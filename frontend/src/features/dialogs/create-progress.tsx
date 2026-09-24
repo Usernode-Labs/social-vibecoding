@@ -101,7 +101,11 @@ function headline(
  * The one line under the steps. It is the `aria-live` region, so it is
  * also what a screen reader hears as the state moves.
  */
-function statusLine(progress: CreationProgressState, outcome: CreationOutcome): string {
+function statusLine(
+  progress: CreationProgressState,
+  outcome: CreationOutcome,
+  states: readonly StepState[] = [],
+): string {
   if (outcome === 'live') {
     return 'Your app is running. Open it to see what it shipped with.';
   }
@@ -112,12 +116,20 @@ function statusLine(progress: CreationProgressState, outcome: CreationOutcome): 
       : 'Set the required secrets and your app will finish starting.';
   }
   if (outcome === 'failed') {
-    // The broadcast reason is a concise one-liner (the full build log
-    // stays behind the gated app payload). When there is none — a
-    // watchdog timeout, or a process that died before recording one —
-    // say what we actually know rather than showing an empty box.
-    return progress.errorReason
-      || 'Setup stopped before your app was running. Retrying usually clears a transient failure.';
+    // QA 2026-09-24 Q32b: the broadcast reason is the server's own line
+    // ("Build failed: ERROR: failed to connect to the docker API at
+    // unix:///var/run/docker.sock…"), which is for whoever runs the server,
+    // not for the person who asked for an app. The line says what happened
+    // in plain words; the reason itself sits under Details below. When there
+    // is none (a watchdog timeout, or a process that died before recording
+    // one), say what we actually know rather than showing an empty box.
+    if (!progress.errorReason) {
+      return 'Setup stopped before your app was running. Retrying usually clears a transient failure.';
+    }
+    const failed = CREATION_STEPS[states.indexOf('failed')]?.key;
+    return failed === 'build'
+      ? 'The build didn’t finish. Try again, or ask an admin.'
+      : 'Setup didn’t finish. Try again, or ask an admin.';
   }
   return 'This usually takes under a minute. You can close this and keep going. We’ll finish in the background and your app will appear in your apps.';
 }
@@ -208,8 +220,24 @@ export function CreateProgress({
             aria-hidden="true"
           />
         ) : null}
-        {statusLine(progress, outcome)}
+        {statusLine(progress, outcome, states)}
       </p>
+
+      {/*
+          QA 2026-09-24 Q32b: the technical reason, one press away rather
+          than in the headline copy. A native disclosure, so it needs no
+          state and opens with the keyboard as well as a tap.
+      */}
+      {outcome === 'failed' && progress.errorReason ? (
+        <details id="create-progress-details" className="text-xs text-zinc-500 dark:text-zinc-400">
+          <summary className="cursor-pointer select-none font-medium text-zinc-600 dark:text-zinc-300">
+            Details
+          </summary>
+          <p className="mt-1.5 font-mono break-words whitespace-pre-wrap text-zinc-600 dark:text-zinc-300">
+            {progress.errorReason}
+          </p>
+        </details>
+      ) : null}
 
       {/*
           Next steps belong under a creation that is going somewhere. Under

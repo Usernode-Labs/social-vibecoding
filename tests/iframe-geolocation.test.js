@@ -45,7 +45,10 @@ const { shellMarkup } = require('./lib/shell-markup');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-const BASE_ALLOW = 'clipboard-write; pointer-lock';
+// QA 2026-09-24 Q35: `pointer-lock` is still ungated but no longer written
+// into `allow` (see tests/iframe-pointer-lock.test.js), so the base the
+// static frames carry is clipboard-write alone.
+const BASE_ALLOW = 'clipboard-write';
 
 test('geolocation is a GATED capability, not part of the ungated base', () => {
   const policy = read('frontend/src/features/app-frame/app-frame-policy.js');

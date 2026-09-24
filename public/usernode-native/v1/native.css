@@ -966,6 +966,18 @@ html.un-kb .un-action-sheet {
 .un-alert-btn.un-destructive {
   color: var(--un-action-danger);
 }
+/* The alert takes focus now (an initial button, a Tab trap). Its card
+   clips (`overflow: hidden`) and the buttons run edge to edge, so the
+   browser's own ring would be cut off: draw it inside the button. The card
+   itself only takes focus as the trap's last resort and draws nothing. */
+.un-alert-btn:focus-visible {
+  outline: 2px solid var(--un-accent);
+  outline-offset: -3px;
+  border-radius: 10px;
+}
+.un-alert:focus {
+  outline: none;
+}
 
 /* ── Centered modal ────────────────────────────────────────────────────
    unNative.presentModal(): arbitrary content in a centered card over the
@@ -1025,19 +1037,33 @@ html.un-kb .un-kb-avoid {
 /* ── Toast ─────────────────────────────────────────────────────────────
    unNative.toast(): bottom capsule HUD on iOS/desktop, Material snackbar
    on Android. Safe-area aware; pointer-events stay off except on the
-   optional action button so it never steals taps from content below. */
+   optional action button so it never steals taps from content below —
+   and on a toast long enough to linger, which `.un-dismissible` lets the
+   reader tap away (toastTapDismisses in native.js).
+
+   `--un-toast-inset-bottom` (default 0) is what the host's own bottom
+   chrome takes up — a tab bar, a composer. The toast rests 16px above the
+   larger of that and the safe-area strip, so it never sits on them.
+
+   The corner radius is HALF A ONE-LINE TOAST'S HEIGHT (10px padding plus
+   half of 0.875rem x 1.4), not a full radius: a one-line toast is the same
+   capsule it always was, and one that wraps becomes a rounded rectangle
+   rather than a round blob. `width: max-content` because `left: 50%` alone
+   capped an absolutely placed box at the right half of the screen, which
+   is what wrapped long messages four words to a line. */
 
 .un-toast {
   position: fixed;
   left: 50%;
-  bottom: calc(16px + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  bottom: calc(16px + max(var(--un-toast-inset-bottom, 0px), var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))));
   z-index: 9995; /* above sheets/alerts: feedback fired from overlays shows */
   display: flex;
   align-items: center;
   gap: 14px;
+  width: max-content;
   max-width: min(85vw, 480px);
   padding: 10px 18px;
-  border-radius: var(--un-radius-full);
+  border-radius: calc(10px + 0.6125rem);
   background: var(--un-toast-bg);
   color: var(--un-toast-text);
   font-size: 0.875rem;
@@ -1054,6 +1080,10 @@ html.un-kb .un-kb-avoid {
 .un-toast.un-in {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+.un-toast.un-dismissible.un-in {
+  pointer-events: auto;
+  cursor: pointer;
 }
 .un-toast-msg {
   min-width: 0;
@@ -1077,6 +1107,7 @@ html.un-kb .un-kb-avoid {
 html.un-android .un-toast {
   left: 16px;
   right: 16px;
+  width: auto;
   max-width: none;
   justify-content: space-between;
   border-radius: var(--un-radius);

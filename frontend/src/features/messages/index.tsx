@@ -10,6 +10,8 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
+import { confirmAction } from '../../lib/confirm';
+import { useMenuKeyboard } from '../../lib/menu-keys';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
@@ -21,6 +23,7 @@ import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
 import { fullTime, UserAvatar } from './format';
 import { MessageRow } from './message-row';
+import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import {
   agentThreadAddress,
@@ -37,6 +40,7 @@ import {
   messagesController,
   open as openConversation,
   openAgentThread,
+  renameConversation,
   openThread,
   respond,
   setUserBlocked,
@@ -121,8 +125,23 @@ function conversationPeer(conversation: ConversationSummary) {
     : null);
 }
 
+/**
+ * QA 2026-09-24 Q33a: who a direct conversation is WITH, for its name and
+ * face. An accepted one is its peer. A request the viewer has not answered
+ * yet carries no peer — the roster stays hidden until acceptance — but it
+ * does carry its requester, deliberately, "so the recipient can decide"
+ * (services/conversations.js serializeConversation). That requester IS the
+ * other person of a direct request, so the row and the header name them
+ * rather than reading "Direct message" over an anonymous "DM" tile.
+ */
+function directPerson(conversation: ConversationSummary) {
+  if (conversation.kind !== 'direct') return null;
+  return conversationPeer(conversation)
+    || (conversation.membershipStatus === 'invited' ? conversation.requester || null : null);
+}
+
 function ConversationRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
-  const peer = conversationPeer(conversation);
+  const peer = directPerson(conversation);
   const invited = conversation.membershipStatus === 'invited';
   const unread = conversation.unreadCount > 0;
   // #1808: the shared ago ladder, which stops being relative at a week — a
@@ -141,7 +160,7 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
       className={`messages-conversation-row ${active ? 'messages-conversation-active' : ''}`}
       aria-current={active ? 'page' : undefined}
     >
-      <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={conversation.title} size="lg" shape="square" />
+      <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={peer?.username || conversation.title} size="lg" shape="square" />
       <div className="min-w-0 flex-1">
         {/* Two lines, the row's own geometry: the name with the time on its
             trailing edge, then the preview with the unread count on its. The
@@ -149,7 +168,7 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
             unread row state itself three ways — bold name, accent time, count
             pill — without adding a third line. */}
         <div className="messages-row-line">
-          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? `@${peer.username}` : conversation.title}{conversation.kind === 'group' ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}</span>
+          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? `@${peer.username}` : conversation.title}{conversation.kind === 'group' && !invited ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}</span>
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
@@ -534,6 +553,11 @@ function startNew(choice: NewChoice) {
  * Nothing is rendered until the button is pressed, so the prerendered
  * document holds the button alone and hydration has nothing to disagree
  * about.
+ *
+ * KEYBOARD (QA 2026-09-24 Q18): opening moves focus to the first row, the
+ * arrows move between rows, Escape and Tab close it back onto the "+"
+ * (lib/menu-keys.ts). Before, Enter opened a menu that focus never reached:
+ * it is portalled to the end of <body>, so Tab walked the whole page first.
  */
 function NewMessageButton() {
   const [rect, setRect] = useState<AnchorRect | null>(null);
@@ -542,6 +566,7 @@ function NewMessageButton() {
   const open = !!rect;
   const shut = () => setRect(null);
   useAnchoredDismiss(open, [btnRef, popRef], shut);
+  const menuKeys = useMenuKeyboard(open, popRef, btnRef, shut);
 
   const toggle = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -555,7 +580,10 @@ function NewMessageButton() {
     }
     setRect(anchorRectOf(event.currentTarget));
   };
-  const choose = (choice: NewChoice) => { shut(); startNew(choice); };
+  // Focus goes back to the "+" BEFORE the dialog opens, so the dialog's own
+  // focus restore (the kit records what was focused when it presents) lands
+  // on the button rather than on a row this close is about to unmount.
+  const choose = (choice: NewChoice) => { btnRef.current?.focus({ preventScroll: true }); shut(); startNew(choice); };
   const pos = rect
     ? placeUnderAnchor(rect, { width: 240, height: 164 }, { width: window.innerWidth, height: window.innerHeight })
     : null;
@@ -584,6 +612,7 @@ function NewMessageButton() {
           aria-label="Start a new conversation"
           style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
           onClick={(event) => event.stopPropagation()}
+          onKeyDown={menuKeys.onKeyDown}
         >
           {newChoices().map((item) => (
             <button
@@ -745,7 +774,7 @@ function ConversationList() {
     if (entry.kind === 'person') {
       const c = byConversation.get(entry.key.slice('person:'.length));
       if (!c) return false;
-      const peer = conversationPeer(c);
+      const peer = directPerson(c) || conversationPeer(c);
       return inboxMatches(c.title, q)
         || inboxMatches(peer?.username, q)
         || inboxMatches(peer?.displayName, q);
@@ -996,10 +1025,36 @@ function ThreadHeader() {
   const active = snap.active;
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
+  // QA 2026-09-24 Q18: the ⋯ menu is a real menu now. It closes on a press
+  // outside it and on Escape (it used to stay open until its own button was
+  // pressed again), takes focus to its first row when it opens, moves
+  // between rows on the arrow keys, and hands focus back to the ⋯ on
+  // Escape. Hooks before the early return below, so their order is stable.
+  const menuWrapRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
+  const closeMenu = () => setMenu(false);
+  useDismiss(menu, [menuWrapRef], closeMenu);
+  const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
+  // Another conversation is another header: a menu left open does not follow.
+  useEffect(() => { setMenu(false); }, [active?.id]);
   const peer = active ? conversationPeer(active) : null;
   if (!active) return null;
   async function blockPeer() {
-    if (!peer || !window.confirm(`Block @${peer.username}? Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.`)) return;
+    if (!peer) return;
+    // The menu goes first and focus returns to the ⋯, so the confirm below
+    // hands focus back there whichever way it is answered.
+    menuBtnRef.current?.focus({ preventScroll: true });
+    setMenu(false);
+    // QA 2026-09-24 Q15: the app's own confirm (lib/confirm.ts), not the
+    // browser's, which some webview hosts suppress.
+    const ok = await confirmAction({
+      title: `Block @${peer.username}?`,
+      message: 'Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.',
+      confirmLabel: 'Block',
+      danger: true,
+    });
+    if (!ok) return;
     const conversationId = active?.id;
     if (!conversationId) return;
     setBusy(true);
@@ -1007,24 +1062,66 @@ function ThreadHeader() {
     catch (err) { window.PlatformUI?.toast?.(err instanceof Error ? err.message : 'Couldn’t block this user.'); }
     finally { setBusy(false); setMenu(false); }
   }
+  // QA 2026-09-24 Q14: rename, for whoever the server lets rename — the
+  // group's owner (`canManage`, the same gate PATCH /api/conversations/:id
+  // applies). The kit's own one-field dialog, pre-filled with the name.
+  async function renameGroup() {
+    setMenu(false);
+    const current = active?.title || '';
+    // PlatformUI.prompt (public/js/platform-ui.js) is the kit alert's inset
+    // text field, resolving the string or null on Cancel.
+    const ui = window.PlatformUI as undefined | {
+      prompt?: (opts: { title: string; value?: string; placeholder?: string; confirmLabel?: string; maxLength?: number }) => Promise<string | null>;
+      toast?: (message: string) => void;
+    };
+    if (!ui?.prompt) return;
+    const next = await ui.prompt({ title: 'Rename group', value: current, placeholder: 'Group name', confirmLabel: 'Save', maxLength: 80 });
+    if (next == null) return;
+    try { await renameConversation(next); }
+    catch (err) { ui.toast?.(err instanceof Error ? err.message : 'Couldn’t rename this group.'); }
+  }
   const channel = active.kind === 'channel';
+  const invited = active.membershipStatus === 'invited';
+  // QA 2026-09-24 Q33a: an unanswered request names its requester.
+  const person = directPerson(active);
+  const count = (n: number) => `${n} ${n === 1 ? 'member' : 'members'}`;
+  // QA 2026-09-24 Q14: "1 member", not "1 members". An invitee is not shown
+  // the roster until they accept, so the count the server gives them is 0 —
+  // they read the invitation's state instead of "0 members".
   const subtitle = channel
-    ? `Everyone on Homeroom · ${active.memberCount} ${active.memberCount === 1 ? 'member' : 'members'}`
-    : active.kind === 'group'
-      ? `${active.memberCount} members${active.myRole === 'owner' ? ' · you own this group' : ''}`
-      : active.membershipStatus === 'invited' ? 'Invitation pending' : 'Direct message';
+    ? `Everyone on Homeroom · ${count(active.memberCount)}`
+    : invited
+      ? 'Invitation pending'
+      : active.kind === 'group'
+        ? `${count(active.memberCount)}${active.myRole === 'owner' ? ' · you own this group' : ''}`
+        : active.awaitingAcceptance ? 'Request pending' : 'Direct message';
   return (
     <header className="messages-thread-header">
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
-        : <UserAvatar user={active.kind === 'direct' ? peer : null} title={active.title} shape="square" />}
+        : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
       <button type="button" className="min-w-0 text-left flex-1" onClick={() => active.kind === 'group' && openDialog('messagesMembers')}>
-        <div className="messages-thread-name">{active.kind === 'direct' && peer ? `@${peer.username}` : channel ? `#${active.channelKey || active.title}` : active.title}</div>
+        <div className="messages-thread-name">{active.kind === 'direct' && person ? `@${person.username}` : channel ? `#${active.channelKey || active.title}` : active.title}</div>
         <div className="messages-thread-sub">{subtitle}</div>
       </button>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
       <FullWidthToggle />
-      <div className="relative"><button type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>{menu ? <div className="messages-thread-menu">{active.kind === 'group' ? <button type="button" onClick={() => { setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button> : active.kind === 'direct' ? <button type="button" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button> : null}<button type="button" onClick={() => { setMenu(false); void loadConversations(true); }}>Refresh conversation</button></div> : null}</div>
+      <div className="relative" ref={menuWrapRef}>
+        <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
+        {menu ? (
+          <div ref={menuRef} className="messages-thread-menu" role="menu" aria-label="Conversation actions" onKeyDown={menuKeys.onKeyDown}>
+            {active.kind === 'group' && active.canManage
+              ? <button type="button" role="menuitem" data-rename-group="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); void renameGroup(); }}>Rename group</button>
+              : null}
+            {active.kind === 'group'
+              ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button>
+              : active.kind === 'direct'
+                ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button>
+                : null}
+            <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>Refresh conversation</button>
+          </div>
+        ) : null}
+      </div>
     </header>
   );
 }
@@ -1545,7 +1642,14 @@ function ConversationThread() {
             is one — re-reads it silently: this row drawn above the messages
             pushed the whole transcript down on each message sent. */}
         {snap.loadingThread && !snap.messages.length ? <div className="messages-state"><span className="messages-spinner" />Loading messages…</div> : null}
-        {snap.threadError && !snap.messages.length ? <div className="messages-state messages-state-error"><p>{snap.threadError}</p><button type="button" onClick={() => messagesController.route(conversationId)}>Try again</button></div> : null}
+        {/* QA 2026-09-24 Q16: a conversation that cannot come back offers the
+            way out, not a Try again that reads the same answer. Leaving it
+            here is said plainly, in the ordinary state colour: it is what
+            the viewer asked for, not an error. */}
+        {snap.threadGone === 'left' ? <div className="messages-state" data-thread-gone="left"><p>You left this group.</p><button type="button" onClick={() => messagesController.open(null)}>Back to Messages</button></div> : null}
+        {snap.threadError && !snap.messages.length ? <div className="messages-state messages-state-error"><p>{snap.threadError}</p>{snap.threadGone === 'missing'
+          ? <button type="button" onClick={() => messagesController.open(null)}>Back to Messages</button>
+          : <button type="button" onClick={() => messagesController.route(conversationId)}>Try again</button>}</div> : null}
         {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>No messages yet. Say hello.</p></div> : null}
         {snap.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={snap.loadingOlder} onClick={() => void older()} className="messages-load-older">{snap.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button></div> : null}
         {rows}

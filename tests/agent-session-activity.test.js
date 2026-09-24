@@ -71,7 +71,9 @@ test('a burst of pushes is one read of the list, and the open conversation keeps
     id: 7, title: 'Dark mode', status: 'open', focusApp: null, focusContext: {}, activeChange: null,
     busy: false, doneUnseen: listDone, lastActivityAt: null, createdAt: null, ...over,
   });
-  globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {} }, UsernodeReact: {} };
+  // A signed-in member: the list waits for a viewer the endpoint will answer
+  // (QA 2026-09-24 Q35, lib/platform-viewer.ts), which is `App.user`.
+  globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {}, user: { id: 1 } }, UsernodeReact: {} };
   globalThis.EventSource = class { close() {} };
   globalThis.fetch = async (url) => {
     requests.push(url);

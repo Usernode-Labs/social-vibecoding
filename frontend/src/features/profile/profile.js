@@ -66,6 +66,7 @@ import {
   displayNameOf,
   initialOf,
 } from './profile-store.js';
+import { pushDismissible } from '../../lib/back-stack';
 import {
   act as actOnFriend,
   announceFriendsChanged,
@@ -103,6 +104,22 @@ const Profile = {
   // what the store carries.
   _pendingAvatar: null,
   _pendingAvatarUrl: null,
+
+  // THE EDITOR'S CLAIM ON THE BACK BUTTON, and what Back leaves behind
+  // (QA 2026-09-24 Q16). Back used to walk past the open editor to the entry
+  // under Profile, so it closed the card AND left the screen, and a half-typed
+  // bio went with it. The editor claims the press the way the dialogs do
+  // (lib/back-stack.ts), and Back closes the card and nothing else.
+  //
+  // What was typed survives that close: `_draft` holds the name and bio until
+  // the editor opens again, which seeds its fields from it. Only Back and the
+  // kit's own dismiss (the backdrop, Escape) keep it; Cancel, Save and leaving
+  // the screen are decisions, and discard it. A staged photo is not kept: it
+  // shows on the identity card as soon as it is staged, which would read as
+  // saved. `_draftSource` is the open editor's own read of its fields.
+  _releaseBack: null,
+  _draft: null,
+  _draftSource: null,
 
   // Field limits, kept in step with src/routes/profile.js. The server is
   // the authority; these exist so the sheet can show a counter and stop an
@@ -490,14 +507,45 @@ const Profile = {
   // unreachable.
 
   showEditSheet() {
-    // Re-entering replaces any open sheet rather than stacking two.
+    // Re-entering replaces any open sheet rather than stacking two. A kept
+    // draft is not thrown away by the re-entry: it is what this open shows.
+    const draft = Profile._draft;
     Profile._dismissSheet();
+    Profile._draft = draft;
     profileStore.set({ sheetOpen: true });
+    Profile._releaseBack = pushDismissible(() => {
+      Profile._releaseBack = null;
+      Profile._dismissSheet({ keepDraft: true });
+      return true;
+    });
   },
 
-  _dismissSheet() {
+  /**
+   * Close the editor. `keepDraft` for a dismissal that is not a decision about
+   * the draft (Back, the kit's backdrop); see `_draft`.
+   */
+  _dismissSheet({ keepDraft = false } = {}) {
+    const source = Profile._draftSource;
+    const user = Profile._user();
+    Profile._draft = keepDraft && typeof source === 'function' && user.username
+      ? { username: user.username, ...source() }
+      : null;
+    // Navigating, because several closes here are the first half of a link
+    // (Email & recovery, Open public page, leaving the screen): the record is
+    // spent a task later, and only if nothing moved (lib/back-stack.ts).
+    const release = Profile._releaseBack;
+    Profile._releaseBack = null;
+    if (release) release({ navigating: true });
     profileStore.set({ sheetOpen: false });
     Profile._clearPendingAvatar();
+  },
+
+  /** The kept draft for the signed-in user, taken once by the opening editor. */
+  takeDraft() {
+    const draft = Profile._draft;
+    Profile._draft = null;
+    const username = Profile._user().username;
+    return draft && username && draft.username === username ? draft : null;
   },
 
   _clearPendingAvatar() {

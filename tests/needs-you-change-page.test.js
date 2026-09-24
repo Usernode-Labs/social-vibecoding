@@ -269,6 +269,25 @@ test('the band is one component for the card and the hero, and the card’s pinn
   assert.match(css, /\.dev-topic-hero > \.dev-topic-hero-title \{[^}]*-webkit-line-clamp: unset;/, 'the title is not clamped');
 });
 
+test('the hero\'s band is as tall as its Vote button, so neither is cut flat (QA 2026-09-24 Q26)', () => {
+  // The band reserves and clips ONE row (`max-height` + `overflow: hidden`),
+  // sized for the 28px pills. The hero also carries the 30px Vote button, so
+  // on a phone the Vote pill and the round menu button lost their bottoms.
+  const css = read('public/css/app.css');
+  const vote = /\n\.dev-vote-btn \{([^}]*)\}/.exec(css);
+  const voteH = Number(/height: (\d+)px;/.exec(vote[1])[1]);
+  const hero = /\.dev-topic-hero \.gc-card-actions \{([^}]*)\}/.exec(css);
+  assert.ok(hero, 'the hero sizes its own band');
+  assert.equal(Number(/max-height: (\d+)px;/.exec(hero[1])[1]), voteH, 'the clip window fits the Vote button');
+  assert.equal(Number(/min-height: (\d+)px;/.exec(hero[1])[1]), voteH);
+  // It still clips one row: the second starts a 6px gap below the first.
+  const card = /:is\(\.dev-card-dense, \.dev-card-topic\) \.gc-card-actions \{([^}]*)\}/.exec(css);
+  assert.match(card[1], /overflow: hidden;/);
+  assert.match(card[1], /gap: 6px;/);
+  assert.ok(css.indexOf('.dev-topic-hero .gc-card-actions {') > css.indexOf(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions {'),
+    'and it comes later than the card rule of equal specificity, so it wins');
+});
+
 test('no bare whitespace expression, no em dash in copy, no computed Tailwind class', () => {
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.doesNotMatch(tsx, /\{' '\}/);

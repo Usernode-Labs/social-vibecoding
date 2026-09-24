@@ -4,11 +4,12 @@
  *
  * ── What this renders ─────────────────────────────────────────────────
  *
- * `#settings-nav-desktop` — the grouped sidebar, a real tab set
- * (`role="tab"` + `aria-selected`, which dapp.json line 1660 selects on).
+ * `#settings-nav-desktop` — the grouped sidebar: section buttons in a <nav>,
+ * the current one marked `aria-current="page"` (which dapp.json selects on).
+ * It was a `role="tab"` set with no tablist around it until QA 2026-09-24.
  * `#settings-mobile-menu-host` — the phone's level-1 menu, a LIST of drawer
- * rows: no `role="tab"`, no `aria-selected`, a 44px minimum target and a
- * chevron, exactly as the admin console's level-1 menu.
+ * rows: no current marker, a 44px minimum target and a chevron, exactly as
+ * the admin console's level-1 menu.
  *
  * Both are fed by ./settings-nav-store.js, which ../settings.js writes from
  * `_renderNav()`. The grouping is shared (`_groupedSections()`), so the two
@@ -148,11 +149,14 @@ function GroupHeading({ group, className }: { group: Disclosure & { name: string
  * grow its own copy of the row.
  */
 function NavRow({ item }: { item: NavItem }) {
+  // Navigation, not a tab set (QA 2026-09-24 Q20): a tab needs a tablist
+  // parent, and these rows sit in a <nav> between group headings, which no
+  // tablist may hold. They are the section links of that <nav>, so the
+  // current one says so with aria-current.
   return (
     <button
       type="button"
-      role="tab"
-      aria-selected={item.active ? 'true' : 'false'}
+      aria-current={item.active ? 'page' : undefined}
       data-settings-nav={item.key}
       className={item.className}
       onClick={() => navClick(item.key)}

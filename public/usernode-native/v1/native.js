@@ -75,9 +75,11 @@
  *                                        call site serves both idioms
  *   unNative.toast(message, opts?)    — transient status toast / snackbar
  *                                        ({ duration?, action?, priority?,
+ *                                        error?, dismissible?,
  *                                        onClose?(reason) }; a priority
  *                                        toast holds the slot for undo
- *                                        flows)
+ *                                        flows; a long message stays
+ *                                        longer and taps away)
  *   unNative.attachNavBar(bar, opts)  — blurred nav bar + large-title collapse
  *   unNative.attachKeyboardAvoidance(scrollEl, opts) — keyboard avoidance
  *                                        for a fixed-shell app's content
@@ -636,6 +638,40 @@
     };
   }
 
+  // How long a toast stays when the caller names no duration. A short
+  // status ("Copied") keeps the 2.2s it always had; a longer message gets
+  // reading time — about 60ms a character over a one-second glance — up to
+  // 8s, because an error that wraps to three lines was gone before it could
+  // be read. `error: true` holds at least 5s whatever its length. An action
+  // toast keeps its 4s: its clock is the undo window, not reading time. An
+  // explicit `duration` always wins. Pure; unit-tested in
+  // tests/native-kit.test.js.
+  var TOAST_MIN_MS = 2200;
+  var TOAST_MAX_MS = 8000;
+  var TOAST_ERROR_MIN_MS = 5000;
+  var TOAST_ACTION_MS = 4000;
+  function toastDuration(message, opts) {
+    var o = opts || {};
+    if (o.duration != null) return o.duration;
+    if (o.action && o.action.label != null) return TOAST_ACTION_MS;
+    var len = message == null ? 0 : String(message).length;
+    var ms = Math.min(TOAST_MAX_MS, Math.max(TOAST_MIN_MS, 1000 + 60 * len));
+    return o.error ? Math.max(TOAST_ERROR_MIN_MS, ms) : ms;
+  }
+
+  // Whether tapping the toast dismisses it. Only a toast that outstays the
+  // short default (or asks to, or is an error) takes taps: a 2.2s "Copied"
+  // stays pass-through, as the kit has always promised, while a long one
+  // that now lingers for up to 8s can be tapped away. Never an action
+  // toast: its only tappable part is its button. `dismissible: false`
+  // opts out.
+  function toastTapDismisses(opts, duration) {
+    var o = opts || {};
+    if (o.action && o.action.label != null) return false;
+    if (o.dismissible != null) return !!o.dismissible;
+    return !!o.error || duration > TOAST_MIN_MS;
+  }
+
   /* ────────────────────────────────────────────────────────────────────
    * Zoom-from-element math — pure functions for the 'zoom-in'/'zoom-out'
    * transition types. Unit-tested via the physics export.
@@ -782,6 +818,8 @@
     placePopover: placePopover,
     createArbiter: createArbiter,
     createToastSlot: createToastSlot,
+    toastDuration: toastDuration,
+    toastTapDismisses: toastTapDismisses,
     zoomPose: zoomPose,
     zoomRectUsable: zoomRectUsable,
     ICON_NAMES: Object.keys(ICONS),
@@ -3287,6 +3325,7 @@
    * ──────────────────────────────────────────────────────────────────── */
 
   var modalStack = []; // Escape dismisses the TOPMOST dismissible modal only
+  var alertSeq = 0;     // unique ids for each alert's title/message (aria)
 
   // Modal/alert cards and the dim over the page are one fade (#1566).
   // Explicitly commit BOTH starting opacities, including the separately
@@ -3362,6 +3401,55 @@
     }
   }, true);
 
+  // Tab stays inside the topmost modal or alert card. The card is appended
+  // to <body> after the page, over a backdrop that takes the pointer, but
+  // the page behind it was still one Tab away: from the card's last control
+  // focus walked out onto whatever was under the dim. So the entries a
+  // modal/alert pushes carry `trap` (their card), and Tab from the last
+  // focusable wraps to the first, Shift+Tab from the first to the last, and
+  // a Tab while focus is outside the card (a click on the backdrop drops it
+  // on <body>) brings it back in. Sheets and panels push no `trap` and keep
+  // their behaviour.
+  //
+  // BUBBLE phase, and it stands aside for a Tab something inside the card
+  // already handled (`defaultPrevented`: an autocomplete that picks on Tab)
+  // and for a popover presented over the modal (its own handler owns Tab).
+  var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), ' +
+    'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), ' +
+    '[contenteditable="true"]';
+
+  function focusablesIn(root) {
+    return Array.prototype.filter.call(root.querySelectorAll(FOCUSABLE), function (el) {
+      if (el.closest && el.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+      return el.getClientRects().length > 0;
+    });
+  }
+
+  window.addEventListener('keydown', function (e) {
+    if (e.key !== 'Tab' || e.defaultPrevented || !modalStack.length) return;
+    if (activePopover) return;
+    var card = modalStack[modalStack.length - 1].trap;
+    if (!card || !card.parentNode) return;
+    var stops = focusablesIn(card);
+    var active = document.activeElement;
+    var inside = active && card.contains(active);
+    if (!stops.length) {
+      e.preventDefault();
+      try { card.focus(); } catch (err) { /* ignore */ }
+      return;
+    }
+    var first = stops[0];
+    var last = stops[stops.length - 1];
+    var next = null;
+    if (!inside) next = e.shiftKey ? last : first;
+    else if (e.shiftKey && (active === first || active === card)) next = last;
+    else if (!e.shiftKey && active === last) next = first;
+    if (next) {
+      e.preventDefault();
+      try { next.focus(); } catch (err) { /* ignore */ }
+    }
+  });
+
   // presentModal({ content | contentEl, onDismiss?, dismissible? }) —
   // content is an HTML string, contentEl an Element to adopt. dismissible
   // (default true) gates backdrop-tap and Escape. Returns { dismiss(), el }.
@@ -3382,7 +3470,8 @@
 
     var prevFocus = document.activeElement;
     var closed = false;
-    var entry = { dismissible: dismissible, dismiss: dismiss };
+    // `trap`: Tab cycles inside this card while it is the topmost entry.
+    var entry = { dismissible: dismissible, dismiss: dismiss, trap: card };
     modalStack.push(entry);
     var fade = animateDialog(card, backdrop, function () {
       var auto = card.querySelector('[autofocus]');
@@ -3992,10 +4081,14 @@
    * { button, value } — value is the field text when a field was shown.
    * ──────────────────────────────────────────────────────────────────── */
 
-  // alert({ title, message?, field?: { placeholder?, value? },
-  // buttons?: [{ label, style?: 'cancel'|'default'|'destructive',
-  // handler? }] }) — returns a Promise. Named alertDialog internally so it
-  // can't be confused with window.alert; exposed as unNative.alert.
+  // alert({ title, message?, field?: { placeholder?, value?, maxLength?,
+  // submitOnEnter? }, buttons?: [{ label, style?: 'cancel'|'default'|
+  // 'destructive', handler? }] }) — returns a Promise. Named alertDialog
+  // internally so it can't be confused with window.alert; exposed as
+  // unNative.alert. `maxLength` caps the field; `submitOnEnter` makes Enter
+  // in it press the last button that is not a cancel, the way a one-field
+  // form submits. Both are opt-in: a caller that passes neither gets the
+  // field it always got.
   function alertDialog(options) {
     var opts = options || {};
     var buttons = opts.buttons && opts.buttons.length
@@ -4006,16 +4099,26 @@
       backdrop.className = 'un-backdrop un-backdrop-fade';
       var card = document.createElement('div');
       card.className = 'un-alert';
+      // Announced as a modal alert dialog, named by its title and described
+      // by its message, and focusable as a last resort for the Tab trap.
+      var uid = 'un-alert-' + (++alertSeq);
+      card.setAttribute('role', 'alertdialog');
+      card.setAttribute('aria-modal', 'true');
+      card.setAttribute('aria-labelledby', uid + '-title');
+      card.tabIndex = -1;
 
       var title = document.createElement('div');
       title.className = 'un-alert-title';
+      title.id = uid + '-title';
       title.textContent = opts.title || '';
       card.appendChild(title);
       if (opts.message) {
         var msg = document.createElement('div');
         msg.className = 'un-alert-message';
+        msg.id = uid + '-message';
         msg.textContent = opts.message;
         card.appendChild(msg);
+        card.setAttribute('aria-describedby', uid + '-message');
       }
       var field = null;
       if (opts.field) {
@@ -4024,14 +4127,33 @@
         field.className = 'un-alert-field';
         if (opts.field.placeholder) field.placeholder = opts.field.placeholder;
         if (opts.field.value != null) field.value = opts.field.value;
+        if (opts.field.maxLength > 0) field.maxLength = opts.field.maxLength;
         card.appendChild(field);
       }
 
       var row = document.createElement('div');
       row.className = 'un-alert-buttons' + (buttons.length > 2 ? ' un-stacked' : '');
       var settled = false;
+      var btnEls = [];
+      var prevFocus = document.activeElement;
+      // The alert is a modal-stack entry too, so Escape answers IT rather
+      // than dismissing a modal underneath (Remove member is asked from
+      // inside the members dialog), and Tab stays on its buttons. Escape
+      // means the cancel-style button, or the only button there is; an
+      // alert with two answers and no cancel has no Escape.
+      var escapeIdx = -1;
+      buttons.forEach(function (button, i) { if (escapeIdx < 0 && button.style === 'cancel') escapeIdx = i; });
+      if (escapeIdx < 0 && buttons.length === 1) escapeIdx = 0;
+      var entry = {
+        dismissible: escapeIdx >= 0,
+        dismiss: function () { if (escapeIdx >= 0) btnEls[escapeIdx].click(); },
+        trap: card,
+      };
+      modalStack.push(entry);
+      var submitBtn = null;
       buttons.forEach(function (button) {
         var btn = document.createElement('button');
+        if (button.style !== 'cancel') submitBtn = btn;
         btn.type = 'button';
         btn.className = 'un-alert-btn' +
           (button.style === 'cancel' ? ' un-cancel' : '') +
@@ -4040,20 +4162,45 @@
         btn.addEventListener('click', function () {
           if (settled) return;
           settled = true;
+          var at = modalStack.indexOf(entry);
+          if (at >= 0) modalStack.splice(at, 1);
           var value = field ? field.value : undefined;
           fade.dismiss(function () {
+            // Focus goes back where it was before the alert, BEFORE the
+            // answer is delivered, so a caller that moves focus on the
+            // answer has the last word.
+            if (prevFocus && typeof prevFocus.focus === 'function' && prevFocus.isConnected !== false) {
+              try { prevFocus.focus(); } catch (e) { /* ignore */ }
+            }
             if (button.handler) button.handler(value);
             resolve({ button: button, value: value });
           });
         });
+        btnEls.push(btn);
         row.appendChild(btn);
       });
       card.appendChild(row);
+      if (field && opts.field.submitOnEnter && submitBtn) {
+        field.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' || e.isComposing) return;
+          e.preventDefault();
+          submitBtn.click();
+        });
+      }
+
+      // Which control starts with focus: the text field when there is one;
+      // otherwise Cancel when another answer is destructive (the safe
+      // default for "Block", "Delete", "Leave"), else the last button, the
+      // primary answer.
+      var hasDestructive = buttons.some(function (b) { return b.style === 'destructive'; });
+      var initial = field
+        || (hasDestructive && escapeIdx >= 0 && buttons[escapeIdx].style === 'cancel' ? btnEls[escapeIdx] : null)
+        || btnEls[btnEls.length - 1];
 
       document.body.appendChild(backdrop);
       document.body.appendChild(card);
       var fade = animateDialog(card, backdrop, function () {
-        if (field) { try { field.focus(); } catch (e) { /* ignore */ } }
+        try { (initial || card).focus(); } catch (e) { /* ignore */ }
       });
     });
   }
@@ -4127,9 +4274,17 @@
       toastEl.className = 'un-toast';
       toastEl.setAttribute('role', 'status');
       toastEl.setAttribute('aria-live', 'polite');
+      // Tap to dismiss, for the records that allow it (toastTapDismisses);
+      // the CSS gives only those `pointer-events`, so every other toast
+      // still lets a tap through to the content under it.
+      toastEl.addEventListener('click', function () {
+        var shown = toastSlot.current();
+        if (shown && shown.tapDismiss && !shown.closed) resolveToast(shown, 'dismiss');
+      });
       document.body.appendChild(toastEl);
     }
     toastEl.classList.toggle('un-has-action', !!record.action);
+    toastEl.classList.toggle('un-dismissible', !!record.tapDismiss);
     while (toastEl.firstChild) toastEl.removeChild(toastEl.firstChild);
     var msg = document.createElement('div');
     msg.className = 'un-toast-msg';
@@ -4179,7 +4334,10 @@
   }
 
   // toast(message, { duration?, action?: { label, handler }, priority?,
-  // onClose?(reason) }) — returns { dismiss(), el }. A priority toast is
+  // error?, dismissible?, onClose?(reason) }) — returns { dismiss(), el }.
+  // With no `duration`, a longer message stays longer (toastDuration) and
+  // one that outstays the short default can be tapped away
+  // (toastTapDismisses); a tap closes it with reason 'dismiss'. A priority toast is
   // not displaced by ordinary toasts (those queue, one deep, latest
   // wins); onClose fires exactly once with 'timeout' | 'action' |
   // 'dismiss' | 'replaced'. `el` is the live toast element while this
@@ -4189,10 +4347,12 @@
   function toast(message, options) {
     var opts = options || {};
     var action = opts.action && opts.action.label != null ? opts.action : null;
+    var duration = toastDuration(message, opts);
     var record = {
       message: message,
       action: action,
-      duration: opts.duration != null ? opts.duration : (action ? 4000 : 2200),
+      duration: duration,
+      tapDismiss: toastTapDismisses(opts, duration),
       priority: !!opts.priority,
       onClose: typeof opts.onClose === 'function' ? opts.onClose : null,
       closed: false,

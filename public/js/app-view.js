@@ -1823,6 +1823,11 @@ const AppView = {
   // below is what every frame still gets; the nine gated capabilities are
   // delegated only where this user has granted them to this app.
   _appIframeUngated: ['clipboard-write', 'pointer-lock'],
+  // Ungated, but delegated by the `allow-pointer-lock` sandbox token above
+  // rather than by `allow`: no browser recognises `pointer-lock` as a policy
+  // feature, and Chrome logged "Unrecognized feature" for it on every page
+  // (QA 2026-09-24 Q35). Same list as SANDBOX_DELEGATED in app-frame-policy.js.
+  _appIframeSandboxDelegated: ['pointer-lock'],
   _appIframeGated: [
     'geolocation', 'microphone', 'camera', 'display-capture',
     'usb', 'serial', 'hid', 'bluetooth', 'midi',
@@ -1834,6 +1839,7 @@ const AppView = {
   _allowAttribute(granted) {
     const wanted = new Set(Array.isArray(granted) ? granted : []);
     return AppView._appIframeUngated
+      .filter((c) => !AppView._appIframeSandboxDelegated.includes(c))
       .concat(AppView._appIframeGated.filter((c) => wanted.has(c)))
       .join('; ');
   },
@@ -2773,7 +2779,7 @@ const AppView = {
     // #685: this render DOES replace the frame, so the announcement goes.
     AppView._issueStateSource = null;
 
-    frame.mount({ slug: appData.slug, faded: false });
+    frame.mount({ slug: appData.slug, faded: false, title: appData.name || '' });
     // #970: full-bleed frame; the insets go to the app instead.
     AppView._setSurface('app');
 
@@ -4443,7 +4449,15 @@ const AppView = {
     }
     if (mine && !AppView.readOnly && open && AppView._headHome(item) === 'app_repo' && item.source !== 'imported') {
       main.actions = [...(main.actions || []), { key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? 'Syncing…' : 'Sync with main', disabled: !!busy || !!item.busy, act: { fn: 'runChangeAction', args: [item.id, 'sync-main', item] } }];
-    } else if (AppView._headHome(item) === 'user_fork') {
+    } else if (AppView._headHome(item) === 'user_fork'
+      // QA 2026-09-24: only when there is something to update. This went
+      // under every fork proposal's row, so a branch that was "Up to date
+      // with main." was told in the next line that its author had to update
+      // it. A quiet row (mute, or ok) needs nothing; a conflict already
+      // carries the fork's own remedy in its foot, which says the same thing
+      // with the reason, so it is not said twice either.
+      && main.tone !== 'mute' && main.tone !== 'ok'
+      && !(main.foot && main.foot.length)) {
       main.foot = [...(main.foot || []), ['The author must update this branch in their fork, then push the changes.']];
     }
     const votes = rows.find((r) => r.key === 'votes');
@@ -5060,17 +5074,90 @@ const AppView = {
       }
     }, true);
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && AppView._openCardMenu) AppView._closeCardMenu();
+      const open = AppView._openCardMenu;
+      if (!open) return;
+      if (e.key === 'Escape') {
+        // Back to the ⋯ that opened it, so a keyboard user is not dropped
+        // at the top of the document (QA 2026-09-24 Q18).
+        const trigger = open.trigger;
+        AppView._closeCardMenu();
+        if (trigger && trigger.isConnected && trigger.focus) trigger.focus();
+        return;
+      }
+      if (open.el && open.el.contains(e.target)) {
+        AppView._roveMenuFocus(e, open.el, '[data-menu-idx]:not([disabled])', () => {
+          AppView._closeCardMenu();
+          if (open.trigger && open.trigger.isConnected && open.trigger.focus) open.trigger.focus();
+        });
+      }
     });
     // The board scrolls in both axes and the menu is position:fixed, so a
     // scroll would leave it stranded beside nothing. Dismiss rather than
     // re-anchor: a menu is a momentary choice, not a persistent panel.
-    window.addEventListener('scroll', () => {
-      if (AppView._openCardMenu) AppView._closeCardMenu();
+    //
+    // BUT ONLY A SCROLL THAT MOVED THE TRIGGER (QA 2026-09-24 Q4). The topic
+    // hero's action band is `overflow: hidden` and a couple of pixels
+    // shorter than its content, so pressing its ⋯ focuses the button and
+    // the browser nudges the band 1px to reveal it. That scroll arrives a
+    // frame AFTER the menu opened and closed it again, so on the proposal
+    // page the menu never appeared at all. A scroll inside the menu itself,
+    // or one that leaves the trigger where the menu was placed against it,
+    // is not a reason to close; the menu follows the few pixels instead.
+    window.addEventListener('scroll', (e) => {
+      const open = AppView._openCardMenu;
+      if (!open) return;
+      const t = e.target;
+      if (t && t.nodeType === 1 && open.el && open.el.contains(t)) return;
+      if (!AppView._cardMenuTriggerMoved(open)) {
+        if (open.el && open.trigger) AppView._positionCardMenu(open.el, open.trigger);
+        return;
+      }
+      AppView._closeCardMenu();
     }, true);
     window.addEventListener('resize', () => {
       if (AppView._openCardMenu) AppView._closeCardMenu();
     });
+  },
+
+  // How far the open menu's trigger may drift from where the menu was placed
+  // before a scroll counts as the page moving under it. A focus nudge inside
+  // a clipped action band is 1-2px; a wheel or a swipe is far more, and it
+  // accumulates against the ORIGINAL spot, so slow trackpad scrolling still
+  // closes the menu once it has really moved.
+  CARD_MENU_SCROLL_SLOP: 4,
+
+  _cardMenuTriggerMoved(open) {
+    const trigger = open && open.trigger;
+    if (!trigger || !trigger.isConnected || !open.at) return true;
+    const r = trigger.getBoundingClientRect();
+    const slop = AppView.CARD_MENU_SCROLL_SLOP;
+    return Math.abs(r.top - open.at.top) > slop || Math.abs(r.left - open.at.left) > slop;
+  },
+
+  // Arrow keys, Home and End move between a menu's rows; Tab leaves the menu
+  // (the platform menu convention: close, then let Tab carry on from the
+  // trigger). Shared by the card menu, the Workshop "+" menu and the
+  // attribute popover. `onTab` closes the surface and puts focus back on the
+  // trigger; the browser's own Tab then moves on from there.
+  _roveMenuFocus(e, root, selector, onTab) {
+    if (!root) return false;
+    if (e.key === 'Tab') {
+      if (onTab) onTab();
+      return false;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return false;
+    const items = Array.from(root.querySelectorAll(selector))
+      .filter((el) => el.getClientRects().length > 0);
+    if (!items.length) return false;
+    const idx = items.indexOf(document.activeElement);
+    let next;
+    if (e.key === 'Home') next = items[0];
+    else if (e.key === 'End') next = items[items.length - 1];
+    else if (e.key === 'ArrowDown') next = items[idx < 0 ? 0 : (idx + 1) % items.length];
+    else next = items[idx < 0 ? items.length - 1 : (idx - 1 + items.length) % items.length];
+    e.preventDefault();
+    next.focus();
+    return true;
   },
 
   _closeCardMenu() {
@@ -5135,7 +5222,10 @@ const AppView = {
       }
     });
     trigger.setAttribute('aria-expanded', 'true');
-    AppView._openCardMenu = { key, el: menu, trigger, own };
+    // `at` is where the trigger was when the menu was placed against it; the
+    // scroll listener in _cardMenuInit compares against it.
+    const at = trigger.getBoundingClientRect();
+    AppView._openCardMenu = { key, el: menu, trigger, own, at: { top: at.top, left: at.left } };
     const first = menu.querySelector('[data-menu-idx]:not([disabled])');
     if (first && first.focus) first.focus();
   },
@@ -5205,6 +5295,8 @@ const AppView = {
     }
     if (!trigger) { AppView._closeCardMenu(); return; }
     open.trigger = trigger;
+    const at = trigger.getBoundingClientRect();
+    open.at = { top: at.top, left: at.left };
     trigger.setAttribute('aria-expanded', 'true');
     AppView._fillCardMenu(open.el, AppView._cardMenuItems(open.key, open.own));
     AppView._positionCardMenu(open.el, trigger);
@@ -5648,6 +5740,8 @@ const AppView = {
       menu.classList.add('hidden');
       btn.setAttribute('aria-expanded', 'false');
     };
+    // The rows a keyboard can reach (QA 2026-09-24 Q18).
+    const PLUS_ROWS = 'button[data-plus]:not([disabled])';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       // Touch platforms: present the same items as a bottom action
@@ -5705,11 +5799,39 @@ const AppView = {
       // Refresh the App secrets item's "N required missing" state only
       // when the menu actually opens — no fetch on every card-list mount.
       if (open) AppView.refreshDevChatSecretsState();
+      // QA 2026-09-24 Q18: focus goes to the first row, so the arrows below
+      // have somewhere to start from.
+      if (open) {
+        // The same walk the touch sheet makes above, so both idioms agree on
+        // what a row is.
+        const first = Array.from(menu.querySelectorAll('button[data-plus], [data-plus-group]'))
+          .find((el) => el.hasAttribute('data-plus') && !el.disabled
+            && typeof el.getClientRects === 'function' && el.getClientRects().length > 0);
+        if (first) first.focus({ preventScroll: true });
+      }
     }, { signal });
-    // Outside-click dismiss. Scoped to the signal above, NOT to the content
-    // node's lifetime — see the note on this method.
-    content.addEventListener('click', (e) => {
-      if (!e.target.closest('#dev-plus-menu, #dev-plus-btn')) close();
+    // Outside-click dismiss, anywhere in the document. It was bound on the
+    // content node only, so a press on the header or the rail left the menu
+    // open (QA 2026-09-24 Q18). Scoped to the signal above, NOT to the
+    // content node's lifetime — see the note on this method.
+    document.addEventListener('click', (e) => {
+      if (menu.classList.contains('hidden')) return;
+      if (!(e.target.closest && e.target.closest('#dev-plus-menu, #dev-plus-btn'))) close();
+    }, { signal });
+    // Escape closes it and hands focus back to the "+"; the arrows, Home and
+    // End move between rows; Tab closes it and carries on from the "+".
+    document.addEventListener('keydown', (e) => {
+      if (menu.classList.contains('hidden')) return;
+      if (e.key === 'Escape') {
+        close();
+        if (btn.isConnected) btn.focus({ preventScroll: true });
+        return;
+      }
+      if (!menu.contains(e.target)) return;
+      AppView._roveMenuFocus(e, menu, PLUS_ROWS, () => {
+        close();
+        if (btn.isConnected) btn.focus({ preventScroll: true });
+      });
     }, { signal });
     // New change lives in Improve (#1490). This menu keeps PR import and app
     // management, and (#1900) filing an issue, which #1490 had folded into
@@ -5723,8 +5845,9 @@ const AppView = {
         // preselected as the target (Platform for the self-hosted app, or
         // while the repo does not exist yet) — #226. The same call
         // Improve.giveFeedback() makes when the panel's app is the open one,
-        // so the two entry points cannot drift.
-        App.openFeedbackModal({ fromDev: true });
+        // so the two entry points cannot drift. QA 2026-09-24: plus
+        // `intent`, so the dialog is headed "File an issue".
+        App.openFeedbackModal({ fromDev: true, intent: 'issue' });
       }, { signal });
     }
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
@@ -12183,7 +12306,11 @@ const AppView = {
     // it names the person and the exact action — or says that nobody need
     // act, and how the author can hurry it. The rest restated the row's own
     // text. The file list keeps its lead-in and sits under it.
-    const remedyParts = remedy ? remedy.parts : null;
+    // QA 2026-09-24: the rest of it, not the lead. `sync.text` above has
+    // just said what the platform does with the conflict, and the remedy's
+    // own lead said it again underneath ("... resolves it automatically,
+    // then tries the merge again. The platform resolves it automatically.").
+    const remedyParts = remedy ? (remedy.followUp || remedy.parts) : null;
     // The file list does NOT survive into the step. It was the bulkiest
     // thing on the panel and the least actionable: both-sides-changed is an
     // upper bound on the conflict rather than the conflict (two edits at
@@ -12551,31 +12678,45 @@ const AppView = {
     const served = (pr.integration && Array.isArray(pr.integration.blockReasons))
       ? pr.integration.blockReasons : [];
     const sync = ': open the session’s dev-chat and run "Sync with main".';
-    let parts;
+    // QA 2026-09-24: `lead` is the sentence about what the PLATFORM does and
+    // `rest` is what a person can do. `parts` is both, as before. The
+    // proposal's "Sync with main" step already opens with its own sentence
+    // about the platform ("Homeroom resolves it automatically, then tries the
+    // merge again."), so it takes `followUp` (the rest alone) rather than
+    // saying the same thing twice in a row.
+    let lead = null;
+    let rest;
     if (pr.source !== 'imported') {
       if (mode === 'failed') {
-        parts = [{ b: creator }, ' needs to resolve it: run "Sync with main" from the session\'s dev-chat.'];
+        rest = [{ b: creator }, ' needs to resolve it: run "Sync with main" from the session\'s dev-chat.'];
       } else if (mode === 'conflict') {
-        parts = ['Automatic resolution may not run for this proposal. ', { b: creator },
-          ' needs to finish the merge: open the session\'s dev-chat and run "Sync with main".'];
+        lead = 'Automatic resolution may not run for this proposal. ';
+        rest = [{ b: creator }, ' needs to finish the merge: open the session\'s dev-chat and run "Sync with main".'];
       } else if (served.includes('integrating')) {
-        parts = ['The platform is resolving it now. Nobody needs to do anything.'];
+        lead = 'The platform is resolving it now. ';
+        rest = ['Nobody needs to do anything.'];
       } else if (served.includes('unresolvable')) {
-        parts = ['The platform tried to resolve it and could not. ', { b: creator }, ` needs to bring it up to date${sync}`];
+        lead = 'The platform tried to resolve it and could not. ';
+        rest = [{ b: creator }, ` needs to bring it up to date${sync}`];
       } else if (served.includes('awaiting_approval')) {
-        parts = ['The platform resolves it once the vote passes. ', { b: creator }, ` can bring it up to date sooner${sync}`];
+        lead = 'The platform resolves it once the vote passes. ';
+        rest = [{ b: creator }, ` can bring it up to date sooner${sync}`];
       } else {
-        parts = ['The platform resolves it automatically. ', { b: creator }, ` can also bring it up to date sooner${sync}`];
+        lead = 'The platform resolves it automatically. ';
+        rest = [{ b: creator }, ` can also bring it up to date sooner${sync}`];
       }
     } else if (home === 'app_repo') {
-      parts = mode === 'failed'
-        ? [{ b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Homeroom keeps this branch itself, so the merge is retried once the update lands.']
-        : ['Homeroom keeps this branch itself and will try to resolve it automatically at the next merge attempt. If that fails, ',
-          { b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it and submit it again as an update to this proposal.'];
+      if (mode === 'failed') {
+        rest = [{ b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Homeroom keeps this branch itself, so the merge is retried once the update lands.'];
+      } else {
+        lead = 'Homeroom keeps this branch itself and will try to resolve it automatically at the next merge attempt. ';
+        rest = ['If that fails, ', { b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it and submit it again as an update to this proposal.'];
+      }
     } else {
-      parts = ['This branch lives in ', { b: creator }, '’s own fork, which Homeroom cannot write to, so it cannot sync it itself. ',
+      rest = ['This branch lives in ', { b: creator }, '’s own fork, which Homeroom cannot write to, so it cannot sync it itself. ',
         { b: creator }, ' needs to merge main into the branch and push it; the proposal follows the push.'];
     }
+    const parts = lead ? [lead, ...rest] : rest;
     // The pill's plain-text detail. A native row keeps the sentence the pill
     // has always carried; an imported one gets the note's sentence, since
     // that is the first time the pill has had anything true to say about it.
@@ -12605,6 +12746,7 @@ const AppView = {
     const tone = authorActs ? 'blocking' : (laneWorking ? 'running' : 'soft');
     return {
       parts,
+      followUp: rest,
       tone,
       // The short form the tag wears. Null leaves the caller's own label
       // alone, which is what an auto-resolving conflict wants: the file
@@ -14028,9 +14170,12 @@ const AppView = {
       const approverSet = new Set(data.approvers || []);
       // A non-breaking space, not `&nbsp;` — the head renders this as a
       // text child, so the entity would show up literally.
+      // QA 2026-09-24: an empty side is an empty string, not a bare dash.
+      // The head leaves that side out (topic-head.tsx's Roster), so the line
+      // reads "Yes (2): @a, @b" rather than "Yes (2): @a, @b No (0): —".
       const fmt = (arr) => (arr && arr.length
         ? arr.map((u) => '@' + u + (approverSet.has(u) ? '\u00a0✓' : '')).join(', ')
-        : '—');
+        : '');
       // #695: on invited apps the headline count splits into approver
       // votes (✓, the ones that count) + the advisory surplus; under the
       // default policy it stays the plain total.
@@ -14108,8 +14253,8 @@ const AppView = {
       if (!res.ok) { publish({ phase: 'hidden' }); return; }
       const data = await res.json();
       // A non-breaking space is not needed here (no approver ticks on a
-      // governance roster), but the em dash placeholder is the same.
-      const fmt = (arr) => (arr && arr.length ? arr.map((u) => '@' + u).join(', ') : '—');
+      // governance roster), and an empty side is left out the same way.
+      const fmt = (arr) => (arr && arr.length ? arr.map((u) => '@' + u).join(', ') : '');
       const yes = Array.isArray(data.yes) ? data.yes : [];
       const no = Array.isArray(data.no) ? data.no : [];
       const reasons = (Array.isArray(data.reasons) ? data.reasons : [])
@@ -14727,10 +14872,27 @@ const AppView = {
       if (!inside('#voting-help-popover')) AppView._closeVotingHelpPopover();
     }, true);
     // Escape dismisses either popover (a11y — the help popover is a dialog).
+    // From inside the attribute picker it also hands focus back to the chip
+    // that opened it (QA 2026-09-24 Q18).
     document.addEventListener('keydown', (e) => {
+      const pop = document.getElementById('attr-popover');
+      const inAttr = !!(pop && e.target && e.target.nodeType === 1 && pop.contains(e.target));
       if (e.key === 'Escape') {
+        const ctx = inAttr ? AppView._attrPopover : null;
+        let anchor = ctx && ctx.anchor;
+        // A repaint replaces the chip; its successor is found the same way
+        // _reanchorAttrPopover finds it.
+        if (ctx && !(anchor && anchor.isConnected)) anchor = AppView._attrAnchorFor(ctx.field, ctx.targetType, ctx.targetRef);
         AppView._closeAttrPopover();
         AppView._closeVotingHelpPopover();
+        if (anchor && anchor.isConnected && typeof anchor.focus === 'function') anchor.focus({ preventScroll: true });
+        return;
+      }
+      // The arrows move between the picker's options, its text box and its
+      // Add button; Home and End too, except inside the text box, where they
+      // move the caret.
+      if (inAttr && !(e.target.tagName === 'INPUT' && (e.key === 'Home' || e.key === 'End'))) {
+        AppView._roveMenuFocus(e, pop, '.attr-opt, .attr-suggest-item, .attr-pop-input, .attr-pop-addbtn');
       }
     });
   },
@@ -14770,7 +14932,9 @@ const AppView = {
     // `_closeAttrPopover` removes the node.
     AppView._reactDevBoard()?.mountAttrPopover(pop);
     AppView._publishAttrPopover({ phase: 'loading', field, groups: [], emptyNote: null, add: null, suggestions: [] });
-    AppView._attrPopover = { field, targetType, targetRef, slug };
+    // `anchor` is what Escape returns focus to: the chip, or nothing when the
+    // picker was opened from a ⋯ row and hangs off a stand-in for the card.
+    AppView._attrPopover = { field, targetType, targetRef, slug, anchor: chip && chip.nodeType === 1 ? chip : null };
 
     // Position under the chip, clamped to the viewport.
     AppView._positionAttrPopover(pop, chip);
@@ -14927,7 +15091,18 @@ const AppView = {
 
     // The publish is flushed, so the field exists on the next line — the same
     // contract the `innerHTML` assignment this replaces gave.
-    if (!add) return;
+    if (!add) {
+      // Priority has no text box to focus. Its first option takes focus
+      // instead, so the arrow keys have somewhere to start (QA 2026-09-24
+      // Q18) — but only on the way in: this re-runs after every vote, and a
+      // repaint must not pull focus back from the option just chosen.
+      const host = document.getElementById('attr-popover');
+      if (host && !host.contains(document.activeElement)) {
+        const first = host.querySelector('.attr-opt');
+        if (first) first.focus({ preventScroll: true });
+      }
+      return;
+    }
     const input = document.getElementById(add.inputId);
     if (!input) return;
     if (add.defaultValue) input.select();
@@ -18768,12 +18943,22 @@ const AppView = {
     }
     return AppView._askVoteReason(vote);
   },
+  // QA 2026-09-24 Q3: resolves TRUE only when the server took the vote, and
+  // false for everything else — a cancelled No, a refusal, a network
+  // failure, or a second press while the first is still in flight. The
+  // Workshop's Needs-you deck marked its card "Voted no" before this ran,
+  // so cancelling the "What's not working for you?" prompt left a card
+  // saying you had voted when nothing was sent. It waits for this answer
+  // now. `opts.onSend` is called at the moment the vote is committed to
+  // (the line is in hand and the optimistic paint is about to happen), so
+  // a caller can show that it is on its way without claiming it landed.
+  // The onclick callers ignore the value, as they always have.
   async castVote(sessionId, vote, expectedEpoch = null, opts = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is idempotent on an unchanged vote, but blocking here
     // avoids pointless round-trips and keeps the UI responsive.
     const key = `${sessionId}:${vote}`;
-    if (AppView._voteInFlight.has(key)) return;
+    if (AppView._voteInFlight.has(key)) return false;
     AppView._voteInFlight.add(key);
     // #1688: the line, before anything is painted — a cancelled No must
     // leave the card exactly as it was.
@@ -18785,7 +18970,11 @@ const AppView = {
     }
     if (reason === false) {
       AppView._voteInFlight.delete(key);
-      return;
+      return false;
+    }
+    const onSend = opts && typeof opts.onSend === 'function' ? opts.onSend : null;
+    if (onSend) {
+      try { onSend(vote); } catch { /* the caller's paint, never the vote's */ }
     }
     // #1924: the card leaves "Needs your vote" on the click, not after the
     // 1–2 s round-trip. The lane (and the Board's needs-vote filter, and the
@@ -18842,7 +19031,7 @@ const AppView = {
         // the server's own words rather than as an opaque failure.
         PlatformUI.toast((data.error === 'reason_required' && data.message)
           || data.error || `Vote failed (HTTP ${res.status}).`);
-        return;
+        return false;
       }
       AppView._seenEpoch.delete(sessionId);
       // The overlay stays until the post-vote read has landed: a load queued
@@ -18852,8 +19041,14 @@ const AppView = {
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
       window.Notifications?.refresh?.();
+      return true;
     } catch {
       rollback();
+      // QA 2026-09-24 Q3: a vote that never reached the server used to put
+      // the card back without a word, which read as the button doing
+      // nothing. Say so, in the same place a refusal is said.
+      window.PlatformUI?.toast?.('Your vote did not go through. Check your connection and try again.');
+      return false;
     }
     finally {
       AppView._voteInFlight.delete(key);
@@ -19152,9 +19347,20 @@ const AppView = {
     // #2813: in the Messages pane there is no Board to fall back to — the
     // pane says the session could not be opened instead — and a redirect
     // to another Dev surface goes through that surface's own address.
+    // Off the Messages pane it falls back to the Workshop, and SAYS SO
+    // (QA 2026-09-24 Q30b): landing on the board with nothing on screen about
+    // the link that was followed read as the link being wrong, or as the
+    // session having been opened somewhere out of sight. The server does not
+    // say which of private or gone it was (the 404 is the same on purpose),
+    // so the note names both.
     const unavailable = () => {
       if (embedded) return 'unavailable';
       if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
+      if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) {
+        // Longer than the kit's 2.2s default: it arrives as the page does,
+        // while the eye is still finding its way round the board.
+        PlatformUI.toast('That session is private or no longer exists.', { duration: 6000 });
+      }
       return undefined;
     };
     if (!restoreSessionId) {

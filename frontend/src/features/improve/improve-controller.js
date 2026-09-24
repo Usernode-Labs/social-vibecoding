@@ -80,8 +80,9 @@ function liveBusy(session) {
 
 /**
  * Whether the session is WAITING ON THE USER (#1959) — the one fact behind
- * both the caption's "Needs you" and the pill's "Ready for your input", so
- * the two cannot say different things.
+ * both the caption's "Needs you" and the pill's "Needs you" (QA 2026-09-24
+ * Q29; it read "Ready for your input" until then), so the two cannot say
+ * different things.
  *
  * `awaiting_input` is the verdict GET /api/me/active-sessions reaches from
  * the transcript (sessionAwaitsInput in routes/sessions.js): the last

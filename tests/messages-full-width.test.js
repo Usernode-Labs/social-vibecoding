@@ -68,7 +68,8 @@ test('a conversation, a group and #general: at the right of the header, just bef
   assert.equal(header.indexOf('<FullWidthToggle />', at + 1), -1, 'once');
   assert.ok(at > header.indexOf('className="min-w-0 text-left flex-1"'), 'after the title, which takes the free width');
   assert.ok(at > header.indexOf('aria-label="Group members"'), 'after a group\'s members disc');
-  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative"><button type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label="Conversation actions"/,
+  // The ⋯ is a keyboard menu button with refs of its own (QA 2026-09-24 Q18).
+  assert.match(header, /<FullWidthToggle \/>\s*<div className="relative" ref=\{menuWrapRef\}>\s*<button ref=\{menuBtnRef\} type="button" onClick=\{\(\) => setMenu\(\(open\) => !open\)\}[^>]*aria-label="Conversation actions"/,
     'immediately before the ⋯ menu');
   assert.match(header, /<header className="messages-thread-header">\s*\{channel/, 'no longer leading the row');
 });

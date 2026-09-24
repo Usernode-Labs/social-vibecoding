@@ -908,7 +908,10 @@ const AdminConsole = {
         + (isActive
           ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
           : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/60');
-      return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}"
+      // Section links of the sidebar's <nav>, the current one marked
+      // aria-current (QA 2026-09-24 Q20). They used to be tabs with no
+      // tablist around them, and a tablist may not hold the group headings.
+      return `<button type="button"${isActive ? ' aria-current="page"' : ''}
         data-admin-section="${s.key}" class="${cls}">${AdminConsole.NAV_ICONS[s.key] || ''}<span class="flex-1 min-w-0 truncate">${AdminConsole.esc(s.label)}</span></button>`;
     };
     return AdminConsole._groupedSections().map((g, i) => {

@@ -43,6 +43,8 @@ const {
   autoScrollVelocity,
   createArbiter,
   createToastSlot,
+  toastDuration,
+  toastTapDismisses,
   zoomPose,
   zoomRectUsable,
 } = physics;
@@ -1751,4 +1753,51 @@ test('an icon row lets its label wrap, exactly as a bare label always did', () =
     'a menu label must keep wrapping');
   assert.doesNotMatch(rule, /text-overflow:\s*ellipsis/,
     'a menu label must not be truncated');
+});
+
+// ── Toast lifetime and shape (QA 2026-09-24 Q28) ───────────────────────
+//
+// Long errors (Claim, Start work) wrapped to four lines in a round blob over
+// the composer and the tab bar and were gone after 2.2s, before they could
+// be read. A longer message now stays longer, can be tapped away, and wraps
+// into a rounded rectangle; everything a caller already passes still wins.
+
+test('QA 2026-09-24 Q28: a longer toast stays longer, up to 8s; short ones keep 2.2s', () => {
+  assert.equal(toastDuration('Copied'), 2200, 'a short status is unchanged');
+  assert.equal(toastDuration(''), 2200);
+  assert.equal(toastDuration(null), 2200);
+  const claim = 'Cannot verify the issue right now: GitHub is unavailable for this app.';
+  assert.equal(toastDuration(claim), 1000 + 60 * claim.length, 'reading time, about 60ms a character');
+  assert.ok(toastDuration(claim) >= 5000 && toastDuration(claim) <= 8000);
+  assert.equal(toastDuration('x'.repeat(400)), 8000, 'capped at 8s');
+  assert.equal(toastDuration('Failed', { error: true }), 5000, 'an error holds at least 5s');
+  assert.equal(toastDuration('x'.repeat(400), { error: true }), 8000);
+  assert.equal(toastDuration('x'.repeat(400), { duration: 1500 }), 1500, 'an explicit duration always wins');
+  assert.equal(toastDuration('Deleted', { action: { label: 'Undo' } }), 4000, 'an undo window is not reading time');
+});
+
+test('QA 2026-09-24 Q28: only a lingering toast takes taps, never an action toast', () => {
+  assert.equal(toastTapDismisses({}, 2200), false, 'a 2.2s status stays pass-through, as the kit promised');
+  assert.equal(toastTapDismisses({}, 5320), true);
+  assert.equal(toastTapDismisses({ error: true }, 2200), true);
+  assert.equal(toastTapDismisses({ dismissible: false }, 8000), false, 'a caller can opt out');
+  assert.equal(toastTapDismisses({ dismissible: true }, 2200), true, 'or in');
+  assert.equal(toastTapDismisses({ action: { label: 'Undo' }, dismissible: true }, 4000), false,
+    'an action toast\'s only tappable part is its button');
+
+  const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'), 'utf8');
+  assert.match(js, /duration: duration,\n      tapDismiss: toastTapDismisses\(opts, duration\),/);
+  assert.match(js, /if \(shown && shown\.tapDismiss && !shown\.closed\) resolveToast\(shown, 'dismiss'\);/,
+    'a tap resolves the SHOWN record with the documented reason');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.css'), 'utf8');
+  const rule = css.slice(css.indexOf('.un-toast {'), css.indexOf('}', css.indexOf('.un-toast {')));
+  assert.match(rule, /pointer-events: none;/, 'pass-through by default');
+  assert.match(rule, /border-radius: calc\(10px \+ 0\.6125rem\);/,
+    'half a one-line toast: a capsule on one line, a rounded rectangle when it wraps');
+  assert.match(rule, /width: max-content;/, 'a long message uses the width it is allowed, not half the screen');
+  assert.match(rule, /bottom: calc\(16px \+ max\(var\(--un-toast-inset-bottom, 0px\), var\(--un-safe-inset-bottom/,
+    'it rests above the host\'s bottom chrome');
+  assert.match(css, /\.un-toast\.un-dismissible\.un-in \{\n  pointer-events: auto;/);
+  assert.match(css, /html\.un-android \.un-toast \{\n  left: 16px;\n  right: 16px;\n  width: auto;/,
+    'the Android snackbar keeps spanning its insets');
 });
