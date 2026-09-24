@@ -2999,6 +2999,21 @@
       "expectSelector": "#messages-screen:not(.hidden) #messages-filters > .messages-filter-track + button#messages-new[aria-haspopup=\"menu\"][aria-label=\"New message\"]"
     },
     {
+      "name": "QA 2026-09-24 Q18: the conversation's ⋯ is a menu button, so its rows are announced and reached as a menu",
+      "path": "/?demo=1#messages/910002",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-header button[aria-label=\"Conversation actions\"][aria-haspopup=\"menu\"][aria-expanded=\"false\"]"
+    },
+    {
+      "name": "QA 2026-09-24 Q13: the Messages composer drives its @ and # suggestions as a list the arrow keys, Enter and Tab can choose from",
+      "path": "/?demo=1#messages/910002",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-composer textarea.messages-composer-input[aria-autocomplete=\"list\"]"
+    },
+    {
+      "name": "QA 2026-09-24 Q18: a Skip to navigation link is the first thing Tab reaches, ahead of the header, and the rail it skips to is there",
+      "path": "/?demo=1",
+      "expectSelector": "body > a[href=\"#platform-tabs\"]:first-of-type:not([hidden]) + header#platform-header ~ nav#platform-tabs a#platform-tab-home"
+    },
+    {
       "name": "The global chat composer wears the safe-bar contract, so on a phone it sits above the tab bar (bug e)",
       "path": "/?demo=1",
       "expectSelector": "#global-chat-screen .global-chat-shell > .global-chat-transcript:not(.platform-safe-scroll) + form.global-chat-composer.platform-safe-bar > textarea#global-chat-composer[placeholder]"

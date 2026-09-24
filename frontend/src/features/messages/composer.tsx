@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
@@ -121,12 +121,70 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     return channels().filter((item) => item.handle.startsWith(q)).slice(0, 6);
   }, [value, snap.conversations, snap.discussions]);
 
+  // ── Choosing a suggestion from the keyboard (QA 2026-09-24 Q13) ──────
+  //
+  // The @ and # lists were mouse-only: the arrows moved the caret, and Enter
+  // SENT the half-typed "@qaf" instead of picking the person it was
+  // suggesting. Now the open list is a listbox the textarea drives through
+  // `aria-activedescendant`: the first row is highlighted, ArrowUp/ArrowDown
+  // move the highlight, Enter or Tab picks it, and Escape closes the list
+  // for the text as it stands (typing brings it back). Enter sends only
+  // while no list is showing.
+  const listId = useId();
+  const [highlight, setHighlight] = useState(0);
+  const [dismissedAt, setDismissedAt] = useState<string | null>(null);
+  const listOpen = dismissedAt !== value;
+  const mentionShown = listOpen && !!mention?.length;
+  const channelShown = listOpen && !mentionShown && !!channelMatches?.length;
+  const suggestions: Array<{ key: string; pick: () => void }> = mentionShown
+    ? (mention || []).map((member) => ({ key: `@${member.id}`, pick: () => insertMention(member.username) }))
+    : channelShown
+      ? (channelMatches || []).map((item) => ({ key: `#${item.handle}`, pick: () => insertChannel(item.handle) }))
+      : [];
+  const suggestionKey = suggestions.map((item) => item.key).join(' ');
+  // A new list (or a narrower one) starts from its first row again.
+  useEffect(() => { setHighlight(0); }, [suggestionKey]);
+  const activeOption = suggestions.length ? Math.min(highlight, suggestions.length - 1) : -1;
+  const optionId = (index: number) => `${listId}-opt-${index}`;
+  useEffect(() => {
+    if (activeOption < 0) return;
+    document.getElementById(optionId(activeOption))?.scrollIntoView?.({ block: 'nearest' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOption, suggestionKey]);
+
+  /** The suggestion list's share of the textarea's keys; true when it took the key. */
+  function suggestionKeys(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
+    if (!suggestions.length || event.nativeEvent.isComposing) return false;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      setHighlight((activeOption + step + suggestions.length) % suggestions.length);
+      return true;
+    }
+    if ((event.key === 'Enter' && !event.shiftKey) || (event.key === 'Tab' && !event.shiftKey)) {
+      event.preventDefault();
+      suggestions[Math.max(0, activeOption)].pick();
+      return true;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setDismissedAt(value);
+      return true;
+    }
+    return false;
+  }
+
   function insertChannel(handle: string) {
     const input = inputRef.current;
     const cursor = input?.selectionStart ?? value.length;
     const before = value.slice(0, cursor).replace(/#([A-Za-z][A-Za-z0-9-]*|)$/, `#${handle} `);
     const next = before + value.slice(cursor);
     updateValue(next);
+    // A pick closes the list for the text it produced. The lists read the
+    // caret during render, and the caret only moves past the inserted name
+    // on the next frame, so without this the list reopened on the OLD caret
+    // and a second Enter picked again.
+    setDismissedAt(next.slice(0, 8000));
     requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(before.length, before.length); });
   }
 
@@ -144,6 +202,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     const before = value.slice(0, cursor).replace(/@([^\s@]*)$/, `@${username} `);
     const next = before + value.slice(cursor);
     updateValue(next);
+    setDismissedAt(next.slice(0, 8000));
     requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(before.length, before.length); });
   }
 
@@ -208,8 +267,8 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to @{reply.sender.username}</span><p className="truncate">{reply.content || 'Attachment'}</p></div><button type="button" onClick={() => setReply(scope, null)} aria-label="Cancel reply">×</button></div> : null}
       {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{objectLabel(object)}</span><button type="button" onClick={() => setObject(null)} aria-label="Remove shared item">×</button></div> : null}
       {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={`Remove ${item.name}`}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">Uploading {uploading}…</span> : null}</div> : null}
-      {channelMatches?.length && !mention?.length ? <div className="messages-mention-menu" role="listbox" aria-label="Channels">{channelMatches.map((item) => <button key={item.handle} type="button" role="option" data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
-      {mention?.length ? <div className="messages-mention-menu" role="listbox">{mention.map((member) => <button key={member.id} type="button" role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
+      {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label="Channels">{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
+      {mentionShown && mention ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label="People">{mention.map((member, index) => <button key={member.id} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
         <div className="messages-composer-add" ref={addRef}>
@@ -232,7 +291,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : 'Message…'} aria-label={inThread ? 'Reply in thread' : 'Message'} className="messages-composer-input" />
+        <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : 'Message…'} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <button type="button" onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}

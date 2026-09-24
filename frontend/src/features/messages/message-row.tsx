@@ -12,6 +12,7 @@ import {
 } from './store';
 import type { ConversationKind, ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
+import { confirmAction } from '../../lib/confirm';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { messageStamp, timeOfDay } from '../../lib/timestamp';
 import { ReportForm, submitReport } from '../reports/report-form';
@@ -136,8 +137,15 @@ export function MessageRow({
   }
 
   async function blockSender() {
-    if (mine || !message.sender.id
-        || !window.confirm(`Block @${message.sender.username}? Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.`)) return;
+    if (mine || !message.sender.id) return;
+    // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
+    const ok = await confirmAction({
+      title: `Block @${message.sender.username}?`,
+      message: 'Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.',
+      confirmLabel: 'Block',
+      danger: true,
+    });
+    if (!ok) return;
     setBusy(true); setNotice('');
     try { await setUserBlocked(message.sender.id, true); }
     catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t block this person.'); }
@@ -145,7 +153,13 @@ export function MessageRow({
   }
 
   async function remove() {
-    if (!window.confirm('Delete this message? Everyone will see “Message deleted” in its place. This can’t be undone.')) return;
+    const ok = await confirmAction({
+      title: 'Delete this message?',
+      message: 'Everyone will see “Message deleted” in its place. This can’t be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     setNotice('');
     try { await deleteMessage(message.id); }
     catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t delete this message.'); }

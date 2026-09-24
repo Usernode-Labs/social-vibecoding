@@ -3287,6 +3287,7 @@
    * ──────────────────────────────────────────────────────────────────── */
 
   var modalStack = []; // Escape dismisses the TOPMOST dismissible modal only
+  var alertSeq = 0;     // unique ids for each alert's title/message (aria)
 
   // Modal/alert cards and the dim over the page are one fade (#1566).
   // Explicitly commit BOTH starting opacities, including the separately
@@ -3362,6 +3363,55 @@
     }
   }, true);
 
+  // Tab stays inside the topmost modal or alert card. The card is appended
+  // to <body> after the page, over a backdrop that takes the pointer, but
+  // the page behind it was still one Tab away: from the card's last control
+  // focus walked out onto whatever was under the dim. So the entries a
+  // modal/alert pushes carry `trap` (their card), and Tab from the last
+  // focusable wraps to the first, Shift+Tab from the first to the last, and
+  // a Tab while focus is outside the card (a click on the backdrop drops it
+  // on <body>) brings it back in. Sheets and panels push no `trap` and keep
+  // their behaviour.
+  //
+  // BUBBLE phase, and it stands aside for a Tab something inside the card
+  // already handled (`defaultPrevented`: an autocomplete that picks on Tab)
+  // and for a popover presented over the modal (its own handler owns Tab).
+  var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), ' +
+    'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), ' +
+    '[contenteditable="true"]';
+
+  function focusablesIn(root) {
+    return Array.prototype.filter.call(root.querySelectorAll(FOCUSABLE), function (el) {
+      if (el.closest && el.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+      return el.getClientRects().length > 0;
+    });
+  }
+
+  window.addEventListener('keydown', function (e) {
+    if (e.key !== 'Tab' || e.defaultPrevented || !modalStack.length) return;
+    if (activePopover) return;
+    var card = modalStack[modalStack.length - 1].trap;
+    if (!card || !card.parentNode) return;
+    var stops = focusablesIn(card);
+    var active = document.activeElement;
+    var inside = active && card.contains(active);
+    if (!stops.length) {
+      e.preventDefault();
+      try { card.focus(); } catch (err) { /* ignore */ }
+      return;
+    }
+    var first = stops[0];
+    var last = stops[stops.length - 1];
+    var next = null;
+    if (!inside) next = e.shiftKey ? last : first;
+    else if (e.shiftKey && (active === first || active === card)) next = last;
+    else if (!e.shiftKey && active === last) next = first;
+    if (next) {
+      e.preventDefault();
+      try { next.focus(); } catch (err) { /* ignore */ }
+    }
+  });
+
   // presentModal({ content | contentEl, onDismiss?, dismissible? }) —
   // content is an HTML string, contentEl an Element to adopt. dismissible
   // (default true) gates backdrop-tap and Escape. Returns { dismiss(), el }.
@@ -3382,7 +3432,8 @@
 
     var prevFocus = document.activeElement;
     var closed = false;
-    var entry = { dismissible: dismissible, dismiss: dismiss };
+    // `trap`: Tab cycles inside this card while it is the topmost entry.
+    var entry = { dismissible: dismissible, dismiss: dismiss, trap: card };
     modalStack.push(entry);
     var fade = animateDialog(card, backdrop, function () {
       var auto = card.querySelector('[autofocus]');
@@ -4006,16 +4057,26 @@
       backdrop.className = 'un-backdrop un-backdrop-fade';
       var card = document.createElement('div');
       card.className = 'un-alert';
+      // Announced as a modal alert dialog, named by its title and described
+      // by its message, and focusable as a last resort for the Tab trap.
+      var uid = 'un-alert-' + (++alertSeq);
+      card.setAttribute('role', 'alertdialog');
+      card.setAttribute('aria-modal', 'true');
+      card.setAttribute('aria-labelledby', uid + '-title');
+      card.tabIndex = -1;
 
       var title = document.createElement('div');
       title.className = 'un-alert-title';
+      title.id = uid + '-title';
       title.textContent = opts.title || '';
       card.appendChild(title);
       if (opts.message) {
         var msg = document.createElement('div');
         msg.className = 'un-alert-message';
+        msg.id = uid + '-message';
         msg.textContent = opts.message;
         card.appendChild(msg);
+        card.setAttribute('aria-describedby', uid + '-message');
       }
       var field = null;
       if (opts.field) {
@@ -4030,6 +4091,22 @@
       var row = document.createElement('div');
       row.className = 'un-alert-buttons' + (buttons.length > 2 ? ' un-stacked' : '');
       var settled = false;
+      var btnEls = [];
+      var prevFocus = document.activeElement;
+      // The alert is a modal-stack entry too, so Escape answers IT rather
+      // than dismissing a modal underneath (Remove member is asked from
+      // inside the members dialog), and Tab stays on its buttons. Escape
+      // means the cancel-style button, or the only button there is; an
+      // alert with two answers and no cancel has no Escape.
+      var escapeIdx = -1;
+      buttons.forEach(function (button, i) { if (escapeIdx < 0 && button.style === 'cancel') escapeIdx = i; });
+      if (escapeIdx < 0 && buttons.length === 1) escapeIdx = 0;
+      var entry = {
+        dismissible: escapeIdx >= 0,
+        dismiss: function () { if (escapeIdx >= 0) btnEls[escapeIdx].click(); },
+        trap: card,
+      };
+      modalStack.push(entry);
       buttons.forEach(function (button) {
         var btn = document.createElement('button');
         btn.type = 'button';
@@ -4040,20 +4117,38 @@
         btn.addEventListener('click', function () {
           if (settled) return;
           settled = true;
+          var at = modalStack.indexOf(entry);
+          if (at >= 0) modalStack.splice(at, 1);
           var value = field ? field.value : undefined;
           fade.dismiss(function () {
+            // Focus goes back where it was before the alert, BEFORE the
+            // answer is delivered, so a caller that moves focus on the
+            // answer has the last word.
+            if (prevFocus && typeof prevFocus.focus === 'function' && prevFocus.isConnected !== false) {
+              try { prevFocus.focus(); } catch (e) { /* ignore */ }
+            }
             if (button.handler) button.handler(value);
             resolve({ button: button, value: value });
           });
         });
+        btnEls.push(btn);
         row.appendChild(btn);
       });
       card.appendChild(row);
 
+      // Which control starts with focus: the text field when there is one;
+      // otherwise Cancel when another answer is destructive (the safe
+      // default for "Block", "Delete", "Leave"), else the last button, the
+      // primary answer.
+      var hasDestructive = buttons.some(function (b) { return b.style === 'destructive'; });
+      var initial = field
+        || (hasDestructive && escapeIdx >= 0 && buttons[escapeIdx].style === 'cancel' ? btnEls[escapeIdx] : null)
+        || btnEls[btnEls.length - 1];
+
       document.body.appendChild(backdrop);
       document.body.appendChild(card);
       var fade = animateDialog(card, backdrop, function () {
-        if (field) { try { field.focus(); } catch (e) { /* ignore */ } }
+        try { (initial || card).focus(); } catch (e) { /* ignore */ }
       });
     });
   }
