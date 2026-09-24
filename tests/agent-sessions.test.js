@@ -618,6 +618,49 @@ test('a build recovery adopted on the active change reads as the conversation\'s
   }
 });
 
+test('a recovered build\'s clock counts from its dispatch, and the lists mark it working', async () => {
+  const agentTurnMod = require('../src/services/mayor/agent-turn');
+  const agentSessionsMod = require('../src/services/agent-sessions');
+  const saved = {
+    recoveredRunState: agentTurnMod.recoveredRunState,
+    getAgentSession: agentSessionsMod.getAgentSession,
+    listAgentSessions: agentSessionsMod.listAgentSessions,
+    markSeen: agentSessionsMod.markSeen,
+  };
+  agentTurnMod.recoveredRunState = (id, changeId) => (changeId === 50 ? { phase: 'cc', stopping: false, changeId } : null);
+  agentSessionsMod.getAgentSession = async () => ({ id: 5, busy: false, activeChange: { id: 50 } });
+  agentSessionsMod.listAgentSessions = async () => ({
+    sessions: [
+      { id: 5, busy: false, doneUnseen: true, activeChange: { id: 50 } },
+      { id: 6, busy: false, doneUnseen: true, activeChange: { id: 60 } },
+      { id: 7, busy: false, doneUnseen: false, activeChange: null },
+    ],
+    nextBefore: null,
+  });
+  agentSessionsMod.markSeen = async () => false;
+  try {
+    const handlers = {
+      'FROM chat_sessions WHERE id': (_sql, params) => ({ rows: params[0] === 50 ? [{ started_at: '2026-09-24T18:49:54.151Z' }] : [] }),
+    };
+    await withRoutes({ id: 7 }, handlers, async (call) => {
+      const detail = await call('GET', '/api/agent-sessions/5');
+      assert.deepEqual(detail.body.turn,
+        { phase: 'cc', stopping: false, changeId: 50, startedAt: Date.parse('2026-09-24T18:49:54.151Z') });
+
+      const list = await call('GET', '/api/agent-sessions');
+      assert.deepEqual(list.body.sessions.map((s) => [s.id, s.busy, s.doneUnseen]),
+        [[5, true, false], [6, false, true], [7, false, false]],
+        'Recents and Continue spin for the recovered build; the others are untouched');
+      assert.equal(list.body.nextBefore, null);
+    });
+  } finally {
+    Object.assign(agentTurnMod, { recoveredRunState: saved.recoveredRunState });
+    Object.assign(agentSessionsMod, {
+      getAgentSession: saved.getAgentSession, listAgentSessions: saved.listAgentSessions, markSeen: saved.markSeen,
+    });
+  }
+});
+
 test('stop during a build recovery adopted names the change, and hands no lease back', async () => {
   const agentTurnMod = require('../src/services/mayor/agent-turn');
   const saved = {

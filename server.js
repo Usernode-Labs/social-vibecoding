@@ -3689,7 +3689,15 @@ async function resumeDetachedTurn(args) {
   const { pool, sessionId, containerName, activeTurn, broadcastGlobal } = args;
   const relayTo = [];
   require('./src/services/agent-sessions').conversationsOfChange(pool, sessionId)
-    .then((conversations) => { for (const c of conversations) relayTo.push(c.agentSessionId); })
+    .then((conversations) => {
+      for (const c of conversations) {
+        relayTo.push(c.agentSessionId);
+        // Their lists read the dead Mayor's lease as idle; this run is theirs.
+        require('./src/services/ws').pushToUser(c.userId, {
+          type: 'agent_session_changed', agentSessionId: c.agentSessionId, busy: true,
+        });
+      }
+    })
     .catch(() => {});
   const stopHandle = buildRecoveryStopHandle({
     sessionId, containerName, activeTurn, broadcastGlobal, relayTo,

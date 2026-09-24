@@ -392,7 +392,9 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
         phase,
         streamText: phase === 'mayor2' ? '' : state.turn.streamText,
         activity: phase === 'cc' ? 'The coding agent is working' : '',
-        startedAt: phase === 'cc' ? Date.now() : (state.turn.startedAt || Date.now()),
+        startedAt: phase === 'cc'
+          ? (typeof event.startedAt === 'number' ? event.startedAt : Date.now())
+          : (state.turn.startedAt || Date.now()),
         progress: phase === 'cc' ? '' : state.turn.progress,
       });
       break;
@@ -508,7 +510,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     void loadDrafts(id);
     refreshCredits();
     if (session.busy) {
-      patchTurn({ running: true, phase: turn ? turn.phase : 'mayor', startedAt: Date.now() });
+      patchTurn({ running: true, phase: turn ? turn.phase : 'mayor', startedAt: (turn && turn.startedAt) || Date.now() });
       followEvents(id);
     }
   } catch (error) {
