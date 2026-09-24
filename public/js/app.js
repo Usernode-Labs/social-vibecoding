@@ -2552,6 +2552,11 @@ const App = {
             // and Messages redraw its spinner or green dot from the list.
             window.UsernodeReact?.agentSession?.listChanged?.(data);
             break;
+          case 'agent_session_drafts_changed':
+            // A draft saved, sent or deleted on another device: the open
+            // conversation re-reads its saved drafts.
+            window.UsernodeReact?.agentSession?.draftsChanged?.(data);
+            break;
           case 'conversation_message_created':
           case 'conversation_message_updated':
           case 'conversation_reaction_updated':

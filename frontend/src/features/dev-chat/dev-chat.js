@@ -6199,6 +6199,19 @@ const DevChat = {
     DevChat.applyTitleStatus();
   },
 
+  // #2779 follow-up: an agent session's turn wears the same "⏳ Thinking…"
+  // while its conversation is on screen and working. The agent-session store
+  // says when (it knows what is open, this tab's dev-chat scoping does not
+  // apply); this module stays the title's one writer, so the marker composes
+  // with the unread count and the completion tier exactly as the dev chat's.
+  _agentSessionThinking: false,
+  setAgentSessionThinking(on) {
+    const next = !!on;
+    if (DevChat._agentSessionThinking === next) return;
+    DevChat._agentSessionThinking = next;
+    DevChat.applyTitleStatus();
+  },
+
   // Re-derive document.title from the current base title + status
   // marker. Composes with Notifications._updateTitle's "(N) " unread
   // prefix: the count stays outermost — `(2) ⏳ MyApp` — because the
@@ -6218,7 +6231,8 @@ const DevChat = {
     // Precedence (#161): completion marker outranks the streaming
     // status; clearing the completion falls back to the live status, so
     // a still-streaming watched session reverts to "⏳ Thinking…".
-    const active = DevChat._titleCompletion || DevChat._titleStatus;
+    const active = DevChat._titleCompletion || DevChat._titleStatus
+      || (DevChat._agentSessionThinking ? 'thinking' : null);
     const marker = active ? DevChat.TITLE_STATUS_MARKERS[active] : '';
     const next = count + marker + base;
     if (next === full) return;

@@ -2968,6 +2968,7 @@ async function seedStagingAgentSession(pool, config) {
     );
   }
   await seedStagingAgentBuilds(pool);
+  await seedStagingAgentComposer(pool, owner.id);
   log.info('db', 'Staging agent-session fixture seeded', {
     owner: owner.username, agentSessionId: STAGING_AGENT_SESSION_ID, changeId: STAGING_AGENT_CHANGE_ID,
   });
@@ -2999,6 +3000,26 @@ async function seedStagingAgentBuilds(pool) {
       JSON.stringify({ stagingFailed: true, changesReady: true, error: 'npm ci exited with code 1 (staging fixture)', prNumber: null }),
       JSON.stringify({ stagingUrl: STAGING_AGENT_PREVIEW_URL, prNumber: null }),
     ]
+  );
+}
+
+// What the composer and the Mayor's replies show (#2779 follow-up): one saved
+// draft, so the list above the message box has a row (sending it would start
+// a real turn, so a check only reads it), and what the Mayor's reply cost, so
+// its "reply $0.012" label has a figure. Both idempotent.
+const STAGING_AGENT_DRAFT_ID = 'dstagingfixture1';
+
+async function seedStagingAgentComposer(pool, ownerId) {
+  await pool.query(
+    `INSERT INTO agent_session_drafts (agent_session_id, user_id, draft_id, content, saved_at)
+     VALUES ($1, $2, $3, $4, NOW() - INTERVAL '2 minutes')
+     ON CONFLICT (agent_session_id, draft_id) DO UPDATE SET user_id = EXCLUDED.user_id`,
+    [STAGING_AGENT_SESSION_ID, ownerId, STAGING_AGENT_DRAFT_ID, 'Also keep the choice when I switch devices.']
+  );
+  await pool.query(
+    `UPDATE chat_session_messages SET cost_cents = 1.2
+      WHERE agent_session_id = $1 AND role = 'assistant' AND COALESCE(cost_cents, 0) = 0`,
+    [STAGING_AGENT_SESSION_ID]
   );
 }
 
