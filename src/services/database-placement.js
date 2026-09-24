@@ -1,8 +1,8 @@
 'use strict';
 
-// An opt-in admission boundary around the existing central database adapter.
-// External placement is deliberately rejected until every copy/cleanup path
-// has a destination-aware implementation. Missing metadata never means central.
+// Verified current placement for opt-in app database families. The immutable
+// registration remains the origin; migration status selects a configured target.
+// Missing or moving metadata never falls back to the origin.
 const fs = require('node:fs');
 const { createStore, GROUP, VERSION } = require('./database-control-plane');
 const IDENT = /^[a-z_][a-z0-9_]{0,62}$/;
@@ -75,7 +75,7 @@ function defaultReader() {
   return reader;
 }
 
-async function assertCentralPlacement(databaseNames, { all = false, env = process.env,
+async function resolvePlacements(databaseNames, { all = false, env = process.env,
   policy = loadSelection(env), getReader = defaultReader } = {}) {
   if (!policy) return [];
   const targets = policy.bindingTargets.filter((target) => all
@@ -96,16 +96,32 @@ async function assertCentralPlacement(databaseNames, { all = false, env = proces
         || spec.credentialRef?.source !== 'platform-app' || spec.credentialRef.appId !== target.appId
         || spec.endpoint?.host !== central.hostname || spec.endpoint.port !== Number(central.port || 5432)
         || ['namespace', 'name', 'uid'].some((key) => spec.clusterRef?.[key] !== target.clusterRef[key])) throw fail();
-      const cluster = await api.cluster(target.clusterRef.namespace, target.clusterRef.name);
-      if (cluster?.metadata?.uid !== spec.clusterRef.uid || cluster.metadata.deletionTimestamp) throw fail();
-      records.push({ name: target.bindingName, ...spec });
+      const status = binding.status;
+      let current = { ...spec, targetId: 'central', revision: 0 };
+      if (status) {
+        if (status.phase !== 'Ready' || !status.current || !Number.isSafeInteger(status.current.revision)
+          || status.current.revision < 0 || !validLabel(status.current.targetId)) throw fail();
+        current.revision = status.current.revision;
+        if (status.current.targetId !== 'central') {
+          const destinations = (policy.runtimeTargets || []).filter(t => t.id === status.current.targetId);
+          if (destinations.length !== 1) throw fail();
+          const destination = destinations[0];
+          if (!validLabel(destination.namespace) || !validLabel(destination.clusterName) || !destination.uid) throw fail();
+          current = { ...current, targetId: destination.id, placement: 'external',
+            clusterRef: {namespace: destination.namespace, name: destination.clusterName, uid: destination.uid},
+            endpoint: {host: `${destination.clusterName}-rw.${destination.namespace}.svc.cluster.local`, port: 5432} };
+        }
+      }
+      const cluster = await api.cluster(current.clusterRef.namespace, current.clusterRef.name);
+      if (cluster?.metadata?.uid !== current.clusterRef.uid || cluster.metadata.deletionTimestamp) throw fail();
+      records.push({ name: target.bindingName, ...current });
     }
     return records;
   } catch { throw fail(); } // Never emit URLs, API bodies or credentials.
 }
 
 async function assertRetirementAllowed(databaseNames, options) {
-  const bindings = await assertCentralPlacement(databaseNames, options);
+  const bindings = await resolvePlacements(databaseNames, options);
   if (bindings.some((binding) => databaseNames.includes(binding.database))) {
     const error = fail();
     error.message = 'Retiring or replacing a bound app database is not supported yet';
@@ -113,4 +129,10 @@ async function assertRetirementAllowed(databaseNames, options) {
   }
 }
 
-module.exports = { assertRetirementAllowed, BINDINGS, GROUP, VERSION, loadSelection, ownsDatabase, assertCentralPlacement };
+async function assertCentralPlacement(names, options) {
+  const records = await resolvePlacements(names, options);
+  if (records.some(r => r.placement !== 'central')) throw fail();
+  return records;
+}
+
+module.exports = { resolvePlacements, assertRetirementAllowed, BINDINGS, GROUP, VERSION, loadSelection, ownsDatabase, assertCentralPlacement };

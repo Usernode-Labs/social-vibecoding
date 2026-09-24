@@ -44,6 +44,9 @@ spec:
                 name: {{ include "social-vibecoding-platform.secretName" . }}
           env:
             - {name: SV_DATABASE_BINDINGS_ENABLED, value: {{ .Values.databaseControlPlane.bindingsEnabled | quote }}}
+            {{- if .Values.databaseControlPlane.runtimeSecret }}
+            - {name: SV_DATABASE_TARGETS_FILE, value: /etc/sv-database-targets/targets.json}
+            {{- end }}
             {{- if .Values.databaseControlPlane.bindingsEnabled }}
             - {name: SV_DATABASE_POLICY_FILE, value: /etc/sv-database/policy.json}
             {{- end }}
@@ -61,11 +64,19 @@ spec:
           resources:
             {{- toYaml .Values.migration.resources | nindent 12 }}
           volumeMounts:
+            {{- if .Values.databaseControlPlane.runtimeSecret }}
+            - {name: database-targets, mountPath: /etc/sv-database-targets, readOnly: true}
+            {{- end }}
             {{- if .Values.databaseControlPlane.bindingsEnabled }}
             - {name: database-policy, mountPath: /etc/sv-database, readOnly: true}
             {{- end }}
             - {name: tmp, mountPath: /tmp}
       volumes:
+        {{- if .Values.databaseControlPlane.runtimeSecret }}
+        - name: database-targets
+          secret:
+            secretName: {{ .Values.databaseControlPlane.runtimeSecret | quote }}
+        {{- end }}
         {{- if .Values.databaseControlPlane.bindingsEnabled }}
         - name: database-policy
           configMap:

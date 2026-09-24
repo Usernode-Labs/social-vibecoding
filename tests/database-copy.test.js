@@ -97,3 +97,15 @@ test('failed transfer and schema mismatch cannot report success or expose tool d
     assert.ok(!fake.created[0].statements.includes('COMMIT'));
   }
 });
+
+test('normal copy entrypoint cannot populate a primary database without explicit move mode', () => {
+  const {validateMode} = require('../scripts/copy-app-database');
+  const c = config();
+  assert.doesNotThrow(()=>validateMode(c));
+  c.destination.database = c.source.database;
+  assert.throws(()=>validateMode(c));
+  assert.doesNotThrow(()=>validateMode(c,'move'));
+  c.destination.database = 'app_other';
+  assert.throws(()=>validateMode(c,'move'));
+  assert.throws(()=>validateMode(c,'unknown'));
+});
