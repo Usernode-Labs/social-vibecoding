@@ -113,9 +113,15 @@ async function provision(config, app, { sourceDatabase, policy = loadPolicy(), p
     if (!/^[a-f0-9]{48}$/.test(password || '')) throw blocked('Assigned database credential is missing');
     const routing = require('./database-routing');
     const urls = routing.credentials([binding]);
-    const admin = connectAdmin ? await connectAdmin(urls.get(binding.targetId)) : new (require('pg').Client)({connectionString:urls.get(binding.targetId)});
+    const admin = connectAdmin ? await connectAdmin(urls.get(binding.targetId)) : new (require('pg').Client)({connectionString:urls.get(binding.targetId),connectionTimeoutMillis:10000,statement_timeout:30000});
     if (!connectAdmin) await admin.connect();
     try {
+      // A second fence on the destination session prevents overlapping SQL if
+      // a platform connection is lost while a previous copy is still running.
+      await admin.query("SELECT pg_advisory_lock(hashtext('sv-allocation'),hashtext($1))",[row.allocation_uid]);
+      const latest=(await client.query('SELECT * FROM app_database_allocations WHERE app_id=$1',[app.id])).rows[0];
+      if (!latest || latest.allocation_uid !== row.allocation_uid || latest.target_id !== row.target_id) throw blocked('Allocation identity changed');
+      row.phase=latest.phase;
       await ensureDatabase(admin,row,password,sourceDatabase,client);
       if (row.phase !== 'Ready' && sourceDatabase) {
         const sourceRecords = await require('./database-placement').resolvePlacements([sourceDatabase]);
