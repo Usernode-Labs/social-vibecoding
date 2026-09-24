@@ -34,8 +34,8 @@ test('slow coding requests explain which OpenRouter boundary is quiet, then repo
     'OpenRouter request #4: HTTP 200 headers after 47s',
     'OpenRouter request #4: headers received, no response bytes after 48s',
     'OpenRouter request #4: first response byte after 52s',
-    'OpenRouter request #4: response streaming after 60s, 512 bytes in 2 chunks',
-    'OpenRouter request #4: response streaming after 120s, 8192 bytes in 16 chunks',
+    'OpenRouter request #4: still responding after 60s, 512 bytes so far',
+    'OpenRouter request #4: still responding after 120s, 8192 bytes so far',
     'OpenRouter request #4: ok after 122s, HTTP 200',
   ]);
   assert.equal(state.codingProviderRequests.size, 0);
@@ -92,7 +92,7 @@ test('coding request progress records content-free context for every request', (
   assert.equal(state.codingProviderRequests.size, 0);
 });
 
-test('idle heartbeat distinguishes a quiet Codex process with and without an active request', () => {
+test('idle heartbeat names what Codex is waiting on, and flags only a quiet with nothing open', () => {
   const state = worker.newWatchState();
   state.agentBackend = 'codex_openrouter';
   const progress = [];
@@ -100,16 +100,45 @@ test('idle heartbeat distinguishes a quiet Codex process with and without an act
     `__USERNODE_CODING_PROVIDER__ ${JSON.stringify(event)}`,
     text => progress.push(text), state,
   );
+  const codex = event => worker.parseLine(JSON.stringify(event), text => progress.push(text), state);
 
   send({ kind: 'codex_output_idle', durationMs: 45_000, activeRequests: 0 });
   send({ kind: 'codex_output_idle', durationMs: 60_000, activeRequests: 0,
     prompt: 'private-prompt', key: 'private-key' });
   send({ kind: 'codex_output_idle', durationMs: 120_000, activeRequests: 1 });
   send({ kind: 'codex_output_idle', durationMs: 180_000, activeRequests: 'private-count' });
-
   assert.deepEqual(progress, [
-    'Codex produced no output for 60s; 0 OpenRouter requests active',
-    'Codex produced no output for 120s; 1 OpenRouter requests active',
-  ]);
+    'Codex has been silent for 60s with no command or model request open',
+  ], 'a slow model request reports itself on its own lines');
   assert.doesNotMatch(JSON.stringify(progress), /private/);
+
+  progress.length = 0;
+  codex({ type: 'item.started', item: { id: 'item_7', type: 'command_execution',
+    command: "/bin/bash -lc 'npm test 2>&1 | tail -12'" } });
+  send({ kind: 'codex_output_idle', durationMs: 194_000, activeRequests: 0 });
+  codex({ type: 'item.started', item: { id: 'item_8', type: 'mcp_tool_call', server: 'playwright', tool: 'browser_navigate' } });
+  send({ kind: 'codex_output_idle', durationMs: 75_000, activeRequests: 0 });
+  codex({ type: 'item.completed', item: { id: 'item_8', type: 'mcp_tool_call', tool: 'browser_navigate', status: 'completed' } });
+  codex({ type: 'item.completed', item: { id: 'item_7', type: 'command_execution', aggregated_output: 'ok', exit_code: 0 } });
+  send({ kind: 'codex_output_idle', durationMs: 90_000, activeRequests: 0 });
+  assert.deepEqual(progress, [
+    "$ /bin/bash -lc 'npm test 2>&1 | tail -12'",
+    "Waiting on a command for 194s: /bin/bash -lc 'npm test 2>&1 | tail -12'",
+    'Using browser_navigate',
+    'Waiting on browser_navigate for 75s (and 1 more)',
+    'MCP completed',
+    '  ⎿ ok',
+    'Codex has been silent for 90s with no command or model request open',
+  ]);
+});
+
+test('a Codex turn prints its start marker once', () => {
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  const progress = [];
+  for (const ev of [{ type: 'thread.started', thread_id: 'thr-1' }, { type: 'turn.started' }]) {
+    worker.parseLine(JSON.stringify(ev), text => progress.push(text), state);
+  }
+  assert.deepEqual(progress, ['[agent]']);
+  assert.equal(state.agentThreadId, 'thr-1');
 });

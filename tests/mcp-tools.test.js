@@ -1928,11 +1928,15 @@ test('a request’s text stays wrapped all the way into the work order', () => {
   const idx = SRC.indexOf("server.registerTool('prepare_work'");
   const body = SRC.slice(idx, SRC.indexOf("server.registerTool('submit_work'"));
   assert.match(body, /parts\.push\(untrusted\(match\.title, MAX_TITLE_CHARS\)\)/);
-  assert.match(body, /parts\.push\(untrusted\(match\.body, MAX_BODY_CHARS\)\)/);
+  assert.match(body, /parts\.push\(untrusted\(match\.body, budget\.body\)\)/);
+  assert.match(body, /parts\.push\(untrusted\(discussion, budget\.discussion\)\)/);
   assert.match(body, /parts\.push\(untrusted\(brief, MAX_BODY_CHARS\)\)/);
-  // The request must actually be open on this app — a number is not a
-  // capability, so it is looked up rather than trusted.
-  assert.match(body, /list\.find\(\(i\) => i\.number === issueNumber\)/);
+  // One request keeps the budgets it always had.
+  assert.deepEqual(tools.requestTextBudget(1, 'x', 6000), { body: tools.MAX_BODY_CHARS, discussion: 2500 });
+  // Every request must actually be open on this app — a number is not a
+  // capability, so each is looked up rather than trusted.
+  assert.match(body, /const missing = requested\.filter\(\(n\) => !list\.some\(\(i\) => i\.number === n\)\)/);
+  assert.match(body, /list\.find\(\(i\) => i\.number === number\)/);
   // And both deliveries of the operating contract warn the receiving model
   // about exactly this — the truncation-proof brief and the full charter.
   assert.match(tools.SERVER_INSTRUCTIONS, /WHAT TO BUILD section/);

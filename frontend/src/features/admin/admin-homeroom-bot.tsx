@@ -189,6 +189,10 @@ function VerdictBody({ run }: { run: Run }) {
         <p className={AdminUI.muted}>
           It goes back to the end of the queue once. A second stop lets the issue go, rather than retrying it forever.
         </p>
+        <p className={AdminUI.muted}>
+          Its cost counts the model requests that finished before the stop. The one still running when it was
+          stopped never reports what it used, so the real cost is a little higher.
+        </p>
       </div>
     );
   }

@@ -27,3 +27,21 @@ export function AgentActivityMark({ activity, className = '' }: { activity: Agen
     />
   );
 }
+
+/**
+ * The spinner IN PLACE of a row's own icon while its session works (#3028):
+ * Recents and the Homeroom menu's Continue rows swap their app tile or glyph
+ * for it rather than draw it beside, so a working session reads as one mark,
+ * not two. Sized by the slot it takes (`className`), and decoration only:
+ * each row says "working" in words (Recents' aria-label, the menu row's
+ * sr-only lead). The finished dot still leads the name, as before.
+ */
+export function AgentWorkingIcon({ className = '' }: { className?: string }) {
+  return (
+    <SpinnerArcIcon
+      className={`animate-spin text-violet-600 dark:text-violet-400 ${className}`}
+      aria-hidden="true"
+      data-agent-activity="working"
+    />
+  );
+}

@@ -159,7 +159,7 @@ test('Open preview docks the platform\'s preview in the pane, signed in to the c
   }
 });
 
-test('Propose asks first, then uses the owner\'s propose route; Retry uses the ensure route', async () => {
+test('Propose (once its panel is confirmed) uses the owner\'s propose route; Retry uses the ensure route', async () => {
   const requests = [];
   let answer = false;
   const session = {
@@ -186,14 +186,10 @@ test('Propose asks first, then uses the owner\'s propose route; Retry uses the e
   try {
     const api = loadTsx('tests/fixtures/agent-session-api.ts');
     await api.openAgentSession({ id: 7, host: 'messages' });
+    // #3032: the card's panel asks (./propose-confirm.tsx); the store's
+    // proposeChange is what its Propose calls, and asks nothing itself.
     await api.proposeChange(50);
-    assert.equal(confirms.length, 1);
-    assert.match(confirms[0].message, /“Dark mode” \(PR #14\) goes to the vote/);
-    assert.equal(confirms[0].confirmLabel, 'Propose');
-    assert.ok(!requests.some(([u]) => /promote$/.test(u)), 'declined: nothing is sent');
-
-    answer = true;
-    await api.proposeChange(50);
+    assert.equal(confirms.length, 0, 'no full-screen dialog');
     assert.ok(requests.some(([u, m]) => u === '/api/sessions/50/promote' && m === 'POST'));
     assert.equal(api.getAgentSessionState().changeAction, null, 'done, and the card reads the refreshed change');
 
