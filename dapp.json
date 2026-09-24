@@ -5110,7 +5110,7 @@
       "expectText": "Superseded by a newer preview"
     },
     {
-      "name": "#2779: an agent session's saved drafts sit above the message box, a Mayor reply says what it cost, and its bar has Build: Homeroom and \u22ef",
+      "name": "#2779: an agent session's saved drafts sit above the message box, a Mayor reply says what it cost, and its bar has Build: Homeroom and ⋯",
       "path": "/#messages/agent/990801",
       "expectSelector": "[data-agent-session-thread=\"990801\"]:has([data-agent-session-reply-cost]):has([data-agent-session-venue] ~ [data-agent-session-menu]) [data-agent-session-drafts=\"1\"] [data-agent-session-draft=\"dstagingfixture1\"]",
       "expectText": "Also keep the choice when I switch devices."
@@ -5174,9 +5174,9 @@
       "expectText": "more"
     },
     {
-      "name": "#2779 follow-up: an agent chat about an ordinary app offers \"Open app\" right after Changes, with the app's tile",
+      "name": "#2779 follow-up: \"Open app\" is offered on an ordinary app's chat and never on the platform's own",
       "path": "/#messages/agent/990803",
-      "expectSelector": "#messages-screen:not(.hidden):has(a[data-inbox-agent-session=\"990803\"]) [data-agent-session-thread=\"990803\"] [data-agent-session-bar] [data-agent-session-changes-button] + [data-agent-session-open-app][data-open-app=\"staging-demo-app\"]",
+      "expectSelector": "#messages-screen:not(.hidden):has([data-agent-session-thread=\"990803\"] [data-agent-session-open-app][data-open-app=\"staging-demo-app\"]):not(:has([data-agent-session-thread=\"990801\"] [data-agent-session-open-app]))",
       "expectText": "Open app",
       "visual": true,
       "id": "agent-session.open-app",
@@ -5184,11 +5184,6 @@
         "frontend/src/features/agent-session/**",
         "src/services/agent-sessions.js"
       ]
-    },
-    {
-      "name": "#2779 follow-up: the platform's own conversation shows no Open app button (its app surface is the platform itself)",
-      "path": "/#messages/agent/990801",
-      "expectSelector": "#messages-screen:not(.hidden) [data-agent-session-thread=\"990801\"]:not(:has([data-agent-session-open-app]))"
     },
     {
       "name": "QA 2026-09-24 Q29: a change waiting on you says \"Needs you\" in its Messages row, short enough to leave the title room",

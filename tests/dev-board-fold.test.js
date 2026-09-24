@@ -1260,7 +1260,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 810, unchanged (#2779): an agent session's "Build: Homeroom" and ⋯ ride
   // on the saved-draft check over conversation 990801 as a :has(), since
   // the floor above leaves no slot for a check of their own.
-  assert.equal(DAPP.tests.length, 810);
+  //
+  // 810 → 811: +1 (#4868): "Open app" lands as ONE check — its two halves
+  // (the button offered on an ordinary app's chat, absent on the platform's
+  // own) fold into a single :has()/:not(:has()) selector over the two
+  // staging conversations 990803 and 990801, the way #2779 folded its four.
+  // Main stood at 810 exactly, the 20-slot floor, so the ceiling moved to
+  // 840 with it (services/app-manifest.js), leaving 29 slots.
+  assert.equal(DAPP.tests.length, 811);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
