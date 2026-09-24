@@ -7,7 +7,7 @@ type Inventory = { enabled: boolean; canWrite: boolean; bindings: Binding[]; tar
 type Plan = { id: string; binding: string; slug: string; target: string; expectedRevision: number; from: string; downtime: string; archivesPreviousCopy: boolean };
 const endpoint = '/api/admin/database-migrations';
 
-export function DatabaseMigrations() {
+export function DatabaseMigrations({ standalone = false }: { standalone?: boolean }) {
   const [data, setData] = useState<Inventory | null>(null);
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -46,9 +46,9 @@ export function DatabaseMigrations() {
   const label = (id: string) => data?.targets.find(t => t.id === id)?.displayName || id;
   const active = data?.operations.some(o => ['Pending', 'Running', 'NeedsAttention'].includes(o.phase));
   if (data && !data.enabled) return null;
-  return <section className={AdminUI.card} aria-label="App database migrations">
+  return <section className={`${AdminUI.card} p-4 mb-4 space-y-4`} aria-label="App database migrations">
     <div className={AdminUI.cardHeader}><h2 className={AdminUI.cardTitle}>Move app databases</h2>
-      <a className={AdminUI.btn.outline} href="/database-maintenance" target="_blank" rel="noopener">Open maintenance page</a></div>
+      {!standalone && <a className={AdminUI.btn.outline} href="/database-maintenance" target="_blank" rel="noopener">Open maintenance page</a>}</div>
     <p className={AdminUI.muted}>Move a selected app to another database cluster. The staging platform and app pause during the move. The maintenance page stays available for progress and recovery.</p>
     {(error || loadError) && <p role="alert" className={AdminUI.muted}>{error || loadError}</p>}
     {!data && !error && <p className={AdminUI.loading}>Loading migrations…</p>}
@@ -68,7 +68,7 @@ export function DatabaseMigrations() {
             onClick={() => void act(async () => { setPlan(await send('/plan', { binding: b.name, target: targets[b.name] })); setConfirmation(''); })}>Review move</button></td>
         </tr>)}</tbody>
       </table></div>
-      {plan && <div className={AdminUI.card} role="region" aria-label="Confirm database move">
+      {plan && <div className={`${AdminUI.card} p-4 space-y-4`} role="region" aria-label="Confirm database move">
         <h3 className={AdminUI.cardTitle}>{plan.slug}: {label(plan.from)} → {label(plan.target)}</h3>
         <p className={AdminUI.muted}>{plan.downtime}</p>
         <p className={AdminUI.muted}>{plan.archivesPreviousCopy ? 'The old destination copy will stay fenced under an archive name. Current data will be copied into a fresh database.' : 'Current data will be copied into a fresh database. The source will be retained and fenced after cutover.'}</p>
@@ -79,9 +79,9 @@ export function DatabaseMigrations() {
       </div>}
       <h3 className={AdminUI.cardTitle}>Migration history</h3>
       {!data.operations.length && <p className={AdminUI.muted}>No moves have been requested from the admin interface yet.</p>}
-      {data.operations.map(o => <div key={o.id} className={AdminUI.card}>
+      {data.operations.map(o => <div key={o.id} className={`${AdminUI.card} p-4 space-y-2`}>
         <strong>{data.bindings.find(b => b.name === o.binding)?.slug || o.binding} → {label(o.target)}</strong>
-        <p className={AdminUI.muted}>{o.phase} · {o.stage}</p><p className={AdminUI.muted}>{o.id} · requested by admin {o.requestedBy}</p>
+        <p className={AdminUI.muted}>{o.phase === 'NeedsAttention' ? 'Needs attention' : o.phase === 'Pending' ? 'Queued' : o.phase} · {o.stage}</p><p className={AdminUI.muted}>{o.id} · requested by admin {o.requestedBy}</p>
         {o.phase === 'NeedsAttention' && data.canWrite && <>
           <p className={AdminUI.muted}>Resume continues the recorded move. Abort is allowed only before cutover, after the copy has stopped; it restores the source and fences the partial destination.</p>
           <button className={AdminUI.btn.primary} disabled={busy} onClick={() => void act(async () => { await send(`/${o.id}/action`, { action: 'resume', attempt: o.attempt }); })}>Resume</button>
