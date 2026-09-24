@@ -106,7 +106,10 @@ test('an app the user cannot see is dropped from the hint, never refused', async
     await agentSessions.resolveHint(visible, { id: 7 }, { slug: 'recipe-box', issueNumber: 12, entry: 'issue' }),
     {
       focusAppId: 3,
-      focusApp: { id: 3, slug: 'recipe-box', name: null },
+      focusApp: {
+        id: 3, slug: 'recipe-box', name: null,
+        selfHosted: false, iconUrl: null, iconEmoji: null,
+      },
       focusContext: { entry: 'issue', issueNumber: 12 },
     }
   );
@@ -131,7 +134,13 @@ test('an unsent conversation is previewed with the same rule, and nothing is wri
   });
   assert.deepEqual(
     await agentSessions.previewDraft(pool, { user: { id: 7 }, hint: { slug: 'recipe-box', proposalId: 4, entry: 'proposal' } }),
-    { focusApp: { id: 3, slug: 'recipe-box', name: 'Recipe box' }, focusContext: { entry: 'proposal', proposalId: 4 } },
+    {
+      focusApp: {
+        id: 3, slug: 'recipe-box', name: 'Recipe box',
+        selfHosted: false, iconUrl: null, iconEmoji: null,
+      },
+      focusContext: { entry: 'proposal', proposalId: 4 },
+    },
   );
   assert.deepEqual(await agentSessions.previewDraft(pool, { user: { id: 7 } }), { focusApp: null, focusContext: {} });
   assert.ok(pool.calls.every((c) => /^\s*SELECT/i.test(c.sql)), 'reads only');
@@ -385,7 +394,10 @@ test('creating a session needs the flag; everything else only needs to be yours'
     const created = await call('POST', '/api/agent-sessions', { hint: { slug: 'recipe-box', entry: 'improve' } });
     assert.equal(created.status, 201);
     assert.equal(created.body.session.id, 5);
-    assert.deepEqual(created.body.session.focusApp, { id: 3, slug: 'recipe-box', name: 'Recipe box' });
+    assert.deepEqual(created.body.session.focusApp, {
+      id: 3, slug: 'recipe-box', name: 'Recipe box',
+      selfHosted: false, iconUrl: null, iconEmoji: null,
+    });
     const insert = pool.calls.find((c) => /INSERT INTO agent_sessions/.test(c.sql));
     assert.deepEqual(insert.params, [7, 3, JSON.stringify({ entry: 'improve' }), null, null, null],
       'no model picked: the conversation follows the default');
@@ -412,7 +424,10 @@ test('an unsent conversation is previewed, then created on its first message wit
     const draft = await call('GET', '/api/agent-sessions/draft?slug=recipe-box&issueNumber=12&entry=issue');
     assert.equal(draft.status, 200);
     assert.deepEqual(draft.body.draft, {
-      focusApp: { id: 3, slug: 'recipe-box', name: 'Recipe box' },
+      focusApp: {
+        id: 3, slug: 'recipe-box', name: 'Recipe box',
+        selfHosted: false, iconUrl: null, iconEmoji: null,
+      },
       focusContext: { entry: 'issue', issueNumber: 12 },
     });
     assert.equal((await call('GET', '/api/agent-sessions/draft?slug=NOPE')).status, 400);

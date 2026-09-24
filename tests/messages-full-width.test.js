@@ -95,10 +95,12 @@ test('an agent chat and a Mayor session: handed to their panels, drawn at the en
   assert.match(CHAT, /<span>New<\/span>\s*<\/button>\s*\{headerAction\}\s*<\/header>/);
   assert.match(CHAT, /\{snapshot\.host === 'messages' \? null : <GlobalChatPanel \/>\}/);
 
-  // The Mayor: the session bar's `action`, after Changes.
+  // The Mayor: the session bar's `action`, after Changes. The bar carries one
+  // more control between the change pill and Changes — the "Open app" button
+  // (#2779 follow-up) — which is why this regex runs across it.
   assert.match(SESSION, /export function AgentSessionPanel\(\{ embedded = false, headerAction = null \}: \{ embedded\?: boolean; headerAction\?: ReactNode \}\)/);
   assert.match(SESSION, /<SessionBar session=\{snapshot\.session\} about=\{about\} embedded=\{embedded\} action=\{headerAction\} \/>/);
-  assert.match(SESSION, /Changes · \{count\}\s*<\/button>\s*\{action\}\s*<\/div>/);
+  assert.match(SESSION, /<OpenAppButton target=\{target\} \/>[\s\S]{0,600}Changes · \{count\}\s*<\/button>\s*\{action\}\s*<\/div>/);
 });
 
 test('the list folds for an agent thread too; a reply thread still belongs to a chat', () => {

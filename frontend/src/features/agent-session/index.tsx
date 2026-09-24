@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -21,6 +22,7 @@ import {
   SparklesIcon,
   SpinnerArcIcon,
   XIcon,
+  AppWindowIcon,
 } from '@/components/ui/icons';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -93,6 +95,8 @@ import {
   writeSpecWidth,
   type SpecSplit,
 } from './spec-layout';
+import { openFocusedApp } from './open-app';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { readUnsent, writeUnsent } from './unsent';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
@@ -126,11 +130,73 @@ function appInitial(name: string | null | undefined) {
   return (name || '?').trim().charAt(0).toUpperCase() || '?';
 }
 
-function AppMark({ name }: { name: string | null | undefined }) {
+function AppMark({ name, iconUrl, iconEmoji }: {
+  name: string | null | undefined;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
+}) {
+  // The app's own artwork, the way the launcher and the inbox rows draw it,
+  // when the payload carries one; the violet letter mark otherwise, which is
+  // what this bar has always drawn and what the first render ships.
+  if (iconUrl || iconEmoji) {
+    const record = { name: name || '?', icon_url: iconUrl, icon_emoji: iconEmoji };
+    return (
+      <span
+        aria-hidden="true"
+        data-icon={appIconKind(record as never)}
+        className="app-icon-tile h-5 w-5 shrink-0 overflow-hidden rounded-md text-[11px]"
+      >
+        <AppIconContent app={record as never} />
+      </span>
+    );
+  }
   return (
     <span aria-hidden="true" className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-violet-600 text-[11px] font-semibold text-white">
       {appInitial(name)}
     </span>
+  );
+}
+
+/**
+ * The app a conversation is about, as "Open app" opens it: the active
+ * change's app first, then the session's (or the unsent draft's) focus.
+ * Null when there is none to open, or when the target is Homeroom itself,
+ * whose "app" surface is the platform the viewer is already in.
+ */
+export function openAppTarget(active: AgentChange | null, about: About): { slug: string; name: string | null } | null {
+  const slug = active?.appSlug || about?.focusApp?.slug || null;
+  if (!slug) return null;
+  const name = active?.appName || about?.focusApp?.name || null;
+  const selfHosted = !!active?.appSelfHosted || !!about?.focusApp?.selfHosted;
+  return selfHosted ? null : { slug, name };
+}
+
+/**
+ * "Open app" — the app this conversation is about, full-view, with the
+ * conversation docked beside it in the side panel (./open-app.ts). Hidden
+ * when there is no app to open, when the app is Homeroom itself, or below
+ * the side panel's desktop breakpoint (lg = 1024px, the same width the
+ * panel itself appears at; the class string is a whole literal so Tailwind
+ * compiles it).
+ */
+export function OpenAppButton({ target }: { target: { slug: string; name: string | null } | null }) {
+  const open = useCallback(() => {
+    if (!target) return;
+    void openFocusedApp({ slug: target.slug, name: target.name });
+  }, [target]);
+  if (!target) return null;
+  return (
+    <button
+      type="button"
+      data-agent-session-open-app
+      data-open-app={target.slug}
+      className="hidden lg:inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+      title={`Open ${target.name || target.slug} with this chat docked beside it`}
+      onClick={open}
+    >
+      <AppWindowIcon className="h-3.5 w-3.5" aria-hidden="true" />
+      <span className="truncate">Open app</span>
+    </button>
   );
 }
 
@@ -166,6 +232,7 @@ function SessionBar({ session, about, embedded, action }: {
   const active = session?.activeChange || null;
   const building = snapshot.turn.running && snapshot.turn.phase === 'cc';
   const count = session?.changes?.length || 0;
+  const target = openAppTarget(active, about);
   return (
     <div className={`flex items-center gap-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800 ${embedded ? 'flex-wrap' : ''}`} data-agent-session-bar>
       {embedded ? (
@@ -181,7 +248,13 @@ function SessionBar({ session, about, embedded, action }: {
         className="inline-flex min-w-0 max-w-[10rem] items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
         title="The app this conversation is about when a request does not name one. The Mayor moves it when you ask."
       >
-        {about?.focusApp ? <AppMark name={about.focusApp.name} /> : null}
+        {about?.focusApp ? (
+          <AppMark
+            name={about.focusApp.name}
+            iconUrl={about.focusApp.iconUrl}
+            iconEmoji={about.focusApp.iconEmoji}
+          />
+        ) : null}
         <span className="truncate">{about?.focusApp?.name || 'Any app'}</span>
       </span>
       <span
@@ -190,6 +263,7 @@ function SessionBar({ session, about, embedded, action }: {
       >
         {active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : 'No change yet'}
       </span>
+      <OpenAppButton target={target} />
       <button
         type="button"
         data-agent-session-changes-button

@@ -201,6 +201,31 @@ function writeAddress(route: string | null): void {
 }
 
 /**
+ * Plant `route` in the top window's `?side=` parameter WITHOUT opening the
+ * panel: the caller is about to navigate the top window to an app, and the
+ * router's own appPresence(true) → restoreFromAddress() then opens the panel
+ * on this page once the app is on screen. False in the panel's own document
+ * (there is no top window to write from there); the write itself is in place,
+ * no history entry, exactly as writeAddress keeps it.
+ */
+export function pend(route: string): boolean {
+  if (typeof window === 'undefined' || isEmbeddedPanel()) return false;
+  if (!isPanelRoute(route)) return false;
+  writeAddress(route);
+  return true;
+}
+
+/**
+ * Take a parameter pend() planted back out — the caller's navigation failed,
+ * or the viewer backed out before the app came on screen. The panel's own
+ * give-up (restoreFromAddress) covers the reload path; this covers the
+ * moment before it.
+ */
+export function clearPending(): void {
+  writeAddress(null);
+}
+
+/**
  * The app is on screen and the address names a panel page nobody has opened
  * yet — a reload, or Back to the app: open it. The app's screen is revealed in
  * a transition after the router reports it, so this waits (briefly) for the
@@ -589,6 +614,8 @@ export const SidePanel = {
   expand,
   appPresence,
   isOpen,
+  pend,
+  clearPending,
   embedded: embeddedApi,
 };
 
