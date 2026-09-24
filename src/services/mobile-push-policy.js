@@ -119,12 +119,30 @@ function buildCopy(kind, context, now) {
         title: withConversation(`@${actor} replied to you`),
         body: message,
       };
+    // #2387: the thread is the news, so the title says where it happened.
+    case 'conversation_thread_reply':
+      return actor && {
+        title: withConversation(`@${actor} replied in a thread`),
+        body: message,
+      };
     case 'conversation_reaction':
       return actor && {
         title: withConversation(detail
           ? `@${actor} reacted ${detail} to your message`
           : `@${actor} reacted to your message`),
         body: message && `You said: ${message}`,
+      };
+    // #2386. No app, no conversation: the person IS the news. The body says
+    // what to do about it, because the row it opens carries the buttons.
+    case 'friend_request':
+      return actor && {
+        title: `@${actor} sent you a friend request`,
+        body: 'Accept or decline in Notifications',
+      };
+    case 'friend_accept':
+      return actor && {
+        title: `@${actor} accepted your friend request`,
+        body: 'You\'re friends now. They show up first when you start a message',
       };
     case 'mention':
       return actor && {
@@ -136,6 +154,13 @@ function buildCopy(kind, context, now) {
       return actor && {
         title: withApp(quotedTitle
           ? `@${actor} replied in ${quotedTitle}` : `@${actor} replied to you`),
+        body: message,
+      };
+    // #2387: somebody answered in an app-chat reply thread you are in. The
+    // reply itself is the body, like a reply to you.
+    case 'thread_reply':
+      return actor && {
+        title: withApp(`@${actor} replied in a thread`),
         body: message,
       };
     case 'reaction':

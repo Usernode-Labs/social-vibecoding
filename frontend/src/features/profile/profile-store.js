@@ -57,6 +57,8 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {string} publicStatus
  * @property {boolean} publishing
  * @property {boolean} previewOpen
+ * @property {number|null} friendsPending — the incoming request being answered (#2386)
+ * @property {string} friendsStatus         — why the last answer failed, if it did
  */
 
 export const profileStore = createStore(/** @type {ProfileState} */ ({
@@ -69,6 +71,8 @@ export const profileStore = createStore(/** @type {ProfileState} */ ({
   publicStatus: '',
   publishing: false,
   previewOpen: false,
+  friendsPending: null,
+  friendsStatus: '',
 }));
 
 /** Only ever render an http(s) URL as a real anchor. Escaping alone would not
@@ -365,6 +369,70 @@ export function publicAvatarView(profile) {
   return { initial: match ? match[0].toUpperCase() : '?', url };
 }
 
+/** "March 2026" — how long two people have been friends. */
+function monthYear(iso) {
+  const t = Date.parse(iso || '');
+  if (!Number.isFinite(t)) return null;
+  try {
+    return new Date(t).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * The own profile's private Friends section (#2386): requests waiting on you,
+ * then your friends, each a link to their page, then the requests you sent
+ * and can still withdraw. From GET /api/friends, which only ever answers the
+ * viewer's own lists — this is never drawn on anybody else's page, and it
+ * counts nothing.
+ *
+ * The sent requests are here because the pending cap (20) tells you to cancel
+ * one, and this is the one place they are all listed. A request that was
+ * declined still reads "Requested": the sender is never told.
+ *
+ * `loaded: false` is a read that failed (or has not answered), told apart
+ * from "no friends yet" the same way Your contributions tells a failure from
+ * an empty list.
+ */
+export function friendsView(lists, now = Date.now()) {
+  const valid = lists && typeof lists === 'object'
+    && Array.isArray(lists.friends) && Array.isArray(lists.incoming);
+  if (!valid) return { loaded: false, incoming: [], friends: [], outgoing: [] };
+  const row = (p, meta) => {
+    const username = String(p.username || '');
+    const match = username.match(/[\p{L}\p{N}]/u);
+    return {
+      key: String(p.id),
+      id: Number(p.id),
+      username,
+      href: `#profile/${encodeURIComponent(username)}`,
+      avatarUrl: typeof p.avatarUrl === 'string' && /^\/avatars\/[a-f0-9]{32}$/.test(p.avatarUrl)
+        ? p.avatarUrl : null,
+      initial: match ? match[0].toUpperCase() : '?',
+      meta,
+    };
+  };
+  const people = (items) => items.filter((p) => p && Number(p.id) > 0 && p.username);
+  return {
+    loaded: true,
+    incoming: people(lists.incoming).map((p) => {
+      // Short, because the row also carries Accept and Decline: on a phone
+      // the name and this line share what the two buttons leave.
+      const when = mergedAgo(p.requestedAt, now);
+      return row(p, when ? `Asked ${when}` : 'Asked to be friends');
+    }),
+    friends: people(lists.friends).map((p) => {
+      const since = monthYear(p.since);
+      return row(p, since ? `Friends since ${since}` : 'Friends');
+    }),
+    outgoing: people(Array.isArray(lists.outgoing) ? lists.outgoing : []).map((p) => {
+      const when = mergedAgo(p.requestedAt, now);
+      return row(p, when ? `Requested ${when}` : 'Requested');
+    }),
+  };
+}
+
 /**
  * The backend zeroes total_tokens until terms are accepted, so a gated
  * allocation must show the terms notice, never a fake 0 balance (mirrors the
@@ -408,11 +476,20 @@ export function buildProfileView(state, now = Date.now()) {
     const other = !!viewer.username
       && viewer.hasPlatformAccess !== false
       && String(viewer.username).toLowerCase() !== String(d.publicProfile.username || '').toLowerCase();
+    // #2386: the viewer's own relationship with this person, as the payload
+    // carried it. Drawn only where Message is — someone else's page, seen by
+    // a signed-in viewer with access — and only when the server sent one.
+    const f = d.publicFriendship;
+    const friendship = other && f && Number(f.userId) > 0
+      && ['none', 'outgoing', 'incoming', 'friends'].includes(f.state)
+      ? { userId: Number(f.userId), state: f.state }
+      : null;
     return {
       kind: 'public',
       profile: d.publicProfile,
       allowReport: other,
       allowMessage: other,
+      friendship,
     };
   }
 
@@ -423,6 +500,7 @@ export function buildProfileView(state, now = Date.now()) {
     publicControls: publicControlsView(state),
     stats: statsView(d.summary || null),
     rows: moreRowsView(d),
+    friends: friendsView(d.friends || null, now),
     contributions: contributionsView(d.summary || null, u.username || null, now),
   };
 }

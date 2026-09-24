@@ -72,8 +72,10 @@ test('the store validates an agent thread out of the address bar', () => {
 
 test('one thread is open: an agent thread yields to a conversation or a discussion', () => {
   assert.match(STORE, /const nextAgent = nextId \|\| nextSlug \? null : validAgentThread\(agent\);/);
-  assert.match(STORE, /route: \{ open: true, conversationId: nextId, appSlug: nextSlug, agent: nextAgent \}/);
-  assert.match(STORE, /route: \{ open: false, conversationId: null, appSlug: null, agent: null \}/);
+  // #2387: a reply thread and a message link ride on the route too, and
+  // are cleared with it.
+  assert.match(STORE, /route: \{ open: true, conversationId: nextId, appSlug: nextSlug, agent: nextAgent, threadRootId: nextRoot, focusMessageId: nextFocus \}/);
+  assert.match(STORE, /route: \{ open: false, conversationId: null, appSlug: null, agent: null, threadRootId: null, focusMessageId: null \}/);
   // On a phone the list hides behind an agent thread as behind any other.
   assert.match(SCREEN, /snap\.route\.conversationId \|\| snap\.route\.appSlug \|\| snap\.route\.agent \? 'hidden md:flex' : 'flex'/);
   assert.match(STORE, /const onThread = !!state\.route\.conversationId \|\| !!state\.route\.appSlug \|\| !!state\.route\.agent;/);
@@ -99,8 +101,9 @@ test('the router opens agent threads in the pane on a desktop and swaps them on 
   assert.match(block, /App\.restoreFromHash\(\);/);
   assert.match(block, /`#chat\/\$\{encodeURIComponent\(agent\.id\)\}`/);
   assert.match(block, /`#app\/\$\{encodeURIComponent\(agent\.slug\)\}\/dev\/sessions\/\$\{agent\.id\}`/);
-  assert.match(APP, /navigateToMessages\(conversationId, appSlug, agent\) \{/);
-  assert.match(APP, /messages\.route\?\.\(conversationId \|\| null, appSlug \|\| null, agent \|\| null\);/);
+  // #2387: a fourth argument carries a reply thread or a message link.
+  assert.match(APP, /navigateToMessages\(conversationId, appSlug, agent, extras\) \{/);
+  assert.match(APP, /messages\.route\?\.\(conversationId \|\| null, appSlug \|\| null, agent \|\| null, more\);/);
   assert.match(APP, /_messagesAgentThread\(parts\) \{[\s\S]*?parts\[1\] === 'agent'[\s\S]*?parts\[1\] === 'session'/);
 });
 

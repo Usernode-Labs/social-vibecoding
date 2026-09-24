@@ -633,6 +633,18 @@
       "expectSelector": "#leaderboard-root:not(.hidden) header:has([data-lb-back]) button[data-message-person=\"usernode-capture\"]"
     },
     {
+      "name": "Friends: a person who asked you gets Accept and Decline under their name, beside Message (#2386)",
+      "path": "/?demo=1#profile/lin",
+      "expectText": "Decline",
+      "expectSelector": "#profile-screen:not(.hidden) #public-profile-card:has([data-message-person=\"lin\"]) #public-profile-friend [data-friend-state=\"incoming\"] button[data-friend-action=\"accept\"] + button[data-friend-action=\"decline\"]"
+    },
+    {
+      "name": "Me: a private Friends section lists requests to answer, then your friends (#2386)",
+      "path": "/?demo=1#profile",
+      "expectText": "Only you can see your friends",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-more ~ #profile-friends:has([data-friend-request-accept=\"lin\"] + [data-friend-request-decline=\"lin\"]) #profile-friends-list a[data-friend=\"ada\"][href=\"#profile/ada\"]"
+    },
+    {
       "name": "Edit profile keeps social accounts proof-backed and sends management to Connectors (#982, #1939)",
       "path": "/?shot=profile-edit#profile",
       "expectSelector": "#profile-edit-sheet #profile-edit-github:not(:has(input)) + #profile-edit-x:not(:has(input)) + a[href='#settings/connectors']",
@@ -5066,6 +5078,42 @@
       "impact": [
         "frontend/src/features/agent-session/**"
       ]
+    },
+    {
+      "name": "#2387: every message carries one hover bar (recent reactions, the picker, reply, save, \u22ef), and a threaded one its reply count",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100404:has(.msgx-thread-chip) > .msgx-bar:has([aria-label^=\"React with\"]) > [aria-label=\"Add reaction\"] ~ [aria-label=\"Reply\"] ~ [aria-label=\"Save message\"] ~ .messages-action-more[aria-haspopup=\"menu\"]",
+      "expectText": "3 replies"
+    },
+    {
+      "name": "#2387: a reply thread opens beside its channel, with its first message and a composer of its own",
+      "path": "/?demo=1#messages/910004/thread/9100404",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.messages-has-reply-thread > .messages-reply-pane[data-reply-thread=\"9100404\"] .messages-composer-thread",
+      "expectText": "Threads keep the room readable"
+    },
+    {
+      "name": "#2387: a deleted message leaves a placeholder, a message link lands on it, and the list beside it can be hidden",
+      "path": "/?demo=1#messages/910002/m/9100202",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout:has(.messages-list-toggle[aria-pressed=\"false\"]) #messages-message-9100202 .messages-deleted",
+      "expectText": "Message deleted"
+    },
+    {
+      "name": "#2387: an app channel's messages carry the same hover bar, a threaded one its reply count, a deleted one its placeholder",
+      "path": "/?demo=1#messages/app/staging-demo-app",
+      "expectSelector": "#gc-messages:has([data-msg-id=\"9902000\"] .gc-msg-deleted-text) [data-msg-id=\"9902003\"]:has(.msgx-thread-chip) .gc-msg-actions.msgx-bar > [aria-label=\"Add reaction\"] ~ .gc-msg-more-action[aria-haspopup=\"menu\"]",
+      "expectText": "3 replies"
+    },
+    {
+      "name": "#2387: a link to a reply in an app channel opens the reply thread it is in, beside the channel",
+      "path": "/?demo=1#messages/app/staging-demo-app/m/9902022",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.messages-has-reply-thread > .messages-reply-pane-app[data-reply-thread=\"9902003\"] .messages-reply-host",
+      "expectText": "Replies stay in here"
+    },
+    {
+      "name": "#2967: the channels you are not in fold under \u201cShow N more\u201d",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll button#messages-more-channels.messages-more-channels[aria-expanded=\"false\"]",
+      "expectText": "more"
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779)",

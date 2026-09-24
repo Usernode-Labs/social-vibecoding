@@ -6,6 +6,7 @@ import type {
   ConversationUser,
   MessageAttachment,
   MessageReaction,
+  MessageThreadSummary,
   SharedObjectCard,
   SharedObjectReference,
   UserSearchResult,
@@ -135,6 +136,19 @@ function normalizeObject(input: unknown): SharedObjectCard {
   };
 }
 
+/** A thread's summary on the message it hangs off, or null when it has no replies. */
+export function normalizeThreadSummary(input: unknown): MessageThreadSummary | null {
+  if (!input || typeof input !== 'object') return null;
+  const row = record(input);
+  const replyCount = Number(pick(row, 'replyCount', 'reply_count')) || 0;
+  if (replyCount < 1) return null;
+  return {
+    replyCount,
+    lastReplyAt: dateText(pick(row, 'lastReplyAt', 'last_reply_at')),
+    participants: array(pick(row, 'participants')).map(normalizeUser).filter((user) => user.id).slice(0, 3),
+  };
+}
+
 export function normalizeMessage(input: unknown, fallbackConversationId = 0): ConversationMessage {
   const row = record(input);
   const conversationId = strictId(pick(row, 'conversationId', 'conversation_id')) || fallbackConversationId;
@@ -156,7 +170,11 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
       id: replyId,
       sender: normalizeUser(pick(replyRow, 'sender', 'user', 'author') ?? replyRow),
       content: text(pick(replyRow, 'content', 'text')),
+      deleted: pick(replyRow, 'deleted') === true,
     } : null,
+    deleted: pick(row, 'deleted') === true,
+    threadRootId: strictId(pick(row, 'threadRootId', 'thread_root_id')),
+    thread: normalizeThreadSummary(pick(row, 'thread')),
     reactions: array(pick(row, 'reactions')).map(normalizeReaction).filter((reaction) => reaction.emoji),
     attachments: array(pick(row, 'attachments')).map((attachment) => normalizeAttachment(attachment, conversationId)),
     objects: array(pick(row, 'objects', 'objectCards', 'object_cards', 'sharedObjects', 'shared_objects')).map(normalizeObject),
@@ -285,13 +303,82 @@ export async function listMessages(id: number, before?: number | null): Promise<
   };
 }
 
-export async function sendMessage(id: number, input: { content: string; replyToId?: number; attachmentIds?: string[]; object?: SharedObjectReference; idempotencyKey: string }): Promise<ConversationMessage> {
+export async function sendMessage(id: number, input: { content: string; replyToId?: number; threadRootId?: number; attachmentIds?: string[]; object?: SharedObjectReference; idempotencyKey: string }): Promise<ConversationMessage> {
   const payload: JsonRecord = { content: input.content, idempotency_key: input.idempotencyKey };
   if (input.replyToId) payload.reply_to_id = input.replyToId;
+  if (input.threadRootId) payload.thread_root_id = input.threadRootId;
   if (input.attachmentIds?.length) payload.attachment_ids = input.attachmentIds;
   if (input.object) payload.object = input.object;
   const data = record(await request<unknown>(`/api/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify(payload) }));
   return normalizeMessage(pick(data, 'message') ?? data, id);
+}
+
+/**
+ * The page a message link opens on (#2387): the messages around one, with a
+ * cursor each way. When the linked message is a reply inside a thread, the
+ * window is around the thread's first message and `focus.threadRootId` names
+ * it, so the thread opens beside it.
+ */
+export async function listMessagesAround(id: number, messageId: number): Promise<{
+  messages: ConversationMessage[];
+  nextBefore: number | null;
+  nextAfter: number | null;
+  focus: { messageId: number; threadRootId: number | null };
+}> {
+  const params = new URLSearchParams({ limit: '50', around: String(messageId) });
+  const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`));
+  const focus = record(pick(data, 'focus'));
+  return {
+    messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
+    nextBefore: strictId(pick(data, 'nextBefore', 'next_before')),
+    nextAfter: strictId(pick(data, 'nextAfter', 'next_after')),
+    focus: {
+      messageId: strictId(pick(focus, 'messageId', 'message_id')) || messageId,
+      threadRootId: strictId(pick(focus, 'threadRootId', 'thread_root_id')),
+    },
+  };
+}
+
+/** The newer half of a linked page: messages after one, oldest first. */
+export async function listMessagesAfter(id: number, after: number): Promise<{ messages: ConversationMessage[]; nextAfter: number | null }> {
+  const params = new URLSearchParams({ limit: '50', after: String(after) });
+  const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`));
+  return {
+    messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
+    nextAfter: strictId(pick(data, 'nextAfter', 'next_after')),
+  };
+}
+
+/** A thread: the message it hangs off, and its replies oldest first (#2387). */
+export async function listThread(id: number, rootId: number, before?: number | null): Promise<{
+  root: ConversationMessage | null;
+  messages: ConversationMessage[];
+  nextBefore: number | null;
+}> {
+  const params = new URLSearchParams({ limit: '50' });
+  if (before) params.set('before', String(before));
+  const data = record(await request<unknown>(`/api/conversations/${id}/threads/${rootId}?${params}`));
+  const root = pick(data, 'root');
+  return {
+    root: root ? normalizeMessage(root, id) : null,
+    messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
+    nextBefore: strictId(pick(data, 'nextBefore', 'next_before')),
+  };
+}
+
+/** Delete your own message (#2387). The server keeps a "deleted" placeholder. */
+export async function deleteMessage(conversationId: number, messageId: number): Promise<ConversationMessage | null> {
+  const data = record(await request<unknown>(`/api/conversations/${conversationId}/messages/${messageId}`, { method: 'DELETE' }));
+  const raw = pick(data, 'message');
+  return raw ? normalizeMessage(raw, conversationId) : null;
+}
+
+/** Make this message, and everything after it, unread again (#2387). */
+export async function markUnread(conversationId: number, messageId: number): Promise<{ unreadCount: number }> {
+  const data = record(await request<unknown>(`/api/conversations/${conversationId}/unread`, {
+    method: 'POST', body: JSON.stringify({ message_id: messageId }),
+  }));
+  return { unreadCount: Number(pick(data, 'unreadCount', 'unread_count')) || 0 };
 }
 
 export async function editMessage(conversationId: number, messageId: number, content: string): Promise<ConversationMessage> {

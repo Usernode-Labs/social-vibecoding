@@ -72,7 +72,9 @@ const DDL = `
     idempotency_key VARCHAR(64),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    edited_at TIMESTAMPTZ
+    edited_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ,
+    thread_root_id INTEGER REFERENCES conversation_messages(id) ON DELETE CASCADE
   );
   CREATE UNIQUE INDEX conversation_message_idempotency
     ON conversation_messages (conversation_id, sender_id, idempotency_key)
@@ -133,6 +135,19 @@ const DDL = `
     detail VARCHAR(32),
     read_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  -- #2386: createDirect reads it (friends skip the invitation) and setBlock
+  -- clears it. The full DDL is schema.sql's; tests/friends-postgres.test.js
+  -- runs that.
+  CREATE TABLE friendships (
+    user_low_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_high_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    responded_at TIMESTAMPTZ,
+    PRIMARY KEY (user_low_id, user_high_id),
+    CHECK (user_low_id < user_high_id)
   );
   CREATE TABLE chat_session_spec_conversation_shares (
     session_id INTEGER NOT NULL,

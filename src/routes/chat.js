@@ -9,13 +9,18 @@ const { listActiveUserIds } = require('../services/active-users');
 const appAccess = require('../services/app-access');
 const attachmentsSvc = require('../services/attachments');
 const messageBookmarks = require('../services/message-bookmarks');
+const appChat = require('../services/app-chat');
 const {
+  appChatReadLimiter,
   attachmentUploadLimiter,
   groupChatWriteLimiter,
   messageBookmarkLimiter,
 } = require('../middleware/rate-limits');
 
-const THREAD_TYPES = new Set(['issue', 'session', 'governance']);
+// #194's topic threads, plus #2387's reply threads ('message', ref = the
+// root chat_messages.id). services/ws.js validateThread is the write-side
+// twin of this set and checks each ref against the database.
+const THREAD_TYPES = new Set(['issue', 'session', 'governance', appChat.MESSAGE_THREAD]);
 const MAX_THREAD_REF = 2147483647; // PostgreSQL INTEGER
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -62,6 +67,60 @@ const { attachmentDisposition } = attachmentsSvc;
 // a thread filter, and on a clean staging database they came back empty too.
 // The ids differ per surface so a page showing both does not draw one id
 // twice.
+//
+// #2387 adds two things to the GENERAL stream only (a topic's mock is
+// unchanged): a deleted message's placeholder, first and oldest (id
+// 9902000, before the 2024 opener, so id order and time order agree), and a
+// reply thread under this morning's row (DEMO_THREAD_ROOT_ID) whose three
+// replies `thread_type=message&thread_ref=9902003&demo=1` serves — see
+// stagingMockReplyThread below. Every row now carries the `deleted` and
+// `thread` fields a real row does.
+const DEMO_THREAD_ROOT_ID = 9902003;
+// Mock repliers get ids from the mock range, not 0, so a thread summary's
+// participants are distinct by id as real ones are (a client keys faces by
+// id). Obviously fake: no staging account reaches 9.9 million.
+const DEMO_REPLIERS = Object.freeze({
+  'staging-tester': 9902101,
+  'staging-demo-user': 9902102,
+});
+
+function stagingMockReplies(appId) {
+  const now = Date.now();
+  const reply = (id, minutesBack, username, content) => ({
+    id, user_id: DEMO_REPLIERS[username], username, content,
+    msg_type: 'message', metadata: {},
+    thread_type: appChat.MESSAGE_THREAD, thread_ref: DEMO_THREAD_ROOT_ID,
+    created_at: new Date(now - minutesBack * 60 * 1000).toISOString(),
+    edited_at: null, reactions: [], bookmarked: false,
+    has_unread_notification: false, app_id: appId, posted_via: null,
+    deleted: false, thread: null,
+  });
+  return [
+    reply(9902021, 60, 'staging-tester',
+      '[Mock] A reply in the thread: the morning build looks right to me.'),
+    reply(9902022, 45, 'staging-demo-user',
+      '[Mock] Thanks. I will fold that into the next change.'),
+    reply(9902023, 20, 'staging-tester',
+      '[Mock] Replies stay in here; the main chat only shows how many there are.'),
+  ];
+}
+
+function stagingMockThreadSummary(appId) {
+  const replies = stagingMockReplies(appId);
+  const seen = new Set();
+  const participants = [];
+  for (const r of [...replies].reverse()) {
+    if (seen.has(r.user_id)) continue;
+    seen.add(r.user_id);
+    participants.push({ id: r.user_id, username: r.username });
+  }
+  return {
+    reply_count: replies.length,
+    last_reply_at: replies[replies.length - 1].created_at,
+    participants: participants.slice(0, appChat.MAX_PARTICIPANTS),
+  };
+}
+
 function stagingMockGroupChat(appId, thread) {
   const iso = (ms) => new Date(ms).toISOString();
   const now = Date.now();
@@ -74,16 +133,28 @@ function stagingMockGroupChat(appId, thread) {
     created_at: createdAt || iso(now - minutesBack * 60 * 1000),
     edited_at: null, reactions: [], bookmarked: false,
     has_unread_notification: false, app_id: appId, posted_via: null,
+    deleted: false, thread: null,
   });
+  const general = !thread;
   return [
+    // #2387: what a deleted message leaves behind — its author, its time,
+    // no text. General stream only.
+    ...(general ? [{
+      ...row(-1, 0, 'staging-tester', '', '2024-02-19T16:00:00Z'),
+      deleted: true,
+    }] : []),
     row(0, 0, 'staging-demo-user',
       '[Mock] Opening line, posted in an earlier year. Its stamp carries the year.',
       '2024-02-19T16:05:00Z'),
     row(1, 0, 'staging-tester',
       '[Mock] A reply from earlier this year: the day, then the time.',
       iso(now - 40 * 24 * 60 * 60 * 1000)),
-    row(2, 95, 'staging-demo-user',
-      '[Mock] And one from this morning, which needs no date at all.'),
+    {
+      ...row(2, 95, 'staging-demo-user',
+        '[Mock] And one from this morning, which needs no date at all.'),
+      // #2387: the general stream's reply thread hangs off this row.
+      thread: general ? stagingMockThreadSummary(appId) : null,
+    },
     row(3, 4, 'staging-tester',
       '[Mock] Same again a few minutes ago, so a run of today\'s rows stays easy to scan.'),
     ...[4, 5, 6].map((offset) => ({
@@ -126,6 +197,10 @@ function isPinnedDemoThread(thread) {
 // What a staging `?demo=1` first page answers with, or null to serve the real
 // rows unchanged. `realRows` is the page the SELECT returned, oldest first.
 function stagingDemoTranscript(appId, thread, realRows) {
+  // A real message's reply thread is never padded: the one mock reply
+  // thread is answered by stagingMockReplyThread before the database is
+  // read, and fixture replies under somebody's real message would be a lie.
+  if (thread && thread.type === appChat.MESSAGE_THREAD) return null;
   if (isPinnedDemoThread(thread)) {
     const mock = stagingMockGroupChat(appId, thread);
     const mockIds = new Set(mock.map((m) => m.id));
@@ -135,6 +210,79 @@ function stagingDemoTranscript(appId, thread, realRows) {
   }
   return realRows.length === 0 ? stagingMockGroupChat(appId, thread) : null;
 }
+
+// #2387: the mock reply thread, as `thread_type=message&thread_ref=<root>`
+// answers it on a staging `?demo=1` read — or null for any other root.
+function stagingMockReplyThread(appId, rootId) {
+  if (Number(rootId) !== DEMO_THREAD_ROOT_ID) return null;
+  const root = stagingMockGroupChat(appId, null).find((m) => m.id === DEMO_THREAD_ROOT_ID);
+  return {
+    messages: stagingMockReplies(appId),
+    root,
+    has_more_before: false,
+    has_more_after: false,
+  };
+}
+
+// #2387: a permalink or catch-up read of the mock general stream. `around`
+// on a mock row (or a mock reply, which opens on its root) answers the whole
+// mock transcript with its focus; `after` answers what follows. Null when
+// the id is not a mock one, so the real read runs.
+function stagingMockStreamPage(appId, { around = null, after = null } = {}) {
+  const rows = stagingMockGroupChat(appId, null);
+  const ids = new Set(rows.map((m) => m.id));
+  if (around != null) {
+    if (ids.has(around)) {
+      return {
+        messages: rows, has_more_before: false, has_more_after: false,
+        focus: { message_id: around, thread_ref: null },
+      };
+    }
+    if (stagingMockReplies(appId).some((m) => m.id === around)) {
+      return {
+        messages: rows, has_more_before: false, has_more_after: false,
+        focus: { message_id: around, thread_ref: DEMO_THREAD_ROOT_ID },
+      };
+    }
+    return null;
+  }
+  if (after != null && ids.has(after)) {
+    return {
+      messages: rows.filter((m) => m.id > after),
+      has_more_before: true,
+      has_more_after: false,
+    };
+  }
+  return null;
+}
+
+// #2387: what the read cursor answers for a mock message id under
+// `?demo=1`, where there is no row to move a real cursor to. A read leaves
+// nothing unread; an unread leaves the mock rows from other people at and
+// after the message — the same definition of "unread" as the real one.
+function stagingMockUnreadCount(appId, messageId, move) {
+  const rows = stagingMockGroupChat(appId, null);
+  if (!rows.some((m) => m.id === messageId)) return null;
+  if (move === 'read') return 0;
+  return rows.filter((m) => m.id >= messageId && m.msg_type === 'message'
+    && !m.deleted && m.user_id != null).length;
+}
+
+// #2387: the paging cursors. Absent (or empty) → null; present → a positive
+// PostgreSQL INTEGER, or undefined for a malformed value the route refuses.
+function cursorParam(value) {
+  if (value == null || value === '') return null;
+  const n = parseThreadRef(value);
+  return n == null ? undefined : n;
+}
+
+function pageLimit(value) {
+  const n = parseInt(value || '50', 10);
+  if (!Number.isFinite(n) || n < 1) return 50;
+  return Math.min(n, 100);
+}
+
+const PIVOT_OPS = new Set(['<', '<=', '>', '>=']);
 
 function parseThreadRef(value) {
   const ref = typeof value === 'number'
@@ -188,21 +336,46 @@ function chatRoutes(config) {
     }
   });
 
+  // ── Reading a transcript (#194, #2387) ───────────────────────────
+  //
+  //   GET /api/apps/:slug/messages
+  //     ?limit=1..100 (default 50)
+  //     &thread_type=&thread_ref=   one thread; absent = the general stream
+  //     &before=<id>                older page, ids < before
+  //     &after=<id>                 newer page, ids > after (catch-up)
+  //     &around=<id>                a permalink window centred on one message
+  //   → { messages /* oldest first */, has_more_before, has_more_after,
+  //       focus?: { message_id, thread_ref },   // around only
+  //       root?: Message }                      // thread_type=message only
+  //
+  // At most one of before / after / around. `around` on a reply-thread
+  // message while reading the general stream centres the window on the
+  // thread's ROOT and says so in focus.thread_ref, so a permalink to a reply
+  // opens the chat where the thread is and the thread on the reply.
+  //
+  // Every row carries `deleted` (a placeholder: no text, no attachments, no
+  // quote) and `thread` (a general-stream row's reply summary, or null).
   router.get('/api/apps/:slug/messages', async (req, res) => {
-    const before = req.query.before;
-    const limit = Math.min(parseInt(req.query.limit || '50', 10), 100);
+    const limit = pageLimit(req.query.limit);
 
     // #194: optional thread scoping. Absent → general chat only
     // (thread_type IS NULL) — this is what keeps thread messages out of
-    // the general stream. Both params must be present and valid to
-    // select a thread; a malformed pair is a 400 rather than silently
-    // falling back to general chat.
+    // the general stream, reply threads (#2387) included. Both params must
+    // be present and valid to select a thread; a malformed pair is a 400
+    // rather than silently falling back to general chat.
     const threadType = req.query.thread_type || null;
     const threadRef = req.query.thread_ref != null ? parseThreadRef(req.query.thread_ref) : null;
     if (threadType || req.query.thread_ref != null) {
       if (!THREAD_TYPES.has(threadType) || threadRef == null) {
         return res.status(400).json({ error: 'Invalid thread_type/thread_ref' });
       }
+    }
+    const before = cursorParam(req.query.before);
+    const after = cursorParam(req.query.after);
+    const around = cursorParam(req.query.around);
+    if (before === undefined || after === undefined || around === undefined
+        || [before, after, around].filter((v) => v != null).length > 1) {
+      return res.status(400).json({ error: 'Invalid before/after/around' });
     }
 
     try {
@@ -218,125 +391,266 @@ function chatRoutes(config) {
       }
 
       const appId = app.id;
+      const viewerId = req.user.id;
+      const thread = threadType ? { type: threadType, ref: threadRef } : null;
+      const demo = IS_STAGING && req.query.demo === '1';
 
-      // Thread filter: a specific thread when requested, else the
-      // general stream (thread_type IS NULL — all legacy rows).
-      const params = [appId];
-      let threadClause;
-      if (threadType) {
-        params.push(threadType, threadRef);
-        threadClause = `m.thread_type = $2 AND m.thread_ref = $3`;
+      // #2387 staging fixtures that no database row stands behind: the mock
+      // reply thread, and a permalink or catch-up read on a mock id.
+      if (demo && thread && thread.type === appChat.MESSAGE_THREAD) {
+        const mock = stagingMockReplyThread(appId, thread.ref);
+        if (mock) return res.json(mock);
+      }
+      if (demo && !thread && (around != null || after != null)) {
+        const mock = stagingMockStreamPage(appId, { around, after });
+        if (mock) return res.json(mock);
+      }
+
+      // A reply thread is readable exactly when its root is: a general-
+      // stream message a person wrote in this app, by nobody this viewer
+      // blocked.
+      let rootRow = null;
+      if (thread && thread.type === appChat.MESSAGE_THREAD) {
+        rootRow = await appChat.findThreadRoot(pool, appId, thread.ref, viewerId);
+        if (!rootRow) return res.status(404).json({ error: 'Message not found' });
+      }
+
+      const stream = { appId, thread, viewerId };
+      let rows;
+      let hasMoreBefore = false;
+      let hasMoreAfter = false;
+      let focus = null;
+      if (around != null) {
+        const target = await locateAround(appId, thread, around, viewerId);
+        if (!target) return res.status(404).json({ error: 'Message not found' });
+        // The anchor and up to half the page before it, the rest after;
+        // one extra row each way answers "is there more".
+        const olderCount = Math.floor((limit - 1) / 2) + 1;
+        const newerCount = limit - olderCount;
+        const older = await selectStream(pool, {
+          ...stream, op: '<=', pivot: target.anchorId, order: 'DESC', limit: olderCount + 1,
+        });
+        const newer = await selectStream(pool, {
+          ...stream, op: '>', pivot: target.anchorId, order: 'ASC', limit: newerCount + 1,
+        });
+        hasMoreBefore = older.length > olderCount;
+        hasMoreAfter = newer.length > newerCount;
+        rows = [...older.slice(0, olderCount).reverse(), ...newer.slice(0, newerCount)];
+        focus = { message_id: target.messageId, thread_ref: target.threadRef };
+      } else if (after != null) {
+        const newer = await selectStream(pool, {
+          ...stream, op: '>', pivot: after, order: 'ASC', limit: limit + 1,
+        });
+        hasMoreAfter = newer.length > limit;
+        rows = newer.slice(0, limit);
+        hasMoreBefore = (await selectStream(pool, {
+          ...stream, op: '<=', pivot: after, order: 'DESC', limit: 1,
+        })).length > 0;
       } else {
-        threadClause = `m.thread_type IS NULL`;
-      }
-      let beforeClause = '';
-      if (before) {
-        params.push(before);
-        beforeClause = ` AND m.id < $${params.length}`;
-      }
-      params.push(req.user.id);
-      const viewerIndex = params.length;
-      params.push(limit);
-
-      const query = `
-        SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata,
-               m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via
-        FROM chat_messages m
-        LEFT JOIN users u ON m.user_id = u.id
-        WHERE m.app_id = $1 AND ${threadClause}${beforeClause}
-          AND NOT EXISTS (
-            SELECT 1 FROM user_blocks blocked
-             WHERE blocked.blocker_id = $${viewerIndex}
-               AND blocked.blocked_user_id = m.user_id
-          )
-        ORDER BY m.id DESC
-        LIMIT $${params.length}`;
-
-      const { rows } = await pool.query(query, params);
-      const messages = rows.reverse().map(message => ({ ...message,
-        username: message.username || (message.msg_type === 'message' && message.user_id == null ? 'Deleted user' : message.username),
-      }));
-
-      // A reply can quote a blocked author's text even when its own sender
-      // remains visible. Hide that quoted content for this viewer.
-      const quotedIds = messages.map((m) => Number(m.metadata?.quote?.refMsgId))
-        .filter((id) => Number.isInteger(id) && id > 0);
-      if (quotedIds.length) {
-        const hiddenQuotes = await pool.query(
-          `SELECT quoted.id FROM chat_messages quoted
-             JOIN user_blocks blocked ON blocked.blocked_user_id = quoted.user_id
-            WHERE blocked.blocker_id = $1 AND quoted.id = ANY($2::int[])`,
-          [req.user.id, quotedIds]
-        );
-        const hidden = new Set(hiddenQuotes.rows.map((row) => Number(row.id)));
-        for (const m of messages) {
-          if (hidden.has(Number(m.metadata?.quote?.refMsgId))) {
-            m.metadata = { ...m.metadata, quote: null };
-          }
+        const older = await selectStream(pool, before != null
+          ? { ...stream, op: '<', pivot: before, order: 'DESC', limit: limit + 1 }
+          : { ...stream, order: 'DESC', limit: limit + 1 });
+        hasMoreBefore = older.length > limit;
+        rows = older.slice(0, limit).reverse();
+        if (before != null) {
+          hasMoreAfter = (await selectStream(pool, {
+            ...stream, op: '>=', pivot: before, order: 'ASC', limit: 1,
+          })).length > 0;
         }
       }
 
-      // #25: attach emoji reactions so the chat renders them on load (live
-      // updates arrive separately over the per-app WS 'reaction' event).
-      try {
-        const { getReactionsForMessages } = require('../services/ws');
-        const byId = await getReactionsForMessages(pool, messages.map((m) => m.id), req.user.id);
-        for (const m of messages) m.reactions = byId[m.id] || [];
-      } catch (err) {
-        log.warn('chat', 'reaction hydrate failed', { message: err.message });
-      }
-
-      // #1280: per-message saved flag, so a loaded page renders its
-      // bookmark buttons already filled in. Same non-fatal contract as the
-      // reaction and unread-dot hydrates around it — a failure here must
-      // never break loading the chat, it just renders every button empty.
-      if (req.user) {
-        try {
-          const savedIds = await messageBookmarks.savedMessageIdsFor(
-            pool, req.user.id, messages.map((m) => m.id)
-          );
-          for (const m of messages) m.bookmarked = savedIds.has(m.id);
-        } catch (err) {
-          log.warn('chat', 'bookmark hydrate failed', { message: err.message });
-        }
-      }
-
-      // Per-message unread dot: flag any message this user has an unread
-      // mention/reply/reaction notification for, so the chat renders a dot
-      // next to it. Live messages (over the WS) can't yet carry this flag,
-      // so the dot is driven by this loaded-history flag plus client-side
-      // reconciliation on notifications_changed. Non-fatal: a failure here
-      // must never break loading the chat.
-      if (req.user) {
-        try {
-          const notifications = require('../services/notifications');
-          const unreadIds = await notifications.unreadMessageIdsForUser(
-            pool, req.user.id, messages.map((m) => m.id)
-          );
-          for (const m of messages) m.has_unread_notification = unreadIds.has(m.id);
-        } catch (err) {
-          log.warn('chat', 'unread-dot hydrate failed', { message: err.message });
-        }
-      }
+      const messages = await hydrateRows(rows, { appId, viewerId, general: !thread });
+      const root = rootRow
+        ? (await hydrateRows([rootRow], { appId, viewerId, general: true }))[0]
+        : null;
 
       // The empty-transcript fallback described at stagingMockGroupChat, and
       // the pinned demo topics described at PINNED_DEMO_THREADS. Only a first
       // page: a `before` cursor is the client paging PAST what it already
       // has, and answering that with the same rows again would loop the
       // transcript.
-      if (IS_STAGING && req.query.demo === '1' && !before) {
-        const demo = stagingDemoTranscript(
-          appId, threadType ? { type: threadType, ref: threadRef } : null, messages
-        );
-        if (demo) return res.json({ messages: demo });
+      if (demo && before == null && after == null && around == null) {
+        const mock = stagingDemoTranscript(appId, thread, messages);
+        if (mock) {
+          return res.json({ messages: mock, has_more_before: false, has_more_after: false });
+        }
       }
 
-      res.json({ messages });
+      const body = { messages, has_more_before: hasMoreBefore, has_more_after: hasMoreAfter };
+      if (focus) body.focus = focus;
+      if (root) body.root = root;
+      res.json(body);
     } catch (err) {
       log.error('chat', 'Failed to load messages', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // One page of one stream, newest-first or oldest-first around a pivot id.
+  // `op` and `order` come from the fixed sets below, never from a request.
+  async function selectStream(db, { appId, thread, viewerId, op = null, pivot = null, order, limit }) {
+    if (op && !PIVOT_OPS.has(op)) throw new Error(`bad pivot op: ${op}`);
+    const direction = order === 'ASC' ? 'ASC' : 'DESC';
+    const params = [appId];
+    let where = 'm.app_id = $1';
+    if (thread) {
+      params.push(thread.type, thread.ref);
+      where += ' AND m.thread_type = $2 AND m.thread_ref = $3';
+    } else {
+      where += ' AND m.thread_type IS NULL';
+    }
+    if (op) {
+      params.push(pivot);
+      where += ` AND m.id ${op} $${params.length}`;
+    }
+    params.push(viewerId);
+    const viewerIndex = params.length;
+    params.push(limit);
+    const { rows } = await db.query(
+      `SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata,
+              m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via,
+              m.deleted_at
+         FROM chat_messages m
+         LEFT JOIN users u ON m.user_id = u.id
+        WHERE ${where}
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks blocked
+             WHERE blocked.blocker_id = $${viewerIndex}
+               AND blocked.blocked_user_id = m.user_id
+          )
+        ORDER BY m.id ${direction}
+        LIMIT $${params.length}`,
+      params
+    );
+    return rows;
+  }
+
+  // Where an `around` window centres. The message must be visible (in this
+  // app, by nobody the viewer blocked) and in the stream being read — or,
+  // when reading the general stream, a reply whose visible root is in it,
+  // in which case the window centres on the root.
+  async function locateAround(appId, thread, messageId, viewerId) {
+    const { rows } = await pool.query(
+      `SELECT target.id, target.thread_type, target.thread_ref
+         FROM chat_messages target
+        WHERE target.id = $1 AND target.app_id = $2
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks blocked
+             WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = target.user_id
+          )`,
+      [messageId, appId, viewerId]
+    );
+    const target = rows[0];
+    if (!target) return null;
+    const replyRoot = target.thread_type === appChat.MESSAGE_THREAD ? Number(target.thread_ref) : null;
+    const inStream = thread
+      ? target.thread_type === thread.type && Number(target.thread_ref) === thread.ref
+      : target.thread_type == null;
+    if (inStream) return { anchorId: target.id, messageId: target.id, threadRef: replyRoot };
+    if (!thread && replyRoot) {
+      const root = await appChat.findThreadRoot(pool, appId, replyRoot, viewerId);
+      if (!root) return null;
+      return { anchorId: root.id, messageId: target.id, threadRef: root.id };
+    }
+    return null;
+  }
+
+  // Everything a transcript row carries beyond its columns. The quote check
+  // is part of the read (a blocked author's words must not leak through a
+  // reply); the rest is decoration, and a failure in any of it renders the
+  // row without that decoration rather than failing the read.
+  async function hydrateRows(rows, { appId, viewerId, general }) {
+    const messages = rows.map(appChat.shapeRow);
+    const live = messages.filter((m) => !m.deleted);
+    const liveIds = live.map((m) => m.id);
+
+    // A reply can quote a blocked author's text even when its own sender
+    // remains visible: hide that quote for this viewer. #2387: a quote of a
+    // message deleted since keeps who said it and loses what.
+    const quotedIds = live.map((m) => Number(m.metadata?.quote?.refMsgId))
+      .filter((id) => Number.isInteger(id) && id > 0);
+    if (quotedIds.length) {
+      const { rows: quoted } = await pool.query(
+        `SELECT quoted.id, (quoted.deleted_at IS NOT NULL) AS deleted,
+                EXISTS (
+                  SELECT 1 FROM user_blocks blocked
+                   WHERE blocked.blocker_id = $1 AND blocked.blocked_user_id = quoted.user_id
+                ) AS hidden
+           FROM chat_messages quoted
+          WHERE quoted.id = ANY($2::int[])`,
+        [viewerId, quotedIds]
+      );
+      const byId = new Map(quoted.map((row) => [Number(row.id), row]));
+      for (const m of live) {
+        const q = byId.get(Number(m.metadata?.quote?.refMsgId));
+        if (!q) continue;
+        if (q.hidden) {
+          m.metadata = { ...m.metadata, quote: null };
+        } else if (q.deleted) {
+          m.metadata = { ...m.metadata, quote: { ...m.metadata.quote, snippet: '', deleted: true } };
+        }
+      }
+    }
+
+    // A deleted row lost its reactions, bookmarks and notifications with
+    // its text, so it answers the decorations without asking.
+    for (const m of messages) {
+      if (!m.deleted) continue;
+      m.reactions = [];
+      m.bookmarked = false;
+      m.has_unread_notification = false;
+    }
+
+    // #25: attach emoji reactions so the chat renders them on load (live
+    // updates arrive separately over the per-app WS 'reaction' event).
+    try {
+      const { getReactionsForMessages } = require('../services/ws');
+      const byId = await getReactionsForMessages(pool, liveIds, viewerId);
+      for (const m of live) m.reactions = byId[m.id] || [];
+    } catch (err) {
+      log.warn('chat', 'reaction hydrate failed', { message: err.message });
+    }
+
+    // #1280: per-message saved flag, so a loaded page renders its
+    // bookmark buttons already filled in. Same non-fatal contract as the
+    // reaction and unread-dot hydrates around it — a failure here must
+    // never break loading the chat, it just renders every button empty.
+    try {
+      const savedIds = await messageBookmarks.savedMessageIdsFor(pool, viewerId, liveIds);
+      for (const m of live) m.bookmarked = savedIds.has(m.id);
+    } catch (err) {
+      log.warn('chat', 'bookmark hydrate failed', { message: err.message });
+    }
+
+    // Per-message unread dot: flag any message this user has an unread
+    // mention/reply/reaction/thread-reply notification for, so the chat
+    // renders a dot next to it. Live messages (over the WS) can't yet carry
+    // this flag, so the dot is driven by this loaded-history flag plus
+    // client-side reconciliation on notifications_changed. Non-fatal: a
+    // failure here must never break loading the chat.
+    try {
+      const notifications = require('../services/notifications');
+      const unreadIds = await notifications.unreadMessageIdsForUser(pool, viewerId, liveIds);
+      for (const m of live) m.has_unread_notification = unreadIds.has(m.id);
+    } catch (err) {
+      log.warn('chat', 'unread-dot hydrate failed', { message: err.message });
+    }
+
+    // #2387: a general-stream row with visible replies says how many, when
+    // the last one came, and who is in it. A deleted root keeps its thread.
+    for (const m of messages) m.thread = null;
+    if (general && messages.length) {
+      try {
+        const summaries = await appChat.threadSummaries(
+          pool, appId, messages.filter((m) => m.thread_type == null).map((m) => m.id), viewerId
+        );
+        for (const m of messages) m.thread = summaries.get(Number(m.id)) || null;
+      } catch (err) {
+        log.warn('chat', 'thread summary hydrate failed', { message: err.message });
+      }
+    }
+    return messages;
+  }
 
   // Bearer-compatible group-chat write path. The browser normally sends
   // these over /ws/chat/:slug, but CLI/MCP clients authenticate with an API
@@ -422,6 +736,104 @@ function chatRoutes(config) {
     }
   });
 
+  // ── #2387: deleting your own message ─────────────────────────────
+  //
+  //   DELETE /api/apps/:slug/messages/:id
+  //   → 200 { ok: true, id, thread_type, thread_ref, deleted: true }
+  //     404 { error: 'Message not found' } | 403 { error: 'not_author' }
+  //
+  // The REST twin of the socket's `{ type: 'delete', id }`: both run the one
+  // canonical handler (ws.handleMessage → services/app-chat.js), which
+  // clears the row, removes its attachments, reactions, bookmarks and
+  // notifications, and broadcasts `chat_delete` (plus `thread_summary` for a
+  // reply) to the app's room. Idempotent: deleting an already-deleted
+  // message of yours answers 200 again. View-gated, not collab-gated, like
+  // the socket: someone who has since lost collaborator access can still
+  // take back what they wrote, and authorship is the real gate.
+  router.delete('/api/apps/:slug/messages/:id', groupChatWriteLimiter, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    const messageId = parseThreadRef(req.params.id);
+    if (messageId == null) return res.status(404).json({ error: 'Message not found' });
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const { handleMessage } = require('../services/ws');
+      const result = await handleMessage(
+        pool,
+        { user: req.user, appId: app.id, appSlug: app.slug },
+        { type: 'delete', id: messageId }
+      );
+      if (!result?.ok) {
+        if (result?.code === 'not_author') return res.status(403).json({ error: 'not_author' });
+        return res.status(404).json({ error: 'Message not found' });
+      }
+      return res.json({
+        ok: true,
+        id: result.message.id,
+        thread_type: result.message.thread_type,
+        thread_ref: result.message.thread_ref,
+        deleted: true,
+      });
+    } catch (err) {
+      log.error('chat', 'Failed to delete message', {
+        slug: req.params.slug, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── #2387: the read cursor ───────────────────────────────────────
+  //
+  //   POST /api/apps/:slug/messages/read    { message_id } → { unread_count }
+  //   POST /api/apps/:slug/messages/unread  { message_id } → { unread_count }
+  //
+  // `read` moves this viewer's position in the app's general stream forward
+  // to the message (never back); `unread` moves it back to just before the
+  // message, so it and everything after it is unread again (never forward).
+  // The message must be a general-stream message of this app: 404
+  // otherwise. `unread_count` is the same number the Messages list shows
+  // for the app (general stream, from other people, not deleted, not from
+  // anybody the viewer blocked).
+  //
+  // Nothing advances the cursor on a READ of the transcript: opening a chat
+  // through Global Chat or an agent's connector is not the person reading
+  // it, and a "mark unread" would not survive the next reload if loading
+  // the page marked it read again. The client says so explicitly; posting
+  // in the general stream is the one implicit move (services/ws.js).
+  async function moveReadCursor(req, res, move) {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      // Validated after the existence-hiding gate, as the write route is.
+      const messageId = parseThreadRef(req.body && req.body.message_id);
+      if (messageId == null) {
+        return res.status(400).json({ error: 'A positive integer message_id is required' });
+      }
+      if (IS_STAGING && req.query.demo === '1') {
+        const mock = stagingMockUnreadCount(app.id, messageId, move);
+        if (mock != null) return res.json({ unread_count: mock });
+      }
+      const result = move === 'read'
+        ? await appChat.markRead(pool, { appId: app.id, userId: req.user.id, messageId })
+        : await appChat.markUnread(pool, { appId: app.id, userId: req.user.id, messageId });
+      if (!result.ok) return res.status(404).json({ error: 'Message not found' });
+      return res.json({ unread_count: result.unread_count });
+    } catch (err) {
+      log.error('chat', `Failed to mark ${move}`, { slug: req.params.slug, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  router.post('/api/apps/:slug/messages/read', appChatReadLimiter,
+    (req, res) => moveReadCursor(req, res, 'read'));
+  router.post('/api/apps/:slug/messages/unread', appChatReadLimiter,
+    (req, res) => moveReadCursor(req, res, 'unread'));
+
   // ── #1280: saving (bookmarking) a group-chat message ─────────────
   //
   // PUT saves, DELETE unsaves, and both are idempotent — the button is a
@@ -451,11 +863,17 @@ function chatRoutes(config) {
       return null;
     }
     const { rows } = await pool.query(
-      `SELECT id FROM chat_messages WHERE id = $1 AND app_id = $2`,
+      `SELECT id, deleted_at FROM chat_messages WHERE id = $1 AND app_id = $2`,
       [messageId, app.id]
     );
     if (!rows.length) {
       res.status(404).json({ error: 'Message not found' });
+      return null;
+    }
+    // #2387: a deleted message has nothing left to save. Unsaving stays
+    // allowed (and is a no-op: the delete removed every bookmark of it).
+    if (rows[0].deleted_at && req.method === 'PUT') {
+      res.status(409).json({ error: 'message_deleted' });
       return null;
     }
     return messageId;
@@ -689,8 +1107,15 @@ function chatRoutes(config) {
       // keeps the canonical/original casing. LOWER(u.username) must be in
       // the SELECT list because SELECT DISTINCT requires ORDER BY
       // expressions to appear there.
+      // #2386: the viewer's friends lead, flagged `friend: true`. Every
+      // caller filters this list by prefix in the order it arrives, so the
+      // order is the whole benefit.
       const { rows } = await pool.query(
-        `SELECT DISTINCT u.username, LOWER(u.username) AS sort_name
+        `SELECT DISTINCT u.username, LOWER(u.username) AS sort_name,
+                EXISTS (SELECT 1 FROM friendships f
+                         WHERE f.status = 'accepted'
+                           AND f.user_low_id = LEAST(u.id, $3::int)
+                           AND f.user_high_id = GREATEST(u.id, $3::int)) AS friend
            FROM users u
           WHERE NOT EXISTS (
                   SELECT 1 FROM user_blocks blocked
@@ -701,12 +1126,16 @@ function chatRoutes(config) {
                SELECT m.user_id FROM chat_messages m
                 WHERE m.app_id = $1 AND m.user_id IS NOT NULL
              ))
-          ORDER BY sort_name
+          ORDER BY friend DESC, sort_name
           LIMIT 500`,
         [appId, ids, req.user.id]
       );
 
-      res.json({ users: rows.map((r) => ({ username: r.username })) });
+      res.json({
+        users: rows.map((r) => (r.friend
+          ? { username: r.username, friend: true }
+          : { username: r.username })),
+      });
     } catch (err) {
       log.error('chat', 'Failed to load mention suggestions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -716,4 +1145,14 @@ function chatRoutes(config) {
   return router;
 }
 
-module.exports = { chatRoutes, postedViaFor, stagingMockGroupChat, stagingDemoTranscript };
+module.exports = {
+  chatRoutes,
+  postedViaFor,
+  stagingMockGroupChat,
+  stagingDemoTranscript,
+  stagingMockReplyThread,
+  stagingMockStreamPage,
+  stagingMockUnreadCount,
+  DEMO_THREAD_ROOT_ID,
+  THREAD_TYPES,
+};

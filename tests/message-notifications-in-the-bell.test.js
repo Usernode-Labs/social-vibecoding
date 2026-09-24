@@ -177,6 +177,32 @@ test('markConversationRead is inert when there is nothing to clear', () => {
   assert.equal(guarded.calls.badge, 0);
 });
 
+// #2387: a message inside a reply thread is read by reading THAT thread. The
+// server's main-stream read leaves those alerts unread, so clearing them here
+// only bounced the badge back on the next refresh.
+test('a conversation read leaves its reply threads\' alerts; a thread read clears only that thread', () => {
+  const markConversationRead = buildMarkConversationRead();
+  const markThreadRead = new Function('Notifications', 'conversationId', 'rootId',
+    methodBody('markConversationThreadRead'));
+  const items = [
+    { id: 1, kind: 'conversation_message', conversationId: 5, readAt: null },
+    { id: 2, kind: 'conversation_thread_reply', conversationId: 5, conversationThreadRootId: 40, readAt: null },
+    { id: 3, kind: 'conversation_mention', conversationId: 5, conversationThreadRootId: 41, readAt: null },
+    { id: 4, kind: 'conversation_thread_reply', conversationId: 6, conversationThreadRootId: 40, readAt: null },
+  ];
+  const N = stubNotifications(items, 4);
+  markConversationRead(N, 5);
+  assert.deepEqual(items.map((n) => !!n.readAt), [true, false, false, false]);
+  assert.equal(N.unread, 3);
+
+  markThreadRead(N, 5, 40);
+  assert.deepEqual(items.map((n) => !!n.readAt), [true, true, false, false],
+    'that thread only — not another thread, not the same root id in another conversation');
+  assert.equal(N.unread, 2);
+  markThreadRead(N, 5, 'x');
+  assert.equal(N.unread, 2, 'a junk root clears nothing');
+});
+
 // ── 4. the Messages store is what calls it ──────────────────────────────
 
 test('the Messages store tells the bell on a local read, and on its own cross-tab read', () => {

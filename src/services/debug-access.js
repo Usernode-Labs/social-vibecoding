@@ -84,6 +84,9 @@ const DENIED_TABLES = new Set([
   'conversation_message_objects', // private shared-object activity
   'chat_session_spec_conversation_shares', // private spec access grants
   'user_blocks',          // private user safety relationships
+  'friendships',          // private friend graph and pending requests (#2386)
+  'friend_request_declines', // who declined whom — silent by product rule (#2386)
+  'friend_request_sends', // per-person request activity (#2386)
   'conversation_message_reports', // private abuse evidence and reporter identity
   'app_reports',             // private mini-app report details and reporter identity
   'chat_message_reports',    // private Workshop post evidence and reporter identity

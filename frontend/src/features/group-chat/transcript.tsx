@@ -55,7 +55,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { ChatMessageRow, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
-import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
+import {
+  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
+  PencilSquareIcon, ReplyArrowIcon, ThreadIcon, UserIcon,
+} from '@/components/ui/icons';
 
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { timeOfDay } from '../../lib/timestamp';
@@ -66,6 +69,13 @@ import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { setUserBlocked } from '../messages/store';
 import { ReportForm, submitReport } from '../reports/report-form';
+import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
+import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
+import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
+import { EmojiPicker } from '../message-actions/emoji-picker';
+import { rememberReaction, useRecentReactions } from '../message-actions/recents';
+import { ThreadSummaryChip } from '../message-actions/thread-summary';
+import { useDismiss } from '../message-actions/use-dismiss';
 import {
   transcriptStore,
   type Attachment,
@@ -311,18 +321,9 @@ export function Reactions({ msg }: { msg: TranscriptMessage }) {
  * every message in the group chat quietly lost all three. Found by seeding a
  * chat and counting the buttons, not by a test.
  */
-function RowActions({ msg, onReportMessage, onReportUser }: {
-  msg: TranscriptMessage;
-  onReportMessage?: () => void;
-  onReportUser?: () => void;
-}) {
-  if (!(msg.showEdit || msg.showBookmark || msg.showReact || (msg.senderId && !msg.mine && msg.kind === 'message'))) return null;
+function RowActions({ msg }: { msg: TranscriptMessage }) {
+  if (!(msg.showEdit || msg.showBookmark || msg.showReact)) return null;
   const saved = msg.bookmarked;
-  async function blockSender() {
-    if (!msg.senderId || !window.confirm(`Block @${msg.username}? Their messages in Messages and app discussions will be hidden.`)) return;
-    try { await setUserBlocked(msg.senderId, true); }
-    catch (error) { window.alert(error instanceof Error ? error.message : 'Couldn’t block this person.'); }
-  }
   return (
     <>
       {msg.showEdit ? (
@@ -349,100 +350,7 @@ function RowActions({ msg, onReportMessage, onReportUser }: {
           {'\u{1F642}'}
         </button>
       ) : null}
-      {msg.kind === 'message' && !msg.mine && msg.senderId ? (
-        <MoreMenu username={msg.username} onReportMessage={onReportMessage} onReportUser={onReportUser}
-          onBlock={() => { void blockSender(); }} />
-      ) : null}
     </>
-  );
-}
-
-/**
- * Report message, report the person, block them — behind one small ⋯ disc
- * the size of the bookmark beside it (#2905).
- *
- * #2895 drew the three as text links in the row's action slot. On a named
- * row that slot shares the header line, so the name truncated to its first
- * letter; on a continuation line it is a column BESIDE the text, so a
- * follow-up message wrapped at a fifth of a phone's width. One disc is the
- * same footprint the bookmark already has, and the menu it opens floats over
- * the transcript rather than taking width from it. It opens upward when the
- * row is near the bottom of the transcript's scroller, so the last message's
- * menu is not cut off by the composer.
- */
-function MoreMenu({ username, onReportMessage, onReportUser, onBlock }: {
-  username: string;
-  onReportMessage?: () => void;
-  onReportUser?: () => void;
-  onBlock: () => void;
-}) {
-  const [open, setOpen] = useState<'down' | 'up' | null>(null);
-  const root = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (event: MouseEvent | TouchEvent) => {
-      if (root.current && !root.current.contains(event.target as Node)) setOpen(null);
-    };
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(null); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('touchstart', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('touchstart', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-  const choose = (act?: () => void) => { setOpen(null); act?.(); };
-  return (
-    <span ref={root} className="relative inline-flex self-center">
-      <button
-        type="button"
-        className="gc-msg-more"
-        title="More"
-        aria-label="More actions"
-        aria-haspopup="menu"
-        aria-expanded={!!open}
-        onClick={(event) => {
-          if (open) { setOpen(null); return; }
-          // Room below is measured to the transcript's own scroller, not the
-          // window: the composer and the tab bar sit under it.
-          let floor = window.innerHeight;
-          for (let node = event.currentTarget.parentElement; node; node = node.parentElement) {
-            if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) { floor = node.getBoundingClientRect().bottom; break; }
-          }
-          setOpen(event.currentTarget.getBoundingClientRect().bottom + 150 > floor ? 'up' : 'down');
-        }}
-      >
-        {'\u22EF'}
-      </button>
-      {open ? (
-        <span
-          role="menu"
-          aria-label="More actions"
-          className={open === 'up'
-            ? 'gc-msg-more-menu absolute bottom-full right-0 z-30 mb-1 flex min-w-[11rem] flex-col rounded-xl bg-white p-1 shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700'
-            : 'gc-msg-more-menu absolute top-full right-0 z-30 mt-1 flex min-w-[11rem] flex-col rounded-xl bg-white p-1 shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700'}
-        >
-          {onReportMessage ? (
-            <button type="button" role="menuitem" onClick={() => choose(onReportMessage)}
-              className="rounded-lg px-3 py-2 text-left text-sm text-zinc-800 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-700">
-              Report message
-            </button>
-          ) : null}
-          {onReportUser ? (
-            <button type="button" role="menuitem" onClick={() => choose(onReportUser)}
-              className="rounded-lg px-3 py-2 text-left text-sm text-zinc-800 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-700">
-              Report @{username}
-            </button>
-          ) : null}
-          <button type="button" role="menuitem" onClick={() => choose(onBlock)} title={`Block @${username}`}
-            className="rounded-lg px-3 py-2 text-left text-sm text-red-600 hover:bg-zinc-100 dark:text-red-400 dark:hover:bg-zinc-700">
-            Block @{username}
-          </button>
-        </span>
-      ) : null}
-    </span>
   );
 }
 
@@ -618,9 +526,128 @@ function SpecSnippet({ html }: { html: string }) {
  * (`groupsWithPrevious`): no avatar and no header, the time in the gutter.
  * `gc-msg-self` stays on the viewer's own rows, which the reaction bar and a
  * thread's tint key off.
+ *
+ * ── The controls are the shared bar (#2387) ───────────────────────────
+ *
+ * ../message-actions/action-bar.tsx, the same bar a Messages conversation's
+ * rows carry: the three recent reactions, the picker, Reply, Save and ⋯. Its
+ * acts are the module's own — `sendReact`, `toggleBookmark`, `_startEdit`,
+ * `replyToMessage`, `deleteMessage`, `markUnread`, `openReplyThread` on
+ * `GroupChat` — called directly rather than through the container's
+ * delegated listener, whose classes (`.gc-msg-save`, `.gc-react-add`,
+ * `.gc-msg-edit`) this row no longer draws. A long press on a phone opens
+ * the same acts as a sheet; the module's own long-press stands down for a
+ * `.gc-msg` row (see `_attachQuoteHandlers`).
  */
-export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; grouped?: boolean }) {
+function MessageActions({ msg, surface, onReportMessage, onReportUser }: {
+  msg: TranscriptMessage;
+  /** Which transcript the row is in: a reply thread offers no thread of its own. */
+  surface: 'main' | 'thread';
+  onReportMessage: () => void;
+  onReportUser: () => void;
+}) {
+  const [picker, setPicker] = useState<'above' | 'below' | null>(null);
+  const [menu, setMenu] = useState<'above' | 'below' | null>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const pickerButton = useRef<HTMLButtonElement>(null);
+  const recents = useRecentReactions();
+  useDismiss(!!(picker || menu), [bar], () => { setPicker(null); setMenu(null); });
+  const chat = controller();
+  const items = messageMenuItems(msg, surface, onReportMessage, onReportUser);
+  const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
+  const pick = (emoji: string) => {
+    rememberReaction(emoji);
+    setPicker(null);
+    if (!reacted(emoji) && msg.id) chat?.sendReact?.(msg.id, emoji);
+  };
+  return (
+    <span ref={bar} className="gc-msg-bar-host">
+      <MessageActionBar
+        className="gc-msg-actions"
+        moreClassName="gc-msg-more-action"
+        recents={recents}
+        reacted={reacted}
+        onReact={msg.showReact && msg.id ? (emoji) => chat?.sendReact?.(msg.id, emoji) : undefined}
+        pickerOpen={!!picker}
+        pickerButtonRef={pickerButton}
+        onTogglePicker={msg.showReact ? () => { setMenu(null); setPicker((open) => (open ? null : placementFor(pickerButton.current, 430))); } : undefined}
+        onReply={!chat?._readOnly?.() && msg.id ? () => chat?.replyToMessage?.(msg.id, surface) : undefined}
+        saved={msg.bookmarked}
+        onToggleSave={msg.showBookmark && msg.id ? () => chat?.toggleBookmark?.(msg.id) : undefined}
+        moreOpen={!!menu}
+        moreButtonRef={moreButton}
+        onToggleMore={items.length ? () => { setPicker(null); setMenu((open) => (open ? null : placementFor(moreButton.current, items.length * 38 + 24))); } : undefined}
+      >
+        {picker ? <EmojiPicker placement={picker} onPick={pick} onClose={() => setPicker(null)} /> : null}
+        {menu ? <MessageMenu items={items} placement={menu} onClose={() => { setMenu(null); moreButton.current?.focus({ preventScroll: true }); }} /> : null}
+      </MessageActionBar>
+    </span>
+  );
+}
+
+/**
+ * The ⋯ menu of an app chat row — the same acts, in the same order, as a
+ * Messages conversation's (#2387). What differs is only where each one goes:
+ * the module, over the app's own socket and routes.
+ */
+export function messageMenuItems(
+  msg: TranscriptMessage,
+  surface: 'main' | 'thread',
+  onReportMessage: () => void,
+  onReportUser: () => void,
+): MenuItem[] {
+  const chat = controller();
+  const id = msg.id;
+  if (!id) return [];
+  const items: MenuItem[] = [];
+  if (surface === 'main' && msg.canThread) {
+    items.push({ key: 'thread', label: msg.thread ? 'View thread' : 'Reply in thread', icon: ThreadIcon, onSelect: () => chat?.openReplyThread?.(id) });
+  }
+  if (msg.showEdit) items.push({ key: 'edit', label: 'Edit message', icon: PencilSquareIcon, onSelect: () => chat?._startEdit?.(id) });
+  if (msg.text) items.push({ key: 'copy', label: 'Copy text', icon: CopyIcon, onSelect: () => { void copyToClipboard(msg.text || '', 'Message text copied'); } });
+  const link = chat?.messageAddress?.(id);
+  if (link) items.push({ key: 'link', label: 'Copy link to message', icon: LinkIcon, onSelect: () => { void copyToClipboard(absoluteLink(link), 'Link copied'); } });
+  if (!msg.mine && surface === 'main') {
+    items.push({
+      key: 'unread', label: 'Mark unread', icon: EnvelopeIcon,
+      onSelect: () => { Promise.resolve(chat?.markUnread?.(id)).then(() => toast('Marked unread')).catch(() => toast('Couldn’t mark this unread.')); },
+    });
+  }
+  if (msg.mine && msg.kind === 'message') {
+    items.push({
+      key: 'delete', label: 'Delete message', icon: DraftTrashIcon, danger: true, separated: true,
+      onSelect: () => {
+        if (!window.confirm('Delete this message? Everyone will see “Message deleted” in its place. This can’t be undone.')) return;
+        Promise.resolve(chat?.deleteMessage?.(id)).catch(() => toast('Couldn’t delete this message.'));
+      },
+    });
+  } else if (!msg.mine && msg.senderId && msg.kind === 'message') {
+    items.push({ key: 'report', label: 'Report message', icon: FlagIcon, separated: true, onSelect: onReportMessage });
+    items.push({ key: 'report-user', label: `Report @${msg.username}`, icon: UserIcon, onSelect: onReportUser });
+    items.push({
+      key: 'block', label: `Block @${msg.username}`, icon: NoSymbolIcon, danger: true,
+      onSelect: () => {
+        if (!msg.senderId || !window.confirm(`Block @${msg.username}? Their messages in Messages and app discussions will be hidden.`)) return;
+        setUserBlocked(msg.senderId, true).catch((error) => window.alert(error instanceof Error ? error.message : 'Couldn’t block this person.'));
+      },
+    });
+  }
+  return items;
+}
+
+export function MessageRow({ msg, grouped = false, surface = 'main' }: {
+  msg: TranscriptMessage;
+  grouped?: boolean;
+  /** #2387: `thread` inside a reply thread, where the row offers no thread of its own. */
+  surface?: 'main' | 'thread';
+}) {
   const [reporting, setReporting] = useState<'message' | 'user' | null>(null);
+  const [sheet, setSheet] = useState(false);
+  const recents = useRecentReactions();
+  const chat = controller();
+  const live = !msg.deleted && !!msg.id;
+  const longPress = useLongPress(() => setSheet(true), { disabled: !live });
   const report = async (reason: string, detail: string) => {
     if (reporting === 'user') {
       await submitReport(`/api/users/${encodeURIComponent(msg.username)}/report`, reason, detail);
@@ -630,9 +657,16 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
     if (!slug || !msg.id) throw new Error('This message is unavailable for reporting.');
     await submitReport(`/api/apps/${encodeURIComponent(slug)}/messages/${msg.id}/report`, reason, detail);
   };
+  const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
+  const items = live ? messageMenuItems(msg, surface, () => setReporting('message'), () => setReporting('user')) : [];
+  const sheetItems: MenuItem[] = live ? [
+    ...(!chat?._readOnly?.() ? [{ key: 'reply', label: 'Reply', icon: ReplyArrowIcon, onSelect: () => chat?.replyToMessage?.(msg.id, surface) }] : []),
+    ...(msg.showBookmark ? [{ key: 'save', label: msg.bookmarked ? 'Unsave' : 'Save', icon: msg.bookmarked ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => chat?.toggleBookmark?.(msg.id) }] : []),
+    ...items,
+  ] : [];
   return (
     <ChatMessageRow
-      className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
+      className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}${msg.deleted ? ' gc-msg-deleted' : ''}`}
       grouped={grouped}
       gutter={grouped ? <span className="gc-msg-gutter-time" title={msg.timeTitle}>{timeOfDay(msg.at) || msg.time}</span> : undefined}
       data-msg-id={msg.id ?? ''}
@@ -640,6 +674,7 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
       // #2236: only when set, so an ordinary row's attribute set is exactly
       // what it was.
       {...(msg.postedVia ? { 'data-posted-via': msg.postedVia } : {})}
+      {...longPress}
       avatar={(
         <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
           {msg.username.charAt(0).toUpperCase()}
@@ -655,23 +690,50 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
       timestamp={(
         <>
           <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
-          {msg.editedTitle ? (
+          {msg.editedTitle && !msg.deleted ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
           ) : null}
         </>
       )}
-      actions={<RowActions msg={msg} onReportMessage={msg.id ? () => setReporting('message') : undefined}
-        onReportUser={() => setReporting('user')} />}
+      actions={live ? <MessageActions msg={msg} surface={surface} onReportMessage={() => setReporting('message')}
+        onReportUser={() => setReporting('user')} /> : undefined}
     >
-      {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
-      <Body html={msg.bodyHtml} />
-      <Attachments items={msg.attachments} />
-      {grouped && msg.editedTitle ? (
-        <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
+      {msg.deleted ? <p className="gc-msg-deleted-text">Message deleted</p> : (
+        <>
+          {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
+          <Body html={msg.bodyHtml} />
+          <Attachments items={msg.attachments} />
+          {grouped && msg.editedTitle ? (
+            <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
+          ) : null}
+          <Reactions msg={msg} />
+        </>
+      )}
+      {msg.thread && surface === 'main' && msg.id ? (
+        <ThreadSummaryChip
+          replyCount={msg.thread.replyCount}
+          lastReplyAt={msg.thread.lastReplyAt}
+          active={!!chat?.isReplyThreadOpen?.(msg.id)}
+          avatars={msg.thread.participants.slice(0, 3).map((name) => (
+            <Avatar key={name} shape="square" size="sm" color={swatchFor(name)} aria-hidden="true">{name.charAt(0).toUpperCase()}</Avatar>
+          ))}
+          onOpen={() => chat?.openReplyThread?.(msg.id)}
+        />
       ) : null}
-      <Reactions msg={msg} />
       {reporting ? <ReportForm key={reporting} kind={reporting} onSubmit={report}
         onCancel={() => setReporting(null)} /> : null}
+      {live ? (
+        <MessageActionSheet
+          open={sheet}
+          onClose={() => setSheet(false)}
+          recents={recents}
+          reacted={reacted}
+          onReact={msg.showReact ? (emoji) => chat?.sendReact?.(msg.id, emoji) : undefined}
+          onPick={msg.showReact ? (emoji) => { rememberReaction(emoji); if (!reacted(emoji)) chat?.sendReact?.(msg.id, emoji); } : undefined}
+          items={sheetItems}
+          preview={{ who: msg.username, text: msg.text || '' }}
+        />
+      ) : null}
     </ChatMessageRow>
   );
 }
@@ -722,6 +784,10 @@ export function Transcript({ source = 'main', foldCards = false }: { source?: st
  */
 function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, chat = false, previous: TranscriptMessage | null = null) {
   const key = msg.id != null ? `m${msg.id}` : fallbackKey;
+  // #2387: the message a reply thread hangs off, drawn at the thread's head —
+  // a row of its own (never grouped with the first reply), with its thread
+  // chip left off since the thread is what is open.
+  if (msg.threadRoot) return <MessageRow key={key} msg={{ ...msg, thread: null }} surface="thread" />;
   if (msg.kind === 'spec_share') return <SpecShareRow key={key} msg={msg} />;
   // `chat` is a change page's own Discussion, drawn in the general chat's
   // language: every notice as a message (its rows arrive with an event from
@@ -729,12 +795,13 @@ function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, ch
   // every surface, grouped under the previous one when it continues it.
   if (msg.kind === 'message') {
     const grouped = !!previous && previous.kind === 'message' && !previous.event && !msg.event
+      && !previous.threadRoot && !msg.deleted && !previous.deleted
       && !!msg.at && !!previous.at
       && groupsWithPrevious(
         { author: previous.username, at: previous.at },
         { author: msg.username, at: msg.at, reply: !!msg.quote },
       );
-    return <MessageRow key={key} msg={msg} grouped={grouped} />;
+    return <MessageRow key={key} msg={msg} grouped={grouped} surface={main ? 'main' : 'thread'} />;
   }
   if ((main || chat) && msg.event) return <EventRow key={key} msg={msg} />;
   return <SystemRow key={key} msg={msg} />;
@@ -827,6 +894,16 @@ export function TranscriptRows({ view, source, foldCards = false }: {
   const drawn: ReactNode[] = [];
   for (let i = 0; i < rows.length; i += 1) {
     drawn.push(renderRow(rows[i], `i${i}`, main, chat, i > 0 ? rows[i - 1] : null));
+    // #2387: under a reply thread's first message, how many replies follow —
+    // the line Slack draws between a thread's head and its replies.
+    if (rows[i].threadRoot) {
+      const replies = rows.length - i - 1;
+      drawn.push(
+        <div key="reply-count" className="gc-reply-count">
+          <span>{replies ? `${replies} ${replies === 1 ? 'reply' : 'replies'}` : 'No replies yet'}</span>
+        </div>,
+      );
+    }
     const length = runs.get(i);
     if (!length) continue;
     const key = rows[i].id != null ? `m${rows[i].id}` : `i${i}`;

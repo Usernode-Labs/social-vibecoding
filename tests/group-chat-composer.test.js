@@ -142,8 +142,10 @@ test('the module publishes the staged reply to both scopes, and no longer paints
   const fn = code.match(/_renderQuotePreview\(\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(fn, '_renderQuotePreview() found');
   assert.doesNotMatch(fn[1], /innerHTML|classList|getElementById/);
-  assert.match(fn[1], /_publishComposer\('general', \{ quote: view \}\)/);
-  assert.match(fn[1], /_publishComposer\('thread', \{ quote: view \}\)/);
+  // #2387: to the scope the quote was staged in — both composers can be on
+  // screen at once now — and to both only when no scope is known.
+  assert.match(fn[1], /_publishComposer\('general', \{ quote: !scope \|\| scope === 'general' \? view : null \}\)/);
+  assert.match(fn[1], /_publishComposer\('thread', \{ quote: !scope \|\| scope === 'thread' \? view : null \}\)/);
   // The label the sources produce: a PR number, an @author, or what an
   // authorless row is (#2391).
   assert.match(fn[1], /`PR #\$\{q\.prNumber \|\| ''\}`\.trim\(\)/);

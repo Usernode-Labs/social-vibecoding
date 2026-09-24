@@ -583,6 +583,9 @@ const Notifications = {
     let cleared = 0;
     for (const n of Notifications.items) {
       if (!n || n.readAt || Number(n.conversationId) !== id) continue;
+      // #2387: an alert about a message inside a reply thread waits for that
+      // thread to be read, as it does server-side.
+      if (n.conversationThreadRootId) continue;
       n.readAt = now;
       cleared += 1;
     }
@@ -593,6 +596,27 @@ const Notifications = {
     Notifications._renderBadge();
     Notifications._renderList();
   },
+
+  // #2387: one reply thread of a conversation was read — its alerts (a reply
+  // in it, a mention in it) clear, and nothing else of the conversation's.
+  markConversationThreadRead(conversationId, rootId) {
+    const id = Number(conversationId);
+    const root = Number(rootId);
+    if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(root) || root <= 0) return;
+    const now = new Date().toISOString();
+    let cleared = 0;
+    for (const n of Notifications.items) {
+      if (!n || n.readAt || Number(n.conversationId) !== id) continue;
+      if (Number(n.conversationThreadRootId) !== root) continue;
+      n.readAt = now;
+      cleared += 1;
+    }
+    if (!cleared) return;
+    Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications._renderBadge();
+    Notifications._renderList();
+  },
+
 
   // #2847: the viewer opened a proposal card, or touched something on it, so
   // its "New proposal" nudge is answered — clear it the way a vote already
@@ -630,6 +654,9 @@ const Notifications = {
   async _onRowAction(id, key) {
     const item = Notifications.items.find((n) => n.id === id);
     if (!item) return false;
+    if ((key === 'friend_accept' || key === 'friend_decline') && item.kind === 'friend_request') {
+      return Notifications._answerFriendRequest(item, key === 'friend_accept');
+    }
     const sessionId = Number(item.sessionId);
     if (key === 'still_yes' && Number.isFinite(sessionId) && sessionId > 0
         && window.AppView && typeof AppView.castVote === 'function') {
@@ -639,6 +666,55 @@ const Notifications = {
       return true;
     }
     return Notifications._onItemClick(id);
+  },
+
+  // #2386: Accept / Decline right on a friend request row. The server marks
+  // the row read and answers the relationship; the row stops offering the
+  // buttons (`friendRequestPending`), and the page's friend caches hear about
+  // it through the same DOM event the profile button raises
+  // (features/friends/api.ts FRIENDS_CHANGED_EVENT) — an event, not an
+  // import, because this module stays import-free. A decline tells the sender
+  // nothing; the toast is only ever the viewer's own confirmation.
+  async _answerFriendRequest(item, accept) {
+    const userId = Number(item.sourceUserId);
+    if (!Number.isSafeInteger(userId) || userId <= 0) return false;
+    const toast = (message) => {
+      if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) PlatformUI.toast(message);
+    };
+    try {
+      const init = {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: '{}',
+      };
+      const res = accept
+        ? await fetch(`/api/friends/${userId}/accept`, init)
+        : await fetch(`/api/friends/${userId}/decline`, init);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error && res.status === 429 ? data.error : 'Couldn’t answer this friend request. Try again.');
+        return false;
+      }
+      item.friendRequestPending = false;
+      if (!item.readAt) {
+        item.readAt = new Date().toISOString();
+        if (Notifications.unread > 0) Notifications.unread -= 1;
+        Notifications._renderBadge();
+      }
+      Notifications._renderList();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('usernode:friends-changed'));
+      }
+      const who = item.sourceUsername ? `@${item.sourceUsername}` : 'them';
+      if (accept) toast(data.state === 'friends' ? `You and ${who} are friends` : 'This request was withdrawn');
+      else toast('Request declined');
+      return true;
+    } catch (err) {
+      console.warn('[notifications] friend answer failed', err);
+      toast('Couldn’t answer this friend request. Try again.');
+      return false;
+    }
   },
 
   _onItemClick(id) {
@@ -667,8 +743,22 @@ const Notifications = {
           && conversationId <= 2147483647) {
         Notifications._dismissSheetForNav();
         const messages = window.UsernodeReact?.messages;
-        if (messages?.open) messages.open(conversationId);
-        else window.location.hash = `#messages/${conversationId}`;
+        // #2387: a row about a message or a thread opens that ADDRESS. The
+        // bridge's openAddress re-runs the router when it is the address
+        // already in the bar; open(id) would move to the bare conversation
+        // and close the thread the row is about.
+        const href = conversationNotificationHref(item);
+        if (messages?.openAddress) messages.openAddress(href);
+        else window.location.hash = href;
+      }
+      return;
+    }
+    // #2386: a friend request or acceptance is about a PERSON, so it opens
+    // their page — where the relationship's own button lives.
+    if (FRIEND_NOTIF_KINDS.has(item.kind)) {
+      if (item.sourceUsername) {
+        Notifications._dismissSheetForNav();
+        window.location.hash = `#profile/${encodeURIComponent(item.sourceUsername)}`;
       }
       return;
     }
@@ -795,7 +885,23 @@ const Notifications = {
       // a same-value hash assignment fires no `hashchange`, so clicking a
       // notification for the app/tab already on screen wouldn't re-render.
       // openAppTab always renders (and keeps the URL in sync internally).
-      const chatKinds = new Set(['mention', 'reply', 'reaction']);
+      const chatKinds = new Set(['mention', 'reply', 'reaction', 'thread_reply']);
+      // #2387: a message in a REPLY thread (thread_type 'message', its ref
+      // the thread's first message) opens that thread beside the channel,
+      // at the address the server worked out for the row.
+      if (chatKinds.has(item.kind) && item.threadType === 'message' && item.threadRef != null) {
+        const root = parseInt(item.threadRef, 10);
+        const href = typeof item.href === 'string' && item.href.startsWith('#messages/app/')
+          ? item.href
+          : (Number.isInteger(root) && root > 0
+            ? `#messages/app/${encodeURIComponent(item.appSlug)}/thread/${root}` : null);
+        if (href) {
+          const messages = window.UsernodeReact?.messages;
+          if (messages?.openAddress) messages.openAddress(href);
+          else window.location.hash = href;
+          return;
+        }
+      }
       if (chatKinds.has(item.kind) && item.threadType && item.threadRef != null) {
         const kindMap = { issue: 'issue', session: 'proposal', governance: 'gov' };
         const topicKind = kindMap[item.threadType];
@@ -1368,7 +1474,33 @@ const CONVERSATION_NOTIF_KINDS = new Set([
   'conversation_mention',
   'conversation_reply',
   'conversation_reaction',
+  // #2387: a reply in a thread the viewer started or replied in.
+  'conversation_thread_reply',
 ]);
+
+// #2387: where a conversation row opens. A thread alert opens its thread; a
+// row about one message (mention, quote-reply, reaction) opens that message's
+// permalink, which lands inside its thread when it lives in one; an invite or
+// a plain new-message row opens the conversation itself.
+function conversationNotificationHref(n) {
+  const valid = (v) => Number.isSafeInteger(v) && v > 0 && v <= 2147483647;
+  const conversationId = Number(n && n.conversationId);
+  if (!valid(conversationId)) return null;
+  const messageId = Number(n.conversationMessageId);
+  const rootId = Number(n.conversationThreadRootId);
+  if (n.kind === 'conversation_thread_reply' && valid(rootId)) {
+    return `#messages/${conversationId}/thread/${rootId}`;
+  }
+  if (['conversation_mention', 'conversation_reply', 'conversation_reaction'].includes(n.kind)
+      && valid(messageId)) {
+    return `#messages/${conversationId}/m/${messageId}`;
+  }
+  return `#messages/${conversationId}`;
+}
+
+// #2386: the two friend kinds (src/services/notifications.js
+// FRIEND_NOTIFICATION_KINDS). No app and no conversation — a person.
+const FRIEND_NOTIF_KINDS = new Set(['friend_request', 'friend_accept']);
 
 // #161 defined these as the kinds that "demand attention": a finished dev
 // session or headless run, while still unread.
@@ -1712,6 +1844,7 @@ function rowView(n) {
       conversation_message: headline(conversation, snippet),
       conversation_mention: headline('Mentioned you', conversation),
       conversation_reply: headline('Replied', conversation),
+      conversation_thread_reply: headline('Replied in thread', conversation),
       conversation_reaction: headline('Reacted', conversation),
     }[n.kind];
     const icons = {
@@ -1719,6 +1852,7 @@ function rowView(n) {
       conversation_message: '💬',
       conversation_mention: '@',
       conversation_reply: '↩️',
+      conversation_thread_reply: '🧵',
       conversation_reaction: n.detail || '❤️',
     };
     return {
@@ -1744,6 +1878,29 @@ function rowView(n) {
       // a rendering fault rather than as attribution.
       appLine: 'Messages',
       ...copy,
+    };
+  }
+
+  // #2386: the person is the SUBJECT of both friend rows, so their name is
+  // the headline and `by` stays null (as on the key rows). A request still
+  // waiting on you carries Accept and Decline beside the row; once answered —
+  // here, on your profile, or withdrawn by its sender — it is a plain row that
+  // opens their page.
+  if (FRIEND_NOTIF_KINDS.has(n.kind)) {
+    const request = n.kind === 'friend_request';
+    return {
+      ...base,
+      appLine: 'Friends',
+      wrap: true,
+      icon: request ? '👋' : '🤝',
+      label: request ? 'Friend request' : 'Accepted your friend request',
+      segments: [{ t: 'who', v: who }],
+      ...(request && n.friendRequestPending ? {
+        actions: [
+          { key: 'friend_accept', label: 'Accept', primary: true },
+          { key: 'friend_decline', label: 'Decline' },
+        ],
+      } : {}),
     };
   }
 
@@ -2133,7 +2290,9 @@ function rowView(n) {
     by: n.sourceUsername || null,
     ...headline(
       n.kind === 'mention' ? 'Mentioned you'
-        : (n.kind === 'reply' ? 'Replied to you' : 'Posted'),
+        : n.kind === 'reply' ? 'Replied to you'
+          // #2387: somebody answered in a reply thread you started or joined.
+          : n.kind === 'thread_reply' ? 'Replied in thread' : 'Posted',
       (n.messageContent || '').slice(0, 140),
     ),
   };

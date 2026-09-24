@@ -57,6 +57,7 @@ function load({ controller = true, groupChat = true } = {}) {
       messages: {
         openDiscussion: (slug) => calls.push(['discussion', slug]),
         open: (id) => calls.push(['conversation', id]),
+        openAddress: (href) => calls.push(['address', href]),
       },
     };
   }
@@ -92,6 +93,25 @@ for (const kind of ['mention', 'reply', 'reaction']) {
     assert.equal(calls[0][0], 'dismiss', 'and the sheet is out of the way first (#1329)');
   });
 }
+
+// #2387: a message in a REPLY thread opens that thread beside the channel —
+// at the address the server put on the row, or the one its ref spells when an
+// older server sent none.
+test('a thread reply opens its reply thread in Messages', () => {
+  const { N, calls } = load();
+  N.items = [row({ kind: 'thread_reply', chatMessageId: 88, threadType: 'message', threadRef: '70',
+    href: '#messages/app/garden-ab12/thread/70' })];
+  N._onItemClick(1);
+  assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/thread/70']]);
+  assert.equal(N._rowView({ ...N.items[0], createdAt: new Date().toISOString() }).label, 'Replied in thread');
+});
+
+test('a mention inside a reply thread opens the thread too, even without an href', () => {
+  const { N, calls } = load();
+  N.items = [row({ kind: 'mention', chatMessageId: 88, threadType: 'message', threadRef: '70' })];
+  N._onItemClick(1);
+  assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/thread/70']]);
+});
 
 test('a mention inside a topic thread still opens that topic, where the message is', () => {
   const { N, calls } = load();

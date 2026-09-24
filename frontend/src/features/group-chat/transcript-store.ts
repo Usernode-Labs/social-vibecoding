@@ -196,6 +196,13 @@ export interface Attachment {
   badge: string | null;
 }
 
+/** #2387: a reply thread's summary, as the chip under its first message draws it. */
+export interface ThreadSummaryView {
+  replyCount: number;
+  lastReplyAt: string | null;
+  participants: string[];
+}
+
 export interface TranscriptMessage {
   id: number | null;
   kind: MessageKind;
@@ -282,6 +289,20 @@ export interface TranscriptMessage {
    * compares by identity and `event` is an object.
    */
   eventHref?: string | null;
+  /**
+   * #2387: the message's own words, unrendered — what "Copy text" copies.
+   * `bodyHtml` is the markdown pipeline's output, which is not what someone
+   * pasting it elsewhere wants.
+   */
+  text?: string;
+  /** #2387: deleted by its author — drawn as a placeholder with no controls. */
+  deleted?: boolean;
+  /** #2387: the reply thread under this message, or null when it has none. */
+  thread?: ThreadSummaryView | null;
+  /** #2387: whether a reply thread can hang off this row (the general chat's people and specs). */
+  canThread?: boolean;
+  /** #2387: this row is the message a reply thread hangs off, drawn at the thread's head. */
+  threadRoot?: boolean;
 }
 
 /**

@@ -703,3 +703,74 @@ export const StakingIcon = stroked('StakingIcon', [
   'M4 5a8 3 0 1 0 16 0 8 3 0 1 0-16 0',
   'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6',
 ]);
+
+/*
+ * ── The message actions (#2387) ────────────────────────────────────────
+ *
+ * The hover bar every chat row carries — add a reaction, reply, save, more —
+ * and the ⋯ menu behind it. Heroicons v2 outline on the same 24 grid as the
+ * set above, drawn by `stroked`, so the menu's glyphs share one stroke rhythm
+ * with the bookmark beside them.
+ */
+
+/** Add a reaction: a smile, the picker's door. */
+export const FaceSmileIcon = stroked('FaceSmileIcon', [
+  'M15.182 15.182a4.5 4.5 0 0 1-6.364 0',
+  'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
+  'M9 9.75h.01M15 9.75h.01',
+]);
+
+/** Reply — the curved arrow back, Discord's glyph for quoting a message. */
+export const ReplyArrowIcon = stroked('ReplyArrowIcon', [
+  'M9 17l-5-5 5-5',
+  'M20 18v-2a4 4 0 0 0-4-4H4',
+]);
+
+/** A thread: two overlapping bubbles, the conversation under a message. */
+export const ThreadIcon = stroked(
+  'ThreadIcon',
+  'M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155',
+);
+
+/** Copy text: two stacked sheets. */
+export const CopyIcon = stroked('CopyIcon', [
+  'M9 9h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2V9Z',
+  'M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4',
+]);
+
+/** Copy a link to the message. */
+export const LinkIcon = stroked(
+  'LinkIcon',
+  'M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244',
+);
+
+/** Mark unread: the closed envelope a mail client uses for it. */
+export const EnvelopeIcon = stroked(
+  'EnvelopeIcon',
+  'M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75',
+);
+
+/** Report: a flag. */
+export const FlagIcon = stroked(
+  'FlagIcon',
+  'M3 3v1.5M3 21v-6m0 0 2.77-.693a9 9 0 0 1 6.208.682l.108.054a9 9 0 0 0 6.086.71l3.114-.732a48.524 48.524 0 0 1-.005-10.499l-3.11.732a9 9 0 0 1-6.085-.711l-.108-.054a9 9 0 0 0-6.208-.682L3 4.5M3 15V4.5',
+);
+
+/** Block: the struck circle. */
+export const NoSymbolIcon = stroked(
+  'NoSymbolIcon',
+  'M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636',
+);
+
+/** Hearts, a category of the emoji picker. */
+export const HeartIcon = stroked(
+  'HeartIcon',
+  'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z',
+);
+
+/** Food & drink, a category of the emoji picker: a cup with steam. */
+export const CupIcon = stroked('CupIcon', [
+  'M17 8h1a4 4 0 1 1 0 8h-1',
+  'M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8Z',
+  'M7 2v2M11 2v2M15 2v2',
+]);

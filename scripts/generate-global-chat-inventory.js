@@ -175,7 +175,7 @@ const DOMAIN_RULES = [
   [/^\/api\/v4\/mobile(?:\/|$)/, 'native'],
   [/^\/challenges-api(?:\/|$)/, 'leaderboards'],
   [/^\/api\/(?:me\/)?global-chat/, 'settings'],
-  [/^\/api\/(?:auth|me\/(?:profile|public-profile|avatar|password|email|locale|social-identities|blocks|summary)|profiles|users)/, 'profile'],
+  [/^\/api\/(?:auth|me\/(?:profile|public-profile|avatar|password|email|locale|social-identities|blocks|summary)|profiles|users|friends)/, 'profile'],
   [/^\/api\/(?:notifications|me\/(?:notification|mobile-push)|apps\/[^/]+\/notification)/, 'notifications'],
   [/^\/api\/(?:conversations|apps\/[^/]+\/messages)/, 'messages'],
   [/^\/api\/(?:sessions|me\/active-sessions|apps\/[^/]+\/(?:sessions|promoted|merged|shared-sessions|dev-flow)|budget)/, 'development'],

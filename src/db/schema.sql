@@ -1715,6 +1715,34 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_thread
   ON chat_messages (app_id, thread_type, thread_ref, id)
   WHERE thread_type IS NOT NULL;
 
+-- #2387 (messages overhaul), app channels.
+--
+-- Soft delete: the author takes back one of their own messages. The row
+-- stays so the transcript keeps its shape (a placeholder where the message
+-- was, and a reply thread under it keeps its root), but its content is
+-- cleared on the row itself and its attachments, reactions, bookmarks and
+-- notifications are removed in the same transaction
+-- (services/app-chat.js deleteOwnMessage). NULL = live, every existing row.
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+-- Reply threads reuse the #194 thread scoping: thread_type 'message' with
+-- thread_ref = the root chat_messages.id, a general-stream row of the same
+-- app. idx_chat_messages_thread above already serves "one thread's
+-- replies" and "the replies under this page of roots".
+--
+-- The general stream had no index of its own: history pages, the Messages
+-- list's latest-message preview and the per-viewer unread count all read
+-- "this app's general stream above/below an id", which is exactly this.
+CREATE INDEX IF NOT EXISTS idx_chat_messages_general
+  ON chat_messages (app_id, id)
+  WHERE thread_type IS NULL;
+
+-- "Apps this person has posted in" — one of the activity sources that puts
+-- a non-member app in the Messages list's "more" section (#2967).
+CREATE INDEX IF NOT EXISTS idx_chat_messages_author
+  ON chat_messages (user_id, app_id)
+  WHERE user_id IS NOT NULL;
+
 -- #25: emoji reactions on group-chat messages (WhatsApp-style, but
 -- Slack-model: a user may add multiple distinct emoji to one message,
 -- hence UNIQUE(message_id, user_id, emoji) rather than per-user). Toggled
@@ -1728,6 +1756,10 @@ CREATE TABLE IF NOT EXISTS message_reactions (
   UNIQUE(message_id, user_id, emoji)
 );
 CREATE INDEX IF NOT EXISTS message_reactions_message_idx ON message_reactions(message_id);
+-- #2967: "apps this person has reacted in", the other chat activity source
+-- for the Messages list's "more" section. The UNIQUE index leads with
+-- message_id, so it cannot answer a per-user read.
+CREATE INDEX IF NOT EXISTS message_reactions_user_idx ON message_reactions(user_id);
 
 -- #1280: personal bookmarks on group-chat messages. A user saves any
 -- message they can read (the bookmark button in the message header,
@@ -1753,6 +1785,35 @@ CREATE TABLE IF NOT EXISTS message_bookmarks (
 -- exactly this index; the message-side lookup rides the UNIQUE index.
 CREATE INDEX IF NOT EXISTS message_bookmarks_user_idx
   ON message_bookmarks (user_id, created_at DESC);
+
+-- #2387: one person's read position in one app's general stream. A
+-- watermark, not a per-message receipt: every general-stream message with
+-- an id above `last_read_message_id`, from somebody else, not deleted and
+-- not from someone the reader blocked, is unread (services/app-chat.js).
+--
+--   POST /api/apps/:slug/messages/read    moves it FORWARD only;
+--   POST /api/apps/:slug/messages/unread  moves it BACK, to just before
+--                                         the message named;
+--   posting in the general stream moves the poster's forward to their own
+--   message, the way sending in Slack marks the channel read.
+--
+-- A missing row is created lazily at the app's newest general-stream id the
+-- first time the Messages list reads it, so the feature starts at zero
+-- unread for everybody instead of at "everything ever said". No FK to the
+-- message: a cursor is a position, and ids are monotonic.
+--
+-- staging:private (below): where each person has read up to is personal
+-- reading history, the same reason `notifications` and `message_bookmarks`
+-- are. Private-to-public FKs (apps, users) are the permitted direction.
+CREATE TABLE IF NOT EXISTS app_chat_reads (
+  app_id               INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id              INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_read_message_id INTEGER NOT NULL DEFAULT 0,
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_chat_reads_user ON app_chat_reads (user_id);
+COMMENT ON TABLE app_chat_reads IS 'staging:private';
 
 -- Issues (mirrored to GitHub Issues). `kind` discriminates general issues from
 -- structured proposals like 'rename' (see src/routes/issues.js). `payload`
@@ -2249,6 +2310,9 @@ END $$;
 -- spec | code | spec_code | question | failed) and 'spec_shared' (#86 —
 -- someone privately shared a spec version with you; session_id points
 -- to the dev session, `detail` holds the version number as a string).
+-- #2387 adds 'thread_reply': somebody replied in an app-chat reply thread
+-- you started or replied in; chat_message_id is the new reply, whose
+-- thread_ref is the thread's root message.
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -4838,6 +4902,13 @@ END $$;
 INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('mention', 'direct_interactions', TRUE),
   ('reply', 'direct_interactions', TRUE),
+  -- #2387: a reply in an app-chat reply thread you started or joined. A
+  -- direct interaction like a reply to your message, so the same category.
+  ('thread_reply', 'direct_interactions', TRUE),
+  -- #2386: a friend request and its acceptance are one person reaching you
+  -- directly, which is what this category already promises.
+  ('friend_request', 'direct_interactions', TRUE),
+  ('friend_accept', 'direct_interactions', TRUE),
   ('collab_invite', 'invitations', TRUE),
   ('collab_invite_accepted', 'invitations', TRUE),
   ('approver_invite', 'invitations', TRUE),
@@ -4873,13 +4944,15 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('conversation_message', 'messages', TRUE),
   ('conversation_mention', 'messages', TRUE),
   ('conversation_reply', 'messages', TRUE),
-  ('conversation_reaction', 'messages', TRUE)
+  ('conversation_reaction', 'messages', TRUE),
+  -- #2387: a reply in a conversation thread you started or replied in.
+  ('conversation_thread_reply', 'messages', TRUE)
 ON CONFLICT (kind) DO UPDATE
   SET category = EXCLUDED.category,
       default_enabled = EXCLUDED.default_enabled;
 DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
-   'mention', 'reply', 'collab_invite', 'collab_invite_accepted',
+   'mention', 'reply', 'thread_reply', 'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
    'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',
@@ -4895,7 +4968,11 @@ DELETE FROM mobile_push_kind_categories
    -- #1688's two.
    'revision_recheck', 'weekly_digest',
    'conversation_invite', 'conversation_message', 'conversation_mention',
-   'conversation_reply', 'conversation_reaction'
+   'conversation_reply', 'conversation_reaction',
+   -- #2386's two.
+   'friend_request', 'friend_accept',
+   -- #2387.
+   'conversation_thread_reply'
  );
 
 -- Sparse account overrides. The closed policy above supplies defaults, so
@@ -7230,6 +7307,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_messages_idempotency
   ON conversation_messages (conversation_id, sender_id, idempotency_key)
   WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL;
 
+-- ── Messages overhaul (#2387): soft delete and threads ─────────────────
+-- `deleted_at` marks an author's own soft delete. The row stays (so thread
+-- replies, quotes and read cursors that point at it keep resolving) and is
+-- served as a placeholder: services/conversations.js clears the content and
+-- removes its attachments, cards, reactions, saves and notifications in the
+-- same transaction that stamps this column.
+--
+-- `thread_root_id` files a reply under a main-stream message of the same
+-- conversation (group or channel; never direct, never nested — the service
+-- enforces both). NULL is the main stream, which is all that the transcript,
+-- unread counts and the list's latest message read. CASCADE rather than SET
+-- NULL: a thread is never re-parented into the main stream, and roots are
+-- only ever soft-deleted, so the cascade fires only with the conversation.
+-- Both columns inherit conversation_messages' table-level staging:private
+-- tag, and neither references users, so account deletion is unaffected.
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS thread_root_id INTEGER
+  REFERENCES conversation_messages(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_conversation_messages_thread
+  ON conversation_messages (thread_root_id, id) WHERE thread_root_id IS NOT NULL;
+-- ── end messages overhaul (#2387) ──────────────────────────────────────
+
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -7663,6 +7762,80 @@ BEGIN
       FOR EACH ROW EXECUTE FUNCTION prepare_conversations_for_user_delete();
   END IF;
 END $$;
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Mutual friends (#2386).
+-- ═══════════════════════════════════════════════════════════════════════
+--
+-- ONE ROW PER UNORDERED PAIR, normalised exactly like
+-- conversation_direct_pairs (user_low_id < user_high_id). A pair therefore
+-- can never hold two requests, or a request beside a friendship: the row IS
+-- the relationship, and `status` says which one it is.
+--
+--   pending  — `requester_id` asked; the other person sees an incoming request.
+--   declined — the other person said no. SILENTLY: the requester keeps seeing
+--              "Requested" (and may cancel it), the recipient sees nothing.
+--   accepted — friends, in both directions.
+--
+-- src/services/friends.js takes the same normalised pair advisory lock as a
+-- direct message and a block (`conversation-direct:<low>:<high>`) before it
+-- touches a row, so a request, an accept and a block on one pair serialise,
+-- and conversations.setBlock deletes the pair's row inside its own
+-- transaction. A friends list is readable only by its owner; nothing here is
+-- counted or published.
+--
+-- Account deletion: every reference CASCADEs. There is nothing to retain — a
+-- relationship with nobody on the other end of it is not history — and the
+-- friend notifications the deleted person sent go with the rest of their
+-- `source_user_id` rows in services/account-deletion.js.
+CREATE TABLE IF NOT EXISTS friendships (
+  user_low_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_high_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status       VARCHAR(16) NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending', 'declined', 'accepted')),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  responded_at TIMESTAMPTZ,
+  PRIMARY KEY (user_low_id, user_high_id),
+  CHECK (user_low_id < user_high_id),
+  CHECK (requester_id IN (user_low_id, user_high_id))
+);
+-- The primary key answers "the pair"; a person's own lists read the pair
+-- from either side, and the pending-outgoing cap counts one requester's
+-- open rows (a declined one still looks open to its sender, so it counts).
+CREATE INDEX IF NOT EXISTS idx_friendships_high
+  ON friendships (user_high_id, user_low_id);
+CREATE INDEX IF NOT EXISTS idx_friendships_requester_open
+  ON friendships (requester_id) WHERE status IN ('pending', 'declined');
+
+-- The rolling-day send cap (50 requests a day) needs a ledger that a cancel
+-- cannot erase, or cancel-and-resend would reset it. One row per request
+-- actually sent; the service prunes a requester's rows older than a day on
+-- each send, so the table stays at most a day deep per person.
+CREATE TABLE IF NOT EXISTS friend_request_sends (
+  id           BIGSERIAL PRIMARY KEY,
+  requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_friend_request_sends_requester
+  ON friend_request_sends (requester_id, created_at DESC);
+
+-- A decline's 30-day quiet period, kept apart from `friendships` because it
+-- must outlive the request row: a requester who cancels a declined request
+-- and sends it again gets an ordinary "Requested" back, but the recipient is
+-- neither notified nor shown it until the period is over. Keyed by direction
+-- — it protects the person who declined, from the person they declined.
+CREATE TABLE IF NOT EXISTS friend_request_declines (
+  recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  declined_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (recipient_id, requester_id),
+  CHECK (recipient_id <> requester_id)
+);
+
+COMMENT ON TABLE friendships IS 'staging:private';
+COMMENT ON TABLE friend_request_sends IS 'staging:private';
+COMMENT ON TABLE friend_request_declines IS 'staging:private';
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- Username changes — the retired-handle ledger.
