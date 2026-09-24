@@ -159,7 +159,7 @@ test('every part of the older Profile has a home', () => {
   // public-profile publishing → the Edit profile sheet
   const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
   assert.match(sheet, /id="public-profile-controls"/);
-  assert.match(sheet, /Profile\._setPublished\(!controls\.published\)/);
+  assert.match(sheet, /Profile\._setPublished\(!published\)/);
   assert.match(sheet, /Copy public link/);
   // Admin & moderation, node / wallet / staking → Settings; Log out already there
   const rows = read('frontend/src/features/settings/account-rows.tsx');
@@ -169,6 +169,65 @@ test('every part of the older Profile has a home', () => {
   assert.match(read('frontend/src/features/settings/index.tsx'), /id="settings-logout"/);
   // completions → counted on Me, listed on the Challenges tab
   assert.match(read(STORE), /summary\.challenges && summary\.challenges\.done/);
+});
+
+// #2787: "Publish profile" took five rows and a four-line footnote on a phone
+// and never said what publishing meant. It is one switch row now, with the
+// state spelled out underneath, and everything else behind a tap.
+function renderPublicGroup(owner, extra = {}) {
+  const real = loadTsx(STORE);
+  const ProfileStub = {
+    _user: () => ({ username: 'evan', links: {} }),
+    _setPublished: () => {}, togglePreview: () => {}, copyPublicLink: () => {},
+    _dismissSheet: () => {}, MAX_DISPLAY_NAME: 50, MAX_BIO: 280,
+  };
+  const mod = loadTsx('frontend/src/features/profile/profile-edit-sheet.tsx', {
+    stubs: { './profile.js': { Profile: ProfileStub } },
+  });
+  const controls = real.publicControlsView({ data: { ownerPublicProfile: owner } });
+  const html = renderToHtml(createElement(mod.ProfileEditSheet, {
+    avatarUrl: null, initial: 'E', publicControls: controls, ...extra,
+  }));
+  const start = html.indexOf('id="public-profile-controls"');
+  const end = html.indexOf('Verified social accounts');
+  assert.ok(start >= 0 && end > start, 'the Public page group renders before social accounts');
+  return html.slice(start, end);
+}
+
+test('Public page is one switch row that says what it means (#2787)', () => {
+  const off = renderPublicGroup({ published: false, profile: { username: 'evan' } });
+  assert.match(off, /<input[^>]*type="checkbox"[^>]*class="un-switch[^"]*"/, 'a switch, not a Publish button');
+  assert.match(off, /id="public-profile-publish"/);
+  assert.doesNotMatch(off, /<input[^>]*checked/, 'off while private');
+  assert.match(off, />Public profile</);
+  assert.match(off, /Off: your profile has no public link/);
+  assert.doesNotMatch(off, /Copy public link|Open public page/, 'no link actions for a page nobody can open');
+  assert.match(off, /What&#x27;s on it|What’s on it|What's on it/);
+  assert.doesNotMatch(off, /Homeroom-hosted photo/, 'the field list waits behind the disclosure');
+  assert.ok((off.match(/un-group-row/g) || []).length === 2, 'two rows while private');
+
+  const on = renderPublicGroup({ published: true, profile: { username: 'evan', url: '/profile/evan' } });
+  assert.match(on, /<input[^>]*checked/, 'on while published');
+  assert.match(on, /On: anyone with the link can view it, no account needed/);
+  assert.match(on, /href="\/profile\/evan"[^>]*>Open public page/);
+  assert.match(on, /Copy public link/);
+
+  const hidden = renderPublicGroup({ published: true, moderationDisabled: true, profile: { username: 'evan' } });
+  assert.match(hidden, /Hidden by moderation/);
+  assert.match(hidden, /public page stays unavailable/);
+});
+
+test('the disclosure holds the field list and the preview card (#2787)', () => {
+  const open = renderPublicGroup(
+    { published: false, profile: { username: 'evan', displayName: 'Evan' } },
+    { previewOpen: true },
+  );
+  assert.match(open, /aria-expanded="true"/);
+  assert.match(open, /Homeroom-hosted photo/);
+  assert.match(open, /id="public-profile-card"/);
+  const closed = renderPublicGroup({ published: false, profile: { username: 'evan' } });
+  assert.match(closed, /aria-expanded="false"/);
+  assert.doesNotMatch(closed, /id="public-profile-card"/);
 });
 
 test('the prerender draws nothing: the Me screen\'s data only ever arrives from effects', () => {

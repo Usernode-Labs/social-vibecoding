@@ -82,16 +82,18 @@
  * for them — its card carries one action, Edit — and they are about exactly
  * what this sheet edits: whether the name, photo and bio above are visible to
  * people who are not signed in. So they are a group of this sheet, with the
- * same four actions and the same status line. They act IMMEDIATELY, as they
- * always did (Publish is a PATCH of its own, not part of Save), and the
- * group's footnote says so.
+ * same status line. They act IMMEDIATELY, as they always did (the switch is a
+ * PATCH of its own, not part of Save). #2787 folded them into one switch row —
+ * see PublicPage below.
  */
 
 import { useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { ChevronDownIcon } from '@/components/ui/icons';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
@@ -169,11 +171,27 @@ function FieldError({ message }: { message?: string | null }): ReactNode {
 }
 
 /**
- * The public page's controls (#582), as a group of this sheet: where the page
- * stands, then Publish / Preview / Open / Copy link, then the status line the
- * writes report into. `controls` is ./profile-store.js's publicControlsView;
- * null while GET /api/me/public-profile has not answered, and then the group
- * is not drawn at all rather than drawn wrong.
+ * The public page's controls (#582), as a group of this sheet. `controls` is
+ * ./profile-store.js's publicControlsView; null while
+ * GET /api/me/public-profile has not answered, and then the group is not drawn
+ * at all rather than drawn wrong.
+ *
+ * ── Why one switch and not five rows (#2787) ──────────────────────────
+ *
+ * This used to be a Visibility row, then Publish / Preview / Open / Copy link
+ * as four tappable rows, then a four-line footnote listing every field the
+ * page does and does not include — the tallest group of the sheet on a phone,
+ * for a setting most people never change, and it never said what "publish"
+ * meant. Now:
+ *
+ *   * ONE switch row, "Public profile", whose second line says in plain words
+ *     what the state means (`id="public-profile-visibility"` keeps carrying
+ *     it). The switch keeps `id="public-profile-publish"` and still calls the
+ *     same immediate PATCH.
+ *   * Open / Copy link only while the page is actually live: on a private
+ *     profile the link leads nowhere for anyone else.
+ *   * "What's on it" is a disclosure row. The field list and the preview card
+ *     live behind it, driven by the store's existing `previewOpen`.
  */
 function PublicPage({ controls, status, publishing, previewOpen }: {
   controls: any;
@@ -181,60 +199,82 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
   publishing: boolean;
   previewOpen: boolean;
 }): ReactNode {
+  const published = !!controls.published;
   return (
     <section id="public-profile-controls" className="mb-4">
       <Group title="Public page">
-        <div className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
-          <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}>Visibility</span>
-          <span id="public-profile-visibility" className={`text-sm font-medium ${controls.visibilityClass}`}>
-            {controls.visibility}
-          </span>
-        </div>
-        <button
-          id="public-profile-publish"
-          type="button"
-          className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400 disabled:opacity-60`}
-          disabled={publishing}
-          onClick={() => { void Profile._setPublished(!controls.published); }}
+        <label
+          htmlFor="public-profile-publish"
+          className="un-group-row flex items-center gap-3 px-4 py-2 min-h-[44px] cursor-pointer select-none"
         >
-          {controls.publishLabel}
-        </button>
+          <span className="flex-1 min-w-0">
+            <span className={`block ${ROW_LABEL_CLASS}`}>Public profile</span>
+            <span id="public-profile-visibility" className={`block text-xs ${controls.visibilityClass}`}>
+              {controls.visibility}
+            </span>
+          </span>
+          <Switch
+            id="public-profile-publish"
+            className="shrink-0 disabled:opacity-60"
+            aria-describedby="public-profile-visibility"
+            checked={published}
+            disabled={publishing}
+            onChange={() => { void Profile._setPublished(!published); }}
+          />
+        </label>
+        {published ? (
+          <a
+            href={controls.openHref}
+            className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
+            onClick={() => Profile._dismissSheet()}
+          >
+            Open public page
+          </a>
+        ) : null}
+        {published ? (
+          <button
+            type="button"
+            className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
+            onClick={() => { void Profile.copyPublicLink(controls.openHref); }}
+          >
+            Copy public link
+          </button>
+        ) : null}
         <button
+          id="public-profile-preview-toggle"
           type="button"
-          className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
+          aria-expanded={previewOpen}
+          aria-controls="public-profile-preview"
+          className={`${ROW_ACTION_CLASS} gap-3 text-zinc-900 dark:text-zinc-100`}
           onClick={() => Profile.togglePreview()}
         >
-          {previewOpen ? 'Hide preview' : 'Preview'}
-        </button>
-        <a
-          href={controls.openHref}
-          className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
-          onClick={() => Profile._dismissSheet()}
-        >
-          Open public page
-        </a>
-        <button
-          type="button"
-          className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
-          onClick={() => { void Profile.copyPublicLink(controls.openHref); }}
-        >
-          Copy public link
+          <span className="flex-1 text-left font-normal">What&apos;s on it</span>
+          <ChevronDownIcon
+            aria-hidden="true"
+            className={previewOpen
+              ? 'w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400 rotate-180 transition-transform'
+              : 'w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400 transition-transform'}
+          />
         </button>
       </Group>
       {controls.moderationDisabled ? (
         <p className="px-4 mt-1.5 text-xs text-red-700 dark:text-red-400">
-          You can keep editing or unpublish, but the public page remains unavailable.
+          You can keep editing or turn it off, but the public page stays unavailable.
         </p>
       ) : null}
-      <p className={FOOTNOTE_CLASS}>
-        Private by default, and publishing takes effect at once. The public page
-        includes only your username, display name, bio, Homeroom-hosted photo
-        and verified social accounts, not unverified handles, wallet, email,
-        roles, memberships or private activity.
-      </p>
-      <p className={FOOTNOTE_CLASS} role="status" aria-live="polite">{status}</p>
+      <p className={status ? FOOTNOTE_CLASS : 'px-4 text-xs text-zinc-500 dark:text-zinc-400'} role="status" aria-live="polite">{status}</p>
       <div id="public-profile-preview" className={previewOpen ? 'mt-3' : 'hidden mt-3'}>
-        {previewOpen ? <PublicProfileCard profile={controls.profile} allowReport={false} /> : null}
+        {previewOpen ? (
+          <>
+            <p className="px-4 mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+              Only your username, display name, bio, Homeroom-hosted photo and
+              verified social accounts. Never your email, wallet, roles,
+              memberships, unverified handles or private activity. Changes take
+              effect at once, and nobody can search for the page.
+            </p>
+            <PublicProfileCard profile={controls.profile} allowReport={false} />
+          </>
+        ) : null}
       </div>
     </section>
   );
