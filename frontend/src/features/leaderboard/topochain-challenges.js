@@ -1233,10 +1233,18 @@ const TopochainChallenges = {
   // query. Nothing that could leave the document or run anything.
   IN_APP_ROUTE: /^#[a-z][a-z0-9-]*(?:\/[A-Za-z0-9._~-]+)*\/?(?:\?[A-Za-z0-9=&._~%-]*)?$/,
 
+  // The platform shell's own hosts, besides whichever one this document is
+  // on. Organiser CTA data is stored as ABSOLUTE URLs, and the rows written
+  // before the domain move say `https://my.onhomeroom.com/#…` while the shell
+  // now runs on app.onhomeroom.com (my. redirects there), so matching only
+  // this document's origin would miss every real link. NOT the bare
+  // onhomeroom.com: that is the marketing site, not the shell.
+  SHELL_HOSTS: ['my.onhomeroom.com', 'app.onhomeroom.com'],
+
   // The fragment a CTA link names when it points INSIDE the shell, else null:
-  // `#route`, `/#route`, or an absolute URL on this document's own origin
-  // whose path is the root and whose only address is its fragment. A trailing
-  // slash is dropped so `#settings/` reads as `#settings`.
+  // `#route`, `/#route`, or an absolute http(s) URL on this document's host or
+  // one of SHELL_HOSTS whose path is the root and whose only address is its
+  // fragment. A trailing slash is dropped so `#settings/` reads as `#settings`.
   _inAppRoute(url) {
     if (typeof url !== 'string') return null;
     const s = url.trim();
@@ -1244,11 +1252,13 @@ const TopochainChallenges = {
     if (s.startsWith('#')) hash = s;
     else if (s.startsWith('/#')) hash = s.slice(1);
     else if (/^https?:\/\//i.test(s)) {
-      const origin = typeof location !== 'undefined' && location ? location.origin : null;
-      if (!origin) return null;
       let u;
       try { u = new URL(s); } catch { return null; }
-      if (u.origin !== origin || u.pathname !== '/' || u.search || !u.hash) return null;
+      const here = typeof location !== 'undefined' && location ? location.hostname : null;
+      const host = u.hostname.toLowerCase();
+      const ours = (!!here && host === String(here).toLowerCase() && u.origin === location.origin)
+        || (u.protocol === 'https:' && !u.port && TopochainChallenges.SHELL_HOSTS.includes(host));
+      if (!ours || u.pathname !== '/' || u.search || !u.hash) return null;
       hash = u.hash;
     }
     if (!hash || !TopochainChallenges.IN_APP_ROUTE.test(hash)) return null;

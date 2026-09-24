@@ -31,7 +31,7 @@ const CHALLENGES_SRC = fs.readFileSync(
 
 const ORIGIN = 'https://my.onhomeroom.com';
 
-function loadModule() {
+function loadModule(origin = ORIGIN) {
   const sandbox = {
     document: {
       getElementById: () => null,
@@ -44,7 +44,9 @@ function loadModule() {
     setTimeout,
     clearTimeout,
     URL,
-    location: { hash: '#leaderboard/challenges/1/2', search: '', origin: ORIGIN },
+    location: {
+      hash: '#leaderboard/challenges/1/2', search: '', origin, hostname: new URL(origin).hostname,
+    },
   };
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
@@ -136,4 +138,25 @@ test('the pane renders a route in place and an external link in a new tab', () =
 
   const linkHtml = render({ kind: 'link', href: 'https://example.com/node', label: 'Set up' });
   assert.match(linkHtml, /<a href="https:\/\/example\.com\/node" target="_blank" rel="noopener" class="flex h-12 w-full/);
+});
+
+test('CTA data written for my.onhomeroom.com still routes in place on app.onhomeroom.com', () => {
+  const App = loadModule('https://app.onhomeroom.com');
+  const ctaOn = (link, challenge) => {
+    const v = App.ctaView({ cta_label: 'Go', cta_link: link }, challenge);
+    return v && JSON.parse(JSON.stringify(v));
+  };
+  assert.deepEqual(ctaOn('https://my.onhomeroom.com/#settings', SHARE),
+    { kind: 'route', href: '#settings', label: 'Go' }, 'the pre-move host is the shell');
+  assert.deepEqual(ctaOn('https://my.onhomeroom.com/#settings', BLOCKS),
+    { kind: 'route', href: '#settings/usernode', label: 'Go' },
+    'and a block-production challenge still lands on its section');
+  assert.equal(ctaOn('https://my.onhomeroom.com/#settings/connectors', SHARE).href, '#settings/connectors');
+  assert.equal(ctaOn('https://app.onhomeroom.com/#apps', SHARE).href, '#apps', 'this host too');
+  // The marketing site is not the shell, and a path is not a bare route.
+  assert.equal(ctaOn('https://onhomeroom.com/#settings', BLOCKS).kind, 'link');
+  assert.equal(ctaOn('https://my.onhomeroom.com/foo#x', BLOCKS).kind, 'link');
+  assert.equal(ctaOn('https://my.onhomeroom.com/?a=1#settings', BLOCKS).kind, 'link');
+  assert.equal(ctaOn('http://my.onhomeroom.com/#settings', BLOCKS).kind, 'link',
+    'a listed host counts only over https');
 });
