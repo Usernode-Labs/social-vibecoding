@@ -72,9 +72,9 @@ Release `0.0.942001-feat-k8s` enables operator-managed observation. Operators cr
 PVC UID and volume. Existing platform, Stockroom and preview cluster identities
 and generations were unchanged. Stockroom remains external at revision 7.
 
-The next increment is durable capacity reservation and initial app bindings,
-including imports/forks/retries. The [shared-pool plan](database-pool-placement.md)
-records bulk migration, cleanup and recovery requirements separately.
+The initial allocation rollout below supersedes the observation-only release.
+The [shared-pool plan](database-pool-placement.md) records bulk migration, cleanup
+and recovery requirements separately.
 
 ## Initial app placement
 
@@ -122,3 +122,28 @@ The real PostgreSQL regression test requires a fresh disposable PostgreSQL insta
 with a database named `sv_allocation_test`, listening on 127.0.0.1. Set
 `TEST_DATABASE_ALLOCATION_URL` and run `node --test tests/database-allocation-postgres.test.js`.
 It creates fixture databases/roles and must never target a shared database server.
+
+## Staging verification of allocation
+
+Release `0.0.947001-feat-k8s`, source `09fafe5aa031230ef6f5ddf52abb8d8b6b0a3568`.
+
+Created private test app `pool-placement-probe-b3e4e9` (app17) through the normal
+API: it was assigned to `shared-b` / staging-apps-b. Its normal fork
+`pool-placement-fork-58b33f` (app18) was assigned to `stockroom-retained` / staging-apps.
+Both reached Running. Tests wrote a public fixture row and a private fixture row
+on the source; the fork preserved the public row and sequence, scrubbed private
+data, and accepted a new write. Both app Pods read the expected destination data. A disposable preview clone
+inherited its source pool, scrubbed private data and was removed after verification.
+
+Repeating provisioning before and after a staging platform restart preserved both
+allocation UUIDs, database/role OIDs, credentials and data. Stockroom remains Ready
+at revision7. These two private fixture apps are retained for later migration tests.
+Local disposable PostgreSQL tests additionally covered concurrent admission up to
+capacity, four Waiting apps, retry after added capacity, interrupted unpublished
+fork copying and refusal to recreate a missing Ready database.
+
+The current migration UI still covers explicitly registered legacy bindings. New
+SQL allocations are not yet eligible for those moves; integrating them into the
+bulk migration and verified retirement workflow is next. Never roll back to a
+platform image predating SQL allocation routing after enabling this cohort.
+Admission can be paused with placement.enabled=false while routing remains active.
