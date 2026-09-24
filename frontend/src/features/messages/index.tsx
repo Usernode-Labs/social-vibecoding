@@ -53,7 +53,7 @@ import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
-import { useSpecBeside } from '../agent-session/spec-layout';
+import { useSidePaneBeside } from '../agent-session/spec-layout';
 import { agentActivity } from '../agent-session/activity';
 import { AgentActivityMark } from '../agent-session/activity-mark';
 import {
@@ -715,11 +715,12 @@ function ConversationList() {
   const mayor = useAgentSessionState();
   useEffect(() => { void loadAgentSessions(); }, []);
   const mayors: MayorSession[] = mounted ? mayor.sessions : [];
-  // A spec open BESIDE an agent session's chat (#2779 follow-up) takes this
-  // column's width while it is open: at 1280 the thread pane alone is too
-  // narrow for two readable columns. Closing the spec brings the list back.
-  // False until mounted, like everything above (../agent-session/spec-layout).
-  const specBeside = useSpecBeside('messages');
+  // The side pane open BESIDE an agent session's chat (#2779 follow-up), a
+  // spec or a preview, takes this column's width while it is open: at 1280
+  // the thread pane alone is too narrow for two readable columns. Closing it
+  // brings the list back. False until mounted, like everything above
+  // (../agent-session/spec-layout).
+  const specBeside = useSidePaneBeside('messages');
   const inbox = buildInbox({
     conversations: snap.conversations,
     discussions: snap.discussions,
@@ -962,10 +963,11 @@ function InvitationBanner() {
  */
 function FullWidthToggle() {
   const snap = useMessagesSnapshot();
-  // A Mayor session's spec open beside its chat has already moved the list
-  // aside (ConversationList), so here the control would do nothing. It is
-  // not drawn, as app.css does for an open reply thread below 1600px.
-  const specBeside = useSpecBeside('messages');
+  // A Mayor session's side pane (its spec or a preview) open beside its chat
+  // has already moved the list aside (ConversationList), so here the control
+  // would do nothing. It is not drawn, as app.css does for an open reply
+  // thread below 1600px.
+  const specBeside = useSidePaneBeside('messages');
   const collapsed = snap.listCollapsed;
   if (specBeside) return null;
   const label = collapsed ? 'Show the conversation list' : 'Full width';

@@ -115,8 +115,9 @@ test('app.css: a desktop control that keeps its ink, and stays under the pointer
   assert.doesNotMatch(CSS, /\.messages-list-toggle\[aria-pressed="true"\]/, 'the glyph says the state; no accent on top');
   // Between 768 and 1600px an open reply thread has already moved the list.
   assert.match(CSS, /\.messages-layout\.messages-has-reply-thread \.messages-list-toggle \{ display: none; \}/);
-  // So has a Mayor session's spec open beside its chat, from 1024px up.
-  assert.match(fn('FullWidthToggle'), /const specBeside = useSpecBeside\('messages'\);[\s\S]*if \(specBeside\) return null;/);
+  // So has a Mayor session's side pane (its spec or a preview) open beside its
+  // chat, from 1024px up.
+  assert.match(fn('FullWidthToggle'), /const specBeside = useSidePaneBeside\('messages'\);[\s\S]*if \(specBeside\) return null;/);
   assert.match(SCREEN, /className=\{`messages-list-pane \$\{specBeside \? 'hidden' : /);
   assert.match(CSS, /\.global-chat-embedded > \.global-chat-toolbar \{ width: 100%; \}/);
 });

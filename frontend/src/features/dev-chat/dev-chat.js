@@ -11724,6 +11724,8 @@ const DevChat = {
   // so the chat is never squeezed between two panels.
   openStagingPanel() {
     if (!DevChat.currentSession) return;
+    // #2779: the dock is the dev chat's again, whoever held it last.
+    if (typeof AppView !== 'undefined' && AppView.setStagingDockHost) AppView.setStagingDockHost(null);
     DevChat.stagingPanel.open = true;
     if (DevChat.specViewer.open) {
       DevChat.specViewer.open = false;

@@ -62,7 +62,7 @@ async function connect(t, { beforeMigration = null } = {}) {
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id), user_id INTEGER REFERENCES users(id),
       status VARCHAR(32) NOT NULL DEFAULT 'active', source TEXT,
       pr_number INTEGER, pr_title VARCHAR(256), session_title TEXT,
-      staging_url TEXT, check_state VARCHAR(32));
+      staging_url TEXT, check_state VARCHAR(32), test_results JSONB NOT NULL DEFAULT '[]');
     CREATE TABLE chat_session_messages (
       id SERIAL PRIMARY KEY,
       session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE,

@@ -5080,6 +5080,12 @@
       ]
     },
     {
+      "name": "#2779: an agent session's staging builds are cards: an older build is superseded, the newest offers Open preview and View change",
+      "path": "/#messages/agent/990801",
+      "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-preview=\"superseded\"] ~ [data-agent-session-preview=\"deployed\"] [data-agent-session-preview-open] + [data-agent-session-preview-change]",
+      "expectText": "Superseded by a newer preview"
+    },
+    {
       "name": "#2387: every message carries one hover bar (recent reactions, the picker, reply, save, \u22ef), and a threaded one its reply count",
       "path": "/?demo=1#messages/910004",
       "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100404:has(.msgx-thread-chip) > .msgx-bar:has([aria-label^=\"React with\"]) > [aria-label=\"Add reaction\"] ~ [aria-label=\"Reply\"] ~ [aria-label=\"Save message\"] ~ .messages-action-more[aria-haspopup=\"menu\"]",

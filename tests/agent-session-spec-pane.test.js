@@ -120,22 +120,24 @@ test('beside from 1024px up, decided after mount; the list steps aside; the divi
   const panel = read('frontend/src/features/agent-session/index.tsx');
   const specLayout = read('frontend/src/features/agent-session/spec-layout.ts');
   assert.match(specLayout, /const \[wide, setWide\] = useState\(false\);/, 'false in the prerender and the hydrating render');
-  assert.match(specLayout, /return wide && snapshot\.open && snapshot\.host === host && !!snapshot\.specSheet;/);
-  assert.match(panel, /const beside = useSpecBeside\(embedded \? 'messages' : 'screen'\);/);
-  assert.match(panel, /\? <SpecBesidePane sheet=\{snapshot\.specSheet\} containerRef=\{root\} \/>\s*: <SpecSheet sheet=\{snapshot\.specSheet\} \/>/,
+  assert.match(specLayout, /return wide && snapshot\.open && snapshot\.host === host && !!\(snapshot\.specSheet \|\| snapshot\.preview\);/,
+    'the side pane holds the spec, a preview, or both');
+  assert.match(panel, /const beside = useSidePaneBeside\(embedded \? 'messages' : 'screen'\);/);
+  assert.match(panel, /\{beside \? \(\s*<SidePane sheet=\{snapshot\.specSheet\} preview=\{snapshot\.preview\} tab=\{snapshot\.paneTab\} containerRef=\{root\} \/>\s*\) : snapshot\.specSheet \? <SpecSheet sheet=\{snapshot\.specSheet\} \/> : null\}/,
     'beside when there is room, the sheet otherwise');
-  assert.match(panel, /data-agent-session-chat>[\s\S]*<ChangesDrawer[\s\S]*<\/div>\s*\{snapshot\.specSheet/,
-    'the changes drawer covers the chat, not the spec beside it');
-  assert.match(panel, /role="separator"\s+aria-orientation="vertical"\s+aria-label="Resize the spec"/);
-  assert.match(panel, /min-w-\[280px\] max-w-\[calc\(100%-324px\)\]/, 'CSS holds the same bounds (320px of chat, 4px of divider) when the window narrows');
+  assert.match(panel, /data-agent-session-chat>[\s\S]*<ChangesDrawer[\s\S]*<\/div>\s*\{beside \?/,
+    'the changes drawer covers the chat, not the pane beside it');
+  assert.match(panel, /role="separator"\s+aria-orientation="vertical"\s+aria-label=\{showing === 'preview' \? 'Resize the preview' : 'Resize the spec'\}/);
+  assert.match(panel, /\$\{preview \? 'min-w-\[320px\]' : 'min-w-\[280px\]'\} max-w-\[calc\(100%-324px\)\]/,
+    'CSS holds the same bounds (320px of chat, 4px of divider) when the window narrows; a preview\'s floor is 320px');
   assert.match(panel, /className="w-1 shrink-0 cursor-col-resize/, 'the divider is the 4px the ceiling allows for');
-  assert.match(panel, /useEffect\(\(\) => \{ setWidth\(clampSpecWidth\(readSpecWidth\(\), containerWidth\(\)\)\); \}, \[\]\);/,
+  assert.match(panel, /useEffect\(\(\) => \{ setWidth\(clampSpecWidth\(readSpecWidth\(\), containerWidth\(\), floor\)\); \}, \[floor\]\);/,
     'the stored width is read after mount, never during render');
   assert.match(panel, /const onUp = \(\) => \{[\s\S]*writeSpecWidth\(latest\);/, 'remembered when the drag ends');
   assert.match(panel, /event\.key !== 'ArrowLeft' && event\.key !== 'ArrowRight'/, 'and the arrow keys move it');
 
   const messages = read('frontend/src/features/messages/index.tsx');
-  assert.match(messages, /const specBeside = useSpecBeside\('messages'\);/);
+  assert.match(messages, /const specBeside = useSidePaneBeside\('messages'\);/);
   assert.match(messages, /className=\{`messages-list-pane \$\{specBeside \? 'hidden' : /, 'the list steps aside while it is open');
 });
 

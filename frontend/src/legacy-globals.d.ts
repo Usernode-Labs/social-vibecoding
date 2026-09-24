@@ -129,6 +129,8 @@ declare global {
       panel?(opts: KitSurfaceOpts & { side?: 'left' | 'right' }): KitHandle | null;
       pullToRefresh(el: Element, fn: () => Promise<unknown> | void): void;
       toast?(message: string): void;
+      /** A native-style confirm card; resolves true on the confirm button. */
+      confirm?(opts: { title?: string; message?: string; confirmLabel?: string; cancelLabel?: string; danger?: boolean }): Promise<boolean>;
       [key: string]: unknown;
     };
     /** features/header/node-pill.js */
@@ -185,6 +187,27 @@ declare global {
        * called by the per-card ledger's button and the board banner alike.
        */
       resumeMainMerges?(slug: string, btn?: HTMLButtonElement | null): Promise<boolean | undefined>;
+      /**
+       * The staging preview (#439, #771), shared with an agent session's side
+       * pane (#2779): ensure-then-open a change's preview, docked beside the
+       * chat when a dock host's slot is mounted, for an explicit app.
+       */
+      ensureStaging?(
+        sessionId: number,
+        fallbackUrl: string | null,
+        testing: { md?: string | null; path?: string | null } | null,
+        opts?: { dock?: boolean; app?: { slug: string; self_hosted?: boolean }; readOnly?: boolean; jump?: boolean },
+      ): Promise<void>;
+      closeStagingOverlay?(): void;
+      setStagingDockHost?(host: {
+        slotId: string;
+        live(): boolean;
+        collapse(): void;
+        redock(): void;
+        closed: (() => void) | null;
+      } | null): void;
+      onStagingRebuildResult?(sessionId: number, result: { url?: string | null; failed?: boolean; error?: string | null }): void;
+      _syncStagingDockGeometry?(): void;
       [key: string]: unknown;
     };
     /** features/home/home.js — refreshed after app creation. */

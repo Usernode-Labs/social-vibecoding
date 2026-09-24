@@ -11,6 +11,10 @@ export interface AgentChange {
   prNumber: number | null;
   stagingUrl?: string | null;
   checkState?: string | null;
+  /** Checks that failed on the last run. */
+  checkFailing?: number;
+  /** The change is to the platform's own (self-hosted) app. */
+  appSelfHosted?: boolean;
 }
 
 /**
@@ -311,6 +315,23 @@ export async function getSpec(changeId: number): Promise<{ spec: string; version
     'Could not load the spec.',
   );
   return { spec: typeof body.spec === 'string' ? body.spec : '', versions: Array.isArray(body.versions) ? body.versions : [] };
+}
+
+/**
+ * Put a change up for the group's vote: the owner's propose route, the same
+ * one the dev chat's Propose button and an imported PR's use.
+ */
+export async function promoteChange(changeId: number): Promise<void> {
+  await json(await request(`/api/sessions/${changeId}/promote`, { method: 'POST' }), 'Could not put this change up for the vote.');
+}
+
+/**
+ * Rebuild a change's preview when it is not running (the staging card's
+ * Retry): the owner's ensure route. `rebuilding` means a build started and
+ * its staging_ready or staging_failed reaches the conversation.
+ */
+export async function ensureChangeStaging(changeId: number): Promise<{ status: string; url?: string | null; reason?: string | null }> {
+  return json(await request(`/api/sessions/${changeId}/ensure-staging`, { method: 'POST' }), 'Could not rebuild the preview.');
 }
 
 export async function getSpecVersion(changeId: number, version: number): Promise<string> {

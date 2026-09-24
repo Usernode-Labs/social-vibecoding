@@ -29,6 +29,8 @@ export const SPEC_BESIDE_QUERY = '(min-width: 1024px)';
 export const SPEC_WIDTH_KEY = 'dc-spec-viewer-width-v1';
 export const SPEC_DEFAULT_WIDTH = 480;
 export const SPEC_MIN_WIDTH = 280;
+/** A preview renders a real app's screen: the dev chat's staging panel floor. */
+export const PREVIEW_MIN_WIDTH = 320;
 export const CHAT_MIN_WIDTH = 320;
 /** The divider between them (`w-1`), which the chat's 320px does not include. */
 export const SPEC_DIVIDER_WIDTH = 4;
@@ -42,12 +44,16 @@ export const SPEC_WIDTH_STEP = 24;
  * With no container measured yet only the floor applies; CSS holds the
  * ceiling too.
  */
-export function clampSpecWidth(width: number | null | undefined, containerWidth: number | null | undefined): number {
+export function clampSpecWidth(
+  width: number | null | undefined,
+  containerWidth: number | null | undefined,
+  floor = SPEC_MIN_WIDTH,
+): number {
   const wanted = typeof width === 'number' && Number.isFinite(width) ? width : SPEC_DEFAULT_WIDTH;
   const ceiling = typeof containerWidth === 'number' && Number.isFinite(containerWidth) && containerWidth > 0
-    ? Math.max(SPEC_MIN_WIDTH, containerWidth - CHAT_MIN_WIDTH - SPEC_DIVIDER_WIDTH)
+    ? Math.max(floor, containerWidth - CHAT_MIN_WIDTH - SPEC_DIVIDER_WIDTH)
     : Infinity;
-  return Math.round(Math.min(ceiling, Math.max(SPEC_MIN_WIDTH, wanted)));
+  return Math.round(Math.min(ceiling, Math.max(floor, wanted)));
 }
 
 export function readSpecWidth(): number | null {
@@ -102,9 +108,12 @@ export function useWideEnoughForSpec(): boolean {
   return wide;
 }
 
-/** A spec is open beside the conversation this host is drawing. */
-export function useSpecBeside(host: AgentSessionHost): boolean {
+/**
+ * The side pane is open beside the conversation this host is drawing: a
+ * spec, or a change's staging preview, or both as tabs.
+ */
+export function useSidePaneBeside(host: AgentSessionHost): boolean {
   const snapshot = useAgentSessionState();
   const wide = useWideEnoughForSpec();
-  return wide && snapshot.open && snapshot.host === host && !!snapshot.specSheet;
+  return wide && snapshot.open && snapshot.host === host && !!(snapshot.specSheet || snapshot.preview);
 }
