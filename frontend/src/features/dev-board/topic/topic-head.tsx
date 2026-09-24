@@ -386,6 +386,17 @@ function HelpLinks({ question }: { question: boolean }): ReactNode {
 }
 
 /**
+ * The follow-on lines the basic view keeps: a blocked row's sentences — why
+ * checks could not run, what to do about a conflict — because a problem that
+ * stops the merge must read in plain words without a click. Lists (file
+ * names, console errors) and every non-blocking row's lines are advanced.
+ */
+export function basicFoot(r: LedgerRow): TextRun[][] {
+  if (r.tone !== 'bad') return [];
+  return (r.foot || []).filter((f): f is TextRun[] => Array.isArray(f));
+}
+
+/**
  * What a ledger row SAYS, under the step it belongs to (StepRowView): the
  * sentence, then — in this order — the live progress, the Review line (who
  * approved, and "How voting works" at its right end, on the one row it
@@ -394,7 +405,17 @@ function HelpLinks({ question }: { question: boolean }): ReactNode {
  * app-view.js (`_topicLedgerRows`) from the same reason, checks, roster and
  * note builders the "Where it stands" ledger drew from — this only draws.
  */
-function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode {
+function LedgerRowBody({ r, help, advanced = true }: { r: LedgerRow; help: boolean; advanced?: boolean }): ReactNode {
+  // #2841: in the basic view a row keeps what a voter reads — the sentence,
+  // the plain checks bar, the Review line, the attention lines, the controls,
+  // and a BLOCKING row's explanation in words — and leaves the technical
+  // material (the build pipeline, the npm test bar, file and error lists,
+  // the check-by-check lists, the run's provenance and freshness lines) to
+  // "Show advanced details".
+  const progress = r.progress && !advanced ? { ...r.progress, build: null, unit: null } : r.progress;
+  const foot = advanced ? (r.foot || []) : basicFoot(r);
+  const fails = advanced ? r.fails : null;
+  const passes = advanced ? r.passes : null;
   return (
     <>
       {r.text.length ? (
@@ -405,7 +426,7 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
           {r.sub && r.key !== 'votes' ? <span className="dev-step-when">{` ${r.sub}`}</span> : null}
         </span>
       ) : null}
-      {r.progress ? <Progress p={r.progress} /> : null}
+      {progress ? <Progress p={progress} /> : null}
       {/* The Review line: who approved, and at its right end the "How
           voting works" affordances — this is the row they explain. */}
       {r.roster || r.help ? (
@@ -418,7 +439,7 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
           introduced. Rendering every list after every line put the
           conflicting files three sentences below "Changed on both
           sides:" — see LedgerRow.foot in model.ts. */}
-      {(r.foot || []).map((f, i) => (Array.isArray(f) ? (
+      {foot.map((f, i) => (Array.isArray(f) ? (
         <span key={i} className="dev-ledger-foot"><Runs parts={f} /></span>
       ) : (
         <ul key={i} className="dev-ledger-list">
@@ -435,19 +456,19 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
       {(r.warnFoot || []).map((f, i) => (
         <span key={`w${i}`} className="dev-ledger-foot dev-ledger-foot-warn text-amber-800 dark:text-amber-400"><Runs parts={f} /></span>
       ))}
-      {r.fails && r.fails.length ? (
+      {fails && fails.length ? (
         <ul className="dev-ledger-fails">
-          {r.fails.map((c) => <CheckRowView key={c.key} r={c} />)}
+          {fails.map((c) => <CheckRowView key={c.key} r={c} />)}
         </ul>
       ) : null}
-      {(r.actions && r.actions.length) || (r.passes && r.passes.length) ? (
+      {(r.actions && r.actions.length) || (passes && passes.length) ? (
         <span className="dev-ledger-ops">
           {(r.actions || []).map((a) => <ActionButton key={a.key} a={a} />)}
-          {r.passes && r.passes.length ? (
+          {passes && passes.length ? (
             <details className="dev-ledger-passes">
-              <summary className="gc-vote-btn dev-ledger-passes-btn">{`${r.passes.length} passing`}</summary>
+              <summary className="gc-vote-btn dev-ledger-passes-btn">{`${passes.length} passing`}</summary>
               <ul className="dev-ledger-fails">
-                {r.passes.map((c) => <CheckRowView key={c.key} r={c} />)}
+                {passes.map((c) => <CheckRowView key={c.key} r={c} />)}
               </ul>
             </details>
           ) : null}
@@ -510,13 +531,13 @@ function Transcript({ t }: { t: TranscriptSection }): ReactNode {
   );
 }
 
-export function TopicHead({ conversation = false }: { conversation?: boolean }): ReactNode {
+export function TopicHead({ conversation = false, advanced }: { conversation?: boolean; advanced?: boolean }): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
   // `back`: this IS the topic page, whose one back control is the chip at the
   // top of the pane (#2916, ./topic-back.tsx). Every kind of topic comes
   // through here, a change page and an issue/governance thread head alike.
-  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} conversation={conversation} back />;
+  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} advanced={advanced} conversation={conversation} back />;
 }
 
 /** Refresh from the endpoint that owns this lifecycle's metadata. */
@@ -932,14 +953,19 @@ function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
  * with Vote first; the plain-English summary; the issue it addresses; the
  * picture, or the line that says it is coming.
  */
-function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
+function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved, advanced = true }: {
   id: number | null;
   card: DevCardModel;
   body: TopicBody;
   linkedIssues: number[];
   onIssuesSaved: (issues: number[]) => void;
+  advanced?: boolean;
 }): ReactNode {
-  const h: HeroView = body.hero || { kind: 'Change', ref: null, status: '', age: null, author: null, verb: 'proposed', provenance: null, tint: 'a' };
+  const full: HeroView = body.hero || { kind: 'Change', ref: null, status: '', age: null, author: null, verb: 'proposed', provenance: null, tint: 'a' };
+  // #2841: the pull request's number is a GitHub detail — the basic view's
+  // eyebrow says what the page is and where it stands; "PR#2473" returns
+  // with the advanced details (and "Open on GitHub" stays in the ⋯ menu).
+  const h: HeroView = advanced ? full : { ...full, ref: null };
   const all = card.actions || [];
   const yesSpec = all.find((a) => isVoteSpec(a, 'yes'));
   const noSpec = all.find((a) => isVoteSpec(a, 'no'));
@@ -1033,7 +1059,7 @@ function VoteTally({ v }: { v: NonNullable<StepRow['vote']> }): ReactNode {
 }
 
 /** One step: the mark, the label, who acts at the right; under them, what the row says. */
-function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
+function StepRowView({ r, help, advanced = true }: { r: StepRow; help: boolean; advanced?: boolean }): ReactNode {
   const row = r.row || null;
   const gateAttrs = r.gate ? { 'data-req-gate': r.gate, 'data-req-state': r.state } : {};
   return (
@@ -1046,7 +1072,7 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
       {r.vote || row || r.note || r.action ? (
         <div className="dev-step-body">
           {r.vote ? <VoteTally v={r.vote} /> : null}
-          {row ? <LedgerRowBody r={row} help={help} /> : (r.note ? <span className="dev-step-note">{r.note}</span> : null)}
+          {row ? <LedgerRowBody r={row} help={help} advanced={advanced} /> : (r.note ? <span className="dev-step-note">{r.note}</span> : null)}
           {r.action ? <span className="dev-ledger-ops"><ActionButton a={r.action} /></span> : null}
         </div>
       ) : null}
@@ -1055,25 +1081,106 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
 }
 
 /**
+ * #2841 — the change page reads BASIC by default: what changed, the picture,
+ * the vote, where each step stands in one sentence, and the Discussion. The
+ * technical half (the pull request's number, the build pipeline, the
+ * check-by-check lists, the follow-on lines and file lists under a step, and
+ * the pull request's own description) is one "Show advanced details" away.
+ *
+ * The choice is the viewer's and is remembered per browser: a convenience,
+ * not state anybody else reads, so localStorage (wrapped — it can throw or
+ * come back empty) is the right home. `?advanced=1` forces the advanced view
+ * for one page load without storing it; the declared checks that read a
+ * step's technical anatomy run in it, because checks never click.
+ */
+export const ADVANCED_DETAILS_KEY = 'homeroom.changeDetail.advanced';
+
+export function readAdvancedDetails(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (new URLSearchParams(window.location.search).get('advanced') === '1') return true;
+  } catch { /* no location: fall through to the stored choice */ }
+  try {
+    return window.localStorage.getItem(ADVANCED_DETAILS_KEY) === '1';
+  } catch { return false; }
+}
+
+function storeAdvancedDetails(on: boolean): void {
+  try {
+    if (on) window.localStorage.setItem(ADVANCED_DETAILS_KEY, '1');
+    else window.localStorage.removeItem(ADVANCED_DETAILS_KEY);
+  } catch { /* private window or blocked storage: the toggle still works for this page */ }
+}
+
+/** Whether the advanced view would show anything the basic view does not. */
+export function hasAdvancedDetails(body: TopicBody): boolean {
+  if (body.hero && body.hero.ref) return true;
+  if (body.proposalBody) return true;
+  for (const step of (body.steps ? body.steps.rows : [])) {
+    const r = step.row;
+    if (!r) continue;
+    if ((r.foot || []).length > basicFoot(r).length) return true;
+    if ((r.fails && r.fails.length) || (r.passes && r.passes.length)) return true;
+    if (r.progress && ((r.progress.build && r.progress.build.length) || r.progress.unit)) return true;
+  }
+  return false;
+}
+
+function AdvancedToggle({ advanced, onToggle }: { advanced: boolean; onToggle: () => void }): ReactNode {
+  return (
+    <div className="flex justify-center pt-2">
+      <Button
+        type="button"
+        variant="unstyled"
+        size="inline"
+        ink="none"
+        className="dev-topic-advanced-toggle inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-500/10 dark:text-violet-300"
+        data-advanced-toggle=""
+        aria-expanded={advanced ? 'true' : 'false'}
+        onClick={onToggle}
+      >
+        <ChevronRightIcon className={advanced ? 'h-4 w-4 rotate-90 transition-transform' : 'h-4 w-4 transition-transform'} aria-hidden="true" />
+        {advanced ? 'Hide advanced details' : 'Show advanced details'}
+      </Button>
+    </div>
+  );
+}
+
+/**
  * The steps: the card's merge-requirements strip (card/dev-card.tsx
  * RequirementsRow) as a sheet — the same headline, detail and count across
  * its top, then every gate as a row, expanded to say what its ledger row
  * said. Built by app-view.js (`_topicStepsView`); this only draws.
+ *
+ * Under the list, the page's one advanced-details toggle, and — open — the
+ * pull request's description. Both live INSIDE this sheet so the page keeps
+ * its hero → steps → Discussion order in either view.
  */
-function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
-  if (!s.rows.length) return null;
+function StepsSheet({ s, help, advanced = true, toggle = null, proposalBody = null }: {
+  s: StepsView | null;
+  help: boolean;
+  advanced?: boolean;
+  toggle?: (() => void) | null;
+  proposalBody?: TopicBody['proposalBody'] | null;
+}): ReactNode {
+  const rows = s ? s.rows : [];
+  if (!rows.length && !toggle) return null;
   return (
-    <section className="dev-topic-sheet dev-topic-steps" data-topic-sheet="steps">
-      <div className="dev-steps rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50">
-        <div className="dev-steps-head">
-          <span className="dev-steps-headline">{s.headline}</span>
-          {s.detail ? <span className="dev-steps-detail">{`· ${s.detail}`}</span> : null}
-          {s.total != null ? <span className="dev-steps-count">{`${s.done}/${s.total}`}</span> : null}
+    <section className="dev-topic-sheet dev-topic-steps" data-topic-sheet="steps" data-detail-level={advanced ? 'advanced' : 'basic'}>
+      {s && rows.length ? (
+        <div className="dev-steps rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50">
+          <div className="dev-steps-head">
+            <span className="dev-steps-headline">{s.headline}</span>
+            {s.detail ? <span className="dev-steps-detail">{`· ${s.detail}`}</span> : null}
+            {s.total != null ? <span className="dev-steps-count">{`${s.done}/${s.total}`}</span> : null}
+          </div>
+          <ol className="dev-steps-list border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
+            {rows.map((r) => <StepRowView key={r.key} r={r} help={help} advanced={advanced} />)}
+          </ol>
         </div>
-        <ol className="dev-steps-list border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-          {s.rows.map((r) => <StepRowView key={r.key} r={r} help={help} />)}
-        </ol>
-      </div>
+      ) : null}
+      {toggle ? <AdvancedToggle advanced={advanced} onToggle={toggle} /> : null}
+      {toggle && advanced && proposalBody ? <ProposalBody b={proposalBody} /> : null}
     </section>
   );
 }
@@ -1125,7 +1232,9 @@ function DetailsSheet({ id, html }: { id: number; html: string }): ReactNode {
  * tags, the actions, the summary, the issues, the picture — then the merge
  * steps (StepsSheet), then, on its own page, the Discussion
  * (./conversation.tsx); the technical half is a sheet the ⋯ menu opens
- * (DetailsSheet). The hero's Build pill LEAVES this page for the change's
+ * (DetailsSheet). The page opens BASIC (#2841, `readAdvancedDetails`): the
+ * steps sheet's one toggle reveals the PR number, the technical lines under
+ * each step and the description inline. The hero's Build pill LEAVES this page for the change's
  * dev session (#2605). An issue or a governance vote keeps the card and
  * `TopicBodySections`.
  *
@@ -1133,10 +1242,16 @@ function DetailsSheet({ id, html }: { id: number; html: string }): ReactNode {
  * `.dev-topic`, above the hero or the card (#2916). Only `TopicHead` passes
  * it: the chip is the page's back control, not part of the card.
  */
-export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false, back = false }: {
+export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false, back = false, advanced: initialAdvanced }: {
   card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean; back?: boolean;
+  /** The first render's detail level; omitted, the viewer's remembered choice (#2841). */
+  advanced?: boolean;
 }): ReactNode {
   const root = useRef<HTMLDivElement>(null);
+  // Never in the prerendered shell (TopicHead renders nothing without a
+  // topic), so reading the stored choice in the initialiser cannot mismatch.
+  const [advanced, setAdvanced] = useState<boolean>(() => (initialAdvanced ?? readAdvancedDetails()));
+  const toggleAdvanced = () => { const next = !advanced; storeAdvancedDetails(next); setAdvanced(next); };
   const [loaded, setLoaded] = useState<any>(null);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
@@ -1184,8 +1299,14 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
       {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
       {changePage ? (
         <>
-          <ChangeHero id={id ? Number(id) : null} card={card} body={body} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
-          {body.steps ? <StepsSheet s={body.steps} help={!!(body.details && body.details.help)} /> : null}
+          <ChangeHero id={id ? Number(id) : null} card={card} body={body} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} advanced={advanced} />
+          <StepsSheet
+            s={body.steps || null}
+            help={!!(body.details && body.details.help)}
+            advanced={advanced}
+            toggle={hasAdvancedDetails(body) ? toggleAdvanced : null}
+            proposalBody={body.proposalBody || null}
+          />
           {/* #2605: a change's page carries NO build surface — not the Build
               sheet, and not the published chat's disclosure that used to sit
               beside it. Both are the dev session page's now, behind the

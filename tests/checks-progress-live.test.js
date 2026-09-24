@@ -895,7 +895,7 @@ test('the ledger island draws the bar and the row model declares it', () => {
   assert.match(model, /progress\?: LedgerProgress \| null;/);
   assert.match(tsx, /className=\{cls\} aria-hidden="true"/, 'decorative: the numbers live in the sub text');
   assert.match(tsx, /const cls = `dev-ledger-progress\$\{indeterminate \? ' dev-ledger-progress-busy' : ''\}`;/);
-  assert.match(tsx, /\{r\.progress \? <Progress p=\{r\.progress\} \/> : null\}/);
+  assert.match(tsx, /\{progress \? <Progress p=\{progress\} \/> : null\}/);
   assert.match(read('public/css/app.css'), /\.dev-ledger-progress-pass/);
   // The unit suite's own track, labelled, pulsing before its first test.
   assert.match(model, /unit\?: LedgerUnitProgress \| null;/);

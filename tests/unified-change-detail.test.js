@@ -272,7 +272,7 @@ test('actual shared component renders the entire card and escapes the issue titl
   av._ghIssues[0].title = '<script>issue</script>';
   const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
   const v = av._topicViewFor('session', failing);
-  const html = renderToHtml(createElement(ChangeDetail, { ...v, item: failing, conversation: true }));
+  const html = renderToHtml(createElement(ChangeDetail, { ...v, item: failing, conversation: true, advanced: true }));
   // The Needs-you page: the summary, the issues line, the steps sheet (with
   // the failing check's reason behind its door), and the Discussion. The
   // Build is a pill that LEAVES this page (#2605), not a sheet on it.
