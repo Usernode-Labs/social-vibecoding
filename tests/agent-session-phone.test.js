@@ -10,8 +10,9 @@
 // panel may shrink below its content, and an empty message box is as tall as
 // its hint, which wraps on a phone and was cut off mid-line.
 //
-// #3015: the pulsing emerald dot on the mark means an agent is mid-turn on a
-// change the viewer can see. It said so nowhere. The mark says it on hover,
+// #3015: the working cue on the mark (a pulsing emerald dot then, a blue
+// corner spinner since the #2779 follow-up, and for the viewer's own changes
+// only) means an agent is mid-turn. It said so nowhere. The mark says it on hover,
 // and the menu the mark opens says it in words, which is what a touch screen
 // gets.
 

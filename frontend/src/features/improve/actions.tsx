@@ -188,14 +188,16 @@ function UpdateStatus(): ReactNode {
   }
 
   if (mounted && working) {
-    // The mark's own dot, drawn beside the words that say what it is.
+    // The mark's own spinner, drawn beside the words that say what it is.
     return (
       <div
         data-improve-working-note
         className="flex items-center gap-3 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400"
       >
-        <span className="inline-flex w-4 shrink-0 justify-center" aria-hidden="true">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+        <span className="inline-flex w-4 shrink-0 justify-center text-violet-600 dark:text-violet-400" aria-hidden="true">
+          <svg className="w-3 h-3 animate-spin motion-reduce:animate-none" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeDasharray="40 57" />
+          </svg>
         </span>
         <span className="min-w-0 flex-1">{WORKING_NOTE}</span>
       </div>
