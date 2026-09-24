@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
-import { channels, draftFor, notifyTyping, replyFor, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
+import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
 import type { MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
@@ -26,10 +26,19 @@ function objectLabel(object: SharedObjectReference): string {
   return `${app}Proposal ${object.sessionId}`;
 }
 
-export function MessageComposer() {
+/**
+ * The conversation's composer — or, with `threadRootId` (#2387), the composer
+ * of the reply thread open beside it. The two keep their own drafts and
+ * their own staged reply (the store's composer scope), and only the
+ * conversation's own composer takes shared items: a card shared into
+ * Messages lands in the conversation, never inside a thread.
+ */
+export function MessageComposer({ threadRootId = null }: { threadRootId?: number | null } = {}) {
   const snap = useMessagesSnapshot();
   const conversationId = snap.route.conversationId || 0;
   const active = snap.active;
+  const scope = scopeKey(conversationId, threadRootId);
+  const inThread = !!threadRootId;
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
   const [uploading, setUploading] = useState(0);
@@ -47,13 +56,14 @@ export function MessageComposer() {
   useAutoGrow(inputRef, value);
   const fileRef = useRef<HTMLInputElement>(null);
   const typingStop = useRef<number | null>(null);
-  const reply = replyFor(conversationId);
+  const reply = replyFor(scope);
 
   useEffect(() => {
-    setValue(draftFor(conversationId)); setAttachments([]); setObject(null); setError('');
-  }, [conversationId]);
+    setValue(draftFor(scope)); setAttachments([]); setObject(null); setError('');
+  }, [scope]);
 
   useEffect(() => {
+    if (inThread) return undefined;
     const onSelected = (event: Event) => {
       const detail = (event as CustomEvent<SharedObjectReference>).detail;
       if (detail) { setObject(detail); inputRef.current?.focus(); }
@@ -81,7 +91,7 @@ export function MessageComposer() {
       window.removeEventListener('usernode:messages-object-selected', onSelected);
       window.removeEventListener('usernode:messages-share', onShare);
     };
-  }, [conversationId]);
+  }, [conversationId, inThread]);
 
   useEffect(() => () => {
     if (typingStop.current) window.clearTimeout(typingStop.current);
@@ -119,7 +129,7 @@ export function MessageComposer() {
 
   function updateValue(next: string) {
     const trimmed = next.slice(0, 8000);
-    setValue(trimmed); setDraft(conversationId, trimmed);
+    setValue(trimmed); setDraft(scope, trimmed);
     notifyTyping(true);
     if (typingStop.current) window.clearTimeout(typingStop.current);
     typingStop.current = window.setTimeout(() => notifyTyping(false), 2200);
@@ -180,19 +190,19 @@ export function MessageComposer() {
     const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object || undefined };
     setValue(''); setAttachments([]); setObject(null);
     requestAnimationFrame(() => inputRef.current?.focus());
-    send(input).catch((err) => setError(err instanceof Error ? err.message : 'Your message wasn’t sent.'));
+    send({ ...input, threadRootId }).catch((err) => setError(err instanceof Error ? err.message : 'Your message wasn’t sent.'));
   }
 
   if (!active || active.membershipStatus !== 'member') return null;
   if (!active.canSend) return <div className="messages-composer-disabled platform-safe-bar">You can’t send messages in this conversation.</div>;
 
   return (
-    <div className={`messages-composer platform-safe-bar ${dragging ? 'messages-composer-dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={(event) => { event.preventDefault(); setDragging(false); void addFiles([...event.dataTransfer.files]); }}>
+    <div className={`messages-composer platform-safe-bar ${inThread ? 'messages-composer-thread' : ''} ${dragging ? 'messages-composer-dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={(event) => { event.preventDefault(); setDragging(false); void addFiles([...event.dataTransfer.files]); }}>
       {/* The white card. The bar around it is what carries the home-indicator
           inset (`platform-safe-bar`), so the card keeps its own padding on a
           notched phone instead of growing a tall blank foot. */}
       <div className="messages-composer-card">
-      {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to @{reply.sender.username}</span><p className="truncate">{reply.content || 'Attachment'}</p></div><button type="button" onClick={() => setReply(conversationId, null)} aria-label="Cancel reply">×</button></div> : null}
+      {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to @{reply.sender.username}</span><p className="truncate">{reply.content || 'Attachment'}</p></div><button type="button" onClick={() => setReply(scope, null)} aria-label="Cancel reply">×</button></div> : null}
       {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{objectLabel(object)}</span><button type="button" onClick={() => setObject(null)} aria-label="Remove shared item">×</button></div> : null}
       {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={`Remove ${item.name}`}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">Uploading {uploading}…</span> : null}</div> : null}
       {channelMatches?.length && !mention?.length ? <div className="messages-mention-menu" role="listbox" aria-label="Channels">{channelMatches.map((item) => <button key={item.handle} type="button" role="option" data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
@@ -210,14 +220,16 @@ export function MessageComposer() {
                 <PaperClipIcon aria-hidden="true" />
                 <span>Attach files</span>
               </button>
-              <button type="button" role="menuitem" onClick={() => { setAddOpen(false); window.UsernodeReact?.dialogs?.messagesShare?.open(); }}>
-                <ArrowUpTrayIcon aria-hidden="true" />
-                <span>Share item</span>
-              </button>
+              {inThread ? null : (
+                <button type="button" role="menuitem" onClick={() => { setAddOpen(false); window.UsernodeReact?.dialogs?.messagesShare?.open(); }}>
+                  <ArrowUpTrayIcon aria-hidden="true" />
+                  <span>Share item</span>
+                </button>
+              )}
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(conversationId, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder="Message…" aria-label="Message" className="messages-composer-input" />
+        <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : 'Message…'} aria-label={inThread ? 'Reply in thread' : 'Message'} className="messages-composer-input" />
         <button type="button" onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}

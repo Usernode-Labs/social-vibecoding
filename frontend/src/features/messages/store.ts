@@ -12,6 +12,7 @@ import type {
   ConversationSummary,
   MessagesAgentThread,
   MessagesSnapshot,
+  ReplyThreadState,
   SharedObjectReference,
 } from './types';
 
@@ -20,6 +21,8 @@ const MAX_ID = 2_147_483_647;
 interface PendingSend {
   content: string;
   replyToId?: number;
+  /** #2387: a reply inside this thread rather than the conversation's own transcript. */
+  threadRootId?: number;
   attachmentIds?: string[];
   object?: SharedObjectReference;
   idempotencyKey: string;
@@ -33,7 +36,7 @@ type Listener = () => void;
 
 const listeners = new Set<Listener>();
 let state: InternalState = {
-  route: { open: false, conversationId: null, appSlug: null, agent: null },
+  route: { open: false, conversationId: null, appSlug: null, agent: null, threadRootId: null, focusMessageId: null },
   conversations: [],
   active: null,
   messages: [],
@@ -53,10 +56,34 @@ let state: InternalState = {
   discussionContext: null,
   discussionError: null,
   filter: 'all',
+  thread: null,
+  nextAfter: null,
+  listCollapsed: false,
+  showMoreChannels: false,
 };
 
-const drafts = new Map<number, string>();
-const replyTargets = new Map<number, ConversationMessage>();
+/*
+ * DRAFTS AND STAGED REPLIES ARE PER COMPOSER, not per conversation (#2387):
+ * a conversation's own composer and the composer of a thread open beside it
+ * each keep their own half-typed words and their own quoted reply. A scope is
+ * the conversation id alone, or `<id>:t<root>` for a thread — the first is the
+ * key the drafts were always stored under, so existing drafts survive.
+ */
+export type ComposerScope = number | string;
+export function scopeKey(conversationId: number, threadRootId?: number | null): ComposerScope {
+  return threadRootId ? `${conversationId}:t${threadRootId}` : conversationId;
+}
+function scopeConversation(scope: ComposerScope): number {
+  return typeof scope === 'number' ? scope : Number(String(scope).split(':')[0]);
+}
+function scopeThread(scope: ComposerScope): number | null {
+  if (typeof scope === 'number') return null;
+  const match = /:t(\d+)$/.exec(scope);
+  return match ? Number(match[1]) : null;
+}
+
+const drafts = new Map<ComposerScope, string>();
+const replyTargets = new Map<ComposerScope, ConversationMessage>();
 const pendingByConversation = new Map<number, PendingSend[]>();
 /*
  * THE SENDER'S OWN ROWS OUTLIVE A REFRESH (#2907). A send draws its message
@@ -78,6 +105,14 @@ let pendingShare: SharedObjectReference | null | undefined;
 let pendingChannel: string | null = null;
 let listRequest = 0;
 let threadRequest = 0;
+let replyThreadRequest = 0;
+/**
+ * The conversation the viewer just marked unread (#2387), which stays unread
+ * while it is still the open one: opening a thread normally reads it to the
+ * end, and doing that here would undo the act a second after it was done.
+ * Leaving the conversation lifts it.
+ */
+let unreadHold: number | null = null;
 
 function browserDemo(): boolean {
   return typeof window !== 'undefined'
@@ -287,30 +322,51 @@ export async function loadConversations(force = false): Promise<void> {
 
 export async function loadThread(conversationId: number, force = false): Promise<void> {
   if (!validId(conversationId)) return;
-  if (!force && state.active?.id === conversationId && state.messages.length) return;
+  const focus = state.route.conversationId === conversationId ? state.route.focusMessageId : null;
+  if (!force && !focus && state.active?.id === conversationId && state.messages.length) return;
   const request = ++threadRequest;
   const preserveVisibleThread = force && state.active?.id === conversationId;
+  // A refresh of a linked page (#2387) re-reads the same window rather than
+  // snapping to the present: the realtime echo of a reaction would otherwise
+  // take the reader away from the message they followed a link to.
+  const reading = preserveVisibleThread && state.nextAfter ? state.messages.find((item) => item.id > 0)?.id || null : null;
   publish({
     loadingThread: true,
     threadError: null,
     active: preserveVisibleThread ? state.active : null,
     messages: preserveVisibleThread ? state.messages : [],
     nextBefore: preserveVisibleThread ? state.nextBefore : null,
+    nextAfter: preserveVisibleThread ? state.nextAfter : null,
   });
   try {
     // Invitation metadata is deliberately readable before acceptance, but
     // retained history is not. Resolve membership first and never request
     // message bytes for an invitee.
     const active = await api.getConversation(conversationId);
-    const page = active.membershipStatus === 'member'
-      ? await api.listMessages(conversationId)
-      : { messages: [], nextBefore: null };
+    const member = active.membershipStatus === 'member';
+    const anchor = focus || reading;
+    const page: { messages: ConversationMessage[]; nextBefore: number | null; nextAfter: number | null; threadRootId?: number | null } = !member
+      ? { messages: [], nextBefore: null, nextAfter: null }
+      : anchor
+        ? await api.listMessagesAround(conversationId, anchor).then((around) => ({
+          messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter, threadRootId: around.focus.threadRootId,
+        })).catch(() => api.listMessages(conversationId).then((latest) => ({ ...latest, nextAfter: null })))
+        : { ...(await api.listMessages(conversationId)), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
     const messages = withLocalRows(conversationId, [...page.messages].sort((a, b) => a.id - b.id));
-    publish({ active, messages, nextBefore: page.nextBefore, loadingThread: false, online: true });
+    publish({ active, messages, nextBefore: page.nextBefore, nextAfter: page.nextAfter, loadingThread: false, online: true });
     upsertConversation(active);
+    // A link to a reply inside a thread opens that thread beside it.
+    if (focus && page.threadRootId && state.route.threadRootId !== page.threadRootId) {
+      publish({ route: { ...state.route, threadRootId: page.threadRootId } });
+    }
+    if (state.route.threadRootId) void loadReplyThread(conversationId, state.route.threadRootId);
     const last = messages.at(-1);
-    if (last && active.membershipStatus === 'member') void markRead(last.id);
+    // Read up to the newest message DRAWN — and only once the transcript
+    // reaches the present, or a message link would mark everything after it
+    // read. Never straight after "Mark unread" (#2387): the reader asked for
+    // this conversation to stay unread, and it is still open.
+    if (last && member && !page.nextAfter && unreadHold !== conversationId) void markRead(last.id);
   } catch (error) {
     if (request !== threadRequest) return;
     publish({ loadingThread: false, threadError: errorMessage(error, 'Couldn’t load this conversation.') });
@@ -354,6 +410,36 @@ async function refreshActiveAfterMembershipChange(conversationId: number): Promi
   if (state.threadError === 'This conversation is no longer available.') {
     await finishDirectBlock(conversationId);
   }
+}
+
+/**
+ * #2387: the newer half of a transcript a message link opened part-way back.
+ * Reaching the present marks it read, as opening it normally would have.
+ */
+export async function loadNewer(): Promise<void> {
+  const conversationId = state.route.conversationId;
+  if (!conversationId || !state.nextAfter || state.loadingOlder) return;
+  publish({ loadingOlder: true });
+  try {
+    const page = await api.listMessagesAfter(conversationId, state.nextAfter);
+    if (state.route.conversationId !== conversationId) return;
+    const known = new Set(state.messages.map((message) => message.id));
+    const newer = page.messages.filter((message) => !known.has(message.id));
+    const messages = [...state.messages, ...newer].sort((a, b) => a.id - b.id);
+    publish({ messages, nextAfter: page.nextAfter, loadingOlder: false });
+    const last = messages.at(-1);
+    if (!page.nextAfter && last && unreadHold !== conversationId) void markRead(last.id);
+  } catch (error) {
+    publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load newer messages.') });
+  }
+}
+
+/** #2387: leave a linked page for the newest messages. */
+export function jumpToPresent(): void {
+  const conversationId = state.route.conversationId;
+  if (!conversationId) return;
+  publish({ route: { ...state.route, focusMessageId: null }, nextAfter: null });
+  void loadThread(conversationId, true);
 }
 
 export async function loadOlder(): Promise<void> {
@@ -401,8 +487,14 @@ export function route(
   conversationId?: number | null,
   appSlug?: string | null,
   agent?: MessagesAgentThread | null,
+  extras: { threadRootId?: number | null; focusMessageId?: number | null } = {},
 ): void {
   const nextId = validId(conversationId) ? conversationId : null;
+  // #2387: a reply thread and a message link ride on a conversation or an
+  // app channel, never on an agent thread or the bare list.
+  const nextRoot = (nextId || validSlug(appSlug)) && validId(extras.threadRootId) ? extras.threadRootId : null;
+  const nextFocus = (nextId || validSlug(appSlug)) && validId(extras.focusMessageId) ? extras.focusMessageId : null;
+  if (unreadHold && unreadHold !== nextId) unreadHold = null;
   // ONE THREAD IS OPEN (#2718 review). An app's discussion and a conversation
   // are both threads of this inbox, addressed differently because one is an
   // app and the other a row in this database — so naming one clears the
@@ -412,14 +504,23 @@ export function route(
   const nextAgent = nextId || nextSlug ? null : validAgentThread(agent);
   if (state.route.open && state.route.conversationId === nextId
       && state.route.appSlug === nextSlug && sameAgentThread(state.route.agent, nextAgent)) {
+    const threadChanged = state.route.threadRootId !== nextRoot;
+    const focusChanged = !!nextFocus && state.route.focusMessageId !== nextFocus;
+    if (threadChanged || focusChanged) {
+      publish({ route: { ...state.route, threadRootId: nextRoot, focusMessageId: nextFocus || state.route.focusMessageId } });
+      if (!nextRoot) publish({ thread: null });
+    }
     if (!state.listLoaded) void loadConversations();
     if (!state.discussionsLoaded) void loadAppDiscussions();
-    if (nextId && (!state.active || state.active.id !== nextId)) void loadThread(nextId);
+    if (nextId && (!state.active || state.active.id !== nextId || focusChanged)) void loadThread(nextId, focusChanged);
+    else if (nextId && nextRoot && threadChanged) void loadReplyThread(nextId, nextRoot);
     if (nextSlug && state.discussionContext?.slug !== nextSlug) void loadDiscussion(nextSlug);
     return;
   }
   publish({
-    route: { open: true, conversationId: nextId, appSlug: nextSlug, agent: nextAgent },
+    route: { open: true, conversationId: nextId, appSlug: nextSlug, agent: nextAgent, threadRootId: nextRoot, focusMessageId: nextFocus },
+    thread: null,
+    nextAfter: null,
     threadError: null,
     discussionError: null,
     // The previous thread's app, if there was one. Held until the next one
@@ -545,10 +646,12 @@ export function close(): void {
   // durable draft. Leaving Messages cancels it instead of surprising the user
   // in an unrelated conversation later.
   pendingShare = undefined;
+  replyThreadRequest += 1;
+  unreadHold = null;
   publish({
-    route: { open: false, conversationId: null, appSlug: null, agent: null },
+    route: { open: false, conversationId: null, appSlug: null, agent: null, threadRootId: null, focusMessageId: null },
     active: null, messages: [], loadingThread: false, threadError: null,
-    discussionContext: null, discussionError: null,
+    discussionContext: null, discussionError: null, thread: null, nextAfter: null,
   });
 }
 
@@ -559,6 +662,17 @@ export function isOpen(): boolean {
 export function handleBack(): boolean {
   const onThread = !!state.route.conversationId || !!state.route.appSlug || !!state.route.agent;
   if (!state.route.open || !onThread || !isMobile()) return false;
+  // #2387: on a phone a reply thread is a level of its own over the
+  // conversation, so Back closes it first.
+  if (state.route.threadRootId) {
+    const parent = state.route.appSlug
+      ? `#messages/app/${encodeURIComponent(state.route.appSlug)}`
+      : `#messages/${state.route.conversationId}`;
+    try { history.replaceState(null, '', parent); } catch { /* non-fatal */ }
+    route(state.route.conversationId, state.route.appSlug, null);
+    syncChrome();
+    return true;
+  }
   const current = typeof location !== 'undefined' ? location.hash : '';
   if (current.startsWith('#messages/') && typeof history !== 'undefined') {
     try { history.replaceState(null, '', '#messages'); } catch { /* non-fatal */ }
@@ -582,6 +696,15 @@ export function syncChrome(): void {
   // which is why backing out of one landed wherever that screen's slot
   // pointed — the Workshop, when that is where the app had been opened from.
   const thread = isMobile() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);
+  // #2387: a reply thread, on a phone, is a level over its conversation: the
+  // chevron goes back to the conversation, and the bar says "Thread".
+  if (isMobile() && state.route.threadRootId && (state.route.conversationId || state.route.appSlug)) {
+    app.setBackIcon?.('arrow', state.route.appSlug
+      ? `#messages/app/${encodeURIComponent(state.route.appSlug)}`
+      : `#messages/${state.route.conversationId}`);
+    app.setHeaderTitle?.('Thread');
+    return;
+  }
   // 'none' ON THE INBOX (#2718 review). This is a second writer over the
   // slot App._BACK_SLOT already set for #messages-screen, and it was
   // publishing the house — so Messages was the one tab root still offering
@@ -744,31 +867,31 @@ async function refreshBlockedView(userId: number, blocked: boolean): Promise<voi
   ]);
 }
 
-export function draftFor(conversationId: number): string {
-  if (drafts.has(conversationId)) return drafts.get(conversationId) || '';
+export function draftFor(scope: ComposerScope): string {
+  if (drafts.has(scope)) return drafts.get(scope) || '';
   try {
-    const value = localStorage.getItem(`usernode:messages-draft:${conversationId}`) || '';
-    drafts.set(conversationId, value);
+    const value = localStorage.getItem(`usernode:messages-draft:${scope}`) || '';
+    drafts.set(scope, value);
     return value;
   } catch { return ''; }
 }
 
-export function setDraft(conversationId: number, value: string): void {
-  drafts.set(conversationId, value);
+export function setDraft(scope: ComposerScope, value: string): void {
+  drafts.set(scope, value);
   try {
-    if (value) localStorage.setItem(`usernode:messages-draft:${conversationId}`, value);
-    else localStorage.removeItem(`usernode:messages-draft:${conversationId}`);
+    if (value) localStorage.setItem(`usernode:messages-draft:${scope}`, value);
+    else localStorage.removeItem(`usernode:messages-draft:${scope}`);
   } catch { /* storage unavailable */ }
   publish({});
 }
 
-export function replyFor(conversationId: number): ConversationMessage | null {
-  return replyTargets.get(conversationId) || null;
+export function replyFor(scope: ComposerScope): ConversationMessage | null {
+  return replyTargets.get(scope) || null;
 }
 
-export function setReply(conversationId: number, message: ConversationMessage | null): void {
-  if (message) replyTargets.set(conversationId, message);
-  else replyTargets.delete(conversationId);
+export function setReply(scope: ComposerScope, message: ConversationMessage | null): void {
+  if (message) replyTargets.set(scope, message);
+  else replyTargets.delete(scope);
   publish({});
 }
 
@@ -777,16 +900,19 @@ function idempotencyKey(): string {
   return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-export async function send(input: { content: string; attachmentIds?: string[]; object?: SharedObjectReference; attachments?: ConversationMessage['attachments'] }): Promise<void> {
+export async function send(input: { content: string; attachmentIds?: string[]; object?: SharedObjectReference; attachments?: ConversationMessage['attachments']; threadRootId?: number | null }): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
+  const threadRootId = input.threadRootId && state.thread?.rootId === input.threadRootId ? input.threadRootId : null;
+  const scope = scopeKey(conversationId, threadRootId);
   const content = input.content.slice(0, 8000);
-  const reply = replyFor(conversationId);
+  const reply = replyFor(scope);
   const pending: PendingSend = {
     content,
     attachmentIds: input.attachmentIds,
     object: input.object,
     replyToId: reply?.id,
+    ...(threadRootId ? { threadRootId } : {}),
     idempotencyKey: idempotencyKey(),
   };
   const optimistic: ConversationMessage = {
@@ -799,11 +925,16 @@ export async function send(input: { content: string; attachmentIds?: string[]; o
     // The files already uploaded draw with the row, so a file-only send is
     // not an empty line while it is in flight.
     reactions: [], attachments: input.attachments || [], objects: [], pending: true, clientKey: pending.idempotencyKey,
+    threadRootId,
   };
   unsent.set(pending.idempotencyKey, { conversationId, payload: pending });
-  setDraft(conversationId, '');
-  setReply(conversationId, null);
-  publish({ messages: [...state.messages, optimistic], threadError: null });
+  setDraft(scope, '');
+  setReply(scope, null);
+  if (threadRootId && state.thread) {
+    publish({ thread: { ...state.thread, messages: [...state.thread.messages, optimistic], error: null } });
+  } else {
+    publish({ messages: [...state.messages, optimistic], threadError: null });
+  }
   await deliver(conversationId, pending);
 }
 
@@ -815,6 +946,7 @@ export async function send(input: { content: string; attachmentIds?: string[]; o
  */
 async function deliver(conversationId: number, pending: PendingSend): Promise<void> {
   const key = pending.idempotencyKey;
+  if (pending.threadRootId) { await deliverToThread(conversationId, pending); return; }
   try {
     const message = await api.sendMessage(conversationId, pending);
     unsent.delete(key);
@@ -848,16 +980,66 @@ async function deliver(conversationId: number, pending: PendingSend): Promise<vo
   }
 }
 
+/**
+ * A reply sent into the thread open beside the conversation (#2387). The
+ * same optimistic row and idempotency key as a send into the conversation,
+ * settled in the thread's own page; the conversation's transcript is then
+ * re-read for the reply count on the message the thread hangs off.
+ */
+async function deliverToThread(conversationId: number, pending: PendingSend): Promise<void> {
+  const key = pending.idempotencyKey;
+  const rootId = pending.threadRootId as number;
+  try {
+    const message = await api.sendMessage(conversationId, pending);
+    unsent.delete(key);
+    sentKeys.set(message.id, key);
+    const thread = state.thread;
+    if (thread && thread.conversationId === conversationId && thread.rootId === rootId) {
+      const messages = thread.messages
+        .filter((item) => item.clientKey !== key && item.id !== message.id)
+        .concat({ ...message, clientKey: key })
+        .sort((a, b) => (a.id < 0 || b.id < 0 ? Number(a.id < 0) - Number(b.id < 0) : a.id - b.id));
+      publish({ thread: { ...thread, messages } });
+    }
+    if (state.route.conversationId === conversationId) void loadThread(conversationId, true);
+  } catch (error) {
+    const thread = state.thread;
+    if (thread && thread.rootId === rootId) {
+      publish({
+        thread: {
+          ...thread,
+          messages: thread.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
+          error: errorMessage(error, 'Your reply wasn’t sent.'),
+        },
+      });
+    }
+  }
+}
+
+/** Apply `fn` to the matching rows of the conversation AND of the open thread. */
+function mapRows(fn: (item: ConversationMessage) => ConversationMessage): void {
+  const thread = state.thread;
+  publish({
+    messages: state.messages.map(fn),
+    ...(thread ? { thread: { ...thread, root: thread.root ? fn(thread.root) : null, messages: thread.messages.map(fn) } } : {}),
+  });
+}
+
+/** Every row this store is drawing, wherever it is drawn. */
+function findRow(messageId: number): ConversationMessage | undefined {
+  return state.messages.find((item) => item.id === messageId)
+    || (state.thread?.root?.id === messageId ? state.thread.root : undefined)
+    || state.thread?.messages.find((item) => item.id === messageId);
+}
+
 /** Send a failed row again, in place (#2907). */
 export async function retrySend(clientKey: string): Promise<void> {
   const entry = unsent.get(clientKey);
   if (!entry) return;
   const queue = pendingByConversation.get(entry.conversationId);
   if (queue) pendingByConversation.set(entry.conversationId, queue.filter((item) => item.idempotencyKey !== clientKey));
-  publish({
-    threadError: null,
-    messages: state.messages.map((item) => item.clientKey === clientKey ? { ...item, pending: true, failed: false } : item),
-  });
+  publish({ threadError: null });
+  mapRows((item) => item.clientKey === clientKey ? { ...item, pending: true, failed: false } : item);
   await deliver(entry.conversationId, entry.payload);
 }
 
@@ -869,7 +1051,12 @@ export function discardFailed(clientKey: string): void {
     const queue = pendingByConversation.get(entry.conversationId);
     if (queue) pendingByConversation.set(entry.conversationId, queue.filter((item) => item.idempotencyKey !== clientKey));
   }
-  publish({ messages: state.messages.filter((item) => !(item.clientKey === clientKey && item.failed)) });
+  const keep = (item: ConversationMessage) => !(item.clientKey === clientKey && item.failed);
+  const thread = state.thread;
+  publish({
+    messages: state.messages.filter(keep),
+    ...(thread ? { thread: { ...thread, messages: thread.messages.filter(keep) } } : {}),
+  });
 }
 
 export async function retryPending(): Promise<void> {
@@ -896,14 +1083,164 @@ export async function edit(messageId: number, content: string): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
   const message = await api.editMessage(conversationId, messageId, content.slice(0, 8000));
-  publish({ messages: state.messages.map((item) => item.id === message.id ? message : item) });
+  // The server's copy of the edited row, keeping what the row already knew
+  // that an edit response does not carry (its thread summary, its client key).
+  mapRows((item) => item.id === message.id ? { ...item, ...message, thread: item.thread, clientKey: item.clientKey } : item);
 }
 
 export async function react(messageId: number, emoji: string): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
   const reactions = await api.toggleReaction(conversationId, messageId, emoji);
-  publish({ messages: state.messages.map((item) => item.id === messageId ? { ...item, reactions } : item) });
+  mapRows((item) => item.id === messageId ? { ...item, reactions } : item);
+}
+
+/**
+ * Delete your own message (#2387). The row becomes the placeholder at once —
+ * the server keeps the same placeholder — and comes back if it refuses.
+ */
+export async function deleteMessage(messageId: number): Promise<void> {
+  const conversationId = state.route.conversationId;
+  if (!conversationId) return;
+  const before = findRow(messageId);
+  if (!before) return;
+  const placeholder = (item: ConversationMessage): ConversationMessage => ({
+    ...item, deleted: true, content: '', attachments: [], objects: [], reactions: [], editedAt: null, saved: false,
+  });
+  mapRows((item) => item.id === messageId ? placeholder(item) : item);
+  try {
+    const message = await api.deleteMessage(conversationId, messageId);
+    if (message) mapRows((item) => item.id === messageId ? { ...placeholder(item), ...message, thread: item.thread } : item);
+    void loadConversations(true);
+  } catch (error) {
+    mapRows((item) => item.id === messageId ? before : item);
+    throw error;
+  }
+}
+
+/**
+ * Make a message and everything after it unread (#2387). The conversation's
+ * row takes its count back, and it stays unread while it is open (unreadHold)
+ * — on a phone the list comes back, the way a mail client leaves a message
+ * you have just marked unread.
+ */
+export async function markUnread(messageId: number): Promise<void> {
+  const conversationId = state.route.conversationId;
+  if (!conversationId) return;
+  const { unreadCount } = await api.markUnread(conversationId, messageId);
+  unreadHold = conversationId;
+  publish({ conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, unreadCount } : item) });
+  void loadConversations(true);
+  if (isMobile()) open(null);
+}
+
+/** The address a message link opens (#2387): the conversation, scrolled to it. */
+export function messageAddress(conversationId: number, messageId: number): string {
+  return `#messages/${conversationId}/m/${messageId}`;
+}
+
+/** The address of a reply thread beside its conversation (#2387). */
+export function threadAddress(conversationId: number, rootId: number): string {
+  return `#messages/${conversationId}/thread/${rootId}`;
+}
+
+/** Open the thread that hangs off a message of the open conversation. */
+export function openThread(rootId: number): void {
+  const conversationId = state.route.conversationId;
+  if (typeof window === 'undefined' || !conversationId || !validId(rootId)) return;
+  const target = threadAddress(conversationId, rootId);
+  if (window.location.hash === target) route(conversationId, null, null, { threadRootId: rootId });
+  else window.location.hash = target;
+}
+
+/** Close the thread beside the conversation, keeping the conversation open. */
+export function closeThread(): void {
+  const conversationId = state.route.conversationId;
+  replyThreadRequest += 1;
+  publish({ thread: null, route: { ...state.route, threadRootId: null } });
+  if (typeof window === 'undefined' || !conversationId) return;
+  const target = `#messages/${conversationId}`;
+  if (window.location.hash !== target) {
+    try { history.replaceState(null, '', target); } catch { window.location.hash = target; }
+  }
+}
+
+/**
+ * A reply thread's page (#2387): the message it hangs off and its replies.
+ * Its own request counter, so a slow thread cannot paint over the next one.
+ */
+export async function loadReplyThread(conversationId: number, rootId: number, force = false): Promise<void> {
+  if (!validId(conversationId) || !validId(rootId)) return;
+  const current = state.thread;
+  const same = current && current.conversationId === conversationId && current.rootId === rootId;
+  if (same && !force && current.messages.length && !current.error) return;
+  const request = ++replyThreadRequest;
+  publish({
+    thread: same && current
+      ? { ...current, loading: true, error: null }
+      : { conversationId, rootId, root: findRow(rootId) || null, messages: [], loading: true, error: null, nextBefore: null },
+  });
+  try {
+    const page = await api.listThread(conversationId, rootId);
+    if (request !== replyThreadRequest || state.route.threadRootId !== rootId) return;
+    const local = (state.thread?.messages || []).filter((item) => item.id < 0 && item.threadRootId === rootId
+      && !page.messages.some((row) => row.sender.id === item.sender.id && row.content === item.content));
+    const known = page.messages.map((item) => {
+      const key = sentKeys.get(item.id);
+      return key ? { ...item, clientKey: key } : item;
+    });
+    publish({
+      thread: {
+        conversationId, rootId, root: page.root || findRow(rootId) || null,
+        messages: [...known.sort((a, b) => a.id - b.id), ...local],
+        loading: false, error: null, nextBefore: page.nextBefore,
+      },
+    });
+  } catch (error) {
+    if (request !== replyThreadRequest) return;
+    const thread = state.thread;
+    publish({
+      thread: thread ? { ...thread, loading: false, error: errorMessage(error, 'Couldn’t load this thread.') } : null,
+    });
+  }
+}
+
+/** The thread's earlier replies. */
+export async function loadOlderReplies(): Promise<void> {
+  const thread = state.thread;
+  if (!thread || !thread.nextBefore || thread.loading) return;
+  publish({ thread: { ...thread, loading: true } });
+  try {
+    const page = await api.listThread(thread.conversationId, thread.rootId, thread.nextBefore);
+    const now = state.thread;
+    if (!now || now.rootId !== thread.rootId) return;
+    const known = new Set(now.messages.map((item) => item.id));
+    publish({
+      thread: {
+        ...now,
+        loading: false,
+        messages: [...page.messages.filter((item) => !known.has(item.id)), ...now.messages].sort((a, b) => (a.id < 0 || b.id < 0 ? Number(a.id < 0) - Number(b.id < 0) : a.id - b.id)),
+        nextBefore: page.nextBefore,
+      },
+    });
+  } catch (error) {
+    const now = state.thread;
+    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, 'Couldn’t load earlier replies.') } });
+  }
+}
+
+/** #2387: fold the list pane away on a desktop, or bring it back. Remembered per device. */
+export function setListCollapsed(collapsed: boolean): void {
+  if (state.listCollapsed === collapsed) return;
+  try { localStorage.setItem('usernode:messages-list-collapsed', collapsed ? '1' : '0'); } catch { /* storage unavailable */ }
+  publish({ listCollapsed: collapsed });
+}
+
+/** #2967: show or hide the channels outside Your apps. Remembered per device. */
+export function setShowMoreChannels(show: boolean): void {
+  if (state.showMoreChannels === show) return;
+  try { localStorage.setItem('usernode:messages-more-channels', show ? '1' : '0'); } catch { /* storage unavailable */ }
+  publish({ showMoreChannels: show });
 }
 
 /**
@@ -922,12 +1259,10 @@ export async function react(messageId: number, emoji: string): Promise<void> {
 export async function toggleSaved(messageId: number): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
-  const current = state.messages.find((item) => item.id === messageId);
+  const current = findRow(messageId);
   if (!current) return;
   const next = !current.saved;
-  const paint = (saved: boolean) => publish({
-    messages: state.messages.map((item) => item.id === messageId ? { ...item, saved } : item),
-  });
+  const paint = (saved: boolean) => mapRows((item) => item.id === messageId ? { ...item, saved } : item);
   paint(next);
   try {
     await api.setMessageSaved(conversationId, messageId, next);
@@ -957,18 +1292,17 @@ export function handleEvent(raw: ConversationEvent): void {
   const conversationId = eventConversationId(event);
   if (!conversationId) return;
   switch (event.type) {
-    case 'conversation_message_created': {
+    case 'conversation_message_created':
+    case 'conversation_message_updated': {
       // Realtime deliberately carries ids only: hydrated messages and shared
       // object cards must be resolved under this viewer's REST permissions.
+      // A reply inside a thread (#2387) re-reads that thread when it is the
+      // one open, and the conversation either way — the reply count on the
+      // message the thread hangs off is the conversation's to draw.
+      const rootId = api.strictId(event.threadRootId ?? event.thread_root_id);
       if (state.route.open && state.route.conversationId === conversationId) {
         void loadThread(conversationId, true);
-      }
-      void loadConversations(true);
-      break;
-    }
-    case 'conversation_message_updated': {
-      if (state.route.open && state.route.conversationId === conversationId) {
-        void loadThread(conversationId, true);
+        if (rootId && state.thread?.rootId === rootId) void loadReplyThread(conversationId, rootId, true);
       }
       void loadConversations(true);
       break;
@@ -1092,6 +1426,8 @@ function paintSaved(messageId: number, saved: boolean): void {
 export const messagesController = {
   open,
   openDiscussion,
+  openThread,
+  closeThread,
   openAgentThread,
   route,
   close,
@@ -1131,7 +1467,15 @@ export function initializeMessagesStore(): () => void {
   if (window.App?.user) void loadConversations();
   else document.addEventListener('sv:authed', onAuthed, { once: true });
   if (window.App?.user) void loadAppDiscussions();
-  publish({ online: navigator.onLine, demo: browserDemo() });
+  // #2387 / #2967: the two layout preferences, read after mount so the first
+  // render matches the prerendered shell.
+  let listCollapsed = false;
+  let showMoreChannels = false;
+  try {
+    listCollapsed = localStorage.getItem('usernode:messages-list-collapsed') === '1';
+    showMoreChannels = localStorage.getItem('usernode:messages-more-channels') === '1';
+  } catch { /* storage unavailable */ }
+  publish({ online: navigator.onLine, demo: browserDemo(), listCollapsed, showMoreChannels });
   return () => {
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOffline);

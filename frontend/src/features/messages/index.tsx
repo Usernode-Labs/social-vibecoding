@@ -3,11 +3,13 @@ import { createPortal } from 'react-dom';
 
 import { groupsWithPrevious } from '@/components/ui/chat';
 import {
-  ChatIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon,
+  ChatIcon, ChevronDownIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon, SearchIcon, SidebarIcon, SparklesIcon,
+  UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
+import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
@@ -22,17 +24,24 @@ import { MessageRow } from './message-row';
 import { ShareItemDialog } from './share-dialog';
 import {
   agentThreadAddress,
+  closeThread,
   fullScreenAddress,
   initializeMessagesStore,
   finishDirectBlock,
+  jumpToPresent,
   loadConversations,
+  loadNewer,
   loadOlder,
+  loadOlderReplies,
+  loadReplyThread,
   messagesController,
   open as openConversation,
   openAgentThread,
   respond,
   setUserBlocked,
   selectConversation,
+  setListCollapsed,
+  setShowMoreChannels,
   syncChrome,
   setFilter,
   typingUsers,
@@ -225,6 +234,9 @@ function GeneralChannelRow({ conversation, active }: { conversation: Conversatio
  */
 function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; active: boolean }) {
   const activity = discussion.lastAt ? agoStamp(discussion.lastAt) : null;
+  // #2387: app channels keep a read cursor now, so they carry a count like
+  // #general's — only while the viewer is not reading it.
+  const unread = !active && (discussion.unreadCount || 0) > 0 ? discussion.unreadCount || 0 : 0;
   const record = {
     icon_url: discussion.iconUrl,
     icon_emoji: discussion.iconEmoji,
@@ -249,7 +261,7 @@ function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; acti
         <div className="messages-row-line">
           <span className="messages-row-name">{discussion.name}<span className="messages-channel-handle">#{handle}</span></span>
           {activity
-            ? <time className="messages-row-time" dateTime={discussion.lastAt || undefined} title={activity.title}>{activity.text}</time>
+            ? <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={discussion.lastAt || undefined} title={activity.title}>{activity.text}</time>
             : null}
         </div>
         <div className="messages-row-line">
@@ -258,6 +270,7 @@ function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; acti
               ? (discussion.lastBy ? `@${discussion.lastBy}: ${discussion.lastMessage}` : discussion.lastMessage)
               : 'No messages yet'}
           </span>
+          {unread ? <span className="messages-unread" aria-label={`${unread} unread`}>{unread > 99 ? '99+' : unread}</span> : null}
         </div>
       </div>
     </a>
@@ -742,7 +755,28 @@ function ConversationList() {
     const g = byAgent.get(entry.key.slice('agent:'.length));
     return !!g && inboxMatches(g.title, q);
   };
-  const shown = inbox.filter(matches);
+  // #2967: the channels outside Your apps fold behind "Show N more" — except
+  // while searching (a query looks through everything), and except the one
+  // that is open, which stays in view wherever it lives.
+  const moreEntries = inbox.filter((entry) => entry.more);
+  const openSlug = snap.route.appSlug;
+  const shown = inbox.filter(matches).filter((entry) => !entry.more || !!q || snap.showMoreChannels
+    || (entry.kind === 'app' && entry.key === `app:${openSlug}`));
+  const moreToggle = moreEntries.length && !q ? (
+    <button
+      key="more-channels"
+      type="button"
+      id="messages-more-channels"
+      className="messages-more-channels"
+      aria-expanded={snap.showMoreChannels}
+      onClick={() => setShowMoreChannels(!snap.showMoreChannels)}
+    >
+      <span className="messages-more-channels-glyph" aria-hidden="true">
+        <ChevronDownIcon className={snap.showMoreChannels ? 'rotate-180' : ''} />
+      </span>
+      <span>{snap.showMoreChannels ? 'Show less' : `Show ${moreEntries.length} more`}</span>
+    </button>
+  ) : null;
 
   return (
     <section className={`messages-list-pane ${snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
@@ -808,8 +842,13 @@ function ConversationList() {
             ? <h3 key={`head-${entry.section}`} className="messages-section-head" data-inbox-section={entry.section}>{SECTION_LABELS[entry.section]}</h3>
             : null;
           const row = inboxRow(entry);
-          return head ? [head, row] : row;
+          // #2967: the toggle sits where the channels outside Your apps
+          // begin — above them once they are shown, so "Show less" is next to
+          // what it folds.
+          const toggle = entry.more && (i === 0 || !shown[i - 1].more) ? moreToggle : null;
+          return [head, toggle, row].filter(Boolean);
         })}
+        {moreToggle && !shown.some((entry) => entry.more) && (snap.filter === 'all' || snap.filter === 'channels') ? moreToggle : null}
       </div>
     </section>
   );
@@ -895,6 +934,31 @@ function InvitationBanner() {
 }
 
 /**
+ * #2387: SINGLE-PANEL MODE. On a desktop the list and the open chat sit side
+ * by side; this folds the list away so the chat (and a thread beside it) has
+ * the whole width, and brings it back. It leads the chat's own title row,
+ * next to the pane it changes, and is remembered on this device. A phone
+ * shows one pane at a time already, so there it is not drawn (app.css).
+ */
+function ListToggle() {
+  const snap = useMessagesSnapshot();
+  const collapsed = snap.listCollapsed;
+  const label = collapsed ? 'Show conversation list' : 'Hide conversation list';
+  return (
+    <button
+      type="button"
+      className="messages-thread-action messages-list-toggle"
+      aria-pressed={collapsed}
+      aria-label={label}
+      title={label}
+      onClick={() => setListCollapsed(!collapsed)}
+    >
+      <SidebarIcon aria-hidden="true" />
+    </button>
+  );
+}
+
+/**
  * The sheet's title row: who this conversation is with, and its actions as
  * floating discs. No back control of its own — on a phone the platform
  * header's back arrow already points at the list (see syncChrome in
@@ -924,6 +988,7 @@ function ThreadHeader() {
       : active.membershipStatus === 'invited' ? 'Invitation pending' : 'Direct message';
   return (
     <header className="messages-thread-header">
+      <ListToggle />
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : <UserAvatar user={active.kind === 'direct' ? peer : null} title={active.title} shape="square" />}
@@ -1068,6 +1133,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           once per browser and then never again. The conversation pane beside
           it carries the same row (ThreadHeader). */}
       <header className="messages-thread-header">
+        <ListToggle />
         <span
           data-icon={appIconKind(iconRecord as never)}
           className="app-icon-tile messages-inbox-tile"
@@ -1300,6 +1366,10 @@ function ConversationThread() {
   const typing = conversationId ? typingUsers(conversationId) : [];
   // #2884: the runs of cards the viewer has opened, by their first message.
   const [expandedRuns, setExpandedRuns] = useState<ReadonlySet<string>>(() => new Set());
+  // #2387: the message a link pointed at, flashed once it is drawn.
+  const focusId = snap.route.focusMessageId;
+  const [flashId, setFlashId] = useState<number | null>(null);
+  const shownFocus = useRef<number | null>(null);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -1311,13 +1381,27 @@ function ConversationThread() {
     const lastMessage = snap.messages.at(-1);
     const last = lastMessage?.id || null;
     if (!el || !last) return;
+    // #2387: a message link lands on its message, centred and flashed, once
+    // — not at the bottom, and not again on every refresh after.
+    if (focusId && shownFocus.current !== focusId) {
+      const row = document.getElementById(`messages-message-${focusId}`);
+      if (row) {
+        shownFocus.current = focusId;
+        previousLast.current = last;
+        requestAnimationFrame(() => row.scrollIntoView({ block: 'center' }));
+        setFlashId(focusId);
+        window.setTimeout(() => setFlashId((id) => (id === focusId ? null : id)), 2400);
+        return;
+      }
+    }
+    if (focusId && shownFocus.current === focusId && snap.nextAfter) { previousLast.current = last; return; }
     // The viewer's own send always lands in view, wherever they had scrolled.
     const sentNow = !!lastMessage?.pending && last !== previousLast.current;
     if (previousLast.current === null || sentNow || Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 180) {
       requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
     }
     previousLast.current = last;
-  }, [snap.messages]);
+  }, [snap.messages, focusId, snap.nextAfter]);
 
   async function older() {
     const el = scroller.current;
@@ -1362,7 +1446,16 @@ function ConversationThread() {
         { author: previous.sender.id, at: previous.createdAt },
         { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
       );
-    rows.push(<MessageRow key={message.clientKey || message.id} message={message} conversationId={conversationId} grouped={grouped} channels={channels} />);
+    rows.push(<MessageRow
+      key={message.clientKey || message.id}
+      message={message}
+      conversationId={conversationId}
+      grouped={grouped}
+      channels={channels}
+      kind={kind}
+      threadOpen={snap.route.threadRootId === message.id}
+      focused={flashId === message.id}
+    />);
     previous = message;
     const length = runs.get(index);
     const runKey = String(message.clientKey || message.id);
@@ -1404,10 +1497,156 @@ function ConversationThread() {
         {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>No messages yet. Say hello.</p></div> : null}
         {snap.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={snap.loadingOlder} onClick={() => void older()} className="messages-load-older">{snap.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button></div> : null}
         {rows}
+        {/* #2387: a message link opened the transcript part-way back. */}
+        {snap.nextAfter ? (
+          <div className="messages-newer">
+            <button type="button" className="messages-load-older" disabled={snap.loadingOlder} onClick={() => void loadNewer()}>{snap.loadingOlder ? 'Loading…' : 'Load newer messages'}</button>
+            <button type="button" className="messages-load-older" onClick={() => jumpToPresent()}>Jump to present</button>
+          </div>
+        ) : null}
       </div>
       <div className="messages-typing" aria-live="polite">{typing.length === 1 ? `${typing[0]} is typing…` : typing.length > 1 ? `${typing.slice(0, 2).join(', ')} are typing…` : ''}</div>
       <MessageComposer />
     </section>
+  );
+}
+
+/**
+ * A REPLY THREAD beside its conversation (#2387): the message it hangs off,
+ * its replies, and a composer of its own. Slack's arrangement — the
+ * conversation stays readable on the left while the side conversation runs
+ * on the right — drawn as a second sheet on the same strip. On a phone it
+ * covers the conversation instead (app.css), and Back returns to it.
+ *
+ * DMs have no threads: a thread is how a room keeps a side conversation out
+ * of everyone's way, and a DM has no one else in it (store: canThread).
+ */
+function ReplyThreadPanel() {
+  const snap = useMessagesSnapshot();
+  const channels = useChannelHandles();
+  const conversationId = snap.route.conversationId;
+  const rootId = snap.route.threadRootId;
+  const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
+  const scroller = useRef<HTMLDivElement>(null);
+  const count = useRef(0);
+  useEffect(() => {
+    if (conversationId && rootId && !snap.loadingThread && snap.active?.id === conversationId) {
+      void loadReplyThread(conversationId, rootId);
+    }
+  }, [conversationId, rootId, snap.active?.id, snap.loadingThread]);
+  // New replies land in view, as the conversation's do.
+  useEffect(() => {
+    const el = scroller.current;
+    const n = thread?.messages.length || 0;
+    if (el && n !== count.current) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    count.current = n;
+  }, [thread?.messages.length]);
+  if (!conversationId || !rootId) return null;
+  const active = snap.active;
+  const kind = active?.kind || 'group';
+  const where = active ? (kind === 'channel' ? `#${active.channelKey || active.title}` : active.title) : '';
+  const root = thread?.root || snap.messages.find((item) => item.id === rootId) || null;
+  const replies = thread?.messages || [];
+  let previous: ConversationMessage | null = null;
+  return (
+    <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label="Thread" data-reply-thread={rootId}>
+      <header className="messages-thread-header">
+        <div className="min-w-0 flex-1">
+          <div className="messages-thread-name">Thread</div>
+          {where ? <div className="messages-thread-sub">{where}</div> : null}
+        </div>
+        <button type="button" className="messages-thread-action" aria-label="Close thread" title="Close thread" onClick={() => closeThread()}>
+          <XIcon aria-hidden="true" />
+        </button>
+      </header>
+      <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll" aria-live="polite">
+        {root ? <MessageRow message={{ ...root, thread: null }} conversationId={conversationId} channels={channels} kind={kind} inThread /> : null}
+        <div className="messages-reply-count" aria-hidden={!replies.length}>
+          <span>{replies.length ? `${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}` : thread?.loading ? 'Loading replies…' : 'No replies yet'}</span>
+        </div>
+        {thread?.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={thread.loading} onClick={() => void loadOlderReplies()} className="messages-load-older">{thread.loading ? 'Loading…' : 'Load earlier replies'}</button></div> : null}
+        {thread?.error ? <div className="messages-state messages-state-error"><p>{thread.error}</p><button type="button" onClick={() => void loadReplyThread(conversationId, rootId, true)}>Try again</button></div> : null}
+        {replies.map((message) => {
+          const grouped = !!previous && !previous.failed && !message.failed
+            && groupsWithPrevious(
+              { author: previous.sender.id, at: previous.createdAt },
+              { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
+            );
+          previous = message;
+          return <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped} channels={channels} kind={kind} inThread />;
+        })}
+      </div>
+      <MessageComposer threadRootId={rootId} />
+    </aside>
+  );
+}
+
+/**
+ * A reply thread beside an app's channel (#2387) — the same side sheet as a
+ * conversation's, filled the way the channel itself is: by the group chat
+ * (public/js/group-chat.js), which owns the app chat's transcript, composer,
+ * drafts, @ and # menus and its socket. `GroupChat.mountThread` puts a
+ * thread's shell and transcript into this host, exactly as it does for an
+ * issue's or a proposal's own discussion; this pane is the frame around it.
+ *
+ * It waits for the channel: the module can only mount a thread for the app
+ * it is connected to, and that is the channel pane's to establish.
+ */
+function AppReplyThreadPanel({ slug, rootId }: { slug: string; rootId: number }) {
+  const snap = useMessagesSnapshot();
+  const host = useRef<HTMLDivElement | null>(null);
+  const context = snap.discussionContext;
+  const ready = !!context && context.slug === slug;
+  const readOnly = ready ? context.readOnly : true;
+  const handle = snap.discussions.find((item) => item.slug === slug)?.channel || null;
+  useEffect(() => {
+    const el = host.current;
+    if (!el || !ready) return undefined;
+    const chat = (window as any).GroupChat;
+    let live = true;
+    let tries = 0;
+    let timer = 0;
+    const mount = () => {
+      if (!live) return;
+      // The channel pane connects the module a macrotask after it mounts;
+      // wait for it rather than connecting a second time from here.
+      if (chat?.appSlug !== slug && tries < 40) { tries += 1; timer = window.setTimeout(mount, 50); return; }
+      chat?.mountThread?.({
+        type: 'message',
+        ref: rootId,
+        container: el,
+        fullHeight: true,
+        readOnly,
+        placeholder: 'Reply in thread…',
+        notice: 'Only members of this app can reply here.',
+      });
+    };
+    timer = window.setTimeout(mount, 0);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+      const list = el.querySelector('#gc-thread-messages');
+      if (list) (window as any).UsernodeReact?.groupChat?.unmountTranscript?.(list);
+      unmountLegacyPortal(el);
+      if (chat?.activeThread?.type === 'message' && Number(chat.activeThread.ref) === rootId) chat.unmountThread?.();
+    };
+  }, [slug, rootId, ready, readOnly]);
+  const back = `#messages/app/${encodeURIComponent(slug)}`;
+  return (
+    <aside className="messages-reply-pane messages-reply-pane-app" aria-label="Thread" data-reply-thread={rootId}>
+      <header className="messages-thread-header">
+        <div className="min-w-0 flex-1">
+          <div className="messages-thread-name">Thread</div>
+          <div className="messages-thread-sub">{handle ? `#${handle}` : (ready ? context.name : slug)}</div>
+        </div>
+        <a className="messages-thread-action" href={back} aria-label="Close thread" title="Close thread">
+          <XIcon aria-hidden="true" />
+        </a>
+      </header>
+      {/* The host's class string is constant and its subtree is the group
+          chat's — the one-owner rule, satisfied at this boundary. */}
+      <div ref={host} className="messages-reply-host flex-1 min-h-0" />
+    </aside>
   );
 }
 
@@ -1454,16 +1693,22 @@ export function MessagesScreen() {
     // the bar and puts the chevron back to the list. Without them, opening a
     // discussion kept the previous thread's name.
     [snap.active?.title, snap.route.open, snap.route.conversationId,
-      snap.route.appSlug, snap.route.agent, snap.discussionContext?.name]);
+      snap.route.appSlug, snap.route.agent, snap.discussionContext?.name, snap.route.threadRootId]);
+  // #2387: single-panel mode applies to an open chat — a conversation or an
+  // app channel. With nothing open, or an agent thread, the list is there.
+  const chatOpen = !!(snap.route.conversationId || snap.route.appSlug);
+  const layout = `messages-layout dc-lift dc-lift-strip${snap.listCollapsed && chatOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.
   return (
     <>
       <main ref={screenRef} id="messages-screen" className="hidden flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
-        <div className="messages-layout dc-lift dc-lift-strip">
+        <div className={layout}>
           <ConversationList />
           <ConversationThread />
+          {snap.route.conversationId && snap.route.threadRootId ? <ReplyThreadPanel /> : null}
+          {snap.route.appSlug && snap.route.threadRootId ? <AppReplyThreadPanel slug={snap.route.appSlug} rootId={snap.route.threadRootId} /> : null}
         </div>
       </main>
       <CreateConversationDialog />

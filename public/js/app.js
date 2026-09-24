@@ -3995,8 +3995,9 @@ const App = {
         if (parts[1] === 'app' && parts[2]) {
           // The raw segment, like the #app route's own slug a few blocks
           // below: the store validates it and the server is the authority on
-          // whether it names anything.
-          App.navigateToMessages(null, parts[2]);
+          // whether it names anything. #2387: `/thread/<id>` opens a reply
+          // thread beside the channel, `/m/<id>` a message link into it.
+          App.navigateToMessages(null, parts[2], null, App._messagesExtras(parts.slice(3)));
           return;
         }
         // #2813: AN AGENT THREAD OPENS BESIDE THE LIST TOO, on a desktop —
@@ -4041,9 +4042,12 @@ const App = {
         // Conversations use SERIAL ids, so keep their signed-int32 bound
         // local to this route.
         const conversationId = App._numericSegment(parts[1]);
+        const validConversation = conversationId != null && conversationId <= 2147483647;
         App.navigateToMessages(
-          conversationId != null && conversationId <= 2147483647
-            ? conversationId : null
+          validConversation ? conversationId : null,
+          null,
+          null,
+          validConversation ? App._messagesExtras(parts.slice(2)) : {},
         );
         return;
       }
@@ -5777,8 +5781,9 @@ const App = {
   //
   // The `navigateToMessages` name is kept below because push handling and
   // notifications.js's conversation rows still say it.
-  navigateToMessages(conversationId, appSlug, agent) {
+  navigateToMessages(conversationId, appSlug, agent, extras) {
     const messages = window.UsernodeReact?.messages;
+    const more = extras || {};
     // ALREADY HERE: route the island in place rather than replaying a screen
     // swap onto the screen you are on. The screen ITSELF is asked, not just
     // the flag — a stale `_inMessages` used to make this return early with
@@ -5786,7 +5791,7 @@ const App = {
     // in _showOnlyScreen is what keeps the flag honest; this is the belt to
     // its braces, and costs one condition.
     if (App._inMessages && App._isScreenVisible('messages-screen') && messages?.isOpen?.()) {
-      messages.route?.(conversationId || null, appSlug || null, agent || null);
+      messages.route?.(conversationId || null, appSlug || null, agent || null, more);
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -5802,7 +5807,7 @@ const App = {
     App._inMessages = true;
     // Route the still-hidden island first. It renders no remote data until its
     // effects resolve, and chrome remains suspended until the callback below.
-    messages?.route?.(conversationId || null, appSlug || null, agent || null);
+    messages?.route?.(conversationId || null, appSlug || null, agent || null, more);
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('messages-screen');
@@ -5810,6 +5815,22 @@ const App = {
       App.setHeaderTitle('Messages');
       messages?.syncChrome?.();
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // #2387: what follows a conversation or an app channel in a Messages
+  // address — `thread/<root>` opens a reply thread beside it, `m/<id>` is a
+  // message link, and the two combine (`thread/<root>/m/<id>`). Serial ids
+  // under the same int32 bound as the conversation's; anything else is
+  // ignored and the conversation opens as it would have.
+  _messagesExtras(rest) {
+    const out = {};
+    for (let i = 0; i + 1 < rest.length; i += 2) {
+      const id = App._numericSegment(rest[i + 1]);
+      if (id == null || id > 2147483647) continue;
+      if (rest[i] === 'thread') out.threadRootId = id;
+      else if (rest[i] === 'm') out.focusMessageId = id;
+    }
+    return out;
   },
 
   // #2813: the agent thread a `#messages/agent/…` or `#messages/session/…`

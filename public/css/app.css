@@ -898,114 +898,293 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   font-size: 13px;
 }
 
-/* ── The per-message tray ────────────────────────────────────────────────
-   Hover-revealed on a pointer, as a row of small discs. On a named row it
-   sits on the row's trailing edge; beside a bubble it stands on the side
-   away from the bubble's alignment, at its top, so it never covers the
-   text. */
+/* ── The hover bar (#2387) ──────────────────────────────────────────────
+   Every chat row's controls in one floating pill, Discord's shape: the three
+   recent reactions, a divider, then the picker, Reply, Save and ⋯. It sits
+   on the row's top edge at the trailing side, half over the row above, so it
+   never covers the text it acts on. Hover-revealed on a pointer (and on
+   focus-within, for the keyboard); on a touch screen it is not drawn at all
+   and a long press opens the sheet (.msgx-sheet) instead. The shared parts
+   are the `.msgx-*` rules in the next section; this is where the Messages
+   row places it. */
 .messages-message-actions {
   position: absolute;
-  top: 2px;
-  right: 8px;
+  z-index: 6;
+  top: -16px;
+  right: 16px;
   display: none;
-  align-items: center;
-  gap: 4px;
 }
 .messages-message:hover .messages-message-actions,
-.messages-message:focus-within .messages-message-actions { display: flex; }
-.messages-message-actions button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 9999px;
-  color: var(--text-muted);
-  background: var(--messages-surface);
-  box-shadow: var(--messages-disc-shadow);
-  font-size: 15px;
-}
-.messages-message-actions button:hover { background: var(--messages-surface-2); color: var(--text-primary); }
-/* The tray's glyphs are text (↩ ☺ ✎ !) except the bookmark, which is the
-   shared SVG the app chat draws. Size only — each icon carries its own
-   fill/stroke as presentation attributes, and a blanket `fill: none` here
-   would erase BookmarkSolidIcon, which is the whole saved state. */
-.messages-message-actions button svg { display: block; width: 16px; height: 16px; }
-.messages-bubble-wrap > .messages-message-actions { top: 0; right: auto; left: calc(100% + 6px); }
-.messages-message-self .messages-bubble-wrap > .messages-message-actions { left: auto; right: calc(100% + 6px); }
+.messages-message:focus-within .messages-message-actions,
+.messages-message-actions.msgx-bar-open { display: flex; }
 
 /* The tray of a message still in flight keeps its place but draws nothing
    (#2907) — on touch it is a line of the row, and growing it only once the
    send confirmed moved every row under it. */
 .messages-message-actions.messages-message-actions-reserved { visibility: hidden; }
 
-/* #2905: report message, report the person and block, behind one ⋯ disc.
-   A small card under the tray on a pointer; on touch, where the tray is the
-   row's last line, it opens upward from that line. */
-.messages-more-menu {
-  position: absolute;
-  z-index: 25;
-  top: 38px;
-  right: 8px;
-  display: flex;
-  flex-direction: column;
-  min-width: 11rem;
-  padding: 4px;
-  border-radius: 14px;
-  background: var(--messages-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
-}
-.messages-more-menu button {
-  padding: 8px 12px;
-  border-radius: 10px;
-  color: var(--text-primary);
-  font-size: 15px;
-  text-align: left;
-}
-.messages-more-menu button:hover { background: var(--messages-surface-2); }
-.messages-more-menu button.messages-more-danger { color: #dc2626; }
-.dark .messages-more-menu button.messages-more-danger { color: #f87171; }
-@media (hover: none) {
-  .messages-more-menu { top: auto; bottom: 42px; }
-}
-
-/* A saved message's bookmark, solid and in the accent — the state lives in
-   the glyph's SHAPE, the same way the app-chat bookmark's does, so the two
-   surfaces read as one feature. It keeps the accent on hover rather than
-   stepping to --text-primary with its neighbours: the others are actions you
-   might take, this one is a state that is currently true. */
-.messages-message-actions button.messages-action-saved,
-.messages-message-actions button.messages-action-saved:hover { color: var(--accent); }
-
-/* ── A saved message says so without being hovered ──────────────────────
-
-   The tray is hover-revealed, so the one piece of PERSISTENT state it
-   carried was visible only while the pointer was on the row: a saved message
-   and an unsaved one were identical until you went looking. Saving is a note
-   to yourself about something worth finding again — a mark you cannot see is
-   not one.
-
-   Two cues, and they are the same two the app chat's bookmark uses
-   (.gc-msg-save below): the mark STAYS, and it is solid and accented. On a
-   named row the accent also sits on the row as an inset bar, composing with
-   the failed-send wash instead of racing it; a bubble carries the mark as
-   the small solid bookmark disc standing at its corner and nothing else,
-   since a bar down a bubble's side would read as part of the bubble. */
+/* A saved message carries the accent as an inset bar down its row (#1280),
+   so it reads as saved without being hovered; the bar's bookmark is solid
+   and accented while the pill is up. */
 .messages-message-saved:not(.messages-message-bubble) { box-shadow: inset 3px 0 0 var(--accent); }
 
-/* Only where the tray is hover-revealed in the first place. On touch it is
-   always laid out (see the `hover: none` block below), and collapsing it to
-   the bookmark there would take reply, react and edit away from phones —
-   `:hover` never matches, so the collapsed state would be the only state. */
-@media (hover: hover) {
-  .messages-message-saved .messages-message-actions { display: flex; }
-  /* At rest it is a MARK, not a toolbar: the other actions stand down, so
-     the message carries one small solid bookmark. The full tray is one
-     hover away, exactly as on any other message. */
-  .messages-message-saved:not(:hover):not(:focus-within)
-    .messages-message-actions > button:not(.messages-action-saved) {
-    display: none;
-  }
+/* ── The message actions, shared (#2387) ─────────────────────────────────
+   The pill, the ⋯ menu, the emoji picker and the phone's long-press sheet,
+   drawn identically on the Messages screen and in an app's chat
+   (frontend/src/features/message-actions/). Floating surfaces take the
+   dense float fill (#2887), so what is under them never shows through. */
+.msgx-bar {
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--dc-float-fill);
+  -webkit-backdrop-filter: var(--dc-frost);
+  backdrop-filter: var(--dc-frost);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+}
+.dark .msgx-bar { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); }
+.msgx-bar > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.msgx-bar > button:hover,
+.msgx-bar > button:focus-visible { color: var(--text-primary); background: var(--msgx-hover, rgba(10, 10, 10, 0.06)); outline: none; }
+.dark .msgx-bar > button:hover,
+.dark .msgx-bar > button:focus-visible { background: rgba(255, 255, 255, 0.1); }
+.msgx-bar > button svg { display: block; width: 18px; height: 18px; }
+.msgx-bar-emoji { font-size: 18px; line-height: 1; }
+.msgx-bar-emoji:hover { transform: scale(1.12); }
+.msgx-bar > .msgx-bar-emoji-on { background: var(--accent-wash); }
+.msgx-bar > .msgx-bar-icon-on { color: var(--text-primary); background: rgba(10, 10, 10, 0.06); }
+.dark .msgx-bar > .msgx-bar-icon-on { background: rgba(255, 255, 255, 0.1); }
+.msgx-bar > .msgx-bar-icon-accent,
+.msgx-bar > .msgx-bar-icon-accent:hover { color: var(--accent); }
+.msgx-bar-divider { width: 1px; height: 20px; margin: 0 3px; background: var(--border-light); }
+@media (prefers-reduced-motion: reduce) {
+  .msgx-bar-emoji:hover { transform: none; }
+}
+
+/* The ⋯ menu and the picker hang off the pill: below it, or above when the
+   row is near the foot of the transcript (placementFor). */
+.msgx-menu,
+.msgx-picker {
+  position: absolute;
+  z-index: 30;
+  right: 0;
+  border-radius: 14px;
+  background: var(--dc-float-fill);
+  -webkit-backdrop-filter: var(--dc-frost);
+  backdrop-filter: var(--dc-frost);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18), 0 0 0 1px var(--border-light);
+}
+.msgx-menu-below, .msgx-picker-below { top: calc(100% + 6px); }
+.msgx-menu-above, .msgx-picker-above { bottom: calc(100% + 6px); }
+.msgx-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 14rem;
+  padding: 4px;
+}
+.msgx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.msgx-menu-item:hover,
+.msgx-menu-item:focus-visible { background: rgba(10, 10, 10, 0.06); outline: none; }
+.dark .msgx-menu-item:hover,
+.dark .msgx-menu-item:focus-visible { background: rgba(255, 255, 255, 0.1); }
+.msgx-menu-item:disabled { opacity: 0.45; cursor: default; }
+.msgx-menu-glyph { flex: 0 0 auto; width: 17px; height: 17px; color: var(--text-muted); }
+.msgx-menu-danger,
+.msgx-menu-danger .msgx-menu-glyph { color: #c81e1e; }
+.dark .msgx-menu-danger,
+.dark .msgx-menu-danger .msgx-menu-glyph { color: #f87171; }
+.msgx-menu-rule { height: 1px; margin: 4px 8px; background: var(--border-light); }
+
+.msgx-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 344px;
+  max-width: calc(100vw - 24px);
+  padding: 10px;
+  box-sizing: border-box;
+}
+.msgx-picker-inline {
+  position: static;
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.msgx-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 10px;
+  color: var(--text-faint);
+  background: var(--bg-secondary);
+}
+.msgx-picker-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  color: var(--text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+}
+.msgx-picker-tabs { display: flex; justify-content: space-between; }
+.msgx-picker-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+.msgx-picker-tab:hover { color: var(--text-primary); }
+.msgx-picker-tab-active { color: var(--accent-wash-ink); background: var(--accent-wash); }
+.msgx-picker-scroll { height: 264px; overflow-y: auto; overscroll-behavior: contain; }
+.msgx-picker-inline .msgx-picker-scroll { height: min(46vh, 340px); }
+.msgx-picker-head {
+  margin: 6px 2px 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.msgx-picker-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 2px; }
+.msgx-picker-emoji {
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.msgx-picker-emoji:hover,
+.msgx-picker-emoji:focus-visible { background: var(--bg-secondary); outline: none; }
+.msgx-picker-empty { padding: 24px 8px; color: var(--text-muted); font-size: 14px; text-align: center; }
+.msgx-picker-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  padding: 2px 2px 0;
+  border-top: 1px solid var(--border-light);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.msgx-picker-foot-emoji { font-size: 20px; }
+
+/* The phone's sheet: a scrim, and a sheet rising from the bottom edge. */
+.msgx-sheet-layer { position: fixed; z-index: 2100; inset: 0; }
+.msgx-sheet-scrim { position: absolute; inset: 0; border: 0; background: rgba(0, 0, 0, 0.32); }
+.msgx-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 88vh;
+  padding: 8px 16px calc(16px + var(--platform-safe-bottom, 0px));
+  overflow-y: auto;
+  border-radius: 20px 20px 0 0;
+  background: var(--dc-sheet-raise);
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.2);
+  outline: none;
+  animation: msgx-sheet-in 180ms ease-out;
+}
+@keyframes msgx-sheet-in { from { transform: translateY(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .msgx-sheet { animation: none; } }
+.msgx-sheet-grabber { align-self: center; width: 36px; height: 5px; border-radius: 3px; background: var(--border); }
+.msgx-sheet-preview {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msgx-sheet-preview strong { color: var(--text-primary); }
+.msgx-sheet-reactions { display: flex; gap: 10px; }
+.msgx-sheet-emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border: 0;
+  border-radius: 9999px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  font-size: 26px;
+  line-height: 1;
+}
+.msgx-sheet-emoji-on { background: var(--accent-wash); }
+.msgx-sheet-list { display: flex; flex-direction: column; overflow: hidden; border-radius: 14px; background: var(--bg-secondary); }
+.msgx-sheet-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 48px;
+  padding: 0 16px;
+  border: 0;
+  box-shadow: inset 0 -1px 0 var(--border-light);
+  color: var(--text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: 17px;
+  text-align: left;
+}
+.msgx-sheet-item:last-child { box-shadow: none; }
+.msgx-sheet-item-separated { margin-top: 10px; border-top: 10px solid var(--dc-sheet-raise); }
+.msgx-sheet-glyph { flex: 0 0 auto; width: 20px; height: 20px; color: var(--text-muted); }
+.msgx-sheet-danger, .msgx-sheet-danger .msgx-sheet-glyph { color: #c81e1e; }
+.dark .msgx-sheet-danger, .dark .msgx-sheet-danger .msgx-sheet-glyph { color: #f87171; }
+
+/* No hover, no bar: a long press opens the sheet. */
+@media (hover: none) {
+  .msgx-bar { display: none !important; }
 }
 
 /* The quoted reply above a message, and the composer's staged-reply chip:
@@ -1048,23 +1227,6 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 }
 .messages-reactions button:hover { background: var(--border); }
 .messages-reactions .messages-reaction-mine { color: var(--accent-wash-ink); background: var(--accent-wash); }
-.messages-reaction-picker {
-  position: absolute;
-  z-index: 25;
-  top: 36px;
-  right: 10px;
-  display: flex;
-  gap: 2px;
-  padding: 6px;
-  border-radius: 9999px;
-  background: var(--messages-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
-}
-.messages-bubble-wrap > .messages-reaction-picker { top: calc(100% + 4px); right: auto; left: 0; }
-.messages-message-self .messages-bubble-wrap > .messages-reaction-picker { left: auto; right: 0; }
-.messages-reaction-picker button { width: 36px; height: 36px; border-radius: 9999px; font-size: 20px; }
-.messages-reaction-picker button:hover { background: var(--messages-surface-2); transform: scale(1.1); }
-
 .messages-edit textarea {
   width: 100%;
   min-height: 56px;
@@ -1358,17 +1520,6 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   pointer-events: none;
 }
 
-/* On touch the tray is always laid out: under the bubble, or on the row's
-   trailing edge, in flow rather than floating. */
-@media (hover: none) {
-  .messages-message-actions { display: flex; position: static; margin: 6px 0 0; }
-  /* On a named row the tray takes its own line under the message, on the
-     trailing edge, rather than a column beside the text: four 32px discs
-     beside a phone-width row left the words wrapping at half the width. */
-  .messages-message:not(.messages-message-bubble) { flex-wrap: wrap; }
-  .messages-message:not(.messages-message-bubble) > .messages-message-actions { flex: 0 0 100%; justify-content: flex-end; margin: 4px 0 0; }
-}
-
 /* ── The two panes, and the width they are actually drawn at ────────────
    From 768px up both panes sit on the one strip: the list column fixed at
    22rem, the sheet rising beside it with its own margin so the strip shows
@@ -1387,6 +1538,125 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   }
   .messages-thread-pane.messages-no-selection { margin: 0; }
 }
+
+/* ── Single-panel mode (#2387) ──────────────────────────────────────────
+   The list folds away on a desktop so the open chat — and a thread beside
+   it — has the whole strip. The toggle leads the chat's title row, and is
+   not drawn below 768px, where one pane is shown at a time anyway. */
+.messages-list-toggle { display: none; }
+@media (min-width: 768px) {
+  .messages-list-toggle { display: inline-flex; }
+  .messages-layout.messages-list-collapsed > .messages-list-pane { display: none; }
+  .messages-layout.messages-list-collapsed > .messages-thread-pane { margin-left: 12px; }
+  .messages-list-toggle[aria-pressed="true"] { color: var(--accent); }
+}
+
+/* ── A reply thread beside its chat (#2387) ─────────────────────────────
+   A second sheet on the strip, to the right of the chat, Slack's layout.
+   Below 1180px the list steps aside while a thread is open, so the chat
+   between them keeps a readable measure; on a phone the thread covers the
+   chat entirely and the header bar's back arrow returns to it. */
+.messages-reply-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.messages-reply-host { display: flex; flex-direction: column; }
+.messages-reply-host > * { flex: 1 1 auto; min-height: 0; }
+@media (max-width: 767px) {
+  .messages-layout.messages-has-reply-thread > .messages-thread-pane { display: none; }
+  .messages-reply-pane { flex: 1 1 auto; width: 100%; margin-top: 12px; }
+}
+@media (min-width: 768px) {
+  .messages-reply-pane { flex: 0 0 min(420px, 42%); margin: 14px 12px 0 0; }
+  .messages-layout.messages-has-reply-thread > .messages-thread-pane { margin-right: 8px; }
+}
+@media (min-width: 768px) and (max-width: 1179px) {
+  .messages-layout.messages-has-reply-thread > .messages-list-pane { display: none; }
+  .messages-layout.messages-has-reply-thread > .messages-thread-pane { margin-left: 12px; }
+}
+.messages-reply-count {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 16px 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.messages-reply-count::after { content: ''; flex: 1 1 auto; height: 1px; background: var(--border-light); }
+.messages-composer-thread .messages-composer-card { box-shadow: var(--messages-disc-shadow); }
+
+/* The "N replies · last reply" chip under a message a thread hangs off. */
+.msgx-thread-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 3px 8px 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+.msgx-thread-chip:hover,
+.msgx-thread-chip:focus-visible { border-color: var(--border-light); background: var(--dc-sheet-raise); outline: none; }
+.msgx-thread-chip-active { border-color: var(--accent-wash); background: var(--accent-wash); }
+.msgx-thread-faces { display: inline-flex; }
+.msgx-thread-faces > * { width: 22px !important; height: 22px !important; border-radius: 6px !important; box-shadow: 0 0 0 2px var(--dc-sheet-raise); font-size: 10px !important; }
+.msgx-thread-faces > * + * { margin-left: -6px; }
+.msgx-thread-count { color: var(--accent); font-weight: 700; white-space: nowrap; }
+.msgx-thread-last { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgx-thread-chevron { flex: 0 0 auto; width: 14px; height: 14px; opacity: 0; transition: opacity 120ms; }
+.msgx-thread-chip:hover .msgx-thread-chevron,
+.msgx-thread-chip:focus-visible .msgx-thread-chevron { opacity: 1; }
+
+/* A deleted message keeps its place and says so (#2387). */
+.messages-deleted { color: var(--text-muted); font-size: 15px; font-style: italic; }
+
+/* A message a link pointed at flashes once (#2387). */
+.messages-message-focus { animation: messages-focus-flash 2.4s ease-out; }
+@keyframes messages-focus-flash {
+  0%, 30% { background: var(--accent-wash); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .messages-message-focus { animation: none; background: var(--accent-tint); }
+}
+
+/* A linked page stops short of the present: two ways back to it. */
+.messages-newer { display: flex; justify-content: center; gap: 8px; padding: 8px 0; }
+
+/* #2967: the channels outside Your apps, behind one row. Drawn on the list's
+   own row grid — the chevron in the tile's column — so it reads as part of
+   the list rather than a button dropped into it. */
+.messages-more-channels {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 16px;
+  border: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.messages-more-channels:hover,
+.messages-more-channels:focus-visible { color: var(--text-primary); background: var(--messages-selected); outline: none; }
+.messages-more-channels-glyph { display: inline-flex; justify-content: center; flex: 0 0 44px; color: var(--text-muted); }
+.messages-more-channels-glyph svg { width: 18px; height: 18px; transition: transform 150ms; }
+@media (prefers-reduced-motion: reduce) { .messages-more-channels-glyph svg { transition: none; } }
 
 /* #2883: THE TRANSCRIPT READS ONE STEP DOWN ON A DESKTOP. 17px is the phone's
    reading size, and the phone keeps it; beside a 22rem list whose previews

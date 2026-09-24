@@ -23,6 +23,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 const SCREEN = read('frontend/src/features/messages/index.tsx');
 const COMPOSER = read('frontend/src/features/messages/composer.tsx');
 const ROW = read('frontend/src/features/messages/message-row.tsx');
+const BAR = read('frontend/src/features/message-actions/action-bar.tsx');
 const TRANSCRIPT = read('frontend/src/features/group-chat/transcript.tsx');
 const CSS = read('public/css/app.css');
 const DAPP = JSON.parse(read('dapp.json'));
@@ -181,7 +182,8 @@ test('#2907: no loading row over a visible thread, no "sending…", no busy send
     'the spinner row is only for a thread with nothing to show yet');
   assert.doesNotMatch(ROW, /<span>sending…<\/span>/);
   assert.doesNotMatch(COMPOSER, /setSending|sending \? '…'/);
-  assert.match(COMPOSER, /setValue\(''\); setAttachments\(\[\]\); setObject\(null\);\s*requestAnimationFrame[^\n]*\n\s*send\(input\)/,
+  // #2387: the send names the thread it goes into, when the composer is a thread's.
+  assert.match(COMPOSER, /setValue\(''\); setAttachments\(\[\]\); setObject\(null\);\s*requestAnimationFrame[^\n]*\n\s*send\(\{ \.\.\.input, threadRootId \}\)/,
     'the box empties at once, before the round trip');
   assert.match(ROW, /className="messages-retry" onClick=\{\(\) => void retrySend\(/);
   assert.match(ROW, /messages-message-actions-reserved/, 'an in-flight row keeps its tray\'s place');
@@ -196,7 +198,11 @@ test('#2905: report and block are one ⋯ menu on both transcripts', () => {
   assert.match(TRANSCRIPT, /role="menu"[\s\S]*?Report message[\s\S]*?Report @\{username\}[\s\S]*?Block @\{username\}/);
   assert.match(CSS, /\.gc-msg-more \{[^}]*width: 20px;[^}]*height: 20px;/, 'the bookmark\'s footprint');
 
-  assert.match(ROW, /className="messages-action-more"[^\n]*aria-haspopup="menu"/);
+  // #2387: the ⋯ is the shared hover bar's (../message-actions/action-bar.tsx),
+  // and it keeps the class and the popup role the declared checks select on.
+  assert.match(BAR, /moreClassName = 'messages-action-more'/);
+  assert.match(BAR, /className=\{`msgx-bar-icon \$\{moreClassName\}[^`]*`\}[\s\S]{0,160}aria-haspopup="menu"/);
+  assert.match(ROW, /<MessageActionBar[\s\S]*?onToggleMore=/);
   assert.doesNotMatch(ROW, />⚑<\/button>|>⊘<\/button>|>!<\/button>/, 'the three discs are gone');
   assert.match(ROW, /<ReportForm kind="message"/);
   assert.match(ROW, /<ReportForm kind="user"/);

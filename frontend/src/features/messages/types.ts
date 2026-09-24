@@ -67,7 +67,18 @@ export interface ConversationMessage {
     id: number;
     sender: ConversationUser;
     content: string;
+    /** The quoted message was deleted: the quote says so instead of its words (#2387). */
+    deleted?: boolean;
   } | null;
+  /**
+   * Deleted by its author (#2387): a placeholder that keeps its place, its
+   * sender and its thread, with no words, files, cards or reactions left.
+   */
+  deleted?: boolean;
+  /** A reply inside a thread: the id of the message the thread hangs off. */
+  threadRootId?: number | null;
+  /** On a message a thread hangs off: how many replies, when the last, and who. */
+  thread?: MessageThreadSummary | null;
   reactions: MessageReaction[];
   attachments: MessageAttachment[];
   objects: SharedObjectCard[];
@@ -81,6 +92,13 @@ export interface ConversationMessage {
   pending?: boolean;
   failed?: boolean;
   clientKey?: string;
+}
+
+export interface MessageThreadSummary {
+  replyCount: number;
+  lastReplyAt: string;
+  /** Up to three of the most recent distinct repliers. */
+  participants: ConversationUser[];
 }
 
 export interface ConversationSummary {
@@ -157,6 +175,17 @@ export interface MessagesRoute {
    * with each other: one thread is open.
    */
   agent: MessagesAgentThread | null;
+  /**
+   * #2387: a reply thread open beside the conversation or app channel — the
+   * id of the message it hangs off (`#messages/<id>/thread/<root>`,
+   * `#messages/app/<slug>/thread/<root>`). Null when no thread is open.
+   */
+  threadRootId: number | null;
+  /**
+   * #2387: a message link (`…/m/<id>`) — the message the transcript opens
+   * scrolled to and flashes. Cleared once shown.
+   */
+  focusMessageId: number | null;
 }
 
 /** An agent thread of the inbox (#2813). See `MessagesRoute.agent`. */
@@ -219,4 +248,30 @@ export interface MessagesSnapshot {
   discussionContext: DiscussionContext | null;
   discussionError: string | null;
   filter: InboxFilter;
+  /**
+   * #2387: the reply thread open beside the conversation, or null. Its own
+   * page of messages, loaded from `/threads/<root>`, so a thread never pushes
+   * the conversation's own transcript out of the store.
+   */
+  thread: ReplyThreadState | null;
+  /**
+   * #2387: a message link opened the transcript part-way back, so there are
+   * newer messages than the ones drawn; the cursor to fetch them. Null when
+   * the transcript ends at the present.
+   */
+  nextAfter: number | null;
+  /** #2387: the list pane folded away on a desktop — single-panel mode. */
+  listCollapsed: boolean;
+  /** #2967: the channels outside Your apps shown, under "Show more". */
+  showMoreChannels: boolean;
+}
+
+export interface ReplyThreadState {
+  conversationId: number;
+  rootId: number;
+  root: ConversationMessage | null;
+  messages: ConversationMessage[];
+  loading: boolean;
+  error: string | null;
+  nextBefore: number | null;
 }
