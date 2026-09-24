@@ -6608,6 +6608,15 @@ WHERE t.session_id = s.id
   AND t.status = 'open'
   AND s.status NOT IN ('active', 'paused');
 
+-- Every request a work order implements. issue_number holds one, and a job
+-- asked to implement several used to keep none of them: prepare_work took a
+-- single requestNumber, so three requests built together went in as free
+-- text, and their proposal merged with no `Closes #N` line and no link, and
+-- left all three open. This holds the whole set, issue_number included, and
+-- is what the submission links and closes. The empty array on an older row
+-- means "just issue_number", exactly what it always meant.
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS linked_issues INTEGER[] NOT NULL DEFAULT '{}';
+
 -- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
 -- chat_sessions today pins Claude continuity via cc_session_id. To add a
 -- second coding-agent backend (codex_openrouter) without breaking the
