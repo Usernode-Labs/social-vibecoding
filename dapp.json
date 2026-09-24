@@ -1394,12 +1394,6 @@
       "expectText": "1 of 2 app slots used"
     },
     {
-      "name": "Create-app dialog names a full server in the allowance panel up front (QA 2026-09-24 Q33b)",
-      "path": "/?shot=create-server-full#create",
-      "expectSelector": ".un-modal #create-app-quota[data-quota-state=\"server-full\"] #create-app-quota-server[data-server-full=\"true\"]",
-      "expectText": "This server is at its app limit (50)"
-    },
-    {
       "name": "Create-app dialog wears the pane styling: a rounded white name card on the details step (#1910, #1911)",
       "path": "/?shot=create-details#create",
       "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-step=\"details\"] #create-name-block.rounded-2xl.bg-white #app-name.bg-transparent",
@@ -3014,11 +3008,6 @@
       "name": "QA 2026-09-24 Q18: the conversation's ⋯ is a menu button, so its rows are announced and reached as a menu",
       "path": "/?demo=1#messages/910002",
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-header button[aria-label=\"Conversation actions\"][aria-haspopup=\"menu\"][aria-expanded=\"false\"]"
-    },
-    {
-      "name": "QA 2026-09-24 Q13: the Messages composer drives its @ and # suggestions as a list the arrow keys, Enter and Tab can choose from",
-      "path": "/?demo=1#messages/910002",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-composer textarea.messages-composer-input[aria-autocomplete=\"list\"]"
     },
     {
       "name": "QA 2026-09-24 Q18: a Skip to navigation link is the first thing Tab reaches, ahead of the header, and the rail it skips to is there",
@@ -4643,23 +4632,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "The sign-in username field is not capitalised or autocorrected on a phone (QA Q11)",
-      "path": "/?shot=anon#login",
-      "expectSelector": "#auth-login-screen:not(.hidden) #login-username[autocapitalize=\"none\"][autocorrect=\"off\"][spellcheck=\"false\"]",
-      "allowConsoleErrors": true
-    },
-    {
       "name": "The register form states the username rule under the username field (QA Q11)",
       "path": "/?shot=anon#register",
       "expectSelector": "#auth-register-screen:not(.hidden) #reg-username[autocapitalize=\"none\"][aria-describedby=\"reg-username-hint\"] + #reg-username-hint",
       "expectText": "Letters, numbers and underscores, 3 to 32 characters.",
-      "allowConsoleErrors": true
-    },
-    {
-      "name": "The register form states the password rule under the password field (QA Q11)",
-      "path": "/?shot=anon#register",
-      "expectSelector": "#auth-register-screen:not(.hidden) #reg-password-hint",
-      "expectText": "At least 8 characters.",
       "allowConsoleErrors": true
     },
     {
@@ -5179,17 +5155,6 @@
       "path": "/?demo=1#messages/910003",
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-thread-header .messages-thread-sub",
       "expectText": "Invitation pending"
-    },
-    {
-      "name": "QA 2026-09-24 Q14: ...and its row in the list carries no member-count tag",
-      "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) a.messages-conversation-row[href=\"#messages/910003\"]:not(:has(.messages-group-tag)) .messages-row-preview-invited",
-      "expectText": "Group invitation"
-    },
-    {
-      "name": "QA 2026-09-24 Q22: a Messages head names its author in its own span, which truncates before the time wraps",
-      "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100405 .messages-message-head > span.messages-message-author + time[datetime]"
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779)",

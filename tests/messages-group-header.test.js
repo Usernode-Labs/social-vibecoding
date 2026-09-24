@@ -26,7 +26,9 @@ test('Rename group is offered to whoever the server lets rename: the owner (canM
   // The server's own gate: an active group, the caller its owner and a member.
   assert.match(SERVICE, /async function updateTitle[\s\S]*?cm\.status = 'member' AND cm\.role = 'owner'/);
   assert.match(SERVICE, /canManage: row\.kind === 'group' && row\.my_role === 'owner' && row\.membership_status === 'member'/);
-  assert.match(HEADER, /active\.kind === 'group' && active\.canManage \? <button type="button" data-rename-group="" onClick=\{\(\) => void renameGroup\(\)\}>Rename group<\/button> : null/);
+  // Merged with QA Q18 (the ⋯ is a keyboard menu): the rename row is a menuitem
+  // that hands focus back to the ⋯ before the dialog opens.
+  assert.match(HEADER, /active\.kind === 'group' && active\.canManage\s*\? <button type="button" role="menuitem" data-rename-group="" onClick=\{\(\) => \{ menuBtnRef\.current\?\.focus\(\{ preventScroll: true \}\); void renameGroup\(\); \}\}>Rename group<\/button>\s*: null/);
 });
 
 test('it is the kit’s one-field dialog, pre-filled with the current name and capped at the server’s 80', () => {

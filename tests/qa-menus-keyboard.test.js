@@ -115,7 +115,8 @@ test('Q18: the Messages "+" and the conversation ⋯ are keyboard menus', () => 
   assert.match(head, /useDismiss\(menu, \[menuWrapRef\], closeMenu\);/, 'an outside press and Escape close it');
   assert.match(head, /aria-haspopup="menu" aria-expanded=\{menu\}/);
   assert.match(head, /className="messages-thread-menu" role="menu"/);
-  assert.equal((head.match(/role="menuitem"/g) || []).length, 3, 'every row is a menuitem');
+  // 4 with QA Q14's "Rename group" row (merged from the Messages group).
+  assert.equal((head.match(/role="menuitem"/g) || []).length, 4, 'every row is a menuitem');
 });
 
 test('Q18: the Workshop "+" menu closes on Escape and on a press anywhere, and roves with the arrows', () => {
