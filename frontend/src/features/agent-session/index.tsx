@@ -11,6 +11,8 @@ import {
 } from '@/components/ui/icons';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { Attached } from '../dev-chat/transcript';
+import { nowStore, type TranscriptRow } from '../dev-chat/transcript-store';
 import type { AgentChange, AgentSession } from './api';
 import {
   choiceFromValue,
@@ -24,17 +26,22 @@ import {
   buildTranscript,
   cardView,
   changeStatusLabel,
+  durationLabel,
   latestReplies,
+  runHeading,
   type CardView,
+  type RunItem,
   type TranscriptItem,
 } from './transcript';
 import {
   chooseAgent,
   clearReturnedText,
+  closeSpec,
   composerId,
   decideCard,
   loadModelCatalog,
   openAgentSession,
+  openSpec,
   sendAgentMessage,
   setDrawerOpen,
   stopAgentTurn,
@@ -54,10 +61,10 @@ import {
 // it. The first render is the hidden, empty root the prerendered shell
 // ships, and everything loads in effects.
 
-function markdown(text: string): string | null {
+function markdown(text: string, breaks = true): string | null {
   const render = window.DevChat?.renderMarkdown;
   if (typeof render !== 'function') return null;
-  try { return render(text, { breaks: true }); } catch { return null; }
+  try { return render(text, { breaks }); } catch { return null; }
 }
 
 function MayorText({ text }: { text: string }) {
@@ -245,15 +252,10 @@ function Item({ item }: { item: TranscriptItem }) {
           {item.text}
         </p>
       );
-    case 'agent':
-      return (
-        <section className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900" data-agent-session-agent={item.outcome}>
-          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            {item.outcome === 'error' ? 'The coding agent did not finish' : item.outcome === 'no_changes' ? 'The coding agent changed nothing' : 'The coding agent finished'}
-          </p>
-          {item.summary ? <p className="mt-1 line-clamp-4 whitespace-pre-wrap text-sm text-zinc-600 dark:text-zinc-300">{item.summary}</p> : null}
-        </section>
-      );
+    case 'run':
+      return <RunCard run={item} />;
+    case 'spec':
+      return <SpecCard item={item} />;
     case 'preview':
       return (
         <section className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900" data-agent-session-preview>
@@ -273,7 +275,137 @@ function Item({ item }: { item: TranscriptItem }) {
   }
 }
 
-function LiveTurn() {
+/**
+ * A coding-agent run, as the dev chat draws one: its `Attached` card, a
+ * status line that opens in place onto the run's log, or onto a build's own
+ * summary of what it did. The caption names the agent that ran. The running
+ * run carries the turn's live progress line and clock.
+ */
+export function RunCard({ run }: { run: RunItem }) {
+  const snapshot = useAgentSessionState();
+  const running = run.status === 'running';
+  const html = useMemo(() => (run.output ? markdown(run.output) : null), [run.output]);
+  const duration = durationLabel(run.durationMs);
+  const logText = [...run.steps, ...run.log].join('\n');
+  const row: Extract<TranscriptRow, { t: 'attached' }> = {
+    t: 'attached',
+    key: run.key,
+    details: { persistId: `agent-run-${run.key}`, defaultOpen: false },
+    icon: running ? 'spinner' : run.status === 'failed' || run.status === 'stopped' ? 'flag' : 'check',
+    text: runHeading(run),
+    caption: run.agent || undefined,
+    elapsed: running
+      ? (snapshot.turn.startedAt ? { kind: 'since', since: snapshot.turn.startedAt } : null)
+      : duration ? { kind: 'fixed', label: `(took ${duration})` } : null,
+    stamp: '',
+    progress: running && snapshot.turn.progress
+      ? { current: snapshot.turn.progress, steps: run.log.length, phase: '', estimate: '', countdownTo: null, cohortSince: null }
+      : undefined,
+    body: html
+      ? { kind: 'md', html }
+      : { kind: 'log', persistId: `agent-run-log-${run.key}`, text: run.output || logText || (running ? 'Starting…' : 'No output.') },
+  };
+  return (
+    <div data-agent-session-run={run.status} data-agent-session-run-mode={run.mode}>
+      <Attached r={row} />
+    </div>
+  );
+}
+
+/** A spec the scout drafted: the dev chat's spec card, opening the viewer over the conversation. */
+export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec' }> }) {
+  const snippet = useMemo(() => (item.preview ? markdown(item.preview, false) : null), [item.preview]);
+  const open = () => { if (item.changeId) void openSpec(item.changeId, item.version); };
+  const title = `Spec${item.version ? ` v${item.version}` : ''}${item.lines ? ` · ${item.lines} lines` : ''}`;
+  return (
+    <div
+      className="dc-spec-preview-card"
+      data-agent-session-spec={item.version ?? 'latest'}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${title}`}
+      onClick={open}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          open();
+        }
+      }}
+    >
+      <div className="dc-spec-preview-header">
+        <span className="dc-spec-preview-title">{title}</span>
+        <span className="dc-spec-preview-cta">View full spec →</span>
+      </div>
+      {snippet
+        ? <div className="dc-spec-preview-snippet" dangerouslySetInnerHTML={{ __html: snippet }} />
+        : item.preview ? <div className="dc-spec-preview-snippet">{item.preview}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * A change's spec over the conversation, read-only, any saved version. The
+ * change page's own viewer keeps sharing and mentions; this is for reading
+ * what the scout wrote without leaving the conversation.
+ */
+function SpecSheet() {
+  const snapshot = useAgentSessionState();
+  const sheet = snapshot.specSheet;
+  const html = useMemo(() => (sheet && sheet.text ? markdown(sheet.text, false) : null), [sheet?.text]);
+  if (!sheet) return null;
+  const change = [snapshot.session?.activeChange, ...(snapshot.session?.changes || [])]
+    .find((c) => c && c.id === sheet.changeId) || null;
+  return (
+    <div
+      className="absolute inset-0 z-30 flex flex-col bg-zinc-950/30"
+      data-agent-session-spec-sheet={sheet.changeId}
+      onClick={(event) => { if (event.target === event.currentTarget) closeSpec(); }}
+    >
+      <section
+        role="dialog"
+        aria-label="Spec"
+        className="platform-safe-bar mt-auto flex max-h-[92%] w-full flex-col rounded-t-3xl bg-white shadow-xl dark:bg-zinc-900 sm:mt-0 sm:h-full sm:max-h-none sm:rounded-none"
+      >
+        <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">Spec</h2>
+            {change ? <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{change.title || changeRef(change)}{change.appName ? ` · ${change.appName}` : ''}</p> : null}
+          </div>
+          {sheet.versions.length > 1 ? (
+            <span className="dc-venue-detail-inline">
+              <select
+                className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100"
+                aria-label="Spec version"
+                value={sheet.version ?? ''}
+                onChange={(event) => void openSpec(sheet.changeId, Number(event.currentTarget.value))}
+              >
+                {sheet.versions.map((v) => <option key={v} value={v}>{`v${v}`}</option>)}
+              </select>
+              <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
+            </span>
+          ) : sheet.version ? <span className="text-xs font-semibold text-zinc-500">{`v${sheet.version}`}</span> : null}
+          <button type="button" className="rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label="Close" onClick={closeSpec}>
+            <XIcon className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          {sheet.phase === 'loading' ? (
+            <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
+          ) : null}
+          {sheet.phase === 'error' ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{sheet.error}</p> : null}
+          {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no spec yet.</p> : null}
+          {sheet.phase === 'ready' && sheet.text ? (
+            html
+              ? <div className="dc-msg-content text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100" data-agent-session-spec-text dangerouslySetInnerHTML={{ __html: html }} />
+              : <pre className="whitespace-pre-wrap text-sm text-zinc-900 dark:text-zinc-100" data-agent-session-spec-text>{sheet.text}</pre>
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function LiveTurn({ runShown }: { runShown: boolean }) {
   const snapshot = useAgentSessionState();
   const turn = snapshot.turn;
   const [clock, setClock] = useState(Date.now());
@@ -299,7 +431,7 @@ function LiveTurn() {
           {turn.cards.map((card) => <Card key={card.id} card={cardView(card, actions)} live />)}
         </article>
       ) : null}
-      {turn.running ? (
+      {turn.running && !(runShown && turn.phase === 'cc') ? (
         <div
           className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
           data-agent-session-activity={turn.phase || 'mayor'}
@@ -547,6 +679,14 @@ function ChangesDrawer({ session }: { session: AgentSession }) {
               {active.stagingUrl ? (
                 <a className="rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500" href={active.stagingUrl} target="_blank" rel="noopener noreferrer">Open preview</a>
               ) : null}
+              <button
+                type="button"
+                data-agent-session-open-spec
+                className="rounded-full bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100"
+                onClick={() => void openSpec(active.id)}
+              >
+                Spec
+              </button>
               {active.appSlug ? (
                 <a
                   className="rounded-full bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100"
@@ -592,7 +732,23 @@ function ChangesDrawer({ session }: { session: AgentSession }) {
 export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) {
   const snapshot = useAgentSessionState();
   const scroll = useRef<HTMLDivElement | null>(null);
-  const items = useMemo(() => buildTranscript(snapshot.messages, snapshot.actions), [snapshot.messages, snapshot.actions]);
+  const liveRun = snapshot.turn.running && snapshot.turn.phase === 'cc';
+  const items = useMemo(
+    () => buildTranscript(snapshot.messages, snapshot.actions, Date.now(), { liveRun }),
+    [snapshot.messages, snapshot.actions, liveRun],
+  );
+  const runShown = items.some((item) => item.kind === 'run' && item.status === 'running');
+
+  // The run card's clock is the dev chat's (`nowStore`), whose heartbeat only
+  // beats inside the dev chat's own transcript; beat it here while a run is
+  // on screen.
+  useEffect(() => {
+    if (!runShown) return undefined;
+    const beat = () => nowStore.set({ now: Date.now() });
+    beat();
+    const timer = window.setInterval(beat, 1000);
+    return () => window.clearInterval(timer);
+  }, [runShown]);
   const replies = latestReplies(items);
   const empty = snapshot.phase === 'ready' && !items.length && !snapshot.turn.running && !snapshot.turn.pendingUserText;
   const about: About = snapshot.session || snapshot.draft;
@@ -611,7 +767,7 @@ export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) 
         ) : null}
         {empty ? <EmptyState about={about} /> : null}
         {items.map((item) => <Item key={item.key} item={item} />)}
-        <LiveTurn />
+        <LiveTurn runShown={runShown} />
         {snapshot.error ? (
           <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
         ) : null}
@@ -619,6 +775,7 @@ export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) 
       <Replies replies={empty ? starters(about) : replies} />
       <Composer id={composerId(embedded ? 'messages' : 'screen')} />
       {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
+      <SpecSheet />
     </div>
   );
 }

@@ -293,6 +293,32 @@ export async function stopTurn(id: number): Promise<{ stopped: boolean; reason?:
   return body;
 }
 
+export interface SpecVersion {
+  version: number;
+  built_at?: string | null;
+  pr_number?: number | null;
+}
+
+/**
+ * A change's spec, from the change's own routes (the conversation's owner
+ * owns its changes): the latest text and its saved versions, newest first.
+ */
+export async function getSpec(changeId: number): Promise<{ spec: string; versions: SpecVersion[] }> {
+  const body = await json<{ spec?: string; versions?: SpecVersion[] }>(
+    await request(`/api/sessions/${changeId}/spec`),
+    'Could not load the spec.',
+  );
+  return { spec: typeof body.spec === 'string' ? body.spec : '', versions: Array.isArray(body.versions) ? body.versions : [] };
+}
+
+export async function getSpecVersion(changeId: number, version: number): Promise<string> {
+  const body = await json<{ spec?: { content?: string } }>(
+    await request(`/api/sessions/${changeId}/specs/${version}`),
+    'Could not load that version of the spec.',
+  );
+  return body.spec && typeof body.spec.content === 'string' ? body.spec.content : '';
+}
+
 export async function getChange(changeId: number): Promise<ChangeDetail | null> {
   const response = await request(`/api/sessions/${changeId}`);
   if (!response.ok) return null;

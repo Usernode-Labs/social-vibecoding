@@ -7,7 +7,7 @@
     "mappedRoutes": 534,
     "exemptRoutes": 154,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 388,
+    "clientApiReferences": 389,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 22,
     "navigationSurfaces": 10
@@ -8983,6 +8983,7 @@
       "mobileSupported": true,
       "classicPath": "#workshop",
       "clientReferences": [
+        "frontend/src/features/agent-session/api.ts",
         "frontend/src/features/dev-chat/dev-chat.js",
         "public/js/app-view.js"
       ]
@@ -9003,6 +9004,7 @@
       "mobileSupported": true,
       "classicPath": "#workshop",
       "clientReferences": [
+        "frontend/src/features/agent-session/api.ts",
         "frontend/src/features/dev-chat/dev-chat.js",
         "public/js/group-chat.js"
       ]

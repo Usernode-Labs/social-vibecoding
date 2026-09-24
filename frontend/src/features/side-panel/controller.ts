@@ -329,10 +329,18 @@ export function drop(): void {
   bootHint = null;
   ready = false;
   reported = '';
+  // The address is cleared only when there was a panel (or a reload's panel
+  // on its way) to clear: the router reports "no app on screen" on its way
+  // through boot, before it reaches the app a reloaded address names, and
+  // that must not take the panel's page out from under it.
+  const pending = restoring;
   restoring = false;
-  writeAddress(null);
   const s = sidePanelStore.get();
-  if (!s.frameSrc && !s.open && !s.route) return;
+  if (!s.frameSrc && !s.open && !s.route) {
+    if (pending) writeAddress(null);
+    return;
+  }
+  writeAddress(null);
   sidePanelStore.set({ ...INITIAL, frameKey: s.frameKey });
 }
 

@@ -541,8 +541,11 @@ test('the page the panel shows is in the top window\'s address, so a reload brin
   assert.equal(gone.length, 0);
   api._resetForTests();
 
-  // A reload: the app comes back on screen with ?side= and the panel opens there.
+  // A reload: the router reports no app while it boots, then the app comes
+  // back on screen with ?side= and the panel opens there.
   win.location = new URL('https://homeroom.test/app/notes-ab12?side=agent/7&demo=1');
+  api.appPresence(false);
+  assert.equal(win.location.search, '?side=agent/7&demo=1', 'booting past "no app" keeps the note');
   api.appPresence(true);
   flush();
   const s = api.sidePanelStore.get();

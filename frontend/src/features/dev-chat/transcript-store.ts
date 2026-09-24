@@ -179,7 +179,8 @@ export type TranscriptRow =
     t: 'attached';
     key: string;
     details: DetailsSpec;
-    icon: 'spinner' | 'check';
+    /** `flag`: an agent session's run that failed or was stopped (#2779). */
+    icon: 'spinner' | 'check' | 'flag';
     text: string;
     html?: string;
     /** #2597's venue caption, under the card's head row. */
