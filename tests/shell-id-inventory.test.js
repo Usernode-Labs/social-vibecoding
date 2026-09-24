@@ -58,6 +58,11 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Create moves into the launcher grid (the prototype's scrHome) ─
+  // Never in the frozen baseline — THE UI OVERHAUL added it through
+  // ADDED_IDS — so it leaves that map and is recorded here instead, which
+  // also puts it under the dereference guard at the bottom of this file.
+  'home-create-section': 'Home\'s fourth area, a full-width "Create app" card in a section of its own below Challenges. Create is the launcher grid\'s trailing tile now (#home-create-tile, features/home/create-tile.tsx), rendered inside #app-list on the first grid paint, so it is not in the prerendered shell. It keeps `data-panel-slot="create"` and `data-create-enabled`, the hooks the declared checks select on; the welcome tour\'s create step points at the tile.',
   // ── #2568: the included key is not claimed, it is created ────────
   // Every account is created with its included OpenRouter key, so the
   // three ids that existed to ASK for one have nothing left to do. The
@@ -324,12 +329,15 @@ const ADDED_IDS = {
   // this map: they render only once a filter has narrowed to nothing or once
   // a discussion or an agent chat has arrived, so none of them is in the
   // prerendered document, which is what this map is for.
-  'messages-filters': '#2718: the filter row — All, People, Apps, Agents. Messages was the `conversations` domain only; an app\'s own discussion and an agent chat were reachable only from inside the thing they belonged to, which is not findable from the one screen somebody opens looking for "what was said to me". One list, one clock, a mark on the rows that are not a person — the arrangement Slack and Teams land on with a channel, a DM and a bot thread in one sidebar.',
+  'messages-filters': '#2718: the filter row — All, People, Channels (Apps until #2783), Agents, with the "+" at its trailing end (#2778). Messages was the `conversations` domain only; an app\'s own discussion and an agent chat were reachable only from inside the thing they belonged to, which is not findable from the one screen somebody opens looking for "what was said to me". One list, one clock, a mark on the rows that are not a person — the arrangement Slack and Teams land on with a channel, a DM and a bot thread in one sidebar.',
   'messages-filter-all': '#2718: the default, and the one thing this screen must always be able to say. The filter is presentation, so it is not persisted and not in the route: a filter that survives a reload is one somebody has to remember turning on.',
   'messages-filter-people': '#2718: conversations only — the `conversations` domain this screen used to be.',
-  'messages-filter-apps': '#2718: the general thread on each app the viewer is a MEMBER of, from GET /api/messages/app-discussions. Membership rather than visibility is the difference between an inbox and a directory: a public app you have never joined is something you can go and read, not something in your messages.',
+  // #messages-filter-apps left this map in #2783: "Apps" became "Channels"
+  // (#messages-filter-channels, below). It was only ever an ADDED id, so it
+  // simply leaves, as #workshop-scope did.
+  'messages-filter-channels': '#2783: the Apps filter, renamed and widened. The inbox is sectioned the way Discord\'s is — the chats (people, groups and agents) on top, then the CHANNELS: #general, a platform-wide room every user is in, and one channel per app the viewer is a member of, including apps nobody has spoken in yet. This filter shows that second section alone. Membership rather than visibility is still the line: a public app you have never joined is something you can go and read, not a channel in your list.',
   'messages-filter-agents': '#2718: the viewer\'s agent chats, read from features/global-chat\'s own store rather than copied into this one — that list is already loaded, merged on every thread event and invalidated by the chat itself. Gated on the same two flags the Improve panel\'s list is, so a shell with the feature off shows no Agents rows.',
-  'messages-new': '#2718: the New-conversation disc, which MOVED from beside the title onto the filter row\'s trailing edge. A title row is where a screen says what it is; a filter row is where it says what it is showing, and the control that adds to what is shown belongs on the line with the one that narrows it. It gained the id in the move — it had none before — because a control that changes line is one a declared check should be able to find.',
+  'messages-new': '#2718, then #2778: the "+" at the filter strip\'s trailing end. #2718\'s review took it off the strip because ONE control saying "new" could only mean one of the kinds the inbox holds, and replaced it with a row of compose buttons under the strip (#messages-compose, retired below). #2778 brings it back as a CHOICE: pressing it opens a small popover — the vote picker\'s placement and dismissal, shared through lib/anchor-popover.ts and lib/popover-dismiss.ts — offering a direct message, a group chat or an agent chat, so it no longer has to guess. On touch the choice is the kit\'s action sheet. The popover (#messages-new-menu) renders only once pressed, so it is not in the prerendered document and not in this map.',
   // ── #2718: the Workshop gets a scope, three tabs and a plus ──────
   //
   // #workshop-picker, #workshop-picker-all, #workshop-plus-change,
@@ -343,6 +351,8 @@ const ADDED_IDS = {
   // leaves; the chip on an app's own Workshop is #dev-ws-scope-chip, which
   // renders client-side and was never in the prerendered document.
   'platform-parked': '#2718: the app you left, offered above the tab bar until it is resumed or dismissed. The bar makes the platform\'s five places one tap each and in doing so makes the app you were IN the one thing that is not: it has no tab, the header\'s app strip goes with it, and Home\'s grid is every app rather than the one you were halfway through. Every host that runs other people\'s programs keeps a handle to the thing you stepped out of — the app switcher, the taskbar, Telegram\'s minimised bot window, WeChat\'s floating capsule — and this is that handle at phone scale. The ROOT ships in the document, `hidden` and EMPTY, which is what an empty store renders; the app arrives from localStorage in an effect, so the prerender and the first client render agree and the id stays in this inventory whatever is parked. Its two children (#platform-parked-resume, #platform-parked-forget) are conditional and therefore not in this map, like #header-app-tile above.',
+  'platform-recents': '#2802: the desktop rail\'s Recents, between Workshop and Me: the apps you left and the conversations you were in (DMs, group chats, channels, agent chats) on one clock, newest first. It replaces the Resume strip (#platform-parked) on the desktop; the phone keeps the strip. The ROOT ships `hidden` with only its heading, which is what an empty list renders; every row arrives one commit after mount, so the prerender and the first client render agree. The rows carry no ids (they are data), only data-recent-kind / data-recent-key, which are client-only and so not in the baseline.',
+  'platform-recents-head': '#2802: the Recents heading, which names the group for assistive tech (`aria-labelledby` on #platform-recents). Rendered unconditionally inside the hidden root so the label target exists on a cold document.',
   'app-menu-row-discussion': '#2718: "Go to app discussion" — the same link-out, to the app\'s own chat. The menu is where an app\'s conversation is reached from inside it; the Messages tab is where it is reached from outside.',
   // ── Three ids from #2718's second pass that are NOT in this map ──
   //
@@ -369,8 +379,18 @@ const ADDED_IDS = {
   'platform-tab-workshop': '#2718: the Workshop tab, to #workshop — which of your apps wants something from you, the question Home does not answer.',
   'platform-tab-me': '#2718: the Me tab, to #profile. Challenges, Settings, Wallet, Validator and Admin are all reached from it, which is what keeps the bar to five: a sixth tab would be a section nobody opens daily.',
   'platform-tabs-badge': '#2718: the Messages tab\'s unread count, and the SECOND badge in the shell. #1443 argued for exactly one, on #notifications-badge, on the grounds that an unread message IS a notification and a menu row is where you say where you are going rather than where you learn something happened. That argument is about a MENU: a tab is visible without opening anything, and a Messages tab that cannot say "there is something here" leaves the bell as the only way to find out — which puts a conversation back behind the sheet the bar exists to get things out of. It counts CONVERSATIONS with something unread, not messages, and renders only above zero so the prerender (navStore\'s INITIAL is 0) and the first client render agree on no badge at all.',
-  "notifications-tab-agents": "#2718 review: the bell's fourth tab, listing what is RUNNING rather than what has happened \u2014 the same sessions the Improve panel calls 'changes in progress', drawn with the same <SessionRow> so a session cannot read two ways in two places. It is on the bell because a session working on your behalf is the one thing you check without anything having pinged you. Read from improveStore, which already answers which sessions are live; a second model here would be a second answer. `showApp` is the one difference from the panel's copy: the bell is the platform's, not one app's.",
-  "messages-compose": "#2718 review: what STARTS something on the Messages screen, under the filter strip and answering to it. The plus used to sit at the far end of that strip, where it could only ever mean one of the three kinds the inbox now holds \u2014 it opened the people dialog on the Agents tab as readily as on People. Here it names what it does: New message under People, New agent chat under Agents, both side by side under All, and nothing under Apps, because an app's discussion is the app's and exists already. The agent half is gated on the same two flags the Agents rows are, so a shell with the feature off has no way to start one.",
+  // #notifications-tab-agents left this map in #2815: the bell's Agents tab
+  // folded into Messages, which now lists the running sessions and the agent
+  // notifications beside the conversations, as the Messages screen's chats
+  // section already did. It was only ever an ADDED id, so it simply leaves.
+  // #messages-compose left this map in #2778: what starts something is the
+  // "+" at the strip's end again (#messages-new), opening a popover of three
+  // choices rather than a row of buttons under the strip. Its agent half,
+  // #messages-new-agent, never shipped in the prerendered document (it is
+  // gated on the global-chat flags), so it was never in this map. Both were
+  // only ever ADDED ids, so they simply leave.
+  'messages-agent-dialog': '#2778: "which app?" — the Agent chat choice under the "+". An agent chat is, for now, a new dev session on one app, so this lists the apps the viewer is a member of (the same rows as their channels, already loaded) and opens the chosen one\'s new-session screen, where nothing is created until the first send. A React-owned dialog driven through useDialog like the other Messages dialogs; a platform-wide agent session will take its place later without the "+" changing.',
+  'messages-agent-apps': '#2778: the agent dialog\'s list of apps — a stable host a declared check can find, whatever is in it.',
   "messages-search": "#2718 review: the Messages inbox's search. It takes the place of the <h2> that used to name the screen under a bar already naming it \u2014 two titles, one word, an inch apart. A CLIENT-SIDE match over the three lists already in memory (people, app discussions, agent chats), so it answers on every keystroke and adds no endpoint; what it matches is the text each row DRAWS, because a search that found rows by a field the reader cannot see returns results they cannot explain. It composes with the filter strip rather than replacing it, and a query that matches nothing says so in its own line rather than borrowing the empty inbox's offer to start a conversation.",
   'sidebar-toggle': '#2718 review: folds and unfolds the desktop rail, from the header\'s left group — the window\'s top-left corner, where VS Code, Slack, Linear and Notion all put this control. DESKTOP ONLY: app.css gives it `display` inside `@media (min-width: 768px)` and nothing else does, because a phone\'s bar is at the FOOT of the screen and is the only navigation there is, so folding must never reach it. It ships PRESSED, matching navStore\'s `railOpen: true` and the visible bar the prerender carries; a folded rail is always something the viewer did, and it is session-only for the same reason. It renders nothing at all where the route has no rail (inside an app, chromeless, signed out), which is also what makes the header\'s left group empty on those screens rather than holding a dead control. The way back from folded is #platform-rail-peek, the same hot zone an open app already uses.',
   // ── #2370: the social-account scope disclosure ───────────────────
@@ -679,11 +699,12 @@ const ADDED_IDS = {
   // The last three were draggable widgets on the launcher canvas; each is a
   // fixed <section> host now, carrying the same `data-panel-slot` key its
   // grid host did so the dapp.json checks still select on it.
-  'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the other three.',
+  'home-apps-section': 'Wraps the launcher grid and its "Show all" control, so area 1 is a section like the others.',
   'home-apps-more': '"Show all N apps" — revealed only when a viewer has more than the two-row default shows. The cap is on what is DRAWN, never on what they may have.',
   'home-discover-section': 'Area 2: featured tiles, the Popular lane and the way into the app directory.',
   'home-challenges-section': 'Area 3: the season\'s open challenges, and under them the leaderboard standings the retired #drawer-row-leaderboard used to point at.',
-  'home-create-section': 'Area 4: the create-an-app block, on every home screen regardless of quota.',
+  // #home-create-section (area 4) left this map when Create moved into the
+  // launcher grid; it is recorded in RETIRED_IDS.
   // #1082 chunk E — the admin console's CHASSIS. These ids are not new to the
   // running page: admin-console.js._renderShell() has always created them, by
   // writing #admin-root.innerHTML on every open. They are new to
@@ -826,6 +847,11 @@ const ADDED_IDS = {
   // ── #2377: Global Chat (experimental) ───────────────────────────
   'global-chat-screen': '#2377/#2543: the React-owned conversational screen. It ships hidden for hydration parity, then the hash router reveals the durable session selected from Improve.',
   'global-chat-composer': '#2377: the compact prompt field inside Global Chat. The stable id gives its label and focus behavior one owner across desktop, mobile web, and the native wrapper.',
+  // ── #2779: agent sessions (experimental, behind a per-user flag) ──
+  'agent-session-screen': '#2779: the React-owned agent session screen, one conversation with the Mayor that works on any app. Ships hidden and empty for hydration parity; the hash router reveals it at #agent/<id>, and App.REACT_SCREEN_IDS keeps its visibility single-owned. Everything inside it renders only once a conversation is open, so the root is its one static id.',
+  'settings-agent-sessions-row': '#2779: the Experimental pane\'s agent-sessions row. Ships hidden; settings.js shows it only to a user the server lets choose (agentSessionsChoosable), so the id is how that one writer finds it.',
+  'agent-sessions-enabled': '#2779: the agent-sessions switch. settings.js binds its change handler by id (POST /api/me/agent-sessions), the same way the two switches above it are bound.',
+  'agent-sessions-status': '#2779: the switch\'s status line, where a refused or failed save says why. Ships empty and hidden, like the two status lines above it.',
   // ── #2707: the feedback destination is chosen, never assumed ────
   'feedback-target-hint': 'The line under the Send Feedback destination row. With both destinations selectable nothing is preselected any more, so Submit is disabled until one is tapped — and a control that refuses without saying why is the dead button #1603 fixed one field down. Ships empty and hidden (the controller owns the text, and the one-destination case never shows it), and carries the radiogroup\'s aria-describedby while it is up.',
   // ── #2718 REVIEW: the Improve panel retired, and ten ids with it ─────
@@ -854,6 +880,25 @@ const ADDED_IDS = {
   //       Workshop segment, and back as "Go to workshop" when the strip
   //       retired in turn (#2761) — so it is in the map above again.
 
+  // ── The side panel beside a running app (features/side-panel/) ──────
+  // On a desktop-width window, the app's Workshop, its discussion, messages,
+  // agent chats, proposals and issues open in a panel BESIDE the running app
+  // instead of replacing it. The panel is one React island, placed after the
+  // app view; it ships hidden and frameless, and its <iframe> (the platform
+  // itself at /?panel=1#<route>) exists only while a panel is open, so the
+  // frame's id is not in the static markup.
+  'platform-side-panel': 'The side panel\'s root — an <aside> named by its title, shown only while a panel page is open beside a running app on a desktop-width window. Its presence also sets html[data-side-panel], which narrows #app-view by the panel\'s width instead of hiding or moving the app\'s frame.',
+  'side-panel-back': 'The panel\'s Back: climbs the pages opened in the panel, then to the list the page belongs to (a discussion or a message to Messages; a proposal, an issue or a change to the app\'s Workshop). Ships hidden, because a freshly opened list has nowhere to climb to.',
+  'side-panel-title': 'The panel\'s title — the page\'s own header title as the panel\'s document reports it, and the aside\'s accessible name.',
+  'side-panel-expand': 'Expand ("Open full width, leaving the app"): the page the panel is showing, full width, as one ordinary navigation of the top window — which closes the app and parks it, so Resume brings it back.',
+  'side-panel-close': 'Close ("Close panel"): closes only the panel; the app keeps running beside where it was.',
+  'side-panel-body': 'The panel\'s body: the one <iframe> of the panel\'s document (#side-panel-frame, rendered only while open, so absent here) and the loading spinner after it.',
+  'side-panel-loading': 'The spinner shown over the panel\'s body until its document has booted and drawn its first page. Ships hidden.',
+  // ── Discover's filter chips (the prototype's scrDiscover) ──────────
+  'browse-filter-chips': 'The All / Featured / Your apps / New chip row in the directory\'s sticky head, between the search and Sort. A chip picks which apps the list holds (Browse.filterApps); ships with All pressed, the store\'s prerender value.',
+  // ── The prototype's Challenges page: a History segment ──────────────
+  'leaderboard-history-root': 'The Leaderboard screen\'s fourth pane, the History tab (#leaderboard/seasons): the seasons that have ended, who won each, each event\'s winner and where the viewer finished — the navigation prototype\'s History segment. Ships EMPTY and hidden like the two other non-default pane roots, and Leaderboard._applySection toggles its `hidden` on a constant className; features/leaderboard/history-pane.tsx is the only writer below it.',
+  'side-panel-divider': '#2886: the divider between the running app and the panel, as a handle on the panel\'s left edge — a vertical `separator` that drags (or takes the arrow keys, Home and End) to share the window differently, keeping at least 320px of panel and 480px of app, remembers the chosen width on this device, and resets to the default on a double-click. Ships with no value: the width is read in an effect, never in the first render.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

@@ -110,14 +110,14 @@ function makeSlot(key) {
   return slot;
 }
 
-// The three fixed section hosts render() writes into, keyed the way it looks
-// them up. `slots` is still the parameter name every test passes: THE UI
-// OVERHAUL changed WHERE a block renders, not what it renders, so the hosts
-// are the same stub under a different id.
+// The fixed section hosts render() writes into, keyed the way it looks them
+// up. `slots` is still the parameter name every test passes: THE UI OVERHAUL
+// changed WHERE a block renders, not what it renders, so the hosts are the
+// same stub under a different id. There were three; Create app became the
+// launcher grid's trailing tile (tests/home-create-tile.test.js).
 const SECTION_HOST_IDS = {
   discover: 'home-discover-section',
   challenges: 'home-challenges-section',
-  create: 'home-create-section',
 };
 
 function makeHomePanels({
@@ -171,14 +171,13 @@ const SECTIONS = 'frontend/src/features/home/panels/sections.tsx';
 // The renderers, as text, for the handful of assertions that are about the
 // SOURCE rather than the output (a class that must be written as a literal, a
 // helper that must be reached through Home).
-const PANEL_SOURCES = ['ui', 'challenges', 'discover', 'create', 'sections']
+const PANEL_SOURCES = ['ui', 'challenges', 'discover', 'sections']
   .map((n) => [`panels/${n}.tsx`, read(`frontend/src/features/home/panels/${n}.tsx`)]);
 const PANELS_TSX = PANEL_SOURCES.map(([, src]) => src).join('\n');
 const challengesSrc = () => PANEL_SOURCES.find(([n]) => n.endsWith('challenges.tsx'))[1];
 const SECTION_VIEWS = {
   discover: 'DiscoverSectionView',
   challenges: 'ChallengesSectionView',
-  create: 'CreateSectionView',
 };
 
 function paintHosts(sandbox, hosts) {
@@ -242,7 +241,7 @@ const panel = (over = {}) => ({
 // MARKER widgets (discover and create build no server payload), so this covers
 // the same ground `HP.renderDiscoverPanel({key})` covered before the renderers
 // moved — with the real render() and the real component in between.
-const MARKER_TITLES = { discover: 'Discover', create: 'Create app' };
+const MARKER_TITLES = { discover: 'Discover' };
 
 function renderBlock(key, opts = {}) {
   const host = makeSlot(key);
@@ -258,7 +257,7 @@ function renderBlock(key, opts = {}) {
 }
 
 function renderWith(data, opts = {}) {
-  const hosts = ['discover', 'challenges', 'create'].map(makeSlot);
+  const hosts = ['discover', 'challenges'].map(makeSlot);
   const { HP, section, sandbox } = makeHomePanels({ ...opts, slots: hosts });
   HP._data = data;
   HP.render();
@@ -1515,26 +1514,28 @@ test('render: stale hidden metadata cannot suppress fixed sections (#1801)', () 
   ];
   // An old server omitted hidden panels from its payload. The new client
   // still renders their empty/marker state rather than removing the sections.
+  // (The registry's `create` marker rides along and is simply not asked for:
+  // Create is the launcher grid's trailing tile now, not a panel.)
   for (const panels of [[], [panel()]]) {
     const out = renderWith({ registry, hidden: ['challenges', 'create'], panels },
       { home: { canCreate: () => false } });
-    for (const key of ['challenges', 'discover', 'create']) {
+    for (const key of ['challenges', 'discover']) {
       assert.ok(!out.host(key)._classes.has('hidden'), `${key} remains visible`);
       assert.match(out.host(key).innerHTML, new RegExp(`data-panel="${key}"`));
     }
     assert.match(out.host('challenges').innerHTML,
       panels.length ? /Report a reproducible bug/ : /No challenges are running right now/);
-    assert.match(out.host('create').innerHTML, /data-create-enabled="false"/);
+    assert.doesNotMatch(out.html, /data-create-enabled/, 'no create block among the panels');
   }
 });
 
 // ── Container shape: one bordered block PER SECTION ───────────────
 //
-// The core of the per-block-container requirement: each of the three areas
-// is its own bordered article in its own host, never rows inside one shared
-// card. THE UI OVERHAUL is what made all three renderable at once — before
-// it, only `challenges` built a payload, so the multi-block case had to be
-// staged with a hypothetical second widget.
+// The core of the per-block-container requirement: each area is its own
+// bordered article in its own host, never rows inside one shared card. THE UI
+// OVERHAUL is what made them all renderable at once — before it, only
+// `challenges` built a payload, so the multi-block case had to be staged with
+// a hypothetical second widget.
 
 test('render: each panel is its own bordered article, in its own host', () => {
   const all = {
@@ -1570,14 +1571,14 @@ test('render: each panel is its own bordered article, in its own host', () => {
       `${key}: its OWN label row`);
     assert.ok(!host._classes.has('hidden'), `${key}: shown`);
   }
-  const create = out.host('create');
-  assert.equal((create.innerHTML.match(/home-create-widget/g) || []).length, 1);
-  assert.ok(!create._classes.has('hidden'), 'create: shown');
+  // The registry's `create` marker builds nothing here: Create is the
+  // launcher grid's trailing tile (tests/home-create-tile.test.js).
+  assert.doesNotMatch(out.html, /home-create/, 'no create block among the panels');
 
   // Siblings, in the ORDER the sections are declared in — the whole point of
-  // the fixed stack. Discover, then Challenges, then Create.
+  // the fixed stack. Discover, then Challenges.
   assert.deepEqual(out.hosts.map((h) => h.dataset.panelSlot),
-    ['discover', 'challenges', 'create']);
+    ['discover', 'challenges']);
   assert.equal((out.html.match(/<article/g) || []).length, 2);
   const first = out.html.indexOf('</article>');
   const second = out.html.indexOf('<article', first);
@@ -1699,19 +1700,26 @@ test('the placement membership API is gone from the module', () => {
   assert.ok(HP.panelFor('discover'), 'the registry still makes a marker renderable');
 });
 
-// The create block is on EVERY home screen. Quota decides whether it is
-// tappable, never whether it exists — this is the regression guard for the
-// old "absent for non-creators" behaviour.
-test('the create block renders regardless of app quota', () => {
+// The create entry is on EVERY home screen, and quota decides its treatment,
+// never whether it exists — the regression guard for the old "absent for
+// non-creators" behaviour now lives with the tile, in
+// tests/home-create-tile.test.js.
+test('the panels no longer build a create block, whatever the quota', () => {
+  // Create is the launcher grid's trailing tile now (the prototype's
+  // scrHome), placed and painted with the app tiles — tests/home-create-tile
+  // .test.js pins that it is there for every account. What is left to pin
+  // here is the other half: the server registry's `create` marker, which a
+  // cached older shell still renders its section from, draws nothing in this
+  // module, so the page can never carry two Create entries.
   for (const canCreateApps of [true, false]) {
     const out = renderWith(
       { registry: [{ key: 'create', title: 'Create app', removable: true }],
         hidden: [], panels: [] },
       { home: { canCreate: () => canCreateApps, CREATE_DISABLED_HINT: 'hint' } });
-    const host = out.host('create');
-    assert.ok(!host._classes.has('hidden'), `quota=${canCreateApps}: shown`);
-    assert.match(host.innerHTML, new RegExp(`data-create-enabled="${canCreateApps}"`),
-      `quota=${canCreateApps}: the state is the DIFFERENCE, not the presence`);
+    assert.doesNotMatch(out.html, /data-create-enabled|home-create/,
+      `quota=${canCreateApps}: no create block among the panels`);
+    const state = out.sandbox.panelsStore.get();
+    assert.equal('create' in state, false, 'and no create field in the model');
   }
   // Nothing in the server registry may consult a viewer's quota either.
   const registrySrc = ROUTE.match(/const PANEL_REGISTRY = \[[\s\S]*?\n\];/)[0];
@@ -2056,15 +2064,15 @@ test('the cell height still matches the app tile it is derived from', () => {
 
 // ── Source pins ───────────────────────────────────────────────────
 
-// THE FOUR AREAS, in the shell's own markup and in this order: Your apps,
-// Discover, Challenges, Create app. That order is the whole shape of the
-// screen, so it is pinned against the built document rather than left to the
-// island's source.
-test('index.html stacks the three section hosts below the grid, in order', () => {
+// THE THREE AREAS, in the shell's own markup and in this order: Your apps
+// (whose grid ends with the Create tile), Discover, Challenges. That order is
+// the whole shape of the screen, so it is pinned against the built document
+// rather than left to the island's source.
+test('index.html stacks the two section hosts below the grid, in order', () => {
   const grid = INDEX.indexOf('id="app-list"');
   assert.ok(grid > 0, 'the launcher grid is there');
   const at = (id) => INDEX.indexOf(`id="${id}"`);
-  const order = ['home-discover-section', 'home-challenges-section', 'home-create-section'];
+  const order = ['home-discover-section', 'home-challenges-section'];
   let prev = grid;
   for (const id of order) {
     const here = at(id);
@@ -2072,20 +2080,24 @@ test('index.html stacks the three section hosts below the grid, in order', () =>
     assert.ok(here > prev, `${id} sits below what precedes it`);
     prev = here;
   }
-  // Outside the grid, or its wholesale re-render would destroy all three.
+  // Outside the grid, or its wholesale re-render would destroy them.
   assert.ok(INDEX.indexOf('id="app-list"', 0) < at('home-discover-section'));
   assert.doesNotMatch(INDEX.slice(grid, at('home-discover-section')), /<\/section>[\s\S]*<div id="app-list"/);
 
   // Each host names the block it is for, which is what the dapp.json checks
   // and the screenshot assertions select on.
-  for (const key of ['discover', 'challenges', 'create']) {
+  for (const key of ['discover', 'challenges']) {
     assert.match(INDEX, new RegExp(`data-panel-slot="${key}"`), `${key} host is named`);
   }
+  // The third, #home-create-section, is retired: Create is the launcher grid's
+  // trailing tile, drawn on the first grid paint and so absent from the
+  // prerender (tests/home-create-tile.test.js).
+  assert.equal(at('home-create-section'), -1);
 
   // #home-panels — the widgets' stacked FALLBACK host — is gone with the
   // placement it existed for. It caught the moment before the first grid
   // paint and the active-search view, because a widget that lived IN the grid
-  // vanished whenever the grid did; the three sections never do.
+  // vanished whenever the grid did; the sections never do.
   assert.equal(INDEX.indexOf('id="home-panels"'), -1);
   // …as are the two trailing sections THOSE replaced, two rounds ago.
   assert.equal(INDEX.indexOf('id="home-find-more"'), -1);
@@ -2454,85 +2466,19 @@ test('every discovery lane is handed to Home._wireDiscoveryCards', () => {
     'nothing reaches across the lane boundary to find tiles');
 });
 
-test('the Create widget reads the viewer’s quota through Home', () => {
-  const enabled = renderBlock('create', { home: { canCreate: () => true } }).html;
-  assert.match(enabled, /data-create-enabled="true"/);
-  assert.doesNotMatch(enabled, /aria-disabled/);
+// The Create block's three tests lived here — its quota treatment, its row
+// shape at every width, and its state mirrored onto the section host. The
+// block became the launcher grid's trailing tile (the prototype's scrHome),
+// one element carrying both `data-panel-slot` and `data-create-enabled`, and
+// its tests moved with it: tests/home-create-tile.test.js.
 
-  const locked = renderBlock('create', { home: { canCreate: () => false } }).html;
-  assert.match(locked, /data-create-enabled="false"/);
-  assert.doesNotMatch(locked, /aria-disabled/,
-    'the locked tile still has an available action: opening quota details');
-  assert.doesNotMatch(locked, /\sdisabled[=\s>]/, 'never the disabled ATTRIBUTE');
-});
-
-// ONE shape. The block used to be 4x1 below 640px and 1x1 at/above it
-// (PANEL_REGISTRY `sizes`), so its CONTENT flipped at the same breakpoint:
-// icon beside label in the full-width phone row, icon above label in the
-// single desktop cell. THE UI OVERHAUL made it a full-width section at every
-// width, so only the row shape is left — the stacked variant existed for a
-// ~150px cell that no longer exists.
-test('the Create block lays out as a row at every width', () => {
-  const { html } = renderBlock('create', { home: { canCreate: () => true } });
-  const btn = html.match(/class="home-create-btn[^"]*"/)[0];
-  assert.match(btn, /\bflex-row\b/, 'icon beside label');
-  assert.doesNotMatch(btn, /\bsm:flex-col\b/, 'and never stacked again at 640px');
-  assert.match(btn, /\bitems-center\b/);
-  // Left-aligned now, as the dashed locked-challenges placeholder it mirrors:
-  // tile at the card's inset, title and quota line beside it.
-  assert.doesNotMatch(btn, /\bjustify-center\b/);
-  assert.match(btn, /\brounded-3xl\b/);
-  assert.match(btn, /\bborder-dashed\b/);
-  assert.match(btn, /\bborder-violet-500\/50\b/, 'the blue accent stroke while creation is open');
-  // The label keeps one size at every width, the placeholder title's.
-  assert.match(html, /home-create-label[^"]*\btext-base\b/);
-  assert.match(html, /home-create-label[^"]*\btext-violet-700\b/, 'and the accent title');
-  assert.doesNotMatch(html, /home-create-label[^"]*sm:text-xs/);
-  // At the limit it steps down to the placeholder's neutrals.
-  const off = renderBlock('create', { home: { canCreate: () => false } }).html;
-  assert.match(off.match(/class="home-create-btn[^"]*"/)[0], /\bborder-zinc-300\b/);
-  assert.doesNotMatch(off, /home-create-label[^"]*text-violet/);
-  // `h-full` went with the rectangle: there is nothing to fill, so the block
-  // is as tall as its own padding.
-  assert.doesNotMatch(btn, /\bh-full\b/);
-});
-
-// The state has to end up on the HOST. The widget stamps it on markup that
-// is painted INSIDE the [data-panel-slot] host, so a selector written the
-// way the spec describes it — and the way the dapp.json checks and the
-// screenshot assertions write it —
-// `[data-panel-slot="create"][data-create-enabled="true"]` asks for both
-// attributes on ONE element and matched nothing at all.
-test('the create state reaches the [data-panel-slot] host as well as the block', () => {
-  const enabled = renderBlock('create', { home: { canCreate: () => true } });
-  assert.equal(enabled.host.getAttribute('data-create-enabled'), 'true',
-    'the host carries the state the checks select on');
-  assert.match(enabled.host.innerHTML, /class="home-create-btn/);
-  assert.match(enabled.host.innerHTML, /data-create-enabled="true"/,
-    'and so does the block — one selector reaches either');
-
-  const locked = renderBlock('create', { home: { canCreate: () => false } });
-  assert.equal(locked.host.getAttribute('data-create-enabled'), 'false');
-
-  // A block with no such state leaves its host clean rather than carrying an
-  // attribute nothing set.
-  const challenges = renderWith(
-    { registry: [], hidden: [], panels: [panel({ total: 0, challenges: [] })] },
-  ).host('challenges');
-  assert.equal(challenges.hasAttribute('data-create-enabled'), false);
-});
-
-// The three selectors the checks actually run, asserted against the exact
-// strings in dapp.json so a markup change and the check can't drift apart.
+// The selectors the checks actually run, asserted against the exact strings
+// in dapp.json so a markup change and the check can't drift apart. (The
+// Create checks moved to the grid's trailing tile, and are pinned against it
+// in tests/home-create-tile.test.js.)
 test('dapp.json’s home-widget checks describe markup this module emits', () => {
   const declared = JSON.parse(read('dapp.json')).tests || [];
   const find = (frag) => declared.find((t) => (t.expectSelector || '').includes(frag));
-
-  const create = find('[data-panel-slot="create"][data-create-enabled="true"]');
-  assert.ok(create, 'the enabled-create check is declared');
-  assert.match(create.expectSelector, /\.home-create-btn/);
-  assert.match(renderBlock('create', { home: { canCreate: () => true } }).html,
-    /class="home-create-btn/);
 
   // ONE Discover check covers the populated widget (#949). It requires BOTH
   // halves to be non-empty via the mirrored stamps, then asserts the block

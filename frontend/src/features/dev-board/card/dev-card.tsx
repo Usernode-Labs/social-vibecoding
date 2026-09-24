@@ -55,6 +55,7 @@ import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOf
 import { Input } from '@/components/ui/input';
 import { useStoreState } from '../../../lib/use-store-state';
 import { placeUnderAnchor } from '../../../lib/anchor-popover';
+import { anchorRectOf, useAnchoredDismiss } from '../../../lib/popover-dismiss';
 import { cardTintClass } from '../../home/panels/ui';
 import { aiEnabledStore, cardNowStore } from './cards-store';
 import type {
@@ -583,30 +584,12 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
         return;
       }
     }
-    const r = e.currentTarget.getBoundingClientRect();
-    setRect({ top: r.top, bottom: r.bottom, right: r.right });
+    setRect(anchorRectOf(e.currentTarget));
     setOpen(true);
   };
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = () => shut();
-    const onDoc = (ev: Event) => {
-      const t = ev.target as Node | null;
-      if (t && (btnRef.current?.contains(t) || popRef.current?.contains(t))) return;
-      close();
-    };
-    const onKey = (ev: globalThis.KeyboardEvent) => { if (ev.key === 'Escape') close(); };
-    document.addEventListener('click', onDoc, true);
-    document.addEventListener('keydown', onKey);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    return () => {
-      document.removeEventListener('click', onDoc, true);
-      document.removeEventListener('keydown', onKey);
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
-    };
-  }, [open]);
+  // Outside click, Escape, scroll, resize — lib/popover-dismiss.ts, shared
+  // with Messages' "+" popover (#2778).
+  useAnchoredDismiss(open, [btnRef, popRef], shut);
   // A card that goes away under an open sheet (a repaint that replaces it)
   // takes the sheet with it rather than leaving a kit surface pointing at a
   // portal target nothing renders into any more.

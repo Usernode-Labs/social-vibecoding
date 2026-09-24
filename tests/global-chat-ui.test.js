@@ -39,20 +39,20 @@ test('Global Chat ships as an experimental hash-routed sibling screen', () => {
   assert.match(shell, /<GlobalChatScreen\s*\/>/);
   assert.match(screen, /id="global-chat-screen"/);
   assert.match(screen, /Chat\s*<span>\(experimental\)<\/span>/);
-  assert.match(screen, /Saved in Improve\./);
+  assert.match(screen, /Saved in Messages\./);
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'global-chat-screen', false\)/);
   assert.match(screen, /className="hidden flex flex-1 min-h-0 overflow-hidden"/);
   assert.match(appJs, /parts\[0\] === 'chat'/);
   assert.match(appJs, /navigateToGlobalChat\(threadId\)/);
   assert.match(appJs, /App\._showOnlyScreen\('global-chat-screen'\)/);
-  // THE WAY IN IS THE INBOX'S (#2718 review). `new-chat-button.tsx` was the
-  // head of the Improve panel's Chats section, and the panel retired; the
-  // control it duplicated is `#messages-new-agent`, which sits beside the
-  // rows that RESUME a chat rather than one surface away from them. The gate
-  // travelled with it unchanged — both flags, read once and driving the
-  // rows, the tab and the compose button together.
+  // THE ROWS ARE THE INBOX'S (#2718 review), gated on both flags, read once.
+  // Starting one moved (#2778): the inbox's "+" offers Agent chat, which for
+  // now opens a new dev session on an app the viewer picks — so the compose
+  // button `#messages-new-agent` that started a Global Chat is retired, and
+  // an existing chat is resumed from its row.
   assert.match(inbox, /parityReady\s*\n?\s*&& chat\.bootstrap\.profiles\.globalChat\.enabled === true/);
-  assert.match(inbox, /id="messages-new-agent"/);
+  assert.doesNotMatch(inbox, /id="messages-new-agent"/);
+  assert.match(inbox, /data-new-choice=\{item\.key\}/);
 });
 
 test('the inbox lists resumable chats, and is where one is deleted', () => {
@@ -62,7 +62,10 @@ test('the inbox lists resumable chats, and is where one is deleted', () => {
   // invalidated in one place — so what the panel's copy is asserted for is
   // asserted of that row now.
   assert.match(inbox, /function AgentChatRow/);
-  assert.match(inbox, /href=\{`#chat\/\$\{encodeURIComponent\(chat\.id\)\}`\}/);
+  // #2813: the row's address is the inbox's own, so on a desktop the chat
+  // opens beside the list; a phone's router swaps it for `#chat/<id>`.
+  assert.match(inbox, /const thread: MessagesAgentThread = \{ kind: 'chat', id: chat\.id \};/);
+  assert.match(inbox, /href=\{href\}/);
   assert.match(inbox, /data-inbox-agent=\{chat\.id\}/);
   assert.match(inbox, /chat\.busy \? 'Working…'/);
   // The DELETE is the one thing that lived nowhere else, so it moved rather
@@ -71,7 +74,6 @@ test('the inbox lists resumable chats, and is where one is deleted', () => {
   assert.match(inbox, /Delete this chat\?/);
   assert.match(inbox, /\{removing \? 'Deleting…' : 'Delete'\}/);
   assert.match(inbox, /DraftTrashIcon/);
-  assert.match(inbox, /void startNewGlobalChat\(\)/);
 });
 test('chat navigation uses the shared screen router instead of a body-wide mode', () => {
   assert.match(store, /open:\s*false/);
@@ -240,7 +242,25 @@ test('Global Chat has a mobile/native layout and accessible composer controls', 
   assert.match(screen, /Reasoning: \{progress\.reasoningEffort\} effort/);
   assert.match(store, /event\.type === 'turn\.progress'/);
   assert.match(store, /event\.type === 'tool\.completed'/);
-  assert.match(css, /\.global-chat-composer[\s\S]*var\(--platform-safe-bottom/);
+  // BUG e: on a phone #global-chat-screen keeps the platform tab bar up, and
+  // the composer cleared only the home-indicator strip — "Ask Homeroom…" sat
+  // under the bar. It wears the shell's safe-bar contract now, which clears
+  // whichever of the tab bar and the strip is taller; and the transcript
+  // above it no longer reserves that band too (it is always above the
+  // composer, so the band is the composer's to clear, once).
+  assert.match(screen, /<form className="global-chat-composer platform-safe-bar" onSubmit=\{submit\}>/);
+  assert.match(screen, /<div ref=\{scroll\} className="global-chat-transcript" aria-live="polite">/);
+  assert.match(css,
+    /\.platform-safe-bar \{[^}]*padding-bottom: calc\(0\.5rem \+ max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom\)\)\) !important;/,
+    'the contract the composer wears');
+  // Comments off first: the rule's own note quotes the old declaration to say
+  // what it replaced, and prose about a value is not the value.
+  const composerRule = /\n\.global-chat-composer \{([\s\S]*?)\n\}/.exec(css.replace(/\/\*[\s\S]*?\*\//g, ''));
+  assert.ok(composerRule, 'the composer rule');
+  assert.match(composerRule[1], /padding: 10px 12px 8px;/,
+    'its own bottom is the safe bar\'s base gap, so desktop renders what the rule says');
+  assert.doesNotMatch(composerRule[1], /var\(--platform-safe-bottom/,
+    'and it no longer clears the strip alone');
   assert.match(css, /@media \(max-width: 639px\)[\s\S]*\.global-chat-suggestions button \{ min-height: 42px; \}/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.global-chat-activity svg \{ animation: none; \}/);
   assert.match(css, /\.global-chat-progress-current/);

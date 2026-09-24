@@ -59,7 +59,7 @@ const {
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
-const { computeStandings, assignSharedRanks } = require('../../services/topochain/standings');
+const { computeOwnStanding, assignSharedRanks } = require('../../services/topochain/standings');
 const { resolveDisplayName } = require('../../services/topochain/event-standings');
 const { nativeSessionRoutes } = require('./native-session');
 const { nativeEpochDelegationRoutes } = require('./epoch-delegation');
@@ -81,6 +81,43 @@ function toIntId(v) {
   return Number.isInteger(n) && n > 0 && String(n) === String(v).trim() ? n : null;
 }
 
+// `season_id=active` (#2777) on /me/ranking and /me/breakdown: resolve the
+// season server-side instead of making the caller fetch /seasons first. The
+// web Profile screen used to do exactly that — await the whole /seasons
+// payload (every season's events, challenges and onboarding, ~130 KB on a
+// seeded database) only to pick one id from it, and only then start its real
+// requests. The rule is the one it applied to that list, kept verbatim so the
+// numbers it shows do not move: the newest public season flagged is_active,
+// else the LAST entry of /seasons' public list (starts_at DESC, id DESC) —
+// which is the oldest. No public season at all resolves to null, i.e. global
+// scope, as the old client's empty query string did. Any other value keeps
+// its old meaning (a numeric id, or absent/garbage -> not provided), so the
+// mobile app, which never sends `active`, is unaffected.
+async function resolveActiveSeasonId(pool) {
+  const { rows: active } = await pool.query(
+    `SELECT id FROM seasons WHERE internal = FALSE AND is_active = TRUE
+      ORDER BY starts_at DESC, id DESC LIMIT 1`
+  );
+  if (active[0]) return Number(active[0].id);
+  const { rows: fallback } = await pool.query(
+    `SELECT id FROM seasons WHERE internal = FALSE
+      ORDER BY starts_at ASC, id ASC LIMIT 1`
+  );
+  return fallback[0] ? Number(fallback[0].id) : null;
+}
+
+async function seasonIdFromQuery(pool, raw) {
+  if (typeof raw === 'string' && raw.trim().toLowerCase() === 'active') {
+    return resolveActiveSeasonId(pool);
+  }
+  return toIntId(raw);
+}
+
+// `include_progress` (breakdown, #2777) — default TRUE, so every existing
+// caller keeps `challenge_progress`. The web Profile screen reads only each
+// event's name and total_points, and turns it off together with
+// include_activity: that leaves one indexed snapshot read per event instead
+// of four queries.
 async function computeLevel(pool, userId, passwordSet) {
   const { rows } = await pool.query(
     'SELECT 1 FROM onchain_accounts WHERE user_id = $1 LIMIT 1',
@@ -296,7 +333,9 @@ async function fetchBreakdownActivities(pool, userId, eventId) {
 // zero-filled placeholder. The single, DIRECT event-scope response (this
 // same builder, called once) always keeps its object and zero-fills,
 // mirroring /me/ranking's own "no data still 200, zeroed" rule.
-async function buildEventBreakdown(pool, userId, event, { includeActivity, omitBonusKeys }) {
+async function buildEventBreakdown(pool, userId, event, {
+  includeActivity, omitBonusKeys, includeProgress = true,
+}) {
   const snap = await fetchEventSnapshot(pool, userId, event.id);
 
   const obj = {
@@ -313,7 +352,7 @@ async function buildEventBreakdown(pool, userId, event, { includeActivity, omitB
   obj.produced_blocks = snap ? Number(snap.event_total_produced_blocks) || 0 : 0;
   obj.vrf_won_slots = snap ? Number(snap.vrf_total_won_slots) || 0 : 0;
   obj.success_rate = snap ? (num(snap.event_success_rate) ?? 0) : 0;
-  obj.challenge_progress = await fetchChallengeProgress(pool, userId, event.id);
+  if (includeProgress) obj.challenge_progress = await fetchChallengeProgress(pool, userId, event.id);
   if (includeActivity) obj.activities = await fetchBreakdownActivities(pool, userId, event.id);
 
   return { obj, hasSnapshot: !!snap };
@@ -843,15 +882,19 @@ function topochainMobileRoutes(config) {
     try {
       // `req.user.id` comes from the credential-bound mobile identity (BIGINT) —
       // node-postgres returns BIGINT columns as STRINGS (no custom type
-      // parser is configured in src/db/pool.js), while computeStandings()
+      // parser is configured in src/db/pool.js), while computeOwnStanding()
       // below Number()-casts its own `user_id` column. Casting once here
-      // keeps every later `===` comparison (`standings.find(...)`)
-      // correct against a real database, not just this file's mock-pool
-      // tests (whose fixtures happen to store ids as JS numbers already).
+      // keeps every later comparison against it correct against a real
+      // database, not just this file's mock-pool tests (whose fixtures
+      // happen to store ids as JS numbers already).
       const userId = Number(req.user.id);
       const seasonEventId = toIntId(req.query.season_event_id);
-      const seasonIdParam = toIntId(req.query.season_id);
-      const termsGate = await getTermsGate(pool, userId);
+      // season_event_id wins (above), so `active` is only resolved when it
+      // can matter; the terms lookup runs alongside it.
+      const [seasonIdParam, termsGate] = await Promise.all([
+        seasonEventId ? null : seasonIdFromQuery(pool, req.query.season_id),
+        getTermsGate(pool, userId),
+      ]);
       const termsFields = {
         terms_accepted: termsGate.termsAccepted,
         terms_version_required: termsGate.termsVersionRequired,
@@ -907,13 +950,13 @@ function topochainMobileRoutes(config) {
         if (season.internal) return fail(res, 404, 'Season not found.');
 
         // Season scope reuses the shared §4.10 aggregate too (not just
-        // global) — computeStandings already accepts a seasonId filter,
-        // so there's no separate query to write; SPEC's "three
-        // consumers" list for this aggregate doesn't name this exact
-        // call site, but it's the identical shape with a season filter.
-        const standings = await computeStandings(pool, { seasonId: season.id });
-        const own = standings.find((s) => s.user_id === userId) || null;
-        const totalTokens = termsGate.termsAccepted ? await sumSeasonTokens(pool, userId, season.id) : 0;
+        // global), with a season filter. computeOwnStanding returns only
+        // this user's row of it and the participant count (#2777) — the
+        // same numbers computeStandings(...).find() produced.
+        const [{ own, totalParticipants }, totalTokens] = await Promise.all([
+          computeOwnStanding(pool, { seasonId: season.id, userId }),
+          termsGate.termsAccepted ? sumSeasonTokens(pool, userId, season.id) : 0,
+        ]);
 
         return ok(res, {
           data: {
@@ -924,16 +967,17 @@ function topochainMobileRoutes(config) {
             total_points: own ? own.total_points : 0,
             total_tokens: totalTokens,
             extra_points: own ? own.extra_points : 0,
-            total_participants: standings.length,
+            total_participants: totalParticipants,
             ...termsFields,
           },
         });
       }
 
       // Global scope (SPEC 1798-1805; §4.10's third listed consumer).
-      const standings = await computeStandings(pool, { seasonId: null });
-      const own = standings.find((s) => s.user_id === userId) || null;
-      const totalTokens = termsGate.termsAccepted ? await sumAllTokens(pool, userId) : 0;
+      const [{ own, totalParticipants }, totalTokens] = await Promise.all([
+        computeOwnStanding(pool, { seasonId: null, userId }),
+        termsGate.termsAccepted ? sumAllTokens(pool, userId) : 0,
+      ]);
 
       return ok(res, {
         data: {
@@ -943,7 +987,7 @@ function topochainMobileRoutes(config) {
           total_tokens: totalTokens,
           events_participated: own ? own.events_participated : 0,
           total_produced_blocks: own ? own.total_produced_blocks : 0,
-          total_participants: standings.length,
+          total_participants: totalParticipants,
           ...termsFields,
         },
       });
@@ -958,8 +1002,9 @@ function topochainMobileRoutes(config) {
   const meBreakdownHandler = async (req, res) => {
     try {
       const seasonEventId = toIntId(req.query.season_event_id);
-      const seasonIdParam = toIntId(req.query.season_id);
+      const seasonIdParam = seasonEventId ? null : await seasonIdFromQuery(pool, req.query.season_id);
       const includeActivity = parseBoolDefaultTrue(req.query.include_activity);
+      const includeProgress = parseBoolDefaultTrue(req.query.include_progress);
 
       const { rows: userRows } = await pool.query(
         'SELECT discord, display_name, email, telegram, username FROM users WHERE id = $1',
@@ -983,7 +1028,7 @@ function topochainMobileRoutes(config) {
         }
 
         const { obj } = await buildEventBreakdown(pool, req.user.id, event, {
-          includeActivity, omitBonusKeys: false,
+          includeActivity, includeProgress, omitBonusKeys: false,
         });
         return ok(res, { data: { display_name: displayName, scope: 'event', ...obj } });
       }
@@ -1002,18 +1047,18 @@ function topochainMobileRoutes(config) {
           'SELECT id, name FROM season_events WHERE season_id = $1 AND internal = FALSE ORDER BY starts_at ASC',
           [season.id]
         );
-        const events = [];
-        for (const eventRow of eventRows) {
-          // eslint-disable-next-line no-await-in-loop -- small per-user
-          // fixture-scale lists; sequential keeps the query count obvious.
-          const { obj, hasSnapshot } = await buildEventBreakdown(pool, req.user.id, eventRow, {
-            includeActivity, omitBonusKeys: false,
-          });
-          // SPEC 1865: events without a snapshot are skipped, not
-          // returned zero-filled (that zero-fill only applies to the
-          // single direct event-scope response above).
-          if (hasSnapshot) events.push(obj);
-        }
+        // One event's queries are independent of the next one's, so they
+        // run side by side (#2777) rather than one event after another; the
+        // response keeps the starts_at order because Promise.all does.
+        const built = await Promise.all(eventRows.map((eventRow) => (
+          buildEventBreakdown(pool, req.user.id, eventRow, {
+            includeActivity, includeProgress, omitBonusKeys: false,
+          })
+        )));
+        // SPEC 1865: events without a snapshot are skipped, not
+        // returned zero-filled (that zero-fill only applies to the
+        // single direct event-scope response above).
+        const events = built.filter((b) => b.hasSnapshot).map((b) => b.obj);
         return ok(res, { data: { display_name: displayName, scope: 'season', events } });
       }
 
@@ -1034,7 +1079,7 @@ function topochainMobileRoutes(config) {
         for (const eventRow of eventRows) {
           // eslint-disable-next-line no-await-in-loop
           const { obj, hasSnapshot } = await buildEventBreakdown(pool, req.user.id, eventRow, {
-            includeActivity, omitBonusKeys: true,
+            includeActivity, includeProgress, omitBonusKeys: true,
           });
           if (hasSnapshot) events.push(obj);
         }

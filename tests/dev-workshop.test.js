@@ -67,9 +67,21 @@ const FOLD = read('frontend/src/features/dev-board/card/fold.tsx');
 const CARD_TSX = read('frontend/src/features/dev-board/card/dev-card.tsx');
 const CSS = read('public/css/app.css');
 const SHEET_TSX = read('frontend/src/features/app-context/app-context-sheet.tsx');
-// The toolbar, which renders the shared filter strip's host inside this pane.
+// The toolbar, which renders the shared filter strip's host inside this pane,
+// and the "+" that closes the tab strip.
 const ACTIONS_ROW = read('frontend/src/features/dev-board/actions-row.tsx');
 const dapp = JSON.parse(read('dapp.json'));
+
+// The "+" and the Workshop's two empty-state notes read the toolbar's props
+// from the actions store (frontend/src/features/dev-board/actions-store.ts),
+// which keeps its one instance on `globalThis` — so the copy loaded here is
+// the one the rendered Workshop reads. Publish for the length of `fn`, then
+// put the defaults back so no other test inherits a read-only viewer.
+const { publishDevActions, DEFAULT_DEV_ACTIONS } = loadTsx('frontend/src/features/dev-board/actions-store.ts');
+function withDevActions(over, fn) {
+  publishDevActions({ ...DEFAULT_DEV_ACTIONS, ...over });
+  try { return fn(); } finally { publishDevActions(DEFAULT_DEV_ACTIONS); }
+}
 
 function makeAppView(over) {
   const o = over || {};
@@ -344,7 +356,10 @@ test('the vote strip pins what is owed to the viewer, whatever the filters say',
   assert.equal(v.meta.filtered, true);
   assert.equal(v.themes[0].lanes.find((l) => l.key === 'review').rows.length, 0,
     'while the theme itself is narrowed');
-  assert.equal(v.discussion, null, 'and the discussion row is dropped, as the feed dropped it');
+  // #2915: the discussion row used to be dropped under a filter, as the feed
+  // dropped it. The search narrows All items alone now, and this is not on it.
+  assert.equal(v.discussion && v.discussion.key, 'discussion',
+    'and the discussion row stays: the search is All items\' alone');
 });
 
 test('the dashboard is drawn every visit; "since" needs a baseline read once', () => {
@@ -1373,10 +1388,24 @@ test('#2573: a filter that hides everything is not an app nobody has started', (
   AppView._ghIssues = [ONE_ISSUE];
   AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'nothing matches this' };
   const v = AppView._workshopView();
-  assert.equal(v.dashboard.open, 0, 'the tiles count what survived the filter');
+  // #2915: the tiles counted what survived the filter, so this banner had to
+  // wait for the filter to come off. The search is All items' alone now: the
+  // tile counts the app, and the app has an open item.
+  assert.equal(v.dashboard.open, 1, 'the tiles count the app, not what All items\' search kept');
   assert.equal(v.meta.filtered, true);
+  assert.equal(v.themes.length, 0, 'while All items itself is narrowed to nothing');
   assert.ok(!workshopHtml(AppView).includes('data-ws-start-here'),
-    'the prompt is a claim about the APP, so it waits for the filter to come off');
+    'the prompt is a claim about the APP, and the app has something open');
+});
+
+test('#2915: an unstarted app gets the start-here prompt whatever All items is searched for', () => {
+  const AppView = makeAppView();
+  seedUntouched(AppView);
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'nothing matches this' };
+  const html = workshopHtml(AppView, 'status');
+  assert.match(html, /data-ws-start-here=""/, 'the search is on All items, not on this claim');
+  assert.doesNotMatch(html, /Nothing here matches/, 'and the status tab blames no search for an empty board');
+  assert.ok(!/!v\.meta\.filtered/.test(WORKSHOP), 'the banner carries no filter condition');
 });
 
 test('#2573: the button is offered on the gate the Improve panel offers New change on', () => {
@@ -1466,11 +1495,19 @@ test('#1934: the rest of the unclaimed issues are the rest of the deck', () => {
   assert.equal(one.queue.filter((r) => r.kind === 'claim').length, 1);
 });
 
-test('#1934: a filter drops the "more" along with the suggestion', () => {
+test('#1934: All items\' search leaves the "more" alone, and the claim questions with it (#2915)', () => {
   const AppView = makeAppView();
   seed(AppView);
+  // "dark" keeps issue 12 on All items and hides issue 13. A filter used to
+  // drop the "more" along with the suggestion, and the Needs-you claim rows
+  // were built from the same narrowed list; both are off All items, so the
+  // search that narrows it reaches neither now.
   AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'dark' };
-  assert.equal(AppView._workshopView().nextMore.length, 0);
+  const v = AppView._workshopView();
+  assert.equal(v.meta.filtered, true);
+  assert.equal(v.nextMore.map((r) => r.key).join(','), 'next:issue:13', 'the issue the search hides is still next');
+  assert.deepEqual(plain(v.queue.filter((r) => r.kind === 'claim').map((r) => r.key)),
+    ['need:issue:12', 'need:issue:13'], 'and Needs you still asks about both');
 });
 
 test('an issue already being worked on is never the one offered', () => {
@@ -1486,13 +1523,19 @@ test('an issue already being worked on is never the one offered', () => {
   assert.equal(v.dashboard.unclaimed, 1);
 });
 
-test('the suggestion stands down while a filter is active', () => {
+test('the suggestion does not follow All items\' search to the other tabs (#2915)', () => {
   const AppView = makeAppView();
   seed(AppView);
-  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'dark' };
-  // A narrowed board is somebody looking for something specific; offering
-  // them a different card is an interruption, not an invitation.
-  assert.equal(AppView._workshopView().nextUp, null);
+  // It stood down while a filter was active, on the reasoning that a
+  // narrowed board is somebody looking for something specific. The search
+  // narrows All items alone now, so the suggestion is the app's, whatever
+  // that tab is narrowed to — here, the very issue the search hides.
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'keyboard' };
+  const v = AppView._workshopView();
+  assert.equal(v.meta.filtered, true);
+  assert.equal(v.nextUp.key, 'next:issue:12');
+  const all = v.themes.flatMap((t) => t.lanes.flatMap((l) => l.rows.map((r) => r.key)));
+  assert.ok(!all.includes('issue:12'), 'while All items, which the search does narrow, hides it');
 });
 
 test('the strips are ordered for a returning member: state, then what to do, then what changed', () => {
@@ -3116,9 +3159,14 @@ test('the toolbar renders inside the Workshop pane, above the tabs', () => {
   // way round the pane had to be read bottom-up.
   assert.ok(tabs < actions, 'the tab strip sits above the toolbar');
   assert.ok(actions < themesList, 'and both above what they act on');
-  // The two controls the toolbar exists for.
+  // The control the toolbar exists for: the search and the filters.
   assert.ok(html.includes('id="dev-kanban-filterbar"'), 'the filter host comes with it');
-  assert.ok(html.includes('id="dev-plus-btn"'), 'and the "+"');
+  // NOT the "+", which rode at the end of this row until it moved to the end
+  // of the view-tab strip — on every tab, where the prototype draws it. It is
+  // on this screen, once, ABOVE the pane.
+  const plusAt = html.indexOf('id="dev-plus-btn"');
+  assert.ok(plusAt > 0 && plusAt < pane, 'the "+" is in the strip above the pane, not in its toolbar');
+  assert.equal(html.split('id="dev-plus-btn"').length - 1, 1, 'and there is exactly one');
   // Everything ABOVE the pane stays outside it: those strips are facts about
   // the app, not things the search narrows.
   assert.ok(html.indexOf('data-ws-dashboard') < pane, 'the summary strip is above the pane');
@@ -3142,7 +3190,7 @@ test('a search that matches nothing keeps the pane on screen, with the search bo
   assert.ok(html.includes('data-ws-pane'), 'the pane renders');
   assert.ok(html.includes('id="dev-actions"'), 'with its toolbar');
   assert.ok(html.includes('id="dev-kanban-filterbar"'), 'and the host the search box fills');
-  assert.ok(html.includes('id="dev-plus-btn"'), 'and the "+"');
+  assert.ok(html.includes('id="dev-plus-btn"'), 'and the "+", which closes the tab strip above it');
   assert.ok(html.includes('data-ws-group="category"'), 'and the grouping tabs');
   // The rows' place says why they are gone, UNDER the controls it is about.
   assert.match(html, /data-ws-empty=""[^>]*>Nothing here matches the current search and filters\./);
@@ -3171,6 +3219,118 @@ test('a search that matches nothing keeps the pane on screen, with the search bo
   assert.equal(check.expectText, 'Nothing here matches the current search and filters.');
 });
 
+// ── #2915: the search and filters are All items' alone ──────────────────
+//
+// The search box and the filters are drawn in All items' pane head and
+// nowhere else, but they used to narrow every card before the view model
+// was built, so a search typed there quietly followed the viewer to Current
+// status ("open items" 146 → 2, "waiting on votes" untouched) and Needs you,
+// neither of which has a search box to say why. They narrow All items alone
+// now, and a dot on that tab says a search is waiting there.
+
+test('#2915: a search narrows All items, and leaves Current status and Needs you whole', () => {
+  const store = {};
+  // A baseline, so "since your last visit" has rows to lose.
+  store[`${'workshopSeen'}:demo-app`] = String(Date.now() - 3.5 * 86400000);
+  const AppView = makeAppView({ localStorage: store });
+  seed(AppView);
+  AppView._workshopThemes = themes([
+    { id: 'look', name: 'Look', items: ['issue:12', 'session:34', 'session:78'] },
+    { id: 'keys', name: 'Keys', items: ['issue:13'] },
+  ]);
+  const whole = AppView._workshopView();
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'nothing matches this' };
+  const v = AppView._workshopView();
+
+  // ALL ITEMS is narrowed, exactly as before: nothing left to group.
+  assert.equal(v.meta.filtered, true);
+  assert.equal(v.themes.length, 0, 'All items\' themes are what the search kept');
+  assert.equal(whole.themes.length, 2);
+
+  // CURRENT STATUS is the app's, whatever All items is searched for: the
+  // tiles, the categories behind them, the unclaimed, the since list and the
+  // suggestion are the same numbers and rows with the search on and off.
+  assert.deepEqual(plain(v.dashboard), plain(whole.dashboard), 'the dashboard is untouched');
+  assert.equal(v.dashboard.open, 3);
+  assert.equal(v.dashboard.themes, 2, 'every category counts, not only the ones the search left');
+  assert.equal(v.dashboard.unclaimed, 2);
+  assert.ok(whole.since && whole.since.total > 0, 'the fixture has a since list to lose');
+  assert.deepEqual(plain(v.since), plain(whole.since), '"since your last visit" is untouched');
+  assert.equal(v.nextUp && v.nextUp.key, whole.nextUp.key);
+  assert.deepEqual(plain(v.nextMore.map((r) => r.key)), plain(whole.nextMore.map((r) => r.key)));
+  assert.equal(v.discussion && v.discussion.key, 'discussion');
+  assert.equal(v.emptyNote, null, 'and no "nothing here" note: the board has plenty');
+
+  // NEEDS YOU: the whole queue, votes and claims alike.
+  assert.deepEqual(plain(v.queue.map((r) => r.key)), plain(whole.queue.map((r) => r.key)));
+  assert.ok(v.queue.some((r) => r.kind === 'claim'), 'the unclaimed issues are still asked about');
+
+  // Drawn: the status tab has its tiles and blames no search; All items
+  // says why it is empty, under the controls that emptied it.
+  const status = workshopHtml(AppView, 'status');
+  assert.ok(status.includes('data-ws-dashboard'), 'the status tab draws the dashboard');
+  assert.doesNotMatch(status, /data-ws-empty/, 'and no empty note over it');
+  assert.match(workshopHtml(AppView, 'all'), /data-ws-empty=""[^>]*>Nothing here matches the current search and filters\./);
+});
+
+test('#2915: while a search or filter is on, a dot on the All items tab says so, on every tab', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const tabOf = (html, key) => {
+    const m = new RegExp(`<button[^>]*data-ws-tab-btn="${key}"[^>]*>([\\s\\S]*?)</button>`).exec(html);
+    assert.ok(m, `the ${key} tab is drawn`);
+    return m[1];
+  };
+  for (const tab of ['status', 'needs', 'all']) {
+    assert.doesNotMatch(workshopHtml(AppView, tab), /data-ws-tab-filtered/, `${tab}: no dot without a search`);
+  }
+  // Any of the filters, not only the search: a quick toggle counts too.
+  for (const over of [{ q: 'dark' }, { assignedToMe: true }, { priority: 'high' }]) {
+    AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), ...over };
+    for (const tab of ['status', 'needs', 'all']) {
+      const html = workshopHtml(AppView, tab);
+      const all = tabOf(html, 'all');
+      // After the label, decorative, with words a screen reader reads as part
+      // of the tab's name: "All items (filtered)".
+      assert.match(all,
+        /<span class="dev-ws-tab-label">All items<\/span><span class="dev-ws-tab-dot" data-ws-tab-filtered="" aria-hidden="true"><\/span><span class="sr-only"> \(filtered\)<\/span>$/,
+        `${tab} / ${JSON.stringify(over)}: the dot, and its words`);
+      assert.equal(html.split('data-ws-tab-filtered').length - 1, 1, `${tab}: on All items alone`);
+      assert.doesNotMatch(tabOf(html, 'status') + tabOf(html, 'needs'), /filtered/);
+    }
+  }
+  // Cleared, it goes.
+  AppView._kanbanFilters = AppView._defaultKanbanFilters();
+  assert.doesNotMatch(workshopHtml(AppView, 'status'), /data-ws-tab-filtered/);
+  // The accent, a 6px round, and never shrunk out of the tab by a long label.
+  // On a phone it is a badge on the glyph that takes no width, because the
+  // pill has 8px to spare at 390px and a dot after the label costs 10: its
+  // own width and the gap after it are handed back, so the labels keep every
+  // letter. Above 700px it follows the label, 6px further off than the gap.
+  assert.match(CSS, /\.dev-ws-tab-dot \{\s*flex: none;\s*width: 6px; height: 6px;\s*border-radius: 999px;\s*background: var\(--accent\);\s*order: -1;\s*margin-right: -10px;\s*transform: translate\(12px, -8px\);\s*\}/);
+  assert.match(CSS, /\.dev-ws-tab \{[^}]*align-items: center; justify-content: center; gap: 4px;/,
+    'the 10px handed back is the dot and the phone tab\'s own 4px gap');
+  assert.match(CSS, /@media \(min-width: 700px\) \{[\s\S]*?\.dev-ws-tab-dot \{ order: 0; margin: 0 0 0 6px; transform: none; \}/);
+});
+
+test('#2915: the tab marker re-measures when a tab resizes inside an unchanged list', () => {
+  // On a phone the tab list is the pill's fixed width and the three tabs
+  // share it out, so the dot arriving re-divides the tabs while the bar and
+  // the list keep their size. The marker observes each tab for that.
+  assert.match(WORKSHOP, /for \(const el of bar\.querySelectorAll<HTMLElement>\('\[data-ws-tab-btn\]'\)\) ro\.observe\(el\);/);
+});
+
+test('#2915: declared checks open Current status and the tab strip with a search on', () => {
+  const status = dapp.tests.filter((t) => /[?&]ws=status\b/.test(t.path || '') && /[?&]q=/.test(t.path || ''));
+  const whole = status.find((t) => /\[data-ws-dashboard\]/.test(t.expectSelector || ''));
+  assert.ok(whole, 'a check opens Current status narrowed by ?q=');
+  assert.match(whole.expectSelector, /\.dev-ws\[data-ws-tab="status"\]:not\(:has\(\[data-ws-empty\]\)\)/,
+    'and expects no "nothing here" note on it');
+  const dot = status.find((t) => /data-ws-tab-filtered/.test(t.expectSelector || ''));
+  assert.ok(dot, 'and one expects the dot on All items from there');
+  assert.match(dot.expectSelector, /\[data-ws-tab-btn="all"\]\[aria-selected="false"\] > \[data-ws-tab-filtered\]/);
+});
+
 test('an empty board still gets the All items pane, and the note names the "+" that is in it', () => {
   const AppView = makeAppView();
   seed(AppView);
@@ -3191,6 +3351,74 @@ test('an empty board still gets the All items pane, and the note names the "+" t
   const status = workshopHtml(AppView, 'status');
   assert.match(status, /data-ws-empty=""[^>]*>Nothing on the board yet\. Press /);
   assert.ok(!status.includes('data-ws-pane'), 'and no pane: that is the All items tab');
+  // BUG g, the first half: on this tab the note told the viewer to press a
+  // "+" that was not on screen — it lived in All items' search row. It
+  // closes the tab strip on every tab now, so the "+" the note names is here.
+  assert.ok(status.includes('id="dev-plus-btn"'), 'the "+" the note names is on the status tab too');
+});
+
+test('bug g: the empty-board note says what the "+" holds, and sends "start a change" to New change', () => {
+  // The second half: "Press + to propose a change or file an issue". The "+"
+  // has had no propose row since New change moved to Improve (#1490) and
+  // then to the Homeroom menu's New change button — an owner decision
+  // (#2740 review) this does not undo. So the note names the "+"'s real rows
+  // and the button that starts a change, by the name the header gives the
+  // menu (the mark's aria-label, "Homeroom menu").
+  const MARK = read('frontend/src/features/header/platform-mark.tsx');
+  assert.match(MARK, /aria-label="Homeroom menu"/, 'the menu is called what the note calls it');
+  const empty = (over) => {
+    const AppView = makeAppView();
+    seed(AppView);
+    AppView._ghIssues = [];
+    AppView._proposals = [];
+    AppView._merged = [];
+    AppView._mergedTotal = 0;
+    Object.assign(AppView, over || {});
+    return AppView;
+  };
+  const NOTE = (tail) => new RegExp(`data-ws-empty=""[^>]*>Nothing on the board yet\\. Press <span[^>]*>\\+<\\/span>${tail}<\\/div>`);
+  const START = '; to start a change, use New change in the Homeroom menu\\.';
+
+  // ALL ITEMS, where no banner offers New change: the whole sentence.
+  const fresh = empty();
+  const all = workshopHtml(fresh, 'all');
+  assert.doesNotMatch(all, /propose a change/, 'no promise of a propose row the "+" does not have');
+  assert.match(all, NOTE(` to file an issue${START}`), "a writer's note: the '+' files an issue");
+  withDevActions({ canCollaborate: true }, () => {
+    assert.match(workshopHtml(fresh, 'all'), NOTE(` to file an issue or import a PR${START}`),
+      "a collaborator's '+' also imports a PR, so the note says so");
+  });
+
+  // CURRENT STATUS on an app nobody has started: #2573's banner leads the tab
+  // with its own New change, so the note stops at the "+" rather than sending
+  // the reader to a menu for the button just above it.
+  const status = workshopHtml(fresh, 'status');
+  assert.match(status, /data-ws-start-here-btn=""[^>]*>New change</, 'the banner offers New change');
+  assert.match(status, NOTE(' to file an issue\\.'), 'and the note under it names the "+" alone');
+  assert.doesNotMatch(status, /propose a change/);
+  // ...and "What you are working on" states the fact alone there too: the
+  // board has no open item to pick up, and New change is the banner's.
+  assert.match(status, /data-ws-mine-empty="">You have no work going on\.<\/p>/);
+  // With no banner — an app with a history the page has not loaded rows for —
+  // the status tab's note says the whole thing too.
+  const finished = empty({ _mergedTotal: 3 });
+  const bare = workshopHtml(finished, 'status');
+  assert.ok(!bare.includes('data-ws-start-here'), 'no banner on an app that has shipped');
+  assert.match(bare, NOTE(` to file an issue${START}`));
+
+  // A read-only viewer's "+" holds Fork alone and their menu has no New
+  // change, so there is nothing to press: the note states the fact.
+  withDevActions({ readOnly: true }, () => {
+    for (const html of [workshopHtml(fresh, 'all'), workshopHtml(fresh, 'status'), workshopHtml(finished, 'status')]) {
+      assert.match(html, /data-ws-empty=""[^>]*>Nothing on the board yet\.<\/div>/, 'the read-only note');
+      assert.doesNotMatch(html, /Homeroom menu/, 'and no door the reader cannot open');
+    }
+  });
+  // Both notes are one component, so the two tabs cannot drift apart, and the
+  // banner's condition is written once, for the banner and the note alike.
+  assert.equal((WORKSHOP.match(/'Nothing on the board yet\. Press '/g) || []).length, 1);
+  assert.match(WORKSHOP, /\{startHere \? <StartHereBanner \/> : null\}/);
+  assert.match(WORKSHOP, /<EmptyNote\s+filtered=\{!!v\.emptyNote\.filtered\}\s+loadFailed=\{v\.emptyNote\.loadFailed\}\s+underStartHere=\{startHere\}\s*\/>/);
 });
 
 test('exactly one surface draws the toolbar, so its ids stay unique', () => {
@@ -3200,11 +3428,137 @@ test('exactly one surface draws the toolbar, so its ids stay unique', () => {
   assert.match(FRAME, /mode === 'workshop' \? null : \(\s*<DevActionsRow/,
     'the frame draws none on the Workshop');
   assert.match(WORKSHOP, /<DevActionsRow/, 'and the Workshop draws its own');
+  // ...WITHOUT its "+": the Workshop's row passes `withPlus={false}`, and the
+  // Workshop draws the "+" once, in its tab strip. Two "+"s on one screen
+  // would be two #dev-plus-btn.
+  assert.match(WORKSHOP, /<DevActionsRow[^>]*withPlus=\{false\}/, 'the pane-head row carries no "+"');
+  assert.equal((WORKSHOP.match(/<DevPlusMenu\b/g) || []).length, 1, 'the strip draws the one "+"');
   // Neither file spells the markup itself any more.
   const ACTIONS = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.match(ACTIONS, /id="dev-actions"/, 'the markup has one home');
   assert.ok(!FRAME.includes('id="dev-actions"'), 'not the frame');
   assert.ok(!WORKSHOP.includes('id="dev-actions"'), 'and not the Workshop');
+});
+
+// ── The "+" closes the view-tab strip ────────────────────────────────────
+//
+// Current status · Needs you · All items · +, on every tab of an app's
+// Workshop. The prototype's `wsTabs` ends its `.tabs` row with a `.tplus`
+// holding Add and Manage, and the spec says "a plus at the end of the tab
+// strip". The product kept the old board "+" at the end of All items' search
+// row, so two of the three tabs had no way to file an issue or reach the
+// app's settings, while their empty-state notes pointed at it.
+
+test('the "+" closes the view-tab strip on all three tabs, outside the tab list', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([
+    { id: 't1', title: 'Voting', items: [{ kind: 'issue', number: 12 }] },
+  ]);
+  for (const tab of ['status', 'needs', 'all']) {
+    const html = workshopHtml(AppView, tab);
+    // The strip, in its order: the three tabs in their list, then the "+" —
+    // a sibling of the list inside the track, so on a wide window it is the
+    // pill's last segment and on a phone the pill's last cell.
+    assert.match(html,
+      /<div class="dev-ws-tabtrack"><div class="dev-ws-tablist" role="tablist" aria-label="Workshop sections">(?:<button type="button" role="tab"[\s\S]*?<\/button>){3}<\/div><div class="dev-ws-plus ?"><button id="dev-plus-btn"/,
+      `${tab}: Current status · Needs you · All items · +`);
+    // NOT a fourth tab: a tab list owns tabs, and a menu button inside one is
+    // announced as a tab that selects nothing.
+    const list = /role="tablist"[^>]*>([\s\S]*?)<\/div><div class="dev-ws-plus/.exec(html);
+    assert.ok(list && !list[1].includes('dev-plus-btn'), `${tab}: the "+" is outside the tab list`);
+    assert.equal((list[1].match(/role="tab"/g) || []).length, 3, `${tab}: which holds the three tabs alone`);
+    // Once per screen, and before everything the tabs switch between.
+    assert.equal(html.split('id="dev-plus-btn"').length - 1, 1, `${tab}: one "+"`);
+    assert.ok(html.indexOf('id="dev-plus-btn"') < html.indexOf('dev-ws-tabbody'), `${tab}: in the strip, above the tab body`);
+    // The menu comes with it: Add to the board, then Settings & rules.
+    assert.match(html, /id="dev-plus-menu"[\s\S]*?data-plus-group="build"[\s\S]*?data-plus="issue"[\s\S]*?data-plus-group="settings"/,
+      `${tab}: with its menu`);
+  }
+  // The outer box is a plain container now: the role and the name moved to
+  // the list, and it is a div so no landmark appeared that the page lacked.
+  assert.match(WORKSHOP, /<div\s+ref=\{setBar\}\s+className="dev-ws-tabs"\s+data-ws-tabs=""\s*>/);
+  assert.ok(!/<nav\b/.test(WORKSHOP), 'no nav landmark in its place');
+  // The same props the toolbar row reads, from the same store — so the gates
+  // (import on canCollaborate, the members row, Fork for a read-only viewer)
+  // are the ones the menu always had.
+  assert.match(WORKSHOP,
+    /<DevPlusMenu\s+illustrationApp=\{actions\.illustrationApp\}\s+canManageIllustration=\{actions\.canManageIllustration\}\s+selfHosted=\{actions\.selfHosted\}\s+readOnly=\{actions\.readOnly\}\s+canCollaborate=\{actions\.canCollaborate\}\s+showsMembers=\{actions\.showsMembers\}\s*\/>/);
+});
+
+test('a read-only viewer of the self-hosted app gets no "+" in the strip, and the tabs take the room', () => {
+  // The menu would be empty (no board writes, and the platform is not
+  // forkable), so the wrapper is hidden outright — the same gate it carried
+  // in the search row.
+  const AppView = makeAppView();
+  seed(AppView);
+  withDevActions({ readOnly: true, selfHosted: true }, () => {
+    const html = workshopHtml(AppView, 'status');
+    assert.match(html, /<div class="dev-ws-plus hidden"><button id="dev-plus-btn"/);
+  });
+  // ...and a hidden "+" resizes the tab list inside a bar of unchanged size,
+  // so the selection marker watches the list as well as the bar.
+  const marker = WORKSHOP.slice(WORKSHOP.indexOf('function useTabMarker('));
+  assert.match(marker.slice(0, marker.indexOf('\n}\n')),
+    /const list = bar\.querySelector<HTMLElement>\('\.dev-ws-tablist'\);\s*if \(list\) ro\.observe\(list\);/);
+});
+
+test('the "+" is drawn as part of the strip, not as a floating action', () => {
+  const decls = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  // THE PHONE: one more 40px cell in the full-width pill — the tabs' own
+  // height and radius — a bare glyph in the selected tab's ink, no ground.
+  const btn = /\n\.dev-ws-plus-btn \{([\s\S]*?)\n\}/.exec(decls);
+  assert.ok(btn, 'the "+" has its own rule beside the tabs');
+  assert.match(btn[1], /width: 40px; height: 40px;/, 'the tab height');
+  assert.match(btn[1], /border: 0; border-radius: 999px;/, "the tab's radius and no border");
+  assert.match(btn[1], /background: transparent;/, 'no ground of its own');
+  assert.match(btn[1], /color: var\(--brand-ink\);/, "the selected tab's ink");
+  // Open, it wears the marker's tint and ring: the strip's own "this one".
+  assert.match(decls,
+    /\.dev-ws-plus-btn\[aria-expanded="true"\] \{\s*background: var\(--brand-tint\);\s*box-shadow: inset 0 0 0 1px var\(--brand-line\);\s*\}/);
+  // Hover only where there is hover, or a tapped "+" stays tinted on a phone.
+  assert.match(decls, /@media \(hover: hover\) \{\s*\.dev-ws-plus-btn:hover \{ background: var\(--brand-tint\); \}/);
+  // The violet filled square is gone from the component.
+  assert.ok(!ACTIONS_ROW.includes('bg-violet-600'), 'no primary fill on the "+"');
+  assert.match(ACTIONS_ROW, /className="dev-ws-plus-btn un-touch-target"/, 'still a 44px hit box');
+  // THE ROOM IT TAKES, paid out of the tabs' padding and glyph gap rather
+  // than their labels — measured at 390px, "Current status" stays whole.
+  const tab = /\n\.dev-ws-tab \{([\s\S]*?)\n\}/.exec(decls);
+  assert.match(tab[1], /gap: 4px;/);
+  assert.match(tab[1], /height: 40px; padding: 0 4px;/);
+  assert.match(decls, /\.dev-ws-tablist \{ flex: 1 1 auto; min-width: 0; display: flex; gap: 2px; \}/,
+    'the list takes the pill less the "+" cell');
+  assert.match(decls, /\.dev-ws-plus \{ position: relative; flex: none; display: flex; \}/,
+    "the dropdown's containing block, never squeezed");
+  // A WIDE WINDOW: the pill's last segment, at the desktop tabs' 32px.
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.match(wide[1], /\.dev-ws-tablist \{ flex: 0 0 auto; \}/);
+  assert.match(wide[1], /\.dev-ws-plus-btn \{ width: 32px; height: 32px; \}/);
+  // Inside the TRACK — which is what lets the ear's measured inset clear it
+  // with no change of its own: useEarInset reads the track's right edge.
+  assert.match(WORKSHOP,
+    /<div className="dev-ws-tabtrack">[\s\S]*?<div className="dev-ws-tablist" role="tablist" aria-label="Workshop sections">[\s\S]*?<\/div>\s*<DevPlusMenu[\s\S]*?\/>\s*<\/div>/);
+  assert.match(WORKSHOP, /const wanted = Math\.max\(0, t\.right - p\.left \+ EAR_GAP_PX\);/);
+  // The dropdown hangs 8px under the button at either size of the strip.
+  assert.match(ACTIONS_ROW, /id="dev-plus-menu"\s+className="hidden absolute right-0 top-full mt-2 z-30 w-64 /);
+});
+
+test('while the "+" menu is open the strip outranks the pane head, and only then', () => {
+  // The dropdown hangs out of the strip over the tab body, and the strip is a
+  // stacking context (sticky wide, frosted narrow), so the menu's own z-30
+  // counted only inside it: the pinned pane head painted over its rows on
+  // All items. Measured before this rule, every row's centre hit the head.
+  const decls = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(decls, /\.dev-ws-tabs:has\(#dev-plus-menu:not\(\.hidden\)\) \{ z-index: 32; \}/);
+  const headZ = Number(/#dev-workshop \.dev-ws-pane-head \{[^}]*z-index: (\d+)/.exec(decls)[1]);
+  assert.ok(32 > headZ, 'above the head while open');
+  // At rest nothing raises the strip: the ear, which hangs into the strip's
+  // band from the head, must stay on top or its two tabs cannot be clicked
+  // (see "the ear outranks the nav").
+  const raised = [...decls.matchAll(/([^{}]*\.dev-ws-tabs[^{}]*)\{[^}]*z-index: (\d+)/g)]
+    .filter((m) => /\.dev-ws-tabs(?![-\w])/.test(m[1]) && Number(m[2]) >= 31);
+  assert.deepEqual(raised.map((m) => m[1].trim()), ['.dev-ws-tabs:has(#dev-plus-menu:not(.hidden))'],
+    'the one rule that lifts the strip past the ear is the open-menu rule');
 });
 
 test('the "+" is re-wired when the toolbar changes surface', () => {
@@ -3613,16 +3967,25 @@ test('the "+" asks to be wired when its row mounts, because the module wires it 
   // AFTER the synchronous publish the module's call follows.
   assert.match(WORKSHOP, /useState<TabKey>\(\(\) => v\.tab \|\| 'status'\)/);
   assert.match(WORKSHOP, /useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/);
-  // So the row asks for itself, from the mount effect that already asks for
-  // the filter strip.
-  const effect = ACTIONS_ROW.match(/useEffect\(\(\) => \{[\s\S]*?\}, \[\]\);/);
-  assert.ok(effect, 'the mount effect');
-  assert.match(effect[0], /callAppView\('_rewirePlusMenu'\);/);
-  // In the effect BODY, not the microtask: the wiring binds listeners and
+  // So the "+" asks for itself, from its OWN mount effect. It rode on the
+  // filter row's effect while it lived at the end of that row; it is its own
+  // component now (`DevPlusMenu`), closing the view-tab strip on every tab,
+  // and the row in the pane head carries no "+" to wire.
+  const plusSrc = ACTIONS_ROW.slice(ACTIONS_ROW.indexOf('export function DevPlusMenu('));
+  const plusEffect = plusSrc.match(/useEffect\(\(\) => \{[\s\S]*?\}, \[\]\);/);
+  assert.ok(plusEffect, 'the "+" has a mount effect');
+  // In the effect BODY, not a microtask: the wiring binds listeners and
   // flushes nothing through React, so there is nothing for a microtask to
   // keep out of the commit, and the nodes it looks up are committed by the
-  // time any effect runs. The strip keeps its microtask; see the test above.
-  assert.match(effect[0], /queueMicrotask\(\(\) => \{ if \(live\) callAppView\('_renderKanbanFilterBar'\); \}\);\s*callAppView\('_rewirePlusMenu'\);/);
+  // time any effect runs.
+  assert.match(plusEffect[0], /^useEffect\(\(\) => \{\s*callAppView\('_rewirePlusMenu'\);\s*\}, \[\]\);$/);
+  // The strip keeps its microtask (see the test above), and no longer wires
+  // a "+" the row may not hold.
+  const rowSrc = ACTIONS_ROW.slice(ACTIONS_ROW.indexOf('export function DevActionsRow('));
+  const rowEffect = rowSrc.match(/useEffect\(\(\) => \{[\s\S]*?\}, \[\]\);/);
+  assert.ok(rowEffect, 'the filter row has its mount effect');
+  assert.match(rowEffect[0], /queueMicrotask\(\(\) => \{ if \(live\) callAppView\('_renderKanbanFilterBar'\); \}\);/);
+  assert.ok(!/_rewirePlusMenu/.test(rowEffect[0]), 'the row does not wire the "+"');
   const wire = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _wirePlusMenu(content) {'));
   const wireBody = wire.slice(0, wire.indexOf('\n  },'));
   assert.ok(!/_reactDevBoard|publish|flushSync|innerHTML/.test(wireBody), 'listeners only');
@@ -4576,8 +4939,20 @@ test('#2182: "What you are working on" stays on screen with nothing in it, and s
   assert.equal(v.mine.rows.length, 0);
   const html = workshopHtml(AppView);
   assert.ok(html.includes('data-ws-mine=""'), 'the strip is drawn');
-  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item below, or start something from the \+ button\.<\/p>/,
+  // BUG g: the note sent the viewer to "start something from the + button",
+  // and the "+" has no propose row — starting a change is the Homeroom
+  // menu's New change (an owner decision, #2740 review). It names that door
+  // now, by the name the header gives the menu.
+  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item below, or start a change with New change in the Homeroom menu\.<\/p>/,
     'with the note in the lane');
+  assert.doesNotMatch(html, /start something from the \+ button/, 'and not the door that cannot open');
+  // A read-only viewer has neither door (no New change, no board writes), so
+  // the note states the fact and offers nothing to press.
+  withDevActions({ readOnly: true }, () => {
+    const ro = workshopHtml(AppView);
+    assert.match(ro, /data-ws-mine-empty="">You have no work going on\.<\/p>/,
+      'a read-only viewer is told the fact alone');
+  });
   assert.ok(!html.includes('data-ws-mine-more'), 'and no more-of-yours button');
   assert.ok(html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-mine'), 'in its usual place');
   // The declared check reaches this state through ?shot=mine-empty, whatever

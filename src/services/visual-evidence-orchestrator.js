@@ -9,6 +9,7 @@
 const appManifest = require('./app-manifest');
 const github = require('./github');
 const log = require('./logger');
+const logRedaction = require('./log-redaction');
 const evidenceAgent = require('./visual-evidence-agent');
 const evidenceControl = require('./visual-evidence-control');
 const environment = require('./visual-evidence-environment');
@@ -23,6 +24,23 @@ const DIFF_CONTEXT_CHARS = 8_000;
 const inFlight = new Map();
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_REPLAY_EVENTS = 40;
+const MAX_AGENT_EVENTS = 128;
+const REPAIRABLE_LOCATOR_CODES = new Set([
+  'ambiguous_locator', 'locator_not_found', 'locator_not_visible',
+]);
+const MAX_REPAIR_ATTEMPTS = 2;
+
+function repairableReplayFailure(error) {
+  const code = errorCode(error);
+  if (REPAIRABLE_LOCATOR_CODES.has(code)) return true;
+  // A missing element in a positive assertion is another locator error.
+  // An existing element with the wrong state/value, or an expected absence
+  // that failed, may be a real app regression and must remain a hard failure.
+  return code === 'assertion_failed' && error?.detail?.phase === 'assertion'
+    && error.detail.count === 0
+    && ['visible', 'attached', 'checked', 'text', 'value', 'focusWithin']
+      .includes(error.detail.assertion?.type);
+}
 
 function progressPhase(event) {
   if (!event || typeof event !== 'object') return null;
@@ -46,6 +64,9 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
   let lastReplayEvent = null;
   const replayEvents = [];
   let lastReplayFlushAt = 0;
+  let agentActivity = null;
+  let agentFinalResponse = null;
+  let lastAgentFlushAt = 0;
   const flush = () => {
     if (stopped || typeof stateService.heartbeatRun !== 'function') return;
     if (writing) { pending = true; return; }
@@ -53,8 +74,13 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
     Promise.resolve().then(async () => {
       do {
         pending = false;
+        const patch = {
+          ...(lastReplayEvent ? { lastReplayEvent, replayEvents: replayEvents.slice(-MAX_REPLAY_EVENTS) } : {}),
+          ...(agentActivity ? { agentActivity } : {}),
+          ...(agentFinalResponse ? { agentFinalResponse } : {}),
+        };
         await stateService.heartbeatRun(pool, runId, phase,
-          lastReplayEvent ? { lastReplayEvent, replayEvents: replayEvents.slice(-MAX_REPLAY_EVENTS) } : null);
+          Object.keys(patch).length ? patch : null);
       } while (pending && !stopped);
     }).catch((error) => {
       log.warn('visual-evidence', 'Evidence heartbeat failed', { runId, error: error.message });
@@ -67,6 +93,25 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
   timer.unref?.();
   flush();
   return {
+    onAgentDiagnostic(activity, kind) {
+      if (stopped || !activity || typeof activity !== 'object') return;
+      agentActivity = activity;
+      if (['tool_start', 'tool_end', 'browser_call_start', 'browser_call_pending',
+        'browser_call_end', 'browser_server_exit', 'document_request', 'document_response',
+        'provider_request_start', 'provider_request_pending', 'provider_response_headers',
+        'provider_response_first_byte', 'provider_request_end',
+        'context_result', 'provider_result',
+        'runner_exit', 'turn_end', 'agent_deadline'].includes(kind)
+          || Date.now() - lastAgentFlushAt >= 5000) {
+        lastAgentFlushAt = Date.now();
+        flush();
+      }
+    },
+    onAgentFinalResponse(summary) {
+      if (stopped || !summary || typeof summary !== 'object') return;
+      agentFinalResponse = summary;
+      flush();
+    },
     onReplayEvent(event) {
       if (stopped || !event || typeof event !== 'object') return;
       lastReplayEvent = event;
@@ -214,9 +259,47 @@ async function resolveRevisionContext(session, explicitHead = null, githubServic
   };
 }
 
-function declaredCheckSummary(checkout) {
+function evidenceWords(value) {
+  return new Set(String(value || '').toLowerCase().replace(/\+/g, ' plus ')
+    .match(/[a-z0-9]{4,}/g) || []);
+}
+
+function declaredCheckSummary(checkout, intent = null) {
   try {
-    return appManifest.readTests(appManifest.read(checkout)).slice(0, 80).map((test) => ({
+    const checks = appManifest.readTests(appManifest.read(checkout));
+    // A large manifest's first 80 checks can omit the changed screen
+    // entirely. Put checks whose names, paths, or readiness selectors match
+    // the accepted story first; retain declaration order for equal scores.
+    const storyText = (intent?.stories || []).map((story) => [
+      story.claim, story.intent?.startPath, story.intent?.checkpoint,
+      story.intent?.focus, ...(story.intent?.steps || []),
+    ].join(' ')).join(' ');
+    const words = evidenceWords(storyText);
+    const navigationWords = evidenceWords((intent?.stories || []).map((story) => [
+      story.intent?.startPath, ...(story.intent?.steps || []),
+    ].join(' ')).join(' '));
+    const frequencies = new Map();
+    const indexed = checks.map((test, index) => {
+      const nameWords = evidenceWords(test.name);
+      const pathWords = evidenceWords(test.path);
+      const selectorWords = evidenceWords(test.expectSelector);
+      for (const word of new Set([...nameWords, ...pathWords, ...selectorWords])) {
+        if (words.has(word)) frequencies.set(word, (frequencies.get(word) || 0) + 1);
+      }
+      return { test, index, nameWords, pathWords, selectorWords };
+    });
+    const ranked = indexed.map(({ test, index, nameWords, pathWords, selectorWords }) => {
+      let score = 0;
+      for (const word of words) {
+        const weight = Math.log2(1 + checks.length / (frequencies.get(word) || 1))
+          * (navigationWords.has(word) ? 3 : 1);
+        if (nameWords.has(word)) score += 3 * weight;
+        if (pathWords.has(word)) score += 2 * weight;
+        if (selectorWords.has(word)) score += weight;
+      }
+      return { test, index, score };
+    }).sort((a, b) => b.score - a.score || a.index - b.index);
+    return ranked.slice(0, 80).map(({ test }) => ({
       name: String(test.name || '').slice(0, 120),
       path: String(test.path || '').slice(0, 512),
       ...(test.id ? { visualScenarioId: test.id } : {}),
@@ -253,7 +336,7 @@ function evidenceContext({ run, session, revision, pair, deployment, intent }) {
       diff: revision.diffSummary,
       untrusted: true,
     },
-    declaredChecks: declaredCheckSummary(pair.sides.head.checkout),
+    declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent),
     provenance: {
       fixtureFingerprint: pair.fixtureFingerprint,
       baseImageDigest: pair.sides.base.imageDigest,
@@ -335,6 +418,35 @@ function redactDiagnosticText(value, max = 240) {
     .replace(/\b(?:sk-(?:proj-)?|ghp_|gho_|github_pat_)[A-Za-z0-9_-]{16,}\b/gi, '[redacted]')
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email]')
     .slice(0, max);
+}
+
+// The worker deletes a normal-turn journal after it exits. Keep the model's
+// final words only for a turn that did not produce evidence, in the private
+// owner diagnostics. The runtime has seeded fixture data; mask known run
+// credentials and internal origins before storing this bounded excerpt.
+function agentFinalResponseSummary(result, authTokens, origins) {
+  const raw = typeof result?.lastResultText === 'string' ? result.lastResultText.trim() : '';
+  const knownValues = [...Object.values(authTokens || {}), ...Object.values(origins || {})];
+  const scrubbed = redactDiagnosticText(
+    logRedaction.redactValues(logRedaction.redactString(raw), knownValues), 3000
+  );
+  const safeEnum = (value) => /^[a-z0-9_:-]{1,80}$/i.test(String(value || '')) ? String(value) : null;
+  return {
+    workerResultPresent: !!result && typeof result === 'object',
+    characters: raw.length,
+    excerpt: scrubbed || null,
+    truncated: raw.length > 3000,
+    resultSubtype: safeEnum(result?.resultSubtype),
+    stopReason: safeEnum(result?.providerStopReason),
+    exitCode: Number.isInteger(result?.exitCode) ? result.exitCode : null,
+    permissionDenialCount: Number.isInteger(result?.permissionDenialCount)
+      ? result.permissionDenialCount : null,
+    toolErrorCount: Number.isInteger(result?.toolErrorCount) ? result.toolErrorCount : null,
+    responseTextBlockCount: Number.isInteger(result?.responseTextBlockCount)
+      ? result.responseTextBlockCount : null,
+    providerTurnCount: Number.isInteger(result?.providerTurnCount)
+      ? result.providerTurnCount : null,
+  };
 }
 
 function visibleError(error) {
@@ -431,6 +543,135 @@ function replayProgressEvent(event, pass) {
   };
 }
 
+const AGENT_DIAGNOSTIC_KINDS = new Set([
+  'worker_prepare_start', 'worker_prepare_end', 'backend_selected',
+  'turn_start', 'turn_end', 'provider_dispatched', 'provider_init',
+  'first_stream', 'first_output', 'provider_result', 'provider_notice', 'provider_usage',
+  'context_result',
+  'runner_phase', 'runner_result', 'runner_exit', 'resume_retry',
+  'tool_start', 'tool_end', 'agent_deadline',
+  'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
+  'document_request', 'document_response',
+  'provider_request_start', 'provider_request_pending', 'provider_response_headers',
+  'provider_response_first_byte', 'provider_request_end',
+  'worker_stop_requested', 'worker_stop_returned',
+]);
+const AGENT_DIAGNOSTIC_PHASES = new Set([
+  'refresh', 'evidence_proxy', 'evidence_browser_bootstrap',
+  'evidence_mcp_ready', 'claude', 'agent', 'done',
+]);
+const AGENT_DIAGNOSTIC_TOOLS = new Set([
+  'evidence_get_context', 'evidence_reset_side', 'evidence_run_plan',
+  'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
+  'browser_take_screenshot', 'browser_click', 'browser_type',
+  'browser_fill_form', 'browser_press_key', 'browser_select_option',
+  'browser_hover', 'browser_drag', 'browser_resize', 'browser_wait_for',
+  'browser_console_messages', 'browser_network_requests', 'browser_tabs',
+  'browser_close', 'other',
+]);
+
+function recordAgentDiagnostic(metrics, raw) {
+  const kind = String(raw?.kind || '');
+  if (!AGENT_DIAGNOSTIC_KINDS.has(kind)) return;
+  const activity = metrics.agentActivity;
+  const event = { atMs: Math.max(0, Date.now() - metrics.startedAtMs), kind };
+  if (raw.backend === 'claude_code' || raw.backend === 'codex_openrouter') {
+    event.backend = raw.backend;
+  }
+  if (raw.requestMode === 'agent_new' || raw.requestMode === 'agent_resume') {
+    event.requestMode = raw.requestMode;
+  }
+  if (AGENT_DIAGNOSTIC_PHASES.has(raw.phase)) event.phase = raw.phase;
+  if (['ok', 'error', 'tool_error', 'rpc_error', 'unparsed', 'server_exit',
+    'http_error', 'network_error', 'stream_error', 'cancelled'].includes(raw.outcome)) {
+    event.outcome = raw.outcome;
+  }
+  for (const key of ['mcpServerCount', 'toolDefinitionCount', 'browserMemberToolCount',
+    'browserAdminToolCount', 'storyCount', 'callOrdinal', 'headingCount',
+    'buttonCount', 'linkCount', 'imageBlocks', 'exitCode', 'checkRank',
+    'documentOrdinal', 'httpStatus', 'requestOrdinal', 'chunkCount']) {
+    if (Number.isSafeInteger(raw[key]) && raw[key] >= 0 && raw[key] <= 1000) {
+      event[key] = raw[key];
+    }
+  }
+  if (Number.isSafeInteger(raw.responseCharacters) && raw.responseCharacters >= 0
+      && raw.responseCharacters <= 1_000_000) {
+    event.responseCharacters = raw.responseCharacters;
+  }
+  for (const key of ['durationMs', 'responseBytes', 'textChars', 'bodyBytes']) {
+    if (Number.isSafeInteger(raw[key]) && raw[key] >= 0 && raw[key] <= 10_000_000) {
+      event[key] = raw[key];
+    }
+  }
+  if (typeof raw.truncated === 'boolean') event.truncated = raw.truncated;
+  if (['timeout', 'network', 'browser_closed', 'locator_ambiguous', 'other'].includes(raw.errorClass)) {
+    event.errorClass = raw.errorClass;
+  }
+  if (raw.signal === 'SIGTERM' || raw.signal === 'SIGINT') event.signal = raw.signal;
+  if (['base', 'head', 'outside'].includes(raw.side)) event.side = raw.side;
+  if (raw.persona === 'member' || raw.persona === 'admin') event.persona = raw.persona;
+  if (['intent_start', 'declared_check', 'other'].includes(raw.routeHint)) {
+    event.routeHint = raw.routeHint;
+  }
+  if (['await_headers', 'await_first_byte', 'streaming'].includes(raw.stage)) {
+    event.stage = raw.stage;
+  }
+  for (const key of ['evidenceGetContextAvailable', 'evidenceRunPlanAvailable']) {
+    if (typeof raw[key] === 'boolean') event[key] = raw[key];
+  }
+  for (const key of ['jsonValid', 'acceptedIntentPresent', 'originsPresent', 'revisionsPresent']) {
+    if (typeof raw[key] === 'boolean') event[key] = raw[key];
+  }
+  for (const key of ['resultSubtype', 'providerStopReason']) {
+    if (/^[a-z0-9_:-]{1,80}$/i.test(String(raw[key] || ''))) event[key] = raw[key];
+  }
+  if (kind === 'tool_start' || kind === 'tool_end'
+      || kind === 'browser_call_start' || kind === 'browser_call_pending'
+      || kind === 'browser_call_end') {
+    event.tool = AGENT_DIAGNOSTIC_TOOLS.has(raw.tool) ? raw.tool : 'other';
+    if (raw.persona === 'member' || raw.persona === 'admin') event.persona = raw.persona;
+    if (['base', 'head', 'outside'].includes(raw.side)) event.side = raw.side;
+    if (Number.isSafeInteger(raw.routeOrdinal) && raw.routeOrdinal > 0
+        && raw.routeOrdinal <= 1000) event.routeOrdinal = raw.routeOrdinal;
+    if (Number.isSafeInteger(raw.sequence) && raw.sequence > 0 && raw.sequence <= 100000) {
+      event.sequence = raw.sequence;
+    }
+    if (kind === 'tool_start') {
+      activity.toolCounts[event.tool] = (activity.toolCounts[event.tool] || 0) + 1;
+    }
+    if (kind === 'browser_call_start') {
+      activity.browserCallCounts[event.tool] = (activity.browserCallCounts[event.tool] || 0) + 1;
+    }
+    if (event.sequence) {
+      if (kind === 'tool_start') activity.pending.set(event.sequence, event);
+      else activity.pending.delete(event.sequence);
+    }
+    if (event.callOrdinal && event.persona) {
+      const key = `${event.persona}:${event.callOrdinal}`;
+      if (kind === 'browser_call_start' || kind === 'browser_call_pending') {
+        activity.browserPending.set(key, { ...activity.browserPending.get(key), ...event });
+      } else if (kind === 'browser_call_end') {
+        activity.browserPending.delete(key);
+      }
+    }
+  }
+  if (event.documentOrdinal && event.side) {
+    const key = `${event.side}:${event.documentOrdinal}`;
+    if (kind === 'document_request') activity.documentPending.set(key, event);
+    else if (kind === 'document_response') activity.documentPending.delete(key);
+  }
+  if (event.requestOrdinal) {
+    if (kind === 'provider_request_end') activity.providerPending.delete(event.requestOrdinal);
+    else if (kind.startsWith('provider_request_') || kind.startsWith('provider_response_')) {
+      activity.providerPending.set(event.requestOrdinal,
+        { ...activity.providerPending.get(event.requestOrdinal), ...event });
+    }
+  }
+  activity.counts[kind] = (activity.counts[kind] || 0) + 1;
+  activity.events.push(event);
+  if (activity.events.length > MAX_AGENT_EVENTS) activity.events.shift();
+}
+
 function newRunMetrics() {
   return {
     startedAtMs: Date.now(),
@@ -448,7 +689,14 @@ function newRunMetrics() {
     replayEvents: [],
     agentAttempts: 0,
     agentDispatches: [],
+    agentActivity: { events: [], counts: {}, toolCounts: {}, pending: new Map(),
+      browserCallCounts: {}, browserPending: new Map(), documentPending: new Map(),
+      providerPending: new Map(), budgetMs: null },
+    agentFinalResponse: null,
     repairCount: 0,
+    repairTrigger: null,
+    repairTriggers: [],
+    fixtureResets: [],
     artifactBytes: 0,
     tokenUsage: {},
   };
@@ -474,6 +722,21 @@ function addAgentUsage(metrics, dispatched) {
   }
 }
 
+function agentActivitySummary(metrics) {
+  return {
+    version: 1,
+    budgetMs: metrics.agentActivity.budgetMs,
+    counts: { ...metrics.agentActivity.counts },
+    toolCounts: { ...metrics.agentActivity.toolCounts },
+    browserCallCounts: { ...metrics.agentActivity.browserCallCounts },
+    events: metrics.agentActivity.events.slice(-MAX_AGENT_EVENTS),
+    pendingTools: [...metrics.agentActivity.pending.values()].slice(-8),
+    pendingBrowserCalls: [...metrics.agentActivity.browserPending.values()].slice(-8),
+    pendingDocumentRequests: [...metrics.agentActivity.documentPending.values()].slice(-8),
+    pendingProviderRequests: [...metrics.agentActivity.providerPending.values()].slice(-8),
+  };
+}
+
 function traceSummary(metrics, extra = {}) {
   return {
     ...extra,
@@ -485,9 +748,13 @@ function traceSummary(metrics, extra = {}) {
     replayRuntime: metrics.replayRuntime,
     lastReplayEvent: metrics.lastReplayEvent,
     replayEvents: metrics.replayEvents.slice(-MAX_REPLAY_EVENTS),
+    fixtureResets: metrics.fixtureResets.slice(0, 12),
     agentAttempts: metrics.agentAttempts,
     agentDispatches: metrics.agentDispatches.slice(0, 4),
+    agentActivity: agentActivitySummary(metrics),
     repairCount: metrics.repairCount,
+    ...(metrics.repairTrigger ? { repairTrigger: metrics.repairTrigger } : {}),
+    repairTriggers: metrics.repairTriggers.slice(0, MAX_REPAIR_ATTEMPTS),
     artifactBytes: metrics.artifactBytes,
     planSource: metrics.planSource || null,
     ...(Object.keys(metrics.tokenUsage).length ? { tokenUsage: { ...metrics.tokenUsage } } : {}),
@@ -550,12 +817,15 @@ async function executeRun(config, options, injected = {}) {
   let latestPlanHash = null;
   let latestHardVerdict = null;
   let failurePhase = 'load_run';
-  let agentThreadId;
+  // The first planning turn must not inherit the proposal's coding history.
+  // Subsequent locator-repair turns resume only this run's evidence thread.
+  let agentThreadId = null;
   const metrics = newRunMetrics();
   metrics.replayRuntime = String(config.captureRuntime || process.env.CAPTURE_RUNTIME || config.appRuntime || 'docker').slice(0, 32);
-  const agentBudgetMs = config.visualEvidence?.maxAgentMs || 240_000;
-  let agentWindowStartedAt = null;
-  let agentWindowSuspendedAt = 0;
+  const agentBudgetMs = config.visualEvidence?.maxAgentMs || 480_000;
+  const repairAgentBudgetMs = config.visualEvidence?.maxRepairAgentMs || 240_000;
+  const agentWindows = new Map();
+  metrics.agentActivity.budgetMs = agentBudgetMs;
   let replayBudgetStartedAt = null;
   let replaySuspendedMs = 0;
   const suspendedMs = () => replaySuspendedMs
@@ -602,10 +872,18 @@ async function executeRun(config, options, injected = {}) {
     stage(failurePhase);
     const idleStartedAt = Date.now();
     await waitForSessionIdle(pool, session.id, {
-      timeoutMs: Math.min(config.visualEvidence?.maxRunMs || 720_000, 120_000),
+      timeoutMs: Math.min(config.visualEvidence?.maxRunMs || 1_440_000, 120_000),
       workerService: deps.worker,
     });
     addTiming(metrics, 'idleWait', idleStartedAt);
+    if (!authorPlan) {
+      // A timeout stops the prior hosted turn and leaves its worker stop
+      // marker intact. This is a new evidence run, so retire that marker
+      // once, after the prior turn is idle and before this run provisions.
+      // Do not clear it in dispatchOnce: a stop during this run's setup must
+      // still prevent its first dispatch, fallback, and repair turns.
+      deps.worker.clearPendingStop(session.id);
+    }
     progress('Preparing exact base and head revisions for visual evidence…');
     failurePhase = 'prepare_pair';
     stage(failurePhase);
@@ -647,6 +925,10 @@ async function executeRun(config, options, injected = {}) {
     stage('exploring');
 
     const context = evidenceContext({ run, session, revision, pair, deployment: exploration, intent });
+    const navigationHints = {
+      intentPaths: intent.stories.map((story) => story.intent.startPath),
+      declaredPaths: context.declaredChecks.map((check) => check.path),
+    };
     failurePhase = 'register_control';
     stage(failurePhase);
     registration = deps.evidenceControl.registerRun({
@@ -654,7 +936,7 @@ async function executeRun(config, options, injected = {}) {
       sessionId: session.id,
       intent,
       context,
-      expiresAt: Date.now() + (config.visualEvidence?.maxRunMs || 720_000),
+      expiresAt: Date.now() + (config.visualEvidence?.maxRunMs || 1_440_000),
       resetSide: async (side) => {
         const reset = await deps.environment.resetPair(config, pair);
         if (!sameProvenance(reset, expectedProvenance)) {
@@ -680,20 +962,29 @@ async function executeRun(config, options, injected = {}) {
           });
           notifyEvidence(session, app, 'replaying');
           const planHash = planContract.planHash(plan);
-          failurePhase = 'reset_pass_1';
-          stage(failurePhase);
-          const firstDeployment = await deps.environment.resetPair(config, pair);
-          if (!sameProvenance(firstDeployment, expectedProvenance)) {
-            throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass one did not use the prepared fixture and images.');
-          }
+          const prepareCase = (pass) => async ({ storyId, viewport }) => {
+            failurePhase = `reset_pass_${pass}`;
+            stage(failurePhase);
+            const resetStartedAt = Date.now();
+            const deployment = await deps.environment.resetPair(config, pair);
+            if (!sameProvenance(deployment, expectedProvenance)) {
+              throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch',
+                `Replay pass ${pass} did not use the prepared fixture and images.`);
+            }
+            metrics.fixtureResets.push({ pass, storyId, viewport,
+              durationMs: Math.max(0, Date.now() - resetStartedAt) });
+            failurePhase = `pass_${pass}`;
+            stage(failurePhase);
+            return deployment;
+          };
           const firstStartedAt = Date.now();
           failurePhase = 'pass_1';
           stage(failurePhase);
-          const first = await deps.replay.runPass(
+          const first = await deps.replay.runPassCases(
             config,
             session.id,
-            replayInput({ run, plan, deployment: firstDeployment, authTokens, provenance: expectedProvenance, pass: 1 }),
-            { onEvent: (event) => {
+            replayInput({ run, plan, deployment: exploration, authTokens, provenance: expectedProvenance, pass: 1 }),
+            { prepareCase: prepareCase(1), onEvent: (event) => {
               recordReplayEvent(event, 1);
             }, previewRunId: run.id }
           );
@@ -702,20 +993,14 @@ async function executeRun(config, options, injected = {}) {
             pass: 1,
             durationMs: Math.max(0, Date.now() - firstStartedAt),
           });
-          failurePhase = 'reset_pass_2';
-          stage(failurePhase);
-          const secondDeployment = await deps.environment.resetPair(config, pair);
-          if (!sameProvenance(secondDeployment, expectedProvenance)) {
-            throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'Replay pass two did not use the prepared fixture and images.');
-          }
           const secondStartedAt = Date.now();
           failurePhase = 'pass_2';
           stage(failurePhase);
-          const second = await deps.replay.runPass(
+          const second = await deps.replay.runPassCases(
             config,
             session.id,
-            replayInput({ run, plan, deployment: secondDeployment, authTokens, provenance: expectedProvenance, pass: 2 }),
-            { onEvent: (event) => {
+            replayInput({ run, plan, deployment: exploration, authTokens, provenance: expectedProvenance, pass: 2 }),
+            { prepareCase: prepareCase(2), onEvent: (event) => {
               recordReplayEvent(event, 2);
             }, previewRunId: run.id }
           );
@@ -783,10 +1068,11 @@ async function executeRun(config, options, injected = {}) {
       },
     });
 
-    const dispatchOnce = async (forceBackend = null) => {
-      if (agentWindowStartedAt == null) {
-        agentWindowStartedAt = Date.now();
-        agentWindowSuspendedAt = suspendedMs();
+    const dispatchOnce = async (forceBackend = null, repairAttempt = 0) => {
+      let window = agentWindows.get(repairAttempt);
+      if (!window) {
+        window = { startedAt: Date.now(), suspendedAt: suspendedMs() };
+        agentWindows.set(repairAttempt, window);
       }
       const dispatchStartedAt = Date.now();
       const suspendedAtStart = suspendedMs();
@@ -794,15 +1080,18 @@ async function executeRun(config, options, injected = {}) {
       const dispatchTrace = {
         requestedBackend: String(forceBackend || session.agent_backend || 'unknown').slice(0, 64),
         requestedModel: safeModelId(session.agent_model || session.model),
+        repairAttempt,
+        budgetMs: repairAttempt > 0 ? repairAgentBudgetMs : agentBudgetMs,
       };
       metrics.agentDispatches.push(dispatchTrace);
       try {
         // Provisioning and deterministic replay are platform work. Starting
         // this clock before the paired images/fixtures were ready spent the
         // agent's four minutes before it could even open its first page.
-        const remainingAgentMs = agentBudgetMs
-          - (Date.now() - agentWindowStartedAt
-            - (suspendedMs() - agentWindowSuspendedAt));
+        const remainingAgentMs = dispatchTrace.budgetMs
+          - (Date.now() - window.startedAt
+            - (suspendedMs() - window.suspendedAt));
+        dispatchTrace.timeoutMs = Math.max(0, remainingAgentMs);
         if (remainingAgentMs <= 0) {
           throw new VisualEvidenceOrchestrationError(
             'evidence_agent_timeout',
@@ -815,9 +1104,15 @@ async function executeRun(config, options, injected = {}) {
           runId: run.id,
           origins: exploration.origins,
           authTokens,
+          navigationHints,
           onProgress: (line) => progress(`Evidence agent: ${line}`),
+          onEvidenceDiagnostic: (event) => {
+            recordAgentDiagnostic(metrics, event);
+            options.onAgentDiagnostic?.(agentActivitySummary(metrics), event?.kind);
+          },
           resumeThreadId: agentThreadId,
           forceBackend,
+          repairAttempt,
           timeoutMs: remainingAgentMs,
           suspendedMs,
         }, injected.agentDependencies || {});
@@ -827,6 +1122,12 @@ async function executeRun(config, options, injected = {}) {
         dispatchTrace.model = safeModelId(dispatched.model);
         if (dispatched.fallbackReason) dispatchTrace.fallbackReason = String(dispatched.fallbackReason).slice(0, 64);
         dispatchTrace.outcome = 'completed';
+        if (!latestHardVerdict?.passed) {
+          metrics.agentFinalResponse = agentFinalResponseSummary(
+            dispatched.result, authTokens, exploration.origins
+          );
+          options.onAgentFinalResponse?.(metrics.agentFinalResponse);
+        }
         return { dispatched, error: null };
       } catch (error) {
         if (error?.evidenceBackend) dispatchTrace.backend = String(error.evidenceBackend).slice(0, 64);
@@ -838,6 +1139,12 @@ async function executeRun(config, options, injected = {}) {
         metrics.timingsMs.agentExploration += Math.max(0,
           Date.now() - dispatchStartedAt - (suspendedMs() - suspendedAtStart));
       }
+    };
+
+    const awaitSubmittedReplay = async () => {
+      if (!registration.control.planCalls) return;
+      try { await registration.control.waitForPlan(); }
+      catch { /* The control retains the exact replay error for repair or failure. */ }
     };
 
     failurePhase = 'agent_exploration';
@@ -853,11 +1160,66 @@ async function executeRun(config, options, injected = {}) {
       agentOutcome = await dispatchOnce();
       if (agentOutcome.error && !latestHardVerdict
           && registration.control.planCalls === 0
-          && session.agent_backend === 'codex_openrouter') {
+          && session.agent_backend === 'codex_openrouter'
+          && !metrics.agentActivity.counts.provider_dispatched) {
         progress('The selected Codex model could not start the evidence flow; using the platform evidence planner…');
         agentOutcome = await dispatchOnce('claude_code');
       }
+      // The hosted tool acknowledges an accepted plan immediately. Its HTTP
+      // request must never wait through a full paired browser replay, which
+      // can exceed ingress and MCP idle timeouts. The platform owns and awaits
+      // the replay here, even if the planning agent has already exited.
+      await awaitSubmittedReplay();
+      while (!latestHardVerdict
+          && registration.control.planCalls === metrics.repairCount + 1
+          && metrics.repairCount < MAX_REPAIR_ATTEMPTS
+          && ['pass_1', 'pass_2'].includes(failurePhase)
+          && repairableReplayFailure(registration.control.lastReplayFailure?.error)) {
+        const replayFailure = registration.control.lastReplayFailure.error;
+        // A wrong role/name is a planner error, not a reason to publish
+        // partial captures or silently substitute another DOM element.
+        // The platform explicitly starts a bounded correction turn with the exact
+        // failed plan and replay location; its replacement still has to pass
+        // both clean, provenance-fenced replay passes.
+        const failureDetail = boundedReplayDetail(replayFailure);
+        registration.control.allowRepair(
+          'A planned locator did not match the intended visible element during replay. Inspect its actual state on both revisions and correct the replays.',
+          {
+            code: errorCode(replayFailure),
+            message: visibleError(replayFailure),
+            detail: failureDetail,
+          }
+        );
+        metrics.repairTrigger = {
+          code: errorCode(replayFailure),
+          ...(Number.isInteger(metrics.lastReplayEvent?.pass)
+            ? { pass: metrics.lastReplayEvent.pass } : {}),
+          ...(['base', 'head'].includes(failureDetail?.side)
+            ? { side: failureDetail.side } : {}),
+          ...(/^[a-z0-9][a-z0-9_-]{0,95}$/.test(String(failureDetail?.actionId || ''))
+            ? { actionId: failureDetail.actionId } : {}),
+          ...(Number.isInteger(failureDetail?.assertionIndex)
+            ? { assertionIndex: failureDetail.assertionIndex } : {}),
+        };
+        metrics.repairTriggers.push(metrics.repairTrigger);
+        // The failed pass may have changed its fixture. Restore the same
+        // pinned pair before the planner inspects the control again.
+        failurePhase = 'repair_reset';
+        const repairResetStartedAt = Date.now();
+        try { await registration.control.resetSide('base'); }
+        finally { replaySuspendedMs += Date.now() - repairResetStartedAt; }
+        metrics.repairCount += 1;
+        failurePhase = 'agent_repair';
+        progress('A planned control did not match the page; the evidence agent is inspecting and correcting it…');
+        const priorBackend = metrics.agentDispatches.at(-1)?.requestedBackend;
+        agentOutcome = await dispatchOnce(priorBackend === 'claude_code' ? 'claude_code' : null, metrics.repairCount);
+        await awaitSubmittedReplay();
+        if (registration.control.planCalls === metrics.repairCount) break;
+      }
       if (agentOutcome.error && !latestHardVerdict) {
+        if (metrics.repairCount > 0 && registration.control.planCalls === metrics.repairCount) {
+          throw agentOutcome.error;
+        }
         throw registration.control.lastReplayFailure?.error
           || registration.control.lastToolFailure?.error || agentOutcome.error;
       }
@@ -916,6 +1278,7 @@ async function executeRun(config, options, injected = {}) {
     const replayDetail = boundedReplayDetail(diagnosticError);
     const failureTrace = traceSummary(metrics, {
       terminalFailureClass: errorCode(error),
+      ...(metrics.agentFinalResponse ? { agentFinalResponse: metrics.agentFinalResponse } : {}),
       failure: {
         phase: toolFailure?.operation === 'run-plan' && control.planCalls === 0
           ? 'plan_validation' : failurePhase,
@@ -940,11 +1303,14 @@ async function executeRun(config, options, injected = {}) {
     if (failed && session && app) {
       notifyEvidence(session, app, 'failed', { failureCode: errorCode(error) });
     }
+    // The final model answer is for the proposal owner and app managers only;
+    // do not copy its potentially app-derived text into the general log ring.
+    const { agentFinalResponse: _privateResponse, ...logTrace } = failureTrace;
     log.warn('visual-evidence', 'Visual evidence run ended without captured evidence', {
       sessionId: session?.id || null,
       runId: run?.id || options.runId || null,
       code: errorCode(error),
-      trace: failureTrace,
+      trace: logTrace,
     });
     throw error;
   } finally {
@@ -1071,6 +1437,8 @@ async function scheduleForSession(config, options, injected = {}) {
     app,
     revision,
     onProgress: heartbeat.onProgress,
+    onAgentDiagnostic: heartbeat.onAgentDiagnostic,
+    onAgentFinalResponse: heartbeat.onAgentFinalResponse,
     onReplayEvent: heartbeat.onReplayEvent,
     authorPlan: run.author_plan || authorPlan,
   }, injected).catch((error) => {

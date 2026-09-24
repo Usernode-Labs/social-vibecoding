@@ -69,10 +69,15 @@ function promotePool(session = sessionRow, { promotionMatches = true } = {}) {
         if (matches) session = { ...session, status: 'promoted' };
         return { rows: [], rowCount: matches ? 1 : 0 };
       }],
+    [/SET status = \$1, promoted_at = \$2,[\s\S]*reviewed_head_sha = \$4/,
+      (params) => {
+        session = { ...session, status: params[0] };
+        return { rows: [], rowCount: 1 };
+      }],
   ]);
 }
 
-function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
+function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool } = {}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
@@ -107,21 +112,20 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
     isEnabled: () => true,
     getPR: async (owner, repo, pr) => {
       getPRCalls.push({ owner, repo, pr });
-      if (!getPRImpl) return { state: 'open', merged: false, head: { sha: HEAD } };
-      return getPRImpl(owner, repo, pr);
+      if (!getPRImpl) return { state: 'open', merged: false, draft: true,
+        node_id: 'PR_26', head: { sha: HEAD } };
+      return { draft: true, node_id: 'PR_26', ...(await getPRImpl(owner, repo, pr)) };
     },
     reopenPR: async (owner, repo, pr) => {
       reopenCalls.push({ owner, repo, pr });
       if (reopenImpl) return reopenImpl(owner, repo, pr);
       return {};
     },
-    // The ready-for-review PATCH goes through a bare installation client.
-    getInstallationOctokit: async () => ({
-      request: async (route, params) => {
-        octokitRequests.push({ route, params });
-        return { data: {} };
-      },
-    }),
+    markPrReadyForReview: async (owner, repo, pr, existing) => {
+      octokitRequests.push({ owner, repo, pr, existing });
+      if (markReadyImpl) return markReadyImpl(owner, repo, pr, existing);
+      return { ...existing, draft: false };
+    },
   });
   stub(ids.staging, { rebuildProduction: async () => ({ ok: true }), teardownStaging: async () => {} });
   stub(ids.docker, {});
@@ -175,10 +179,10 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
 }
 
 async function withServer({
-  getPRImpl, reopenImpl, session, expectedHandoffHead, expectedHandoffStatus, promotionMatches,
+  getPRImpl, reopenImpl, markReadyImpl, session, expectedHandoffHead, expectedHandoffStatus, promotionMatches,
 } = {}, fn) {
   const pool = promotePool(session, { promotionMatches });
-  const ctx = loadVotesRouter({ getPRImpl, reopenImpl, pool });
+  const ctx = loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool });
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -262,7 +266,22 @@ test('promote: an open PR captures its head and promotes (no reopen call)', asyn
     const update = ctx.pool.queries.find((q) => /reviewed_head_sha/.test(q.sql));
     assert.equal(update.params[1], HEAD, 'live PR head persisted as the reviewed revision');
     assert.equal(ctx.octokitRequests.length, 1, 'a native draft is marked ready at promotion');
-    assert.equal(ctx.octokitRequests[0].params.draft, false);
+    assert.equal(ctx.octokitRequests[0].pr, 26);
+  });
+});
+
+test('promote: GitHub refusal to mark a draft ready leaves the session Underway', async () => {
+  await withServer({
+    getPRImpl: async () => ({ state: 'open', merged: false, draft: true,
+      node_id: 'PR_26', head: { sha: HEAD } }),
+    markReadyImpl: async () => { throw new Error('GraphQL unavailable'); },
+  }, async (ctx) => {
+    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(response.status, 503);
+    assert.match((await response.json()).error, /ready for review/);
+    assert.equal(ctx.pool.issued(/SET status = 'promoted'/), true);
+    assert.equal(ctx.pool.issued(/SET status = \$1, promoted_at = \$2/), true,
+      'GitHub failure restores the pre-review session');
   });
 });
 
@@ -293,6 +312,7 @@ test('promote: a concurrent pause/archive cannot be overwritten by the final pro
     const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
     assert.equal(r.status, 409);
     assert.deepEqual(await r.json(), { error: 'session_state_changed' });
+    assert.equal(ctx.octokitRequests.length, 0, 'no GitHub transition after a lost status CAS');
     assert.equal(ctx.systemMessages.length, 0,
       'a promotion that lost the active-state CAS emits no proposal announcement');
   });

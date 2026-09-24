@@ -120,6 +120,13 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 // confirmation for implementation work, while an issue-link edit is already
 // bounded to the caller's own proposal and changes neither code nor votes.
 //
+//   recheck_change         — re-runs a proposal's checks on its current commit
+//                            (a staging build, but no code or vote moves)
+//   start_change,
+//   promote_change,
+//   sync_change,
+//   withdraw_change        — the native change lifecycle (#2779), registered
+//                            only for an agent session's Mayor
 //   submit_work            — opens or advances a proposal, for the group to vote on
 //   create_request         — files on the app's board and as a GitHub issue
 //   prepare_work           — claims the request on the app's board; mints a
@@ -150,6 +157,14 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 // `answer_questions` is a write and is deliberately NOT here: it only feeds
 // text to a build the user already started.
 const ACTING_TOOLS = Object.freeze([
+  // #2779: the change lifecycle. recheck_change is on every surface; the
+  // other four are registered only for the Mayor of an agent session, whose
+  // writes the user confirms first (services/mcp-audiences.js).
+  'recheck_change',
+  'start_change',
+  'promote_change',
+  'sync_change',
+  'withdraw_change',
   'submit_work',
   'submit_visual_evidence_plan',
   'create_request',
@@ -975,6 +990,149 @@ function shapeProposal(session, origin) {
   };
 }
 
+// ── A native change (#2779) ────────────────────────────────────────────
+//
+// get_change is the in-platform twin of get_proposal. get_proposal is written
+// for an agent OUTSIDE the platform that pushes to a fork and submits through
+// submit_work, and its nextStep says so. A change an agent session drives has
+// no fork and no work order: the coding agent runs in the change's own
+// worker, and the Mayor moves it on with the change tools. So the same row is
+// projected again, with the live half of GET /status (is a turn running, is a
+// sync in flight) and a nextStep in that vocabulary.
+//
+// Pure, so the wording is testable without the server stack.
+function changeRefSentence(session) {
+  const id = Number(session.id);
+  return Number(session.pr_number) > 0
+    ? `PR #${Number(session.pr_number)} (change ${id})`
+    : `Change ${id}`;
+}
+
+// The same situations read differently to each caller: the Mayor moves a
+// change with the change tools, the coding agent inside it fixes things in
+// its own turn, and an external client has neither and is pointed at the
+// change's page. One table, so the three cannot describe different states.
+const CHANGE_NEXT_STEP_WORDS = Object.freeze({
+  agent_mayor: {
+    build: 'Dispatch the coding agent to start it.',
+    fixTests: 'Dispatch the coding agent to fix the failing tests. Use recheck_change only when the failure came from outside this change.',
+    fixBuild: 'Dispatch the coding agent to fix the build; checks gate merge.',
+    deferred: 'sync_change merges main in (the user confirms it, and it clears any votes).',
+    ready: 'promote_change puts it there once the user confirms.',
+    behind: 'sync_change would clear its votes, so only when needed.',
+    closed: 'Further work on it is a new change (start_change).',
+  },
+  worker_read: {
+    build: 'This turn is where it gets built.',
+    fixTests: 'Fix the failing tests in this turn; the checks run again after your push.',
+    fixBuild: 'Fix the build in this turn; the checks run again after your push.',
+    deferred: 'The Mayor can sync it with main, with the user\'s confirmation.',
+    ready: 'the Mayor puts it there once the user confirms.',
+    behind: 'syncing it would clear its votes.',
+    closed: 'Further work on it is a new change.',
+  },
+  external: {
+    build: 'Its coding agent runs inside Homeroom, from the change\'s own page.',
+    fixTests: 'Its coding agent fixes them from the change\'s own page; recheck_change re-runs the checks when the failure came from outside this change.',
+    fixBuild: 'The build needs fixing from the change\'s own page; checks gate merge.',
+    deferred: 'Syncing it with main from its page merges main in and clears any votes.',
+    ready: 'its owner puts it there from its page on Homeroom.',
+    behind: 'syncing it with main would clear its votes.',
+    closed: 'Further work on it is a new change.',
+  },
+});
+
+function changeNextStep(session, checks, live, kind = 'agent_mayor') {
+  const words = CHANGE_NEXT_STEP_WORDS[kind] || CHANGE_NEXT_STEP_WORDS.external;
+  const ref = changeRefSentence(session);
+  const status = session.status || null;
+  if (status === 'archived') {
+    return `${ref} was withdrawn and is closed for good. ${words.closed}`;
+  }
+  if (status === 'merged') {
+    return `${ref} merged: the group voted it in and it is part of the app now. ${words.closed}`;
+  }
+  if (status === 'merging') {
+    return `${ref} won its vote and is merging now. Nothing to do; call get_change again to see it land.`;
+  }
+  if (!['active', 'paused', 'promoted'].includes(status)) {
+    return `${ref} is ${status || 'no longer open'}, so there is nothing to move on it.`;
+  }
+  if (live.busy && kind !== 'worker_read') {
+    return `The coding agent is working on ${ref} right now. Wait for that turn to finish before asking for more.`;
+  }
+  if (live.syncing) {
+    return `${ref} is being synced with main right now. Call get_change again once it finishes.`;
+  }
+  if (!session.branch_name) {
+    return `Nothing has been built on ${ref} yet. ${words.build}`;
+  }
+  const paused = status === 'paused'
+    ? ' It is paused, so its worker is released; its branch, preview and pull request are kept.'
+    : '';
+  const failing = checks.state === 'error' || checks.state === 'failing' || checks.state === 'fail'
+    || (Array.isArray(checks.failing) && checks.failing.length > 0);
+  if (checks.state === 'pending') {
+    return checks.phase === 'deferred'
+      ? `Checks on ${ref} are held back because it conflicts with main. ${words.deferred}${paused}`
+      : `Checks are running on ${ref}'s current commit. Call get_change again for the verdict.${paused}`;
+  }
+  if (failing) {
+    return checks.state === 'error' && !(checks.failing && checks.failing.length)
+      ? `The checks run on ${ref} errored before any test reported: the preview build itself broke. `
+        + `${words.fixBuild}${paused}`
+      : `Checks on ${ref} are failing and they gate merge. ${words.fixTests}${paused}`;
+  }
+  if (!checks.state) {
+    return `No checks have reported on ${ref} yet. They run after the coding agent pushes and the preview builds.${paused}`;
+  }
+  const stale = checks.stale
+    ? ' The verdict is for an older commit, so a fresh run should follow on its own.'
+    : '';
+  if (status === 'promoted') {
+    const tally = typeof session.votes_required === 'number'
+      ? ` It has ${Number(session.yes_count) || 0} of ${session.votes_required} yes votes.`
+      : '';
+    const behind = typeof session.behind_main === 'number' && session.behind_main > 0
+      ? ` It is ${session.behind_main} commit(s) behind main; ${words.behind}`
+      : '';
+    return `${ref} is up for the group's vote.${tally}${behind}${stale}`;
+  }
+  return `${ref} is ready to go up for a vote: ${words.ready}${stale}${paused}`;
+}
+
+function shapeChange(session, live, origin, kind = 'agent_mayor') {
+  const status = (live && typeof live === 'object') ? live : {};
+  const sync = status.sync && typeof status.sync === 'object' ? status.sync : null;
+  const liveState = {
+    busy: typeof status.busy === 'boolean' ? status.busy : false,
+    syncing: !!(sync && sync.phase),
+  };
+  const checks = shapeChecks(session);
+  return {
+    changeId: Number(session.id),
+    appSlug: session.app_slug || null,
+    title: untrusted(session.pr_title || session.session_title, MAX_TITLE_CHARS),
+    status: session.status || null,
+    busy: typeof status.busy === 'boolean' ? status.busy : null,
+    syncing: liveState.syncing,
+    hasBranch: !!session.branch_name,
+    branchName: session.branch_name || null,
+    linkedIssues: require('./pr-metadata').sanitizeIssueNumbers(session.linked_issues),
+    prNumber: session.pr_number || null,
+    prUrl: session.pr_url || null,
+    stagingUrl: session.staging_url || null,
+    checks,
+    yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
+    noVotes: typeof session.no_count === 'number' ? session.no_count : null,
+    votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
+    behindMain: typeof session.behind_main === 'number' ? session.behind_main : null,
+    mergeability: session.mergeability || null,
+    nextStep: changeNextStep(session, checks, liveState, kind),
+    webPath: session.app_slug ? changeWebPath(origin, session.app_slug, session.id) : null,
+  };
+}
+
 // ── The request's discussion, for a work order ─────────────────────────
 //
 // Budgeted well under MAX_BRIEF_CHARS (6000 in services/external-agent-tasks.js,
@@ -1195,8 +1353,16 @@ function registerTools(server, ctx) {
   const { z } = require('zod');
   const {
     accessToken, scopes, user, clientName, clientId, origin, pool, baseUrl, config,
-    tokenId, grantId,
+    tokenId, grantId, delegation = null,
   } = ctx;
+  // #2779: one registry, three kinds of caller. The kind comes from the
+  // token's delegation (none means an external client that went through
+  // consent), and a tool this kind may not see is simply never registered —
+  // see services/mcp-audiences.js for who sees what, and why.
+  const audiences = require('./mcp-audiences');
+  const kind = audiences.kindOf(ctx);
+  server = audiences.scopedServer(server, kind);
+  const charter = require('./mcp-charter');
   const canWrite = scopes.includes(WRITE_SCOPE);
   const canRead = scopes.includes(READ_SCOPE);
   const visualEvidenceOutputSchema = z.object({
@@ -1263,7 +1429,9 @@ function registerTools(server, ctx) {
   const claimSetupHint = () => {
     if (hintClaim) return hintClaim;
     hintClaim = (async () => {
-      if (!grantId || hintSuppressedForClient(clientName)) return null;
+      // A delegated grant is the platform's own agent: nobody reads its
+      // permission prompts, so there is nothing for the tip to stop.
+      if (!grantId || delegation || hintSuppressedForClient(clientName)) return null;
       // Delegated for the same reason every other database read in this
       // module is: no tool here talks to the database directly. The throttle
       // owns mcp_connector_hints and swallows its own failures.
@@ -1341,10 +1509,11 @@ function registerTools(server, ctx) {
     // Platform-authored text, so it is NOT untrusted-wrapped — the same
     // treatment get_platform_conventions gives its sections, and the charter
     // says so about itself in its opening paragraph.
-    const charter = require('./mcp-charter');
+    // The charter for THIS caller's kind: identical to before for an
+    // external client, and the Mayor's own variant for an agent session.
     return readResult('get_connector_guidance', {
-      charter: charter.CHARTER_FULL,
-      sections: charter.CHARTER_SECTIONS.map((s) => ({ id: s.id, title: s.title })),
+      charter: charter.charterFor(kind),
+      sections: charter.sectionsFor(kind).map((s) => ({ id: s.id, title: s.title })),
       // Not a workflow, just the two other tools whose results are guidance
       // rather than user data, so a model reading this knows where the rest
       // of the platform-authored text lives.
@@ -1513,6 +1682,12 @@ function registerTools(server, ctx) {
     + 'edits" and "In-loop browser (build turns)" (both describe that worker\'s harness, not yours). '
     + 'Everything else applies to the app you are changing.';
 
+  // The platform's own agents read those three sections the other way round
+  // (#2779): they ARE addressed to the worker, and the Mayor writes no code.
+  const conventionsPreambleForCaller = kind === 'external'
+    ? conventionsPreamble
+    : charter.DELEGATED_CONVENTIONS_PREAMBLES[kind];
+
   server.registerTool('get_platform_conventions', {
     title: 'Read the Homeroom platform conventions',
     description: "Read Homeroom's platform conventions — the rules an app on this platform has to follow. Call it with no arguments for the essentials plus an index of every section, then again with a `section` slug for the full text of one. Use it whenever you are about to write code for a Homeroom app and need the real rule rather than a guess: how auth works (iframe token injection), how to declare a secret in dapp.json, how to call the platform's LLM proxy or file storage, what the centrally hosted native UI kit provides, how staging differs from production, and what the automated checks that gate merge require. If you are a coding agent whose sandbox cannot reach the Homeroom host, this connector is your only way to read it — the work order you were handed carries an excerpt, not the document. Platform-authored reference material, not user content.",
@@ -1545,7 +1720,7 @@ function registerTools(server, ctx) {
 
     if (!section) {
       return readResult('get_platform_conventions', {
-        preamble: conventionsPreamble,
+        preamble: conventionsPreambleForCaller,
         essentials: prompts.getWorkOrderEssentials(),
         sections: index,
         fullDocUrl: `${origin}/claude.md`,
@@ -1562,7 +1737,7 @@ function registerTools(server, ctx) {
     }
     const truncated = found.content.length > MAX_CONVENTIONS_CHARS;
     return readResult('get_platform_conventions', {
-      preamble: conventionsPreamble,
+      preamble: conventionsPreambleForCaller,
       slug: found.slug,
       title: found.title,
       content: truncated ? found.content.slice(0, MAX_CONVENTIONS_CHARS) : found.content,
@@ -2581,6 +2756,267 @@ function registerTools(server, ctx) {
         };
       }),
       truncated: open.length > MAX_LIST_ITEMS,
+    });
+  });
+
+  // ── Native changes (#2779) ───────────────────────────────────────────
+  //
+  // Homeroom's own changes: a session on the platform, built by the coding
+  // agent in the change's worker rather than by a coding agent the user runs
+  // elsewhere. get_change and recheck_change are on every surface; the other
+  // four are the change lifecycle an agent session drives, and are registered
+  // only for the Mayor (services/mcp-audiences.js). Every one is a loopback
+  // to the route the change page's own buttons call, under this caller's own
+  // token, so ownership, caps and state checks are the route's and never
+  // restated here.
+  const changeIdSchema = () => z.number().int().positive().max(2147483647)
+    .describe('The change id: what get_change and start_change report as changeId, and what get_proposal and '
+      + 'list_my_proposals call proposalId. The last number in its webPath.');
+
+  // A refusal from a lifecycle route, in its own words. Several of them send
+  // a machine code in `error` and the sentence in `message`; the sentence is
+  // what the user should hear.
+  const changeRouteError = (result) => {
+    const body = result.body || {};
+    if (result.ok || result.networkError || ![400, 409].includes(result.status)) return platformError(result);
+    const coded = typeof body.error === 'string' && /^[a-z_]+$/.test(body.error);
+    const message = (coded && typeof body.message === 'string' && body.message)
+      || body.error || body.message || `Homeroom returned HTTP ${result.status}.`;
+    return toolError(coded ? body.error : 'refused', String(message));
+  };
+
+  const changeSummarySchema = {
+    changeId: z.number(),
+    appSlug: z.string().nullable(),
+    status: z.string().nullable(),
+    nextStep: z.string(),
+    webPath: z.string().nullable(),
+  };
+
+  // ── get_change ───────────────────────────────────────────────────────
+  server.registerTool('get_change', {
+    title: 'Get a change',
+    description: 'Where one of Homeroom\'s own changes stands: a change built inside Homeroom by its coding agent, as opposed to work pushed from a fork. Returns its status, whether a turn or a sync is running right now, its branch, pull request, staging preview, checks (failing test NAMES and why), votes, and a nextStep in plain words: follow it. Takes the change id, which get_proposal and list_my_proposals call proposalId. Name the change by its pull request number first when it has one: "PR #2151 (change 4223)". Read-only.',
+    inputSchema: { changeId: changeIdSchema() },
+    outputSchema: {
+      ...changeSummarySchema,
+      title: z.string(),
+      busy: z.boolean().nullable()
+        .describe('Whether the coding agent is running a turn on it right now. Null when the live status could not be read.'),
+      syncing: z.boolean(),
+      hasBranch: z.boolean()
+        .describe('False until the first turn has built anything.'),
+      branchName: z.string().nullable(),
+      linkedIssues: z.array(z.number()),
+      prNumber: z.number().nullable(),
+      prUrl: z.string().nullable(),
+      stagingUrl: z.string().nullable(),
+      checks: z.unknown()
+        .describe('The checks snapshot, in the same shape get_proposal reports: state, phase, failing names, failures with reasons, stale, error.'),
+      yesVotes: z.number().nullable(),
+      noVotes: z.number().nullable(),
+      votesRequired: z.number().nullable(),
+      behindMain: z.number().nullable(),
+      mergeability: z.string().nullable(),
+    },
+    annotations: readAnnotations,
+  }, async ({ changeId }) => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${changeId}`);
+    if (!result.ok) return platformError(result);
+    const session = (result.body && result.body.session) || {};
+    // The live half is advisory: an unreadable status leaves `busy` unknown
+    // rather than failing a read the row already answers.
+    const live = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${changeId}/status`);
+    return readResult('get_change', shapeChange(session, live.ok ? live.body : null, origin, kind));
+  });
+
+  // ── recheck_change ───────────────────────────────────────────────────
+  server.registerTool('recheck_change', {
+    title: 'Re-run a change\'s checks',
+    description: 'Re-run the automated checks on the commit a change or proposal already has: the same act as its "Re-run checks" button. No code moves and no votes are cleared. Use it when a verdict is stale or failed for a reason outside the change (a flaky preview, an infrastructure error), never to retry code that really fails — fix that instead. Only the owner (or a platform admin) can, and only while it is still open. Returns straight away; call get_change for the verdict.',
+    inputSchema: { changeId: changeIdSchema() },
+    outputSchema: {
+      changeId: z.number(),
+      started: z.boolean(),
+      checkState: z.string().nullable(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ changeId }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${changeId}/recheck`, {});
+    if (!result.ok) return changeRouteError(result);
+    const body = result.body || {};
+    if (body.status === 'unavailable') {
+      return toolResult({
+        changeId,
+        started: false,
+        checkState: null,
+        nextStep: 'Checks cannot run inside a staging preview of Homeroom itself, so nothing was started.',
+      });
+    }
+    return toolResult({
+      changeId,
+      started: true,
+      checkState: typeof body.checkState === 'string' ? body.checkState : 'pending',
+      nextStep: 'The checks are running again on the current commit. Call get_change for the verdict; a run '
+        + 'takes a few minutes.',
+    });
+  });
+
+  // ── start_change ─────────────────────────────────────────────────────
+  server.registerTool('start_change', {
+    title: 'Start a change',
+    description: 'Open a new Homeroom change on an app: a session of the user\'s own that its coding agent builds on, with a staging preview and checks, which goes to the group vote only when promoted. Counts against the user\'s running-change limit. Starting from requests links them, and the first one is also claimed for the user on the app\'s board. Nothing is built until the coding agent is dispatched on it.',
+    inputSchema: {
+      slug: z.string().describe('The app slug, as list_apps returns it.'),
+      title: z.string()
+        .describe('A short name for the change, as the user would call it. Up to 256 characters.'),
+      linkedIssues: z.array(z.number().int().positive().max(2147483647)).max(10).optional()
+        .describe('Request numbers this change addresses. The first is claimed for the user.'),
+    },
+    outputSchema: {
+      ...changeSummarySchema,
+      title: z.string(),
+      linkedIssues: z.array(z.number()),
+      warnings: z.array(z.string()),
+    },
+    annotations: writeAnnotations,
+  }, async ({ slug, title, linkedIssues }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug, as list_apps returns it.');
+    const name = String(title == null ? '' : title).replace(/\s+/g, ' ').trim();
+    if (!name) return toolError('invalid_request', 'title is required. Nothing was created.');
+    const length = checkWriteLength(name, {
+      field: 'title', max: 256, hint: 'Shorten the title and call start_change again.',
+    });
+    if (!length.ok) return writeLengthError(length);
+    const issues = [...new Set(Array.isArray(linkedIssues) ? linkedIssues : [])];
+
+    // The name rides on the create itself (#2779 step 3), so the change is
+    // never briefly nameless and an agent session's "started" note can say
+    // what it is.
+    const created = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/sessions`,
+      issues.length ? { issueNumber: issues[0], title: name } : { title: name });
+    if (!created.ok) return changeRouteError(created);
+    const session = (created.body && created.body.session) || {};
+    const changeId = Number(session.id);
+    if (!Number.isSafeInteger(changeId) || changeId <= 0) {
+      return toolError('platform_error', 'Homeroom did not report the new change. Check list_my_proposals before trying again.');
+    }
+
+    // The change exists from here on. A name or a link that does not stick is
+    // reported alongside it, never as a failure that invites a second change.
+    const warnings = [];
+    let linked = issues.slice(0, 1);
+    if (issues.length > 1) {
+      const more = await callPlatform(baseUrl, accessToken, 'PATCH', `/api/sessions/${changeId}/linked-issues`,
+        { addIssues: issues.slice(1) });
+      if (more.ok && Array.isArray(more.body && more.body.linkedIssues)) linked = more.body.linkedIssues;
+      else warnings.push('The change was created but not every request was linked; update_proposal_issues can add them.');
+    }
+    return toolResult({
+      changeId,
+      appSlug: slug,
+      title: untrusted(name, MAX_TITLE_CHARS),
+      status: session.status || 'active',
+      linkedIssues: linked,
+      warnings,
+      nextStep: `Change ${changeId} is open on ${slug}. Nothing is built yet: dispatch the coding agent on it.`,
+      webPath: changeWebPath(origin, slug, changeId),
+    });
+  });
+
+  // ── promote_change ───────────────────────────────────────────────────
+  server.registerTool('promote_change', {
+    title: 'Put a change up for the vote',
+    description: 'Put one of the user\'s changes up for the app\'s group vote: opens its pull request if it has none and starts the vote, the same act as its "Propose to group" button. Refused while its preview or checks are not ready, when it has no committed code, or when the user already has as many proposals up for vote as they may. The group decides whether it ships; nothing merges here.',
+    inputSchema: { changeId: changeIdSchema() },
+    outputSchema: {
+      changeId: z.number(),
+      prNumber: z.number().nullable(),
+      prUrl: z.string().nullable(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ changeId }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${changeId}/promote`, {});
+    if (!result.ok) return changeRouteError(result);
+    const body = result.body || {};
+    const prNumber = Number(body.prNumber) > 0 ? Number(body.prNumber) : null;
+    return toolResult({
+      changeId,
+      prNumber,
+      prUrl: typeof body.prUrl === 'string' ? body.prUrl : null,
+      nextStep: `${prNumber ? `PR #${prNumber} (change ${changeId})` : `Change ${changeId}`} is up for the group's `
+        + 'vote. It ships only if the group votes it in; get_change reports the tally.',
+    });
+  });
+
+  // ── sync_change ──────────────────────────────────────────────────────
+  server.registerTool('sync_change', {
+    title: 'Sync a change with main',
+    description: 'Merge the app\'s latest main into one of the user\'s changes, resolving conflicts with the coding agent when there are any: the same act as its "Sync with main" button. This revises the change, so a change that is up for a vote LOSES the votes it has collected. Can take a few minutes; if the call times out, the sync carries on and get_change reports it.',
+    inputSchema: { changeId: changeIdSchema() },
+    outputSchema: {
+      changeId: z.number(),
+      synced: z.boolean(),
+      result: z.string().nullable(),
+      behind: z.number(),
+      pushed: z.boolean(),
+      conflictFiles: z.array(z.string()),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ changeId }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${changeId}/sync-main`, {});
+    if (!result.ok) return changeRouteError(result);
+    const body = result.body || {};
+    const conflictFiles = (Array.isArray(body.conflictFiles) ? body.conflictFiles : [])
+      .slice(0, MAX_LIST_ITEMS).map((f) => untrusted(f, MAX_TITLE_CHARS));
+    const synced = body.ok !== false;
+    return toolResult({
+      changeId,
+      synced,
+      result: typeof body.syncResult === 'string' ? body.syncResult : null,
+      behind: Number(body.behind) || 0,
+      pushed: body.pushOk === true,
+      conflictFiles,
+      nextStep: synced
+        ? 'The change is up to date with main. Its checks run again on the new commit; get_change reports them.'
+        : 'The conflicts with main could not be resolved, so the branch is unchanged. Dispatch the coding agent '
+          + 'to resolve them, or try sync_change again.',
+    });
+  });
+
+  // ── withdraw_change ──────────────────────────────────────────────────
+  server.registerTool('withdraw_change', {
+    title: 'Withdraw a change',
+    description: 'Withdraw one of the user\'s changes for good: its worker and preview are removed and its pull request is closed, taking it off the vote if it was on one. It cannot be reopened. Only the user\'s own changes.',
+    inputSchema: { changeId: changeIdSchema() },
+    outputSchema: {
+      changeId: z.number(),
+      withdrawn: z.boolean(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ changeId }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${changeId}/archive`, {});
+    if (!result.ok) return changeRouteError(result);
+    return toolResult({
+      changeId,
+      withdrawn: true,
+      nextStep: `Change ${changeId} is withdrawn and closed for good. Further work on it is a new change.`,
     });
   });
 
@@ -4177,6 +4613,7 @@ module.exports = {
   SERVER_NAME,
   SERVER_VERSION,
   SERVER_INSTRUCTIONS,
+  instructionsFor: require('./mcp-charter').instructionsFor,
   MAX_LIST_ITEMS,
   MAX_REQUEST_PAGE,
   MAX_TITLE_CHARS,
@@ -4207,6 +4644,8 @@ module.exports = {
   decodeRequestCursor,
   pageRequests,
   shapeProposal,
+  shapeChange,
+  changeNextStep,
   proposalRef,
   shapeChecks,
   shapeTestingNotes,

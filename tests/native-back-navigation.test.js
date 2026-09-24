@@ -15,6 +15,23 @@ test('only a visible Back destination outside embedded app content enables swipi
   ]) assert.equal(nativeBackEnabled({ ...arrow, ...override }), false);
 });
 
+// #2916: a Workshop topic's back is the "‹ Workshop" chip inside the pane, and
+// the header draws no arrow there. The swipe must stay on for those pages: it
+// follows the page's back control, whichever bar or pane draws it.
+const topic = {
+  visible: true, mode: 'none', href: '/', slug: 'example', tab: 'dev',
+  paneHref: '#app/example/workshop',
+};
+test('a Workshop topic keeps swiping through its in-pane back chip', () => {
+  assert.equal(nativeBackEnabled(topic), true);
+  assert.equal(nativeBackEnabled({ ...topic, paneHref: null }), false,
+    'without the chip and without an arrow there is no back to swipe to');
+  assert.equal(nativeBackEnabled({ ...topic, visible: false }), false,
+    'a hidden header (chromeless) still publishes false');
+  assert.equal(nativeBackEnabled({ ...topic, tab: 'app' }), false,
+    'and embedded App-tab content never gets the gesture');
+});
+
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });

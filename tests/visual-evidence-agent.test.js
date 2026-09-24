@@ -41,14 +41,113 @@ test('agent exploration timeout excludes time spent in platform replay', async (
   assert.equal(stopped, 0, 'the replay has its own bounded lifetime');
 });
 
+test('hosted evidence dispatch forwards worker lifecycle diagnostics through the normal path', async () => {
+  const events = [];
+  const workerService = {
+    ensureWorker: async () => 'warm-worker',
+    execInWorker: async (_sessionId, options) => {
+      assert.equal(options.mode, 'evidence');
+      options.onEvidenceDiagnostic({ kind: 'provider_init' });
+      return { exitCode: 0, sessionId: 'provider-thread' };
+    },
+  };
+  const result = await agent.dispatch({ visualEvidence: { maxAgentMs: 500 } }, {
+    pool: {}, session: {
+      id: 42, repo_url: 'https://github.com/acme/demo.git',
+      branch_name: 'proposal', agent_backend: 'claude_code',
+    },
+    runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token' },
+    onEvidenceDiagnostic: (event) => events.push(event),
+  }, { workerService });
+  assert.equal(result.backend, 'claude_code');
+  assert.deepEqual(events.map((event) => event.kind), [
+    'worker_prepare_start', 'worker_prepare_end', 'backend_selected',
+    'turn_start', 'provider_init', 'turn_end',
+  ]);
+  assert.doesNotMatch(JSON.stringify(events), /private-token/);
+});
+
+test('Codex evidence receives the planning contract as developer context in a fresh turn', async () => {
+  let dispatched;
+  const result = await agent.dispatch({ visualEvidence: { maxAgentMs: 500 } }, {
+    pool: {}, session: {
+      id: 42, user_id: 7, repo_url: 'https://github.com/acme/demo.git',
+      branch_name: 'proposal', agent_backend: 'codex_openrouter',
+      agent_model: 'z-ai/glm-test', agent_thread_id: 'coding-thread',
+    },
+    runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token' },
+    resumeThreadId: null,
+  }, {
+    workerService: {
+      ensureWorker: async () => 'warm-worker',
+      execInWorker: async (_sessionId, options) => {
+        dispatched = options;
+        return { exitCode: 0, agentThreadId: 'evidence-thread' };
+      },
+    },
+    agentTurn: {
+      resolveCodexRuntimeContext: async () => ({
+        agentModel: 'z-ai/glm-test', agentModelMetadata: { supportsTools: true },
+      }),
+      startCodexAttempt: async ({ resumeThreadId }) => {
+        assert.equal(resumeThreadId, null);
+        return { turnUuid: 'attempt-1', journal: '/tmp/attempt-1' };
+      },
+      completeCodexAttempt: async () => {},
+      usageTotalFromResult: () => null,
+    },
+  });
+  assert.equal(result.threadId, 'evidence-thread');
+  assert.equal(dispatched.resumeSessionId, null);
+  assert.equal(dispatched.systemPrompt, agent.SYSTEM_PROMPT);
+  assert.match(dispatched.systemPrompt, /Use evidence_get_context first/);
+  assert.match(dispatched.systemPrompt, /submit them through the tool/);
+});
+
 test('the evidence prompt asks for a replay plan and leaves visual judgement to people', () => {
   assert.match(agent.SYSTEM_PROMPT, /platform code—not you—will reset both sides and\s+replay it twice/i);
-  assert.match(agent.SYSTEM_PROMPT, /human reviewers, who decide whether it proves the claim/i);
-  assert.match(agent.SYSTEM_PROMPT, /do not need image understanding or to issue a relevance verdict/i);
+  assert.match(agent.SYSTEM_PROMPT, /promptly acknowledges a\s+validated submission; it does not wait for replay or return a verdict/i);
+  assert.match(agent.SYSTEM_PROMPT, /platform waits for replay, starts a separate\s+correction turn if a locator fails/i);
+  assert.match(agent.SYSTEM_PROMPT, /passing media available to human\s+reviewers/i);
+  assert.match(agent.SYSTEM_PROMPT, /do not need image understanding or a relevance verdict/i);
   assert.doesNotMatch(agent.SYSTEM_PROMPT, /evidence_finish/);
   assert.match(agent.SYSTEM_PROMPT, /page[\s\S]*untrusted data/i);
   assert.doesNotMatch(agent.promptFor(), /review was rejected|corrected plan/i);
+  assert.match(agent.promptFor({ repair: true }), /rejected plan and the exact replay failure/i);
+  assert.match(agent.promptFor({ repair: true }), /BOTH exact revisions/i);
   assert.match(agent.replayPlanGuide(), /No arbitrary JavaScript/);
+  assert.match(agent.replayPlanGuide(), /exactly one\s+entry for every accepted story id/i);
+  assert.match(agent.replayPlanGuide(), /Do not copy those fields yourself/);
+  assert.match(agent.replayPlanGuide(), /Every interaction target and each checkpoint focus must\s+identify exactly one visible element/);
+  assert.match(agent.replayPlanGuide(), /waitFor target only needs one or more\s+visible matches/);
+  assert.match(agent.replayPlanGuide(), /waitFor text matches a visible substring/);
+});
+
+test('a second hosted dispatch receives an explicit repair task through the normal worker', async () => {
+  const prompts = [];
+  const workerService = {
+    ensureWorker: async () => 'warm-worker',
+    execInWorker: async (_sessionId, options) => {
+      prompts.push(options.prompt);
+      assert.equal(options.resumeSessionId, 'evidence-thread');
+      assert.equal(options.evidenceRunId, '1'.repeat(32));
+      return { exitCode: 0, sessionId: 'evidence-thread' };
+    },
+  };
+  await agent.dispatch({ visualEvidence: { maxAgentMs: 500 } }, {
+    pool: {}, session: {
+      id: 42, repo_url: 'https://github.com/acme/demo.git',
+      branch_name: 'proposal', agent_backend: 'claude_code',
+    },
+    runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token' },
+    resumeThreadId: 'evidence-thread', repairAttempt: 1,
+  }, { workerService });
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /first submitted plan failed deterministic replay/i);
+  assert.match(prompts[0], /evidence_run_plan/);
 });
 
 test('backend results cannot silently turn an errored model turn into success', () => {

@@ -45,7 +45,7 @@ import { ChromelessPill } from './chromeless-pill';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
 import { SidebarToggle } from '../nav/sidebar-toggle';
-import { boardHref, improveStore } from '../improve/improve-store.js';
+import { improveStore, topicBackHref } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
 // ── The bundle's boot seam ────────────────────────────────────────────
@@ -102,6 +102,7 @@ import '../notifications/mount';
 // app chip beside them all the same way: periwinkle ink on a periwinkle tint
 // with a hairline one step darker (--brand-ink / --brand-tint / --brand-line
 // in app.css, which also carry the dark values, so no dark: variants here).
+// The bell and the sidebar toggle wear that disc on HOVER only (#2798).
 // Discs at 28px, not the design's larger circle: the header's content row is
 // pinned to 28px (tests/header-height-parity.test.js, and #909 before it), so
 // the ratio scales rather than the row. The hairline is inside the h-7 box
@@ -128,63 +129,78 @@ function homeHref(): string {
  *
  * ── Why this is derived and not published ──────────────────────────────
  *
- * These are the four screens whose parent is another screen INSIDE the same
- * app, and the answer is a pure function of the route. Publishing it would
- * mean an imperative call per sub-view hop — and sub-view hops never pass
- * `App._showOnlyScreen`, the usual single owner of the back-slot reset, which
- * is precisely how the session's arrow used to linger on the Board.
+ * These are the screens whose parent is another screen, and the answer is a
+ * pure function of the route. Publishing it would mean an imperative call per
+ * sub-view hop — and sub-view hops never pass `App._showOnlyScreen`, the usual
+ * single owner of the back-slot reset, which is precisely how the session's
+ * arrow used to linger on the Board.
  *
  * ── The ladder ─────────────────────────────────────────────────────────
  *
- *   Board / Activity   →  the app itself. They are the app's dev surface, and
- *                         the app is what you were looking at before it.
- *   The general chat   →  the board. It is reached from a card there.
- *   A topic (issue,    →  the board. `activeAppView` already counts a topic
- *   proposal, gov,        as the Board for the view strip's purposes; a card
- *   shared session)       opened full-screen is still the board's content.
+ *   The Workshop       →  NOTHING (#2740 review). An app's Workshop is a
+ *   (board / activity)    platform screen with the rail beside it and the
+ *                         Workshop tab lit, like Homeroom's own (#2843), and
+ *                         the way back into the app is the parked strip and
+ *                         the rail's Recents (#2761). It used to go up to
+ *                         `#app/<slug>/app`: a ‹ from the mark's "Go to
+ *                         workshop" or Expand, a ✕ "Close app" from the
+ *                         Workshop tab, and both OPENED the app.
+ *   The general chat   →  Messages. The app's discussion is a thread of that
+ *                         inbox (#2718 review, #2763), so the old full-screen
+ *                         route — still reached by a legacy link — climbs to
+ *                         the inbox, agreeing with App._backSlotFor. It went
+ *                         up to the board, which was a screen the reader had
+ *                         not come from.
+ *   A topic (issue,    →  NOT THIS BAR'S ANY MORE (#2916). Its level up is
+ *   proposal, gov,        still the board it was opened from, but the
+ *   shared session)       control is the "‹ Workshop" chip at the top of the
+ *                         pane (../dev-board/topic/topic-back.tsx), and the
+ *                         bar draws none; see `topicBackHref` in
+ *                         ../improve/improve-store.js and the `mode` line in
+ *                         PlatformHeader. It was a chevron here, and before
+ *                         that a full-width "← Back" bar in the page one row
+ *                         under it; one control, in one place, either way.
  *   A dev session      →  wherever it was opened from — see `sessionOrigin`
  *                         in ../improve/improve-store.js — falling back to
  *                         Messages on a cold deep link, because a change is
  *                         an agent conversation and that is its inbox
  *                         (#2770; it was the board before).
  *
- * ── "The board" is TWO screens, and the arrow has to pick ──────────────
+ * ── "The board" is TWO screens, and back has to pick ───────────────────
  *
  * Workshop and Board are one screen in two layouts, and the layout IS the
- * route. So the three rows above that read "the board" cannot spell one:
- * `#app/<slug>/board` sent a viewer who had opened an issue from the Workshop
- * to the Kanban board — a screen they had not been on — and, because that
- * route applies its own layout, rewrote their stored preference to kanban as
- * it went. `boardView` (published with the route by `Improve.setTab`) names
- * the layout that was on screen when the sub-view was entered, and
- * `boardHref` turns it into the matching address for this arrow and for a
- * session's captured origin alike.
+ * route. So "the board" cannot be spelled as one address: `#app/<slug>/board`
+ * sent a viewer who had opened an issue from the Workshop to the Kanban board
+ * (a screen they had not been on) and, because that route applies its own
+ * layout, rewrote their stored preference to kanban as it went. `boardView`
+ * (published with the route by `Improve.setTab`) names the layout that was on
+ * screen when the sub-view was entered, and `boardHref` turns it into the
+ * matching address for a topic's in-pane chip and for a session's captured
+ * origin alike.
  *
- * ── The self-hosted exception ──────────────────────────────────────────
+ * ── Every app's Workshop is the platform's own now ──────────────────────
  *
- * The platform's own app has no App tab: `App.switchTab` coerces a request
- * for one straight back to the dev forum, because its iframe target does not
- * resolve. So "up from the Board" cannot be the app there — it would bounce
- * back to the Board it just left. Returning null hands the slot to the home
- * glyph, which is the honest parent of the platform's own board.
+ * The self-hosted exception this used to carry — the platform's own app has
+ * no App tab, so "up from the Board" returned null there rather than bounce
+ * back to the Board — is simply the rule: no app's Workshop has anywhere up
+ * to go. `App._backSlotFor` publishes the same empty slot for it.
  */
 function appRouteUpHref(
   slug: string | null,
   tab: string | null,
   subTab: string | null,
-  selfHosted: boolean,
   sessionOrigin: string | null,
-  boardView: string,
 ): string | null {
   if (!slug || tab !== 'dev') return null;
-  const board = boardHref(slug, boardView);
   // #2770: a session with no captured origin is a thread of Messages — a
   // change is an agent conversation, listed under Messages → Agents — so its
   // level up is that inbox rather than the board it used to fall back to.
   if (subTab === 'sessions') return sessionOrigin || '#messages';
-  if (subTab === 'chat' || subTab === 'topic') return board;
-  // The Board and the Activity feed themselves: up is the app.
-  if (subTab === 'forum') return selfHosted ? null : `#app/${slug}/app`;
+  // The app's discussion is a thread of Messages too (#2718 review, #2763).
+  if (subTab === 'chat') return '#messages';
+  // A topic (subTab 'topic') falls through on purpose (#2916): its level up
+  // is drawn inside the pane, not here. See the ladder above.
+  // The Workshop itself (the Board and the Activity feed): nothing above it.
   return null;
 }
 
@@ -211,23 +227,30 @@ export function PlatformHeader() {
   // sites agreeing by convention.
   const {
     slug: backSlug, tab: backTab, subTab: backSubTab,
-    selfHosted, sessionOrigin, boardView,
+    sessionOrigin, boardView,
   } = useStoreState(improveStore);
-  const routeUp = appRouteUpHref(
-    backSlug, backTab, backSubTab, selfHosted, sessionOrigin, boardView,
-  );
+  const routeUp = appRouteUpHref(backSlug, backTab, backSubTab, sessionOrigin);
+  // #2916: on a Workshop topic the back control is the "‹ Workshop" chip at
+  // the top of the pane, so this bar draws NONE there, whatever the last
+  // setBackIcon() published. Forced from the same function the chip renders
+  // from rather than left to renderDevView's 'none' reset, so the page has
+  // exactly one back control by construction.
+  const paneBack = topicBackHref({
+    slug: backSlug, tab: backTab, subTab: backSubTab, boardView,
+  });
   // An app route that has a level above it wins over the imperative call;
   // everything else keeps whatever the last setBackIcon() published, which on
   // a platform screen is 'home' by default and 'arrow' where that screen owns
   // a sub-level of its own (a Settings section, a Browse detail, a thread).
-  // #2718: the app view's own 'close' outranks the route's level-up. Inside
-  // an app the ✕ is the whole way out — the Workshop and the app's other
-  // views are rows of the mark's menu now, not a chevron's destination — so a
-  // sub-route that used to earn an arrow gets the ✕ that leaves the app
-  // instead. The DESTINATION is unchanged either way: `resolvedBackHref`
-  // still prefers the route's up-level href, so ✕ from a session lands on
-  // that app's Workshop exactly as ← did.
-  const mode = backMode === 'close' ? 'close' : (routeUp ? 'arrow' : backMode);
+  // #2718: the app view's own 'close' outranks the route's level-up. The ✕ is
+  // published for the RUNNING APP only now (App._backSlotFor, switchTab), and
+  // the running app's route has no level above it, so the two never meet —
+  // the rule stays so that a stale arrow can never paint over the ✕. Where
+  // the ✕ lands is App._closeAppHref's answer: the page the app was opened
+  // from (App.closeApp), which is `backHref`.
+  const mode = backMode === 'close' ? 'close'
+    : paneBack ? 'none'
+      : (routeUp ? 'arrow' : backMode);
   const backArrow = mode === 'arrow';
   const backClose = mode === 'close';
   const resolvedBackHref = routeUp
@@ -250,8 +273,12 @@ export function PlatformHeader() {
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
+  // The swipe follows whichever control is the page's back: this bar's
+  // arrow, or on a Workshop topic the in-pane chip (#2916), which is a back
+  // with a destination even though the bar shows nothing.
   useNativeBackNavigation(nativeBackEnabled({
     visible, mode, href: resolvedBackHref, slug: backSlug, tab: backTab,
+    paneHref: paneBack,
   }));
 
   return (
@@ -648,11 +675,16 @@ export function PlatformHeader() {
               starts are listed and resumed (`#messages-new-agent`, gated on
               the same two flags as the rows). The panel retired with it
               already gone (#2718 review).
+
+              NO DISC AT REST (#2798): the bell sits on the bar with no fill,
+              and the periwinkle tint the other header controls wear shows
+              only on hover. Same for #sidebar-toggle; the back button and
+              the app chip keep theirs.
           */}
           <a
             id="notifications-btn"
             href="#notifications"
-            className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)]"
+            className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)]"
             aria-label="Notifications"
             aria-haspopup="dialog"
             onClick={(event) => {

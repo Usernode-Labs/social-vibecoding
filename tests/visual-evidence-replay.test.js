@@ -32,6 +32,16 @@ test('runner accepts a validated pair and only publishes artifacts on pass two',
   assert.equal(first.publishArtifacts, false);
 });
 
+test('an isolated browser job can only select a declared story and viewport', () => {
+  const selection = { storyId: 'invite-suggestions', viewport: 'desktop' };
+  assert.deepEqual(replay.validateInput(input({ selection })).selection, selection);
+  assert.throws(() => replay.validateInput(input({ selection: {
+    storyId: 'invite-suggestions', viewport: 'undeclared',
+  } })), { code: 'invalid_selection' });
+  assert.throws(() => replay.validateInput(input({ selection: { ...selection, extra: 'ignored' } })),
+    { code: 'invalid_selection' });
+});
+
 test('runner refuses identical, credential-bearing, or non-origin targets', () => {
   assert.throws(() => replay.validateInput(input({ runId: 'not-a-run' })), { code: 'invalid_run_id' });
   assert.throws(() => replay.validateInput(input({ origins: { base: 'http://same:3000', head: 'http://same:3000' } })), { code: 'identical_origins' });
@@ -84,6 +94,59 @@ test('element resolution waits for a late accessible target before counting matc
   assert.equal(resolved, visibleLocator);
   assert.deepEqual(calls[0], ['wait', 'visible', 5000]);
   assert.equal(calls.some(([name]) => name === 'visible-count'), true);
+});
+
+test('a readiness wait accepts repeated visible matches while an interaction stays strict', async () => {
+  const visible = {
+    first: () => ({ waitFor: async () => {} }),
+    count: async () => 2,
+  };
+  const matches = {
+    first: () => ({ waitFor: async () => {} }),
+    filter: (options) => {
+      assert.deepEqual(options, { visible: true });
+      return visible;
+    },
+    count: async () => 2,
+    nth: () => ({ isVisible: async () => true }),
+  };
+  const page = { getByRole: () => matches };
+  const target = { by: 'role', role: 'heading', name: 'Global Chat', exact: false };
+
+  await replay.waitForAnyVisible(page, target, 'wait-heading', 1000);
+  await assert.rejects(replay.resolveOne(page, target, 'click-heading', {
+    state: 'visible', timeoutMs: 1000,
+  }), { code: 'ambiguous_locator' });
+});
+
+test('text readiness matches a visible substring and reports a missing one as a locator error', async () => {
+  let visible = true;
+  const locator = {
+    filter: ({ visible: onlyVisible }) => {
+      assert.equal(onlyVisible, true);
+      return {
+        first: () => ({ waitFor: async () => {
+          if (!visible) throw new Error('timeout');
+        } }),
+        count: async () => Number(visible),
+      };
+    },
+    count: async () => Number(visible),
+    nth: () => ({ isVisible: async () => visible }),
+  };
+  const page = { getByText: (value, options) => {
+    assert.equal(value, 'Ready');
+    assert.deepEqual(options, { exact: false });
+    return locator;
+  } };
+  await replay.waitForVisibleText(page, 'Ready', 'wait-ready', 1000);
+  visible = false;
+  await assert.rejects(replay.waitForVisibleText(page, 'Ready', 'wait-ready', 1000), (error) => {
+    assert.equal(error.code, 'locator_not_found');
+    assert.equal(error.detail.kind, 'text');
+    assert.equal(error.detail.visibleCount, 0);
+    return true;
+  });
 });
 
 test('element resolution distinguishes a hidden role target from a missing target', async () => {

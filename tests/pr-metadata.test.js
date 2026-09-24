@@ -351,7 +351,7 @@ test('the model prompt is framed on the whole PR, not the latest update (#2433)'
   assert.match(src.slice(i), /CODING AGENT SUMMAR\$\{sumList\.length > 1 \? 'IES \(one per update, chronological\)'/);
 });
 
-test('a multi-turn deterministic proposal describes every update, not the last (#2433)', async () => {
+test('a multi-turn over-budget Claude proposal describes every update, not the last (#2433)', async () => {
   let generateCalls = 0;
   const githubCalls = [];
   const { subject, restore } = loadWithStubs({
@@ -366,11 +366,14 @@ test('a multi-turn deterministic proposal describes every update, not the last (
       { role: 'system', content: 'cc', metadata: { ccOutput: 'Added password reset.' } },
       { role: 'user', content: 'Also remember me', metadata: {} },
     ]);
+    // A Claude session with no payer takes the deterministic path too; it
+    // keeps the cumulative per-update record. (OpenRouter sessions use their
+    // agent's latest whole-change description instead, #2820 below.)
     const session = {
       id: 12,
       branch_name: 'feat/auth',
       pr_number: null,
-      agent_backend: 'codex_openrouter',
+      agent_backend: 'claude',
     };
 
     await subject.applyPrMetadata({
@@ -378,6 +381,7 @@ test('a multi-turn deterministic proposal describes every update, not the last (
       userMessage: 'Also remember me',
       ccSummary: 'Wired the remember-me checkbox.',
       username: 'evan',
+      allowModelGeneration: false,
     });
 
     assert.equal(generateCalls, 0, 'still no hidden Anthropic call on this path');
@@ -1122,6 +1126,136 @@ test('creating a PR mirrors its body so the proposal can report a description', 
     assert.ok(write.params.includes(created.opts.body),
       'the mirrored body is the body the PR was opened with');
     assert.equal(session.pr_body, created.opts.body);
+  } finally {
+    restore();
+  }
+});
+
+// ---- #2820: OpenRouter proposals carry the agent's own description ----
+//
+// The agent ends each turn with a "==== DESCRIPTION ====" block describing
+// the whole change so far. The newest block replaces the previous one; no
+// "Update N" log is stacked up.
+
+test('an OpenRouter proposal uses the latest description, replacing earlier ones (#2820)', async () => {
+  let generateCalls = 0;
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => { generateCalls += 1; },
+    githubCalls,
+  });
+  try {
+    const pool = mockPool([
+      { role: 'user', content: 'Add a login form', metadata: {} },
+      {
+        role: 'system',
+        content: 'cc',
+        metadata: {
+          ccOutput: 'Done. Committed as e1d33fa.',
+          proposalDescription: 'Adds a login form to the home page.',
+        },
+      },
+      { role: 'user', content: 'Now add password reset', metadata: {} },
+    ]);
+    const session = {
+      id: 13, branch_name: 'feat/auth', pr_number: null, agent_backend: 'codex_openrouter',
+    };
+
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'Now add password reset',
+      ccSummary: 'Done. The reset flow is wired up; committed as 3f2a9c1.',
+      proposalDescription: 'Adds a login form to the home page, with a "Forgot password?" link that emails a reset code.',
+      username: 'evan',
+    });
+
+    assert.equal(generateCalls, 0, 'still no hidden Anthropic call');
+    const { body } = githubCalls[0].opts;
+    assert.match(body, /^Adds a login form to the home page, with a "Forgot password\?" link/);
+    assert.doesNotMatch(body, /\*\*Update \d+\*\*/, 'no stacked per-turn log');
+    assert.doesNotMatch(body, /Committed as|e1d33fa|3f2a9c1/, 'no raw turn messages');
+    assert.equal(body.match(/Adds a login form/g).length, 1, 'the old description was replaced');
+
+    const insert = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
+    assert.equal(
+      insert.params[6],
+      'Adds a login form to the home page, with a "Forgot password?" link that emails a reset code.',
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('a stored description is used on later calls that pass no in-flight turn (#2820)', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    // Promote / title-heal call sites read the history back from the DB.
+    const pool = mockPool([
+      { role: 'user', content: 'Add dark mode', metadata: {} },
+      {
+        role: 'system', content: 'cc',
+        metadata: { ccOutput: 'Done.', proposalDescription: 'Adds a dark-mode switch to settings.' },
+      },
+    ]);
+    await subject.applyPrMetadata({
+      pool,
+      session: { id: 14, branch_name: 'feat/dark', pr_number: null, agent_backend: 'codex_openrouter' },
+      repoOwner: 'acme', repoName: 'app', userMessage: 'Add dark mode', username: 'evan',
+    });
+    assert.match(githubCalls[0].opts.body, /^Adds a dark-mode switch to settings\./);
+  } finally {
+    restore();
+  }
+});
+
+test('with no description the latest turn message stands alone, cleaned up (#2820)', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    const draft = subject.deterministicPrMetadataDraft({
+      requests: ['Add a header', 'Make it sticky'],
+      summaries: [
+        'Done. Added a header.',
+        'Done. The header in public/index.html now stays pinned while scrolling. Committed as e1d33fa.',
+      ],
+      descriptions: [null, null],
+      latestDescription: true,
+      username: 'evan',
+    });
+    assert.equal(draft.summary, 'The header in public/index.html now stays pinned while scrolling.');
+  } finally {
+    restore();
+  }
+});
+
+test('a turn that skipped its block keeps the last description and adds its own note (#2820)', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    const draft = subject.deterministicPrMetadataDraft({
+      requests: ['Add a header', 'Fix the typo'],
+      summaries: ['Done.', 'Fixed the typo in the header title.'],
+      descriptions: ['Adds a header with the app name to every page.', null],
+      latestDescription: true,
+      username: 'evan',
+    });
+    assert.equal(
+      draft.summary,
+      'Adds a header with the app name to every page.\n\n**Latest update:** Fixed the typo in the header title.',
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('the in-flight description attaches to a summary already stored as the tail (#2820)', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    const pool = mockPool([
+      { role: 'system', content: 'cc', metadata: { ccOutput: 'Did it.' } },
+    ]);
+    const ctx = await subject.gatherSessionContext(pool, 15, 'Did it.', 'Adds the thing.');
+    assert.deepEqual(ctx.summaries, ['Did it.']);
+    assert.deepEqual(ctx.descriptions, ['Adds the thing.']);
   } finally {
     restore();
   }

@@ -33,9 +33,13 @@
  *     step has it: the menu step, which the viewer completes by pressing the
  *     real mark. Everything else is described, not driven — see "shown, not
  *     pressed" below.
- *   * `advanceOn: 'menu-open'` is a step with NO Next. It ends when the menu
- *     opens, which the overlay learns by subscribing to appContextStore. The
- *     press is never intercepted; the tour only watches.
+ *   * `advanceOn: 'menu-open'` is a step that ends when the menu opens, which
+ *     the overlay learns by subscribing to appContextStore. The press is
+ *     never intercepted; the tour only watches. Its Next does not skip the
+ *     step: it opens the menu through the controller's own `open()`, the
+ *     same thing the mark does, and the watcher advances the tour from
+ *     there — so a viewer who reads "press it" as "press Next" still lands
+ *     on step 4 with the menu up.
  *   * `needsPanel` marks the steps whose target is inside that menu: Give
  *     feedback and New change. If it is not open they cannot be shown, and
  *     ./index.tsx falls back to the menu step rather than spotlighting
@@ -85,7 +89,7 @@ export interface TourStep {
   targets: readonly string[];
   /** The cut-out passes clicks through to the control it is drawn around. */
   interactive?: boolean;
-  /** No Next: the step ends when the Improve panel opens. */
+  /** The step ends when the menu opens; its Next opens the menu. */
   advanceOn?: 'menu-open';
   /** The target is inside the Improve panel, so the panel has to be open. */
   needsPanel?: boolean;
@@ -104,7 +108,12 @@ export const TOUR_STEPS: readonly TourStep[] = [
     id: 'create',
     title: 'Create a new app',
     body: 'Create a new app here. Describe it and an AI builds the first version.',
-    targets: ['#home-create-section'],
+    // The launcher grid's trailing tile (../create-tile.tsx). It draws with
+    // the first grid paint, so on the rare tour that starts before the apps
+    // have loaded, the Your apps area it will end is the next best thing to
+    // point at. It was `#home-create-section`, a section of its own, until
+    // Create moved into the grid.
+    targets: ['#home-create-tile', '#home-apps-section'],
   },
   {
     // ONE STEP, WHERE THERE WERE TWO (#2718 review). The arc was "press the
@@ -112,10 +121,10 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // mark opens the app's menu". The panel is retired and its two actions
     // are rows of that menu, so both steps were teaching the same press.
     //
-    // It still does not press it: the whole shape of this arc is that the
-    // viewer performs each step themselves and the tour watches, so
-    // `advanceOn: 'menu-open'` waits for the menu and there is no Next to
-    // skip it with.
+    // The step still ends on the menu opening, whoever opens it: the
+    // viewer's press on the mark, or Next, which opens the menu the same
+    // way rather than skipping past it — step 4 points INSIDE the menu, so
+    // a Next that only moved the counter would land on nothing.
     id: 'app-menu',
     title: "The app's own menu",
     body: 'The mark opens the menu for the app you are in. Press it.',
@@ -224,9 +233,9 @@ export function isLastStep(index: number): boolean {
   return clampIndex(index) === TOUR_LENGTH - 1;
 }
 
-/** False on a step the viewer advances by acting rather than by pressing Next. */
-export function hasNext(index: number): boolean {
-  return stepAt(index).advanceOn === undefined;
+/** True on the step whose Next opens the menu instead of moving the counter. */
+export function nextOpensMenu(index: number): boolean {
+  return stepAt(index).advanceOn === 'menu-open';
 }
 
 /** The counter the card prints, e.g. "3 of 8". */

@@ -68,6 +68,7 @@ export const TAB_FOR_SCREEN = Object.freeze({
   'browse-screen': 'discover',
   'messages-screen': 'messages',
   'global-chat-screen': 'messages',
+  'agent-session-screen': 'messages',
   'workshop-screen': 'workshop',
   'profile-screen': 'me',
   'leaderboard-screen': 'me',
@@ -105,6 +106,10 @@ export const TAB_FOR_SCREEN = Object.freeze({
  *   same fact as `platform-tabs` visibility and must not be folded into it:
  *   the bar is HIDDEN here — the router says so, and the screens reserve no
  *   band for it — and this is a temporary overlay on top of that answer.
+ * @property {boolean} peekOut  The peeked rail is FADING AWAY (#2795): the
+ *   pointer left and the grace period ran out, and `peek` stays true for
+ *   the ~200ms of the fade so the element is still there to fade. Only ever
+ *   true while `peek` is; ./rail-peek.ts sets and clears it.
  * @property {boolean} railOpen  The viewer has the desktop rail expanded.
  *   True is the prerender; see the note on INITIAL for why this is separate
  *   from the visibility store and why it is not remembered across loads.
@@ -117,6 +122,7 @@ const INITIAL = {
   messages: 0,
   viewer: null,
   peek: false,
+  peekOut: false,
   /*
       IS THE DESKTOP RAIL EXPANDED — the sidebar toggle's own state (#2718
       review).

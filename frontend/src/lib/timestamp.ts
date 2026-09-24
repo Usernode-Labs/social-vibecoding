@@ -127,6 +127,19 @@ export function messageStamp(
   return { text: `${datePart(date, now)}, ${time}`, title };
 }
 
+/**
+ * The time of day alone — no date, whatever day it was. For the gutter of a
+ * grouped continuation line in a transcript (#2783): the named row above it
+ * already said which day, in `messageStamp`'s form.
+ */
+export function timeOfDay(
+  value: string | number | Date | null | undefined,
+  opts: { hour?: 'numeric' | '2-digit' } = {},
+): string {
+  const date = parse(value);
+  return date ? date.toLocaleTimeString(undefined, { hour: opts.hour ?? 'numeric', minute: '2-digit' }) : '';
+}
+
 /** The floor under the relative form, in milliseconds. See the header. */
 const RELATIVE_FLOOR_MS = 7 * 24 * 60 * 60 * 1000;
 

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "homeroom": {
+      "command": "node",
+      "args": ["/usr/local/bin/homeroom-read-mcp.js"]
+    }
+  }
+}

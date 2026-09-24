@@ -10,8 +10,10 @@
 // Featured apps' content is ONE contained card: the admin-curated tiles
 // (the `featured` / `featured_order` flags GET /api/apps serializes from
 // the featured_apps table) plus, as an attached footer row inside the same
-// card, the way into the #apps browse screen. Create an app is the former
-// in-grid "Build your own app" tile, now the page's last section.
+// card, the way into the #apps browse screen. Create an app was the former
+// in-grid "Build your own app" tile, then the page's last section; it is the
+// launcher grid's trailing tile again now (the prototype's scrHome), derived
+// per paint rather than placed (tests/home-create-tile.test.js).
 //
 // Run with: node --test tests/home-find-more.test.js
 
@@ -31,10 +33,12 @@ const { renderComponent } = require('./lib/render-tsx');
 // the view models. Assertions about markup read the components, assertions
 // about what decides the markup read the module.
 const PANEL_SRC = Object.fromEntries(
-  ['ui', 'challenges', 'discover', 'create', 'sections'].map(
+  ['ui', 'challenges', 'discover', 'sections'].map(
     (n) => [n, read(`frontend/src/features/home/panels/${n}.tsx`)]
   )
 );
+// Create is no longer one of the panels: the launcher grid's trailing tile.
+const TILE_SRC = read('frontend/src/features/home/create-tile.tsx');
 const LAYOUT_SRC = read('frontend/src/features/home/home-layout.js');
 const INDEX = read('public/index.html');
 const CSS = read('public/css/app.css');
@@ -493,22 +497,24 @@ test('renderAppCard: home mode leaves the icon free of menu badges (#1616)', () 
 
 // ── index.html section shells ────────────────────────────────────
 
-test('index.html stacks the four home areas in order', () => {
-  // This assertion has now inverted twice. Discover and Create app began as
-  // fixed trailing sections below the grid; #911 made them WIDGETS, placeable
-  // anywhere on the launcher canvas, and the section shells went; THE UI
-  // OVERHAUL made them fixed sections again — deliberately, and with the
-  // reasoning that settles it: a home screen with a reading order is a page,
-  // and the same four things at wherever-you-dropped-them was a canvas that
-  // made every one of them feel optional.
+test('index.html stacks the three home areas in order', () => {
+  // This assertion has now inverted three times. Discover and Create app began
+  // as fixed trailing sections below the grid; #911 made them WIDGETS,
+  // placeable anywhere on the launcher canvas, and the section shells went;
+  // THE UI OVERHAUL made them fixed sections again — deliberately, and with
+  // the reasoning that settles it: a home screen with a reading order is a
+  // page, and the same things at wherever-you-dropped-them was a canvas that
+  // made every one of them feel optional. Then Create moved INTO Your apps as
+  // the grid's trailing tile (the prototype's scrHome): not a widget with a
+  // stored cell, but a tile whose cell is derived from the grid it ends.
   const grid = INDEX.indexOf('id="app-list"');
   const discover = INDEX.indexOf('id="home-discover-section"');
   const challenges = INDEX.indexOf('id="home-challenges-section"');
-  const create = INDEX.indexOf('id="home-create-section"');
   assert.ok(grid > 0, 'the launcher grid is present');
   assert.ok(discover > grid, 'Discover comes after the apps grid');
   assert.ok(challenges > discover, 'Challenges after Discover');
-  assert.ok(create > challenges, 'Create app last');
+  assert.equal(INDEX.indexOf('id="home-create-section"'), -1,
+    'Create app is no longer a section of its own');
   // The widgets' fallback host is gone with the placement it existed for: it
   // caught the moment before the first grid paint and the active-search view,
   // because a widget INSIDE #app-list vanished whenever #app-list did.
@@ -581,10 +587,14 @@ test('every block is one bordered box, sized by its own content', () => {
   assert.doesNotMatch(ROUTE, /sizes:/);
   // What each host DOES still carry is the key of the block it is for — the
   // hook the dapp.json checks and the screenshot assertions select on.
-  for (const key of ['discover', 'challenges', 'create']) {
+  for (const key of ['discover', 'challenges']) {
     assert.match(INDEX, new RegExp(`<section id="home-${key}-section" data-panel-slot="${key}"`),
       `${key}: its section names it`);
   }
+  // Create carries the same key on the grid tile that replaced its section
+  // (it renders on the first grid paint, so it is not in the prerender).
+  assert.match(TILE_SRC, /data-panel-slot="create"/);
+  assert.doesNotMatch(INDEX, /data-panel-slot="create"/);
 });
 
 // Short feed on a tall screen: the trailing sections sit at the BOTTOM of
@@ -641,26 +651,28 @@ test('the browse action routes through the hash for a real history entry', () =>
   assert.match(PANEL_SRC.ui, /home-panel-browse[\s\S]*?location\.hash = '#apps'/);
 });
 
-test('the create widget renders in both states and keeps quota details reachable', () => {
-  const { HP, sandbox } = makePanels();
-  const createHtml = () => renderComponent(
-    'frontend/src/features/home/panels/create.tsx', 'CreatePanel',
-    { view: HP.createView({ key: 'create' }) },
+test('the Create tile renders in both states and keeps quota details reachable', () => {
+  const createHtml = (enabled) => renderComponent(
+    'frontend/src/features/home/create-tile.tsx', 'CreateTile',
+    {
+      view: {
+        enabled,
+        hint: 'Ask an admin to enable app creation for your account.',
+        placement: { col: 3, row: 0, w: 1, h: 1 },
+      },
+    },
   );
 
-  sandbox.Home.canCreate = () => true;
-  const on = createHtml();
+  const on = createHtml(true);
   assert.match(on, /data-create-enabled="true"/);
   assert.match(on, /home-create-btn/, 'the hook the dapp.json create checks select on');
-  assert.match(on, /Create app/);
+  assert.match(on, /Create an app/);
   assert.doesNotMatch(on, /aria-disabled/);
 
-  sandbox.Home.canCreate = () => false;
-  const off = createHtml();
-  // Still a real widget in a real cell — dimmed, not absent.
-  assert.ok(off.length > 100, 'the widget renders for a viewer with no quota');
+  const off = createHtml(false);
+  // Still a real tile in a real cell — quieter, not absent.
+  assert.ok(off.length > 100, 'the tile renders for a viewer with no quota');
   assert.match(off, /data-create-enabled="false"/);
-  assert.match(off, /home-create-widget--disabled/);
   assert.doesNotMatch(off, /aria-disabled/,
     'the available open-quota-details action is not disabled to assistive technology');
   assert.match(off, /View app quota\. Ask an admin to enable app creation/,
@@ -670,19 +682,22 @@ test('the create widget renders in both states and keeps quota details reachable
   assert.doesNotMatch(off, /<button[^>]*\sdisabled/);
 });
 
-test('Create app is a fixed section, for every account', () => {
-  // This assertion has inverted twice with the surface: banished from the
-  // grid into a trailing section, then a first-class grid item (#911), and
-  // now a fixed section again. What never changed is the part that matters —
-  // it exists for EVERY account, and app quota decides whether it is
-  // tappable, never whether it is there.
-  assert.match(PANELS_SRC, /createView\(panel\) \{/);
-  assert.match(PANELS_SRC, /create: 'home-create-section'/,
-    'it renders into its own fixed host');
+test('Create an app is the launcher grid\'s trailing tile, for every account', () => {
+  // This assertion has inverted three times with the surface: banished from
+  // the grid into a trailing section, then a first-class grid item (#911),
+  // then a fixed section again, and now the grid's LAST tile (the prototype's
+  // scrHome). What never changed is the part that matters: it exists for
+  // EVERY account, and app quota decides its treatment, never whether it is
+  // there.
+  assert.doesNotMatch(PANELS_SRC, /createView\(panel\) \{/, 'the panels no longer build it');
+  assert.doesNotMatch(PANELS_SRC, /create: 'home-create-section'/, 'and it has no section host');
+  assert.match(HOME_SRC, /create = \{\n\s+enabled: canCreate,/,
+    'Home.render() builds it on the grid paint, from the same canCreate');
   assert.doesNotMatch(HOME_SRC, /data-panel-slot="/,
-    'and the grid plants no widget slots any more');
-  // The server builds it unconditionally: no viewer argument reaches the
-  // registry, so app quota can never decide whether it exists.
+    'and the grid still plants no widget slots: the tile is a component, not a slot');
+  // The server's registry still lists it (a cached older shell renders its
+  // section from it) and still builds it unconditionally: no viewer argument
+  // reaches the registry, so app quota can never decide whether it exists.
   const registry = ROUTE.match(/const PANEL_REGISTRY = \[[\s\S]*?\n\];/)[0];
   assert.match(registry, /key: 'create'/);
   assert.doesNotMatch(registry, /canCreateApps|quota/i);
@@ -692,7 +707,7 @@ test('a viewer with no quota can open the dialog to inspect it', () => {
   // The compact locked state carries the shared hint in its tooltip;
   // tapping opens the detailed used-of-limit row.
   assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'View your app allowance or request more slots\.'/);
-  const btn = PANEL_SRC.create.slice(PANEL_SRC.create.indexOf('onClick={'));
+  const btn = TILE_SRC.slice(TILE_SRC.indexOf('onClick={'));
   assert.match(btn, /App\?\.showCreateModal\?\.\(\)/,
     'both enabled and locked tiles open the create modal');
   assert.doesNotMatch(btn, /PlatformUI\?\.toast\?\.\(/,

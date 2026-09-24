@@ -69,7 +69,7 @@ import { improveStore } from '../../improve/improve-store.js';
 import { swatchFor } from '../../messages/format';
 import { devWorkshopStore } from '../card/cards-store';
 import { DevKanban } from '../card/dev-kanban';
-import { DevActionsRow } from '../actions-row';
+import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
 import { CardRowView, callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
@@ -408,8 +408,40 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
  * undo the search left the screen with the rows, and the viewer was stuck on
  * a board they could not widen back out. Now the pane stays, and this note
  * takes the rows' place beneath the box it is talking about.
+ *
+ * ── It says only what the screen can do ──────────────────────────────
+ *
+ * It read "Press + to propose a change or file an issue", and both halves had
+ * stopped being true: the "+" was only in All items' search row, so on
+ * Current status it pointed at nothing on screen, and it has had no propose
+ * row since New change moved to Improve (#1490) and then to the Homeroom
+ * menu's New change button (#2740 review) — an owner decision this note does
+ * not undo. The "+" is at the end of the tab strip on every tab now, so the
+ * note names what it holds, and sends "start a change" to the button that
+ * does it, by the name the header gives that menu ("Homeroom menu", the
+ * mark's own aria-label).
+ *
+ * Gated on the same facts as what it names: "import a PR" only where the "+"
+ * carries that row (`canCollaborate`), and nothing to press at all for a
+ * read-only viewer, whose "+" holds Fork alone and whose menu has no New
+ * change (both from `AppView.readOnly`, the flag the menu's New change and
+ * the "+"'s writable rows are each gated on).
+ *
+ * UNDER THE START-HERE BANNER it stops at the "+". On Current status an empty
+ * board is nearly always an app nobody has started, and #2573's banner right
+ * above the note carries its own New change button — so sending the reader
+ * to the Homeroom menu for the same button would be the note talking past
+ * the screen it is on. All items has no banner, so there it says the whole
+ * thing.
  */
-function EmptyNote({ filtered, loadFailed }: { filtered: boolean; loadFailed: boolean }): ReactNode {
+function EmptyNote({ filtered, loadFailed, underStartHere = false }: {
+  filtered: boolean;
+  loadFailed: boolean;
+  underStartHere?: boolean;
+}): ReactNode {
+  const { readOnly, canCollaborate } = useDevActions();
+  const adds = canCollaborate ? ' to file an issue or import a PR' : ' to file an issue';
+  const start = underStartHere ? '.' : '; to start a change, use New change in the Homeroom menu.';
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
       {filtered ? (
@@ -417,9 +449,13 @@ function EmptyNote({ filtered, loadFailed }: { filtered: boolean; loadFailed: bo
       ) : (
         <>
           {loadFailed ? "Couldn't load open issues right now. " : ''}
-          {'Nothing on the board yet. Press '}
-          <span className="font-medium text-violet-700 dark:text-violet-400">+</span>
-          {' to propose a change or file an issue.'}
+          {readOnly ? 'Nothing on the board yet.' : (
+            <>
+              {'Nothing on the board yet. Press '}
+              <span className="font-medium text-violet-700 dark:text-violet-400">+</span>
+              {adds + start}
+            </>
+          )}
         </>
       )}
     </div>
@@ -440,11 +476,11 @@ function EmptyNote({ filtered, loadFailed }: { filtered: boolean; loadFailed: bo
  * not `shippedWeek` — see the model — because a quiet week on a busy app
  * zeroes the week count and would otherwise put this banner on it.
  *
- * `meta.filtered` is the third condition and it is not about the app at all:
- * `dashboard.open` counts the entries that survived the shared filter bar,
- * so a search matching nothing reads as "no open items" on a board that has
- * plenty. The prompt is a claim about the APP, so it stands down while the
- * viewer is looking through a filter rather than at everything.
+ * There was a third condition, `meta.filtered`, because `dashboard.open`
+ * used to count only the entries that survived the shared filter bar, so a
+ * search matching nothing read as "no open items" on a board with plenty.
+ * The search and filters narrow All items alone now (#2915) and the count is
+ * the whole app's, so the two conditions above are the whole claim.
  *
  * ── Why the button is not a second "New change" ─────────────────────────
  *
@@ -2447,6 +2483,18 @@ function useTabMarker(
     measure(true);
     const ro = new ResizeObserver(() => measure(false));
     ro.observe(bar);
+    // ...AND THE TAB LIST, which can resize while the bar does not: on a phone
+    // the "+" shares the pill with it, so the "+" arriving or leaving (it is
+    // hidden for a read-only viewer of the self-hosted app) moves every tab
+    // inside a bar of unchanged size, and an observer on the bar alone would
+    // leave the marker where the tabs used to be.
+    const list = bar.querySelector<HTMLElement>('.dev-ws-tablist');
+    if (list) ro.observe(list);
+    // ...AND EACH TAB, which can resize while the list does not (#2915). The
+    // All items dot comes and goes with the search: on a phone the list is
+    // the pill's fixed width and the three tabs share it out, so the dot
+    // re-divides the tabs inside a list and a bar that both kept their size.
+    for (const el of bar.querySelectorAll<HTMLElement>('[data-ws-tab-btn]')) ro.observe(el);
     return () => ro.disconnect();
   }, [bar, tab]);
   return box;
@@ -2632,6 +2680,11 @@ export function DevWorkshop(): ReactNode {
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
   const slug = v.slug || '';
   const canPost = !!v.canPost;
+  // #2573's start-here banner: nothing open and nothing ever shipped. (All
+  // items' search no longer narrows the count, so it is not a condition:
+  // #2915.) Named once because the empty note under it reads it too — see
+  // EmptyNote.
+  const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped);
 
   /* ── The three destinations ──
      AT THE HEAD OF THE PAGE, AT EVERY WIDTH (#2767). Above 700px it is the
@@ -2647,14 +2700,36 @@ export function DevWorkshop(): ReactNode {
      In flow it is part of the Workshop's own subtree and leaves with it.
 
      It LEADS the markup, so focus order and reading order agree at every
-     width: the nav is announced before the content it navigates. */
+     width: the nav is announced before the content it navigates.
+
+     ── The "+" closes the strip ──
+     Current status · Needs you · All items · +, on all three tabs: the
+     prototype's `wsTabs` ends its `.tabs` row with a `.tplus`, and the spec
+     puts "a plus at the end of the tab strip". It sat at the end of All
+     items' search row, so on the other two tabs there was no way to file an
+     issue or reach the app's settings — while their empty-state notes told
+     the viewer to press it. It is ONE node (`DevPlusMenu`, ../actions-row.tsx)
+     rendered here and nowhere else on this surface, which is what keeps
+     `#dev-plus-btn` / `#dev-plus-menu` unique for `_wirePlusMenu`.
+
+     It is the strip's last item, INSIDE the pill: on a phone the nav itself
+     is the full-width pill and the "+" takes a 40px cell at its end; above
+     700px the track is the pill and the "+" is its last segment. Either way
+     it is drawn on the tabs' own metrics and ink (app.css
+     `.dev-ws-plus-btn`), so it reads as part of the bar rather than as the
+     violet floating action it was.
+
+     WHY THE TAB LIST MOVED IN A LEVEL. The nav carried `role="tablist"`, and
+     a tab list owns tabs: a menu button inside it is announced as a fourth
+     tab that selects nothing. So the three tabs sit in `.dev-ws-tablist`,
+     which carries the role and the name, and the "+" is its sibling. The
+     outer box is a plain container now, as a `div` — a `nav` without the
+     role would have added a landmark the page did not have. */
   const railNode = (
-        <nav
+        <div
           ref={setBar}
           className="dev-ws-tabs"
           data-ws-tabs=""
-          role="tablist"
-          aria-label="Workshop sections"
         >
           {/* THE SELECTION, drawn once and moved, rather than redrawn per tab.
               It is `aria-hidden` and not focusable: `aria-selected` on the tab
@@ -2691,18 +2766,25 @@ export function DevWorkshop(): ReactNode {
             } : undefined}
           />
           {/* The TRACK, separate from the nav, and `display: contents` on a
-              phone so the bar there is byte-identical to what it was: the nav
-              itself is the pill, edge to edge.
+              phone so the bar there is what it was: the nav itself is the
+              pill, edge to edge, with the tab list and the "+" its two items.
 
               Above 700px the two have different jobs. The nav is the POSITIONING
               box — it inherits the 760px reading column and its centring, which
               is what keeps the strip anchored to the same left edge whether the
               pane beside it is the 760px category list or the full-bleed board.
-              The track is the pill, and it hugs its three labels: a segmented
-              control spanning the reading column would read as a header bar
-              rather than as a control, which is the same reason
-              @/components/ui/tabs.tsx makes SECTION_TABS_LIST `inline-flex`. */}
+              The track is the pill, and it hugs its three labels and the "+": a
+              segmented control spanning the reading column would read as a
+              header bar rather than as a control, which is the same reason
+              @/components/ui/tabs.tsx makes SECTION_TABS_LIST `inline-flex`.
+              Because the "+" is INSIDE the track, the ear's measured inset
+              (useEarInset reads the track's right edge) clears it with no
+              change of its own. */}
           <div className="dev-ws-tabtrack">
+          {/* The tab list: the three tabs and nothing else — a real box at
+              both widths, so the role never sits on a `display: contents`
+              node, which some screen readers drop from the tree. */}
+          <div className="dev-ws-tablist" role="tablist" aria-label="Workshop sections">
           {TABS.map((t) => (
             <button
               key={t.key}
@@ -2721,10 +2803,33 @@ export function DevWorkshop(): ReactNode {
                   lives in app.css beside its neighbours. */}
               <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
               <span className="dev-ws-tab-label">{t.label}</span>
+              {/* #2915: A SEARCH OR FILTER IS WAITING ON ALL ITEMS. They
+                  narrow that tab alone, so from the other two a search the
+                  viewer typed there is out of sight, and this dot is what
+                  says it is still on. Drawn on whichever tab is up, since it
+                  is about All items rather than about where you are.
+                  The dot is decoration; the words are for a screen reader,
+                  and they join the tab's name ("All items (filtered)") so
+                  the visible label still leads it. */}
+              {t.key === 'all' && v.meta.filtered ? (
+                <>
+                  <span className="dev-ws-tab-dot" data-ws-tab-filtered="" aria-hidden="true" />
+                  <span className="sr-only"> (filtered)</span>
+                </>
+              ) : null}
             </button>
           ))}
           </div>
-        </nav>
+          <DevPlusMenu
+            illustrationApp={actions.illustrationApp}
+            canManageIllustration={actions.canManageIllustration}
+            selfHosted={actions.selfHosted}
+            readOnly={actions.readOnly}
+            canCollaborate={actions.canCollaborate}
+            showsMembers={actions.showsMembers}
+          />
+          </div>
+        </div>
   );
 
   return (
@@ -2762,11 +2867,13 @@ export function DevWorkshop(): ReactNode {
           and points at the "+"; this says what to do about an app nobody
           has started on, and the product decision put it at the top of the
           tab. See StartHereBanner for the three conditions. */}
-      {v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped && !v.meta.filtered ? (
-        <StartHereBanner />
-      ) : null}
+      {startHere ? <StartHereBanner /> : null}
       {v.emptyNote ? (
-        <EmptyNote filtered={!!v.emptyNote.filtered} loadFailed={v.emptyNote.loadFailed} />
+        <EmptyNote
+          filtered={!!v.emptyNote.filtered}
+          loadFailed={v.emptyNote.loadFailed}
+          underStartHere={startHere}
+        />
       ) : null}
 
       {/* ── One pane: where the app is, and what moved while you were away ──
@@ -2927,10 +3034,22 @@ export function DevWorkshop(): ReactNode {
           <div className="dev-ws-lane" data-ws-lane="mine">
             {/* #2182: the strip does not leave when the viewer has nothing
                 underway. It says so instead, so the pane keeps one shape
-                and the place your work will appear is always the same. */}
+                and the place your work will appear is always the same.
+
+                The way in is NEW CHANGE, by the name the Homeroom menu
+                gives it. This said "start something from the + button",
+                and the "+" has no propose row — starting a change is that
+                menu's New change, an owner decision (#2740 review) — so
+                the line sent a viewer to a menu that could not do what it
+                promised. A read-only viewer has neither door, so is told
+                the fact and nothing to press — and so is a viewer under the
+                start-here banner, whose New change is at the top of this
+                very tab and whose board has no open item to pick up. */}
             {!v.mine.rows.length ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
-                You have no work going on. Pick up an open item below, or start something from the + button.
+                {actions.readOnly || startHere
+                  ? 'You have no work going on.'
+                  : 'You have no work going on. Pick up an open item below, or start a change with New change in the Homeroom menu.'}
               </p>
             ) : null}
             {(allMine ? v.mine.rows : v.mine.rows.slice(0, v.mine.shown)).map((row) => (row.t === 'card' ? (
@@ -3127,9 +3246,12 @@ export function DevWorkshop(): ReactNode {
               how you happen to be sorting it. */}
           <section className="dev-ws-pane" data-ws-pane="">
           {/* ── The sticky head: the controls that act on what is below ──
-              The search, the filters and the "+" used to sit in the frame's
-              chrome above the scroller, two strips away from the list they
-              narrow. They belong WITH it — and with the tab strip, because
+              The search and the filters used to sit in the frame's chrome
+              above the scroller, two strips away from the list they narrow.
+              (So did the "+", which is not a narrowing control: it adds to
+              the board and manages the app, so it closes the view-tab strip
+              on every tab instead — see the rail above.) They belong WITH
+              the list — and with the tab strip, because
               "which grouping" and "narrowed to what" are one question asked
               twice. Both pin together: filtering a long list is exactly what
               you are doing when you are scrolled down, and a tab strip that
@@ -3170,6 +3292,8 @@ export function DevWorkshop(): ReactNode {
           {/* The strip's narrow home. Above the breakpoint it is in the ear
               instead — one node, two places. */}
           {earUp ? null : <GroupStrip group={group} />}
+            {/* The search and the filters. NOT the "+": that closes the tab
+                strip above, on every tab, so the row draws none of its own. */}
             <DevActionsRow
               illustrationApp={actions.illustrationApp}
               canManageIllustration={actions.canManageIllustration}
@@ -3177,6 +3301,7 @@ export function DevWorkshop(): ReactNode {
               readOnly={actions.readOnly}
               canCollaborate={actions.canCollaborate}
               showsMembers={actions.showsMembers}
+              withPlus={false}
             />
           </div>
           {/* The pane's face is painted by its two PARTS, not by the pane —

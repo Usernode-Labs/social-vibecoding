@@ -24,9 +24,10 @@
  * page. Those are app.css's `.gc-event-box` rules. A submission whose vote is
  * still open carries `data-open`, and the box reads in the text ink rather
  * than the muted one: the one thing on the line that still wants the reader.
- * The viewer's own event — a proposal they put up, a merge they forced —
- * sits on the right with no avatar, as their own messages do (`gc-event-self`,
- * `from="me"` on the row).
+ * The viewer's own event — a proposal they put up, a merge they forced — is
+ * the same named row as anybody's, on the left with its avatar, as their own
+ * messages are since every chat went to Discord's rows (#2783). It keeps
+ * `gc-event-self`, which is how the stylesheet can still tell it apart.
  *
  * That is the whole row. No tally, no buttons, no bookmark, no react button,
  * no reactions: the controls live on the page the box opens.
@@ -178,8 +179,8 @@ export function EventRow({ msg }: { msg: TranscriptMessage }) {
   }
   const href = msg.eventHref || null;
   const open = ev.type === 'submitted' && msg.votePhase !== 'settled';
-  // The viewer's own event sits on the right, as their own messages do:
-  // the row runs right to left, the box hugs the right edge, no avatar.
+  // The viewer's own event is marked, not moved (#2783): the same left-hand
+  // named row as everybody's, as the viewer's own messages are.
   const me = ev.mine;
   const tail = eventTail(msg);
   const box = (
@@ -197,7 +198,6 @@ export function EventRow({ msg }: { msg: TranscriptMessage }) {
   return (
     <ChatMessageRow
       className={me ? 'gc-event gc-event-self' : 'gc-event'}
-      from={me ? 'me' : 'them'}
       data-msg-id={msg.id ?? ''}
       data-event={ev.type}
       // What refreshVoteControls reads back to resolve the row against the
@@ -207,7 +207,7 @@ export function EventRow({ msg }: { msg: TranscriptMessage }) {
       {...(open ? { 'data-open': '1' } : {})}
       {...(ev.here ? { 'data-here': '1' } : {})}
       {...(ev.type === 'vote' && ev.vote ? { 'data-vote': ev.vote } : {})}
-      avatar={me ? undefined : (
+      avatar={(
         <Avatar shape="square" size="md" color={swatchFor(ev.sender)} aria-hidden="true">
           {ev.sender.charAt(0).toUpperCase()}
         </Avatar>

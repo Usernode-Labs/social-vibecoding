@@ -445,22 +445,21 @@ const Notifications = {
   // mock rows to render. Once per page load — reopening after a manual
   // dismiss would fight the user, and refresh() runs again on live events.
   //
-  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB, and
-  // `?shot=notifications-agents` on the AGENTS tab. Both are React state
-  // inside the sheet, so without a URL that reaches them neither the capture
-  // pipeline nor a declared check could see the tab, its collapsed
-  // conversation rows, its "All messages" entry, or the session rows Agents
-  // draws — the platform's own rule for a screen that is otherwise only
-  // reachable by clicking. The sheet reads the same parameter for the tab;
-  // this only has to open it.
+  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB. That is
+  // React state inside the sheet, so without a URL that reaches it neither
+  // the capture pipeline nor a declared check could see the tab, its
+  // collapsed conversation rows, its "All messages" entry, or the agent
+  // session rows it draws (#2815 folded the Agents tab into it) — the
+  // platform's own rule for a screen that is otherwise only reachable by
+  // clicking. The sheet reads the same parameter for the tab; this only has
+  // to open it.
   //
   _shotOpened: false,
   _maybeShotOpen() {
     if (Notifications._shotOpened || Notifications.open) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
-    if (shot !== 'notifications' && shot !== 'notifications-messages'
-      && shot !== 'notifications-agents') return;
+    if (shot !== 'notifications' && shot !== 'notifications-messages') return;
     Notifications._shotOpened = true;
     // The list is the Notifications SHEET now (Streamlined Concept), so the
     // deep link resolves a screen underneath and presents over it rather
@@ -593,6 +592,36 @@ const Notifications = {
     Notifications.unread = Math.max(0, Notifications.unread - cleared);
     Notifications._renderBadge();
     Notifications._renderList();
+  },
+
+  // #2847: the viewer opened a proposal card, or touched something on it, so
+  // its "New proposal" nudge is answered — clear it the way a vote already
+  // does server-side. Called by AppView (the topic page and the dev board's
+  // delegated card click) through `window.Notifications`. Skipped when
+  // nothing is unread, so the common click costs no request; the server
+  // scopes the clear to pr_proposed rows for this one session.
+  async markProposalSeen(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isSafeInteger(id) || id <= 0 || Notifications.unread === 0) return;
+    const now = new Date().toISOString();
+    for (const n of Notifications.items) {
+      if (n && !n.readAt && n.kind === 'pr_proposed' && Number(n.sessionId) === id) n.readAt = now;
+    }
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: id }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.cleared) return;
+      Notifications.unread = data.unread || 0;
+      Notifications._renderBadge();
+      Notifications._renderList();
+    } catch (err) {
+      console.warn('[notifications] markProposalSeen failed', err);
+    }
   },
 
   // #1688: a row's own button. 'still_yes' re-casts a Yes on the proposal a
@@ -748,12 +777,12 @@ const Notifications = {
       // routing; an invalid topic ref falls through to the chat/proposals
       // navigation), so one dismiss covers the whole block.
       Notifications._dismissSheetForNav();
-      // Mentions/replies/reactions land on the app's Dev → Chat — unless
-      // the message lives in a topic thread (#194 parity), in which case
-      // the click opens that issue/proposal/governance discussion where
-      // the message is actually visible. Vote nudges and kudos land on
-      // the Proposals tab where their PR card lives (deep-linked when we
-      // know the session).
+      // Mentions/replies/reactions land on the app's discussion, in Messages
+      // (see _openAppDiscussion) — unless the message lives in a topic thread
+      // (#194 parity), in which case the click opens that
+      // issue/proposal/governance discussion where the message is actually
+      // visible. Vote nudges and kudos land on the Proposals tab where their
+      // PR card lives (deep-linked when we know the session).
       //
       // Navigate via App.openAppTab rather than assigning location.hash:
       // a same-value hash assignment fires no `hashchange`, so clicking a
@@ -797,16 +826,52 @@ const Notifications = {
         'pr_merged', 'proposal_vote', 'vote_digest', 'revision_recheck',
       ]);
       const toProposals = proposalKinds.has(item.kind);
+      // A new issue opens THAT ISSUE. `detail` is its number (the producer
+      // has no issue column), and this row fell through to the app's general
+      // chat, a screen that says nothing about the issue it announces.
+      const issueNumber = item.kind === 'issue_opened' && /^\d+$/.test(String(item.detail || ''))
+        ? Number(item.detail) : null;
+      if (!toProposals && !issueNumber) {
+        // Everything else is about a message in the app's general chat — a
+        // mention, a reply, a reaction, the weekly card — or has no better
+        // page than it.
+        Notifications._openAppDiscussion(item.appSlug, item.chatMessageId);
+        return;
+      }
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', toProposals
           ? { subTab: 'proposals', ref: item.sessionId || null }
-          : { subTab: 'chat' });
+          : { subTab: 'issues', ref: issueNumber });
       } else {
         window.location.hash = toProposals
           ? `#app/${item.appSlug}/dev/proposals${item.sessionId ? `/${item.sessionId}` : ''}`
-          : `#app/${item.appSlug}/dev/chat`;
+          : `#app/${item.appSlug}/dev/issues/${issueNumber}`;
       }
     }
+  },
+
+  // AN APP'S DISCUSSION IS A THREAD OF MESSAGES (#2718 review, #2763), so a
+  // row about a message in it opens it THERE: `#messages/app/<slug>`, two
+  // panes on a desktop, with the side panel taking it beside a running app
+  // (#2854). These rows opened the old full-screen `#app/<slug>/dev/chat`,
+  // whose back arrow climbed to the app's Workshop — a screen the reader
+  // had not come from.
+  //
+  // When the row names ONE message, the discussion opens on it rather than
+  // at the newest: GroupChat scrolls it into view and flashes it, the same
+  // highlight a quote's jump-to-original lands on, once the transcript has
+  // loaded (or at once, when that discussion is already open). A message
+  // older than the page the discussion loads cannot be shown, and the
+  // thread opens at the newest as before. The Messages controller is the
+  // one door, with the address as the fallback for a shell still starting.
+  _openAppDiscussion(slug, messageId) {
+    if (!slug) return;
+    if (messageId && typeof GroupChat !== 'undefined' && GroupChat.revealMessage) {
+      GroupChat.revealMessage(slug, messageId);
+    }
+    const messages = window.UsernodeReact?.messages;
+    if (messages?.openDiscussion) messages.openDiscussion(slug);
+    else window.location.hash = `#messages/app/${encodeURIComponent(slug)}`;
   },
 
   // --- rendering -------------------------------------------------------
@@ -969,7 +1034,8 @@ const Notifications = {
 
   // Clicking a saved row opens the message where it actually lives: the
   // topic discussion when it was posted in one (#194 parity with the
-  // mention/reply rows), otherwise the app's Dev → Chat. Deliberately does
+  // mention/reply rows), otherwise the app's discussion in Messages, opened
+  // on the saved message (_openAppDiscussion). Deliberately does
   // NOT unsave — a save is not a to-do item, and a row that vanished the
   // moment you looked at it would make the section unusable.
   _onSavedClick(messageId) {
@@ -1010,11 +1076,7 @@ const Notifications = {
       }
       return;
     }
-    if (typeof App !== 'undefined' && App.openAppTab) {
-      App.openAppTab(saved.appSlug, 'dev', { subTab: 'chat' });
-    } else {
-      window.location.hash = `#app/${saved.appSlug}/dev/chat`;
-    }
+    Notifications._openAppDiscussion(saved.appSlug, saved.messageId);
   },
 
   // Unsave from the drawer — the "or there" half of "until unsaved in the
@@ -1099,11 +1161,12 @@ const Notifications = {
         Home.load();
       }
       const target = data.appSlug || slug;
-      if (target && typeof App !== 'undefined' && App.openAppTab) {
+      if (target) {
         // About to navigate — on touch the sheet would otherwise stay
-        // presented over the app screen this opens (#1329).
+        // presented over the screen this opens (#1329). The people you just
+        // joined are in the app's discussion, which is a thread of Messages.
         Notifications._dismissSheetForNav();
-        App.openAppTab(target, 'group-chat');
+        Notifications._openAppDiscussion(target);
       }
     } catch (err) {
       console.warn('[notifications] acceptInvite failed', err);
@@ -1477,10 +1540,24 @@ function collapseConversationRuns(items) {
 // The sheet's rows: one descriptor per run. `count` rides only on a genuine
 // collapse, so a lone notification's view is byte-identical to what it was.
 function screenViews(items) {
-  return collapseConversationRuns(items).map((run) => (
-    run.count > 1 ? { ...rowView(run.item), count: run.count } : rowView(run.item)
-  ));
+  return collapseConversationRuns(items).map((run) => {
+    const view = AGENT_NOTIF_KINDS.has(run.item && run.item.kind)
+      ? { ...rowView(run.item), agent: true } : rowView(run.item);
+    return run.count > 1 ? { ...view, count: run.count } : view;
+  });
 }
+
+// #2815: what an AGENT did on your behalf — a session that finished, a
+// proposal run that came back, a question it asked, work it submitted or
+// shared. The sheet's Messages tab lists these beside the conversations and
+// the running sessions themselves, the way the Messages screen already puts
+// agents in its chats, so the bell has no separate Agents tab. Carried as a
+// flag for the same reason `conversation` is: the tab must never re-derive
+// the set from `kind` and drift from it. stale_pr and check_failed stay out:
+// they are about a proposal, not about an agent talking back to you.
+const AGENT_NOTIF_KINDS = new Set([
+  'session_done', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted',
+]);
 
 // One notification row, as data. It has ONE renderer — ScreenRow in
 // ./notifications-sheet.tsx — which draws THREE lines:

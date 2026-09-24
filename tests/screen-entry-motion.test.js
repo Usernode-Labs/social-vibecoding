@@ -26,7 +26,7 @@ const dapp = JSON.parse(read('dapp.json'));
 
 // The App._entryTransition body.
 function entryTransition() {
-  const at = appJs.indexOf('  _entryTransition(preferred, screenEl) {');
+  const at = appJs.indexOf('  _entryTransition(preferred, screenEl, viaTab) {');
   assert.ok(at !== -1, 'App._entryTransition went missing');
   return appJs.slice(at, appJs.indexOf('\n  },', at));
 }
@@ -45,19 +45,20 @@ test('the resolved type is stamped on the screen element', () => {
 
 // ── Every screen entry routes through it ───────────────────────────────
 
-test('all ten screen transitions go through App._entryTransition', () => {
-  // It was nine, then eight, nine again, and Global Chat makes ten. Notifications and Messages
+test('all eleven screen transitions go through App._entryTransition', () => {
+  // It was nine, then eight, nine again, Global Chat made ten, and an agent
+  // session's own screen (#2779, #agent/<id> on a phone) makes eleven. Notifications and Messages
   // gave one back each when they stopped being screens — a sheet presents over
   // whatever is there, so there is no screen swap to animate and nothing for
   // the gate to type — and the Workshop screen (#workshop) takes one, because
   // it is a root that replaces the screen you were on. #2543 gives Global
   // Chat that same first-class screen contract.
   const calls = appJs.match(/PlatformUI\.transition\(/g) || [];
-  assert.equal(calls.length, 10,
-    `expected 10 PlatformUI.transition call sites in app.js, found ${calls.length} — `
+  assert.equal(calls.length, 11,
+    `expected 11 PlatformUI.transition call sites in app.js, found ${calls.length} — `
     + 'a new one must route its type through App._entryTransition too');
   const routed = appJs.match(/type: App\._entryTransition\(/g) || [];
-  assert.equal(routed.length, 10,
+  assert.equal(routed.length, 11,
     'every call site must take its type from the gate, or that screen keeps '
     + 'animating over the closing drawer');
 });
@@ -77,7 +78,7 @@ test('each named screen entry passes its own screen element to the gate', () => 
   // sheet has no screen element for the gate to stamp `data-entered` on.
   for (const nav of ['navigateToLeaderboard', 'navigateToProfile',
     'navigateToBrowse', 'navigateToAdminConsole', 'navigateToSettings',
-    'navigateToGlobalChat']) {
+    'navigateToGlobalChat', 'navigateToAgentSession']) {
     const at = appJs.indexOf(`  ${nav}(`);
     assert.ok(at !== -1, `${nav} went missing`);
     const body = appJs.slice(at, appJs.indexOf("getElementById('back-btn')", at));
@@ -94,12 +95,13 @@ test('the zoom sites keep their split mutation intact under the gate', () => {
   // since the _exitX helpers no longer hide their own screens.
   const nav = appJs.slice(appJs.indexOf('async navigateToApp('));
   const zoom = nav.slice(0, nav.indexOf('await AppView.open(slug)'));
-  assert.match(zoom, /App\._entryTransition\('zoom-in', appViewEl\)/);
+  // `viaTab` (#2880, #2881): a Workshop-tab press resolves as a tab switch.
+  assert.match(zoom, /App\._entryTransition\('zoom-in', appViewEl, viaTab\)/);
   assert.match(zoom, /after: \(\) => \{ App\._showOnlyScreen\('app-view'\); \}/,
     'the conceal half of the mutation must survive');
-  const home = appJs.slice(appJs.indexOf('navigateHome() {'));
+  const home = appJs.slice(appJs.indexOf('navigateHome(opts) {'));
   assert.match(home.slice(0, home.indexOf('App.updateHash()')),
-    /App\._entryTransition\('zoom-out', av\)/);
+    /App\._entryTransition\('zoom-out', av, viaTab\)/);
 });
 
 // ── The two native sheets ──────────────────────────────────────────────

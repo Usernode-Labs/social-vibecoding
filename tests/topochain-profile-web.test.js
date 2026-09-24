@@ -31,6 +31,9 @@ const shellSource = read('frontend/src/Shell.tsx');
 const switcherSheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
 const nativeChrome = read('public/js/native-chrome.js');
 const profileJs = read('frontend/src/features/profile/profile.js');
+// navigateToProfile, which decides WHEN the load starts relative to the
+// screen transition (#2777).
+const appJs = read('public/js/app.js');
 // #1083 chunk F did the same for the screen itself: <main id="profile-screen">
 // and its host div moved out of Shell.tsx into this island, which is also where
 // the renderer now lives (./profile.js beside it). Shell.tsx keeps the comment
@@ -134,10 +137,64 @@ test('a 401 replaces stale data rather than leaving the last user on screen', ()
     profileJs.indexOf('async _load('),
     profileJs.indexOf('// ── rendering')
   );
-  const branch = fn.slice(fn.indexOf('err.status === 401'));
+  const branch = fn.slice(fn.indexOf('err.status === 401) {'));
   // `_data = { signedOut: true }` unconditionally — NOT `if (!_data)`,
   // which would keep showing the previous user's rank after logout.
   assert.match(branch.slice(0, 300), /Profile\._data = \{ signedOut: true \}/);
+  // …and the copy kept for the next visit goes too (#2777), whether or not
+  // this load is still the current one.
+  const catchBlock = fn.slice(fn.indexOf('} catch (err) {'));
+  assert.match(
+    catchBlock.slice(0, catchBlock.indexOf('if (token !== Profile._loadToken) return;')),
+    /err\.status === 401\) Profile\._ownCache = null/,
+  );
+});
+
+// ─── Instant return visits (#2777) ───────────────────────────────────────
+
+test('re-opening the own profile paints the cached copy, never another user\'s', () => {
+  const open = profileJs.slice(profileJs.indexOf('async open('), profileJs.indexOf('close() {'));
+  // The cache is consulted instead of wiping `_data` on every visit…
+  assert.doesNotMatch(open, /Profile\._data = null;/);
+  assert.match(open, /Profile\._targetUsername \? null : Profile\._cachedOwnData\(\)/,
+    'a public #profile/<name> page never starts from the own-profile cache');
+  // …and only when it was filed under whoever is signed in now.
+  const cached = open.slice(open.indexOf('_cachedOwnData() {'));
+  assert.match(cached, /cache\.username !== username\) return null/);
+});
+
+test('a second route run for the same profile does not start a second load', () => {
+  // popstate + hashchange both reach navigateToProfile; the second lands in
+  // _routeMountedProfile -> Profile.open. It must join the load in flight,
+  // not double every request of the screen.
+  const open = profileJs.slice(profileJs.indexOf('async open('), profileJs.indexOf('_cachedOwnData() {'));
+  const guard = open.indexOf('if (Profile._open && Profile._loading');
+  assert.ok(guard > 0, 'open() returns early while the same target is loading');
+  assert.match(open.slice(guard, guard + 200), /=== Profile\._targetUsername\)/,
+    'only for the SAME target — own -> public (or back) still reloads');
+  assert.ok(guard < open.indexOf('Profile._open = true;'), 'checked before any state is touched');
+});
+
+test('a finished load files its data under the username it was started for', () => {
+  const fn = profileJs.slice(profileJs.indexOf('async _load('), profileJs.indexOf('// ── rendering'));
+  const captured = fn.indexOf('const username = Profile._user().username');
+  const firstAwait = fn.indexOf('await Promise.all');
+  assert.ok(captured > 0 && captured < firstAwait, 'captured before the requests go out');
+  assert.match(fn, /Profile\._ownCache = \{ username, data \}/);
+  // The signed-out pre-check drops it as well.
+  const pre = fn.slice(fn.indexOf('if (window.App && !App.user)'));
+  assert.match(pre.slice(0, 200), /Profile\._ownCache = null/);
+});
+
+test('the profile starts loading before its screen transition', () => {
+  const nav = appJs.slice(appJs.indexOf('  navigateToProfile(username = null) {'),
+    appJs.indexOf('  _routeMountedProfile(username) {'));
+  const openAt = nav.indexOf('Profile.open(username)');
+  assert.ok(openAt > 0, 'navigateToProfile opens the Profile module');
+  assert.ok(openAt < nav.indexOf('PlatformUI.transition('),
+    'the requests are in flight (or the cache painted) before the transition captures');
+  assert.ok(nav.indexOf('App._inProfile = true') < nav.indexOf('PlatformUI.transition('),
+    'set before the transition, so a same-tick second route run hits the mounted guard');
 });
 
 test('the signed-out render offers a sign-in link, not the connection error', () => {
@@ -171,15 +228,21 @@ test('the signed-out branch is checked before the generic error branch', () => {
 test('the identity card renders picture, name and the way in to editing', () => {
   const fn = profileViewTsx.slice(
     profileViewTsx.indexOf('function IdentityCard('),
-    profileViewTsx.indexOf('function PublicControls(')
+    profileViewTsx.indexOf('function StatCards(')
   );
   assert.ok(fn.length, 'IdentityCard must exist');
   assert.match(fn, /IdentityAvatar/, 'the picture, or the initial-in-a-circle fallback');
   assert.match(fn, /profile-edit-btn/);
   assert.match(fn, /Profile\.showEditSheet\(\)/);
-  const chips = profileStoreJs.slice(profileStoreJs.indexOf('export function identityView'));
-  assert.match(chips, /Your builder profile/);
-  assert.match(chips, /#leaderboard\/users\//, 'the builder-profile link goes to the kudos page');
+  assert.match(fn, /identity\.sub/, 'the prototype card\'s one line of facts under the name');
+  // The builder-profile chip left the card: the viewer's proposed PRs are
+  // "See all" over Your contributions now, the same #leaderboard/users/<you>.
+  const identity = profileStoreJs.slice(profileStoreJs.indexOf('export function identityView'),
+    profileStoreJs.indexOf('export function statsView'));
+  assert.doesNotMatch(identity, /Your builder profile/);
+  const contributions = profileStoreJs.slice(profileStoreJs.indexOf('export function contributionsView'));
+  assert.match(contributions, /seeAllHref: username \? `#leaderboard\/users\/\$\{encodeURIComponent\(username\)\}`/,
+    'the builder page is where "See all" goes');
 });
 
 test('the bio is a text node, never innerHTML', () => {
@@ -432,20 +495,27 @@ test('field-level server errors keep the sheet open', () => {
   assert.match(profileSheetTsx, /if \(result\.ok\) return;/);
 });
 
-test('the completed list is the viewer’s own, and every row links out', () => {
+test('Me counts the viewer’s OWN completions, and its contributions link out', () => {
   assert.doesNotMatch(profileJs, /challenges\.filter\(\(c\) => c\.completed\)/,
     'c.completed is an ORGANISER flag — that filter showed 28 of production’s '
     + '34 live challenges to every signed-in person as their own completions');
-  assert.match(profileJs, /\/api\/me\/challenges\/completed/);
-  const shaping = profileStoreJs.slice(profileStoreJs.indexOf('export function completedView'));
-  assert.match(shaping, /href: '#leaderboard\/challenges\/'/);
+  // The prototype's Me counts completions on a stat card (from
+  // GET /api/me/summary, the same per-user done rule) instead of listing
+  // them; the list is the Challenges tab, where each one is a card.
+  assert.match(profileJs, /\/api\/me\/summary/);
+  const stats = profileStoreJs.slice(profileStoreJs.indexOf('export function statsView'),
+    profileStoreJs.indexOf('export function moreRowsView'));
+  assert.match(stats, /summary\.challenges && summary\.challenges\.done/);
+  // Every contribution is a real anchor to its proposal's page.
+  const shaping = profileStoreJs.slice(profileStoreJs.indexOf('export function contributionsView'));
+  assert.match(shaping, /href: `#app\/\$\{encodeURIComponent\(c\.appSlug\)\}\/dev\/proposals\/\$\{Number\(c\.sessionId\)\}`/);
   const fn = profileViewTsx.slice(
-    profileViewTsx.indexOf('function Completed('),
-    profileViewTsx.indexOf('function TokenCard(')
+    profileViewTsx.indexOf('function Contributions('),
+    profileViewTsx.indexOf('function ProfileSkeleton(')
   );
-  assert.match(fn, /See all challenges/);
-  assert.match(fn, /No completed challenges yet/);
-  assert.match(fn, /Browse challenges/, 'the empty state offers a way forward');
+  assert.match(fn, /as="a"/);
+  assert.match(fn, /href=\{row\.href\}/);
+  assert.match(fn, /Nothing merged yet/, 'an empty list says so, and why');
 });
 
 test('the stale "organiser flag" comments are gone', () => {
@@ -505,11 +575,14 @@ test('the profile checks assert on the changed screen, not on "/"', () => {
       'the self-app is hash-routed — a bare pathname boots the home feed');
     assert.ok(t.expectSelector, `${t.name} must assert on a real element`);
   }
-  // The screen check proves BOTH halves of the change in one slot: the
-  // corrected completed list (the selector) and the identity card above it
-  // (the text, which only the card renders).
-  const screen = mine.find((t) => t.path === '/#profile');
-  assert.match(screen.expectSelector, /data-completed-challenge/);
+  // The screen check proves the card and what now follows it in one slot:
+  // the identity card with its Edit button, then the prototype's three stat
+  // cards (the selector), and the card's own words (the text, which only the
+  // card renders). It rides ?demo=1 so a staging clone's empty
+  // chat_sessions still draws the lower half of the screen.
+  const screen = mine.find((t) => t.path === '/?demo=1#profile');
+  assert.ok(screen, 'the Me screen check is one of the two');
+  assert.match(screen.expectSelector, /#profile-identity-card:has\(#profile-edit-btn\) \+ #profile-stats/);
   assert.equal(screen.expectText, 'Edit profile');
 });
 
@@ -543,8 +616,19 @@ test('the profile no longer fetches the season challenge list via the old route'
   const body = profileJs.slice(profileJs.indexOf('const Profile'));
   assert.doesNotMatch(body, /\/challenges-api\/challenges/,
     'the old season-grid fetch must not come back');
-  assert.match(profileJs, /\/challenges-api\/seasons/,
-    'the season lookup stays — it scopes both /me/* reads and names the season');
-  assert.match(profileJs, /\/challenges-api\/me\/ranking/);
-  assert.match(profileJs, /\/challenges-api\/me\/breakdown/);
+  // #2777: nor does it fetch /challenges-api/seasons any more. That was a
+  // whole first round — every season's events and challenges — spent to read
+  // one id; the /me/* reads now name the season as `active` and the server
+  // resolves it.
+  assert.doesNotMatch(body, /fetchJson\('\/challenges-api\/seasons/,
+    'no seasons round before the real requests');
+  assert.match(profileJs, /\/challenges-api\/me\/ranking\?season_id=active/);
+  // The breakdown left with the points it breaks down: the Challenges tab's
+  // standing card reads it (features/leaderboard/my-standing.js), with the
+  // same two trims.
+  assert.doesNotMatch(body, /\/challenges-api\/me\/breakdown/, 'Me draws no breakdown any more');
+  const standing = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/leaderboard/my-standing.js'), 'utf8');
+  assert.match(standing, /\/challenges-api\/me\/breakdown\?season_id=active&include_activity=0&include_progress=0/,
+    'the breakdown skips the activity and progress lists nothing draws');
 });

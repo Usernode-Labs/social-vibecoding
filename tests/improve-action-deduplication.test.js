@@ -25,7 +25,7 @@ const PANEL = read('frontend/src/features/improve/actions.tsx');
 // The "+" menu moved out of the frame into its own row component, which the
 // Board and the Workshop render one-at-a-time — so the menu's rows are
 // rendered from there now. Same markup, same props, one level less chrome.
-const { DevActionsRow } = loadTsx('frontend/src/features/dev-board/actions-row.tsx');
+const { DevActionsRow, DevPlusMenu } = loadTsx('frontend/src/features/dev-board/actions-row.tsx');
 const BASE = {
   selfHosted: false, readOnly: false, canCollaborate: true, showsMembers: true,
   cardCls: '', cardHoverCls: '',
@@ -47,7 +47,16 @@ test('read-only viewers still get only Fork, and no + button on the platform app
   assert.deepEqual(actions(board({ readOnly: true, canCollaborate: false })), ['fork']);
   const platform = board({ selfHosted: true, readOnly: true, canCollaborate: false });
   assert.deepEqual(actions(platform), []);
-  assert.match(platform, /class="relative ml-auto hidden"><button id="dev-plus-btn"/);
+  // The wrapper is `.dev-ws-plus` now — the "+" closes the Workshop's tab
+  // strip, and app.css positions it there — and it is still hidden outright.
+  assert.match(platform, /class="dev-ws-plus hidden"><button id="dev-plus-btn"/);
+  // The same component is what the Workshop's strip renders, so the gate
+  // holds there too, not only in the Board's row.
+  const strip = renderToHtml(createElement(DevPlusMenu, {
+    ...BASE, selfHosted: true, readOnly: true, canCollaborate: false,
+  }));
+  assert.match(strip, /^<div class="dev-ws-plus hidden"><button id="dev-plus-btn"/);
+  assert.deepEqual(actions(strip), []);
 });
 
 test('hiding import leaves File an issue under the heading, so neither the heading nor the divider goes', () => {

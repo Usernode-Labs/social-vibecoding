@@ -122,11 +122,20 @@ const OWNED = [
   { sel: '#home-widget-strip-section' },     // features/home/widget-strip.tsx
   { sel: '#home-discover-section' },         // features/home/panels/sections.tsx
   { sel: '#home-challenges-section' },       // ditto
-  { sel: '#home-create-section' },           // ditto
+  // #home-create-section is gone: Create is #app-list's trailing tile now
+  // (features/home/create-tile.tsx), inside the host already listed above.
   // The Challenges pane (features/leaderboard/challenges-pane.tsx). Scoped to
   // its route: #challenges-root is only mounted — and only React's — while the
   // Leaderboard screen's Challenges tab is the section on screen.
   { sel: '#challenges-root', when: '#leaderboard/challenges' },
+  // The History pane (features/leaderboard/history-pane.tsx), the same
+  // arrangement one tab over: React-owned from the day it shipped, and only
+  // on screen while History is the section showing.
+  { sel: '#leaderboard-history-root', when: '#leaderboard/seasons' },
+  // Settings' account block (features/settings/account-rows.tsx) inside the
+  // footer settings.js MOVES between columns: the move is the module's, the
+  // subtree is React's alone.
+  { sel: '#settings-account-rows' },
   // The transcript (features/group-chat/transcript.tsx). A vote row's inline
   // controls are the one exception, and they are the controller-host seam
   // AGENTS.md documents: transcript.tsx renders `.gc-vote-inline` ONCE as an
@@ -188,6 +197,11 @@ const OWNED = [
   // sweep a closed sheet on every route and report nothing.
   { sel: '#notifications-sheet', when: '#notifications' }, // features/notifications/notifications-sheet.tsx
   { sel: '#messages-sheet', when: '#messages' },           // features/messages/index.tsx
+  // An agent session (#2779, features/agent-session/index.tsx). The phone
+  // screen is React's end to end; the same panel mounted in the Messages
+  // pane is covered by the #messages-sheet entry above, and the deep link
+  // below puts a seeded conversation (src/db/migrate.js, id 990801) in it.
+  { sel: '#agent-session-screen', when: '#agent/' },
 
   // The AI-credit row in Settings → Anthropic API key
   // (features/header/ai-budget.tsx). It used to be an empty
@@ -350,13 +364,15 @@ const OWNED = [
   // card's host, filled by admin-topochain.js, and #1120 slice 35 made that
   // card a child component. The whole section is React's, exemption included.
   { sel: '#admin-section-content', when: '#admin/users' }, // features/admin/admin-users.tsx
+  { sel: '#admin-section-content', when: '#admin/reports' }, // features/admin/admin-reports.tsx
 ];
 
 const ROUTES = [
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990411',
   '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401',
   '#home', '#apps', '#apps/recipebot', '#workshop', '#settings', '#settings/app-ai',
-  '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#messages', '#notifications',
+  '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#leaderboard/seasons', '#messages', '#notifications',
+  '#agent/990801', '#agent/990801/changes', '#messages/agent/990801',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
   // The spec reader, which is the one host inside `#dc-view` whose subtree
@@ -373,7 +389,7 @@ const ROUTES = [
   // than dropping the route.
   '#app/recipebot/dev/issues/900001',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/estimator', '#admin/analytics', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/status', '#admin/rollover', '#admin/staging-reap',
-  '#admin/model-costs',
+  '#admin/model-costs', '#admin/reports',
   '#admin/api-tester', '#admin/sql-console', '#admin/settings', '#admin/app-version', '#admin/waitlist', '#admin/onchain-accounts', '#admin/user-activities', '#admin/delegations',
   '#admin/challenge-templates', '#admin/challenge-scoring', '#admin/seasons', '#admin/season-events',
 ];

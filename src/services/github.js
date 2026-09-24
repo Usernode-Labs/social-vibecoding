@@ -1118,7 +1118,7 @@ function _setCreatePrRetryDelaysForTests(delays) {
 // the same fixed-list caveat. Cross-fork callers must pass `false`; see the
 // note at the call below for why the default is not safe there.
 async function createPR(owner, repo, {
-  branch, title, body, head, headRepo, maintainerCanModify,
+  branch, title, body, head, headRepo, maintainerCanModify, draft,
 }) {
   const octokit = await getOctokit(owner);
   const headRef = head || branch;
@@ -1147,6 +1147,7 @@ async function createPR(owner, repo, {
         ...(typeof maintainerCanModify === 'boolean'
           ? { maintainer_can_modify: maintainerCanModify }
           : {}),
+        ...(typeof draft === 'boolean' ? { draft } : {}),
         base: 'main',
       }));
       break;
@@ -1349,6 +1350,28 @@ async function getPR(owner, repo, prNumber) {
     pull_number: prNumber,
   });
   return data;
+}
+
+// GitHub's REST update-PR endpoint does not support changing draft state.
+// The GraphQL mutation is the supported transition at the review boundary.
+async function markPrReadyForReview(owner, repo, prNumber, existingPr = null) {
+  const pr = existingPr || await getPR(owner, repo, prNumber);
+  if (pr.draft === false) return pr;
+  if (pr.draft !== true) throw new Error(`GitHub did not report PR #${prNumber}'s draft state`);
+  if (!pr.node_id) throw new Error(`PR #${prNumber} has no GitHub node ID`);
+  const octokit = await getOctokit(owner);
+  const result = await octokit.graphql(
+    `mutation($pullRequestId: ID!) {
+      markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
+        pullRequest { id isDraft }
+      }
+    }`,
+    { pullRequestId: pr.node_id }
+  );
+  if (result?.markPullRequestReadyForReview?.pullRequest?.isDraft !== false) {
+    throw new Error(`GitHub did not confirm PR #${prNumber} is ready for review`);
+  }
+  return { ...pr, draft: false };
 }
 
 // List the file paths changed between two refs ("main...branch-name").
@@ -2313,6 +2336,7 @@ module.exports = {
   HeadMovedError,
   _setOctokitFactoryForTests,
   getPR,
+  markPrReadyForReview,
   listChangedFiles,
   compareRefs,
   getProposalDiff,

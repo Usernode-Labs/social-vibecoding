@@ -215,7 +215,7 @@ test('the chunk commits the panes with flushSync before a forwarded open() runs'
     'the header write navigateToSettings delegated to syncChrome() is made up once the module is in');
   assert.match(facadeJs, /route\(section\) \{\s*whenLoaded\(\(real\) => \{\s*if \(window\.App && !window\.App\._inSettings\) return;\s*real\.route\(section\);/);
   assert.match(facadeJs, /showTermsSheet\(onAccepted, opts\) \{\s*return whenLoaded\(\(real\) => real\.showTermsSheet\(onAccepted, opts\)\);/);
-  assert.match(facadeJs, /async logout\(\) \{\s*return whenLoaded\(\(real\) => real\.logout\(\)\);/);
+  assert.match(facadeJs, /async logout\(options\) \{\s*return whenLoaded\(\(real\) => real\.logout\(options\)\);/);
 });
 
 test('the chassis gates the panes on the chunk, and init() runs where the panes are', () => {

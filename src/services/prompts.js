@@ -38,6 +38,45 @@ function getAppConventions() {
   return cached;
 }
 
+// #2817: the design guidance every coding agent builds with. It asks for the
+// platform's own kit before anything invented, one primary action and one
+// word per concept, the four data states, and a self-check before commit.
+// Claude and OpenRouter sessions get the same text so the two backends stay
+// in parity; the one line that differs is HOW the agent checks its work,
+// because the Codex runner gives OpenRouter models text input only
+// (worker/build-codex-model-catalog.js), so they read the page's
+// accessibility snapshot where Claude looks at screenshots. A separate file
+// so it can be tuned without touching the 150 KB conventions document.
+const DESIGN_GUIDANCE_PATH = path.join(__dirname, '..', 'prompts', 'design-guidance.md');
+const DESIGN_SELF_CHECK_TOKEN = '{{DESIGN_SELF_CHECK}}';
+const DESIGN_CHECKLIST = 'confirm: one primary action; headings make sense on their own; no new colours or fonts; nothing boxed in a card that could be plain layout; the same words as the rest of the app. Fix what fails and check again, within the in-loop browser\'s time budget.';
+const DESIGN_SELF_CHECK = Object.freeze({
+  images: `Checking your work: when the in-loop browser is available, take screenshots (\`browser_take_screenshot\`) of each changed screen at a phone width (\`browser_resize\` to 390x844) and a desktop width, including its empty and error states, and ${DESIGN_CHECKLIST}`,
+  text: `Checking your work: you read text, not images. When the in-loop browser is available, check the running app with its accessibility snapshot (\`browser_snapshot\`) rather than screenshots. Walk each changed screen at a phone width (\`browser_resize\` to 390x844) and a desktop width, including its empty and error states, and ${DESIGN_CHECKLIST}`,
+});
+
+let cachedDesignGuidance = null;
+
+function getDesignGuidance({ readsImages = true } = {}) {
+  if (cachedDesignGuidance === null) {
+    try {
+      cachedDesignGuidance = fs.readFileSync(DESIGN_GUIDANCE_PATH, 'utf-8').trim();
+    } catch (err) {
+      log.error('prompts', 'Failed to read design-guidance.md', { err: err.message });
+      cachedDesignGuidance = '';
+    }
+  }
+  if (!cachedDesignGuidance) return '';
+  return cachedDesignGuidance
+    .split(DESIGN_SELF_CHECK_TOKEN)
+    .join(readsImages ? DESIGN_SELF_CHECK.images : DESIGN_SELF_CHECK.text);
+}
+
+// The same decisions, made once at spec time so the build inherits them
+// instead of improvising: every scout writes them into the spec as a
+// plain-language "### Design" subsection a non-developer can review.
+const SPEC_DESIGN_BRIEF = `DESIGN BRIEF: when the change adds or alters something a person sees, end the "User-facing changes" half (before any "### Questions") with a short "### Design" subsection in plain language: the screen's one job, its one primary action, which existing screen of this app it should look and behave like, and the exact word it uses for each thing on it, matching the words the app already uses. Prefer the app's existing components and styling to anything new, and say so when nothing existing fits. The build follows this subsection, so decide here rather than leaving it to the build. Omit it for changes nobody sees.`;
+
 // The offline excerpt carried inside a connector work order.
 //
 // Every app's notes tell a coding agent to fetch these conventions from the
@@ -249,7 +288,7 @@ function getLaunchpadInstructions({ appName, slug, targetProposalId } = {}) {
   // USERNODE_DOMAIN getAppConventions() resolves, falling back to the hosted
   // platform where it is unset (local dev, tests) because a chat cannot use
   // a relative path.
-  const origin = platformOrigin() || 'https://my.onhomeroom.com';
+  const origin = platformOrigin() || 'https://app.onhomeroom.com';
   const continuing = Number.isInteger(Number(targetProposalId)) && Number(targetProposalId) > 0;
   return [
     `You are making a change to "${name}" on Homeroom (app \`${slug}\`).`,
@@ -295,6 +334,8 @@ function getLaunchpadInstructions({ appName, slug, targetProposalId } = {}) {
 
 module.exports = {
   getAppConventions,
+  getDesignGuidance,
+  SPEC_DESIGN_BRIEF,
   getLaunchpadInstructions,
   getWorkOrderEssentials,
   getConventionSections,

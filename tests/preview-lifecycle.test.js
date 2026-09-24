@@ -31,7 +31,11 @@ test('preview lifecycle across independent owners', { skip: !url }, async t => {
       checks_commit_sha TEXT, staging_commit_sha TEXT, imported_pr_head_sha TEXT);
       CREATE TABLE artifacts (value TEXT); INSERT INTO artifacts VALUES ('new');`);
     const schemaSql = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-    await db.query(schemaSql.slice(schemaSql.indexOf('CREATE TABLE IF NOT EXISTS preview_operations')));
+    // This fixture needs only its own table. Later migrations may reference
+    // production tables deliberately absent from this isolated schema.
+    const previewSchema = schemaSql.match(/CREATE TABLE IF NOT EXISTS preview_operations \([\s\S]*?\n\);/);
+    assert.ok(previewSchema, 'preview_operations must exist in the schema');
+    await db.query(previewSchema[0]);
     const make = (checks = async () => {}) => {
       const guard = createGuard({ retryMs: 5 });
       return createLifecycle({ poolFor: () => db, lock: guard.withResourceUse,

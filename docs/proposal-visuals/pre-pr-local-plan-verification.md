@@ -35,9 +35,10 @@ a plan that changes the intent. The plan schema and examples are in
    `motion` only when movement is the claim.
 3. Run the command. It checks out the two exact commits, builds both Docker
    images, snapshots the *local* database, and restores that same snapshot
-   separately for base and head. It mints the normal local capture identities
-   and runs the production browser replay/encoder twice, restoring the
-   snapshot between passes. A failed locator, action, assertion, media check,
+   separately for base and head before each story and viewport. It mints the
+   normal local capture identities and runs the production browser
+   replay/encoder twice, restoring the snapshot between cases and passes. A
+   failed locator, action, assertion, media check,
    or reproducibility check exits nonzero and writes a failure JSON file.
 4. On success, inspect the PNGs and any WebM in
    `.local-visual-evidence/pre-pr-<run-id>/`. Confirm that the captures show

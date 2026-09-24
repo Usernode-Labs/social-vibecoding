@@ -1,4 +1,8 @@
-export type ConversationKind = 'direct' | 'group';
+/**
+ * `channel` is a room every user is in (#2783) — today only #general. It has
+ * no roster (just a count), no owner and no invitations.
+ */
+export type ConversationKind = 'direct' | 'group' | 'channel';
 export type MembershipStatus = 'invited' | 'member' | 'declined' | 'left' | 'removed';
 export type MemberRole = 'owner' | 'member';
 
@@ -98,6 +102,8 @@ export interface ConversationSummary {
   canInvite: boolean;
   canManage: boolean;
   archived?: boolean;
+  /** A channel's `#handle` (`general`); null for everything else. */
+  channelKey?: string | null;
 }
 
 export interface ConversationDetail extends ConversationSummary {
@@ -138,7 +144,27 @@ export interface MessagesRoute {
    * in this database and the other is an app.
    */
   appSlug: string | null;
+  /**
+   * #2813: an AGENT thread open beside the list on a desktop — a global
+   * agent chat (`#messages/agent/<id>`) or an app's dev session
+   * (`#messages/session/<slug>/<id>`). Both used to navigate away to a
+   * screen of their own (`#chat/<id>`, `#app/<slug>/dev/sessions/<id>`),
+   * which is still where a PHONE goes: the router swaps these addresses for
+   * those there, so the full-screen behaviour on a narrow viewport is the
+   * one it always was.
+   *
+   * Mutually exclusive with the other two, for the same reason they are
+   * with each other: one thread is open.
+   */
+  agent: MessagesAgentThread | null;
 }
+
+/** An agent thread of the inbox (#2813). See `MessagesRoute.agent`. */
+export type MessagesAgentThread =
+  | { kind: 'chat'; id: string }
+  | { kind: 'session'; slug: string; id: number }
+  // #2779: an agent session, a conversation with the Mayor (a serial id).
+  | { kind: 'agent'; id: number };
 
 /** The app whose discussion is open, once its metadata has landed. */
 export interface DiscussionContext {
@@ -146,6 +172,13 @@ export interface DiscussionContext {
   name: string;
   /** `can_collaborate === false` — the composer does not render. */
   readOnly: boolean;
+  /**
+   * The app's artwork, for the pane header's tile when the inbox has no row
+   * to take it from (a discussion opened from a link by a non-member). The
+   * row's own `iconUrl` / `iconEmoji` win when there is one.
+   */
+  iconUrl: string | null;
+  iconEmoji: string | null;
 }
 
 import type { AppDiscussion, InboxFilter } from './inbox';
