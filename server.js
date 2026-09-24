@@ -557,7 +557,9 @@ app.use(conversationRoutes(config));
 app.use(contentReportRoutes(config));
 app.use(proposalHandoffRoutes(config));
 // #2779: agent sessions, the per-user conversation that starts changes.
-app.use(agentSessionRoutes(config));
+app.use(agentSessionRoutes(config, {
+  scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
+}));
 app.use(sessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
 }));

@@ -1856,6 +1856,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.check_state, cs.check_phase, cs.check_error_detail,
                 cs.test_results, cs.spec_md,
                 cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
+                -- #2779: a change started from an agent session is listed
+                -- under that conversation in Messages, not as a row of its own.
+                cs.agent_session_id,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 lt.role AS last_turn_role, lt.asks AS last_turn_asks,
                 a.slug AS app_slug, a.name AS app_name,
@@ -2275,6 +2278,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows } = await pool.query(
         `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
                 created_from_issue_number, agent_backend, agent_model, source, external_agent, build_venue,
+                -- #2779: the agent session a change was started from, so the
+                -- owner's Build door can lead back to that conversation.
+                agent_session_id,
                 (spec_md IS NOT NULL AND spec_md <> '') AS has_spec,
                 -- The same derivation the shared-session list uses, so the
                 -- owner's own card and everyone else's card agree about
@@ -6525,6 +6531,12 @@ ${SCREENSHOT_FETCH_NOTE}`;
 // attachments.js buildDispatchBlock): the worker has curl + outbound
 // network, and Claude Code's Read tool views local image files. Appended
 // to the headless addendum and both worker prompts (scout + build).
+// #2779: the coding agent's read-only platform tools, served by
+// worker/homeroom-read-mcp.js on a grant execInWorker issues per build or
+// scout turn (services/worker.js mintHomeroomReadGrant). Minting is best
+// effort, so the note says what to do when they are absent.
+const HOMEROOM_READ_NOTE = 'Read-only Homeroom tools may also be available to you, as the MCP server `homeroom`: get_platform_conventions, get_app, list_requests, get_request, get_proposal and get_change. They read what the platform knows about THIS change\'s app: a section of the platform conventions on demand, the full discussion on a request, a proposal and its check results. They cannot write anything, and a call about any other app is refused. If they are not in your tool list this turn, carry on without them. Questions for the user still go in your final message.';
+
 const SCREENSHOT_FETCH_NOTE = 'If the issue body embeds a screenshot URL like `https://…/issue-images/<id>` (a **Screenshot:** image line), it is a screenshot the reporter captured as context — the agent working the issue should download it with `curl -sS -o /tmp/issue-screenshot.png <url>` (run via Bash) and use its Read tool on /tmp/issue-screenshot.png to view it before working.';
 
 // #170: the addendum for the headless DECISION turn — the one extra Mayor
@@ -9301,7 +9313,7 @@ ${toolPromptArg}
 USER REQUEST: "${userMessage}"${attachmentsBlock}${discussionBlock}
 
 ${scoutPlanModeLine}${personalFilesNote}${revisionBlock}
-${issueHelperNote}${prodDebug ? `
+${issueHelperNote}${runLocally ? '' : `\n${HOMEROOM_READ_NOTE}\n`}${prodDebug ? `
 ${debugAccess.promptBlock()}
 ` : ''}
 Your job is to investigate this repo and produce a MARKDOWN SPEC for the change. The spec should be:
@@ -11152,7 +11164,7 @@ run against this repo outside the harness.${personalFilesNote}
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body plus BOTH of its discussion surfaces (\`{ issue, comments, commentsTruncated, usernodeThread?, usernodeThreadTruncated?, note? }\` — \`comments\` are the GitHub comments, \`usernodeThread\` is the issue's Discussion thread on the platform, where people often answer clarifying questions). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way. ${SCREENSHOT_FETCH_NOTE}
 
 ${platformIssueHelperNote}
-${prodDebug && !isCodexSession ? `
+${runLocally ? '' : `\n${HOMEROOM_READ_NOTE}\n`}${prodDebug && !isCodexSession ? `
 ${debugAccess.promptBlock()}
 ` : ''}
 INSTRUCTIONS:
@@ -12926,4 +12938,4 @@ const MAYOR_TURN_DEPS = Object.freeze({
   staticWrapUpText,
 });
 
-module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { MAYOR_TURN_DEPS, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

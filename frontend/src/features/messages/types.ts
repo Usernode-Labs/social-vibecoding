@@ -162,7 +162,9 @@ export interface MessagesRoute {
 /** An agent thread of the inbox (#2813). See `MessagesRoute.agent`. */
 export type MessagesAgentThread =
   | { kind: 'chat'; id: string }
-  | { kind: 'session'; slug: string; id: number };
+  | { kind: 'session'; slug: string; id: number }
+  // #2779: an agent session, a conversation with the Mayor (a serial id).
+  | { kind: 'agent'; id: number };
 
 /** The app whose discussion is open, once its metadata has landed. */
 export interface DiscussionContext {

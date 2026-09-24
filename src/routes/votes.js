@@ -2026,6 +2026,9 @@ function mergedRowSelect() {
            cs.merged_at, cs.promoted_at, cs.shared_at, cs.session_title,
            COALESCE(cs.merged_at, cs.created_at) AS completed_at,
            cs.revert_of_session_id,
+           -- #2779: the agent session the change was started from. Only its
+           -- id: the conversation itself answers to its owner alone.
+           cs.agent_session_id,
            -- Transcript sharing: true when this proposal's owner published
            -- the dev chat that produced it, so the proposal page can offer
            -- "Read the dev chat". A boolean only — the transcript itself is

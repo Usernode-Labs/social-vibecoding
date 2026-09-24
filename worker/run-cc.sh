@@ -314,6 +314,21 @@ if [ "$MODE" = "build" ] && [ -f "$BROWSER_MCP_CONFIG" ]; then
   BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
 fi
 
+# #2779: the coding agent's read-only Homeroom tools, for a build or scout
+# turn the platform issued a grant to (HOMEROOM_MCP_TOKEN). The config names
+# only the stdio bridge; the grant reaches it through this process's
+# environment and is never written to a file. A build loads it beside the
+# browser config; a scout loads it alone, so it stays browser-free. Still
+# --strict-mcp-config either way.
+HOMEROOM_MCP_CONFIG="${HOMEROOM_MCP_CONFIG:-/usr/local/share/usernode/homeroom-mcp.json}"
+if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && [ -f "$HOMEROOM_MCP_CONFIG" ]; then
+  if [ "$MODE" = "build" ] && [ -n "$BROWSER_MCP_FLAGS" ]; then
+    BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG $HOMEROOM_MCP_CONFIG --strict-mcp-config"
+  elif [ "$MODE" = "build" ] || [ "$MODE" = "scout" ]; then
+    BROWSER_MCP_FLAGS="--mcp-config $HOMEROOM_MCP_CONFIG --strict-mcp-config"
+  fi
+fi
+
 EVIDENCE_PROXY_PID=""
 EVIDENCE_DIAGNOSTIC_TAIL_PID=""
 EVIDENCE_TMP=""

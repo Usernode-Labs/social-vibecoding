@@ -68,6 +68,7 @@ export const TAB_FOR_SCREEN = Object.freeze({
   'browse-screen': 'discover',
   'messages-screen': 'messages',
   'global-chat-screen': 'messages',
+  'agent-session-screen': 'messages',
   'workshop-screen': 'workshop',
   'profile-screen': 'me',
   'leaderboard-screen': 'me',

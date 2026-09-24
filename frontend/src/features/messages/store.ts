@@ -453,6 +453,9 @@ export function validAgentThread(agent?: MessagesAgentThread | null): MessagesAg
     const slug = validSlug(agent.slug);
     return slug && validId(agent.id) ? { kind: 'session', slug, id: agent.id } : null;
   }
+  if (agent.kind === 'agent') {
+    return validId(agent.id) ? { kind: 'agent', id: agent.id } : null;
+  }
   return null;
 }
 
@@ -460,6 +463,7 @@ function sameAgentThread(a: MessagesAgentThread | null, b: MessagesAgentThread |
   if (!a || !b) return a === b;
   if (a.kind === 'chat' && b.kind === 'chat') return a.id === b.id;
   if (a.kind === 'session' && b.kind === 'session') return a.slug === b.slug && a.id === b.id;
+  if (a.kind === 'agent' && b.kind === 'agent') return a.id === b.id;
   return false;
 }
 
@@ -468,6 +472,7 @@ function sameAgentThread(a: MessagesAgentThread | null, b: MessagesAgentThread |
  * every viewport; on a phone the router swaps it for `fullScreenAddress`.
  */
 export function agentThreadAddress(agent: MessagesAgentThread): string {
+  if (agent.kind === 'agent') return `#messages/agent/${agent.id}`;
   return agent.kind === 'chat'
     ? `#messages/agent/${encodeURIComponent(agent.id)}`
     : `#messages/session/${encodeURIComponent(agent.slug)}/${agent.id}`;
@@ -475,6 +480,7 @@ export function agentThreadAddress(agent: MessagesAgentThread): string {
 
 /** Where the same thread lives as a screen of its own — a phone's destination. */
 export function fullScreenAddress(agent: MessagesAgentThread): string {
+  if (agent.kind === 'agent') return `#agent/${agent.id}`;
   return agent.kind === 'chat'
     ? `#chat/${encodeURIComponent(agent.id)}`
     : `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`;

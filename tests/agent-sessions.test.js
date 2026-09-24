@@ -378,3 +378,81 @@ test('the conversation is read in id order from the rows its changes wrote', asy
     assert.deepEqual(query.params, [5, 10, 3]);
   });
 });
+
+test('a confirmed card gets the Mayor a follow-up turn when the conversation is free', async () => {
+  const agentTurnMod = require('../src/services/mayor/agent-turn');
+  const actionsMod = require('../src/services/agent-session-actions');
+  const saved = {
+    runAgentTurn: agentTurnMod.runAgentTurn,
+    resolveAgentMayor: agentTurnMod.resolveAgentMayor,
+    confirmAction: actionsMod.confirmAction,
+  };
+  const turns = [];
+  agentTurnMod.runAgentTurn = async (args) => { turns.push(args); };
+  agentTurnMod.resolveAgentMayor = async () => ({ ok: true, provider: 'anthropic', model: 'm' });
+  actionsMod.confirmAction = async () => ({ id: 'a', toolName: 'start_change', status: 'done', result: { ok: true } });
+  const ACTION = '11111111-2222-3333-4444-555555555555';
+  try {
+    let free = true;
+    const handlers = {
+      "SET active_turn = jsonb_build_object": () => ({ rows: free ? [{ id: 5 }] : [] }),
+    };
+    await withRoutes({ id: 7, username: 'ada' }, handlers, async (call) => {
+      const confirmed = await call('POST', `/api/agent-sessions/5/actions/${ACTION}/confirm`);
+      assert.equal(confirmed.status, 200);
+      assert.equal(confirmed.body.status, 'done');
+      assert.match(confirmed.body.followUp.turnId, /^[0-9a-f-]{36}$/);
+      assert.equal(turns.length, 1);
+      assert.equal(turns[0].messageText, undefined, 'no user message');
+      assert.deepEqual(turns[0].followUp, { toolName: 'start_change', title: 'Start a change', ok: true });
+      assert.equal(turns[0].res, null, 'it streams on the conversation\'s bus');
+      assert.equal(turns[0].turnId, confirmed.body.followUp.turnId);
+
+      free = false;
+      const busy = await call('POST', `/api/agent-sessions/5/actions/${ACTION}/confirm`);
+      assert.equal(busy.status, 200);
+      assert.equal(busy.body.followUp, null, 'a running turn reads the outcome itself');
+      assert.equal(turns.length, 1);
+    });
+  } finally {
+    Object.assign(agentTurnMod, { runAgentTurn: saved.runAgentTurn, resolveAgentMayor: saved.resolveAgentMayor });
+    actionsMod.confirmAction = saved.confirmAction;
+  }
+});
+
+test('stop answers what it stopped, and names the change during a dispatch', async () => {
+  const agentTurnMod = require('../src/services/mayor/agent-turn');
+  const saved = agentTurnMod.stopAgentTurn;
+  agentTurnMod.stopAgentTurn = () => ({ stopped: false, reason: 'dispatch_running', changeId: 50 });
+  try {
+    await withRoutes({ id: 7, username: 'ada' }, { 'FROM agent_sessions WHERE id': () => ({ rows: [{ active_turn: {} }] }) }, async (call) => {
+      const stopped = await call('POST', '/api/agent-sessions/5/stop');
+      assert.deepEqual(stopped.body, { ok: true, stopped: false, reason: 'dispatch_running', changeId: 50 });
+    });
+  } finally {
+    agentTurnMod.stopAgentTurn = saved;
+  }
+});
+
+test('the changes drawer switches the active change without a model call', async () => {
+  const agentSessionsMod = require('../src/services/agent-sessions');
+  const saved = agentSessionsMod.switchActiveChange;
+  const switched = [];
+  agentSessionsMod.switchActiveChange = async (_pool, args) => {
+    switched.push(args);
+    if (args.changeId === 99) throw new agentSessionsMod.AgentSessionError(404, 'That change was not started from this conversation.');
+    return { changed: true, change: { id: args.changeId } };
+  };
+  try {
+    await withRoutes({ id: 7 }, { 'FROM agent_sessions s': () => ({ rows: [SESSION_ROW] }) }, async (call) => {
+      const ok = await call('POST', '/api/agent-sessions/5/active-change', { changeId: 50 });
+      assert.equal(ok.status, 200);
+      assert.equal(ok.body.session.id, 5);
+      assert.deepEqual(switched[0], { agentSessionId: 5, userId: 7, changeId: 50 });
+      const refused = await call('POST', '/api/agent-sessions/5/active-change', { changeId: 99 });
+      assert.equal(refused.status, 404);
+    });
+  } finally {
+    agentSessionsMod.switchActiveChange = saved;
+  }
+});

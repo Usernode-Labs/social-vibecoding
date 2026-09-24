@@ -847,6 +847,11 @@ const ADDED_IDS = {
   // ── #2377: Global Chat (experimental) ───────────────────────────
   'global-chat-screen': '#2377/#2543: the React-owned conversational screen. It ships hidden for hydration parity, then the hash router reveals the durable session selected from Improve.',
   'global-chat-composer': '#2377: the compact prompt field inside Global Chat. The stable id gives its label and focus behavior one owner across desktop, mobile web, and the native wrapper.',
+  // ── #2779: agent sessions (experimental, behind a per-user flag) ──
+  'agent-session-screen': '#2779: the React-owned agent session screen, one conversation with the Mayor that works on any app. Ships hidden and empty for hydration parity; the hash router reveals it at #agent/<id>, and App.REACT_SCREEN_IDS keeps its visibility single-owned. Everything inside it renders only once a conversation is open, so the root is its one static id.',
+  'settings-agent-sessions-row': '#2779: the Experimental pane\'s agent-sessions row. Ships hidden; settings.js shows it only to a user the server lets choose (agentSessionsChoosable), so the id is how that one writer finds it.',
+  'agent-sessions-enabled': '#2779: the agent-sessions switch. settings.js binds its change handler by id (POST /api/me/agent-sessions), the same way the two switches above it are bound.',
+  'agent-sessions-status': '#2779: the switch\'s status line, where a refused or failed save says why. Ships empty and hidden, like the two status lines above it.',
   // ── #2707: the feedback destination is chosen, never assumed ────
   'feedback-target-hint': 'The line under the Send Feedback destination row. With both destinations selectable nothing is preselected any more, so Submit is disabled until one is tapped — and a control that refuses without saying why is the dead button #1603 fixed one field down. Ships empty and hidden (the controller owns the text, and the one-destination case never shows it), and carries the radiogroup\'s aria-describedby while it is up.',
   // ── #2718 REVIEW: the Improve panel retired, and ten ids with it ─────

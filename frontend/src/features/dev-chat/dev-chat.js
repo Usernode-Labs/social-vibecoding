@@ -9656,6 +9656,8 @@ const DevChat = {
   // the banner — the user is presumably still refining that change.
   _newChangeBannerView(session) {
     if (!session || !session.pr_number) return null;
+    // #2779: its conversation starts the next change, not this chat.
+    if (DevChat._agentSessionBannerView(session)) return null;
     const status = session.status;
     if (status !== 'promoted' && status !== 'merging' && status !== 'merged') return null;
     const proposed = status === 'promoted' || status === 'merging';
@@ -9706,6 +9708,13 @@ const DevChat = {
   async startNewChange() {
     const slug = DevChat._sessionAppSlug(DevChat.currentSession);
     if (!slug) return;
+    // #2779: with agent sessions on, a new change starts in a conversation
+    // with the Mayor, focused on this session's app.
+    const agent = window.UsernodeReact?.agentSession;
+    if (window.App?.user?.agentSessionsEnabled === true && agent) {
+      void agent.start({ slug, entry: 'banner' });
+      return;
+    }
     DevChat._newChangePending = true;
     DevChat._publishBanners();
     try {
@@ -9746,7 +9755,18 @@ const DevChat = {
       newChange: session ? DevChat._newChangeBannerView(session) : null,
       credits: session ? DevChat._creditsBannerView() : null,
       creditsLow: session ? DevChat._creditsLowBannerView() : null,
+      agentSession: session ? DevChat._agentSessionBannerView(session) : null,
     };
+  },
+
+  // #2779: a change its owner started from an agent session is revised in
+  // that conversation (this chat's own route answers 409 for it), so the
+  // composer gives way to a strip that leads there. Other readers see the
+  // chat as they always have.
+  _agentSessionBannerView(session) {
+    if (!session || !session.agent_session_id) return null;
+    if (typeof App === 'undefined' || !App.user || Number(session.user_id) !== Number(App.user.id)) return null;
+    return { href: `#messages/agent/${Number(session.agent_session_id)}` };
   },
 
   // Start a sync, from the banner's button. Named, because the component
@@ -9960,7 +9980,7 @@ const DevChat = {
       // in the box while still not re-explaining a settled fact on the next
       // full render. See `renderChatView`.
       venueNoteHtml: DevChat._venueNoteForRender || '',
-      hidden: !!DevChat._launchpadVenue(),
+      hidden: !!DevChat._launchpadVenue() || !!DevChat._agentSessionBannerView(DevChat.currentSession),
       models: DevChat._modelPickerView(),
       drafts: DevChat._savedDraftsView(),
       attachError: DevChat._attachError,

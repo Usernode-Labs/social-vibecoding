@@ -221,7 +221,15 @@ TOML
   cat <<'TOML'
 
 [shell_environment_policy]
-exclude = ["OPENROUTER_API_KEY"]
+TOML
+  # #2779: the read-only Homeroom grant stays out of commands the model
+  # launches, like the provider key. Only its MCP bridge receives it.
+  if [ -n "${HOMEROOM_MCP_TOKEN:-}" ]; then
+    printf 'exclude = ["OPENROUTER_API_KEY", "HOMEROOM_MCP_TOKEN"]\n'
+  else
+    printf 'exclude = ["OPENROUTER_API_KEY"]\n'
+  fi
+  cat <<'TOML'
 
 [agents]
 enabled = false
@@ -302,6 +310,22 @@ startup_timeout_sec = 30
 tool_timeout_sec = 60
 TOML
   fi
+  # #2779: the coding agent's read-only Homeroom tools, for a build or scout
+  # turn the platform issued a grant to. The bridge receives the grant from
+  # this process's environment through env_vars; the config names only the
+  # variable, never its value.
+  if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && { [ "$MODE" = "build" ] || [ "$MODE" = "scout" ]; }; then
+    cat <<'TOML'
+
+[mcp_servers.homeroom]
+command = "node"
+args = ["/usr/local/bin/homeroom-read-mcp.js"]
+env_vars = ["HOMEROOM_MCP_TOKEN", "PLATFORM_URL"]
+enabled_tools = ["get_platform_conventions", "get_app", "list_requests", "get_request", "get_proposal", "get_change"]
+startup_timeout_sec = 15
+tool_timeout_sec = 30
+TOML
+  fi
 } > "$CONFIG_TMP"; then
   rm -f "$CONFIG_TMP"
   die "could not write Codex config"
@@ -313,6 +337,10 @@ fi
 if grep -Fq -- "$OPENROUTER_API_KEY" "$CONFIG_TMP"; then
   rm -f "$CONFIG_TMP"
   die "refusing Codex config containing the OpenRouter key"
+fi
+if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && grep -Fq -- "$HOMEROOM_MCP_TOKEN" "$CONFIG_TMP"; then
+  rm -f "$CONFIG_TMP"
+  die "refusing Codex config containing the Homeroom grant"
 fi
 chmod 600 "$CONFIG_TMP" || { rm -f "$CONFIG_TMP"; die "could not secure Codex config"; }
 mv -f "$CONFIG_TMP" "$CODEX_HOME/config.toml" \
@@ -345,7 +373,7 @@ TMP_STATUS=$(mktemp /home/node/.usernode/turn-codex-status-XXXX 2>/dev/null || m
 # contain replacement or regex metacharacters are handled safely.
 redact_codex_stream() {
   awk '
-    BEGIN { secret = ENVIRON["OPENROUTER_API_KEY"] }
+    BEGIN { secret = ENVIRON["OPENROUTER_API_KEY"]; grant = ENVIRON["HOMEROOM_MCP_TOKEN"] }
     {
       # Codex emits a structured JSON retry event immediately after this
       # internal Rust warning. Drop the duplicate implementation detail so
@@ -355,6 +383,12 @@ redact_codex_stream() {
       if (secret != "") {
         while ((at = index($0, secret)) > 0) {
           $0 = substr($0, 1, at - 1) "****" substr($0, at + length(secret))
+        }
+      }
+      # #2779: the read-only Homeroom grant, scrubbed the same literal way.
+      if (grant != "") {
+        while ((at = index($0, grant)) > 0) {
+          $0 = substr($0, 1, at - 1) "****" substr($0, at + length(grant))
         }
       }
       print

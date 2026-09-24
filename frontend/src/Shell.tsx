@@ -85,6 +85,7 @@ import { MessagesScreen } from './features/messages';
 import { ParkedStrip, PlatformTabs } from './features/nav';
 import { SidePanel } from './features/side-panel';
 import { GlobalChatScreen } from './features/global-chat';
+import { AgentSessionScreen } from './features/agent-session';
 import { WorkshopScreen } from './features/workshop';
 import { NotificationsIsland } from './features/notifications';
 import { MobileInstallBanner } from './features/mobile-install';
@@ -278,6 +279,15 @@ export function Shell() {
           App.REACT_SCREEN_IDS keeps visibility single-owned by React.
       */}
       <Island name="GlobalChatScreen"><GlobalChatScreen /></Island>
+      {/*
+          Agent sessions (#2779): one conversation with the Mayor that works
+          on any app. A React-owned sibling screen like Global Chat above,
+          shipped hidden and empty, revealed by the hash router at #agent/<id>
+          (a phone's surface; a desktop draws the same panel in the Messages
+          pane). Listed in App.REACT_SCREEN_IDS, so React alone writes its
+          `hidden`.
+      */}
+      <Island name="AgentSessionScreen"><AgentSessionScreen /></Island>
       {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down

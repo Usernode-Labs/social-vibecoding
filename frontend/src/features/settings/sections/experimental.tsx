@@ -19,6 +19,12 @@ import { LocalAgentsList } from '../local-agents-list';
  * from every venue list until this is on. Deployment support (cliAuthEnabled)
  * is still required on top; see VENUES in public/js/build-venues.js.
  *
+ * #2779 Agent sessions (default from AGENT_SESSIONS_DEFAULT, off today): new
+ * work starts in one conversation with the Mayor that works on any app. The
+ * row ships hidden and settings.js shows it only to a user the server says
+ * may choose (`agentSessionsChoosable`: admins until the opt-in opens), and
+ * POSTs /api/me/agent-sessions on change. Global Chat keeps its own switch.
+ *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
  * exposes, and because a lease is NOT a credential: revoking a CLI token is a
@@ -49,6 +55,15 @@ export function ExperimentalSection() {
             Adds <span className="font-mono">Your computer &middot; Homeroom session</span> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Homeroom CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.
           </p>
           <StatusLine id="session-bridge-status" size="xs" />
+        </div>
+        <div id="settings-agent-sessions-row" className="hidden mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+          <SwitchRow id="agent-sessions-enabled">
+            Agent sessions
+          </SwitchRow>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+            New changes start in an agent session: one conversation with the Mayor that works on any app, starts and tracks your changes, and stays open after they merge. Sessions you already have keep working as they do today. Global Chat has its own switch and is not affected.
+          </p>
+          <StatusLine id="agent-sessions-status" size="xs" />
         </div>
       </div>
       <div id="settings-local-agents-section" className="hidden mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">

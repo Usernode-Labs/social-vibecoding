@@ -38,9 +38,52 @@ function sendError(res, err, what) {
   return res.status(500).json({ error: 'Internal server error' });
 }
 
-function agentSessionRoutes(config) {
+// `scheduleInteractiveRecovery` is server.js's retained-turn scheduler, the
+// one routes/sessions.js is given: a dispatch from a conversation leaves its
+// change's durable turn to it exactly as a classic turn does.
+function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   const router = express.Router();
   const pool = getPool(config);
+
+  // After a confirmed card the Mayor gets a short follow-up turn, so it can
+  // say what happened and carry on (dispatch the build the user asked for
+  // before the change existed). No request is open for it: it streams on the
+  // conversation's bus, which GET .../events follows. It only runs when the
+  // conversation is free and somebody can pay for it; otherwise the outcome
+  // simply waits in the conversation for the next turn.
+  const startFollowUp = async ({ user, agentSessionId, outcome }) => {
+    const turnId = agentTurn.newTurnId();
+    const leased = await agentSessions.acquireTurnLease(pool, { agentSessionId, userId: user.id, turnId });
+    if (!leased) return null;
+    let mayor = null;
+    try {
+      mayor = await agentTurn.resolveAgentMayor({ pool, config, userId: user.id, agentSessionId });
+    } catch (err) {
+      log.warn('agent-sessions', 'Follow-up turn could not resolve the Mayor', { agentSessionId, err: err.message });
+    }
+    if (!mayor || !mayor.ok) {
+      await agentSessions.releaseTurnLease(pool, { agentSessionId, turnId }).catch(() => {});
+      return null;
+    }
+    agentTurn.runAgentTurn({
+      pool,
+      config,
+      user,
+      agentSessionId,
+      turnId,
+      followUp: {
+        toolName: outcome.toolName,
+        title: actions.ACTION_LABELS[outcome.toolName] || outcome.toolName,
+        ok: outcome.status === 'done',
+      },
+      mayor,
+      res: null,
+      scheduleInteractiveRecovery,
+    }).catch((err) => {
+      log.error('agent-sessions', 'Follow-up turn crashed', { agentSessionId, err: err.message });
+    });
+    return { turnId };
+  };
 
   const requireUser = (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
@@ -85,7 +128,9 @@ function agentSessionRoutes(config) {
     try {
       const session = await agentSessions.getAgentSession(pool, { userId: req.user.id, id: req.params.id });
       if (!session) return res.status(404).json({ error: 'Agent session not found' });
-      return res.json({ session });
+      // Where a running turn is, when it runs in this process, so a client
+      // that opens the conversation mid-turn shows the right controls.
+      return res.json({ session, turn: agentTurn.turnState(session.id) });
     } catch (err) {
       return sendError(res, err, 'Read agent session');
     }
@@ -191,6 +236,7 @@ function agentSessionRoutes(config) {
       });
       await agentTurn.runAgentTurn({
         pool, config, user: req.user, agentSessionId: id, turnId, messageText: message, mayor, res,
+        scheduleInteractiveRecovery,
       });
       return undefined;
     } catch (err) {
@@ -249,10 +295,29 @@ function agentSessionRoutes(config) {
         ? await pool.query('SELECT active_turn FROM agent_sessions WHERE id = $1 AND user_id = $2', [id, req.user.id])
         : { rows: [] };
       if (!rows.length) return res.status(404).json({ error: 'Agent session not found' });
-      const stopped = agentTurn.stopAgentTurn(id, { by: req.user.username });
-      return res.json({ ok: true, stopped, ...(stopped ? {} : { reason: 'no active turn' }) });
+      // During a dispatch the answer names the change: its own stop route
+      // (POST /api/sessions/:changeId/stop) confirms the kill and escalates.
+      return res.json({ ok: true, ...agentTurn.stopAgentTurn(id, { by: req.user.username }) });
     } catch (err) {
       return sendError(res, err, 'Stop agent turn');
+    }
+  });
+
+  // POST /api/agent-sessions/:id/active-change { changeId } — the changes
+  // drawer's "Switch to". The same move as the Mayor's switch_active_change
+  // (parks the current change, appends a change_switched note), without
+  // spending a model call on a button press.
+  router.post('/api/agent-sessions/:id/active-change', requireUser, async (req, res) => {
+    const id = positiveId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Agent session not found' });
+    try {
+      await agentSessions.switchActiveChange(pool, {
+        agentSessionId: id, userId: req.user.id, changeId: (req.body || {}).changeId,
+      });
+      const session = await agentSessions.getAgentSession(pool, { userId: req.user.id, id });
+      return res.json({ session });
+    } catch (err) {
+      return sendError(res, err, 'Switch active change');
     }
   });
 
@@ -278,7 +343,11 @@ function agentSessionRoutes(config) {
       const outcome = await actions.confirmAction(pool, {
         config, user: req.user, agentSessionId: id, actionId: req.params.actionId,
       });
-      return res.json(outcome);
+      const followUp = await startFollowUp({ user: req.user, agentSessionId: id, outcome }).catch((err) => {
+        log.warn('agent-sessions', 'Follow-up turn did not start', { agentSessionId: id, err: err.message });
+        return null;
+      });
+      return res.json({ ...outcome, followUp });
     } catch (err) {
       return sendError(res, err, 'Confirm agent session action');
     }

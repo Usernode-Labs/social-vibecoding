@@ -94,6 +94,9 @@ function shapeChangeRow(row) {
     status: row.change_status || null,
     title: row.change_title || null,
     prNumber: row.change_pr_number || null,
+    // For the changes drawer: the owner's own preview and checks verdict.
+    stagingUrl: row.change_staging_url || null,
+    checkState: row.change_check_state || null,
   };
 }
 
@@ -146,6 +149,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
+            c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             ca.slug AS change_app_slug, ca.name AS change_app_name
        FROM agent_sessions s
        LEFT JOIN apps fa ON fa.id = s.focus_app_id
@@ -174,6 +178,7 @@ async function getAgentSession(pool, { userId, id }) {
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
+            c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             ca.slug AS change_app_slug, ca.name AS change_app_name
        FROM agent_sessions s
        LEFT JOIN apps fa ON fa.id = s.focus_app_id
@@ -189,6 +194,7 @@ async function getAgentSession(pool, { userId, id }) {
   const { rows: changes } = await pool.query(
     `SELECT c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
+            c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             a.slug AS change_app_slug, a.name AS change_app_name
        FROM chat_sessions c JOIN apps a ON a.id = c.app_id
       WHERE c.agent_session_id = $1 AND c.user_id = $2
@@ -483,8 +489,10 @@ async function setFocusApp(pool, { agentSessionId, user, slug }) {
 //
 // One Mayor turn at a time per conversation. The lease is a row write, not a
 // process-local lock, so two tabs (or two pods) cannot both start a turn. A
-// lease older than TURN_LEASE_STALE_MINUTES belongs to a turn whose process
-// died without releasing it, and is taken over.
+// running turn renews it every minute (a dispatch can run far longer than
+// the stale window), so a lease not renewed for TURN_LEASE_STALE_MINUTES
+// belongs to a turn whose process died without releasing it, and is taken
+// over.
 const TURN_LEASE_STALE_MINUTES = 20;
 
 async function acquireTurnLease(pool, { agentSessionId, userId, turnId }) {
@@ -494,9 +502,22 @@ async function acquireTurnLease(pool, { agentSessionId, userId, turnId }) {
             last_activity_at = NOW()
       WHERE id = $1 AND user_id = $2 AND status = 'open'
         AND (active_turn IS NULL
-             OR (active_turn->>'startedAt')::timestamptz < NOW() - make_interval(mins => $4))
+             OR COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz
+                < NOW() - make_interval(mins => $4))
       RETURNING id`,
     [agentSessionId, userId, turnId, TURN_LEASE_STALE_MINUTES]
+  );
+  return rows.length > 0;
+}
+
+// Only the turn holding the lease renews it.
+async function renewTurnLease(pool, { agentSessionId, turnId }) {
+  const { rows } = await pool.query(
+    `UPDATE agent_sessions
+        SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW())
+      WHERE id = $1 AND active_turn->>'id' = $2
+      RETURNING id`,
+    [agentSessionId, turnId]
   );
   return rows.length > 0;
 }
@@ -534,5 +555,6 @@ module.exports = {
   setFocusApp,
   TURN_LEASE_STALE_MINUTES,
   acquireTurnLease,
+  renewTurnLease,
   releaseTurnLease,
 };
