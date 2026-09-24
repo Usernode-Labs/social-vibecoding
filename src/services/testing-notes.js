@@ -50,10 +50,22 @@ const TESTING_PATH_MAX = 512;
 // inside it. Extras are dropped and logged — never silently truncated.
 const CAPTURE_MAX_PATHS = 3;
 
-// Marker lines are matched whole-line and tolerate variable `=` runs and
-// surrounding whitespace, but require the exact TESTING / END TESTING label.
-const OPEN_RE = /^[ \t]*={2,}[ \t]*TESTING[ \t]*={2,}[ \t]*$/gm;
-const CLOSE_RE = /^[ \t]*={2,}[ \t]*END TESTING[ \t]*={2,}[ \t]*$/gm;
+// Marker lines are matched whole-line and require the exact upper-case
+// TESTING / END TESTING label. They tolerate variable `=` runs, surrounding
+// whitespace, and the markdown a model sometimes wraps the marker in
+// ("**TESTING ===**", "**==== TESTING ====**"), but the line must START with
+// `=` or `**`/`__`: an agent's ordinary "Testing" or "## TESTING" heading
+// over its test log is not how-to-test guidance for the group (#2779
+// follow-up; see markerRe).
+const OPEN_RE = markerRe('TESTING');
+const CLOSE_RE = markerRe('END TESTING');
+
+function markerRe(label) {
+  return new RegExp(
+    `^[ \\t]*(?=\\*\\*|__|=)(?:\\*\\*|__)?[ \\t]*(?:={2,}[ \\t]*)?${label}(?:[ \\t]*={2,})?[ \\t]*(?:\\*\\*|__)?[ \\t]*:?[ \\t]*$`,
+    'gm',
+  );
+}
 
 // Viewport labels a capture path may carry (#768). Desktop is the default
 // (the capture container's fixed 1280x800); `@mobile` opts one route into

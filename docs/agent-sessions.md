@@ -328,6 +328,12 @@ The coding agent runs exactly as today: one warm worker per change, with the app
 
 **Honest value check.** The agent already gets the conventions and failing checks inline, so the gain is modest: on-demand reads of the request discussion and proposal details. This step lands after the Mayor work (see Implementation plan), and it can be dropped without affecting the rest.
 
+**Proposal title and description (as built).** One conversation carries several changes, and a message is filed under whichever change was active when it was sent. So the messages under a change are the go-ahead ("Build the spec") and the next change's opening line, not a description of it. `pr-metadata.js` therefore writes an agent-session change's title and description from the change alone:
+- its only request is the name the Mayor gave it at `start_change`, recorded on the `change_started` event (`session_title` follows the PR title once one exists);
+- then its spec, its builds' summaries and its coding agent's descriptions.
+
+A Codex change is titled by that name; a Claude change's title is generated from it. The text is rewritten on every build and again at `POST /api/sessions/:id/promote`, so voters read the change as it stands. The refresh is best-effort and never blocks the vote. `start_change` no longer writes `proposed_pr_title`, so only a title a person sets (`PATCH /api/sessions/:id/title`) pins the proposal's name. Coding agents' `**DESCRIPTION**` / `**TESTING ===**` markers are accepted; ordinary headings are not.
+
 ## Lifecycle and limits
 
 An agent session is closed only by the user archiving it. Its changes keep today's lifecycle, and the session just tracks which of them is active.
