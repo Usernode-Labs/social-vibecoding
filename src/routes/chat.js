@@ -1208,6 +1208,7 @@ module.exports = {
   chatRoutes,
   postedViaFor,
   stagingMockGroupChat,
+  stagingMockGeneralStream,
   stagingDemoTranscript,
   stagingMockReplyThread,
   stagingMockStreamPage,
