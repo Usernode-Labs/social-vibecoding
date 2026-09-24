@@ -63,7 +63,9 @@ export function MorePanel({ rows }: { rows: { challenges: string | null; kudos: 
     .join(', ');
   return (
     <section id="profile-more" className="mt-2">
-      <SectionHeader className="px-1">More</SectionHeader>
+      {/* SectionHeader's own `px-4`, on the rows' content edge (#2832) — see
+          Contributions in ./profile-view.tsx. */}
+      <SectionHeader>More</SectionHeader>
       <GroupedList className="mx-0">
         <ListRow
           as="a"

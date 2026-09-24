@@ -177,14 +177,19 @@ function ContributionTile({ tile }: { tile: any }): ReactNode {
  *  proposal page, and "See all" to the builder page with every one of them. */
 function Contributions({ view }: { view: any }): ReactNode {
   return (
+    // The label keeps SectionHeader's own `px-4` (#2832): with the list at
+    // `mx-0` that lines it up with the rows' content edge, where each tile
+    // starts — as Settings and Discover set theirs. It was `px-1`, 12px left
+    // of the rows it labels. "See all" takes the same inset from the right,
+    // where the rows' Merged badges end.
     <section id="profile-contributions" className="mt-2">
       <div className="flex items-baseline justify-between gap-3">
-        <SectionHeader className="px-1">Your contributions</SectionHeader>
+        <SectionHeader>Your contributions</SectionHeader>
         {view.seeAllHref ? (
           <a
             id="profile-contributions-all"
             href={view.seeAllHref}
-            className="shrink-0 px-1 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
+            className="shrink-0 px-4 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
           >
             See all
           </a>
