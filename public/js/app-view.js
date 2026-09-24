@@ -6138,6 +6138,13 @@ const AppView = {
       RefAutocomplete.attach(gcInput, slugForDraft);
     }
 
+    // `:th` emoji shortcode autocomplete, and `:tada:` → 🎉 as the closing
+    // colon is typed. Same capture-phase lifecycle; a `:` token never shares
+    // a caret with an `@` or `#` one, so the three menus never fight.
+    if (typeof EmojiAutocomplete !== 'undefined') {
+      EmojiAutocomplete.attach(gcInput);
+    }
+
     // #15: Escape clears a staged reply quote (when the input is empty so
     // we don't fight other Escape semantics mid-typing).
     gcInput.addEventListener('keydown', (e) => {

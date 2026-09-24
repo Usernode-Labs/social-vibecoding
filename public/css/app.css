@@ -1530,6 +1530,17 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-mention-menu button { display: block; width: 100%; padding: 9px 12px; border-radius: 10px; color: var(--text-primary); font-size: 15px; text-align: left; }
 .messages-mention-menu button:hover { background: var(--messages-surface-2); }
 .messages-mention-menu .messages-channel-option-name { color: var(--text-muted); font-size: 13px; }
+/* `:th` — the emoji shortcode menu (features/messages/composer.tsx). The
+   mention menu's box; the heading stays put while the rows scroll, a row is
+   the glyph beside its `:code:`, and the keyboard's row wears the hover. */
+.messages-emoji-menu { max-height: none; overflow: visible; }
+.messages-emoji-menu-heading { padding: 4px 12px 6px; color: var(--text-muted); font-size: 12px; font-weight: 600; }
+.messages-emoji-menu-query { color: var(--text-primary); }
+.messages-emoji-menu-list { max-height: min(288px, 38vh); overflow-y: auto; overscroll-behavior: contain; }
+.messages-emoji-menu .messages-emoji-menu-list button { display: flex; align-items: center; gap: 10px; padding: 6px 12px; }
+.messages-emoji-menu .messages-emoji-menu-list button[aria-selected="true"] { background: var(--messages-surface-2); }
+.messages-emoji-option-glyph { flex: none; width: 24px; font-size: 20px; line-height: 24px; text-align: center; }
+.messages-emoji-option-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .messages-composer-dragging .messages-composer-card { outline: 2px solid var(--accent); outline-offset: -2px; }
 .messages-drop-overlay {
   position: absolute;
@@ -8830,6 +8841,31 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* `:th` — the emoji shortcode menu (#gc-emoji-menu). Same box and rows as
+   the mention menu; a heading repeats the query, and each row is the glyph
+   beside its `:code:`. Tall enough for its eight rows without scrolling. */
+.gc-mention-menu.gc-emoji-menu { max-height: min(320px, 50vh); }
+.gc-emoji-menu-heading {
+  padding: 4px 10px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.gc-emoji-menu-query { color: var(--text-primary, inherit); }
+.gc-emoji-option { gap: 10px; padding: 5px 10px; }
+.gc-emoji-option-glyph {
+  flex: none;
+  width: 24px;
+  font-size: 20px;
+  line-height: 24px;
+  text-align: center;
+}
+.gc-emoji-option-code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── Streaming spinner (bouncing dots) ─────────────────── */

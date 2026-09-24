@@ -1002,13 +1002,17 @@ const GroupChat = {
       // #694: paperclip / paste / drag-and-drop attachment wiring for
       // this thread's composer.
       GroupChat.setupAttachments({ type, ref });
-      // #87/#130 parity with the general composer: @mention and #/PR#
-      // reference autocomplete on the thread input.
+      // #87/#130 parity with the general composer: @mention, #/PR#
+      // reference and `:emoji` autocomplete on the thread input.
       if (typeof MentionAutocomplete !== 'undefined') {
         MentionAutocomplete.attach(input, slug);
       }
       if (typeof RefAutocomplete !== 'undefined') {
         RefAutocomplete.attach(input, slug);
+      }
+      // `:th` emoji shortcodes, and `:tada:` → 🎉 (same as the general one).
+      if (typeof EmojiAutocomplete !== 'undefined') {
+        EmojiAutocomplete.attach(input);
       }
       // #15 parity: Escape clears a staged reply quote (when the input is
       // empty so we don't fight other Escape semantics mid-typing).
@@ -4404,6 +4408,283 @@ const RefAutocomplete = {
   },
 };
 
+// ── `:shortcode` emoji autocomplete ─────────────────────────────────────
+//
+// Discord's `:th` → "Emoji matching :th" → `👍 :thumbsup:`, in #gc-input and
+// #gc-thread-input. Modeled on MentionAutocomplete and RefAutocomplete above:
+// same body-level menu host (`#gc-emoji-menu`, children React's —
+// features/group-chat/autocomplete.tsx), same capture-phase keydown, same
+// _detectToken/_sync/accept lifecycle, same dismiss and positioning. Two
+// differences:
+//
+//   - The matching is not here. The emoji, their shortcodes and the token
+//     rules are features/message-actions/emoji-shortcodes.ts, which the
+//     Messages composer uses directly; this module calls the same functions
+//     through window.UsernodeReact.groupChat. Before the bundle has loaded
+//     there is nothing to call, and the menu simply does not open.
+//   - A complete, known `:tada:` becomes 🎉 the moment its closing colon is
+//     typed, menu or no menu (_convert, from the `input` listener).
+//
+// A `:` only starts a token at the start of the text or after whitespace or
+// an opening bracket, so `10:30` and `https://` never open it, and the query
+// is name characters only — so it never shares a caret with an `@name` or a
+// `#123` token, and at most one of the three menus is open at once.
+const EmojiAutocomplete = {
+  MAX_RESULTS: 8,
+
+  _input: null,
+  _menu: null,
+  _items: [],      // currently-shown { emoji, shortcode }
+  _active: -1,
+  _open: false,
+  _tokenStart: -1, // index of the `:` in input.value for the active token
+  _query: '',
+  _composing: false,
+  _dismissBound: null,
+
+  _api() {
+    const api = window.UsernodeReact?.groupChat;
+    return api && typeof api.emojiShortcodeToken === 'function' ? api : null;
+  },
+
+  // Wire (or re-wire) the controller onto a freshly-rendered composer.
+  // Idempotent per element; called on every group-chat tab mount and every
+  // thread mount. Each listener re-targets the controller at ITS input, so
+  // the general composer and an open thread's never answer for each other.
+  attach(input) {
+    if (!input) return;
+    EmojiAutocomplete._input = input;
+
+    if (input._gcEmojiBound) return;
+    input._gcEmojiBound = true;
+
+    const own = () => {
+      if (EmojiAutocomplete._input !== input) {
+        EmojiAutocomplete.close();
+        EmojiAutocomplete._input = input;
+      }
+    };
+    input.addEventListener('compositionstart', () => { EmojiAutocomplete._composing = true; });
+    input.addEventListener('compositionend', () => {
+      EmojiAutocomplete._composing = false;
+      own(); EmojiAutocomplete._sync();
+    });
+    input.addEventListener('input', (e) => {
+      own();
+      // Only a typed colon completes a code — not a paste, and not the
+      // synthetic `input` accept() and _convert() dispatch themselves.
+      if (e.inputType === 'insertText' && e.data === ':' && EmojiAutocomplete._convert()) return;
+      EmojiAutocomplete._sync();
+    });
+    input.addEventListener('click', () => { own(); EmojiAutocomplete._sync(); });
+    input.addEventListener('keyup', (e) => {
+      if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
+      own(); EmojiAutocomplete._sync();
+    });
+    // Capture phase so we win over the composer's own keydown handler and
+    // the form's implicit Enter-submit while the menu is open. Only
+    // consumes keys while this menu is open, so it can't fight the mention
+    // and reference menus' identical handlers.
+    input.addEventListener('keydown', (e) => {
+      if (EmojiAutocomplete._input === input) EmojiAutocomplete._onKeydown(e);
+    }, true);
+    input.addEventListener('blur', () => {
+      setTimeout(() => { if (document.activeElement !== input) EmojiAutocomplete.close(); }, 0);
+    });
+  },
+
+  // Detect an active `:query` immediately before the caret.
+  // Returns { start, query } or null.
+  _detectToken() {
+    const input = EmojiAutocomplete._input;
+    const api = EmojiAutocomplete._api();
+    if (!input || !api) return null;
+    return api.emojiShortcodeToken(input.value, input.selectionStart, input.selectionEnd);
+  },
+
+  // Re-evaluate the token under the caret and open/close/refresh the menu.
+  _sync() {
+    if (EmojiAutocomplete._composing) return;
+    const token = EmojiAutocomplete._detectToken();
+    if (!token) { EmojiAutocomplete.close(); return; }
+    const items = EmojiAutocomplete._api().matchEmojiShortcodes(token.query, EmojiAutocomplete.MAX_RESULTS);
+    if (!items.length) { EmojiAutocomplete.close(); return; }
+    EmojiAutocomplete._tokenStart = token.start;
+    EmojiAutocomplete._query = token.query;
+    EmojiAutocomplete._items = items;
+    EmojiAutocomplete._active = 0;
+    EmojiAutocomplete._render();
+  },
+
+  _ensureMenu() {
+    if (EmojiAutocomplete._menu) return EmojiAutocomplete._menu;
+    const menu = document.createElement('div');
+    menu.id = 'gc-emoji-menu';
+    // The mention menu's box; its rows are gc-mention-option too, so the
+    // hover and highlight are theirs. No role on the host: the heading is not
+    // an option, so the listbox is a child (autocomplete.tsx).
+    menu.className = 'gc-mention-menu gc-emoji-menu hidden';
+    // mousedown (not click) so we can preventDefault and keep the input
+    // focused — a blur-then-click would close the menu before the click.
+    menu.addEventListener('mousedown', (e) => {
+      const opt = e.target.closest('.gc-emoji-option');
+      if (!opt) return;
+      e.preventDefault();
+      EmojiAutocomplete.accept(opt.dataset.emoji);
+    });
+    document.body.appendChild(menu);
+    // Same split as the other two menus: ours to place, React's to fill.
+    window.UsernodeReact?.groupChat?.mountEmojiMenu?.(menu);
+    EmojiAutocomplete._menu = menu;
+    return menu;
+  },
+
+  _publish() {
+    window.UsernodeReact?.groupChat?.publishEmojiMenu?.(
+      EmojiAutocomplete._query,
+      EmojiAutocomplete._items.map((item) => ({ emoji: item.emoji, shortcode: item.shortcode })),
+      EmojiAutocomplete._active
+    );
+  },
+
+  _render() {
+    const menu = EmojiAutocomplete._ensureMenu();
+    // Publishing goes through flushSync (features/group-chat/mount.ts), so the
+    // rows exist before _position() measures the menu's height.
+    EmojiAutocomplete._publish();
+
+    if (!EmojiAutocomplete._open) {
+      menu.classList.remove('hidden');
+      EmojiAutocomplete._open = true;
+      EmojiAutocomplete._bindDismiss();
+    }
+    EmojiAutocomplete._position();
+  },
+
+  // Anchor above the composer, flipping below if it would clip the top.
+  // Matches the input width — same mechanics as MentionAutocomplete.
+  _position() {
+    const input = EmojiAutocomplete._input;
+    const menu = EmojiAutocomplete._menu;
+    if (!input || !menu) return;
+    const r = input.getBoundingClientRect();
+    menu.style.left = `${r.left}px`;
+    menu.style.width = `${r.width}px`;
+    const h = menu.offsetHeight || 0;
+    let top = r.top - h - 4;
+    if (top < 8) top = Math.min(r.bottom + 4, window.innerHeight - h - 8);
+    menu.style.top = `${top}px`;
+  },
+
+  _bindDismiss() {
+    if (EmojiAutocomplete._dismissBound) return;
+    EmojiAutocomplete._dismissBound = (e) => {
+      if (e.type === 'scroll') { EmojiAutocomplete.close(); return; }
+      if (EmojiAutocomplete._menu && EmojiAutocomplete._menu.contains(e.target)) return;
+      if (e.target === EmojiAutocomplete._input) return;
+      EmojiAutocomplete.close();
+    };
+    document.addEventListener('mousedown', EmojiAutocomplete._dismissBound, true);
+    const msgs = document.getElementById('gc-messages');
+    if (msgs) msgs.addEventListener('scroll', EmojiAutocomplete._dismissBound, true);
+  },
+
+  close() {
+    if (!EmojiAutocomplete._open) return;
+    EmojiAutocomplete._open = false;
+    EmojiAutocomplete._active = -1;
+    EmojiAutocomplete._items = [];
+    EmojiAutocomplete._tokenStart = -1;
+    EmojiAutocomplete._query = '';
+    if (EmojiAutocomplete._menu) {
+      EmojiAutocomplete._menu.classList.add('hidden');
+      EmojiAutocomplete._publish();
+    }
+    if (EmojiAutocomplete._dismissBound) {
+      document.removeEventListener('mousedown', EmojiAutocomplete._dismissBound, true);
+      const msgs = document.getElementById('gc-messages');
+      if (msgs) msgs.removeEventListener('scroll', EmojiAutocomplete._dismissBound, true);
+      EmojiAutocomplete._dismissBound = null;
+    }
+  },
+
+  // The index is the state; the class and the scroll follow from it.
+  _move(delta) {
+    const n = EmojiAutocomplete._items.length;
+    if (!n) return;
+    EmojiAutocomplete._active = (EmojiAutocomplete._active + delta + n) % n;
+    EmojiAutocomplete._publish();
+  },
+
+  // Capture-phase keydown. Consumes the event only when the menu is open
+  // and the key is one we own.
+  _onKeydown(e) {
+    if (!EmojiAutocomplete._open || e.isComposing) return;
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault(); e.stopPropagation(); EmojiAutocomplete._move(1); break;
+      case 'ArrowUp':
+        e.preventDefault(); e.stopPropagation(); EmojiAutocomplete._move(-1); break;
+      case 'Enter':
+      case 'Tab': {
+        if (e.key === 'Tab' && e.shiftKey) break;
+        const item = EmojiAutocomplete._items[EmojiAutocomplete._active];
+        if (item) {
+          e.preventDefault(); e.stopPropagation();
+          EmojiAutocomplete.accept(item.emoji);
+        }
+        break;
+      }
+      case 'Escape':
+        e.preventDefault(); e.stopPropagation(); EmojiAutocomplete.close(); break;
+      default:
+        break;
+    }
+  },
+
+  // Put `emoji` and a space where the `:query` token was, restore the caret,
+  // and fire a synthetic `input` event so draft persistence and the typing
+  // indicator run exactly as if the user typed it.
+  accept(emoji) {
+    const input = EmojiAutocomplete._input;
+    if (!input || !emoji || EmojiAutocomplete._tokenStart < 0) { EmojiAutocomplete.close(); return; }
+    const caret = input.selectionStart;
+    const value = input.value;
+    const before = value.slice(0, EmojiAutocomplete._tokenStart);
+    const insert = `${emoji} `;
+    const next = before + insert + value.slice(caret);
+    // `:query` is at least three characters and an emoji plus a space at
+    // most four, but the maxlength rule is the other menus', so keep it.
+    const max = parseInt(input.getAttribute('maxlength') || '0', 10);
+    if (max && next.length > max) { EmojiAutocomplete.close(); return; }
+
+    input.value = next;
+    const pos = (before + insert).length;
+    input.setSelectionRange(pos, pos);
+    EmojiAutocomplete.close();
+    input.focus();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  },
+
+  // A typed closing colon that completes a known code — `:tada:` — swaps the
+  // code for its emoji in place. True when it did (the synthetic `input` it
+  // dispatches has already re-synced every menu).
+  _convert() {
+    const input = EmojiAutocomplete._input;
+    const api = EmojiAutocomplete._api();
+    if (!input || !api || input.selectionStart !== input.selectionEnd) return false;
+    const done = api.completedEmojiShortcode(input.value, input.selectionStart);
+    if (!done) return false;
+    const value = input.value;
+    input.value = value.slice(0, done.start) + done.emoji + value.slice(done.end);
+    const pos = done.start + done.emoji.length;
+    input.setSelectionRange(pos, pos);
+    EmojiAutocomplete.close();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  },
+};
+
 // Expose on window so app.js's WS dispatcher can reconcile the in-chat
 // unread dots on notification events. (A top-level `const` is a lexical
 // global accessible by bare name within the realm, but is NOT a property
@@ -4411,3 +4692,4 @@ const RefAutocomplete = {
 window.GroupChat = GroupChat;
 window.MentionAutocomplete = MentionAutocomplete;
 window.RefAutocomplete = RefAutocomplete;
+window.EmojiAutocomplete = EmojiAutocomplete;
