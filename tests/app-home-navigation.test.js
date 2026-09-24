@@ -74,7 +74,7 @@ function harness() {
   Browse._load = () => {};
   App.bindEvents();
   return {
-    App, Browse, location,
+    App, Browse, location, context,
     visible: id => !element(id).classList.contains('hidden'),
     get frameMounted() { return frameMounted; },
     get closes() { return closes; },
@@ -87,8 +87,8 @@ function harness() {
       location.hash = slug ? `#apps/${slug}` : '#apps';
       App.navigateToBrowse(slug);
     },
-    finishOpen() {
-      AppView.appData = { slug: 'coffee', name: 'Pourover Coffee' };
+    finishOpen(appData = { slug: 'coffee', name: 'Pourover Coffee' }) {
+      AppView.appData = appData;
       releaseOpen();
     },
   };
@@ -145,4 +145,31 @@ test('Home during a pending app load cannot be intercepted or undone by its comp
   assert.equal(h.visible('app-view'), false);
   assert.equal(h.frameMounted, false);
   assert.equal(h.tabRenders, 0, 'the old async router tail must not reopen the app');
+});
+
+test('app navigation retires the previous report target before loading, including when loading fails', async t => {
+  const {loadTsx, renderToHtml, createElement} = require('./lib/render-tsx');
+  const ui = loadTsx('tests/fixtures/app-report-actions-api.ts');
+  const h = harness();
+  const previousWindow = global.window;
+  global.window = h.context;
+  h.context.Improve = ui.Improve;
+  h.App.ImproveStatus = ui.ImproveStatus;
+  ui.Improve._prefetched = true;
+  t.after(() => { global.window = previousWindow; });
+  ui.Improve.setTarget({kind:'platform',slug:'homeroom',name:'Homeroom',canReport:true});
+  const menu = () => renderToHtml(createElement(ui.ImproveQuickActions));
+  assert.match(menu(), /improve-row-report/);
+  const opening = h.App.navigateToApp('missing');
+  assert.equal(ui.improveStore.get().slug, null, 'the pending route cannot report the old app');
+  assert.doesNotMatch(menu(), /improve-row-report/);
+  h.finishOpen(null);
+  await opening;
+  assert.doesNotMatch(menu(), /improve-row-report/, 'a failed load cannot restore the old target');
+  assert.match(h.context.document.title, /App not available/);
+  const retry = h.App.navigateToApp('coffee');
+  h.finishOpen({slug:'coffee',name:'Pourover Coffee',can_report:true});
+  await retry;
+  assert.equal(ui.improveStore.get().slug, 'coffee');
+  assert.match(menu(), /improve-row-report/, 'an available app gets its own report action');
 });

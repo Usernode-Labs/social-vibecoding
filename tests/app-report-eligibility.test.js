@@ -39,3 +39,39 @@ test('opening apps carries API eligibility through the controller into the rende
   ui.ImproveStatus.setAppOpen(true);
   assert.doesNotMatch(render(),/improve-row-report/,'unknown target does not inherit the preceding app permission');
 });
+
+test('an unavailable app cannot leave the report menu targeting Homeroom or a previous app', t => {
+  const previousWindow = global.window;
+  const initial = {...ui.improveStore.get()};
+  const prefetched = ui.Improve._prefetched;
+  ui.Improve._prefetched = true;
+  let homePublications = 0;
+  global.window = {
+    Improve: ui.Improve,
+    App: {currentApp: 'missing-app', platformUpdateState: 'idle'},
+    AppView: {appData: null, readOnly: true},
+    Home: {publishImproveTarget() { homePublications++; }},
+  };
+  t.after(() => {global.window=previousWindow;ui.improveStore.set(initial);ui.Improve._prefetched=prefetched;});
+  for (const previous of [
+    {kind:'platform',slug:'homeroom',name:'Homeroom',selfHosted:true,canReport:true},
+    {kind:'app',slug:app.slug,name:app.name,canReport:true},
+  ]) {
+    for (const appData of [null, {slug: previous.slug, name: previous.name, can_report:true}]) {
+      ui.Improve.setTarget(previous);
+      window.AppView.appData = appData;
+      ui.ImproveStatus.setAppOpen(true);
+      assert.equal(ui.improveStore.get().slug, null, 'unconfirmed or mismatched metadata clears the old target');
+      assert.doesNotMatch(renderToHtml(createElement(ui.ImproveQuickActions)), /improve-row-report/);
+    }
+  }
+  assert.equal(homePublications, 0, 'an app failure must not republish Homeroom');
+  window.App.currentApp = app.slug;
+  window.AppView.appData = {...app, ...accessFlags(app,{id:4},false)};
+  ui.ImproveStatus.setAppOpen(true);
+  assert.equal(ui.improveStore.get().slug, app.slug, 'a successful app load publishes its own target');
+  assert.match(renderToHtml(createElement(ui.ImproveQuickActions)), /improve-row-report/);
+  window.App.currentApp = null;
+  ui.ImproveStatus.setAppOpen(false);
+  assert.equal(homePublications, 1, 'leaving the app still restores the platform context');
+});

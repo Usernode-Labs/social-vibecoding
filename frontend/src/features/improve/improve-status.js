@@ -52,7 +52,8 @@ const ImproveStatus = {
     // one dead option. Improve has no such problem — everything it offers
     // works on the platform's own row, opened like any other app.
     const appData = window.AppView?.appData;
-    if (open && appData?.slug) {
+    const currentSlug = window.App?.currentApp;
+    if (open && appData?.slug && (!currentSlug || appData.slug === currentSlug)) {
       window.Improve?.setTarget({
         kind: appData.self_hosted ? 'platform' : 'app',
         slug: appData.slug,
@@ -67,7 +68,11 @@ const ImproveStatus = {
         canShare: appData.status === 'running' && !!appData.url,
         canReport: appData.can_report === true,
       });
-    } else if (!open) {
+    } else {
+      // A pending or failed app load has no confirmed target. Leaving the
+      // previous one here would report Homeroom (or the previous app) from
+      // the new app's menu. Only an actual app exit restores the platform.
+      window.Improve?.setTarget(null);
       // Closing an app does not mean there is nothing to improve — it means
       // the PLATFORM is what is on screen. So this is a swap, not a clear.
       //
@@ -80,9 +85,8 @@ const ImproveStatus = {
       // screens. `Home.publishImproveTarget` is still the publisher (it owns
       // both gates — an app must not be on screen, and the viewer must
       // actually have been served the self-hosted row), and it is a no-op
-      // when either fails, in which case the clear below stands.
-      window.Improve?.setTarget(null);
-      window.Home?.publishImproveTarget?.();
+      // when either fails, in which case the cleared target stands.
+      if (!open) window.Home?.publishImproveTarget?.();
     }
     ImproveStatus.refreshDeployDot();
   },
