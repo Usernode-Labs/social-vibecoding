@@ -100,14 +100,9 @@ const STEP_P = 'mb-5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400
 const LABEL = 'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
 const QUIET_BUTTON = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
 // The secondary routes under the primary button — forgot password, the
-// email code, register — as the language's neutral pills rather than text
-// links: on the wallpaper a link is a line of grey in a screen of pills.
+// email code — as the language's neutral pills rather than text links: on
+// the wallpaper a link is a line of grey in a screen of pills.
 const PILL_LINK = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
-// ...with ONE exception, at the bottom of the stack: the activation-code
-// route. Three white pills say three equal choices, and this is the rarest
-// of them by a wide margin, so it is a line of text. `py-3` keeps the tap
-// target past 44px while the line still reads as a line.
-const REGISTER_LINE = 'block py-3 text-center text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400';
 // The screen's one <h1>. `#recovery-view` and `#reset-password-view` bring
 // their own <h2> and are out of this change's scope, so on those two views
 // the <h1> is hidden rather than saying "Sign in" above a different title.
@@ -1465,36 +1460,16 @@ export function LoginScreen() {
             </a>
           </p>
           {/*
-              THE FOOT PIN for the password step. #register-link is the one
-              tertiary line this step ends on, and the spacer above it takes
-              whatever height is left over.
+              #2979: the password step no longer ends on a tertiary line — the
+              "Have an activation code? Register" foot pin (#register-link)
+              is gone, along with the spacer that pinned it to the foot. This
+              step now simply stops after the two link wraps above; the
+              leftover height is unclaimed space rather than a fourth band.
 
-              Base ONLY, and that is not a preference: #otp-view,
-              #recovery-view and #reset-password-view all come AFTER this line
-              in source order, so a spacer that grew on those views would push
-              the view itself to the bottom of the screen instead of its foot.
-              With the spacer hidden they simply sit at flex-start, which is
-              the top anchoring they want anyway.
-
-              A spacer rather than `mt-auto` on the line below: the `mt-2`
-              there is a minimum, and an auto margin would replace it rather
-              than add to it.
-          */}
-          <div className={base ? 'grow' : 'hidden'} />
-          <p
-            id="register-link"
-            className={hiddenLast(!base, 'mt-2')}
-          >
-            <a href="#register" className={REGISTER_LINE}>
-              {'Have an activation code? '}
-              <span className="text-violet-700 dark:text-violet-400">Register</span>
-            </a>
-          </p>
-          {/*
-              Email-code sign-in sub-view (thin-shell migration). The ONE
-              email-code path, backed by the web-auth endpoints. It serves both
-              first-time sign-ups (otp/verify creates the account — this is
-              the #signup route) and migrated password-less participants.
+              Email-code sign-in sub-view below (thin-shell migration). The
+              ONE email-code path, backed by the web-auth endpoints. It serves
+              both first-time sign-ups (otp/verify creates the account — this
+              is the #signup route) and migrated password-less participants.
           */}
           {/*
               `flex grow flex-col gap-4` where this was `space-y-4`. `grow` is

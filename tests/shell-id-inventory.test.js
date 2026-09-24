@@ -300,6 +300,8 @@ const RETIRED_IDS = {
   'landing-waitlist': 'The pitch card <section>: 67 words of explanation in a tinted box above the grid. Replaced by the eyebrow, one heading and one sentence, with no box around them — the card was the largest single block on a screen whose problem was that it read as a website.',
   'landing-cta-queued': 'The "You\'re already on the waitlist" line inside that card. A waiting-room session\'s whole action area is one pill to #waiting now (#landing-back-to-waiting, which is deliberately NOT retired), which says the same thing and gives them somewhere to go.',
   'landing-apps': 'The directory grid. 41 tiles, 36 locked, three of the four screens a visitor scrolled through, and none of them usable signed out. The directory is still FETCHED — ?shot=anon-back picks its target from it, pull-to-refresh re-runs it, and _loadLandingApps stays a router seam — it simply renders nothing.',
+  // ── #2979: the activation-code prompt leaves sign-in ────────────────
+  'register-link': 'The "Have an activation code? Register" foot pin under the password sign-in step. The #register route (register.tsx) and its own activation-code field are untouched — this retires only the login screen\'s entry point into it, along with the foot-pinning spacer and the now-unused REGISTER_LINE class constant.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
