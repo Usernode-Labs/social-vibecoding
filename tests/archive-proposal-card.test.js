@@ -221,10 +221,8 @@ function makeTopicHarness(viewerId) {
 
 // A fake #gc-thread-head. It is a MOUNT HOST now rather than an innerHTML
 // sink — `_fillKudosHosts` is the only thing that still reads inside it.
-// `surface` is the page it sits in: a change's own page, or a thread.
-function fakeHead(surface) {
+function fakeHead() {
   return {
-    closest: (sel) => (sel === `.${surface}` ? {} : null),
     querySelector: () => null,
     querySelectorAll: () => [],
   };
@@ -239,7 +237,7 @@ function explorePillId(state) {
 
 test("topic head for another user's proposal puts Explore on the card's band, not in More", () => {
   const { AppView, els, published, headHtml } = makeTopicHarness(ME);
-  els['gc-thread-head'] = fakeHead('dev-change-overview');
+  els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'proposal', id: 7 };
   AppView._findTopicItem = () => baseProposal({ user_id: 999 });
 
@@ -264,7 +262,7 @@ test("topic head for the viewer's OWN proposal shows no AI button", () => {
   // #348: owners reach the Mayor via "Open session" on their own PR, so the
   // detail view shows no pill (matching the card behaviour from #313).
   const { AppView, els, published, headHtml } = makeTopicHarness(ME);
-  els['gc-thread-head'] = fakeHead('dev-change-overview');
+  els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'proposal', id: 7 };
   AppView._findTopicItem = () => baseProposal({ user_id: ME });
 
@@ -282,7 +280,7 @@ test("topic head for the viewer's OWN IMPORTED proposal puts Explore on the band
   // bind it — a head whose gate disagrees with the card leaves an inert
   // button. This is the case that regressed: mine && imported.
   const { AppView, els, published, headHtml } = makeTopicHarness(ME);
-  els['gc-thread-head'] = fakeHead('dev-change-overview');
+  els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'proposal', id: 7 };
   AppView._findTopicItem = () => baseProposal({ user_id: ME, source: 'imported' });
 
@@ -302,7 +300,7 @@ test('topic head for a governance proposal has NO AI button at all (#827)', () =
   // A dev chat can't act on a rename / secret change / close-issue vote, so
   // the governance-only standalone button was dropped with no replacement.
   const { AppView, els, headHtml } = makeTopicHarness(ME);
-  els['gc-thread-head'] = fakeHead('dev-thread');
+  els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'gov', id: 5 };
   AppView._findTopicItem = () => ({
     id: 5, kind: 'gov', title: 'Adopt a code of conduct',
