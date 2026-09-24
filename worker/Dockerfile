@@ -146,6 +146,7 @@ COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
 COPY evidence-mcp.js /usr/local/bin/evidence-mcp.js
 COPY build-evidence-mcp.js /usr/local/bin/build-evidence-mcp.js
 COPY evidence-origin-proxy.js /usr/local/bin/evidence-origin-proxy.js
+COPY evidence-browser-observer.js /usr/local/bin/evidence-browser-observer.js
 COPY evidence-browser-bootstrap.js /usr/local/bin/evidence-browser-bootstrap.js
 COPY write-evidence-mcp-config.js /usr/local/bin/write-evidence-mcp-config.js
 # #2779: the coding agent's read-only Homeroom tools. The config carries no
@@ -210,6 +211,7 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/evidence-mcp.js \
               /usr/local/bin/build-evidence-mcp.js \
               /usr/local/bin/evidence-origin-proxy.js \
+              /usr/local/bin/evidence-browser-observer.js \
               /usr/local/bin/evidence-browser-bootstrap.js \
               /usr/local/bin/write-evidence-mcp-config.js \
               /usr/local/bin/homeroom-read-mcp.js \

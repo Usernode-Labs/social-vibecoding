@@ -39,7 +39,7 @@ class RunControl {
     this.context = cloneJson(context);
     this.resetSideCallback = resetSide;
     this.runPlanCallback = runPlan;
-    this.expiresAt = Number(expiresAt || Date.now() + 4 * 60_000);
+    this.expiresAt = Number(expiresAt || Date.now() + 8 * 60_000);
     this.planCalls = 0;
     this.maxPlanCalls = 1;
     this.latestHard = null;
@@ -245,7 +245,7 @@ class RunControl {
     this.latestHard = null;
   }
 
-  waitForFinish({ signal = null, timeoutMs = 240_000 } = {}) {
+  waitForFinish({ signal = null, timeoutMs = 480_000 } = {}) {
     if (this.finished) return Promise.resolve(cloneJson(this.finished));
     return new Promise((resolve, reject) => {
       let timer = null;

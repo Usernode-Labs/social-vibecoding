@@ -6282,12 +6282,15 @@ const AppView = {
     return run;
   },
   _mergedRowKey(row) { return `${row.row_type || 'pr'}:${row.id}`; },
+  _completedAt(row) {
+    return row.completed_at || row.merged_at || row.payload?.appliedAt || row.closed_at || row.created_at;
+  },
   _mergedRowCursor(row) {
-    return row ? { created_at: row.created_at, id: row.id, row_type: row.row_type || 'pr' } : null;
+    return row ? { completed_at: AppView._completedAt(row), created_at: row.created_at, id: row.id, row_type: row.row_type || 'pr' } : null;
   },
   // Match /merged's keyset order, including independent PR / close-issue ids.
   _compareMergedRows(a, b) {
-    return Date.parse(b.created_at) - Date.parse(a.created_at)
+    return Date.parse(AppView._completedAt(b)) - Date.parse(AppView._completedAt(a))
       || Number(b.row_type !== 'close_issue') - Number(a.row_type !== 'close_issue')
       || Number(b.id) - Number(a.id);
   },
@@ -6295,6 +6298,7 @@ const AppView = {
     const qs = AppView._demoQS();
     const params = [];
     if (cursor) params.push(`before=${encodeURIComponent(cursor.created_at)}`,
+      `before_completed_at=${encodeURIComponent(AppView._completedAt(cursor))}`,
       `before_id=${encodeURIComponent(cursor.id)}`, `before_type=${encodeURIComponent(cursor.row_type || 'pr')}`);
     if (limit) params.push(`limit=${limit}`);
     const after = params.length ? (qs ? '&' : '?') + params.join('&') : '';
@@ -6582,13 +6586,7 @@ const AppView = {
       // its last surviving row, not after the first page of the refresh.
       AppView._mergedHasMore = !!mergedData.hasMore;
       AppView._mergedCursor = merged.length
-        ? {
-          created_at: merged[merged.length - 1].created_at,
-          id: merged[merged.length - 1].id,
-          // The stream mixes PR + close-issue rows from independent id
-          // sequences, so the cursor carries the last row's type too.
-          row_type: merged[merged.length - 1].row_type || 'pr',
-        }
+        ? AppView._mergedRowCursor(merged[merged.length - 1])
         // Keyset cursors need not name an existing row. If every row in the
         // loaded range disappeared, older history must remain reachable.
         : (mergedData.hasMore ? mergedData.boundary : null);
@@ -8967,7 +8965,6 @@ const AppView = {
     const issueT = (i) => Math.max(ts(i.updatedAt), ts(i.lastMessageAt));
     const prT = (p) => Math.max(ts(p.promoted_at || p.created_at), ts(p.last_message_at));
     const govT = (g) => Math.max(ts(g.created_at), ts(g.last_message_at));
-    const mergedT = (m) => Math.max(ts(m.created_at), ts(m.last_message_at));
     // Merge-pipeline pin rank (#388), and since THE UI OVERHAUL the board is
     // the ONLY place it applies. It used to have a twin, AppView
     // ._proposalPinRank, which ordered the retired List view's proposal
@@ -9044,7 +9041,7 @@ const AppView = {
     for (const g of gov) review.push({ kind: 'gov', item: g, _r: 4, _t: govT(g) });
     review.sort((a, b) => (a._r - b._r) || (b._t - a._t));
 
-    const done = merged.slice().sort((a, b) => mergedT(b) - mergedT(a));
+    const done = merged.slice().sort(AppView._compareMergedRows);
 
     // In progress = pinned own sessions (most recent activity first) →
     // headless-working issues → other users' shared sessions (oldest
@@ -10017,7 +10014,7 @@ const AppView = {
       const t = Date.parse(v || '');
       return Number.isFinite(t) ? t : 0;
     };
-    const fresh = list.filter((m) => Math.max(ts(m.created_at), ts(m.last_message_at)) >= cutoff);
+    const fresh = list.filter((m) => ts(AppView._completedAt(m)) >= cutoff);
     return fresh.length >= AppView.DONE_RECENT_MIN ? fresh : list.slice(0, AppView.DONE_RECENT_MIN);
   },
   showAllDone() {

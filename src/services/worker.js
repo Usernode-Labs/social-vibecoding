@@ -479,13 +479,48 @@ function evidenceDiagnosticTool(name) {
   return { tool, ...(server ? { persona: server } : {}) };
 }
 
+function evidenceNavigationTarget(state, input) {
+  if (!state.evidenceOrigins) return {};
+  let args = input;
+  if (typeof args === 'string' && args.length <= 8192) {
+    try { args = JSON.parse(args); } catch { return {}; }
+  }
+  if (!args || typeof args.url !== 'string') return {};
+  let destination;
+  try { destination = new URL(args.url); } catch { return {}; }
+  let side = null;
+  for (const candidate of ['base', 'head']) {
+    try {
+      if (destination.origin === new URL(state.evidenceOrigins?.[candidate]).origin) {
+        side = candidate;
+        break;
+      }
+    } catch { /* No paired origin is available in a non-evidence turn. */ }
+  }
+  if (!side) return { side: 'outside' };
+  // Only an ordinal leaves the worker. It distinguishes repeated routes and
+  // base/head navigation without storing private paths, queries, or tokens.
+  const routes = state.evidenceRouteOrdinals || (state.evidenceRouteOrdinals = new Map());
+  const key = `${destination.pathname}${destination.search}${destination.hash}`;
+  if (!routes.has(key) && routes.size < 1000) routes.set(key, routes.size + 1);
+  const hints = state.evidenceNavigationHints || {};
+  const checkRank = Array.isArray(hints.declaredPaths) ? hints.declaredPaths.indexOf(key) + 1 : 0;
+  const intentStart = Array.isArray(hints.intentPaths) && hints.intentPaths.includes(key);
+  return {
+    side,
+    ...(routes.has(key) ? { routeOrdinal: routes.get(key) } : {}),
+    routeHint: checkRank > 0 ? 'declared_check' : intentStart ? 'intent_start' : 'other',
+    ...(checkRank > 0 ? { checkRank } : {}),
+  };
+}
+
 function emitEvidenceDiagnostic(state, event) {
   if (typeof state?.evidenceDiagnosticObserver !== 'function') return;
   try { state.evidenceDiagnosticObserver(event); }
   catch { /* Diagnostics must never affect the worker turn. */ }
 }
 
-function observeEvidenceTool(state, { phase, id, name, failed = false }) {
+function observeEvidenceTool(state, { phase, id, name, input = null, failed = false }) {
   if (typeof state?.evidenceDiagnosticObserver !== 'function') return;
   const key = id == null ? null : String(id);
   const starts = state.evidenceDiagnosticStarts || (state.evidenceDiagnosticStarts = new Map());
@@ -494,7 +529,12 @@ function observeEvidenceTool(state, { phase, id, name, failed = false }) {
     if (key && starts.has(key)) return;
     const sequence = (state.evidenceDiagnosticSequence || 0) + 1;
     state.evidenceDiagnosticSequence = sequence;
-    const safeTool = evidenceDiagnosticTool(name);
+    const tool = evidenceDiagnosticTool(name);
+    const safeTool = {
+      ...tool,
+      ...(tool.tool === 'browser_navigate'
+        ? evidenceNavigationTarget(state, input) : {}),
+    };
     if (key) starts.set(key, { sequence, ...safeTool });
     emitEvidenceDiagnostic(state, { kind: 'tool_start', sequence, ...safeTool });
     return;
@@ -506,7 +546,11 @@ function observeEvidenceTool(state, { phase, id, name, failed = false }) {
   emitEvidenceDiagnostic(state, {
     kind: 'tool_end',
     sequence: prior?.sequence || null,
-    ...(prior ? { tool: prior.tool, ...(prior.persona ? { persona: prior.persona } : {}) }
+    ...(prior ? { tool: prior.tool, ...(prior.persona ? { persona: prior.persona } : {}),
+      ...(prior.side ? { side: prior.side } : {}),
+      ...(prior.routeOrdinal ? { routeOrdinal: prior.routeOrdinal } : {}),
+      ...(prior.routeHint ? { routeHint: prior.routeHint } : {}),
+      ...(prior.checkRank ? { checkRank: prior.checkRank } : {}) }
       : evidenceDiagnosticTool(name)),
     outcome: failed ? 'error' : 'ok',
   });
@@ -743,10 +787,10 @@ function applyStreamEvent(event, onProgress, state) {
         if (observeDiagnostics) state.responseRedactedThinkingBlockCount += 1;
       } else if (block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
         if (observeDiagnostics) noteClaudeToolCall(state, block);
-        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name });
+        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
       } else if (block.type === 'tool_use') {
         if (observeDiagnostics) noteClaudeToolCall(state, block);
-        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name });
+        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
         const input = block.input || {};
         // Track id → label mapping so the matching tool_result can
         // display "⎿ <label>: <summary>" instead of just "⎿ done".
@@ -859,6 +903,24 @@ function applyStreamEvent(event, onProgress, state) {
 
 function parseLine(line, onProgress, state) {
   if (!line || !line.trim()) return;
+  if (line.startsWith('__USERNODE_EVIDENCE_PROVIDER__ ')) {
+    try {
+      const event = JSON.parse(line.slice('__USERNODE_EVIDENCE_PROVIDER__ '.length));
+      if (event && typeof event === 'object' && !Array.isArray(event)) {
+        emitEvidenceDiagnostic(state, event);
+      }
+    } catch { /* A malformed diagnostic must not change the agent turn. */ }
+    return;
+  }
+  if (line.startsWith('__USERNODE_EVIDENCE_BROWSER__ ')) {
+    try {
+      const event = JSON.parse(line.slice('__USERNODE_EVIDENCE_BROWSER__ '.length));
+      if (event && typeof event === 'object' && !Array.isArray(event)) {
+        emitEvidenceDiagnostic(state, event);
+      }
+    } catch { /* A malformed diagnostic must not change the agent turn. */ }
+    return;
+  }
   if (line.startsWith('__USERNODE_PHASE__')) {
     state.phase = line.replace('__USERNODE_PHASE__', '').trim();
     const phase = state.phase.split(/[\s(]/, 1)[0];
@@ -970,7 +1032,8 @@ function parseLine(line, onProgress, state) {
           emitEvidenceDiagnostic(state, { kind: 'first_output' });
         }
         if (isToolStart) {
-          observeEvidenceTool(state, { phase: 'start', id: ev.itemId, name: ev.toolName });
+          observeEvidenceTool(state, { phase: 'start', id: ev.itemId, name: ev.toolName,
+            input: event?.item?.arguments });
         }
         if (isToolCompletion) {
           observeEvidenceTool(state, {
@@ -2479,9 +2542,9 @@ async function execInWorker(sessionId, {
   // non-Claude backend. This remains user-level input; it is never promoted
   // into the authoritative system-context transport below.
   resumeFallbackPrompt = null,
-  // Hosted Claude build-only appended system context. The caller keeps this
-  // null for Codex, scouts, sync and local turns. Materialized separately so
-  // it is a stable system layer rather than another conversation message.
+  // Hosted Claude system context; Codex evidence turns receive the same
+  // purpose-bound contract as developer instructions. Materialized separately
+  // so it is a stable instruction layer, not another conversation message.
   systemPrompt = null,
   // Restart recovery can reuse the prompt file deliberately retained by a
   // runner that emitted agent_retry_fresh=1. Live calls keep writing the
@@ -2509,6 +2572,7 @@ async function execInWorker(sessionId, {
   evidenceRunId = null,
   evidenceOrigins = null,
   evidenceAuthTokens = null,
+  evidenceNavigationHints = null,
   turnUuid = null,
   logicalTurnId = null,
   attemptNumber = null,
@@ -2620,8 +2684,8 @@ async function execInWorker(sessionId, {
   // One backend decision for this whole dispatch (review Commit 1 /
   // plan 3.1): all runner/token/env/active-turn choices derive from it.
   const { backend: resolvedBackend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
-  if (systemPrompt && !isClaude) {
-    throw new Error('execInWorker: systemPrompt is only supported for Claude turns');
+  if (systemPrompt && !isClaude && !(isCodex && mode === 'evidence')) {
+    throw new Error('execInWorker: systemPrompt is only supported for Claude or Codex evidence turns');
   }
   if (resumeFallbackPrompt && !isClaude) {
     throw new Error('execInWorker: resumeFallbackPrompt is only supported for Claude turns');
@@ -2634,6 +2698,9 @@ async function execInWorker(sessionId, {
   }
   if (isClaude && ['build', 'evidence'].includes(mode) && !systemPrompt) {
     throw new Error(`execInWorker: hosted Claude ${mode} requires systemPrompt`);
+  }
+  if (isCodex && mode === 'evidence' && !systemPrompt) {
+    throw new Error('execInWorker: hosted Codex evidence requires systemPrompt');
   }
   if (mode === 'evidence') {
     if (!/^[0-9a-f]{32}$/.test(String(evidenceRunId || ''))
@@ -2749,6 +2816,7 @@ async function execInWorker(sessionId, {
       EVIDENCE_RUN_ID: evidenceRunId,
       EVIDENCE_BASE_ORIGIN: new URL(evidenceOrigins.base).origin,
       EVIDENCE_HEAD_ORIGIN: new URL(evidenceOrigins.head).origin,
+      EVIDENCE_NAVIGATION_HINTS: JSON.stringify(evidenceNavigationHints || {}),
     } : {}),
     ...(isClaude ? {
       MODEL: models.resolve(model),
@@ -2963,6 +3031,10 @@ async function execInWorker(sessionId, {
     // agent_backend in __USERNODE_RESULT__ (too late for the events), so
     // we seed it from the dispatch param up front.
     state.agentBackend = agentBackend;
+    if (mode === 'evidence') {
+      state.evidenceOrigins = evidenceOrigins;
+      state.evidenceNavigationHints = evidenceNavigationHints;
+    }
     if (mode === 'evidence' && typeof onEvidenceDiagnostic === 'function') {
       state.evidenceDiagnosticObserver = onEvidenceDiagnostic;
       emitEvidenceDiagnostic(state, {

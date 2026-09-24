@@ -501,6 +501,51 @@ test('a hosted Claude build cannot dispatch without authoritative system context
   } finally { restore(); }
 });
 
+test('a hosted Codex evidence turn cannot dispatch without the planning contract', async () => {
+  const { worker, calls, restore } = loadWorker();
+  try {
+    warmSession(worker, 8304);
+    await assert.rejects(
+      () => worker.execInWorker(8304, {
+        ...DISPATCH_ARGS,
+        mode: 'evidence',
+        agentBackend: 'codex_openrouter',
+        systemPrompt: null,
+        evidenceRunId: '1'.repeat(32),
+        evidenceOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
+        evidenceAuthTokens: { member: 'member', read_only_admin: 'admin' },
+      }),
+      /hosted Codex evidence requires systemPrompt/,
+    );
+    assert.equal(calls.length, 0, 'validation fails before the provider is touched');
+  } finally { restore(); }
+});
+
+test('Codex evidence dispatch carries the planning contract file to its runner', async () => {
+  const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
+  try {
+    warmSession(worker, 8305);
+    await worker.execInWorker(8305, {
+      mode: 'evidence',
+      prompt: 'open the run context',
+      systemPrompt: 'Use evidence_get_context first and submit through evidence_run_plan.',
+      branchName: 'dev/test',
+      agentBackend: 'codex_openrouter',
+      agentModel: 'z-ai/glm-5.3-flash',
+      agentModelMetadata: { supportsTools: true },
+      openrouterApiKey: 'sk-or-must-not-appear-in-argv',
+      evidenceRunId: '1'.repeat(32),
+      evidenceOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
+      evidenceAuthTokens: { member: 'member', read_only_admin: 'admin' },
+    });
+    const dispatch = calls.find(isDispatch);
+    assert.ok(dispatch, 'Codex evidence turn was dispatched');
+    assert.ok(dispatch.args.includes('MODE=evidence'));
+    assert.ok(dispatch.args.includes('SYSTEM_PROMPT_FILE=/home/node/.claude/turn-system-prompt.txt'));
+    assert.ok(!dispatch.args.some((arg) => String(arg).includes('sk-or-must-not-appear-in-argv')));
+  } finally { restore(); }
+});
+
 test('a complete resume fallback is accepted only for a resumed hosted-Claude build', async () => {
   const { worker, calls, restore } = loadWorker();
   try {

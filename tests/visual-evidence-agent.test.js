@@ -68,6 +68,44 @@ test('hosted evidence dispatch forwards worker lifecycle diagnostics through the
   assert.doesNotMatch(JSON.stringify(events), /private-token/);
 });
 
+test('Codex evidence receives the planning contract as developer context in a fresh turn', async () => {
+  let dispatched;
+  const result = await agent.dispatch({ visualEvidence: { maxAgentMs: 500 } }, {
+    pool: {}, session: {
+      id: 42, user_id: 7, repo_url: 'https://github.com/acme/demo.git',
+      branch_name: 'proposal', agent_backend: 'codex_openrouter',
+      agent_model: 'z-ai/glm-test', agent_thread_id: 'coding-thread',
+    },
+    runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token' },
+    resumeThreadId: null,
+  }, {
+    workerService: {
+      ensureWorker: async () => 'warm-worker',
+      execInWorker: async (_sessionId, options) => {
+        dispatched = options;
+        return { exitCode: 0, agentThreadId: 'evidence-thread' };
+      },
+    },
+    agentTurn: {
+      resolveCodexRuntimeContext: async () => ({
+        agentModel: 'z-ai/glm-test', agentModelMetadata: { supportsTools: true },
+      }),
+      startCodexAttempt: async ({ resumeThreadId }) => {
+        assert.equal(resumeThreadId, null);
+        return { turnUuid: 'attempt-1', journal: '/tmp/attempt-1' };
+      },
+      completeCodexAttempt: async () => {},
+      usageTotalFromResult: () => null,
+    },
+  });
+  assert.equal(result.threadId, 'evidence-thread');
+  assert.equal(dispatched.resumeSessionId, null);
+  assert.equal(dispatched.systemPrompt, agent.SYSTEM_PROMPT);
+  assert.match(dispatched.systemPrompt, /Use evidence_get_context first/);
+  assert.match(dispatched.systemPrompt, /submit them through the tool/);
+});
+
 test('the evidence prompt asks for a replay plan and leaves visual judgement to people', () => {
   assert.match(agent.SYSTEM_PROMPT, /platform code—not you—will reset both sides and\s+replay it twice/i);
   assert.match(agent.SYSTEM_PROMPT, /promptly acknowledges a\s+validated submission; it does not wait for replay or return a verdict/i);

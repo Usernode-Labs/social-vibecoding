@@ -21,7 +21,9 @@ const REQUIRED_TOOLS = [
 
 function verifyBrowser(server) {
   return new Promise((resolve, reject) => {
-    const child = spawn(server.command, server.args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(server.command, server.args, {
+      env: { ...process.env, ...server.env }, stdio: ['pipe', 'pipe', 'pipe'],
+    });
     let output = '';
     let errors = '';
     let settled = false;
@@ -91,10 +93,13 @@ async function main() {
       fs.writeFileSync(path.join(stateDir, `${persona}.json`), '{"cookies":[],"origins":[]}');
     }
     const output = path.join(dir, 'mcp.json');
+    const diagnosticFile = path.join(dir, 'browser-diagnostics.log');
+    fs.writeFileSync(diagnosticFile, '');
     execFileSync(process.execPath, [path.join(__dirname, 'write-evidence-mcp-config.js'), output], {
       env: {
         ...process.env,
         EVIDENCE_BROWSER_STATE_DIR: stateDir,
+        EVIDENCE_BROWSER_DIAGNOSTIC_FILE: diagnosticFile,
         EVIDENCE_PROXY_SERVER: 'http://127.0.0.1:17891',
         EVIDENCE_BASE_ORIGIN: 'http://base.example.invalid',
         EVIDENCE_HEAD_ORIGIN: 'http://head.example.invalid',
@@ -102,7 +107,19 @@ async function main() {
     });
     const config = JSON.parse(fs.readFileSync(output, 'utf8'));
     for (const persona of ['browser_member', 'browser_admin']) {
+      fs.writeFileSync(diagnosticFile, '');
       const tools = await verifyBrowser(config.mcpServers[persona]);
+      const records = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')
+        .filter((line) => line.startsWith('__USERNODE_EVIDENCE_BROWSER__ '))
+        .flatMap((line) => {
+          try { return [JSON.parse(line.slice('__USERNODE_EVIDENCE_BROWSER__ '.length))]; }
+          catch { return []; }
+        })
+        .filter((event) => event.persona === (persona === 'browser_admin' ? 'admin' : 'member'));
+      if (!records.some((event) => event.kind === 'browser_call_start')
+          || !records.some((event) => event.kind === 'browser_call_end')) {
+        throw new Error(`Browser observer did not record ${persona} tool timing`);
+      }
       process.stdout.write(`${persona}: ${tools.length} MCP tools available; Chromium opened a tab\n`);
     }
   } finally {
