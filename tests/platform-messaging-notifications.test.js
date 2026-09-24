@@ -25,6 +25,7 @@ const KINDS = [
   'conversation_mention',
   'conversation_reply',
   'conversation_reaction',
+  'conversation_thread_reply',
 ];
 
 function conversationRow(kind) {

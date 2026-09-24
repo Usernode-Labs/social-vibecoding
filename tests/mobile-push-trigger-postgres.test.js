@@ -250,8 +250,9 @@ pgTest('the closed kind policy and account preferences gate enqueue at insert ti
   // every boot, so they were push-disabled in the database while the service
   // policy said otherwise. This count running against a real server is what
   // proves they survive now. 27 → 29 with #1688's two (revision_recheck,
-  // weekly_digest), seeded and reaped in the same two lists.
-  assert.equal(policy.length, 29, 'the seed carries the reviewed closed set');
+  // weekly_digest), seeded and reaped in the same two lists. 29 → 30 with
+  // #2387's conversation_thread_reply, under messages.
+  assert.equal(policy.length, 30, 'the seed carries the reviewed closed set');
   for (const { kind, default_enabled: enabled } of policy) {
     const row = await notify(client, { userId: alice, kind });
     assert.equal((await deliveriesFor(client, row.id)).length, enabled ? 1 : 0,

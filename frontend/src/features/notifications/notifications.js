@@ -667,7 +667,12 @@ const Notifications = {
           && conversationId <= 2147483647) {
         Notifications._dismissSheetForNav();
         const messages = window.UsernodeReact?.messages;
-        if (messages?.open) messages.open(conversationId);
+        // #2387: a permalink or thread address goes through the hash, which
+        // carries the message/thread the bridge's open(id) cannot.
+        const href = conversationNotificationHref(item);
+        if (href !== `#messages/${conversationId}` && window.location.hash !== href) {
+          window.location.hash = href;
+        } else if (messages?.open) messages.open(conversationId);
         else window.location.hash = `#messages/${conversationId}`;
       }
       return;
@@ -1361,7 +1366,29 @@ const CONVERSATION_NOTIF_KINDS = new Set([
   'conversation_mention',
   'conversation_reply',
   'conversation_reaction',
+  // #2387: a reply in a thread the viewer started or replied in.
+  'conversation_thread_reply',
 ]);
+
+// #2387: where a conversation row opens. A thread alert opens its thread; a
+// row about one message (mention, quote-reply, reaction) opens that message's
+// permalink, which lands inside its thread when it lives in one; an invite or
+// a plain new-message row opens the conversation itself.
+function conversationNotificationHref(n) {
+  const valid = (v) => Number.isSafeInteger(v) && v > 0 && v <= 2147483647;
+  const conversationId = Number(n && n.conversationId);
+  if (!valid(conversationId)) return null;
+  const messageId = Number(n.conversationMessageId);
+  const rootId = Number(n.conversationThreadRootId);
+  if (n.kind === 'conversation_thread_reply' && valid(rootId)) {
+    return `#messages/${conversationId}/thread/${rootId}`;
+  }
+  if (['conversation_mention', 'conversation_reply', 'conversation_reaction'].includes(n.kind)
+      && valid(messageId)) {
+    return `#messages/${conversationId}/m/${messageId}`;
+  }
+  return `#messages/${conversationId}`;
+}
 
 // #161 defined these as the kinds that "demand attention": a finished dev
 // session or headless run, while still unread.
@@ -1693,6 +1720,7 @@ function rowView(n) {
       conversation_message: headline(conversation, snippet),
       conversation_mention: headline('Mentioned you', conversation),
       conversation_reply: headline('Replied', conversation),
+      conversation_thread_reply: headline('Replied in thread', conversation),
       conversation_reaction: headline('Reacted', conversation),
     }[n.kind];
     const icons = {
@@ -1700,6 +1728,7 @@ function rowView(n) {
       conversation_message: '💬',
       conversation_mention: '@',
       conversation_reply: '↩️',
+      conversation_thread_reply: '🧵',
       conversation_reaction: n.detail || '❤️',
     };
     return {

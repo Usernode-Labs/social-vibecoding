@@ -35,6 +35,8 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
   'conversation_mention',
   'conversation_reply',
   'conversation_reaction',
+  // #2387: a reply in a thread you started or replied in.
+  'conversation_thread_reply',
 ]);
 const CONVERSATION_KIND_SQL = [...CONVERSATION_NOTIFICATION_KINDS]
   .map((kind) => `'${kind}'`).join(', ');
@@ -658,6 +660,7 @@ async function hydrateAndPush(pool, row) {
               c.title AS conversation_title,
               n.conversation_message_id,
               conversation_message.content AS conversation_message_content,
+              conversation_message.thread_root_id AS conversation_thread_root_id,
               su.username AS source_username,
               n.detail,
               pv.reason AS vote_reason
@@ -987,6 +990,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             c.title AS conversation_title,
             n.conversation_message_id,
             conversation_message.content AS conversation_message_content,
+            conversation_message.thread_root_id AS conversation_thread_root_id,
             su.username AS source_username,
             n.detail,
             pv.reason AS vote_reason
@@ -1025,6 +1029,7 @@ async function getForUser(pool, userId, id) {
             c.title AS conversation_title,
             n.conversation_message_id,
             conversation_message.content AS conversation_message_content,
+            conversation_message.thread_root_id AS conversation_thread_root_id,
             su.username AS source_username,
             n.detail,
             pv.reason AS vote_reason
@@ -1264,6 +1269,9 @@ function serialize(row) {
     conversationKind: isConversation ? (row.conversation_kind || null) : null,
     conversationTitle: isConversation ? (row.conversation_title || null) : null,
     conversationMessageId: isConversation ? row.conversation_message_id : null,
+    // #2387: the thread the referenced message sits in (null: the main
+    // stream). A thread alert opens #messages/<id>/thread/<root>.
+    conversationThreadRootId: isConversation ? (row.conversation_thread_root_id ?? null) : null,
     messageContent: isConversation
       ? (row.conversation_message_content ?? null)
       : row.message_content,
