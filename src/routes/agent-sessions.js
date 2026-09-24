@@ -229,8 +229,12 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
         })
         .catch((err) => log.warn('agent-sessions', 'session_done dismiss failed', { err: err.message }));
       // Where a running turn is, when it runs in this process, so a client
-      // that opens the conversation mid-turn shows the right controls.
-      return res.json({ session, turn: agentTurn.turnState(session.id) });
+      // that opens the conversation mid-turn shows the right controls. A
+      // recovered build on the active change counts: the Mayor turn that
+      // dispatched it died in a restart, and its lease reads as idle.
+      const turn = agentTurn.turnState(session.id)
+        || agentTurn.recoveredRunState(session.id, session.activeChange ? session.activeChange.id : null);
+      return res.json({ session: turn && !session.busy ? { ...session, busy: true } : session, turn });
     } catch (err) {
       return sendError(res, err, 'Read agent session');
     }
@@ -412,13 +416,18 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     const id = positiveId(req.params.id);
     try {
       const { rows } = id
-        ? await pool.query('SELECT active_turn FROM agent_sessions WHERE id = $1 AND user_id = $2', [id, req.user.id])
+        ? await pool.query('SELECT active_turn, active_change_id FROM agent_sessions WHERE id = $1 AND user_id = $2', [id, req.user.id])
         : { rows: [] };
       if (!rows.length) return res.status(404).json({ error: 'Agent session not found' });
       // During a dispatch the answer names the change: its own stop route
       // (POST /api/sessions/:changeId/stop) confirms the kill and escalates.
-      const answer = agentTurn.stopAgentTurn(id, { by: req.user.username });
-      if (answer.reason === 'no_active_turn' && rows[0].active_turn) {
+      let answer = agentTurn.stopAgentTurn(id, { by: req.user.username });
+      const recovered = answer.reason === 'no_active_turn'
+        ? agentTurn.recoveredRunState(id, rows[0].active_change_id ? Number(rows[0].active_change_id) : null)
+        : null;
+      if (recovered) {
+        answer = { stopped: false, reason: 'dispatch_running', changeId: recovered.changeId };
+      } else if (answer.reason === 'no_active_turn' && rows[0].active_turn) {
         answer.released = await agentTurn.handBackOrphanedTurn({ pool, agentSessionId: id, userId: req.user.id });
       }
       return res.json({ ok: true, ...answer });

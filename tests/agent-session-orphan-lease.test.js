@@ -7,8 +7,9 @@
 //
 //   1. Handing back: a stale lease is cleared and the dead turn's `done` is
 //      sent in its place, never while this process runs a turn there.
-//   2. Recovery hands back the conversation whose change it finished, and
-//      tries again once a lease still inside the window goes stale.
+//   2. Recovery hands back the conversation whose change it ran, and tries
+//      again once a lease still inside the window goes stale. While the
+//      recovered build runs, it is the conversation's running dispatch.
 //   3. The screen's stop settles from the server when nothing was running.
 //
 // The lease SQL itself runs against Postgres in
@@ -72,12 +73,28 @@ test('recovery hands back its change\'s conversations, and waits out a lease sti
   await agentTurn.handBackAfterRecovery({ pool: {}, changeId: 4834, deps, retryMs: 10 });
   assert.deepEqual(calls.released.map((r) => [r.agentSessionId, r.finished]), [[5, true], [8, true]],
     'the wrap-up was posted, so each finished something');
-  assert.equal(calls.published.length, 1, 'conversation 8 is still inside the stale window');
+  assert.deepEqual(calls.published.map(([key, event]) => [key, event.type]),
+    [[agentTurn.busKey(5), 'done'], [agentTurn.busKey(8), 'done']],
+    'conversation 8 is still inside the stale window, but the run its screen follows is over');
 
   stale.add(8);
   await new Promise((resolve) => setTimeout(resolve, 40));
   assert.deepEqual(calls.released.map((r) => r.agentSessionId), [5, 8, 8], 'tried again once');
-  assert.deepEqual(calls.published.map(([key]) => key), [agentTurn.busKey(5), agentTurn.busKey(8)]);
+  assert.deepEqual(calls.published.map(([key]) => key), [agentTurn.busKey(5), agentTurn.busKey(8), agentTurn.busKey(8)]);
+});
+
+test('a recovered build on the active change is the conversation\'s running dispatch', () => {
+  const busy = new Set([50]);
+  const deps = { isChangeBusy: (changeId) => busy.has(changeId) };
+  assert.deepEqual(agentTurn.recoveredRunState(3, 50, deps), { phase: 'cc', stopping: false, changeId: 50 });
+  assert.equal(agentTurn.recoveredRunState(3, 51, deps), null, 'nothing running on the change');
+  assert.equal(agentTurn.recoveredRunState(3, null, deps), null, 'no active change');
+  agentTurn._stopRegistry.set(3, { phase: 'cc' });
+  try {
+    assert.equal(agentTurn.recoveredRunState(3, 50, deps), null, 'a live Mayor turn answers for itself');
+  } finally {
+    agentTurn._stopRegistry.delete(3);
+  }
 });
 
 test('the default retry waits past the stale window', () => {
