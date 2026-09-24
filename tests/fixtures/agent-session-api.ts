@@ -25,4 +25,21 @@ export {
   stopAgentTurn,
   stoppedText,
   MAX_SAVED_DRAFTS,
+  sendAgentMessage,
+  creditsRefusal,
+  dismissCredits,
+  renameCurrentSession,
+  archiveCurrentSession,
+  unarchiveCurrentSession,
+  openHandoff,
+  closeHandoff,
+  recheckChange,
 } from '../../frontend/src/features/agent-session/store';
+export {
+  handoffTarget,
+  handoffSteps,
+  creditsView,
+  CreditsCardView,
+  VenuePicker,
+  VENUE_ROWS,
+} from '../../frontend/src/features/agent-session/handoff';

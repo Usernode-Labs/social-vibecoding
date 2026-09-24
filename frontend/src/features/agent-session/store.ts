@@ -94,6 +94,20 @@ export interface PreviewPaneState {
 /** Which of the side pane's two pages is showing, when it holds both. */
 export type PaneTab = 'spec' | 'preview';
 
+/** The coding agents a change can be handed to on the web. */
+export type HandoffAgent = 'claude-code' | 'codex';
+
+/**
+ * A message the platform credits refused (POST .../turns answered 429
+ * `budget_exceeded`): the card that says so and how to keep building, in
+ * place of a raw error line.
+ */
+export interface CreditsRefusal {
+  error: string;
+  reason: string | null;
+  verificationRequired: boolean;
+}
+
 export interface AgentSessionState {
   open: boolean;
   host: AgentSessionHost;
@@ -119,8 +133,12 @@ export interface AgentSessionState {
   specSheet: SpecSheetState | null;
   preview: PreviewPaneState | null;
   paneTab: PaneTab;
-  /** A staging card's action on its way: proposing, or retrying the build. */
-  changeAction: { changeId: number; kind: 'propose' | 'retry' } | null;
+  /** A staging card's action on its way: proposing, retrying the build, or re-running its checks. */
+  changeAction: { changeId: number; kind: 'propose' | 'retry' | 'recheck' } | null;
+  /** The last message was refused for credits; cleared by the next send. */
+  credits: CreditsRefusal | null;
+  /** The hand-off walkthrough over the conversation, for this agent. */
+  handoff: HandoffAgent | null;
   /**
    * The conversation's saved drafts (#2779 follow-up, the dev chat's #798
    * list): what the owner parked while the Mayor worked, oldest first, as
@@ -164,6 +182,8 @@ export const INITIAL_STATE: AgentSessionState = {
   paneTab: 'spec',
   changeAction: null,
   drafts: [],
+  credits: null,
+  handoff: null,
 };
 
 let state: AgentSessionState = INITIAL_STATE;
@@ -415,7 +435,10 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     phase: same ? state.phase : 'loading',
     error: '',
     drawerOpen: drawer || (same ? state.drawerOpen : false),
-    ...(same ? {} : { session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null, drafts: [] }),
+    ...(same ? {} : {
+      session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null,
+      changeAction: null, drafts: [], credits: null, handoff: null,
+    }),
   });
   syncTitle();
   if (same) return;
@@ -427,6 +450,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     publish((current) => ({ session, phase: 'ready', sessions: withListed(current, session) }));
     syncTitle();
     void loadDrafts(id);
+    refreshCredits();
     if (session.busy) {
       patchTurn({ running: true, phase: turn ? turn.phase : 'mayor', startedAt: Date.now() });
       followEvents(id);
@@ -483,8 +507,11 @@ function openDraft(host: AgentSessionHost) {
     specSheet: null,
     turn: IDLE_TURN,
     drafts: [],
+    credits: null,
+    handoff: null,
   });
   syncTitle();
+  refreshCredits();
   if (!hint || !(hint.slug || hint.issueNumber || hint.proposalId)) return;
   // What it is about, resolved as creating it would resolve it, written
   // nowhere. A failure only leaves the bar saying "Any app".
@@ -503,7 +530,7 @@ export function deactivateAgentSession() {
   if (turnAbort) turnAbort.abort();
   turnAbort = null;
   if (state.preview) closePreview();
-  publish({ open: false, drawerOpen: false, specSheet: null, preview: null, turn: IDLE_TURN });
+  publish({ open: false, drawerOpen: false, specSheet: null, preview: null, turn: IDLE_TURN, handoff: null });
 }
 
 /** Where a conversation lives: beside the inbox on a desktop, its own screen on a phone (app.js swaps). */
@@ -614,7 +641,7 @@ export async function sendAgentMessage(text: string) {
   const draft = state.id ? null : state.draft;
   const message = text.trim();
   if ((!state.id && !draft) || !message || state.turn.running) return;
-  publish({ error: '' });
+  publish({ error: '', credits: null });
   patchTurn({ running: true, phase: 'mayor', pendingUserText: message, startedAt: Date.now(), streamText: '', cards: [] });
   const id = draft ? await createFromDraft(draft) : state.id;
   if (!id) {
@@ -629,6 +656,14 @@ export async function sendAgentMessage(text: string) {
     await api.sendTurn(id, message, { signal: abort.signal, onEvent: (event) => handleEvent(id, event) });
   } catch (error) {
     if (abort.signal.aborted) return;
+    const refused = creditsRefusal(error);
+    if (refused) {
+      // Out of platform credits: the card that says how to keep building,
+      // and the text back in the box to send once there is a way.
+      publish({ credits: refused, turn: IDLE_TURN, ...(state.id === id ? { returnedText: message } : {}) });
+      refreshCredits(true);
+      return;
+    }
     const busy = (error as { body?: { busy?: boolean } }).body?.busy;
     publish({ error: busy ? 'The Mayor is already answering in this conversation.' : errorText(error, 'The Mayor could not take that message.') });
     // Refused before it was recorded: the text goes back to the composer
@@ -644,6 +679,37 @@ export async function sendAgentMessage(text: string) {
     }
     void refreshAll(id).catch(() => {});
   }
+}
+
+/**
+ * A turn the platform credits refused: POST .../turns answers 429 with
+ * `code: 'budget_exceeded'` (services/mayor/agent-turn.js, the dev chat's
+ * own shape), and the error text names the limit and when it resets.
+ */
+export function creditsRefusal(error: unknown): CreditsRefusal | null {
+  const failure = error as { status?: number; body?: { code?: unknown; error?: unknown; reason?: unknown; verificationRequired?: unknown } };
+  if (!failure || failure.status !== 429 || !failure.body || failure.body.code !== 'budget_exceeded') return null;
+  return {
+    error: typeof failure.body.error === 'string' ? failure.body.error : '',
+    reason: typeof failure.body.reason === 'string' ? failure.body.reason : null,
+    verificationRequired: failure.body.verificationRequired === true,
+  };
+}
+
+/**
+ * The viewer's AI credits, which the composer's meter shows: the header's
+ * own figures (features/header/ai-credit.js), kept live by the server's
+ * `budget_updated` pushes. Read when a conversation opens, throttled there,
+ * and again at once after a refusal.
+ */
+function refreshCredits(force = false) {
+  if (typeof window === 'undefined') return;
+  const budget = (window as unknown as { AiCredit?: { Budget?: { refresh?: (opts?: { force?: boolean }) => unknown } } }).AiCredit?.Budget;
+  try { void budget?.refresh?.({ force }); } catch { /* the meter keeps its last figures */ }
+}
+
+export function dismissCredits() {
+  if (state.credits) publish({ credits: null });
 }
 
 /** The composer took a refused message back. */
@@ -719,6 +785,100 @@ export async function switchActiveChange(changeId: number) {
 
 export function setDrawerOpen(open: boolean) {
   publish({ drawerOpen: open });
+}
+
+// ── The session's own actions (the bar's ⋯) ────────────────────────────
+
+/** Rename the conversation; asks for the name. */
+export async function renameCurrentSession() {
+  const id = state.id;
+  const session = state.session;
+  if (!id || !session) return;
+  const title = await window.PlatformUI?.prompt?.({
+    title: 'Rename this session',
+    value: session.title || '',
+    placeholder: 'What this conversation is about',
+    confirmLabel: 'Rename',
+  });
+  if (title == null || !title.trim() || title.trim() === session.title || state.id !== id) return;
+  try {
+    const renamed = await api.renameSession(id, title.trim());
+    if (state.id !== id) return;
+    publish((current) => ({ session: renamed, sessions: withListed(current, renamed) }));
+    syncTitle();
+  } catch (error) {
+    if (state.id === id) publish({ error: errorText(error, 'Could not rename this session.') });
+  }
+}
+
+/**
+ * Archive the conversation, after a confirm. It leaves the lists; its
+ * active change is paused (a change up for a vote keeps its vote), and the
+ * conversation stays on screen, read-only, with Unarchive.
+ */
+export async function archiveCurrentSession() {
+  const id = state.id;
+  if (!id || state.session?.status === 'archived') return;
+  const ok = await window.PlatformUI?.confirm?.({
+    title: 'Archive this session?',
+    message: 'It leaves your lists and its change is paused. A change up for a vote keeps its vote, and you can unarchive the session at any time.',
+    confirmLabel: 'Archive',
+  });
+  if (!ok || state.id !== id) return;
+  try {
+    const session = await api.archiveSession(id);
+    if (state.id !== id) return;
+    publish((current) => ({ session, sessions: current.sessions.filter((s) => s.id !== id) }));
+    void loadAgentSessions();
+  } catch (error) {
+    if (state.id === id) publish({ error: errorText(error, 'Could not archive this session.') });
+  }
+}
+
+export async function unarchiveCurrentSession() {
+  const id = state.id;
+  if (!id || state.session?.status !== 'archived') return;
+  try {
+    const session = await api.unarchiveSession(id);
+    if (state.id !== id) return;
+    publish({ session });
+    void loadAgentSessions();
+  } catch (error) {
+    if (state.id === id) publish({ error: errorText(error, 'Could not unarchive this session.') });
+  }
+}
+
+// ── Handing the work to a coding agent on the web ──────────────────────
+
+/** Show the walkthrough for handing this conversation's change to `agent`. */
+export function openHandoff(agent: HandoffAgent) {
+  if (state.handoff !== agent) publish({ handoff: agent });
+}
+
+export function closeHandoff() {
+  if (state.handoff) publish({ handoff: null });
+}
+
+// ── Checks ─────────────────────────────────────────────────────────────
+
+/**
+ * Re-run a change's checks on its current commit: the platform's own
+ * recheck (AppView.castRecheck, POST /api/sessions/:id/recheck), which says
+ * itself when it cannot. The change's `checks_ready` event, or the re-read
+ * here, moves the card's line.
+ */
+export async function recheckChange(changeId: number) {
+  const id = state.id;
+  if (!id || state.changeAction) return;
+  const cast = window.AppView?.castRecheck;
+  if (typeof cast !== 'function') return;
+  publish({ changeAction: { changeId, kind: 'recheck' } });
+  try {
+    await cast.call(window.AppView, changeId);
+  } finally {
+    if (actionOn(changeId, 'recheck')) publish({ changeAction: null });
+    if (state.id === id) void refreshSession(id).catch(() => {});
+  }
 }
 
 // ── Saved drafts ───────────────────────────────────────────────────────
@@ -942,9 +1102,9 @@ function toast(message: string) {
 }
 
 /** Read afresh: the action can end while an await is outstanding. */
-function actionOn(changeId: number): boolean {
+function actionOn(changeId: number, kind?: NonNullable<AgentSessionState['changeAction']>['kind']): boolean {
   const action: AgentSessionState['changeAction'] = state.changeAction;
-  return !!action && action.changeId === changeId;
+  return !!action && action.changeId === changeId && (!kind || action.kind === kind);
 }
 
 /**

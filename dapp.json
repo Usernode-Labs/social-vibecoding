@@ -5092,6 +5092,12 @@
       "expectText": "Also keep the choice when I switch devices."
     },
     {
+      "name": "#2779: an agent session's bar says where its work is built (Build: Homeroom) and carries the session's own actions",
+      "path": "/#messages/agent/990801",
+      "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-bar]:has([data-agent-session-menu]) [data-agent-session-venue]",
+      "expectText": "Homeroom"
+    },
+    {
       "name": "#2387: every message carries one hover bar (recent reactions, the picker, reply, save, \u22ef), and a threaded one its reply count",
       "path": "/?demo=1#messages/910004",
       "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100404:has(.msgx-thread-chip) > .msgx-bar:has([aria-label^=\"React with\"]) > [aria-label=\"Add reaction\"] ~ [aria-label=\"Reply\"] ~ [aria-label=\"Save message\"] ~ .messages-action-more[aria-haspopup=\"menu\"]",

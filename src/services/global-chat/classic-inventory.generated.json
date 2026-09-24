@@ -7,7 +7,7 @@
     "mappedRoutes": 550,
     "exemptRoutes": 154,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 399,
+    "clientApiReferences": 403,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 22,
     "navigationSurfaces": 10
@@ -5909,6 +5909,7 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/workshop",
       "clientReferences": [
+        "frontend/src/features/agent-session/api.ts",
         "frontend/src/features/dev-chat/dev-chat.js"
       ]
     },
@@ -13202,6 +13203,13 @@
       "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
     },
     {
+      "path": "/api/agent-sessions/:param/archive",
+      "sources": [
+        "frontend/src/features/agent-session/api.ts"
+      ],
+      "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
+    },
+    {
       "path": "/api/agent-sessions/:param/events",
       "sources": [
         "frontend/src/features/agent-session/store.ts"
@@ -13223,7 +13231,21 @@
       "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
     },
     {
+      "path": "/api/agent-sessions/:param/title",
+      "sources": [
+        "frontend/src/features/agent-session/api.ts"
+      ],
+      "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
+    },
+    {
       "path": "/api/agent-sessions/:param/turns",
+      "sources": [
+        "frontend/src/features/agent-session/api.ts"
+      ],
+      "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
+    },
+    {
+      "path": "/api/agent-sessions/:param/unarchive",
       "sources": [
         "frontend/src/features/agent-session/api.ts"
       ],

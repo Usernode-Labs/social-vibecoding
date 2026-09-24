@@ -697,6 +697,16 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 - **The browser tab** says "⏳ Thinking…" while the conversation on screen is working. The dev chat's module stays the title's one writer (`DevChat.setAgentSessionThinking`), so the marker composes with the unread count and the "done" marker as the dev chat's does.
 - **Staging** gives the seeded conversation one saved draft and a cost on the Mayor's reply. A declared check pins both.
 
+*Follow-up: session and change controls, credits, and handing the work to a web agent.*
+
+- **The session's ⋯** (the dev chat's): Rename (`PATCH .../title`, asked with the kit's prompt), Archive after a confirm (`POST .../archive`: the conversation leaves the lists and its change is paused; a change up for a vote keeps its vote), and Unarchive. An archived conversation stays on screen, read-only, with "This session is archived. Unarchive it to keep going." above the box.
+- **Checks on the staging card.** The checks line ("2 checks failing") opens the platform's own "Proposal checks" dialog (`AppView.openSessionChecks`: every check, Refresh, Re-run). A failing or errored run also offers Re-run checks on the card, which is the platform's recheck (`AppView.castRecheck`, `POST /api/sessions/:id/recheck`) with its own toasts; the card reads "Re-running…" until it answers.
+- **The credits meter** beside the model picker is the header's own figure (`aiBudgetStore`, published by `features/header/ai-credit.js` and kept live by `budget_updated`), read when a conversation opens.
+- **Out of credits.** A message the platform credits refuse (`429 budget_exceeded`) is no longer a raw red line. It goes back to the box, and the conversation shows a card with `credit-options.js`'s lead ("You're out of this week's free AI credits."), the server's reason, and the ways to keep building: Claude Code and Codex on the web first, then your own API key and the rest a non-developer can follow. The developer routes (a CLI lease, importing your own pull request) are left out: they build a dev session, not this conversation.
+- **"Build: Homeroom"** is always in the session bar. Its menu offers Homeroom (here), Claude Code on the web and Codex on the web; the web rows open the hand-off walkthrough. The label stays Homeroom, because the conversation itself keeps building here: the Mayor's dispatch has no venue.
+- **The hand-off walkthrough** is the dev chat's (#1049): `dev-flow-select.js` `steps()` over `GET /api/apps/:slug/dev-flow/status` for the conversation's change (its app, `sessionId`/`proposalId`, and `targetKind` session or proposal), drawn in React. Link GitHub, fork the app, connect Homeroom in the Claude or ChatGPT account the agent runs as (the connector steps and the MCP URL open in place), then Copy instructions and Open Claude Code / Codex. It reads the server's status every time, so it resumes where it was. With no change it hands over new work on the conversation's app; with no app at all it says to pick one first.
+- **Staging:** a declared check pins "Build: Homeroom" beside the ⋯ on conversation 990801. The walkthrough there shows staging's fixture status (nothing linked yet).
+
 **Process.** Each proposal:
 
 1. pins its base with `prepare_work`;

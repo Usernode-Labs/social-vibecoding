@@ -1245,7 +1245,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // box, in a conversation whose Mayor reply shows what it cost: one
   // selector over the staging conversation 990801's seeded draft. 26 slots
   // left under 830.
-  assert.equal(DAPP.tests.length, 804);
+  //
+  // 804 → 805: +1 (#2779): an agent session's bar says where its work is
+  // built ("Build: Homeroom") beside the session's ⋯, one selector over the
+  // staging conversation 990801's bar. 25 slots left under 830.
+  assert.equal(DAPP.tests.length, 805);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
