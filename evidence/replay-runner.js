@@ -36,6 +36,8 @@ const STEPS_TARGET_BYTES = 1_500_000;
 const STEPS_MAX_BYTES = 4_000_000;
 const MOTION_TARGET_BYTES = 2_000_000;
 const MOTION_MAX_BYTES = 6_000_000;
+const INITIAL_NAVIGATION_RETRY_DELAY_MS = 500;
+const RETRYABLE_INITIAL_NAVIGATION = /\bnet::ERR_(NETWORK_CHANGED|CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_REFUSED|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE)\b/i;
 
 const CHROMIUM_ARGS = Object.freeze([
   '--disable-dev-shm-usage',
@@ -339,6 +341,23 @@ function authorizedUrl(origin, relativePath, token) {
   const url = new URL(joinedUrl(origin, relativePath));
   if (token) url.searchParams.set('token', token);
   return url.toString();
+}
+
+// A freshly reset internal service can change its network endpoint between
+// session bootstrap and Chromium's first document request. Retry only that
+// pre-document transport failure, never an app response, action, or assertion.
+// The same plan still has to pass both independent clean replays.
+async function navigateStart(page, url, onRetry = () => {}, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      return await page.goto(url, { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
+    } catch (error) {
+      const code = RETRYABLE_INITIAL_NAVIGATION.exec(String(error?.message || ''))?.[1]?.toLowerCase();
+      if (!code || attempt === 2) throw error;
+      onRetry({ attempt: attempt + 1, code });
+      await wait(INITIAL_NAVIGATION_RETRY_DELAY_MS);
+    }
+  }
 }
 
 function publicRelativePath(value) {
@@ -918,9 +937,8 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   let failureStage = { phase: 'navigate_start' };
   try {
     emitEvent({ type: 'navigation_started', ...eventBase });
-    const response = await page.goto(authorizedUrl(origin, sidePlan.startPath, authToken), {
-      waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS,
-    });
+    const response = await navigateStart(page, authorizedUrl(origin, sidePlan.startPath, authToken),
+      ({ attempt, code }) => emitEvent({ type: 'navigation_retry', ...eventBase, attempt, code }));
     navigation = {
       status: typeof response?.status === 'function' ? response.status() : null,
     };
@@ -1266,6 +1284,7 @@ module.exports = {
   waitForAnyVisible,
   waitForVisibleText,
   authorizedUrl,
+  navigateStart,
   publicRelativePath,
   redactedUrl,
   sessionCookieValue,
