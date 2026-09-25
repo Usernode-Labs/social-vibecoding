@@ -4564,6 +4564,9 @@ const App = {
     // it — it reveals #app-view itself — but a `keepAlso` reveal during a
     // zoom-out would, and clearing on the way OUT of an app is right anyway.
     if (revealId !== 'app-view') App._appReturn = null;
+    // …and so does a topic's Messages origin (#3103): a card opened from a
+    // conversation returns to it, but only for that visit.
+    if (revealId !== 'app-view') window.Improve?.clearTopicOrigin?.();
     // AND THE INBOX VISIT ENDS THE SAME WAY (#2718 review), for the same
     // reason and at the same single choke point.
     //

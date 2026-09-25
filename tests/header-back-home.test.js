@@ -225,7 +225,7 @@ test('the derived answer outranks the imperative one, and only inside an app', (
     'an app view wins outright; a Workshop topic hides the bar\'s slot for the '
     + 'in-pane chip; an app route with a level above it wins over the '
     + 'imperative call; everything else keeps what setBackIcon published');
-  assert.match(HEADER, /const paneBack = topicBackHref\(\{\n\s+slug: backSlug, tab: backTab, subTab: backSubTab, boardView,\n\s+\}\);/,
+  assert.match(HEADER, /const paneBack = topicBackHref\(\{\n\s+slug: backSlug, tab: backTab, subTab: backSubTab, boardView, topicOrigin,\n\s+\}\);/,
     'and that topic answer is topicBackHref\'s, the chip\'s own');
   assert.match(HEADER, /const resolvedBackHref = routeUp\n\s+\|\| \(mode === 'home' \? homeHref\(\) : backHref\);/,
     "and 'home' resolves its own href rather than relying on a caller to "
@@ -237,7 +237,7 @@ test('the derived answer outranks the imperative one, and only inside an app', (
 function loadImprove(initial) {
   const store = makeStoreStub({
     slug: null, tab: 'app', subTab: null, selfHosted: false,
-    sessionOrigin: null, boardView: 'workshop', ...initial,
+    sessionOrigin: null, topicOrigin: null, boardView: 'workshop', ...initial,
   });
   const sandbox = {
     console, Promise, setTimeout, clearTimeout,
@@ -254,7 +254,7 @@ function loadImprove(initial) {
   // then writes into — one store, reached two ways, as in the bundle.
   runModules(sandbox, [['improve-store.js', IMPROVE_STORE]], {
     imports: { '../../lib/plain-store.js': { createStore: () => store } },
-    tail: 'window.__improveStore = { improveStore, boardHref, topicBackHref };',
+    tail: 'window.__improveStore = { improveStore, boardHref, topicBackHref, topicBackLabel };',
   });
   // The one surface still listing these sessions. Flip `sheet.open` in a
   // test that needs the reload gate open; it is the notifications sheet's
@@ -281,6 +281,7 @@ function loadImprove(initial) {
     Improve: sandbox.__improve, store, sandbox,
     boardHref: sandbox.__improveStore.boardHref,
     topicBackHref: sandbox.__improveStore.topicBackHref,
+    topicBackLabel: sandbox.__improveStore.topicBackLabel,
   };
 }
 
@@ -457,6 +458,58 @@ test('a topic route, and only a topic route, has an in-pane back to its board (#
   }
   assert.equal(at('topic', { tab: 'app' }), null, 'never on the running app');
   assert.equal(at('topic', { slug: null }), null, 'and never without an app');
+});
+
+test('a card opened from a Messages conversation goes back to it (#3103)', () => {
+  // The shared proposal / issue card in a conversation opens the same topic
+  // route the Workshop does. Its back chip went to the Workshop — a screen the
+  // reader had not been on — because the only origin a topic knew was its
+  // board. The card now names the conversation before it navigates.
+  const { Improve, store, topicBackHref, topicBackLabel } = loadImprove({ slug: 'demo-app' });
+  const chip = () => topicBackHref(store.state);
+  Improve.setTab('dev', 'forum');
+  Improve.enterTopicFrom('#messages/42');
+  Improve.setTab('dev', 'topic');
+  assert.equal(store.state.topicOrigin, '#messages/42', 'the conversation is recorded');
+  assert.equal(chip(), '#messages/42', 'and the chip goes back to it');
+  assert.equal(topicBackLabel(chip()), 'Messages', 'and says where it goes');
+  Improve.setTab('dev', 'topic');
+  assert.equal(chip(), '#messages/42',
+    'kept when the topic route re-publishes (navigateToApp, once the record loads)');
+  Improve.setTab('dev', 'forum');
+  assert.equal(store.state.topicOrigin, null, 'dropped by any other route');
+  Improve.setTab('dev', 'topic');
+  assert.equal(chip(), '#app/demo-app/workshop',
+    'so a topic opened from the Workshop still goes back to the Workshop');
+  assert.equal(topicBackLabel(chip()), 'Workshop');
+
+  Improve.enterTopicFrom('#messages/app/demo-app');
+  Improve.setTab('dev', 'forum');
+  Improve.setTab('dev', 'topic');
+  assert.equal(chip(), '#messages/app/demo-app',
+    'a named origin waits for the topic entry it was set for');
+  Improve.clearTopicOrigin();
+  assert.equal(store.state.topicOrigin, null,
+    'and leaving the app view ends it (App._showOnlyScreen)');
+  Improve.enterTopicFrom('https://elsewhere.example/');
+  assert.equal(Improve._nextTopicOrigin, null, 'only a hash is accepted');
+});
+
+test('the shared card and the router wire the Messages origin (#3103)', () => {
+  const FORMAT = read('frontend/src/features/messages/format.tsx');
+  assert.match(FORMAT, /className="messages-object-card"[^>]*onClick=\{\(event\) => recordObjectOrigin\(event, object\.href as string\)\}/,
+    'the card anchor records its origin on click, keeping its class and href');
+  const fn = FORMAT.slice(FORMAT.indexOf('export function recordObjectOrigin('),
+    FORMAT.indexOf('export function ObjectCard('));
+  assert.ok(fn.indexOf('isNativeClick?.(event)') !== -1, 'a modified click records nothing');
+  assert.match(fn, /here\.startsWith\('#messages'\) \? here : '#messages'/,
+    'the origin is the conversation address on screen, or the inbox');
+  assert.match(fn, /\/dev\\\/sessions\\\/\/\.test\(href\)\) w\.Improve\?\.enterSessionFrom\?\.\(origin\)/,
+    'a shared spec opens a session, whose arrow reads sessionOrigin');
+  assert.match(fn, /\(\?:issues\|proposals\|governance\)\\\/\/\.test\(href\)\) w\.Improve\?\.enterTopicFrom\?\.\(origin\)/,
+    'an issue, proposal or governance card opens a topic, whose chip reads topicOrigin');
+  assert.match(APP_JS, /if \(revealId !== 'app-view'\) window\.Improve\?\.clearTopicOrigin\?\.\(\);/,
+    'App._showOnlyScreen ends the origin with the app-view visit');
 });
 
 test('a session origin and the topic chip answer with the same board', () => {
