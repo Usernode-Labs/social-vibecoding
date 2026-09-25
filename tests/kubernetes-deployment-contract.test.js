@@ -100,6 +100,25 @@ test('Kubernetes platform rollout preserves availability and singleton ownership
   assert.doesNotMatch(platform, /type: Recreate/);
 });
 
+test('Kubernetes gives the platform a heap ceiling that fits its memory limit', () => {
+  // Node's default heap stops at about 1.5 GB whatever limits.memory says; on
+  // 2026-09-25 the platform crash-looped on heap exhaustion with half of its
+  // 3Gi container unused.
+  const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  assert.match(platform,
+    /\{\{- with \.Values\.platform\.nodeOptions \}\}\n\s+- \{name: NODE_OPTIONS, value: \{\{ \. \| quote \}\}\}\n\s+\{\{- end \}\}/,
+    'the platform container gets NODE_OPTIONS only when a value is set');
+  const heap = /nodeOptions: "--max-old-space-size=(\d+)"/.exec(values);
+  assert.ok(heap, 'the chart sets a default heap ceiling');
+  const limit = /limits:\n\s+cpu: "4"\n\s+memory: (\d+)Gi/.exec(values);
+  assert.ok(limit, 'the platform memory limit is in Gi');
+  const heapMb = Number(heap[1]);
+  const limitMb = Number(limit[1]) * 1024;
+  assert.ok(heapMb > 1536, 'above Node\'s default ceiling, or it changes nothing');
+  assert.ok(heapMb <= limitMb * 0.8, 'leaves room outside the heap for buffers, code and stacks');
+});
+
 test('Kubernetes enables visual evidence by default with one explicit kill switch', () => {
   const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
