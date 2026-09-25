@@ -87,6 +87,18 @@ test('classifyIssue: unchanged since the last run is skipped; changed is re-queu
   assert.equal(changed.reason, 'changed');
 });
 
+test('classifyIssue: an unchanged issue whose last verdict a cap held says which cap (#3152)', () => {
+  const issue = { number: 7, state: 'open', updatedAt: '2026-09-02T00:00:00Z' };
+  const lastRun = { thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: 'proposals_per_app' };
+  const held = bot.classifyIssue({ issue, lastRun });
+  assert.equal(held.eligible, false, 'refreshApp, not classifyIssue, decides whether the cap has room');
+  assert.equal(held.reason, 'held');
+  assert.equal(held.cap, 'proposals_per_app');
+  // Something new on the issue re-queues it whatever held it last time.
+  const changed = bot.classifyIssue({ issue, threadLastAt: '2026-09-05T00:00:00Z', lastRun });
+  assert.equal(changed.reason, 'changed');
+});
+
 test('classifyIssue: the bot never competes with a person, and never looks at a closed issue', () => {
   const busy = bot.classifyIssue({ issue: { number: 7, state: 'open' }, busy: true });
   assert.equal(busy.eligible, false);
@@ -970,6 +982,77 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
   assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[1, 1, 'new'], [5, 2, 'changed']]);
   assert.deepEqual(deleted, [9, [1, 5]], 'everything else queued for this app is dropped');
   assert.equal(out.removed, 2);
+});
+
+function heldPool({ inserts }) {
+  // #10 and #11 were held by the proposals cap (#10 first), #12 by the
+  // question tripwire, #13 is unchanged and was never held.
+  return {
+    async query(sql, params) {
+      const s = String(sql);
+      if (/FROM issue_claims|UNNEST\(cs\.linked_issues\)|headless_issue_number AS n|created_from_issue_number AS n|FROM chat_messages/.test(s)) return { rows: [] };
+      if (/FROM homeroom_bot_runs/.test(s)) {
+        return { rows: [
+          { issue_number: 10, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: 'proposals_per_app', created_at: '2026-09-03T00:00:00Z' },
+          { issue_number: 11, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: 'proposals_per_app', created_at: '2026-09-04T00:00:00Z' },
+          { issue_number: 12, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: 'question_tripwire', created_at: '2026-09-04T00:00:00Z' },
+          { issue_number: 13, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: null, created_at: '2026-09-03T00:00:00Z' },
+        ] };
+      }
+      if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
+      if (/DELETE FROM homeroom_bot_queue/.test(s)) return { rowCount: 0, rows: [] };
+      throw new Error(`unexpected query: ${s.slice(0, 60)}`);
+    },
+  };
+}
+const HELD_GITHUB = {
+  async fetchPublicIssues() {
+    // Listed newest first, as GitHub does: the refresh must still take the
+    // OLDEST hold when there is room for only one.
+    return { issues: [13, 12, 11, 10].map((number) => ({ number, state: 'open', updatedAt: '2026-09-01T00:00:00Z' })) };
+  },
+};
+const HELD_APP = { id: 9, slug: 'rss-reader-4113da', repo_url: 'https://github.com/usernode-bot/rss-reader' };
+
+test('refreshApp brings back held issues once their cap has room, oldest first, no more than fit (#3152)', async () => {
+  const inserts = [];
+  await bot.refreshApp(heldPool({ inserts }), HELD_APP, {
+    github: HELD_GITHUB, capRoom: { proposals_per_app: 1, question_tripwire: 0 },
+  });
+  assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[10, 2, 'cap_freed']],
+    'one merged proposal frees one slot: the oldest held build comes back, the question tripwire is still full');
+
+  inserts.length = 0;
+  await bot.refreshApp(heldPool({ inserts }), HELD_APP, {
+    github: HELD_GITHUB, capRoom: { proposals_per_app: 2, question_tripwire: 3 },
+  });
+  assert.deepEqual(inserts.map((p) => p[1]).sort(), [10, 11, 12], 'an unchanged issue nothing held stays out');
+});
+
+test('refreshApp leaves held issues alone on a shadow app', async () => {
+  const inserts = [];
+  const out = await bot.refreshApp(heldPool({ inserts }), HELD_APP, { github: HELD_GITHUB });
+  assert.equal(out.queued, 0, 'no capRoom, no retries: in shadow a hold is only a number on the dashboard');
+});
+
+test('capRoomFor counts the same two things the live check does', async () => {
+  const pool = {
+    async query(sql) {
+      const s = String(sql);
+      if (/FROM chat_sessions/.test(s)) return { rows: [{ cnt: 1 }] };
+      if (/FROM homeroom_bot_runs/.test(s)) return { rows: [{ cnt: 12 }] };
+      throw new Error(`unexpected query: ${s.slice(0, 60)}`);
+    },
+  };
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9), { proposals_per_app: 1, question_tripwire: 0 });
+  const tripwire = SRC.slice(SRC.indexOf('async function tripwireCount'), SRC.indexOf('async function capRoomFor'));
+  assert.match(tripwire, /AND cap_suppressed IS NULL/,
+    'a held question is not a posted one; counting it would let every retry keep the window full');
+  const refresh = SRC.slice(SRC.indexOf('async function refreshQueue'), SRC.indexOf('async function nextBatch'));
+  assert.equal((refresh.match(/deps\.bot && live\.isLiveFor\(settings, app\)/g) || []).length, 2,
+    'both the timed refresh and a wake ask for room, and only on a live app');
+  assert.match(SRC, /refreshQueue\(pool, settings, \{ \.\.\.deps, bot \}\)/);
+  assert.match(SRC, /refreshApps\(pool, settings, targeted, \{ \.\.\.deps, bot \}\)/);
 });
 
 test('refreshApp treats a degraded GitHub read as "no answer", not "no issues"', async () => {

@@ -503,10 +503,13 @@ function toMs(value) {
  *   threadLastAt newest Homeroom discussion message on it, or null
  *   busy         true when a person has a live claim, session or proposal
  *                on it — the bot never competes with a human who started
- *   lastRun      the bot's most recent run on it ({ thread_seen_at }), or null
+ *   lastRun      the bot's most recent run on it ({ thread_seen_at,
+ *                cap_suppressed }), or null
  *
  * `threadSeenAt` is the newest activity the bot knows of. A run is only
- * worth repeating when something happened after the last one saw it.
+ * worth repeating when something happened after the last one saw it, or
+ * (#3152) when a live cap held its verdict: that issue comes back as `held`,
+ * naming the cap, and refreshApp decides whether the cap has room again.
  */
 function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = null }) {
   if (!issue || !Number.isInteger(issue.number)) return { eligible: false, reason: 'invalid' };
@@ -516,7 +519,12 @@ function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = nul
   const threadSeenAt = seenMs ? new Date(seenMs).toISOString() : null;
   if (lastRun) {
     const lastSeenMs = toMs(lastRun.thread_seen_at);
-    if (lastSeenMs && seenMs <= lastSeenMs) return { eligible: false, reason: 'unchanged', threadSeenAt };
+    if (lastSeenMs && seenMs <= lastSeenMs) {
+      if (lastRun.cap_suppressed) {
+        return { eligible: false, reason: 'held', cap: lastRun.cap_suppressed, threadSeenAt };
+      }
+      return { eligible: false, reason: 'unchanged', threadSeenAt };
+    }
     return { eligible: true, reason: 'changed', priority: 2, threadSeenAt };
   }
   return { eligible: true, reason: 'new', priority: 1, threadSeenAt };
@@ -612,7 +620,7 @@ async function threadActivityByIssue(pool, appId) {
  */
 async function lastRunsByIssue(pool, appId) {
   const { rows } = await pool.query(
-    `SELECT DISTINCT ON (issue_number) issue_number, thread_seen_at, verdict, created_at
+    `SELECT DISTINCT ON (issue_number) issue_number, thread_seen_at, verdict, cap_suppressed, created_at
        FROM homeroom_bot_runs
       WHERE app_id = $1
         AND budget_stop IS DISTINCT FROM 'input tokens'
@@ -626,8 +634,15 @@ async function lastRunsByIssue(pool, appId) {
 /**
  * One refresh of one app's slice of the queue. Returns what it did so a
  * test can drive it directly. `github` is injectable for the same reason.
+ *
+ * `capRoom` (#3152) is how many more verdicts each live cap would let
+ * through on this app right now, from capRoomFor; null on a shadow app.
+ * An unchanged issue whose last verdict a cap held comes back once that
+ * cap has room: oldest hold first, and no more of them than there is room
+ * for, so a merged proposal brings back one held build rather than all of
+ * them at once.
  */
-async function refreshApp(pool, app, { github = require('./github') } = {}) {
+async function refreshApp(pool, app, { github = require('./github'), capRoom = null } = {}) {
   const repo = parseRepo(app.repo_url);
   const out = { app: app.slug, queued: 0, removed: 0, skipped: null };
   if (!repo) { out.skipped = 'no_repo'; return out; }
@@ -642,15 +657,27 @@ async function refreshApp(pool, app, { github = require('./github') } = {}) {
   ]);
 
   const eligible = [];
+  const held = [];
   for (const issue of issues) {
     const n = Number(issue.number);
+    const lastRun = lastRuns.get(n) || null;
     const verdict = classifyIssue({
       issue,
       threadLastAt: threads.get(n) || null,
       busy: busy.has(n),
-      lastRun: lastRuns.get(n) || null,
+      lastRun,
     });
     if (verdict.eligible) eligible.push({ n, ...verdict });
+    else if (verdict.reason === 'held') held.push({ n, heldAt: toMs(lastRun.created_at), ...verdict });
+  }
+  if (capRoom) {
+    const room = { ...capRoom };
+    held.sort((a, b) => a.heldAt - b.heldAt);
+    for (const h of held) {
+      if (!(room[h.cap] > 0)) continue;
+      room[h.cap] -= 1;
+      eligible.push({ n: h.n, eligible: true, reason: 'cap_freed', priority: 2, threadSeenAt: h.threadSeenAt });
+    }
   }
 
   for (const item of eligible) {
@@ -687,7 +714,9 @@ async function refreshQueue(pool, settings, deps = {}) {
     if (paused.has(app.slug)) continue;
     summary.apps += 1;
     try {
-      const r = await refreshApp(pool, app, deps);
+      const capRoom = deps.bot && live.isLiveFor(settings, app)
+        ? await capRoomFor(pool, deps.bot, app.id) : null;
+      const r = await refreshApp(pool, app, { ...deps, capRoom });
       summary.queued += r.queued;
       summary.removed += r.removed;
       if (r.skipped) summary.skipped += 1;
@@ -708,7 +737,9 @@ async function refreshApps(pool, settings, appIds, deps = {}) {
     if (paused.has(app.slug)) continue;
     summary.apps += 1;
     try {
-      const r = await refreshApp(pool, app, deps);
+      const capRoom = deps.bot && live.isLiveFor(settings, app)
+        ? await capRoomFor(pool, deps.bot, app.id) : null;
+      const r = await refreshApp(pool, app, { ...deps, capRoom });
       summary.queued += r.queued;
       summary.removed += r.removed;
       if (r.skipped) summary.skipped += 1;
@@ -820,23 +851,51 @@ async function insertRun(pool, run) {
  */
 async function simulateCaps(pool, bot, appId, verdict) {
   if (verdict === 'ready') {
-    const { rows } = await pool.query(
-      `SELECT COUNT(*)::int AS cnt FROM chat_sessions
-        WHERE app_id = $1 AND user_id = $2 AND status IN ('promoted', 'merging')`,
-      [appId, bot.id],
-    );
-    if ((rows[0]?.cnt || 0) >= PROPOSALS_PER_APP_CAP) return 'proposals_per_app';
+    if (await openBotProposalCount(pool, bot, appId) >= PROPOSALS_PER_APP_CAP) return 'proposals_per_app';
   }
   if (TRIPWIRE_VERDICTS.includes(verdict)) {
-    const { rows } = await pool.query(
-      `SELECT COUNT(*)::int AS cnt FROM homeroom_bot_runs
-        WHERE app_id = $1 AND verdict = ANY($2::text[])
-          AND created_at > NOW() - INTERVAL '24 hours'`,
-      [appId, TRIPWIRE_VERDICTS],
-    );
-    if ((rows[0]?.cnt || 0) >= QUESTION_TRIPWIRE_PER_DAY) return 'question_tripwire';
+    if (await tripwireCount(pool, appId) >= QUESTION_TRIPWIRE_PER_DAY) return 'question_tripwire';
   }
   return null;
+}
+
+async function openBotProposalCount(pool, bot, appId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS cnt FROM chat_sessions
+      WHERE app_id = $1 AND user_id = $2 AND status IN ('promoted', 'merging')`,
+    [appId, bot.id],
+  );
+  return rows[0]?.cnt || 0;
+}
+
+// Only the verdicts that went out (or, in shadow, would have). A held one
+// said nothing but the one-line held note, and counting it would let each
+// retry of a held question push the window out again (#3152).
+async function tripwireCount(pool, appId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS cnt FROM homeroom_bot_runs
+      WHERE app_id = $1 AND verdict = ANY($2::text[])
+        AND cap_suppressed IS NULL
+        AND created_at > NOW() - INTERVAL '24 hours'`,
+    [appId, TRIPWIRE_VERDICTS],
+  );
+  return rows[0]?.cnt || 0;
+}
+
+/**
+ * How many more verdicts each cap would let through on this app now, keyed
+ * by the name simulateCaps records (#3152). The same two counts, so a held
+ * issue is only brought back when the check it failed would now pass.
+ */
+async function capRoomFor(pool, bot, appId) {
+  const [proposals, questions] = await Promise.all([
+    openBotProposalCount(pool, bot, appId),
+    tripwireCount(pool, appId),
+  ]);
+  return {
+    proposals_per_app: Math.max(0, PROPOSALS_PER_APP_CAP - proposals),
+    question_tripwire: Math.max(0, QUESTION_TRIPWIRE_PER_DAY - questions),
+  };
 }
 
 // Errors that mean "this app cannot be worked right now", as opposed to
@@ -1465,7 +1524,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
  * #3146: what a live verdict does. Posts to the issue, builds and proposes
  * a ready request, then records what the bot has seen so its own comments
  * are not read back as a change. A verdict the live caps hold back posts
- * nothing: the dashboard already shows what it would have said.
+ * one line saying so (#3152), and only when that same line is not already
+ * the bot's newest post there: a held issue is retried whenever its cap has
+ * room, and a retry that is held again has nothing new to say.
  */
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
@@ -1479,9 +1540,18 @@ async function actOnVerdict({
   };
   let acted = capSuppressed ? 'held' : parsed.verdict;
   if (capSuppressed) {
-    log.info('homeroom-bot', 'Live verdict held by a cap; nothing posted', {
-      app: app.slug, issueNumber, verdict: parsed.verdict, cap: capSuppressed,
+    const kind = live.heldKind(capSuppressed);
+    const already = await live.lastPostKind(pool, app.id, issueNumber) === kind;
+    log.info('homeroom-bot', 'Live verdict held by a cap', {
+      app: app.slug, issueNumber, verdict: parsed.verdict, cap: capSuppressed, noted: !already,
     });
+    if (!already) {
+      await say(kind, live.heldText({
+        cap: capSuppressed,
+        verdict: parsed.verdict,
+        limit: capSuppressed === 'proposals_per_app' ? PROPOSALS_PER_APP_CAP : QUESTION_TRIPWIRE_PER_DAY,
+      }));
+    }
   } else if (parsed.verdict === 'question') {
     await say('question', live.questionText(parsed));
   } else if (parsed.verdict === 'person') {
@@ -1571,19 +1641,20 @@ async function runOnce(pool, config, deps = {}) {
     const forceAll = !!deps.forceRefresh || refreshAllRequested;
     refreshAllRequested = false;
     wakeRequested = false;
+    // Before the refresh: on a live app it asks how much room the caps have
+    // for the bot's held issues (#3152).
+    const bot = await ensureBotUser(pool, config);
     if (forceAll || now - lastRefreshAt >= REFRESH_INTERVAL_MS) {
-      const summary = await refreshQueue(pool, settings, deps);
+      const summary = await refreshQueue(pool, settings, { ...deps, bot });
       lastRefreshAt = now;
       out.refreshed = true;
       if (summary.queued) log.info('homeroom-bot', 'Queue refreshed', summary);
     } else if (targeted.length) {
-      const summary = await refreshApps(pool, settings, targeted, deps);
+      const summary = await refreshApps(pool, settings, targeted, { ...deps, bot });
       out.refreshed = true;
       out.woken = targeted.length;
       if (summary.queued) log.info('homeroom-bot', 'Queue refreshed on activity', summary);
     }
-
-    const bot = await ensureBotUser(pool, config);
 
     // Free what the bot's own sessions still hold, on the refresh cadence
     // (#3122). Runs before the fault check on purpose: a full quota is
@@ -2083,6 +2154,7 @@ module.exports = {
   MAX_BATCH_SIZE,
   // Pure, exported for tests.
   classifyIssue,
+  capRoomFor,
   parseVerdict,
   parseRepo,
   BOT_USERNAME,

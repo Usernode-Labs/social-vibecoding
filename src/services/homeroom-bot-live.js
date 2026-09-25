@@ -11,6 +11,8 @@
 //   person          a short note saying a person needs to decide, and why
 //   empty           a short note saying there is nothing to build, and why;
 //                   the issue is never closed by the bot
+//   held            a verdict a live cap held back: one line saying why,
+//                   posted once while the issue stays held (#3152)
 //   ready           one GLM build turn in a dev session of the bot's own,
 //                   then the SAME /promote handler a person's Propose button
 //                   runs — pull request, staging, checks, vote — and a post
@@ -104,6 +106,35 @@ function proposalText({ link, prNumber }) {
 function buildFailedText(reason) {
   return `Homeroom bot tried to build this but couldn't finish: ${clipText(reason, 400) || 'unknown reason'}. `
     + 'A person could pick it up from here.';
+}
+
+// #3152: a verdict a live cap held. One line, so the person who filed the
+// issue is not left with silence, and a promise the refresh keeps: a held
+// issue is queued again as soon as the cap that held it has room.
+function heldText({ cap, verdict, limit }) {
+  if (cap === 'proposals_per_app') {
+    return `Homeroom bot would build this, but it already has ${limit} proposals open on this app. `
+      + 'It will come back to this issue when one of them is merged or closed.';
+  }
+  const what = verdict === 'question' ? 'a question about' : 'a note on';
+  return `Homeroom bot has ${what} this request, but it has already posted ${limit} questions and notes `
+    + 'on this app in the last day. It will come back to this issue once some of those are a day old.';
+}
+
+function heldKind(cap) {
+  return `held_${cap}`;
+}
+
+/** The kind of the bot's newest post on this issue, or null. */
+async function lastPostKind(pool, appId, issueNumber) {
+  const { rows } = await pool.query(
+    `SELECT kind FROM homeroom_bot_posts
+      WHERE app_id = $1 AND issue_number = $2
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [appId, issueNumber],
+  );
+  return rows[0]?.kind || null;
 }
 
 function proposalLink(domain, appSlug, sessionId) {
@@ -419,6 +450,9 @@ module.exports = {
   emptyText,
   proposalText,
   buildFailedText,
+  heldText,
+  heldKind,
+  lastPostKind,
   proposalLink,
   post,
   advanceSeen,

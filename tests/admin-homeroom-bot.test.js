@@ -433,7 +433,19 @@ test('every verdict opens to its own detail, and only a real failure shows the f
 test('the live list is set from the dashboard, and a proposal the bot opened is one click away (#3146)', () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(tsx, /id="admin-homeroom-bot-live-apps"/);
-  assert.match(tsx, /saveSettings\(\{ liveApps: slugs \}/, 'saved through the same settings route as every other knob');
+  // #3152: one row per app, picked from the running apps, and an explicit
+  // Save through the same settings route as every other knob.
+  assert.match(tsx, /id=\{`admin-homeroom-bot-live-app-\$\{i\}`\}/);
+  assert.match(tsx, /id="admin-homeroom-bot-live-apps-add"/);
+  assert.match(tsx, /id="admin-homeroom-bot-live-apps-save"/);
+  assert.match(tsx, /disabled=\{!liveDirty \|\| !!busy\}/, 'Save is live only when the list differs from what is saved');
+  assert.match(tsx, /write\('\/api\/admin\/homeroom-bot\/settings', 'PUT', \{ liveApps: liveChosen \}/);
+  // The rows are the SAVED list until someone edits them, so a refresh shows
+  // what the bot will act on, and the 30-second poll never wipes an edit.
+  assert.match(tsx, /const liveRows = liveDraft \?\? savedLive;/);
+  assert.match(tsx, /const savedLive = payload\?\.settings\.liveApps \|\| \[\];/);
+  assert.match(tsx, /setLiveDraft\(null\);\s*apply\(data as Payload\);/, 'a successful save goes back to showing the saved list');
+  assert.match(tsx, /id="admin-homeroom-bot-live-apps-state"/);
   assert.match(tsx, /id="admin-homeroom-bot-live-apps-note"/);
   assert.match(tsx, /a staging copy never acts/);
   // The link is built from the run's own app slug and session id, never

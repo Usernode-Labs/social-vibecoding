@@ -244,6 +244,10 @@ function HomeroomBotSection() {
   const [capDraft, setCapDraft] = useState('');
   const [runSlug, setRunSlug] = useState('');
   const [runIssue, setRunIssue] = useState('');
+  // #3152: the live list being edited, or null while it matches what is
+  // saved. Null is what lets the 30-second poll refresh the rows without
+  // throwing away an edit in progress.
+  const [liveDraft, setLiveDraft] = useState<string[] | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -322,6 +326,24 @@ function HomeroomBotSection() {
     const data = await write('/api/admin/homeroom-bot/run', 'POST', { slug: runSlug, issueNumber: n },
       `#${n} on ${runSlug} is at the head of the queue${payload?.settings.mode === 'off' ? ' (the bot is off, so it waits)' : ''}.`);
     if (data) { setRunIssue(''); load(); }
+  };
+
+  const savedLive = payload?.settings.liveApps || [];
+  const liveRows = liveDraft ?? savedLive;
+  const liveChosen = [...new Set(liveRows.filter(Boolean))];
+  const liveDirty = liveChosen.join(',') !== savedLive.join(',');
+  const appName = (slug: string) => payload?.apps.find((a) => a.slug === slug)?.name || slug;
+  const editLive = (rows: string[]) => setLiveDraft(rows);
+
+  const saveLive = async () => {
+    if (!liveDirty) return;
+    const data = await write('/api/admin/homeroom-bot/settings', 'PUT', { liveApps: liveChosen }, liveChosen.length
+      ? `Saved. The bot now acts for real on ${liveChosen.map(appName).join(', ')}.`
+      : 'Saved. The bot is back to shadow on every app.');
+    if (data) {
+      setLiveDraft(null);
+      apply(data as Payload);
+    }
   };
 
   const togglePause = async (slug: string) => {
@@ -490,29 +512,79 @@ function HomeroomBotSection() {
           </div>
 
           <div>
-            <label className={AdminUI.label} htmlFor="admin-homeroom-bot-live-apps">Apps it acts on for real</label>
-            <div className="flex items-center gap-2 mt-1">
-              <input
-                id="admin-homeroom-bot-live-apps"
-                type="text"
-                className={AdminUI.input}
-                placeholder="none: shadow everywhere"
-                defaultValue={(settings?.liveApps || []).join(', ')}
-                key={`live-${(settings?.liveApps || []).join(',')}`}
-                disabled={!canWrite}
-                onBlur={(e) => {
-                  const slugs = [...new Set(e.target.value.split(/[\s,]+/).map((v) => v.trim().toLowerCase()).filter(Boolean))];
-                  if (slugs.join(',') === (settings?.liveApps || []).join(',')) return;
-                  if (!slugs.every((v) => /^[a-z0-9-]{1,120}$/.test(v))) {
-                    setStatus({ text: 'Live apps must be app slugs, separated by commas.', tone: 'err' });
-                    return;
-                  }
-                  saveSettings({ liveApps: slugs }, slugs.length
-                    ? `The bot now acts for real on ${slugs.join(', ')}.`
-                    : 'The bot is back to shadow on every app.');
-                }}
-              />
+            <p className={AdminUI.label} id="admin-homeroom-bot-live-apps-label">Apps it acts on for real</p>
+            <div id="admin-homeroom-bot-live-apps" role="group" aria-labelledby="admin-homeroom-bot-live-apps-label" className="mt-1 space-y-2">
+              {liveRows.length ? liveRows.map((slug, i) => (
+                <div key={i} className="flex items-center gap-2" data-live-app-row={slug || 'new'}>
+                  <select
+                    id={`admin-homeroom-bot-live-app-${i}`}
+                    aria-label={`Live app ${i + 1}`}
+                    className={AdminUI.select}
+                    value={slug}
+                    disabled={!canWrite}
+                    onChange={(e) => editLive(liveRows.map((v, j) => (j === i ? e.target.value : v)))}
+                  >
+                    <option value="">Pick an app…</option>
+                    {slug && !payload?.apps.some((a) => a.slug === slug)
+                      ? <option value={slug}>{`${slug} (not running)`}</option>
+                      : null}
+                    {(payload?.apps || [])
+                      .filter((a) => a.slug === slug || !liveRows.includes(a.slug))
+                      .map((a) => <option key={a.slug} value={a.slug}>{a.name}</option>)}
+                  </select>
+                  {canWrite ? (
+                    <button
+                      type="button"
+                      className={AdminUI.btn.outlineSm}
+                      aria-label={`Remove ${slug ? appName(slug) : 'this row'}`}
+                      onClick={() => editLive(liveRows.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              )) : (
+                <p className={AdminUI.muted} id="admin-homeroom-bot-live-apps-none">None: it only records verdicts, on every app.</p>
+              )}
             </div>
+            {canWrite ? (
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <button
+                  type="button"
+                  id="admin-homeroom-bot-live-apps-add"
+                  className={AdminUI.btn.outlineSm}
+                  onClick={() => editLive([...liveRows, ''])}
+                >
+                  Add app
+                </button>
+                <button
+                  type="button"
+                  id="admin-homeroom-bot-live-apps-save"
+                  className={AdminUI.btn.primarySm}
+                  disabled={!liveDirty || !!busy}
+                  onClick={saveLive}
+                >
+                  Save
+                </button>
+                {liveDraft !== null ? (
+                  <button
+                    type="button"
+                    id="admin-homeroom-bot-live-apps-reset"
+                    className={AdminUI.btn.ghost}
+                    onClick={() => setLiveDraft(null)}
+                  >
+                    Undo changes
+                  </button>
+                ) : null}
+                <span className={AdminUI.muted} id="admin-homeroom-bot-live-apps-state">
+                  {liveDirty
+                    ? 'Not saved yet.'
+                    : savedLive.length
+                      ? `Saved: acts for real on ${savedLive.map(appName).join(', ')}${settings?.mode === 'off' ? ', once the bot is turned on' : ''}.`
+                      : 'Saved: shadow on every app.'}
+                </span>
+              </div>
+            ) : null}
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-live-apps-note">
               On these apps it posts on each issue it looks at, asks its questions
               there, and builds the clear requests into proposals for the group to
