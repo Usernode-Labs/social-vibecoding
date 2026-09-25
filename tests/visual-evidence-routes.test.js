@@ -10,9 +10,82 @@ const fixtures = require('./fixtures/visual-evidence');
 const db = require('../src/db/pool');
 const appAccess = require('../src/services/app-access');
 const appAdmins = require('../src/services/app-admins');
+const github = require('../src/services/github');
 const orchestrator = require('../src/services/visual-evidence-orchestrator');
 const state = require('../src/services/visual-evidence-state');
 const planContract = require('../src/services/visual-evidence-plan');
+
+test('retry classifies the original exact revisions before deciding a no-impact claim', async (t) => {
+  const base = 'a'.repeat(40);
+  const head = 'b'.repeat(40);
+  const runId = '1'.repeat(32);
+  const declaration = { version: 1, impact: 'none', rationale: 'Server-only change.', stories: [] };
+  const session = {
+    id: 42, app_id: 9, user_id: 7, source: 'imported', status: 'merged',
+    imported_pr_head_sha: head, visual_evidence_state: 'failed', visual_evidence_run_id: runId,
+  };
+  const pool = { query: async (sql) => {
+    if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
+    throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
+  } };
+  const saved = {
+    pool: db.getPool, access: appAccess.getAppForUser, compare: github.compareRefs,
+    getRun: state.getRun, rerun: state.rerunSameHead, schedule: orchestrator.scheduleForSession,
+  };
+  db.getPool = () => pool;
+  appAccess.getAppForUser = async () => ({ id: 9, slug: 'demo', repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' });
+  state.getRun = async () => ({ id: runId, base_sha: base, head_sha: head, intent: declaration });
+  const comparisons = [];
+  let files = ['src/routes/sessions.js'];
+  github.compareRefs = async (owner, repo, range) => {
+    comparisons.push({ owner, repo, range });
+    return { files, filesComplete: true };
+  };
+  const decisions = [];
+  state.rerunSameHead = async (_pool, _runId, options) => {
+    decisions.push(options.heuristicUi);
+    return { id: '2'.repeat(32), head_sha: head, state: options.heuristicUi ? 'planned' : 'not_required' };
+  };
+  orchestrator.scheduleForSession = async () => ({ scheduled: false, reason: 'not_required' });
+  const routePath = require.resolve('../src/routes/visual-evidence');
+  delete require.cache[routePath];
+  const isolatedRoutes = require('../src/routes/visual-evidence');
+  const app = express();
+  app.use((req, _res, next) => { req.user = { id: 7 }; next(); });
+  app.use(isolatedRoutes.visualEvidenceRoutes({ visualEvidence: { execute: true } }));
+  const server = app.listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  t.after(() => {
+    server.close();
+    db.getPool = saved.pool;
+    appAccess.getAppForUser = saved.access;
+    github.compareRefs = saved.compare;
+    state.getRun = saved.getRun;
+    state.rerunSameHead = saved.rerun;
+    orchestrator.scheduleForSession = saved.schedule;
+    delete require.cache[routePath];
+  });
+  const url = `http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/evidence/rerun`;
+  const retry = async () => {
+    const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    return { status: response.status, body: await response.json() };
+  };
+  assert.deepEqual(await retry(), {
+    status: 202, body: { ok: true, runId: '2'.repeat(32), visualEvidenceState: 'not_required' },
+  });
+  files = ['frontend/src/features/dev-board/topic/topic-head.tsx'];
+  assert.equal((await retry()).body.visualEvidenceState, 'planned');
+  assert.deepEqual(decisions, [false, true]);
+  assert.deepEqual(comparisons, [
+    { owner: 'Usernode-Labs', repo: 'social-vibecoding', range: `${base}...${head}` },
+    { owner: 'Usernode-Labs', repo: 'social-vibecoding', range: `${base}...${head}` },
+  ]);
+  github.compareRefs = async () => ({ files: [], filesComplete: false });
+  const incomplete = await retry();
+  assert.equal(incomplete.status, 409);
+  assert.equal(incomplete.body.error, 'evidence_change_set_incomplete');
+  assert.deepEqual(decisions, [false, true], 'an incomplete changed-file list cannot reclassify a run');
+});
 
 test('artifact range parsing supports full, open, and suffix ranges and fails closed', () => {
   assert.equal(routes.parseRange(undefined, 100), null);
@@ -53,6 +126,7 @@ test('run diagnostics are private to the author or app manager, available live, 
     replay_plan: fixtures.plan(), plan_hash: planContract.planHash(fixtures.plan()),
     failure_code: 'assertion_failed', failure_reason: 'Sort was not visible.',
     trace_summary: {
+      heartbeat: { processId: 'a'.repeat(16), poolWaiting: 3 },
       replayPasses: [{ pass: 1, durationMs: 20 }], replayRuntime: 'kubernetes', agentAttempts: 1,
       agentDispatches: [{ requestedBackend: 'codex_openrouter', requestedModel: 'glm-4', backend: 'claude_code', model: 'claude-sonnet', fallbackReason: 'model_without_tools', outcome: 'completed' }],
       agentActivity: { budgetMs: 240000, events: [{ atMs: 1200, kind: 'agent_deadline' }] },
@@ -110,6 +184,7 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.equal(diagnostics.currentRun, true);
   assert.equal(diagnostics.replayPlan.stories[0].id, fixtures.plan().stories[0].id);
   assert.deepEqual(diagnostics.trace.replayPasses, [{ pass: 1, durationMs: 20 }]);
+  assert.equal(diagnostics.trace.heartbeat.poolWaiting, 3);
   assert.equal(diagnostics.trace.agentDispatches[0].backend, 'claude_code');
   assert.equal(diagnostics.trace.agentDispatches[0].fallbackReason, 'model_without_tools');
   assert.equal(diagnostics.trace.agentActivity.events[0].kind, 'agent_deadline');

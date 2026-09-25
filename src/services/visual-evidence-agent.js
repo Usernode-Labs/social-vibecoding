@@ -79,6 +79,14 @@ revisions. Where an animation starts, wait for its observed marker to appear,
 then wait for it to become hidden before asserting the settled checkpoint.
 Do not use unrelated actions as a timer or remove a failed checkpoint.
 Verify the data behind the claimed screen loaded for the story's persona.
+A plan must execute every accepted interaction step on both revisions and
+assert the accepted checkpoint after the last step. Before calling
+evidence_run_plan, compare the numbered intent.steps with the before and after
+action lists one by one. A visible control is not proof that clicking it
+reaches the claimed destination: actually click it on both revisions and
+assert the resulting page or URL. If the frozen story cannot prove its full
+claim with the available fixture and replay actions, report that blocker
+instead of submitting a narrower plan that happens to pass.
 A visible page shell, composer, or heading does not prove that an owner-scoped
 record exists. If the page says "not found", a required list is empty, or an
 API request for the record fails unexpectedly, do not submit that route. Follow the actual

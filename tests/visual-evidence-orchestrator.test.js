@@ -1038,7 +1038,7 @@ test('slow paired environment provisioning does not consume the agent exploratio
 test('background evidence heartbeat records progress and stops when the run ends', async () => {
   const seen = [];
   const writes = [];
-  const heartbeat = orchestrator.startRunHeartbeat({}, RUN_ID, {
+  const heartbeat = orchestrator.startRunHeartbeat({ totalCount: 10, idleCount: 1, waitingCount: 3 }, RUN_ID, {
     heartbeatRun: async (_pool, _runId, phase, patch) => { seen.push(phase); writes.push(patch); },
   }, null, 10);
   heartbeat.onProgress({ stage: 'checkout_revisions' });
@@ -1051,6 +1051,10 @@ test('background evidence heartbeat records progress and stops when the run ends
   assert.equal(writes.at(-1).replayEvents.length, 1);
   assert.equal(writes.at(-1).agentActivity.events[0].tool, 'browser_navigate');
   assert.equal(writes.at(-1).agentFinalResponse.excerpt, 'Planner stopped.');
+  assert.match(writes.at(-1).heartbeat.processId, /^[0-9a-f]{16}$/);
+  assert.equal(writes.at(-1).heartbeat.poolTotal, 10);
+  assert.equal(writes.at(-1).heartbeat.poolIdle, 1);
+  assert.equal(writes.at(-1).heartbeat.poolWaiting, 3);
   assert.ok(seen.length >= 2, 'the lease renews during a slow provisioning step');
   heartbeat.stop();
   const stoppedAt = seen.length;

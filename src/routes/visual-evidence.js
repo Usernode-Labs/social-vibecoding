@@ -4,11 +4,13 @@ const { Router, json } = require('express');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
+const github = require('../services/github');
 const log = require('../services/logger');
 const orchestrator = require('../services/visual-evidence-orchestrator');
 const plan = require('../services/visual-evidence-plan');
 const state = require('../services/visual-evidence-state');
 const view = require('../services/visual-evidence-view');
+const { repoParts } = require('../services/visual-evidence-environment');
 const { visualHeadForSession } = require('../services/pr-vote-revision');
 
 const ARTIFACT_ID_RE = /^[0-9a-f]{32}$/;
@@ -24,7 +26,7 @@ async function loadContext(pool, slug, id, user, level = 'view') {
     slug,
     user,
     level,
-    'id, slug, created_by, collab_visibility, view_visibility'
+    'id, slug, repo_url, created_by, collab_visibility, view_visibility'
   );
   if (!app) return null;
   const { rows } = await pool.query(
@@ -180,6 +182,7 @@ function visualEvidenceRoutes(config) {
         failureReason: run.failure_reason,
         trace: {
           progress: trace.progress || null,
+          heartbeat: trace.heartbeat || null,
           timingsMs: trace.timingsMs || null,
           replayPasses: trace.replayPasses || [],
           replayRuntime: trace.replayRuntime || null,
@@ -357,8 +360,36 @@ function visualEvidenceRoutes(config) {
       const currentId = ctx.session.visual_evidence_run_id;
       let run;
       if (currentId) {
+        const old = await state.getRun(pool, currentId);
+        const intent = plan.parseIntent(replacement || old.intent);
+        let heuristicUi = false;
+        if (intent.impact === 'none') {
+          // A past run's `required` flag can be stale or wrong. Reclassify the
+          // immutable revisions it actually used, not today's moving main.
+          const { owner, repo } = repoParts(ctx.app.repo_url);
+          let comparison;
+          try {
+            comparison = await github.compareRefs(owner, repo, `${old.base_sha}...${old.head_sha}`);
+          } catch (error) {
+            log.warn('visual-evidence', 'Could not classify evidence retry files', {
+              sessionId: id, runId: currentId, error: error.message,
+            });
+            throw new state.VisualEvidenceStateError(
+              'evidence_change_set_unavailable',
+              'The original changed files could not be checked. Retry when GitHub is available.', 503
+            );
+          }
+          if (comparison.filesComplete !== true) {
+            throw new state.VisualEvidenceStateError(
+              'evidence_change_set_incomplete',
+              'The original changed-file list is incomplete; this retry cannot safely decide whether browser evidence is required.'
+            );
+          }
+          heuristicUi = orchestrator.uiFileHeuristic(comparison.files);
+        }
         run = await state.rerunSameHead(pool, currentId, {
           trigger: 'manual-rerun', intent: replacement || null,
+          heuristicUi,
         });
       } else if (replacement) {
         await state.recordIntent(pool, id, replacement);

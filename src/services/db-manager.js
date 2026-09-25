@@ -701,7 +701,7 @@ function templateIdle(sourceDb) {
 }
 
 // The fast clone: a file copy of the template, handed to a fresh role.
-async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000 } = {}) {
+async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000, onProgress = null } = {}) {
   if (!SAFE_IDENT.test(templateDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`cloneFromTemplate: unsafe identifiers ${templateDb}/${targetDb}`);
   }
@@ -714,8 +714,11 @@ async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000
   const password = generatePassword();
   await withDatabaseConnection('usernode', async (execute) => {
     const admin = (sql, opts) => execute('usernode', sql, opts);
+    onProgress?.('drop_target');
     await dropDatabase(targetDb, { strict: true, execute: admin });
+    onProgress?.('create_role');
     await admin(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
+    onProgress?.('copy_template');
     await admin(`CREATE DATABASE ${targetDb} TEMPLATE ${templateDb} OWNER ${targetRole}`);
     await admin(`REVOKE CONNECT ON DATABASE ${targetDb} FROM PUBLIC`);
     await admin(`GRANT ALL PRIVILEGES ON DATABASE ${targetDb} TO ${targetRole}`);
@@ -729,6 +732,7 @@ async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000
       ['truncate_private', () => truncatePrivateTables(targetDb, execute)],
       ['scrub_private', () => scrubPrivateColumns(targetDb, execute)],
     ]) {
+      onProgress?.(phase);
       try { await run(); }
       catch (error) {
         error.message = `Database clone ${phase}: ${error.message}`;
@@ -736,6 +740,7 @@ async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000
       }
     }
   }, { queryTimeoutMs });
+  onProgress?.('redaction_complete');
   log.info('db-manager', 'Database cloned from staging template', {
     templateDb, targetDb, targetRole, durationMs: Date.now() - startedAt,
   });
@@ -802,7 +807,7 @@ async function prepareStagingCloneSource(sourceDb, { sourceId } = {}) {
   });
 }
 
-async function cloneFromPreparedSource(prepared, targetDb) {
+async function cloneFromPreparedSource(prepared, targetDb, { onProgress = null } = {}) {
   const templateDb = typeof prepared === 'string' ? prepared : prepared?.templateDb;
   if (!isPreparedCloneSource(templateDb)) {
     throw new Error(`cloneFromPreparedSource: invalid prepared source ${JSON.stringify(templateDb)}`);
@@ -810,7 +815,8 @@ async function cloneFromPreparedSource(prepared, targetDb) {
   // Paired evidence resets repeat this clone and have their own bounded
   // lifetime. A large ownership/redaction query may exceed the ordinary
   // preview's 30-second ceiling without being stuck.
-  const result = await cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs: 90_000 });
+  const result = await cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs: 90_000, onProgress });
+  onProgress?.('connection_limit');
   await applyStagingConnectionLimit(targetDb);
   return {
     ...result,

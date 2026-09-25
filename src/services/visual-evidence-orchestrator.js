@@ -7,6 +7,8 @@
 // the durable run to verified.
 
 const appManifest = require('./app-manifest');
+const crypto = require('node:crypto');
+const os = require('node:os');
 const github = require('./github');
 const log = require('./logger');
 const logRedaction = require('./log-redaction');
@@ -29,7 +31,10 @@ const EVIDENCE_STOPPED_REASON = 'Stopped before it finished. Nothing was capture
 const stopRequested = new Set();
 const DIFF_CONTEXT_CHARS = 8_000;
 const inFlight = new Map();
+const inFlightRunIds = new Map();
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const EVIDENCE_PROCESS_ID = crypto.randomBytes(8).toString('hex');
+const EVIDENCE_PROCESS_STARTED_AT = new Date().toISOString();
 const MAX_REPLAY_EVENTS = 40;
 const MAX_AGENT_EVENTS = 128;
 const REPAIRABLE_LOCATOR_CODES = new Set([
@@ -108,6 +113,7 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
   let agentActivity = null;
   let agentFinalResponse = null;
   let lastAgentFlushAt = 0;
+  let lastHeartbeatWriteMs = null;
   const flush = () => {
     if (stopped || typeof stateService.heartbeatRun !== 'function') return;
     if (writing) { pending = true; return; }
@@ -116,15 +122,30 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
       do {
         pending = false;
         const patch = {
+          heartbeat: {
+            processId: EVIDENCE_PROCESS_ID,
+            processStartedAt: EVIDENCE_PROCESS_STARTED_AT,
+            host: os.hostname().replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 128),
+            buildSha: exactSha(process.env.GIT_SHA),
+            poolTotal: Number.isInteger(pool.totalCount) ? pool.totalCount : null,
+            poolIdle: Number.isInteger(pool.idleCount) ? pool.idleCount : null,
+            poolWaiting: Number.isInteger(pool.waitingCount) ? pool.waitingCount : null,
+            previousWriteMs: lastHeartbeatWriteMs,
+          },
           ...(lastReplayEvent ? { lastReplayEvent, replayEvents: replayEvents.slice(-MAX_REPLAY_EVENTS) } : {}),
           ...(agentActivity ? { agentActivity } : {}),
           ...(agentFinalResponse ? { agentFinalResponse } : {}),
         };
+        const writeStartedAt = Date.now();
         await stateService.heartbeatRun(pool, runId, phase,
           Object.keys(patch).length ? patch : null);
+        lastHeartbeatWriteMs = Date.now() - writeStartedAt;
       } while (pending && !stopped);
     }).catch((error) => {
-      log.warn('visual-evidence', 'Evidence heartbeat failed', { runId, error: error.message });
+      log.warn('visual-evidence', 'Evidence heartbeat failed', {
+        runId, phase, error: error.message,
+        poolTotal: pool.totalCount, poolIdle: pool.idleCount, poolWaiting: pool.waitingCount,
+      });
     }).finally(() => {
       writing = false;
       if (pending && !stopped) flush();
@@ -1591,17 +1612,23 @@ async function scheduleForSession(config, options, injected = {}) {
   }).finally(() => {
     heartbeat.stop();
     inFlight.delete(key);
+    inFlightRunIds.delete(key);
   });
   // Attach a rejection observer now so fire-and-forget callers never create
   // an unhandled rejection; callers that need completion may still await the
   // original promise returned below.
   promise.catch(() => {});
   inFlight.set(key, promise);
+  inFlightRunIds.set(key, run.id);
   return { scheduled: true, runId: run.id, promise };
 }
 
 function inFlightSnapshot() {
   return [...inFlight.keys()];
+}
+
+function inFlightRunSnapshot() {
+  return [...inFlightRunIds.values()];
 }
 
 // The running evidence run on a change, whatever its head, or null. Settles
@@ -1680,6 +1707,7 @@ module.exports = {
   noteNotStarted,
   NOT_STARTED_REASONS,
   inFlightSnapshot,
+  inFlightRunSnapshot,
   inFlightRunFor,
   stopForSession,
   EVIDENCE_STOPPED_REASON,

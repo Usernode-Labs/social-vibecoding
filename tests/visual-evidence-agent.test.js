@@ -135,6 +135,8 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.match(agent.replayPlanGuide(), /exactly one\s+entry for every accepted story id/i);
   assert.match(agent.replayPlanGuide(), /Do not copy those fields yourself/);
   assert.match(agent.replayPlanGuide(), /Every interaction target and each checkpoint focus must\s+identify exactly one visible element/);
+  assert.match(agent.replayPlanGuide(), /execute every accepted interaction step on both revisions/);
+  assert.match(agent.replayPlanGuide(), /actually click it on both revisions and\s+assert the resulting page or URL/);
   assert.match(agent.replayPlanGuide(), /state:"visible" or state:"hidden"/);
   assert.match(agent.replayPlanGuide(), /waitFor target only needs one or more\s+visible matches when state is visible/);
   assert.match(agent.replayPlanGuide(), /wait for its observed marker to appear,\s+then wait for it to become hidden/i);

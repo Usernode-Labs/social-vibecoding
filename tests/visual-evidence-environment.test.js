@@ -73,11 +73,13 @@ test('each paired reset serializes clones and adds the same member fixture to bo
     runtime.remove = async () => {};
     runtime.deploy = async (_config, spec) => ({ runtimeName: spec.runtimeName });
     runtime.appOrigin = (_config, deployment) => `http://${deployment.runtimeName}`;
-    dbManager.cloneFromPreparedSource = async (_source, dbName) => {
+    dbManager.cloneFromPreparedSource = async (_source, dbName, { onProgress }) => {
       assert.equal(cloneActive, false, 'the next clone must wait for the prior redaction pass');
       cloneActive = true;
       order.push(dbName);
+      onProgress('copy_template');
       await new Promise((resolve) => setImmediate(resolve));
+      onProgress('scrub_private');
       cloneActive = false;
       return { password: 'disposable' };
     };
@@ -89,7 +91,10 @@ test('each paired reset serializes clones and adds the same member fixture to bo
     const deployment = await environment.resetPair({ selfAppSlug: slug }, pair,
       { onProgress: (event) => progress.push(event.stage) });
     assert.deepEqual(order, [pair.sides.base.dbName, pair.sides.head.dbName]);
-    assert.deepEqual(progress.slice(0, 2), ['clone_base', 'clone_head']);
+    assert.deepEqual(progress.slice(0, 6), [
+      'clone_base', 'clone_base_copy_template', 'clone_base_scrub_private',
+      'clone_head', 'clone_head_copy_template', 'clone_head_scrub_private',
+    ]);
     assert.equal(deployment.availableFixtures.length, 1);
     assert.equal(deployment.availableFixtures[0].persona, 'member');
     assert.equal(deployment.fixtureFingerprint, crypto.createHash('sha256')
