@@ -289,10 +289,11 @@ export function AppsSwitcherSheet(): ReactNode {
   const close = useCallback(() => AppContext.close(), []);
 
   /*
-      CONTINUE (#2779 follow-up): up to three of your agent sessions on this
-      app, below its own rows, so going back to one is a tap from anywhere,
-      each with the lists' mark (a spinner while it works, a green dot once
-      it finished unseen); then "See all sessions", Messages' Agents list.
+      CONTINUE (#2779 follow-up): your five most recent agent sessions, on
+      any app, below this app's own rows, so going back to one is a tap from
+      anywhere (Home included), each with the lists' mark (a spinner while it
+      works, a green dot once it finished unseen); then, when there are more,
+      "Show more", which opens Messages' Agents list.
       The rules are ./continue-model.ts's.
 
       AFTER MOUNT and after the list loads, never in the prerender: the rows
@@ -305,8 +306,8 @@ export function AppsSwitcherSheet(): ReactNode {
     if (open && window.App?.user) void loadAgentSessions();
   }, [open]);
   const continuing = mounted && view !== 'about'
-    ? continueRows(slug || null, agentSessions || [])
-    : [];
+    ? continueRows(agentSessions || [])
+    : { rows: [], more: false };
 
 
   // Every way into an app funnels through improveStore.slug, so recording
@@ -670,13 +671,13 @@ export function AppsSwitcherSheet(): ReactNode {
           {/*
               CONTINUE (#2779 follow-up), BELOW the app's own rows: Go to
               workshop, the discussion and About are this app's section, and
-              your agent sessions on it follow under their own heading. See
-              the comment on `continuing` above.
+              your agent sessions, on every app, follow under their own
+              heading. See the comment on `continuing` above.
           */}
-          {continuing.length ? (
-            <div id="app-menu-continue" data-app-menu-continue={continuing.length}>
+          {continuing.rows.length ? (
+            <div id="app-menu-continue" data-app-menu-continue={continuing.rows.length}>
               <div className={SECTION}>Continue</div>
-              {continuing.map((row, index) => (
+              {continuing.rows.map((row, index) => (
                 <MenuRow
                   key={row.key}
                   id={`app-menu-continue-${index}`}
@@ -695,16 +696,18 @@ export function AppsSwitcherSheet(): ReactNode {
                   )}
                 />
               ))}
-              <MenuRow
-                id="app-menu-continue-all"
-                href="#messages"
-                icon={<ChatIcon />}
-                label="See all sessions"
-                onClick={() => {
-                  setMessagesFilter('agents');
-                  AppContext.dismissForNav();
-                }}
-              />
+              {continuing.more ? (
+                <MenuRow
+                  id="app-menu-continue-all"
+                  href="#messages"
+                  icon={<ChatIcon />}
+                  label="Show more"
+                  onClick={() => {
+                    setMessagesFilter('agents');
+                    AppContext.dismissForNav();
+                  }}
+                />
+              ) : null}
             </div>
           ) : null}
           </>

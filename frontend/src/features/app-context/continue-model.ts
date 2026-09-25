@@ -1,8 +1,14 @@
 // The "Continue" rows under the platform mark (#2779 follow-up): your agent
-// sessions on the app the menu is about, so going back to one is a tap from
-// anywhere. Pure, so tests can read the rules without a browser.
+// sessions, so going back to one is a tap from anywhere. Pure, so tests can
+// read the rules without a browser.
 //
 // The rules:
+//   - every app's, not only the one the menu is open on, and on Home too: a
+//     session is yours to continue wherever you are, and the old per-app
+//     filter hid a change you had just started whenever the app it named was
+//     not the one on screen (or it named none);
+//   - the five most recent, and `more` when there are others, which the menu
+//     answers with "Show more" (Messages' Agents list);
 //   - agent sessions only: a conversation stands for the changes it started,
 //     and the Workshop is one row above for everything else;
 //   - "paused" is not a state of the work (the platform pauses an idle
@@ -34,16 +40,17 @@ export interface ContinueRow {
   activity: AgentActivity;
 }
 
-export const CONTINUE_MAX = 3;
+export interface ContinueList {
+  rows: ContinueRow[];
+  /** More sessions qualify than the rows show. */
+  more: boolean;
+}
+
+export const CONTINUE_MAX = 5;
 
 function time(value: string | null | undefined): number {
   const t = Date.parse(value || '');
   return Number.isFinite(t) ? t : 0;
-}
-
-/** Which app an agent session is about: its active change's, else its focus. */
-function appOf(session: ContinueAgentSession): string | null {
-  return (session.activeChange && session.activeChange.appSlug) || (session.focusApp && session.focusApp.slug) || null;
 }
 
 function agentDetail(session: ContinueAgentSession): string {
@@ -55,15 +62,15 @@ function agentDetail(session: ContinueAgentSession): string {
 }
 
 export function continueRows(
-  slug: string | null,
   agentSessions: ContinueAgentSession[],
   max = CONTINUE_MAX,
-): ContinueRow[] {
-  if (!slug) return [];
-  return agentSessions
-    .filter((session) => session.status === 'open' && (session.title || session.activeChange) && appOf(session) === slug)
-    .sort((a, b) => (time(b.lastActivityAt) || time(b.createdAt)) - (time(a.lastActivityAt) || time(a.createdAt)))
-    .slice(0, Math.max(0, max))
+): ContinueList {
+  const current = agentSessions
+    .filter((session) => session.status === 'open' && (session.title || session.activeChange))
+    .sort((a, b) => (time(b.lastActivityAt) || time(b.createdAt)) - (time(a.lastActivityAt) || time(a.createdAt)));
+  const shown = Math.max(0, max);
+  const rows = current
+    .slice(0, shown)
     .map((session): ContinueRow => ({
       key: `agent:${session.id}`,
       href: `#messages/agent/${session.id}`,
@@ -71,4 +78,5 @@ export function continueRows(
       detail: agentDetail(session),
       activity: agentActivity(session),
     }));
+  return { rows, more: current.length > shown };
 }
