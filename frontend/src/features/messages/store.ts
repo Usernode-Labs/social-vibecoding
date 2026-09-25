@@ -390,11 +390,17 @@ export async function loadThread(conversationId: number, force = false): Promise
   // snapping to the present: the realtime echo of a reaction would otherwise
   // take the reader away from the message they followed a link to.
   const reading = preserveVisibleThread && state.nextAfter ? state.messages.find((item) => item.id > 0)?.id || null : null;
+  // THE PANE OPENS AT ITS FINAL SHAPE. With nothing active until the detail
+  // answered, the header and composer mounted only then: the transcript drew
+  // full height on the first frames and shrank under them as they arrived.
+  // The inbox row is already a full summary (ConversationDetail adds nothing
+  // to it), so it stands in until the detail replaces it.
+  const listed = preserveVisibleThread ? null : state.conversations.find((item) => item.id === conversationId) || null;
   publish({
     loadingThread: true,
     threadError: null,
     threadGone: null,
-    active: preserveVisibleThread ? state.active : null,
+    active: preserveVisibleThread ? state.active : listed,
     messages: preserveVisibleThread ? state.messages : [],
     nextBefore: preserveVisibleThread ? state.nextBefore : null,
     nextAfter: preserveVisibleThread ? state.nextAfter : null,
@@ -432,6 +438,9 @@ export async function loadThread(conversationId: number, force = false): Promise
   } catch (error) {
     if (request !== threadRequest) return;
     publish({
+      // A failed open says so on its own, as it did before the inbox row
+      // stood in: no header or composer for a conversation that did not load.
+      ...(preserveVisibleThread ? {} : { active: null }),
       loadingThread: false,
       threadError: errorMessage(error, 'Couldn’t load this conversation.'),
       // A 404 is an answer, not a failure: trying again reads the same one.

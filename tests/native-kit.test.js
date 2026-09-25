@@ -37,6 +37,7 @@ const {
   remeasuredSheetY,
   keyboardInset,
   isTextEntryField,
+  keyboardCanBeUp,
   revealScrollDelta,
   reorderDropIndex,
   gridDropSide,
@@ -662,6 +663,31 @@ test('keyboardInset: explicit minInset override is honored, degenerate input is 
   );
   assert.equal(keyboardInset(null), 0);
   assert.equal(keyboardInset(undefined), 0);
+});
+
+test('keyboardCanBeUp: only a focused text field can hold the keyboard up', () => {
+  // The tracker zeroes its inset on blur rather than waiting for iOS to
+  // report the retraction, which lands after the keys have gone.
+  assert.equal(keyboardCanBeUp(null), false, 'nothing focused: no keyboard');
+  assert.equal(keyboardCanBeUp({ tag: 'BUTTON' }), false);
+  assert.equal(keyboardCanBeUp({ tag: 'INPUT', type: 'checkbox' }), false);
+  assert.equal(keyboardCanBeUp({ tag: 'INPUT', type: 'text' }), true);
+  assert.equal(keyboardCanBeUp({ tag: 'TEXTAREA' }), true);
+  assert.equal(keyboardCanBeUp({ tag: 'DIV', contentEditable: true }), true);
+  assert.equal(keyboardCanBeUp({ tag: 'TEXTAREA', readOnly: true }), false);
+  // A frame may hold a field of its own that the page cannot see.
+  assert.equal(keyboardCanBeUp({ tag: 'IFRAME' }), true);
+});
+
+test('native.css: a modal eases its height on the same clock as its top', () => {
+  // Centred on `top`, a card whose height snapped while `top` eased shrank
+  // around its middle: its top edge dropped by half the keyboard and slid
+  // back. The same duration and curve keep that edge still.
+  const modal = cssBlock('.un-modal');
+  const transition = /transition:\s*([^;]+);/.exec(modal)[1];
+  for (const prop of ['top', 'max-height', 'height']) {
+    assert.match(transition, new RegExp(`(^|,\\s*)${prop} 250ms ease-out`), `${prop} eases with the keyboard`);
+  }
 });
 
 // ── Keyboard-avoidance reveal math ─────────────────────────────────────

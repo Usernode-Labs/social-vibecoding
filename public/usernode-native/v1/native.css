@@ -1006,7 +1006,12 @@ html.un-kb .un-action-sheet {
   left: 50%;
   /* Centered in the strip above the on-screen keyboard; on iOS 100dvh
      ignores the (overlaying) keyboard, so the inset is subtracted from
-     the max-height too. Both are 0 on resize-mode Android / desktop. */
+     the max-height too. Both are 0 on resize-mode Android / desktop.
+     `top` and the height ease TOGETHER, on one clock. The card is centred
+     on `top`, so a height that snapped while `top` eased shrank it around
+     its middle for a frame: a card taller than the strip dropped its top
+     edge by half the keyboard, then slid back up. Moving as one, the top
+     edge holds still and only the bottom follows the keyboard. */
   top: calc(50% - var(--un-kb-inset, 0px) / 2);
   z-index: 9992;
   width: var(--un-modal-width, min(480px, calc(100vw - 32px)));
@@ -1022,7 +1027,7 @@ html.un-kb .un-action-sheet {
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
   transform: translate(-50%, -50%) scale(1.04);
   opacity: 0;
-  transition: transform 260ms var(--un-ease-spring), opacity var(--un-dialog-fade-duration) ease, top 250ms ease-out;
+  transition: transform 260ms var(--un-ease-spring), opacity var(--un-dialog-fade-duration) ease, top 250ms ease-out, max-height 250ms ease-out, height 250ms ease-out;
   will-change: transform, opacity;
   outline: none;
 }

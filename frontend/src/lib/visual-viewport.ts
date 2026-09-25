@@ -21,8 +21,9 @@
  * it is on screen.
  *
  * So this module publishes the missing half, `visualViewport.offsetTop`, as
- * `--platform-vv-top` on <html>, beside the kit's inset, and app.css adds it
- * to the modal's `top`. Where nothing pans — Android measured offsetTop 0 in
+ * `--platform-vv-top` on <html>, beside the kit's inset, and app.css moves
+ * the modal down by it (a `translate`, so it keeps iOS's timing — see
+ * app.css). Where nothing pans — Android measured offsetTop 0 in
  * the same table, and desktop never has a keyboard — the property stays 0px
  * and the modal sits exactly where the kit puts it.
  *
@@ -30,9 +31,18 @@
  * offset for the zoom, and following it would drag the dialog around the
  * layout under the viewer's fingers. The kit forces its inset to 0 while
  * zoomed for the same reason, so this reads 0 there too.
+ *
+ * THE PAN IS THE KEYBOARD'S, so it is published only while the kit reports
+ * one (`html.un-kb`). The two terms of the modal's `top` must describe the
+ * same moment. The kit clears its inset the moment the field blurs (native.js
+ * keyboardCanBeUp), while iOS keeps reporting the pan until its retraction
+ * has finished. A pan with no inset put the dialog's centre that far below
+ * the middle of the screen, and it slid down as iOS unwound the pan.
  */
 
 export const VV_TOP_PROP = '--platform-vv-top';
+/** The kit's "keyboard up" class on <html> (native.js keyboard tracker). */
+export const KB_CLASS = 'un-kb';
 
 type ViewportLike = Pick<VisualViewport, 'offsetTop' | 'scale'>;
 
@@ -47,39 +57,50 @@ export function visualViewportTop(vv: ViewportLike | null | undefined): number {
   return Math.round(top);
 }
 
-type DocLike = { documentElement: { style: Pick<CSSStyleDeclaration, 'setProperty'> } };
-type WinLike = Pick<Window, 'requestAnimationFrame'> & {
+type DocLike = {
+  documentElement: {
+    style: Pick<CSSStyleDeclaration, 'setProperty'>;
+    classList: Pick<DOMTokenList, 'contains'>;
+  };
+};
+type ObserverLike = new (callback: () => void) => {
+  observe(target: unknown, options: { attributes: boolean; attributeFilter: string[] }): void;
+};
+type WinLike = {
   visualViewport?: (ViewportLike & Pick<EventTarget, 'addEventListener'>) | null;
+  MutationObserver?: ObserverLike;
 };
 
 /**
  * Follow the visual viewport and keep `--platform-vv-top` current.
  *
- * On the kit's schedule: the same two events its tracker listens to, and
- * the write in an animation frame, so the offset and the inset it pairs
- * with land in the same frame rather than moving the dialog twice. Writes
- * only on a change — a scrolling page fires `scroll` here every frame.
- * Returns the apply step, for tests.
+ * Written IN the viewport event, not a frame later: the pan is a
+ * `translate` that has to land in the frame iOS scrolls the page, and a
+ * frame's delay showed the dialog riding the page off for that frame. The
+ * same two events the kit's tracker listens to. Writes only on a change —
+ * a scrolling page fires `scroll` here every frame. The kit's `un-kb` class
+ * is watched too, and read the moment it changes: the kit sets it in its
+ * own frame and clears it in the blur itself, and this follows before
+ * either paints. Returns the apply step, for tests.
  */
 export function initVisualViewportTop(doc: DocLike, win: WinLike): () => void {
   const vv = win.visualViewport;
   let last = 0; // the stylesheet's fallback: unset reads as 0px
-  let queued = false;
   const apply = () => {
-    queued = false;
-    const top = visualViewportTop(vv);
+    const top = doc.documentElement.classList.contains(KB_CLASS) ? visualViewportTop(vv) : 0;
     if (top === last) return;
     last = top;
     doc.documentElement.style.setProperty(VV_TOP_PROP, `${top}px`);
   };
   if (!vv) return apply;
-  const schedule = () => {
-    if (queued) return;
-    queued = true;
-    win.requestAnimationFrame(apply);
-  };
-  vv.addEventListener('resize', schedule, { passive: true });
-  vv.addEventListener('scroll', schedule, { passive: true });
+  vv.addEventListener('resize', apply, { passive: true });
+  vv.addEventListener('scroll', apply, { passive: true });
+  if (win.MutationObserver) {
+    new win.MutationObserver(apply).observe(doc.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+  }
   apply();
   return apply;
 }
