@@ -115,4 +115,9 @@ test('staging seeds a fake user for the details view, and dapp.json checks it', 
   // Folded into the #1788 weekly-cap check (the manifest keeps 20 slots
   // clear of MAX_DECLARED_TESTS), since that input now lives in this view.
   assert.match(check.expectSelector, /^#admin-user-details /);
+  // Declared checks sign in as a VIEW-ONLY admin, who sees the cap as text:
+  // selecting the write-only input failed on every run.
+  assert.equal(check.expectSelector, '#admin-user-details .admin-user-weekly-limit-value');
+  assert.match(USERS, /<span className="admin-user-weekly-limit-value">/,
+    'the read-only cap carries the class the check selects');
 });

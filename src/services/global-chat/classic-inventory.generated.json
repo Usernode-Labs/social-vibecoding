@@ -7,7 +7,7 @@
     "mappedRoutes": 550,
     "exemptRoutes": 156,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 405,
+    "clientApiReferences": 403,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 22,
     "navigationSurfaces": 10
@@ -1267,7 +1267,6 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
-        "frontend/src/features/admin/admin-users.tsx",
         "frontend/src/features/admin/admin-users.tsx"
       ]
     },
@@ -1286,7 +1285,6 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
-        "frontend/src/features/admin/admin-users.tsx",
         "frontend/src/features/admin/admin-users.tsx"
       ]
     },
@@ -10856,6 +10854,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx"
       ]
@@ -10875,6 +10874,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx",
         "frontend/src/features/admin/topochain/waitlist.tsx"
@@ -10895,6 +10895,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx"
       ]
@@ -10914,6 +10915,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx"
       ]
@@ -10933,6 +10935,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx"
       ]
@@ -10952,6 +10955,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx"
       ]
@@ -10971,6 +10975,7 @@
       "mobileSupported": true,
       "classicPath": "#admin",
       "clientReferences": [
+        "frontend/src/features/admin/admin-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx",
         "frontend/src/features/admin/topochain/programme-users.tsx"
       ]

@@ -3920,9 +3920,9 @@
       "expectText": "this week"
     },
     {
-      "name": "A user's details view can give them their own weekly cap (#1788)",
+      "name": "A user's details view shows their own weekly cap (#1788)",
       "path": "/#admin/users/900301",
-      "expectSelector": "#admin-user-details .admin-user-weekly-limit-input",
+      "expectSelector": "#admin-user-details .admin-user-weekly-limit-value",
       "expectText": "Programme profile"
     },
     {

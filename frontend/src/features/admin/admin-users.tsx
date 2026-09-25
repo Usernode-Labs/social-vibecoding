@@ -848,7 +848,7 @@ function UserDetails({ user, fullAdminCount, canWrite, onBack, onReload, onDelet
               <CommitField className={`admin-user-weekly-limit-input ${DETAIL_INPUT}`} ariaLabel="Weekly cap in dollars"
                 type="number" inputMode="decimal" placeholder="Platform default" disabled={false}
                 committed={weeklyOverrideDollars} onCommit={commitWeeklyCap} />
-            ) : <span>{weeklyOverrideDollars ? `$${weeklyOverrideDollars}` : 'Platform default for this tier'}</span>}
+            ) : <span className="admin-user-weekly-limit-value">{weeklyOverrideDollars ? `$${weeklyOverrideDollars}` : 'Platform default for this tier'}</span>}
           </Row>
           <Row label="Tier">
             <span>{TIER_LABEL[user.identity_tier || 'unverified']}</span>
