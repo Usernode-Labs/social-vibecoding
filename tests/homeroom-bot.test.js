@@ -102,7 +102,7 @@ test('classifyIssue: the bot never competes with a person, and never looks at a 
 test('settings default to off and clamp their numbers', () => {
   const s = bot.parseSettings([]);
   assert.deepEqual(s, {
-    mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [],
+    mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [], liveApps: [],
     turnSeconds: 20 * 60, turnInputTokens: 10_000_000,
   });
   const t = bot.parseSettings([
@@ -1154,4 +1154,58 @@ test('runTriage: a platform fault is recorded, hands the row back, and stops the
   assert.deepEqual({ ran: out.ran, reason: out.reason, detail: out.detail }, { ran: false, reason: 'infra', detail: 'credential_required' });
   assert.ok(h.calls.queries.some((q) => /UPDATE homeroom_bot_queue SET started_at = NULL/.test(q.s)), 'the row goes back to the queue');
   assert.ok(!h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)));
+});
+
+// ── Live on one app (#3146) ──────────────────────────────────────────────
+
+test('runTriage on a live app: announces the first look, posts the question, records a live run', async () => {
+  const { pool, deps, calls } = triageHarness({
+    sessionId: 920,
+    verdictText: 'Read the feed code.\n```json\n{"verdict":"question","determined":false,"missing_fact":"which feed","question":"Which feed?","default":"All of them"}\n```',
+  });
+  const posts = [];
+  const realQuery = pool.query;
+  pool.query = async (sql, params) => {
+    if (/INSERT INTO homeroom_bot_posts/.test(String(sql))) { posts.push(params[3]); return { rows: [{ id: posts.length }] }; }
+    return realQuery(sql, params);
+  };
+  const comments = [];
+  deps.github.createIssueComment = async (owner, repo, n, body) => {
+    comments.push(body);
+    return { id: comments.length, created_at: new Date(Date.now() + 1000).toISOString() };
+  };
+  const thread = [];
+  deps.ws = { async sendSystemMessage(_p, appId, content, msgType, metadata, scope) { thread.push({ content, msgType, scope }); return { id: thread.length }; } };
+  deps.sessionLifecycle = {};
+  deps.domain = 'app.onhomeroom.com';
+  const out = await bot.runTriage(pool, {}, {
+    bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps,
+    settings: { mode: 'shadow', liveApps: [APP.slug], turnSeconds: 1200, turnInputTokens: 10_000_000 },
+  });
+  assert.equal(out.verdict, 'question');
+  assert.equal(out.acted, 'question');
+  assert.deepEqual(posts, ['looking', 'question'], 'the first look, then the verdict');
+  assert.match(comments[0], /Homeroom bot is looking at this request/);
+  assert.match(comments[1], /Which feed\?/);
+  assert.ok(thread.every((m) => m.msgType === 'system' && m.scope.type === 'issue' && m.scope.ref === 12));
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(insert.params[3], 'live', 'the ledger says which runs spoke');
+  assert.ok(calls.queries.some((q) => /UPDATE homeroom_bot_runs\s+SET thread_seen_at = GREATEST/.test(q.s)),
+    'and what it has seen moves past its own comments');
+});
+
+test('runTriage on an app not in the live list stays silent', async () => {
+  const { pool, deps, calls } = triageHarness({
+    sessionId: 921,
+    verdictText: 'x\n```json\n{"verdict":"question","determined":false,"missing_fact":"a","question":"Which?","default":"b"}\n```',
+  });
+  deps.github.createIssueComment = async () => { throw new Error('must not post'); };
+  const out = await bot.runTriage(pool, {}, {
+    bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps,
+    settings: { mode: 'shadow', liveApps: ['some-other-app'], turnSeconds: 1200, turnInputTokens: 10_000_000 },
+  });
+  assert.equal(out.acted, undefined);
+  assert.ok(!calls.queries.some((q) => /homeroom_bot_posts/.test(q.s)));
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(insert.params[3], 'shadow');
 });

@@ -54,6 +54,7 @@ const bcrypt = require('bcrypt');
 
 const log = require('./logger');
 const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
+const live = require('./homeroom-bot-live');
 
 const BOT_USERNAME = 'homeroom_bot';
 const MODES = Object.freeze(['off', 'shadow', 'live']);
@@ -70,9 +71,12 @@ const KEY_BATCH_SIZE = 'homeroom_bot_batch_size';
 const KEY_PAUSED_APPS = 'homeroom_bot_paused_apps';
 const KEY_TURN_SECONDS = 'homeroom_bot_turn_seconds';
 const KEY_TURN_INPUT_TOKENS = 'homeroom_bot_turn_input_tokens';
+// #3146: the apps the bot acts on for real — posts on their issues, and
+// builds and proposes the clear ones. Everything else stays in shadow.
+const KEY_LIVE_APPS = 'homeroom_bot_live_apps';
 const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
-  KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS,
+  KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS,
 ]);
 
 // batchSize is how many of ONE app's issues a pass takes before the loop
@@ -84,6 +88,7 @@ const DEFAULTS = Object.freeze({
   concurrency: 1,
   batchSize: 100,
   pausedApps: [],
+  liveApps: [],
   turnSeconds: 20 * 60,
   turnInputTokens: 10_000_000,
 });
@@ -217,6 +222,13 @@ function parseSettings(rows) {
   } catch {
     pausedApps = DEFAULTS.pausedApps;
   }
+  let liveApps = DEFAULTS.liveApps;
+  try {
+    const parsed = JSON.parse(map.get(KEY_LIVE_APPS) || '[]');
+    if (Array.isArray(parsed)) liveApps = parsed.filter((s) => typeof s === 'string').slice(0, 50);
+  } catch {
+    liveApps = DEFAULTS.liveApps;
+  }
   const turnSeconds = clampInt(
     map.get(KEY_TURN_SECONDS), DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS,
   );
@@ -224,7 +236,7 @@ function parseSettings(rows) {
     map.get(KEY_TURN_INPUT_TOKENS), DEFAULTS.turnInputTokens,
     MIN_TURN_INPUT_TOKENS, MAX_TURN_INPUT_TOKENS,
   );
-  return { mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens };
+  return { mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens };
 }
 
 function clampInt(raw, fallback, min, max) {
@@ -298,6 +310,13 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: 'pausedApps must be an array of app slugs' };
     }
     updates.push([KEY_PAUSED_APPS, JSON.stringify([...new Set(body.pausedApps)])]);
+  }
+  if (body.liveApps !== undefined) {
+    if (!Array.isArray(body.liveApps) || body.liveApps.length > 50
+        || !body.liveApps.every((s) => typeof s === 'string' && /^[a-z0-9-]{1,120}$/.test(s))) {
+      return { ok: false, error: 'liveApps must be an array of up to 50 app slugs' };
+    }
+    updates.push([KEY_LIVE_APPS, JSON.stringify([...new Set(body.liveApps)])]);
   }
   let weeklyLimitCents;
   if (body.weeklyLimitCents !== undefined) {
@@ -1065,6 +1084,11 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
 
   const issueNumber = Number(item.issue_number);
   const startedMs = Date.now();
+  // #3146: on an app in the live list the verdict is acted on, and the run
+  // is recorded as 'live' so the ledger says which runs spoke.
+  const liveMode = live.isLiveFor(settings, app);
+  const runMode = liveMode ? 'live' : mode;
+  const liveD = liveMode ? liveDeps(deps) : null;
   const turnBudgetMs = 1000 * clampInt(
     settings?.turnSeconds, DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS,
   );
@@ -1095,7 +1119,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     // A platform fault the current streak already recorded gets no second
     // row (#3122); the retry is still logged below.
     const id = infra && isRepeatFault(error) ? null : await insertRun(pool, {
-      appId: app.id, issueNumber, mode, verdict: 'failed', error,
+      appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error,
       threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, ...extra,
     });
@@ -1126,6 +1150,30 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
     return { ran: false, reason: 'not_open' };
   }
+  // #3146: what this run has posted on GitHub, so its own comments are not
+  // read back as a change (see homeroom-bot-live.js).
+  const postedAt = [];
+  if (liveMode) {
+    const open = await live.openBotProposal(pool, bot.id, app.id, issueNumber);
+    if (open) {
+      // One proposal per issue: the group is already voting on the bot's
+      // answer, and a second build would be a second, competing proposal.
+      await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+      log.info('homeroom-bot', 'Issue already has a bot proposal; not looking again', {
+        app: app.slug, issueNumber, sessionId: open.id,
+      });
+      return { ran: false, reason: 'has_proposal' };
+    }
+    const looked = await live.post({
+      pool, github, ws: liveD.ws, app, repo, issueNumber,
+      kind: 'looking', text: live.lookingText(),
+    }).catch((err) => {
+      log.warn('homeroom-bot', 'Looking post failed (continuing)', { app: app.slug, issueNumber, err: err.message });
+      return null;
+    });
+    if (looked?.githubCreatedAt) postedAt.push(looked.githubCreatedAt);
+  }
+  const seedReadAt = new Date().toISOString();
   const [{ comments = [] } = {}, thread] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
     threadContext.loadIssueThread(pool, app.id, issueNumber),
@@ -1320,7 +1368,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   if (budgetHit) {
     const retried = String(item.reason || '') === 'budget_retry';
     const id = await insertRun(pool, {
-      appId: app.id, issueNumber, sessionId: session.id, mode, verdict: 'failed',
+      appId: app.id, issueNumber, sessionId: session.id, mode: runMode, verdict: 'failed',
       error: `budget: ${budgetHit}`, budgetStop: budgetHit,
       threadSeenAt: item.thread_seen_at || null, model,
       costUsd, ...usage,
@@ -1382,7 +1430,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   }
   const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict);
   const runId = await insertRun(pool, {
-    appId: app.id, issueNumber, sessionId: session.id, mode,
+    appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
@@ -1395,7 +1443,100 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   log.info('homeroom-bot', 'Triaged', {
     app: app.slug, issueNumber, verdict: parsed.verdict, costUsd, runId,
   });
-  return { ran: true, verdict: parsed.verdict, runId };
+  let acted = null;
+  if (liveMode) {
+    try {
+      acted = await actOnVerdict({
+        pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
+        seed, seedReadAt, postedAt, turnBudgetMs, model,
+        deps: {
+          github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
+          activeWorkers, ...liveD,
+        },
+      });
+    } catch (err) {
+      log.error('homeroom-bot', 'Acting on a live verdict failed', { app: app.slug, issueNumber, err: err.message });
+    }
+  }
+  return { ran: true, verdict: parsed.verdict, runId, ...(acted ? { acted } : {}) };
+}
+
+/**
+ * #3146: what a live verdict does. Posts to the issue, builds and proposes
+ * a ready request, then records what the bot has seen so its own comments
+ * are not read back as a change. A verdict the live caps hold back posts
+ * nothing: the dashboard already shows what it would have said.
+ */
+async function actOnVerdict({
+  pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
+  seed, seedReadAt, postedAt, turnBudgetMs, model, deps,
+}) {
+  const { github, ws } = deps;
+  const say = async (kind, text, extra = {}) => {
+    const posted = await live.post({ pool, github, ws, app, repo, issueNumber, kind, runId, text, ...extra });
+    if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
+    return posted;
+  };
+  let acted = capSuppressed ? 'held' : parsed.verdict;
+  if (capSuppressed) {
+    log.info('homeroom-bot', 'Live verdict held by a cap; nothing posted', {
+      app: app.slug, issueNumber, verdict: parsed.verdict, cap: capSuppressed,
+    });
+  } else if (parsed.verdict === 'question') {
+    await say('question', live.questionText(parsed));
+  } else if (parsed.verdict === 'person') {
+    await say('person', live.personText(parsed));
+  } else if (parsed.verdict === 'empty') {
+    await say('empty', live.emptyText(parsed));
+  } else if (parsed.verdict === 'ready') {
+    const built = await live.buildAndPropose({
+      pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
+      turnBudgetMs, model, deps,
+    });
+    if (built.costUsd > 0) {
+      try {
+        if (await deps.managedOpenRouter.usesIncludedKey(pool, bot.id)) {
+          await deps.limits.recordSpend(pool, bot.id, Math.round(built.costUsd * 1e6) / 1e4, { byok: false });
+        }
+      } catch (err) {
+        log.warn('homeroom-bot', 'Build spend debit failed', { err: err.message });
+      }
+    }
+    if (built.ok) {
+      acted = 'proposed';
+      await pool.query(
+        'UPDATE homeroom_bot_runs SET proposal_session_id = $2 WHERE id = $1',
+        [runId, built.sessionId],
+      ).catch(() => {});
+      // The vote-card metadata the promote route's own activity rows carry,
+      // so the issue's thread shows the live proposal card, not only a link.
+      await say('proposal', live.proposalText({
+        link: live.proposalLink(deps.domain, app.slug, built.sessionId), prNumber: built.prNumber,
+      }), { msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } } });
+    } else {
+      acted = 'build_failed';
+      log.warn('homeroom-bot', 'Live build did not become a proposal', {
+        app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
+      });
+      await say('build_failed', live.buildFailedText(built.error));
+    }
+  }
+  await live.advanceSeen({
+    pool, github, threadContext: deps.threadContext, app, repo, issueNumber, runId,
+    since: seedReadAt, postedAt,
+  }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
+  return acted;
+}
+
+// Resolved lazily, and only for a live app: ws and session-lifecycle load
+// half the platform. Each is injectable for the tests.
+function liveDeps(deps = {}) {
+  return {
+    ws: deps.ws || require('./ws'),
+    sessionLifecycle: deps.sessionLifecycle || require('./session-lifecycle'),
+    domain: deps.domain || require('./caddy').USERNODE_DOMAIN,
+    votesRouter: deps.votesRouter || null,
+  };
 }
 
 // ── The work loop ───────────────────────────────────────────────────────
@@ -1662,6 +1803,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.question, r.question_default, r.build_note, r.reason, r.cap_suppressed,
             r.rating, r.rating_note, r.rated_at, r.thread_seen_at, r.model, r.cost_usd::float8 AS cost_usd,
             r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.created_at,
+            r.proposal_session_id,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -1691,6 +1833,9 @@ const EXPORT_COLUMNS = Object.freeze([
   'rating', 'rating_note', 'rated_by', 'rated_at',
   'model', 'cost_usd', 'input_tokens', 'output_tokens', 'duration_ms',
   'error', 'budget_stop', 'thread_seen_at',
+  // #3146: the proposal a live `ready` run opened. Last, so an analysis
+  // that reads the earlier columns by position is not shifted.
+  'proposal_session_id',
 ]);
 
 /** One run as the values of EXPORT_COLUMNS, in that order. */
@@ -1910,6 +2055,7 @@ module.exports = {
   clearStaleTurn,
   noteStopped,
   wasStoppedRecently,
+  actOnVerdict,
   summarizeFault,
   faultBackoff,
   noteFault,
@@ -1946,6 +2092,7 @@ module.exports = {
   KEY_CONCURRENCY,
   KEY_BATCH_SIZE,
   KEY_PAUSED_APPS,
+  KEY_LIVE_APPS,
   DEFAULT_WEEKLY_LIMIT_CENTS,
   REFRESH_INTERVAL_MS,
   IDLE_PASS_DELAY_MS,

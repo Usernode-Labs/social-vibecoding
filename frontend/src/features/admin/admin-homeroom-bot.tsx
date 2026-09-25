@@ -27,6 +27,8 @@ interface Settings {
   concurrency: number;
   batchSize: number;
   pausedApps: string[];
+  // #3146: the apps the bot acts on for real. Shadow everywhere else.
+  liveApps: string[];
   turnSeconds: number;
   turnInputTokens: number;
 }
@@ -87,6 +89,8 @@ interface Run {
   duration_ms: number | null;
   error: string | null;
   created_at: string;
+  // #3146: the proposal a live `ready` run opened.
+  proposal_session_id: number | null;
   app_slug: string;
   app_name: string;
   issueUrl: string | null;
@@ -185,7 +189,20 @@ function VerdictBody({ run }: { run: Run }) {
     );
   }
   if (run.verdict === 'ready') {
-    return <p className="text-sm whitespace-pre-line">{run.build_note || '(no build note)'}</p>;
+    return (
+      <div className="space-y-1">
+        <p className="text-sm whitespace-pre-line">{run.build_note || '(no build note)'}</p>
+        {run.proposal_session_id ? (
+          <p className={AdminUI.muted}>
+            {'Built and '}
+            <a className={AdminUI.btn.link} href={`#app/${encodeURIComponent(run.app_slug)}/dev/proposals/${Number(run.proposal_session_id)}`}>
+              opened as a proposal
+            </a>
+            .
+          </p>
+        ) : null}
+      </div>
+    );
   }
   if (run.verdict === 'person') {
     return <p className="text-sm">{run.reason || '(no reason given)'}</p>;
@@ -471,6 +488,38 @@ function HomeroomBotSection() {
               logged. The minute limit above is what actually ends a runaway turn.
             </p>
           </div>
+
+          <div>
+            <label className={AdminUI.label} htmlFor="admin-homeroom-bot-live-apps">Apps it acts on for real</label>
+            <div className="flex items-center gap-2 mt-1">
+              <input
+                id="admin-homeroom-bot-live-apps"
+                type="text"
+                className={AdminUI.input}
+                placeholder="none: shadow everywhere"
+                defaultValue={(settings?.liveApps || []).join(', ')}
+                key={`live-${(settings?.liveApps || []).join(',')}`}
+                disabled={!canWrite}
+                onBlur={(e) => {
+                  const slugs = [...new Set(e.target.value.split(/[\s,]+/).map((v) => v.trim().toLowerCase()).filter(Boolean))];
+                  if (slugs.join(',') === (settings?.liveApps || []).join(',')) return;
+                  if (!slugs.every((v) => /^[a-z0-9-]{1,120}$/.test(v))) {
+                    setStatus({ text: 'Live apps must be app slugs, separated by commas.', tone: 'err' });
+                    return;
+                  }
+                  saveSettings({ liveApps: slugs }, slugs.length
+                    ? `The bot now acts for real on ${slugs.join(', ')}.`
+                    : 'The bot is back to shadow on every app.');
+                }}
+              />
+            </div>
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-live-apps-note">
+              On these apps it posts on each issue it looks at, asks its questions
+              there, and builds the clear requests into proposals for the group to
+              vote on. Everywhere else it only records verdicts. The mode above has
+              to be on, and a staging copy never acts.
+            </p>
+          </div>
         </div>
 
         <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-identity">
@@ -678,6 +727,7 @@ function HomeroomBotSection() {
                           <div className={AdminUI.muted}>{ratingLabel}</div>
                           <VerdictBody run={run} />
                           <div className={`${AdminUI.muted} flex flex-wrap gap-x-4 gap-y-1`}>
+                            {run.mode === 'live' ? <span>live: acted on the issue</span> : null}
                             <span>determined: {run.determined == null ? '–' : run.determined ? 'yes' : 'no'}</span>
                             {run.missing_fact ? <span>missing: {run.missing_fact}</span> : null}
                             {run.cap_suppressed ? <span>{CAP_LABEL[run.cap_suppressed] || run.cap_suppressed}</span> : null}

@@ -9049,15 +9049,42 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_issue
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_created
   ON homeroom_bot_runs(created_at DESC);
 
+-- #3146: live mode, on the apps in `homeroom_bot_live_apps` only. The run a
+-- ready verdict turned into a proposal points at that proposal's session.
+ALTER TABLE homeroom_bot_runs
+  ADD COLUMN IF NOT EXISTS proposal_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
+
+-- Everything the bot posted on an issue: one row per post, both surfaces
+-- (the GitHub comment and the Homeroom thread message) on the same row.
+-- The partial unique index is what makes "looking at this" a once-per-issue
+-- post: the insert IS the claim, so two passes cannot both announce it.
+CREATE TABLE IF NOT EXISTS homeroom_bot_posts (
+  id                 SERIAL PRIMARY KEY,
+  app_id             INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number       INTEGER NOT NULL,
+  run_id             INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  kind               TEXT NOT NULL,
+  github_comment_id  BIGINT,
+  thread_message_id  INTEGER,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_homeroom_bot_posts_looking
+  ON homeroom_bot_posts(app_id, issue_number) WHERE kind = 'looking';
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_posts_issue
+  ON homeroom_bot_posts(app_id, issue_number, created_at DESC);
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
--- (reserved: refused by the settings route until a later slice posts and
--- builds). Ships `off` so the change that adds the bot is itself inert.
+-- (still refused by the settings route). Acting for real is per app
+-- instead (#3146): `homeroom_bot_live_apps` names the apps whose issues the
+-- bot posts on and builds for, and it ships empty. Ships `off` so the change
+-- that adds the bot is itself inert.
 INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_mode', 'off'),
   ('homeroom_bot_concurrency', '1'),
   ('homeroom_bot_batch_size', '10'),
-  ('homeroom_bot_paused_apps', '[]')
+  ('homeroom_bot_paused_apps', '[]'),
+  ('homeroom_bot_live_apps', '[]')
 ON CONFLICT (key) DO NOTHING;
 
 -- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.

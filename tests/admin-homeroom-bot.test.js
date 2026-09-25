@@ -429,3 +429,15 @@ test('every verdict opens to its own detail, and only a real failure shows the f
   const empty = body.slice(body.indexOf("if (run.verdict === 'empty')"));
   assert.match(empty.slice(0, 200), /run\.reason/, 'and an empty verdict shows the reason the bot gave');
 });
+
+test('the live list is set from the dashboard, and a proposal the bot opened is one click away (#3146)', () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(tsx, /id="admin-homeroom-bot-live-apps"/);
+  assert.match(tsx, /saveSettings\(\{ liveApps: slugs \}/, 'saved through the same settings route as every other knob');
+  assert.match(tsx, /id="admin-homeroom-bot-live-apps-note"/);
+  assert.match(tsx, /a staging copy never acts/);
+  // The link is built from the run's own app slug and session id, never
+  // from a URL the API handed over.
+  assert.match(tsx, /href=\{`#app\/\$\{encodeURIComponent\(run\.app_slug\)\}\/dev\/proposals\/\$\{Number\(run\.proposal_session_id\)\}`\}/);
+  assert.match(tsx, /className=\{AdminUI\.btn\.link\}/);
+});
