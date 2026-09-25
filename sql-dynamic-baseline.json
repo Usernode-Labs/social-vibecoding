@@ -173,9 +173,23 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "6addf75e8851124809f5",
+      "fingerprint": "606267a1970143fe0d00",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
+      "fingerprint": "7b1ff9cff45031446175",
       "count": 1,
       "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
+      "fingerprint": "c803ef2d58849531c800",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boo"
     },
     {
       "source": "src/routes/chat.js",
@@ -862,6 +876,13 @@
       "fingerprint": "73bb2c779f8c52b9b224",
       "count": 1,
       "preview": "`INSERT INTO app_check_history (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, consecutive_passes) VALUES ${values.jo"
+    },
+    {
+      "source": "src/services/communities.js",
+      "kind": "structural-template",
+      "fingerprint": "5c0f6f71276d5c1f5622",
+      "count": 1,
+      "preview": "`SELECT a.community_id, (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS member_count, EXISTS (SELECT 1 FROM community_m"
     },
     {
       "source": "src/services/connector-limits.js",

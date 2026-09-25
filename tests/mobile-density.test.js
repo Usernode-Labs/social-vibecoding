@@ -32,17 +32,18 @@ test('#1940: the provider and PR link show directly at every width — no Detail
 test('Discover keeps the full app name, metadata and explicit add/remove action in one row', () => {
   const row = { app: {}, slug: 'long-app', name: 'A very long community application name',
     meta: '11 users · Updated recently', status: 'Running', statusDot: 'bg-emerald-500',
-    openable: true, demo: false, added: false, addTitle: 'Add to Your apps' };
+    openable: true, demo: false, added: false, addTitle: 'Join A very long community application name' };
   const render = added => renderToHtml(createElement(BrowseRows, { rows: [{ ...row, added }] }));
   const html = render(false);
   for (const hook of ['browse-row-content', 'browse-row-title', 'browse-row-meta', 'browse-row-name']) assert.ok(html.includes(hook));
   assert.ok(html.includes(row.name));
   assert.ok(html.includes(row.meta));
-  // QA 2026-09-24 Q10: "+ Add" on screen, the destination in the accessible name.
-  assert.match(html, /data-added="false" aria-pressed="false" aria-label="Add to Your apps"[^>]*>.*Add<\/button>/);
+  // QA 2026-09-24 Q10: one short word on screen ("+ Join", communities), and
+  // what is being joined in the accessible name.
+  assert.match(html, /data-added="false" aria-pressed="false" aria-label="Join A very long community application name"[^>]*>.*Join<\/button>/);
   assert.equal((html.match(/class="browse-add-btn/g) || []).length, 1, 'no duplicated responsive buttons');
   assert.match(render(true), /data-added="true" aria-pressed="true"/);
-  assert.match(render(true), />Added</);
+  assert.match(render(true), />Joined</);
 });
 
 test('the title reflow is phone-only and scoped to Discover and the Dev session title', () => {

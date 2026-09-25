@@ -423,7 +423,7 @@ const Browse = {
 
   // ── Filter chips (the prototype's scrDiscover) ────────────────────
   //
-  // All · Featured · Your apps · New, in a row above the list. A chip
+  // All · Featured · Joined · New, in a row above the list. A chip
   // FILTERS where Sort only reorders, and the three controls compose in one
   // fixed order: the chip picks the set, Sort orders it, the search narrows
   // it. So "Featured, by Most users" is the featured apps ranked by users,
@@ -436,7 +436,10 @@ const Browse = {
   FILTERS: [
     { key: 'all', label: 'All' },
     { key: 'featured', label: 'Featured' },
-    { key: 'yours', label: 'Your apps' },
+    // The key stays `yours` — ?filter=yours links and the declared checks
+    // select on it — while the label says what the chip now holds: the
+    // communities you are in, not the shortcuts on your Home screen.
+    { key: 'yours', label: 'Joined' },
     { key: 'new', label: 'New' },
   ],
 
@@ -514,17 +517,17 @@ const Browse = {
   //              admin's curation, the same flag Home's featured lane reads
   //              (Home.featuredApps). Here it is the WHOLE curated set: the
   //              directory lists apps you have too, and has no six-card cap.
-  //   yours    — Home.isYours, the one predicate "Your apps" means everywhere
-  //              (apps you added, and apps you are a member of unless you took
-  //              them off Home), so this chip and the rows' Added state can
-  //              never disagree.
+  //   yours    — Home.isJoined: the communities you are in, the same flag the
+  //              rows' Join pill reads, so the chip and the pill can never
+  //              disagree. Not Home.isYours — taking an app off Home is not
+  //              leaving it, and Discover is where you join and leave.
   //   new      — newApps above.
   // Pure — unit-tested.
   filterApps(apps, key, now) {
     const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
     const list = (apps || []).filter(Boolean);
     if (filter === 'featured') return list.filter((a) => !!a.featured);
-    if (filter === 'yours') return list.filter((a) => Home.isYours(a));
+    if (filter === 'yours') return list.filter((a) => Home.isJoined(a));
     if (filter === 'new') return Browse.newApps(list, now);
     return list;
   },
@@ -535,12 +538,12 @@ const Browse = {
     const q = String(query || '').trim();
     if (q) {
       if (filter === 'featured') return `No featured apps match “${q}”.`;
-      if (filter === 'yours') return `None of your apps match “${q}”.`;
+      if (filter === 'yours') return `Nothing you’ve joined matches “${q}”.`;
       if (filter === 'new') return `No new apps match “${q}”.`;
       return `No apps match “${q}”.`;
     }
     if (filter === 'featured') return 'No featured apps yet.';
-    if (filter === 'yours') return 'Nothing in Your apps yet. Add apps from All.';
+    if (filter === 'yours') return 'You haven’t joined anything yet. Join apps from All.';
     return 'No apps to show yet.';
   },
 
@@ -706,7 +709,10 @@ const Browse = {
   // Pure — unit-tested in tests/browse-screen.test.js.
   rowView(app) {
     const isDemo = !!app.demo;
-    const isAdded = Home.isYours(app);
+    // The pill is membership now (Join / Joined), not the Home shortcut it
+    // used to be: see Home.setMembership. `added` keeps its name because the
+    // row's data-added attribute is what the declared checks select on.
+    const isAdded = Home.isJoined(app);
     return {
       app,
       directoryTier: Browse.directoryTier(app),
@@ -721,7 +727,7 @@ const Browse = {
       demo: isDemo,
       openable: !isDemo,
       added: isAdded,
-      addTitle: isAdded ? 'Added. Tap to remove from Your apps' : 'Add to Your apps',
+      addTitle: isAdded ? `Joined. Tap to leave ${app.name || app.slug}` : `Join ${app.name || app.slug}`,
     };
   },
 
@@ -796,7 +802,7 @@ const Browse = {
 
   toggleRowAdded(view) {
     if (!view || !view.slug) return;
-    Home.toggleAdded(view.slug, !view.added, () => Browse.render());
+    Home.setMembership(view.slug, !view.added, () => Browse.render());
   },
 
   // Screenshot-state deep link (?shot=browse-detail): the detail page is

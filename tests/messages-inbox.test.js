@@ -263,8 +263,16 @@ test('one row shape per kind; the channels are headed rather than pilled', () =>
   assert.doesNotMatch(SCREEN, /<KindPill kind="app" \/>/, 'a section heading says it once');
   assert.match(SCREEN, /<KindPill kind="agent" \/>/, 'an agent among the people still says so');
   assert.match(SCREEN, /chats: 'Chats',\s*channels: 'Channels',/);
-  assert.match(SCREEN, /snap\.filter === 'all' && \(i === 0 \|\| shown\[i - 1\]\.section !== entry\.section\)/,
+  assert.match(SCREEN, /sectionRuns\(shown, snap\.filter === 'all'\)/,
     'a heading over each section, under All only');
+  assert.match(SCREEN, /<div key=\{`card-\$\{run\.section\}`\} className="messages-section-card" data-inbox-card=\{run\.section\}>/,
+    'and each section\'s rows in a card of their own, so the last row of a section drops its separator');
+  const e = (section, more) => ({ section, more });
+  assert.deepEqual(inbox.sectionRuns([e('chats'), e('chats'), e('channels'), e('channels', true)], true)
+    .map((r) => [r.section, r.head, r.entries.length]),
+  [['chats', true, 2], ['channels', true, 2]], 'one card per section, each headed under All; the folded channels stay in theirs');
+  assert.deepEqual(inbox.sectionRuns([e('channels')], false).map((r) => [r.section, r.head]), [['channels', false]],
+    'under a filter: one card, no heading');
   const conversationRow = SCREEN.slice(SCREEN.indexOf('function ConversationRow'), SCREEN.indexOf('function KindPill'));
   assert.doesNotMatch(conversationRow, /KindPill/,
     'a person gets none: they are the majority, and a pill on every row says nothing');

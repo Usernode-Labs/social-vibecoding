@@ -7,6 +7,7 @@ const platformJwt = require('./platform-jwt');
 const notifications = require('./notifications');
 const events = require('./events');
 const appAccess = require('./app-access');
+const communities = require('./communities');
 const attachmentsSvc = require('./attachments');
 const appChat = require('./app-chat');
 const wsBus = require('./ws-bus');
@@ -602,6 +603,30 @@ async function handleMessage(pool, client, msg) {
         appId: client.appId, userId: client.user.id, type: msg.type,
       });
       return { ok: false, code: 'not_collaborator' };
+    }
+  }
+  // Posting in an app's chat is for the members of its community
+  // (services/communities.js). Unlike the drops above, this one is ANSWERED:
+  // the sender is a legitimate client whose composer does not know they have
+  // not joined, so the refusal goes back to that one socket as a
+  // `join_required` frame carrying the message, and the composer
+  // (public/js/group-chat.js) offers Join and sends it again. Only 'chat':
+  // see chatNeedsJoin for why typing and reactions are not gated.
+  if (msg.type === 'chat') {
+    let join = null;
+    try {
+      join = await communities.chatNeedsJoin(pool, client.appId, client.user);
+    } catch (err) {
+      log.warn('ws', 'chat message dropped: membership check failed', {
+        appId: client.appId, userId: client.user.id, err: err.message,
+      });
+      return { ok: false, code: 'write_access_failed' };
+    }
+    if (join) {
+      try {
+        if (client.ws.readyState === 1) client.ws.send(JSON.stringify({ type: 'join_required', ...join, retry: msg }));
+      } catch { /* a closed socket has nobody to ask */ }
+      return { ok: false, code: 'join_required' };
     }
   }
   switch (msg.type) {

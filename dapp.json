@@ -1229,7 +1229,7 @@
       "expectText": "staging-demo-lead"
     },
     {
-      "name": "Discover leads its list with filter chips, All / Featured / Your apps / New, with All pressed (the prototype's scrDiscover)",
+      "name": "Discover leads its list with filter chips, All / Featured / Joined / New, with All pressed (the prototype's scrDiscover)",
       "path": "/#apps",
       "expectSelector": "#browse-screen:not(.hidden) #browse-search-bar > #browse-filter-chips[role=\"group\"] > [data-filter=\"all\"][aria-pressed=\"true\"] + [data-filter=\"featured\"][aria-pressed=\"false\"] + [data-filter=\"yours\"] + [data-filter=\"new\"]",
       "expectText": "Featured"
@@ -1336,16 +1336,16 @@
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
     },
     {
-      "name": "Browse renders app-store rows with an Add button, under a bar with no back slot (#2639, #2718)",
+      "name": "Browse renders app-store rows with a Join button, under a bar with no back slot (#2639, #2718)",
       "path": "/#apps",
       "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list .browse-row .browse-add-btn",
       "expectText": "All apps"
     },
     {
-      "name": "Browse rows carry a compact Add pill that still names Your apps as its destination (QA 2026-09-24 Q10)",
+      "name": "Browse rows carry a compact Join pill whose accessible name says what is joined (communities; QA 2026-09-24 Q10)",
       "path": "/#apps",
-      "expectSelector": "#browse-list .browse-row .browse-add-btn[data-added=\"false\"][aria-label=\"Add to Your apps\"][title=\"Add to Your apps\"]",
-      "expectText": "All apps"
+      "expectSelector": "#browse-list .browse-row .browse-add-btn[data-added=\"false\"][aria-label^=\"Join \"][title^=\"Join \"]",
+      "expectText": "Join"
     },
     {
       "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
@@ -2383,6 +2383,12 @@
       "expectText": "Staging demo: one line on what the open issues and waiting proposals are about."
     },
     {
+      "name": "A project's Workshop page leads with a hero that says who it is for and how a change gets in (communities)",
+      "path": "/#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"] > [data-ws-community-rule]",
+      "expectText": "Community"
+    },
+    {
       "id": "workshop.grouping-ear",
       "name": "The grouping strip sits beside the tabs, on a surface joined to the pane",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
@@ -3019,7 +3025,7 @@
       "id": "messages.channels",
       "name": "#2783: the Messages list is sectioned Discord-style — chats on top, then a Channels heading led by #general",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll h3.messages-section-head[data-inbox-section=\"chats\"] ~ h3.messages-section-head[data-inbox-section=\"channels\"] + a.messages-channel-row[data-inbox-channel=\"general\"][href=\"#messages/910004\"]",
+      "expectSelector": "#messages-screen:not(.hidden) h3.messages-section-head[data-inbox-section=\"chats\"] ~ h3.messages-section-head[data-inbox-section=\"channels\"] + .messages-section-card > a.messages-channel-row[data-inbox-channel=\"general\"][href=\"#messages/910004\"]",
       "expectText": "Channels",
       "visual": true,
       "impact": [
@@ -3209,9 +3215,10 @@
       "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-app=\"staging-demo-your-app\"] [data-workshop-working=\"2\"] + [data-workshop-needs=\"3\"]"
     },
     {
-      "name": "An app with a decision waiting leads the Workshop list",
+      "name": "The Workshop lists your communities under Communities, Groups and Just you, in that order",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-list a[data-workshop-app]:first-of-type [data-workshop-needs]:not([data-workshop-needs=\"0\"])"
+      "expectSelector": "#workshop-list > [data-workshop-section=\"open\"] ~ [data-workshop-section=\"invited\"]:has([data-workshop-app=\"staging-demo-long-name\"]) ~ [data-workshop-section=\"solo\"] [data-workshop-app=\"staging-demo-emoji-icon\"]",
+      "expectText": "Just you"
     },
     {
       "name": "The Workshop screen draws no empty-state line while it has rows, and leads with the All apps chip over its Current status and Needs you tabs (#3051, reverses #2759)",

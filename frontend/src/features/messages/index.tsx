@@ -84,7 +84,7 @@ import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
 import {
-  INBOX_FILTERS, buildInbox,
+  INBOX_FILTERS, buildInbox, sectionRuns,
   type AgentChat, type AppDiscussion, type InboxFilter, type InboxSection,
 } from './inbox';
 import type { ConversationMessage, ConversationSummary, MessagesAgentThread } from './types';
@@ -894,18 +894,35 @@ function ConversationList() {
             that knows how. Under All each section is headed, the way Discord
             heads its DMs and its channels; under a filter the strip already
             says which one this is. */}
-        {shown.map((entry, i) => {
-          const head = snap.filter === 'all' && (i === 0 || shown[i - 1].section !== entry.section)
-            ? <h3 key={`head-${entry.section}`} className="messages-section-head" data-inbox-section={entry.section}>{SECTION_LABELS[entry.section]}</h3>
-            : null;
-          const row = inboxRow(entry);
-          // #2967: the toggle sits where the channels outside Your apps
-          // begin — above them once they are shown, so "Show less" is next to
-          // what it folds.
-          const toggle = entry.more && (i === 0 || !shown[i - 1].more) ? moreToggle : null;
-          return [head, toggle, row].filter(Boolean);
+        {/* EACH SECTION'S ROWS SIT IN A CARD, under its label: the grouped
+            list's label-over-card shape that Workshop and Discover draw,
+            rather than rows ruled straight onto the strip. The card is the
+            rows' parent, so `:last-child` (which drops the last separator)
+            now means the last row of its section. Under a filter there is no
+            label and one card.
+
+            #2967's toggle is a row of the channels card: it sits where the
+            channels outside Your apps begin (above them once they are shown,
+            so "Show less" is next to what it folds), or at the card's foot
+            while they are folded. */}
+        {sectionRuns(shown, snap.filter === 'all').map((run) => {
+          const rows = run.entries.flatMap((entry, i) => {
+            const toggle = entry.more && (i === 0 || !run.entries[i - 1].more) ? moreToggle : null;
+            return [toggle, inboxRow(entry)].filter(Boolean);
+          });
+          const foot = run.section === 'channels' && moreToggle && !run.entries.some((entry) => entry.more)
+            ? moreToggle : null;
+          return [
+            run.head
+              ? <h3 key={`head-${run.section}`} className="messages-section-head" data-inbox-section={run.section}>{SECTION_LABELS[run.section]}</h3>
+              : null,
+            <div key={`card-${run.section}`} className="messages-section-card" data-inbox-card={run.section}>
+              {rows}
+              {foot}
+            </div>,
+          ];
         })}
-        {moreToggle && !shown.some((entry) => entry.more) && (snap.filter === 'all' || snap.filter === 'channels') ? moreToggle : null}
+        {moreToggle && !shown.some((entry) => entry.section === 'channels') && (snap.filter === 'all' || snap.filter === 'channels') ? moreToggle : null}
       </div>
     </section>
   );

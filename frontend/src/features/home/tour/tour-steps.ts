@@ -159,7 +159,9 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // screen on every platform route, so the target resolves everywhere.
     id: 'workshop',
     title: 'Workshop',
-    body: 'Workshop shows what is in progress across your apps, and what needs you.',
+    // Communities (stage 2): the tab lists what you have JOINED, by who it
+    // is for, not Home's shortcuts, so the step says so.
+    body: 'Workshop lists every community and group you are in, and your own projects, with what needs you in each.',
     targets: ['#platform-tab-workshop'],
     // THE STEP THAT LEAVES THE MENU, and it is this one now rather than
     // Challenges: the two steps before it point at rows INSIDE the menu, and

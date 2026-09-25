@@ -78,6 +78,7 @@ import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { AppWorkshopScope } from '../../workshop/workshop-chrome';
+import { CommunityCard } from './community-card';
 import { readAskStream } from './ask-stream';
 
 type SortKey = 'people' | 'activity' | 'open';
@@ -3099,6 +3100,20 @@ export function DevWorkshop(): ReactNode {
       <div className="dev-ws-tabbody">
       {tab === 'status' ? (
       <>
+      {/* ── The hero: what this is, who it is for, Join (communities) ──
+          FIRST ON THE PAGE. A person arriving from Discover or a shared link
+          met four numbers about the code before the thing's own name; the
+          page now leads with identity, the way a profile does, and the
+          dashboard follows. Its channel row is the same room Messages lists
+          under Channels. See ./community-card.tsx. */}
+      {slug ? (
+        <CommunityCard
+          slug={slug}
+          name={app.name || undefined}
+          iconUrl={app.iconUrl}
+          iconEmoji={app.iconEmoji}
+        />
+      ) : null}
       {/* #2573: ABOVE the empty note, because the two answer different
           questions on the same screen. The note says what the board holds
           and points at the "+"; this says what to do about an app nobody
@@ -3255,6 +3270,7 @@ export function DevWorkshop(): ReactNode {
               from it; what goes is this screen's copy of the door. */}
         </section>
       ) : null}
+
 
       {/* ── Yours, first ──
           The first question a returning member has is about their OWN work,

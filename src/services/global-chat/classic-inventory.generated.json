@@ -3003,6 +3003,52 @@
     },
     {
       "source": "src/routes/apps.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/community",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.apps.item.community.2cbc86b3",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app",
+      "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/community-card.tsx",
+        "frontend/src/features/dialogs/members-controller.js",
+        "frontend/src/features/messages/api.ts",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/apps.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/membership",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.apps.item.membership.07da8654",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app",
+      "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dialogs/members-controller.js",
+        "frontend/src/features/home/home.js",
+        "frontend/src/features/messages/api.ts",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/apps.js",
       "method": "PUT",
       "path": "/api/favorites/order",
       "expression": null,

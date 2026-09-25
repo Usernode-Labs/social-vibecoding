@@ -276,11 +276,17 @@ function useRailPeek(peek: boolean) {
  * null and the marker hides, so the next tab to light lands rather than
  * sliding in from wherever the last one was.
  *
- * The box is an INSET of the lit tab, not the tab itself: the tab is the
- * full 56px cell edge to edge, and a fill that met its neighbour's would read
- * as the bar being split into panels. The desktop rail does not use it at
- * all — its rows already carry a `--brand-tint` fill of their own, and
- * app.css hides the marker there.
+ * THE BOX HUGS THE TAB'S GLYPH AND LABEL, not the tab. The tab is the full
+ * 56px cell edge to edge, which is right for the thumb and wrong for the
+ * pill: a pill inset 4px from the cell was sized by the bar's width divided
+ * by five, so a long label ("Workshop", "Messages") met its edges with a
+ * pixel to spare and a short one ("Home") floated in a wide lozenge. The
+ * pill is now what it holds plus the same padding on every tab — 5px over
+ * the glyph, 8px either side, 3px under the label — with a floor so a
+ * three-letter label still gets a pill rather than a capsule, and the tab
+ * under it keeps the whole cell as its target. The desktop rail does not
+ * use it at all — its rows carry a fill of their own, and app.css hides the
+ * marker there.
  */
 interface TabMarkerBox {
   x: number;
@@ -290,20 +296,64 @@ interface TabMarkerBox {
   slide: boolean;
 }
 
+/** The fallback when the tab's contents cannot be measured: the cell, inset. */
 const MARKER_INSET = 4;
+/** The pill's padding around the glyph and label, and its narrowest width. */
+const MARKER_PAD = { top: 5, x: 8, bottom: 3 } as const;
+const MARKER_MIN_W = 58;
 
+/** A box relative to the tab it sits in, as getBoundingClientRect deltas. */
+export type ContentRect = { left: number; top: number; width: number; height: number };
+
+/**
+ * The marker's box on the bar. `content` is the union of the tab's glyph and
+ * label relative to the tab; without one (not measurable, or nothing laid
+ * out inside) the box falls back to the cell inset 4px, the old geometry.
+ * Integers, so a re-measure that lands on the same pixel keeps the previous
+ * box (useTabMarker compares them) rather than restarting a slide.
+ */
 export function markerBoxFor(
   el: { offsetLeft: number; offsetTop: number; offsetWidth: number; offsetHeight: number },
+  content?: ContentRect | null,
 ): Omit<TabMarkerBox, 'slide'> | null {
   // A bar that is not laid out (hidden, or the keyboard is up) has nothing to
   // say about where the tab is; keep the last box rather than collapse it.
   if (!(el.offsetWidth > 0) || !(el.offsetHeight > 0)) return null;
+  if (!content || !(content.width > 0) || !(content.height > 0)) {
+    return {
+      x: el.offsetLeft + MARKER_INSET,
+      y: el.offsetTop + MARKER_INSET,
+      w: Math.max(0, el.offsetWidth - MARKER_INSET * 2),
+      h: Math.max(0, el.offsetHeight - MARKER_INSET * 2),
+    };
+  }
+  const w = Math.round(Math.max(MARKER_MIN_W, content.width + MARKER_PAD.x * 2));
+  const h = Math.round(content.height + MARKER_PAD.top + MARKER_PAD.bottom);
+  const centre = el.offsetLeft + content.left + content.width / 2;
   return {
-    x: el.offsetLeft + MARKER_INSET,
-    y: el.offsetTop + MARKER_INSET,
-    w: Math.max(0, el.offsetWidth - MARKER_INSET * 2),
-    h: Math.max(0, el.offsetHeight - MARKER_INSET * 2),
+    x: Math.round(centre - w / 2),
+    y: Math.round(el.offsetTop + content.top - MARKER_PAD.top),
+    w,
+    h,
   };
+}
+
+/**
+ * The union of a tab's glyph and label, relative to the tab. Null when
+ * either is missing or not laid out, which sends markerBoxFor to its
+ * fallback.
+ */
+export function tabContentRect(tab: HTMLElement): ContentRect | null {
+  const parts = [tab.querySelector('.platform-tab-mark'), tab.querySelector('.platform-tab-label')]
+    .map((node) => (node as HTMLElement | null)?.getBoundingClientRect?.())
+    .filter((r): r is DOMRect => !!r && r.width > 0 && r.height > 0);
+  if (parts.length < 2) return null;
+  const base = tab.getBoundingClientRect();
+  const left = Math.min(...parts.map((r) => r.left));
+  const top = Math.min(...parts.map((r) => r.top));
+  const right = Math.max(...parts.map((r) => r.right));
+  const bottom = Math.max(...parts.map((r) => r.bottom));
+  return { left: left - base.left, top: top - base.top, width: right - left, height: bottom - top };
 }
 
 /**
@@ -372,7 +422,7 @@ function useTabMarker(
     const measure = (selectionChanged: boolean) => {
       const el = bar.querySelector<HTMLElement>('.platform-tab[aria-current="page"]');
       if (!el) return;
-      const next = markerBoxFor(el);
+      const next = markerBoxFor(el, tabContentRect(el));
       if (!next) return;
       setBox((prev) => {
         if (prev && prev.x === next.x && prev.y === next.y
@@ -399,6 +449,11 @@ function useTabMarker(
     // pending slide re-measures anyway), so it waits for the slide too.
     const ro = new ResizeObserver(() => { if (!cancelSlide) measure(false); });
     ro.observe(bar);
+    // The pill is sized by the lit tab's label now, and a label can change
+    // width with the bar standing still (the Me tab takes the viewer's name
+    // once it has loaded), so the label is watched as well.
+    const label = bar.querySelector('.platform-tab[aria-current="page"] .platform-tab-label');
+    if (label) ro.observe(label);
     return () => {
       ro.disconnect();
       cancelSlide?.();

@@ -50,18 +50,34 @@ function controller(): any {
 
 const ADD_BASE = 'browse-add-btn shrink-0 inline-flex items-center gap-1 rounded-full '
   + 'border px-3 py-1.5 text-xs font-medium transition-colors ';
-// emerald-700, not -500: white on #10b981 is 2.5:1 — a green you can see and a
-// label you cannot read. -700 takes the same pill to 5.5:1 with the state
-// unchanged.
-const ADD_ON = 'bg-emerald-700 border-emerald-700 text-white';
+// JOINED IS A QUIET STATE, not a filled green. A column of solid emerald pills
+// down the directory made the one thing that is already done the loudest
+// thing on the screen, in a second accent the product uses nowhere else for
+// state (AGENTS.md, "Type and colour": one accent, and colour for what asks
+// for you). It keeps its check and its word, in grey with no fill, so a
+// joined row reads as settled and the filled "Join" beside it as the action.
+// It is still a button: a tap asks before leaving (Home.setMembership).
+const ADD_ON = 'border-transparent bg-transparent text-zinc-600 dark:text-zinc-300 '
+  + 'hover:bg-zinc-100 dark:hover:bg-zinc-800';
 // Filled neutral, not an accent outline: the row sits on a white card now, and
 // an outlined control on a floating surface is the shape the language never
-// draws (see the `neutral` variant in @/components/ui/button.tsx). ADD_ON stays
-// a filled emerald because "Added" is a STATE, not an action.
+// draws (see the `neutral` variant in @/components/ui/button.tsx).
 const ADD_OFF = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
   + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
 
-function Row({ view }: { view: RowView }): ReactNode {
+function Row({ view, headingSays }: {
+  view: RowView;
+  /**
+   * The directory label the tier heading over this row already says
+   * ("Reviewed working" under "Reviewed working apps"). A row whose own label
+   * is that one drops it: the same words once over the section and again on
+   * every row under it was the metadata that made a Discover row four lines
+   * deep. A label the heading does NOT say ("Needs an icon", "Needs
+   * re-review" under "Not yet reviewed") stays, and so does every label in
+   * an ungrouped sort, where no heading says anything.
+   */
+  headingSays?: string;
+}): ReactNode {
   const rowRef = useRef<HTMLDivElement | null>(null);
 
   // NavLink.wireModified binds its own listeners to the node, so it runs in an
@@ -117,7 +133,12 @@ function Row({ view }: { view: RowView }): ReactNode {
       title={(
         <span className="flex items-center gap-1.5 min-w-0">
           <span className="browse-row-name truncate">{view.name}</span>
-          <span className={`status-dot ${view.statusDot} shrink-0`} title={view.status}></span>
+          {/* A DOT ONLY WHEN SOMETHING IS WRONG. Green on every running app
+              is a light that is always on, which says nothing; the meta line
+              already names a status that is not "running". */}
+          {view.statusDot !== 'running' ? (
+            <span className={`status-dot ${view.statusDot} shrink-0`} title={view.status}></span>
+          ) : null}
         </span>
       )}
       subtitle={(
@@ -125,13 +146,16 @@ function Row({ view }: { view: RowView }): ReactNode {
           {/* `truncate`, not just `block` (QA 2026-09-24 Q10): the subtitle box
               clips, so without its own ellipsis this line was cut mid-word
               ("Reviewed workir") on a phone. */}
-          {view.app.directory?.label ? (
+          {view.app.directory?.label && view.app.directory.label !== headingSays ? (
             <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">{view.app.directory.label}</span>
           ) : null}
           <span className="block truncate">{view.meta}</span>
           {hasAppPills(view.app) ? (
             <span className="mt-1 flex flex-wrap items-center gap-1">
-              <AppPills app={view.app} />
+              {/* ONE pill: the first thing that asks for attention, else
+                  the visibility. A row of three chips under a meta line
+                  was more to read than the app's own name. */}
+              <AppPills app={view.app} limit={1} />
             </span>
           ) : null}
         </>
@@ -145,7 +169,7 @@ function Row({ view }: { view: RowView }): ReactNode {
         data-slug={view.slug}
         data-added={String(view.added)}
         aria-pressed={view.added}
-        aria-label={view.added ? undefined : 'Add to Your apps'}
+        aria-label={view.added ? undefined : `Join ${view.name}`}
         title={view.addTitle}
         onClick={(e) => {
           e.stopPropagation();
@@ -155,14 +179,15 @@ function Row({ view }: { view: RowView }): ReactNode {
         {view.added
           ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
           : <PlusIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />}
-        {/* #1553: "Add" alone never said add to WHAT, so the row spelled out
-            "Add to Your apps". QA 2026-09-24 Q10: that 127px pill left the
-            app's NAME ten characters on a desktop box and nothing at all at
-            1024. The visible label is "+ Add" again, and the destination
-            stays where #1553 put it for everyone who is not reading the
-            glyph: the accessible name and the title attribute both say
-            "Add to Your apps". "Added" is a state and stays short. */}
-        {view.added ? 'Added' : 'Add'}
+        {/* JOIN, not Add (communities, stage 1). The pill used to put the
+            app on Home; it now puts YOU in the app's community, which is
+            what lets you propose and vote (and it still pins the app, so
+            nothing you relied on went away). QA 2026-09-24 Q10's width rule
+            holds: the visible label is one short word and the accessible
+            name carries the rest — "Join <app>", so a screen reader hears
+            what is being joined. "Joined" is a state and stays short; a tap
+            on it asks before leaving (Home.setMembership). */}
+        {view.added ? 'Joined' : 'Join'}
       </button>
         </>
       )}
@@ -182,7 +207,9 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
   moreExpanded?: boolean;
 }): ReactNode {
   if (!rows) return null;
-  const renderRows = (items: RowView[]) => items.map((view) => <Row key={view.slug} view={view} />);
+  const renderRows = (items: RowView[], headingSays?: string) => items.map((view) => (
+    <Row key={view.slug} view={view} headingSays={headingSays} />
+  ));
   if (!curated) return <>{renderRows(rows)}</>;
   const shown = rows.filter((view) => view.directoryTier !== 'more');
   const ready = rows.filter((view) => view.directoryTier === 'ready');
@@ -205,9 +232,9 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
       {grouped ? (
         <>
           {ready.length ? <SectionHeader className={headingClass}>Reviewed working apps</SectionHeader> : null}
-          {renderRows(ready)}
+          {renderRows(ready, 'Reviewed working')}
           {unreviewed.length ? <SectionHeader className={headingClass}>Not yet reviewed</SectionHeader> : null}
-          {renderRows(unreviewed)}
+          {renderRows(unreviewed, 'Not yet reviewed')}
         </>
       ) : renderRows(shown)}
       {more.length ? (

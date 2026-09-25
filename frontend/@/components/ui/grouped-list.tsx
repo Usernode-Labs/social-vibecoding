@@ -40,10 +40,20 @@ import { ChevronRightIcon } from './icons';
  * `inset="none"` and the hairline runs the full width.
  */
 
+/**
+ * THE SECTION LABEL IS SMALL CAPS: 12px, bold, uppercase, tracked. It names
+ * the card under it; it is not a line of text in its own right, and at the
+ * body's 15px in grey it read as one, the same size as the rows' own titles,
+ * so a screen of three sections looked like a screen of three paragraphs.
+ * Small and tracked is the label every grouped list in the design reference
+ * wears (AGENTS.md, "Type and colour"), and it is the one place in the shell
+ * that is uppercase. dark:text-zinc-400 for the contrast reason the row's
+ * subtitle gives below.
+ */
 export function SectionHeader({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h2
-      className={cn('px-4 pb-2 pt-6 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500', className)}
+      className={cn('px-4 pb-2 pt-6 text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400', className)}
       {...props}
     />
   );
@@ -63,7 +73,16 @@ export function SectionHeader({ className, ...props }: React.HTMLAttributes<HTML
  */
 export const PLANE_FILL = 'bg-[color:var(--dc-sheet-solid)]';
 
-const groupedList = cva('mx-4 overflow-hidden rounded-2xl', {
+/*
+ * ONE HAIRLINE AND A 20px RADIUS (AGENTS.md, "Type and colour"). Figure and
+ * ground still do the separating; the hairline is what keeps the card's edge
+ * where it is when the ground under it is the pale end of the wallpaper and
+ * the plane colour is a point or two off it, which is most of a phone
+ * screen. Inset, as a shadow, so it adds no width and a row's own hairline
+ * inset (below) still lands where the tile ends. The colour is
+ * `--app-sheet-line`, the sheets' own edge, which already has its dark value.
+ */
+const groupedList = cva('mx-4 overflow-hidden rounded-[20px] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]', {
   variants: {
     tone: {
       card: 'bg-white dark:bg-zinc-900',
@@ -156,9 +175,9 @@ export interface ListRowProps
   /**
    * Extra classes for the title line, merged over its defaults.
    *
-   * The default is `font-bold`, which is right for the rows this primitive was
-   * built for — a conversation, an app, a notification — where the title is
-   * the row's subject and a subtitle sits under it. A settings MENU is the
+   * The default is a 650 weight at 15px, which is right for the rows this
+   * primitive was built for — a conversation, an app, a notification — where
+   * the title is the row's subject and a subtitle sits under it. A settings MENU is the
    * other kind of grouped list: every row is one word, there are no subtitles,
    * and bolding all of them makes a page of headings with nothing under them.
    * Rather than fork the primitive, such a caller passes a weight here.
@@ -204,8 +223,13 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
     >
       {leading}
       <div className={cn('min-w-0 flex-1', contentClassName)}>
+        {/* 15 OVER 13 (AGENTS.md, "Type and colour"). The title was 17px
+            bold over a 15px subtitle: the size of a heading, on every row,
+            so a list of five rows read as five headings and the one real
+            heading above them had nothing left to be louder with. 15px at
+            650 is the row's subject; 13px grey is the fact under it. */}
         <div className={cn(
-          'truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100',
+          'truncate text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100',
           titleClassName,
         )}>{title}</div>
         {/* dark:text-zinc-400, not -500 (QA 2026-09-24 Q20): zinc-500 is
@@ -213,7 +237,7 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
             Discover rows' and the Me screen's meta lines. zinc-400 is 6.0 and
             5.2, and is still the quiet line under a bold title. */}
         {subtitle ? (
-          <div className={cn('truncate text-[0.9375rem] text-zinc-500 dark:text-zinc-400', subtitleClassName)}>{subtitle}</div>
+          <div className={cn('mt-0.5 truncate text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400', subtitleClassName)}>{subtitle}</div>
         ) : null}
       </div>
       {dot ? (

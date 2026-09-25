@@ -206,6 +206,39 @@ representative fixture before the same gate can be claimed. See
 `docs/proposal-visuals/pre-pr-local-plan-verification.md` for setup and the
 remaining live-proposal boundary.
 
+## Communities own projects — name them the way the screen does
+
+- **Internally the container is a `community`; on screen it never is.** Every
+  app belongs to exactly one community (`apps.community_id`, the
+  "Communities" block at the end of `src/db/schema.sql`,
+  `src/services/communities.js`), and a community is what people join.
+  People see it by its audience — **Just you** (`solo`), **Group**
+  (`invited`) or **Community** (`open`) — and what it owns are **projects**.
+  Use "project" in user-facing copy where the app is the thing being built;
+  keep "app" where it is the thing being used (the App tab, Discover).
+- **Audience is derived, never stored.** `communities.audienceSql` reads it
+  off the app's `view_visibility` and its member/invite count. A second
+  stored copy is one the visibility reconcile would have to remember.
+- **Communities and apps are one-to-one today.** A community with a single
+  project is drawn as that project — its name, icon and page — and nothing
+  should render a separate "community" layer for it. The table is bare on
+  purpose; a name and an audience move onto it when a community can own
+  more than one project.
+- **Membership gates taking part, not reading.** Starting a change,
+  proposing, filing a request, voting (on proposals and requests) and posting
+  in an app's chat answer 403 `join_required` to a non-member
+  (`communities.requireAppMembership` / `requireSessionMembership` /
+  `requireIssueMembership`, and `chatNeedsJoin` on the WebSocket, which
+  answers with a `join_required` frame). Mount the matching gate on any new
+  write route of that kind; the client's fetch wrapper
+  (`frontend/src/lib/join-required.ts`) turns the 403 into a Join prompt and
+  a retry, so no caller handles it by hand. The collab guard in
+  `app-access.js` still decides who may be there at all; admins pass.
+  Collaborators, Home pins and platform access join by trigger — write those
+  rows, not `community_members`, unless the action is literally Join or
+  Leave. The vote threshold counts active MEMBERS
+  (`services/active-users.js`, concept #3).
+
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 
 - The shell's markup is React now. **Do not edit `public/index.html`** — it is
@@ -331,6 +364,47 @@ in code (prose in comments is fine). It also holds the console to its own
 registry: a section may not hand-write a class string a recipe of five or more
 utilities already covers — interpolate the key, or the copy stops tracking the
 recipe the first time it changes.
+
+### Type and colour on the platform shell — one scale, one accent
+
+The shell's screens read as one product because a few choices are made once.
+Make new UI from them rather than choosing again; the primitives already
+carry most of them.
+
+- **Rows are 15 over 13.** `ListRow`'s title is 15px at weight 650, its
+  subtitle 13px muted. Messages' `.messages-row-name` / `-preview` use the
+  same pair. A 17px bold row title makes every row a heading.
+- **A label over a card is small caps; a title inside a card is a
+  sentence.** `SectionHeader` is 12px bold uppercase, tracked `0.06em`, muted
+  (Messages' `.messages-section-head` matches it). It is the only uppercase
+  text in the shell. A heading inside a card (`.dev-ws-head-title`) stays
+  sentence case. A page has at most one large heading, such as the project
+  hero's name.
+- **Cards are the plane colour, 20px, one hairline.** `GroupedList` draws
+  them: `--dc-sheet-solid` (tone `plane`) or white, `rounded-[20px]`, and an
+  inset `--app-sheet-line` hairline. A list drawn outside the primitive (for
+  example `.messages-section-card`) spells the same three values.
+- **One accent, with three jobs kept apart.**
+  - `violet-*` (the blue: `tailwind.config.js` overrides it) and `--accent`
+    mark an action, or a number that asks for the viewer ("3 to vote").
+  - `--lit-ink` / `--lit-tint` / `--lit-line` mark where you are: the lit
+    tab on the phone bar, the rail row, and the Workshop strip's marker.
+  - `--brand-*` periwinkle is the header's own ink (the app chip, the bell,
+    the back disc) and nothing else.
+
+  A state that is already done gets no fill. "Joined" is grey with a check;
+  a filled green pill made the settled thing the loudest thing on screen.
+- **Say it in words, and let zero say nothing.** A count on a row is a
+  phrase ("2 in progress · 3 to vote"), not a glyph and a bare number that
+  need a legend. A zero is hidden (`hidden`, kept in the DOM when a declared
+  check selects on it). Show a status dot only when something is wrong,
+  never a green dot on every running app.
+- **At most one pill on a list row.** Use `AppPills limit={1}`. Pass the
+  heading's own words to a row's label so the row does not repeat them.
+
+Tests pin the literals where they live (`tests/section-heading-primitives`,
+`tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is
+a change to the rule. Make it here as well.
 
 ### The console is React — add a section the same way
 

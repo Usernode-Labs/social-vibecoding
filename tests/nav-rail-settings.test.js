@@ -86,6 +86,6 @@ test('desktop only: hidden on the phone bar, drawn beside Me inside the rail blo
   // …and in the same block as Me's foot rules, which make room for it.
   const meRule = CSS.indexOf('  #platform-tab-me {\n    margin-right: 48px;');
   assert.ok(meRule > media && meRule < desk, 'Me gives up the cog\'s room, in the same desktop block');
-  assert.match(CSS, /\.platform-rail-settings\[aria-current="page"\] \{\s*background: var\(--brand-tint\);/,
+  assert.match(CSS, /\.platform-rail-settings\[aria-current="page"\] \{\s*background: var\(--lit-tint\);/,
     'lit like a rail row');
 });

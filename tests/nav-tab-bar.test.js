@@ -691,12 +691,30 @@ test('the marker ships bare, so the first render matches the prerender', () => {
   assert.ok(html.indexOf('platform-tabs-marker') < html.indexOf('id="platform-tab-home"'));
 });
 
-test('the marker is an inset of the lit tab, and an unlaid-out bar keeps the last box', () => {
+test('the marker hugs the lit tab\'s glyph and label, and an unlaid-out bar keeps the last box', () => {
   const { markerBoxFor } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  const cell = { offsetLeft: 150, offsetTop: 0, offsetWidth: 72, offsetHeight: 56 };
+  // "Workshop": a 56px label under a 22px glyph, centred in a 72px cell.
   assert.deepEqual(
-    { ...markerBoxFor({ offsetLeft: 150, offsetTop: 0, offsetWidth: 72, offsetHeight: 56 }) },
+    { ...markerBoxFor(cell, { left: 8, top: 9, width: 56, height: 37 }) },
+    { x: 150, y: 4, w: 72, h: 45 },
+    '8px either side of the label, 5px over the glyph, 3px under the label',
+  );
+  // "Home": narrower than the floor, so the pill is 58px, still centred.
+  assert.deepEqual(
+    { ...markerBoxFor(cell, { left: 20, top: 9, width: 32, height: 37 }) },
+    { x: 157, y: 4, w: 58, h: 45 },
+    'a short label still gets a pill, not a capsule',
+  );
+  // A label wider than its cell: the pill follows it past the cell's edges
+  // (the tab keeps the cell as its target; only the fill is wider).
+  assert.equal(markerBoxFor(cell, { left: 2, top: 9, width: 68, height: 37 }).w, 84);
+  // Nothing measurable inside: the old geometry, the cell inset 4px.
+  assert.deepEqual(
+    { ...markerBoxFor(cell) },
     { x: 154, y: 4, w: 64, h: 48 },
   );
+  assert.deepEqual({ ...markerBoxFor(cell, { left: 0, top: 0, width: 0, height: 0 }) }, { x: 154, y: 4, w: 64, h: 48 });
   assert.equal(markerBoxFor({ offsetLeft: 0, offsetTop: 0, offsetWidth: 0, offsetHeight: 0 }), null,
     'a hidden bar (an app, the keyboard) has no geometry to report');
 });
@@ -755,8 +773,8 @@ test('the marker is the Workshop\'s blue, on the Workshop\'s curve, phone only',
   const rule = css.match(/\.platform-tabs-marker \{[^}]*\}/);
   assert.ok(rule);
   assert.match(rule[0], /position: absolute;/);
-  assert.match(rule[0], /background: var\(--brand-tint\);/);
-  assert.match(rule[0], /box-shadow: inset 0 0 0 1px var\(--brand-line\);/);
+  assert.match(rule[0], /background: var\(--lit-tint\);/);
+  assert.match(rule[0], /box-shadow: inset 0 0 0 1px var\(--lit-line\);/);
   assert.match(rule[0], /opacity: 0;/, 'hidden until measured');
   assert.match(css, /\.platform-tabs-marker\[data-marker-at\] \{ opacity: 1; \}/);
   assert.match(css,
@@ -765,6 +783,6 @@ test('the marker is the Workshop\'s blue, on the Workshop\'s curve, phone only',
   assert.match(css, /\.platform-tab \{\s*position: relative;\s*z-index: 1;\s*\}/,
     'the tabs sit over the marker');
   // The rail keeps its row fill; the marker is not drawn there.
-  const desktop = css.slice(css.indexOf('.platform-tab[aria-current="page"] {\n    background: var(--brand-tint);'));
+  const desktop = css.slice(css.indexOf('.platform-tab[aria-current="page"] {\n    background: var(--lit-tint);'));
   assert.match(desktop.slice(0, 400), /\.platform-tabs-marker \{\s*display: none;\s*\}/);
 });

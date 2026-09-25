@@ -169,6 +169,7 @@ const { listDrafts } = require('./chat-drafts');
 // shared by GET /transcript and POST /fork (see services/transcript-share.js).
 const transcriptShare = require('../services/transcript-share');
 const appAccess = require('../services/app-access');
+const communities = require('../services/communities');
 const userAgentFiles = require('../services/user-agent-files');
 const debugAccess = require('../services/debug-access');
 // #907: a coding agent running on the user's own machine, holding a lease on
@@ -2713,7 +2714,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
   // Create a new session. No branch and no PR yet (#1350): the branch is
   // minted on the first chat turn, the PR after the first commit.
-  router.post('/api/apps/:slug/sessions', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/sessions', drainGuard, communities.requireAppMembership(pool), async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
@@ -2975,7 +2976,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // preview, but never opens a PR — the PR is created lazily on a cloned
   // session's branch at propose time (see runClaudeCodeTool's `headless`
   // flag).
-  router.post('/api/apps/:slug/issues/:number/headless-session', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/issues/:number/headless-session', drainGuard, communities.requireAppMembership(pool), async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
@@ -3184,7 +3185,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // memory volume so the agent resumes with full context. A follow-up
   // assistant message tells the new owner where things stand and how to
   // proceed (review spec / answer question / ask for PR + staging).
-  router.post('/api/sessions/:id/clone-headless', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/clone-headless', drainGuard, communities.requireSessionMembership(pool), async (req, res) => {
     try {
       const { rows: srcRows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url

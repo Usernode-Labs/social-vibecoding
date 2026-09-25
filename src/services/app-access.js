@@ -62,6 +62,9 @@ const NON_SECRET_APP_COLUMNS = [
   // the commit a reset puts main back to. The settings dialog reads the
   // first; nothing about any of them is secret.
   'demo_mode', 'demo_partner_id', 'demo_base_sha', 'demo_prev_approvals',
+  // The community the app belongs to (services/communities.js). An id, and
+  // the community's members are the app's own collaborators and joiners.
+  'community_id',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list

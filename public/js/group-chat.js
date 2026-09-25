@@ -504,6 +504,13 @@ const GroupChat = {
 
   handleIncoming(msg) {
     switch (msg.type) {
+      case 'join_required': {
+        // Posting here is for the app's members (services/communities.js).
+        // The server answered THIS socket's own message with the question
+        // rather than dropping it; see _answerJoinRequired.
+        void GroupChat._answerJoinRequired(msg);
+        break;
+      }
       case 'chat': {
         // #194: thread messages never land in the general stream — they
         // route to the mounted thread (if it matches) or bump the
@@ -695,6 +702,31 @@ const GroupChat = {
       GroupChat._scheduleReconnect();
     }
     GroupChat._renderStatusLine();
+  },
+
+  // A 'chat' the server refused because the sender has not joined the app's
+  // community. Ask through the shell's one Join prompt
+  // (frontend/src/lib/join-required.ts, published as
+  // window.UsernodeReact.offerJoin) and, on a yes, send the SAME message
+  // again — the server echoed it back as `retry`, so its thread, quote and
+  // attachments ride along untouched. The composer cleared itself when the
+  // message left, so a no has to say the message was not sent, or it would
+  // simply vanish.
+  async _answerJoinRequired(msg) {
+    const offer = typeof window !== 'undefined' ? window.UsernodeReact?.offerJoin : null;
+    let joined = false;
+    try {
+      joined = typeof offer === 'function' ? await offer(msg) : false;
+    } catch { joined = false; }
+    if (joined && msg.retry && msg.retry.type === 'chat') {
+      if (GroupChat.ws && GroupChat.ws.readyState === 1) {
+        GroupChat.ws.send(JSON.stringify(msg.retry));
+      } else {
+        GroupChat._pendingOutgoing.push(msg.retry);
+      }
+      return;
+    }
+    window.PlatformUI?.toast?.(`Not sent. ${msg.error || 'Join this project to post here.'}`);
   },
 
   sendTyping(thread) {
