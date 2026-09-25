@@ -27,7 +27,6 @@ import { fetchJson, send } from './topochain/api.ts';
 // are API-supplied strings, and the console never makes those clickable.
 
 const console_ = () => (window as any).AdminConsole;
-const API = '/api/admin/support';
 
 const DETAIL_HASH = /^#admin\/support\/(\d+)(?:$|[/?])/;
 
@@ -194,7 +193,7 @@ function SupportSearch({ onOpen, initialQuery, onQuery }: {
     if (!/^\d+$/.test(q) && q.length < 3) { setResults(null); setError('Type at least 3 characters, or a user id.'); return; }
     setBusy(true);
     setError('');
-    const { ok, data } = await fetchJson(`${API}/search?q=${encodeURIComponent(q)}`);
+    const { ok, data } = await fetchJson(`/api/admin/support/search?q=${encodeURIComponent(q)}`);
     setBusy(false);
     if (!ok) { setResults(null); setError(data?.error || 'Search failed. Try again.'); return; }
     const list: SearchResult[] = data?.results || [];
@@ -418,7 +417,7 @@ function ReverseControl({ activity, onDone }: { activity: any; onDone: () => voi
     });
     if (!ok) return;
     setBusy(true);
-    const res = await send('POST', `${API}/actions/${actionId}/reverse`, { reason: reason.trim() });
+    const res = await send('POST', `/api/admin/support/actions/${actionId}/reverse`, { reason: reason.trim() });
     setBusy(false);
     if (!res.ok) { setError(res.data?.error || 'Could not reverse the adjustment. Try again.'); return; }
     setOpen(false);
@@ -453,7 +452,7 @@ function PointsHistory({ userId, events, canWrite, version, onChanged }: {
     const mine = ++seq.current;
     if (p === 1) setState('loading'); else setMore(true);
     const qs = `page=${p}${eventId ? `&season_event_id=${eventId}` : ''}`;
-    const { ok, data } = await fetchJson(`${API}/users/${userId}/points?${qs}`);
+    const { ok, data } = await fetchJson(`/api/admin/support/users/${userId}/points?${qs}`);
     if (mine !== seq.current) return;
     setMore(false);
     if (!ok) { if (p === 1) setState('error'); else console_()?._alert('Could not load more points. Try again.'); return; }
@@ -537,7 +536,7 @@ function AdjustPointsForm({ userId, username, onDone }: { userId: number; userna
 
   useEffect(() => {
     if (!open || events) return;
-    fetchJson(`${API}/events`).then(({ ok, data }) => {
+    fetchJson(`/api/admin/support/events`).then(({ ok, data }) => {
       if (ok) setEvents(data.events || []); else setError('Could not load events. Close and try again.');
     });
   }, [open, events]);
@@ -546,7 +545,7 @@ function AdjustPointsForm({ userId, username, onDone }: { userId: number; userna
     setChallenges(null);
     setChallengeId('');
     if (!eventId) return;
-    fetchJson(`${API}/challenges?season_event_id=${eventId}`).then(({ ok, data }) => {
+    fetchJson(`/api/admin/support/challenges?season_event_id=${eventId}`).then(({ ok, data }) => {
       if (ok) setChallenges(data.challenges || []); else setError('Could not load challenges for that event.');
     });
   }, [eventId]);
@@ -575,7 +574,7 @@ function AdjustPointsForm({ userId, username, onDone }: { userId: number; userna
     });
     if (!ok) return;
     setBusy(true);
-    const res = await send('POST', `${API}/users/${userId}/points-adjustment`, {
+    const res = await send('POST', `/api/admin/support/users/${userId}/points-adjustment`, {
       season_event_id: Number(eventId), challenge_id: Number(challengeId), points: n,
       reason: reason.trim(), ticket: ticket.trim() || undefined,
     });
@@ -709,7 +708,7 @@ function KudosList({ title, rows, render, empty }: {
 
 function KudosCard({ summary }: { summary: any }) {
   const k = summary.kudos;
-  const list = useLoad<any>(`${API}/users/${summary.user.id}/kudos`);
+  const list = useLoad<any>(`/api/admin/support/users/${summary.user.id}/kudos`);
   const pr = (r: any) => (r.title || (r.pr_number ? `PR #${r.pr_number}` : 'a proposal'));
   return (
     <DetailCard title="Kudos" id="admin-support-kudos">
@@ -780,7 +779,7 @@ function TimelineCard({ userId, version }: { userId: number; version: number }) 
     const mine = ++seq.current;
     if (!before) setState('loading'); else setMore(true);
     const qs = `types=${type}${before ? `&before=${encodeURIComponent(before)}` : ''}`;
-    const { ok, data } = await fetchJson(`${API}/users/${userId}/timeline?${qs}`);
+    const { ok, data } = await fetchJson(`/api/admin/support/users/${userId}/timeline?${qs}`);
     if (mine !== seq.current) return;
     setMore(false);
     if (!ok) { if (!before) setState('error'); else console_()?._alert('Could not load older activity. Try again.'); return; }
@@ -829,7 +828,7 @@ function TimelineCard({ userId, version }: { userId: number; version: number }) 
 // ── Support history ────────────────────────────────────────────────────
 
 function HistoryCard({ userId, version }: { userId: number; version: number }) {
-  const h = useLoad<any>(`${API}/users/${userId}/history`, [version]);
+  const h = useLoad<any>(`/api/admin/support/users/${userId}/history`, [version]);
   const actions: any[] = h.data?.actions || [];
   return (
     <DetailCard title="Support history" id="admin-support-history">
@@ -861,7 +860,7 @@ function HistoryCard({ userId, version }: { userId: number; version: number }) {
 
 function SupportDetail({ userId, onBack }: { userId: number; onBack: () => void }) {
   const [version, setVersion] = useState(0);
-  const summary = useLoad<any>(`${API}/users/${userId}`, [version]);
+  const summary = useLoad<any>(`/api/admin/support/users/${userId}`, [version]);
   const canWrite = !!console_()?.canWrite();
   const bump = useCallback(() => setVersion((v) => v + 1), []);
 

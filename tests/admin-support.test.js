@@ -51,8 +51,8 @@ test('writes render only for admins with write access', () => {
   assert.match(CODE, /const canWrite = !!console_\(\)\?\.canWrite\(\);/);
   assert.match(CODE, /\{canWrite \? \(\s*<div className="mt-4">\s*<AdjustPointsForm/);
   assert.match(CODE, /const reversible = canWrite && a\.source === 'support_adjustment' && !a\.reversed && !isReversal;/);
-  assert.match(CODE, /send\('POST', `\$\{API\}\/users\/\$\{userId\}\/points-adjustment`/);
-  assert.match(CODE, /send\('POST', `\$\{API\}\/actions\/\$\{actionId\}\/reverse`/);
+  assert.match(CODE, /send\('POST', `\/api\/admin\/support\/users\/\$\{userId\}\/points-adjustment`/);
+  assert.match(CODE, /send\('POST', `\/api\/admin\/support\/actions\/\$\{actionId\}\/reverse`/);
 });
 
 test('the search box commits on blur or Enter, not per keystroke', () => {
