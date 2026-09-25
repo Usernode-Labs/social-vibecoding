@@ -190,6 +190,11 @@ function VerdictBody({ run }: { run: Run }) {
   if (run.verdict === 'person') {
     return <p className="text-sm">{run.reason || '(no reason given)'}</p>;
   }
+  // A verdict, not a failure (#3144): the bot found nothing to build and says
+  // why. Without its own branch it fell through to the red failure line below.
+  if (run.verdict === 'empty') {
+    return <p className="text-sm">{run.reason || '(no reason given)'}</p>;
+  }
   if (run.budget_stop) {
     return (
       <div className="space-y-1">
