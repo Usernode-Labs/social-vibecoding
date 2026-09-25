@@ -18457,6 +18457,30 @@ html.un-kb #platform-parked {
     background: var(--accent);
   }
 
+  /* ── ACTIVE (#3074) ──────────────────────────────────────────────────
+     frontend/src/features/nav/recents.ts (buildActive) carries the argument:
+     the running apps, in a section of their own at the top of the list, above
+     the RECENTS heading and under one of the same cut. Never squeezed: the
+     frame store keeps three at most, so it is always short. */
+  .platform-active {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: 1px;
+    margin-bottom: 10px;
+  }
+  /* THE APP YOU ARE IN is lit as the tab you are on is: the same fill, so
+     the rail says "you are here" once, in one voice. */
+  .platform-recent[aria-current="true"] {
+    background: var(--brand-tint);
+    color: var(--brand-ink);
+  }
+  /* Only apps are running and none has been left yet: no RECENTS heading
+     over nothing. The heading is the list's last child only then. */
+  .platform-recents-head:last-child {
+    display: none;
+  }
+
   /* ── RECENTS BY DAY (#2919) ──────────────────────────────────────────
      frontend/src/features/nav/recents.ts (groupRecents) carries the argument.
      A small label before each day that has a row, quieter than the RECENTS

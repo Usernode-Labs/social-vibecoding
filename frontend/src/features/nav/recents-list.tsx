@@ -48,6 +48,18 @@
  * button arrive with the rows, one commit after mount, so the prerender is
  * untouched, and a timer at the viewer's midnight re-renders the list so a
  * rail left open overnight moves today's rows under Yesterday.
+ *
+ * ── Active above Recents (#3074) ─────────────────────────────────────
+ *
+ * The apps running right now, the ones with the green "still open" dot, get
+ * a section of their own at the top, with the app you are in highlighted
+ * (`aria-current`). ./recents.ts's buildActive says which and in what order,
+ * and buildRecents leaves them out of Recents, so no app is listed twice; an
+ * app whose frame goes returns to Recents. They are the same rows, drawn by
+ * RecentRow. The section sits INSIDE #platform-recents, before its heading,
+ * so the rail's children and the declared checks that walk them are
+ * unchanged, and like every row it arrives one commit after mount. There is
+ * no close button: a frame goes the way it always has.
  */
 
 import { Fragment, useEffect, useRef, useState, type MouseEvent } from 'react';
@@ -58,17 +70,22 @@ import {
 
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
-import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
+import {
+  LIVE_APP_LABEL, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs,
+} from '../app-frame/live-apps';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { loadAgentSessions, useAgentSessionState } from '../agent-session/store';
 import { ACTIVITY_LABEL } from '../agent-session/activity';
 import { AgentActivityMark, AgentWorkingIcon } from '../agent-session/activity-mark';
 import { useGlobalChatState } from '../global-chat/store';
+import { improveStore } from '../improve/improve-store.js';
 import type { AgentChat } from '../messages/inbox';
 import { useMessagesSnapshot } from '../messages/store';
 import { navStore } from './nav-store.js';
 import { readRecentApps, recentAppsStore } from './recent-apps-store.js';
-import { buildRecents, groupRecents, type RecentItem, type RecentKind } from './recents';
+import {
+  buildActive, buildRecents, groupRecents, type RecentItem, type RecentKind,
+} from './recents';
 
 const GLYPHS: Record<RecentKind, typeof UserIcon> = {
   app: AppWindowIcon,
@@ -128,6 +145,7 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       data-recent-key={item.key}
       aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}`}
       {...(live ? { 'data-live': 'true' } : null)}
+      {...(item.current ? { 'aria-current': 'true' as const, 'data-current': 'true' } : null)}
       onClick={item.app ? (event) => onAppClick(event, item.app!.slug) : undefined}
     >
       {/* #2779: an agent session working (a spinner) or finished unseen (a
@@ -204,6 +222,21 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
   );
 }
 
+/**
+ * The running apps, above Recents (#3074). Nothing at all while there are
+ * none, which is also the initial render. Its own component so a test can
+ * render it from plain props.
+ */
+export function ActiveApps({ items }: { items: RecentItem[] }) {
+  if (!items.length) return null;
+  return (
+    <div className="platform-active" role="group" aria-labelledby="platform-active-head">
+      <h2 id="platform-active-head" className="platform-recents-head">Active</h2>
+      {items.map((item) => <RecentRow key={item.key} item={item} live />)}
+    </div>
+  );
+}
+
 /** Re-render at the viewer's next midnight, and each one after, so the day
  *  labels move on while the rail stays open. groupRecents reads the clock
  *  itself; this only makes sure it is asked again. */
@@ -231,6 +264,8 @@ export function RecentsList() {
   const snap = useMessagesSnapshot();
   const chat = useGlobalChatState();
   const live = useLiveAppSlugs();
+  const current = useCurrentAppSlug();
+  const improve = useStoreState(improveStore);
 
   // POST-MOUNT, for hydration (see the header). The stored apps are read by
   // ./mount.ts when the router names the viewer, since the list is theirs;
@@ -257,6 +292,18 @@ export function RecentsList() {
   useEffect(() => {
     if (viewer) void loadAgentSessions();
   }, [viewer]);
+  // #3074: the open app's header record names it before it has ever been
+  // left, which is when Recents first learns it.
+  const active = mounted && viewer
+    ? buildActive({
+      live,
+      current,
+      apps,
+      known: improve.slug ? [{
+        slug: improve.slug, name: improve.name, iconUrl: improve.iconUrl, iconEmoji: improve.iconEmoji,
+      }] : [],
+    })
+    : [];
   const items = mounted && viewer
     ? buildRecents({
       apps,
@@ -265,9 +312,10 @@ export function RecentsList() {
       agents: agentsOn ? (chat.threads as AgentChat[]) : [],
       agentSessions,
       viewerId: Number(window.App?.user?.id) || null,
+      active: active.map((item) => item.app!.slug),
     })
     : [];
-  useHiddenClass(ref, items.length === 0);
+  useHiddenClass(ref, items.length === 0 && active.length === 0);
 
   return (
     <div
@@ -277,6 +325,7 @@ export function RecentsList() {
       role="group"
       aria-labelledby="platform-recents-head"
     >
+      <ActiveApps items={active} />
       <h2 id="platform-recents-head" className="platform-recents-head">Recents</h2>
       <RecentsByDay
         items={items}
