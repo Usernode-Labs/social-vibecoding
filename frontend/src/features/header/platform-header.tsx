@@ -687,6 +687,24 @@ export function PlatformHeader() {
             className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)]"
             aria-label="Notifications"
             aria-haspopup="dialog"
+            onPointerEnter={(event) => {
+              // Disposable hover polish: one ~350ms wobble, once, then the
+              // bell returns exactly where it started (the keyframes end at
+              // translate 0). Guarded against re-triggering while playing and
+              // skipped entirely under prefers-reduced-motion: reduce; the
+              // CSS also turns the animation off there as a backstop.
+              if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+              const bell = event.currentTarget;
+              if (bell.classList.contains('is-notif-wobbling')) return;
+              bell.classList.add('is-notif-wobbling');
+              const done = (ev: Event) => {
+                if (ev.animationName === 'notif-bell-wobble') {
+                  bell.classList.remove('is-notif-wobbling');
+                  bell.removeEventListener('animationend', done);
+                }
+              };
+              bell.addEventListener('animationend', done);
+            }}
             onClick={(event) => {
               if ((window as any).NavLink?.isNativeClick?.(event)) return;
               event.preventDefault();

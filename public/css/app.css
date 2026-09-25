@@ -19103,3 +19103,25 @@ html.in-side-panel body {
   --platform-bar-h: 0px !important;
   --platform-rail-w: 0px !important;
 }
+
+/* ── #notifications-btn HOVER WOBBLE (disposable, one-shot) ────────────────
+   On pointerenter the header bell plays a single ~350ms wobble and settles
+   back exactly where it started (the keyframes end at translate 0). The
+   class is applied from platform-header.tsx, guarded against re-triggering
+   while the animation is running, and skipped entirely when the visitor
+   prefers reduced motion. */
+@keyframes notif-bell-wobble {
+  0%   { transform: rotate(0deg) translateX(0); }
+  20%  { transform: rotate(-9deg) translateX(-1px); }
+  40%  { transform: rotate(8deg) translateX(1px); }
+  60%  { transform: rotate(-6deg) translateX(-1px); }
+  80%  { transform: rotate(4deg) translateX(1px); }
+  100% { transform: rotate(0deg) translateX(0); }
+}
+#notifications-btn.is-notif-wobbling .w-5 {
+  animation: notif-bell-wobble 350ms ease-in-out both;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  #notifications-btn.is-notif-wobbling .w-5 { animation: none; }
+}

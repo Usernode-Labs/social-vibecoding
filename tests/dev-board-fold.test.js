@@ -1260,7 +1260,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 810, unchanged (#2779): an agent session's "Build: Homeroom" and ⋯ ride
   // on the saved-draft check over conversation 990801 as a :has(), since
   // the floor above leaves no slot for a check of their own.
-  assert.equal(DAPP.tests.length, 810);
+  //
+  // 810 → 811: +1 (the bell-hover wobble proposal): the header bell's
+  // one-shot hover wobble gets its own check on #home, and MAX_DECLARED_TESTS
+  // moves 830 → 850 with it (the ledger in services/app-manifest.js carries
+  // the deadline arithmetic). 29 slots left under 850, the floor restored.
+  assert.equal(DAPP.tests.length, 811);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
