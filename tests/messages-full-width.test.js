@@ -96,11 +96,12 @@ test('an agent chat and a Mayor session: handed to their panels, drawn at the en
   assert.match(CHAT, /<span>New<\/span>\s*<\/button>\s*\{headerAction\}\s*<\/header>/);
   assert.match(CHAT, /\{snapshot\.host === 'messages' \? null : <GlobalChatPanel \/>\}/);
 
-  // The Mayor: the session bar's `action`, after Changes and just before
-  // the session's ⋯, as on the other panes.
+  // The Mayor: the session bar's `action`, after Changes, the "Open app"
+  // button (#2779 follow-up), and just before the session's ⋯, as on the
+  // other panes.
   assert.match(SESSION, /export function AgentSessionPanel\(\{ embedded = false, headerAction = null \}: \{ embedded\?: boolean; headerAction\?: ReactNode \}\)/);
   assert.match(SESSION, /<SessionBar session=\{snapshot\.session\} about=\{about\} embedded=\{embedded\} action=\{headerAction\} \/>/);
-  assert.match(SESSION, /Changes · \{count\}\s*<\/button>\s*\{action\}\s*<SessionMenu session=\{session\} \/>/);
+  assert.match(SESSION, /Changes · \{count\}\s*<\/button>\s*<OpenAppButton target=\{target\} \/>\s*\{action\}\s*<SessionMenu session=\{session\} \/>/);
 });
 
 test('the list folds for an agent thread too; a reply thread still belongs to a chat', () => {

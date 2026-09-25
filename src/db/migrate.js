@@ -100,6 +100,8 @@ async function migrate(config) {
   await seedStagingCcCohortRuns(pool, config);
   await seedStagingPlatformIssueDrafts(pool, config);
   await seedStagingDemoAppCard(pool);
+  // Must run AFTER seedStagingDemoAppCard — it focuses the demo app row.
+  await seedStagingAgentOpenAppSession(pool, config);
   await seedStagingLandingDirectory(pool);
   await seedStagingFailedApp(pool, config);
   await seedStagingForkLineage(pool, config);
@@ -2971,6 +2973,58 @@ async function seedStagingAgentSession(pool, config) {
   await seedStagingAgentComposer(pool, owner.id);
   log.info('db', 'Staging agent-session fixture seeded', {
     owner: owner.username, agentSessionId: STAGING_AGENT_SESSION_ID, changeId: STAGING_AGENT_CHANGE_ID,
+  });
+}
+
+// #2779 follow-up ("Open app"): a SECOND agent-session fixture, this one
+// focused on an ordinary app rather than the platform's own. The first
+// fixture (990801) is focused on the self-app, where the new button hides —
+// so a check that proves the button renders needs a conversation the button
+// targets. The rows are tiny: one user message the title comes from, no
+// change (the button opens the app itself, not a change on it). Same rules
+// as its sibling: owned by the check viewer, idempotent on the id, and a
+// strict no-op outside staging.
+const STAGING_AGENT_OPEN_APP_SESSION_ID = 990803;
+const STAGING_OPEN_APP_SLUG = 'staging-demo-app';
+
+async function seedStagingAgentOpenAppSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const { rows: appRows } = await pool.query(
+    'SELECT id, name FROM apps WHERE slug = $1',
+    [STAGING_OPEN_APP_SLUG]
+  );
+  const app = appRows[0];
+  if (!app) {
+    log.warn('db', 'Staging agent-session open-app fixture skipped: demo app row missing',
+      { slug: STAGING_OPEN_APP_SLUG });
+    return;
+  }
+  const owner = await getStagingCheckViewer(pool, 'Staging agent-session open-app fixture');
+  if (!owner) return;
+
+  await pool.query(
+    `INSERT INTO agent_sessions (id, user_id, title, title_source, status, focus_app_id, focus_context,
+                                 last_activity_at, created_at)
+     VALUES ($1, $2, $3, 'auto', 'open', $4, '{"entry":"improve"}'::jsonb,
+             NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '12 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, status = 'open', archived_at = NULL,
+                                    focus_app_id = EXCLUDED.focus_app_id`,
+    [STAGING_AGENT_OPEN_APP_SESSION_ID, owner.id, '[staging fixture] Notes: welcome thread', app.id]
+  );
+  const { rows: existing } = await pool.query(
+    'SELECT 1 FROM chat_session_messages WHERE agent_session_id = $1 LIMIT 1',
+    [STAGING_AGENT_OPEN_APP_SESSION_ID]
+  );
+  if (!existing.length) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+       VALUES (NULL, $1, 'user', 'Staging demo: open the app beside this chat.', '{}'::jsonb, NOW() - INTERVAL '12 minutes'),
+              (NULL, $1, 'assistant', 'Staging demo reply: the "Open app" button in the bar opens the app this conversation is about, with the chat docked beside it.', '{}'::jsonb, NOW() - INTERVAL '11 minutes')`,
+      [STAGING_AGENT_OPEN_APP_SESSION_ID]
+    );
+  }
+  log.info('db', 'Staging agent-session open-app fixture seeded', {
+    owner: owner.username, agentSessionId: STAGING_AGENT_OPEN_APP_SESSION_ID,
   });
 }
 

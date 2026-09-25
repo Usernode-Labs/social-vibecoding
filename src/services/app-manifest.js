@@ -258,7 +258,18 @@ const MANIFEST_FILENAME = 'dapp.json';
 // unchanged 650s TESTS_DEADLINE_MS still clears the 2x margin by ~245s, so
 // neither the deadline nor RUN_TIMEOUT_MS moves. The step buys 38 slots over
 // the 792 declared here; #2387's six, merged beside it, leave 32 over 798.
-const MAX_DECLARED_TESTS = 830;
+//
+// 830 → 840 (#4868): main stood at 810 exactly, the 20-slot floor, after the
+// QA sweep's six; the "Open app" proposal declares one — its two assertions
+// (the button offered on an ordinary app's chat, absent on the platform's
+// own) already folded into a single :has()/:not(:has()) selector over the two
+// staging conversations 990803 and 990801, the way #2779 folded its four.
+// A proposal red before it started is the case #2386 raised the ceiling for,
+// and the same arithmetic holds: 840 checks at ~3.9s over the pool of 16 is
+// ~206s of ideal work, and the unchanged 650s TESTS_DEADLINE_MS still clears
+// the 2x margin by ~238s, so neither the deadline nor RUN_TIMEOUT_MS moves.
+// The step buys 29 slots over the 811 declared here.
+const MAX_DECLARED_TESTS = 840;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

@@ -32,7 +32,16 @@ export interface AgentSession {
   id: number;
   title: string | null;
   status: 'open' | 'archived';
-  focusApp: { id: number; slug: string | null; name: string | null } | null;
+  focusApp: {
+    id: number;
+    slug: string | null;
+    name: string | null;
+    /** True for the platform's own row: its app surface is the platform. */
+    selfHosted?: boolean;
+    /** The app's own tile artwork, as the launcher draws it. */
+    iconUrl?: string | null;
+    iconEmoji?: string | null;
+  } | null;
   focusContext: Record<string, unknown>;
   agent?: AgentChoice | null;
   activeChange: AgentChange | null;

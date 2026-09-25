@@ -519,6 +519,84 @@ test('the unsent address is routed on every surface', () => {
     /const same = id === 'new' \? current\.id === null : current\.id === id;/);
 });
 
+test('"Open app" targets the conversation\u2019s app, hides for self-hosted and no-app, and docks the chat beside it', async () => {
+  const { createElement, renderToHtml } = require('./lib/render-tsx');
+  const { OpenAppButton, openAppTarget } = loadTsx('frontend/src/features/agent-session/index.tsx');
+
+  // Target resolution: active change first, then the focus app.
+  assert.deepEqual(
+    openAppTarget({ appSlug: 'notes-ab12', appName: 'Notes', appSelfHosted: false }, null),
+    { slug: 'notes-ab12', name: 'Notes' },
+  );
+  assert.deepEqual(
+    openAppTarget(null, {
+      focusApp: { id: 3, slug: 'recipes-cd34', name: 'Recipes', selfHosted: false, iconUrl: null, iconEmoji: null },
+      focusContext: {},
+    }),
+    { slug: 'recipes-cd34', name: 'Recipes' },
+  );
+  // Homeroom itself: nothing to open. No app at all: same.
+  assert.equal(openAppTarget({ appSlug: 'usernode-2d5619', appSelfHosted: true }, null), null);
+  assert.equal(
+    openAppTarget(null, {
+      focusApp: { id: 4, slug: 'platform', name: 'Platform', selfHosted: true, iconUrl: null, iconEmoji: null },
+      focusContext: {},
+    }),
+    null,
+  );
+  assert.equal(openAppTarget(null, null), null);
+
+  // The button carries the tile mark, the words, and the hidden lg:inline-flex
+  // width gate (the same breakpoint the side panel appears at).
+  const html = renderToHtml(createElement(OpenAppButton, {
+    target: { slug: 'notes-ab12', name: 'Notes' },
+  }));
+  assert.match(html, /data-agent-session-open-app/);
+  assert.match(html, /data-open-app="notes-ab12"/);
+  assert.match(html, /hidden lg:inline-flex/);
+  assert.match(html, /Open app/);
+  assert.match(html, /app-icon-tile|svg/, 'the tile mark rides with it');
+  assert.equal(renderToHtml(createElement(OpenAppButton, { target: null })), '',
+    'no app, no button');
+
+  // The click sequence: pend the panel page, then openAppTab. In the panel's
+  // own document it forwards the App tab and never touches the address.
+  const pendCalls = [];
+  const openTabCalls = [];
+  const forwardCalls = [];
+  const hashSets = [];
+  globalThis.window = {
+    location: { hash: '#agent/7' },
+    UsernodeReact: {
+      agentSession: { currentId: () => 7 },
+      sidePanel: { pend: (route) => { pendCalls.push(route); return true; } },
+      sidePanelEmbed: { openApp: (slug) => { forwardCalls.push(slug); } },
+    },
+    App: { openAppTab: (slug, tab) => { openTabCalls.push([slug, tab]); } },
+  };
+  try {
+    const openApp = loadTsx('frontend/src/features/agent-session/open-app.ts');
+    await openApp.openFocusedApp({ slug: 'notes-ab12', name: 'Notes' });
+    assert.deepEqual(pendCalls, ['agent/7'], 'the panel page is planted first');
+    assert.deepEqual(openTabCalls, [['notes-ab12', 'app']], 'then the app opens, its App tab');
+    assert.deepEqual(forwardCalls, [], 'the top document does not forward');
+
+    globalThis.document = {
+      documentElement: { classList: { contains: (c) => c === 'in-side-panel' } },
+    };
+    try {
+      await openApp.openFocusedApp({ slug: 'other-app' });
+      assert.deepEqual(forwardCalls, ['other-app'], 'docked: the App tab is forwarded up');
+      assert.deepEqual(openTabCalls, [['notes-ab12', 'app']], 'the frame never opens an app itself');
+      assert.deepEqual(pendCalls, ['agent/7'], 'and never writes the top address');
+    } finally {
+      delete globalThis.document;
+    }
+  } finally {
+    delete globalThis.window;
+  }
+});
+
 test('QA Q23: opened twice by a cold deep link, a missing session still says it is missing', async () => {
   // `#agent/<id>` opens the session from the screen's own effect AND from
   // app.js's router. The second call used to take a new load version and

@@ -74,7 +74,8 @@ async function resolveHint(pool, user, hint) {
   if (!hint || !hint.slug) {
     return { focusAppId: null, focusApp: null, focusContext: hint && hint.entry ? { entry: hint.entry } : {} };
   }
-  const app = await appAccess.getAppForUser(pool, hint.slug, user, 'view', `${appAccess.ACCESS_COLUMNS}, name`);
+  const app = await appAccess.getAppForUser(pool, hint.slug, user, 'view',
+    `${appAccess.ACCESS_COLUMNS}, name, self_hosted, icon_emoji, icon_image_id`);
   if (!app) return { focusAppId: null, focusApp: null, focusContext: hint.entry ? { entry: hint.entry } : {} };
   const context = {};
   if (hint.entry) context.entry = hint.entry;
@@ -82,7 +83,14 @@ async function resolveHint(pool, user, hint) {
   if (hint.proposalId) context.proposalId = hint.proposalId;
   return {
     focusAppId: app.id,
-    focusApp: { id: app.id, slug: app.slug || null, name: app.name || null },
+    focusApp: {
+      id: app.id,
+      slug: app.slug || null,
+      name: app.name || null,
+      selfHosted: !!app.self_hosted,
+      iconUrl: app.icon_image_id ? `/app-icons/${app.icon_image_id}` : null,
+      iconEmoji: app.icon_emoji || null,
+    },
     focusContext: context,
   };
 }
@@ -127,7 +135,16 @@ function shapeSession(row) {
     titleSource: row.title_source,
     status: row.status,
     focusApp: row.focus_app_id
-      ? { id: row.focus_app_id, slug: row.focus_app_slug || null, name: row.focus_app_name || null }
+      ? {
+        id: row.focus_app_id,
+        slug: row.focus_app_slug || null,
+        name: row.focus_app_name || null,
+        // "Open app" hides itself for the platform's own row, whose app
+        // surface is the platform the viewer is already in.
+        selfHosted: !!row.focus_app_self_hosted,
+        iconUrl: row.focus_app_icon_id ? `/app-icons/${row.focus_app_icon_id}` : null,
+        iconEmoji: row.focus_app_icon_emoji || null,
+      }
       : null,
     focusContext: row.focus_context || {},
     // The composer's model choice; null follows the user's default.
@@ -189,6 +206,8 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
              AND COALESCE(s.active_turn->>'renewedAt', s.active_turn->>'startedAt')::timestamptz
                  >= NOW() - make_interval(mins => $5)) AS turn_live,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
+            fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
+            fa.icon_image_id AS focus_app_icon_id,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
@@ -223,6 +242,8 @@ async function getAgentSession(pool, { userId, id }) {
              AND COALESCE(s.active_turn->>'renewedAt', s.active_turn->>'startedAt')::timestamptz
                  >= NOW() - make_interval(mins => $3)) AS turn_live,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
+            fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
+            fa.icon_image_id AS focus_app_icon_id,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,

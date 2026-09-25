@@ -57,6 +57,12 @@ async function connect(t, { beforeMigration = null } = {}) {
     CREATE TABLE apps (
       id INTEGER PRIMARY KEY, slug TEXT UNIQUE, name TEXT, created_by INTEGER,
       self_hosted BOOLEAN DEFAULT FALSE,
+      -- The two icon columns the data layer's focus-app projection now reads
+      -- (the "Open app" header button draws the app's own artwork from them).
+      -- The real table gets them from ALTER TABLE later in schema.sql; this
+      -- reduced copy creates them up front, the way it creates every other
+      -- column the agent-sessions statements touch.
+      icon_emoji VARCHAR(32), icon_image_id VARCHAR(32),
       collab_visibility TEXT NOT NULL DEFAULT 'public', view_visibility TEXT NOT NULL DEFAULT 'public');
     CREATE TABLE chat_sessions (
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id), user_id INTEGER REFERENCES users(id),
