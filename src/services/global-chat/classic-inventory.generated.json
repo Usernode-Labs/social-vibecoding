@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 718,
-    "mappedRoutes": 562,
+    "totalRoutes": 719,
+    "mappedRoutes": 563,
     "exemptRoutes": 156,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 415,
+    "clientApiReferences": 416,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 22,
     "navigationSurfaces": 10
@@ -8724,6 +8724,26 @@
       "classicPath": "#workshop",
       "clientReferences": [
         "frontend/src/features/dev-chat/dev-chat.js",
+        "frontend/src/features/dev-chat/dev-chat.js",
+        "public/js/app-view.js",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "method": "POST",
+      "path": "/api/sessions/:id/unpromote",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "development.post.sessions.item.unpromote.536b3a7c",
+      "domain": "development",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "session",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#workshop",
+      "clientReferences": [
         "frontend/src/features/dev-chat/dev-chat.js",
         "public/js/app-view.js",
         "public/js/app-view.js"
