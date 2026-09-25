@@ -151,7 +151,10 @@ export interface AgentSessionState {
   changeAction: { changeId: number; kind: 'propose' | 'retry' | 'recheck' } | null;
   /** The last message was refused for credits; cleared by the next send. */
   credits: CreditsRefusal | null;
-  /** The hand-off walkthrough over the conversation, for this agent. */
+  /**
+   * A request to open "Build with" on this agent's tab (the credits card's
+   * hand-off rows); the composer opens its sheet there and clears it.
+   */
   handoff: HandoffAgent | null;
   /**
    * The conversation's saved drafts (#2779 follow-up, the dev chat's #798
@@ -1062,7 +1065,7 @@ export async function unarchiveCurrentSession() {
 
 // ── Handing the work to a coding agent on the web ──────────────────────
 
-/** Show the walkthrough for handing this conversation's change to `agent`. */
+/** Open "Build with" on `agent`'s tab: the hand-off of this conversation's change. */
 export function openHandoff(agent: HandoffAgent) {
   if (state.handoff !== agent) publish({ handoff: agent });
 }

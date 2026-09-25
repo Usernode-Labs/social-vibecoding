@@ -298,7 +298,7 @@ test('the pill is gray in every state and only its ink changes; the ring empties
 
 test('the sheet spells out the credits the pill abbreviates', () => {
   const credit = parts.creditView({ limitCents: 5000, remainingCents: 1200, spentCents: 3800, byokCents: 60, weekly: true, level: 'ok' });
-  const html = renderToHtml(createElement(parts.ModelSheetBody, { groups: [], value: '', onPick() {}, onClose() {}, effort: null, credit }));
+  const html = renderToHtml(createElement(parts.ModelSheetBody, { options: [], value: '', onPick() {}, effort: null, credit }));
   assert.match(html, /data-agent-session-sheet-credits/);
   assert.match(html, />This week’s credits</);
   assert.match(html, /role="meter" aria-label="Credits left" aria-valuemin="0" aria-valuemax="50" aria-valuenow="12"/);
