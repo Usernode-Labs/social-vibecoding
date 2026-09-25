@@ -193,6 +193,43 @@ test('delegation card renders off, active and setup states with disclosure', () 
   assert.match(pending, /<button[^>]*disabled=""[^>]*>Opening…<\/button>/);
 });
 
+test('background service note shows on Android only, active only while producing (#3059)', () => {
+  const { wallet, sandbox } = loadWallet();
+  const activeCopy = /A background service keeps running so this phone can keep producing blocks/;
+  const inactiveCopy = /The background service is not active\./;
+  const local = { delegate: null, delegated_since: null };
+  const delegated = {
+    delegate: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
+    delegated_since: null,
+  };
+
+  // iOS / no kit: never drawn.
+  assert.doesNotMatch(stakingHtml(wallet, local), /data-background-service/);
+  sandbox.unNative = { platform: 'ios' };
+  assert.doesNotMatch(stakingHtml(wallet, delegated), /data-background-service/);
+
+  sandbox.unNative = { platform: 'android' };
+  const producing = textOf(stakingHtml(wallet, local));
+  assert.match(producing, activeCopy);
+  assert.match(producing, /A notification stays visible while it is active\./);
+  assert.doesNotMatch(producing, inactiveCopy);
+
+  const off = textOf(stakingHtml(wallet, delegated));
+  assert.match(off, inactiveCopy);
+  assert.doesNotMatch(off, activeCopy);
+
+  assert.match(textOf(stakingHtml(wallet, null)), inactiveCopy,
+    'unfinished setup is not producing either');
+
+  for (const html of [stakingHtml(wallet, local), stakingHtml(wallet, delegated)]) {
+    assert.doesNotMatch(html, /FOREGROUND_SERVICE|permission/i,
+      'no Android permission wording reaches the user');
+  }
+  for (const copy of [mod().BACKGROUND_SERVICE_ACTIVE, mod().BACKGROUND_SERVICE_INACTIVE]) {
+    assert.ok(copy && !copy.includes('\u2014'), 'no em dashes in user copy');
+  }
+});
+
 test('manage action sends no values, applies native result, then refreshes',
   async () => {
     const { wallet, sandbox } = loadWallet();
