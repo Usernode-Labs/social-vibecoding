@@ -475,6 +475,15 @@ test('rows go most recently active first; undated ones last, in the server\'s or
     + 'falls off the bottom, and the counts on each row already say which ones '
     + 'are asking — and the sort is stable, so ties keep the server\'s order');
   assert.ok(orderRows([]).length === 0);
+  // A ?demo=1 fixture row leads, whatever its time: on a staging clone the
+  // backfill stamps every real membership newer than the fixture, and the
+  // declared checks look for the fixture inside a section's first three.
+  const withDemo = orderRows([
+    { slug: 'real-new', working: 0, needs: 0, last_active_at: '2026-09-25T12:00:00Z' },
+    { slug: 'staging-demo-your-app', demo: true, working: 2, needs: 3, last_active_at: '2026-09-01T00:00:00Z' },
+    { slug: 'real-old', working: 0, needs: 0, last_active_at: '2026-09-02T00:00:00Z' },
+  ]);
+  assert.deepEqual(withDemo.map((r) => r.slug), ['staging-demo-your-app', 'real-new', 'real-old']);
 });
 
 test('groupRows: three sections in order, empty ones left out, an unknown audience read as open', () => {

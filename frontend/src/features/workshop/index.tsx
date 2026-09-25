@@ -110,6 +110,8 @@ type WorkshopRow = {
   audience?: Audience | string;
   member_count?: number;
   last_active_at?: string | null;
+  /** A ?demo=1 fixture row (see orderRows). */
+  demo?: boolean;
   working: number;
   needs: number;
 };
@@ -166,6 +168,13 @@ function demoQuery(): string {
  * with no `last_active_at` sorts after every dated one, and two rows the
  * clock cannot tell apart keep the server's order (its activity order):
  * `sort` is stable and this comparator answers 0 for them.
+ *
+ * A ?demo=1 FIXTURE ROW (`demo: true`, src/routes/apps.js's demoIconApps)
+ * LEADS ITS SECTION. The declared checks find those rows on this screen, and
+ * a section shows only its three most recent: on a staging clone the
+ * viewer's real memberships were all joined when the backfill ran, which is
+ * more recent than any fixed fixture time, so the fixture fell behind "Show
+ * N more" and the checks found nothing. Real rows never carry the flag.
  */
 export function orderRows(apps: WorkshopRow[]): WorkshopRow[] {
   const at = (row: WorkshopRow) => {
@@ -173,6 +182,7 @@ export function orderRows(apps: WorkshopRow[]): WorkshopRow[] {
     return Number.isNaN(t) ? -Infinity : t;
   };
   return apps.slice().sort((a, b) => {
+    if (!!a.demo !== !!b.demo) return a.demo ? -1 : 1;
     const x = at(a);
     const y = at(b);
     if (x === y) return 0;
