@@ -74,6 +74,22 @@ async function readVisualEvidenceGate(config, pool, session) {
   return visualEvidenceGateForSession(config, { ...session, ...(rows[0] || {}) });
 }
 
+// A pending verdict nothing will settle: no capture running or queued for
+// the change and no turn or operation holding it (a turn's tail runs its own
+// capture; a visual-evidence run holding the worker never settles checks).
+// A restart between setChecksPending and the capture leaves exactly this,
+// and the promote kick is the last thing that looks before voters wait.
+function strandedPendingChecks(session, {
+  visuals = require('../services/visuals'),
+  activeWorkers = require('../services/active-workers'),
+} = {}) {
+  if (session?.check_state !== 'pending' || session.check_phase === 'deferred') return false;
+  const id = Number(session.id);
+  return !visuals.hasInFlightCapture(id)
+    && !activeWorkers.hasSessionOperation(id)
+    && !activeWorkers.activeWorkers.has(id);
+}
+
 // #687: pick the GitHub client the imported-PR flow talks to. Staging
 // previews use the in-memory mock (no GitHub credentials there — see
 // usesMockGithubForImports in config.js); production always uses the real
@@ -2666,7 +2682,7 @@ function voteRoutes(config) {
         // re-runs against the live container (or rebuilds a dead one) and
         // captureForSession is _inFlight-guarded.
         (async () => {
-          let needsKick = !session.check_state;
+          let needsKick = !session.check_state || strandedPendingChecks(session);
           if (!needsKick && github.isEnabled() && repoOwner && repoName) {
             try {
               const octokit = await github.getInstallationOctokit(repoOwner);
@@ -7063,6 +7079,7 @@ module.exports = {
   prImportFailureBody,
   visualEvidenceGateForSession,
   readVisualEvidenceGate,
+  strandedPendingChecks,
   // The request an imported pull request implements (#1217), likewise.
   parseImportLinkedIssues,
   MAX_IMPORT_LINKED_ISSUES,

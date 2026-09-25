@@ -623,8 +623,11 @@ app.use(platformAboutRoutes(config));
 // that reason; the daily re-draft is the leader's sweep below.
 {
   const workshopThemes = require('./src/services/workshop-themes');
+  const previewLifecycle = require('./src/services/preview-lifecycle');
   if (typeof ws.onBoardChange === 'function') {
-    ws.onBoardChange((info) => workshopThemes.noteBoardChange(getPool(config), info));
+    // Announced from inside preview runs too; the debounced reconcile
+    // outlives them, so it must not keep a run's guarded pool.
+    ws.onBoardChange((info) => previewLifecycle.detach(() => workshopThemes.noteBoardChange(getPool(config), info)));
   }
 }
 // A promoted head whose checks were deferred because it conflicted with main
@@ -3598,6 +3601,12 @@ async function finalizeRecoveredTurn({
       log.info('server', 'Orphan finalized', {
         sessionId, commitHash: result.sha.substring(0, 8), url: stagingResult.stagingUrl,
       });
+      // setChecksPending voided the verdict above; nothing else runs the
+      // checks against this fresh preview.
+      visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: () => {}, trigger: 'boot-reconcile' })
+        .catch((err) => log.warn('server', 'Recovered turn: capture failed (non-fatal)', {
+          sessionId, err: err.message,
+        }));
     } else {
       const { describeStagingFailure } = require('./src/routes/sessions');
       const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
