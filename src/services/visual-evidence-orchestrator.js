@@ -34,6 +34,7 @@ const MAX_REPAIR_ATTEMPTS = 2;
 function replayRepairKind(error, plan) {
   const code = errorCode(error);
   if (REPAIRABLE_LOCATOR_CODES.has(code)) return 'locator';
+  if (code === 'controlled_failure_unused') return 'controlled_failure';
   if (code === 'browser_diagnostics' && error?.detail?.phase === 'browser_diagnostics') {
     const diagnostics = error.detail.browserDiagnostics || error.detail;
     const httpErrors = diagnostics.httpErrors || [];
@@ -132,6 +133,7 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
       agentActivity = activity;
       if (['auth_bootstrap', 'tool_start', 'tool_end', 'browser_call_start', 'browser_call_pending',
         'browser_call_end', 'browser_server_exit', 'document_request', 'document_response',
+        'controlled_failure_set', 'controlled_failure_hit',
         'provider_request_start', 'provider_request_pending', 'provider_response_headers',
         'provider_response_first_byte', 'provider_request_end',
         'context_result', 'provider_result',
@@ -564,7 +566,9 @@ function replayProgressEvent(event, pass) {
     ...(Number.isInteger(event?.durationMs) && event.durationMs >= 0
       ? { durationMs: event.durationMs } : {}),
     ...(type === 'navigation_retry' && event?.attempt === 2 ? { attempt: 2 } : {}),
-    ...(['actionCount', 'assertionCount', 'recordedFrameCount', 'httpErrorCount', 'baseFrames', 'headFrames', 'bytes'].reduce((counts, key) => {
+    ...(['actionCount', 'assertionCount', 'recordedFrameCount', 'httpErrorCount',
+      'recoveredRequestCount', 'recoveredNetworkChanges', 'controlledFailureHits',
+      'expectedFailureConsoleCount', 'baseFrames', 'headFrames', 'bytes'].reduce((counts, key) => {
       if (Number.isInteger(event?.[key]) && event[key] >= 0) counts[key] = event[key];
       return counts;
     }, {})),
@@ -603,7 +607,7 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'tool_start', 'tool_end', 'agent_deadline',
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
   'auth_bootstrap',
-  'document_request', 'document_response',
+  'document_request', 'document_response', 'controlled_failure_set', 'controlled_failure_hit',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',
   'provider_response_first_byte', 'provider_request_end',
   'worker_stop_requested', 'worker_stop_returned',
@@ -613,7 +617,7 @@ const AGENT_DIAGNOSTIC_PHASES = new Set([
   'evidence_mcp_ready', 'claude', 'agent', 'done',
 ]);
 const AGENT_DIAGNOSTIC_TOOLS = new Set([
-  'evidence_get_context', 'evidence_reset_side', 'evidence_run_plan',
+  'evidence_get_context', 'evidence_reset_side', 'evidence_set_request_failure', 'evidence_run_plan',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -641,7 +645,7 @@ function recordAgentDiagnostic(metrics, raw) {
   for (const key of ['mcpServerCount', 'toolDefinitionCount', 'browserMemberToolCount',
     'browserAdminToolCount', 'storyCount', 'callOrdinal', 'headingCount',
     'buttonCount', 'linkCount', 'imageBlocks', 'exitCode', 'checkRank',
-    'documentOrdinal', 'httpStatus', 'requestOrdinal', 'chunkCount']) {
+    'documentOrdinal', 'httpStatus', 'requestOrdinal', 'chunkCount', 'hitOrdinal']) {
     if (Number.isSafeInteger(raw[key]) && raw[key] >= 0 && raw[key] <= 1000) {
       event[key] = raw[key];
     }
@@ -656,6 +660,9 @@ function recordAgentDiagnostic(metrics, raw) {
     }
   }
   if (typeof raw.truncated === 'boolean') event.truncated = raw.truncated;
+  if (kind === 'controlled_failure_set' && typeof raw.enabled === 'boolean') {
+    event.enabled = raw.enabled;
+  }
   if (['timeout', 'network', 'browser_closed', 'locator_ambiguous', 'other'].includes(raw.errorClass)) {
     event.errorClass = raw.errorClass;
   }
@@ -1570,6 +1577,7 @@ module.exports = {
   addAgentUsage,
   traceSummary,
   progressPhase,
+  replayProgressEvent,
   startRunHeartbeat,
   notifyEvidence,
   failCurrentRun,

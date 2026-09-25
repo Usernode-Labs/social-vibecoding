@@ -21,6 +21,18 @@ test('evidence and staging use the same UI file classifier', () => {
   assert.equal(orchestrator.uiFileHeuristic(['src/features/widgets/icon.svg']), true);
 });
 
+test('run diagnostics retain bounded recovery and controlled-failure counts', () => {
+  const navigation = orchestrator.replayProgressEvent({ type: 'navigation_completed',
+    status: 200, recoveredRequestCount: 1 }, 2);
+  const side = orchestrator.replayProgressEvent({ type: 'side_finished',
+    controlledFailureHits: 1, expectedFailureConsoleCount: 1,
+    recoveredNetworkChanges: 0 }, 2);
+  assert.equal(navigation.recoveredRequestCount, 1);
+  assert.equal(side.controlledFailureHits, 1);
+  assert.equal(side.expectedFailureConsoleCount, 1);
+  assert.equal(side.recoveredNetworkChanges, 0);
+});
+
 const RUN_ID = '1'.repeat(32);
 const BASE = 'a'.repeat(40);
 const HEAD = 'b'.repeat(40);

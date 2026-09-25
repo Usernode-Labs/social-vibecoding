@@ -144,6 +144,41 @@ test('wait-only checkpoints cannot request a steps video', () => {
   assert.equal(evidence.parseReplayPlan(staticPlan).stories[0].intent.animation, 'none');
 });
 
+test('controlled API failure is authorized by intent and identical on both revisions', () => {
+  const candidate = plan();
+  const story = candidate.stories[0];
+  const path = '/api/lists/demo?source=evidence';
+  story.intent.controlledFailurePath = path;
+  story.intent.steps.unshift(evidence.CONTROLLED_FAILURE_LABEL);
+  const enable = { id: 'block-list', stage: 'failure', type: 'requestFailure', path, enabled: true };
+  story.replay.before.actions = [enable, ...story.replay.before.actions];
+  story.replay.after.actions = [enable, ...story.replay.after.actions];
+  assert.equal(evidence.parseReplayPlan(candidate).stories[0].intent.controlledFailurePath, path);
+
+  story.replay.after.actions[0] = { ...enable, enabled: false };
+  assert.match(evidence.safeParseReplayPlan(candidate).errors[0].message, /same declared request failure/);
+  story.replay.after.actions[0] = enable;
+  story.replay.before.actions[0] = { ...enable, path: '/api/other' };
+  assert.equal(evidence.safeParseReplayPlan(candidate).ok, false);
+  story.replay.before.actions[0] = enable;
+  delete story.intent.controlledFailurePath;
+  assert.equal(evidence.safeParseReplayPlan(candidate).ok, false);
+});
+
+test('controlled failure paths are exact same-origin API GET paths', () => {
+  for (const path of ['/outside', '/api/list#fragment', '/api/*',
+    'https://example.test/api/list', '/api/list?token=secret']) {
+    const candidate = intent();
+    candidate.stories[0].intent.controlledFailurePath = path;
+    assert.equal(evidence.safeParseIntent(candidate).ok, false, path);
+  }
+  const candidate = intent();
+  candidate.stories[0].intent.controlledFailurePath = '/api/list?item=one';
+  assert.equal(evidence.safeParseIntent(candidate).ok, false);
+  candidate.stories[0].intent.steps.unshift(evidence.CONTROLLED_FAILURE_LABEL);
+  assert.equal(evidence.safeParseIntent(candidate).ok, true);
+});
+
 test('the canonical plan hash is stable across object key order and changes with behavior', () => {
   const first = plan();
   const parsed = evidence.parseReplayPlan(first);

@@ -8,6 +8,14 @@ const state = require('../src/services/visual-evidence-state');
 const contract = require('../src/services/visual-evidence-plan');
 const { intent, plan } = require('./fixtures/visual-evidence');
 
+test('controlled failure evidence is clearly labeled in reviewer-visible flow', () => {
+  const declaration = intent();
+  declaration.stories[0].intent.controlledFailurePath = '/api/lists/demo';
+  declaration.stories[0].intent.steps.unshift(contract.CONTROLLED_FAILURE_LABEL);
+  const claims = state.claimsFromIntent(contract.parseIntent(declaration));
+  assert.equal(claims[0].steps[0], contract.CONTROLLED_FAILURE_LABEL);
+});
+
 test('visual evidence lifecycle permits only the documented progression and one repair loop', () => {
   const allowed = [
     ['planned', 'provisioning'],

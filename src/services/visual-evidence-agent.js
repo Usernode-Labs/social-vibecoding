@@ -43,6 +43,15 @@ dragPoints(surface,from:{xRatio,yRatio},to:{xRatio,yRatio}),
 scrollIntoView(target), scrollBy(x,y), or waitFor(exactly one of target, text,
 path, quietNetwork; optional timeoutMs up to 10000; target also accepts
 state:"visible" or state:"hidden", default visible).
+An accepted error-state story may declare intent.controlledFailurePath. Only
+for that exact /api/ GET, call evidence_set_request_failure({path,enabled:true})
+during exploration before the action that triggers the request; inspect the
+real resulting UI on both revisions, then disable it. In both replays use
+requestFailure(path,enabled:true) before the trigger (and matching disable
+actions when needed). The toggle sequence must match exactly across revisions.
+Replay fails if neither side actually makes the blocked request. The reviewer
+will see a clear controlled-test label. Never invent a failure path or use a
+controlled failure for an undeclared story.
 waitFor text matches a visible substring. For an exact full-element text match,
 use waitFor target:{by:"text",value,exact:true}.
 
@@ -64,7 +73,7 @@ Do not use unrelated actions as a timer or remove a failed checkpoint.
 Verify the data behind the claimed screen loaded for the story's persona.
 A visible page shell, composer, or heading does not prove that an owner-scoped
 record exists. If the page says "not found", a required list is empty, or an
-API request for the record fails, do not submit that route. Follow the actual
+API request for the record fails unexpectedly, do not submit that route. Follow the actual
 claimed user interaction and assert visible content from the loaded record.
 Role, label, and text locators default to exact full-element
 matching; an accessible name can include description text inside a wrapping
@@ -128,6 +137,10 @@ Same-origin API 404s mean the planned data route was unavailable: inspect the
 account and available fixtures, then follow a real list row to a loaded record.
 If the claim cannot be reached with that persona, report the missing fixture
 instead of submitting another plan pointed at an error page.
+If a declared controlled failure was unused, keep its exact accepted API path
+and inspect the real triggering action on both revisions. Move the failure
+toggle before that action; do not invent another path or claim success until
+the browser shows the intended error state.
 Review the remaining actions, assertions, and focus targets before resubmitting.
 Do not guess a replacement from the error text alone. Submit one complete
 corrected set of replays through evidence_run_plan. An accepted response means

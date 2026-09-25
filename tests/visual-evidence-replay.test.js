@@ -32,6 +32,50 @@ test('runner accepts a validated pair and only publishes artifacts on pass two',
   assert.equal(first.publishArtifacts, false);
 });
 
+test('controlled replay failure intercepts only its declared GET and counts a real hit', async () => {
+  let routeHandler;
+  const context = { route: async (_glob, handler) => { routeHandler = handler; } };
+  const diagnostics = { blockedRequests: [] };
+  const controlled = { path: '/api/lists/demo', enabled: false, hits: 0,
+    requests: new WeakSet(), urls: new Set() };
+  await replay.installOriginFence(context, new Set(['http://base-evidence:3000']), diagnostics, controlled);
+  await replay.executeAction(null, { type: 'requestFailure', path: controlled.path, enabled: true },
+    'http://base-evidence:3000', null, '', controlled);
+  const calls = [];
+  const request = { url: () => 'http://base-evidence:3000/api/lists/demo', method: () => 'GET' };
+  await routeHandler({ request: () => request, abort: async (code) => calls.push(['abort', code]),
+    continue: async () => calls.push(['continue']) });
+  assert.deepEqual(calls, [['abort', 'failed']]);
+  assert.equal(controlled.hits, 1);
+  assert.equal(controlled.requests.has(request), true);
+  assert.equal(controlled.urls.has(request.url()), true);
+
+  const other = { url: () => 'http://base-evidence:3000/api/lists/other', method: () => 'GET' };
+  await routeHandler({ request: () => other, abort: async (code) => calls.push(['abort', code]),
+    continue: async () => calls.push(['continue']) });
+  assert.deepEqual(calls.at(-1), ['continue']);
+  await replay.executeAction(null, { type: 'requestFailure', path: controlled.path, enabled: false },
+    'http://base-evidence:3000', null, '', controlled);
+  await routeHandler({ request: () => request, abort: async (code) => calls.push(['abort', code]),
+    continue: async () => calls.push(['continue']) });
+  assert.deepEqual(calls.at(-1), ['continue']);
+});
+
+test('only Chromium resource errors for deliberately failed exact requests are expected', () => {
+  const generated = { message: 'Failed to load resource: net::ERR_FAILED' };
+  const appError = { message: 'Could not load account data' };
+  const unrelated = { message: 'Failed to load resource: net::ERR_FAILED' };
+  const diagnostics = { consoleErrors: [generated, appError, unrelated] };
+  const failure = { hits: 1, urls: new Set(['http://base-evidence:3000/api/list']) };
+  const removed = replay.discardExpectedControlledFailureConsole(diagnostics, [
+    { entry: generated, url: 'http://base-evidence:3000/api/list', message: generated.message },
+    { entry: appError, url: 'http://base-evidence:3000/app.js', message: appError.message },
+    { entry: unrelated, url: 'http://base-evidence:3000/api/other', message: unrelated.message },
+  ], failure);
+  assert.equal(removed, 1);
+  assert.deepEqual(diagnostics.consoleErrors, [appError, unrelated]);
+});
+
 test('an isolated browser job can only select a declared story and viewport', () => {
   const selection = { storyId: 'invite-suggestions', viewport: 'desktop' };
   assert.deepEqual(replay.validateInput(input({ selection })).selection, selection);

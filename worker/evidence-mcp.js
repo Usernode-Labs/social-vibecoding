@@ -13,6 +13,8 @@ const { z } = require('/usr/local/lib/node_modules/zod');
 const platform = String(process.env.PLATFORM_URL || '').replace(/\/$/, '');
 const runId = String(process.env.EVIDENCE_RUN_ID || '');
 const token = String(process.env.EVIDENCE_JWT || '');
+const proxy = String(process.env.EVIDENCE_PROXY_SERVER || '');
+const proxyControlToken = String(process.env.EVIDENCE_PROXY_CONTROL_TOKEN || '');
 if (!/^https?:\/\//.test(platform) || !/^[0-9a-f]{32}$/.test(runId) || !token) {
   process.stderr.write('Evidence MCP configuration is incomplete.\n');
   process.exit(1);
@@ -78,6 +80,33 @@ server.registerTool('evidence_reset_side', {
 }, async ({ side }) => {
   try { return resultContent((await request('/reset-side', { method: 'POST', body: { side } })).result); }
   catch (error) { return toolError(error); }
+});
+
+server.registerTool('evidence_set_request_failure', {
+  description: 'Only for a story whose accepted intent declares controlledFailurePath: deliberately fail that exact API GET during browser exploration. Applies to both revisions. Set enabled=true before the triggering action, and false afterward. The replay plan must declare the same toggles and a real matching request on each revision; reviewers see a controlled-test label.',
+  inputSchema: { path: z.string().min(6).max(512), enabled: z.boolean() },
+  annotations,
+}, async ({ path, enabled }) => {
+  try {
+    const context = (await request('/context', { timeoutMs: 30_000 })).context;
+    if (!context?.acceptedIntent?.stories?.some((story) => story.intent?.controlledFailurePath === path)) {
+      const error = new Error('That exact API path is not declared in the accepted evidence intent.');
+      error.code = 'undeclared_controlled_failure';
+      throw error;
+    }
+    if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(proxy) || !/^[0-9a-f]{64}$/.test(proxyControlToken)) {
+      throw new Error('The evidence proxy control is unavailable.');
+    }
+    const response = await fetch(`${proxy}/__usernode_evidence_control/request-failure`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-evidence-control-token': proxyControlToken },
+      body: JSON.stringify({ path, enabled }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`Evidence proxy rejected the controlled failure (${response.status}).`);
+    const result = await response.json();
+    return resultContent({ ok: true, path, enabled: result.enabled, hitCount: result.hitCount });
+  } catch (error) { return toolError(error); }
 });
 
 server.registerTool('evidence_run_plan', {

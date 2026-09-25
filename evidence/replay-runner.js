@@ -597,9 +597,15 @@ function networkTracker(page) {
   };
 }
 
-async function executeAction(page, action, origin, network, authToken = '') {
+async function executeAction(page, action, origin, network, authToken = '', controlledFailure = null) {
   const startedAt = Date.now();
   switch (action.type) {
+    case 'requestFailure':
+      if (!controlledFailure || controlledFailure.path !== action.path) {
+        throw new ReplayFailure('invalid_controlled_failure', 'Request failure does not match the accepted intent.');
+      }
+      controlledFailure.enabled = action.enabled;
+      break;
     case 'navigate':
       await page.goto(authorizedUrl(origin, action.path, authToken), { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
       break;
@@ -845,14 +851,23 @@ async function encodeWebm(frames, { fps, targetBytes, maxBytes }) {
   } finally { await fsp.rm(dir, { recursive: true, force: true }); }
 }
 
-async function installOriginFence(context, allowedOrigins, diagnostics) {
+async function installOriginFence(context, allowedOrigins, diagnostics, controlledFailure = null) {
   await context.route('**/*', async (route) => {
     const request = route.request();
     const url = request.url();
     if (/^(?:data|blob|about):/.test(url)) return route.continue();
     let origin;
     try { origin = new URL(url).origin; } catch { origin = null; }
-    if (origin && allowedOrigins.has(origin)) return route.continue();
+    if (origin && allowedOrigins.has(origin)) {
+      if (controlledFailure?.enabled && request.method() === 'GET'
+          && new URL(url).pathname + new URL(url).search === controlledFailure.path) {
+        controlledFailure.requests.add(request);
+        controlledFailure.hits += 1;
+        controlledFailure.urls.add(url);
+        return route.abort('failed');
+      }
+      return route.continue();
+    }
     if (diagnostics.blockedRequests.length < MAX_CONSOLE_ITEMS) {
       diagnostics.blockedRequests.push({
         origin: safeDiagnosticText(origin || 'invalid', 120),
@@ -861,6 +876,20 @@ async function installOriginFence(context, allowedOrigins, diagnostics) {
     }
     return route.abort('blockedbyclient');
   });
+}
+
+function discardExpectedControlledFailureConsole(diagnostics, consoleEvents, controlledFailure) {
+  if (!controlledFailure?.hits) return 0;
+  let discarded = 0;
+  for (const { entry, url, message } of consoleEvents) {
+    if (!controlledFailure.urls.has(url)
+        || !/^Failed to load resource: net::ERR_(?:FAILED|BLOCKED_BY_CLIENT)$/i.test(message.trim())) continue;
+    const index = diagnostics.consoleErrors.indexOf(entry);
+    if (index < 0) continue;
+    diagnostics.consoleErrors.splice(index, 1);
+    discarded += 1;
+  }
+  return discarded;
 }
 
 async function addCookies(context, origin, values) {
@@ -930,6 +959,10 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   const diagnostics = {
     consoleErrors: [], pageErrors: [], failedRequests: [], blockedRequests: [], httpErrors: [],
   };
+  const controlledFailure = story.intent.controlledFailurePath
+    ? { path: story.intent.controlledFailurePath, enabled: false, hits: 0,
+      requests: new WeakSet(), urls: new Set() }
+    : null;
   const bootstrap = { attempted: false, cookieAlreadyPresent: false, sessionCookieInstalled: false, responseStatus: null };
   const eventBase = {
     runId: input.runId, pass: input.pass, storyId: story.id,
@@ -964,7 +997,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     // for base and head to observe each other.
     const allowedOrigins = new Set([origin]);
     setupPhase = 'install_origin_fence';
-    await installOriginFence(context, allowedOrigins, diagnostics);
+    await installOriginFence(context, allowedOrigins, diagnostics, controlledFailure);
     setupPhase = 'install_cookies';
     await addCookies(context, origin, input.cookies[side]);
     setupPhase = 'bootstrap_session';
@@ -1017,6 +1050,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     }
   });
   page.on('requestfailed', (request) => {
+    if (controlledFailure?.requests.has(request)) return;
     let sameOrigin = false;
     try { sameOrigin = new URL(request.url()).origin === origin; } catch {}
     if (sameOrigin && diagnostics.failedRequests.length < MAX_CONSOLE_ITEMS) {
@@ -1084,7 +1118,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
         actionId: action.id, actionStage: action.stage, actionType: action.type,
       });
       if (Date.now() >= sideDeadline) throw new ReplayFailure('side_timeout', `${side} exceeded its ${planContract.MAX_SIDE_MS} ms budget.`);
-      const durationMs = await executeAction(page, action, origin, network, authToken);
+      const durationMs = await executeAction(page, action, origin, network, authToken, controlledFailure);
       await settlePage(page, { motion });
       actionResults.push({ id: action.id, stage: action.stage, type: action.type, durationMs, passed: true });
       emitEvent({
@@ -1129,6 +1163,13 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     stages.push({ stage: '__checkpoint__', image: contextPng });
 
     failureStage = { phase: 'browser_diagnostics' };
+    if (controlledFailure && controlledFailure.hits === 0) {
+      throw new ReplayFailure('controlled_failure_unused',
+        'The declared API request was never made while the controlled failure was enabled.');
+    }
+    const expectedFailureConsoleCount = discardExpectedControlledFailureConsole(
+      diagnostics, consoleEvents, controlledFailure
+    );
     const recoveredNetwork = discardRecoveredNetworkChanges(
       diagnostics, networkFailures, successfulRequests, consoleEvents
     );
@@ -1164,6 +1205,8 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       location: diagnosticLocation(page.url(), origin),
       httpErrorCount: diagnostics.httpErrors.length,
       recoveredNetworkChanges: recoveredNetwork.requests,
+      controlledFailureHits: controlledFailure?.hits || 0,
+      expectedFailureConsoleCount,
     });
     return result;
   } catch (error) {
@@ -1413,6 +1456,9 @@ module.exports = {
   navigateStart,
   discardRecoveredInitialNavigationFailures,
   discardRecoveredNetworkChanges,
+  discardExpectedControlledFailureConsole,
+  installOriginFence,
+  executeAction,
   publicRelativePath,
   redactedUrl,
   sessionCookieValue,

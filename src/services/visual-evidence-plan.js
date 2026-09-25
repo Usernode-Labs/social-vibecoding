@@ -22,11 +22,12 @@ const MAX_PATH = 512;
 const IMPACTS = Object.freeze(['ui', 'motion', 'none']);
 const PERSONAS = Object.freeze(['member', 'read_only_admin']);
 const ANIMATIONS = Object.freeze(['none', 'steps', 'motion']);
+const CONTROLLED_FAILURE_LABEL = 'Controlled test: deliberately block the declared API GET on both revisions.';
 const LOCATOR_KINDS = Object.freeze(['testId', 'role', 'label', 'placeholder', 'text', 'css']);
 const ACTION_TYPES = Object.freeze([
   'navigate', 'click', 'fill', 'press', 'select', 'check', 'uncheck',
   'hover', 'drag', 'clickPoint', 'dragPoints', 'scrollIntoView', 'scrollBy',
-  'waitFor',
+  'waitFor', 'requestFailure',
 ]);
 const ASSERTION_TYPES = Object.freeze([
   'visible', 'hidden', 'attached', 'detached', 'text', 'count', 'value',
@@ -94,6 +95,17 @@ const relativePathSchema = z.string().max(MAX_PATH)
     return !credentialLike(value) && !credentialLike(decoded);
   }, 'Must not contain credentials, tokens, or non-fixture email addresses');
 
+function validControlledFailurePath(value) {
+  if (!validRelativePath(value) || !value.startsWith('/api/') || value.includes('*')) return false;
+  try {
+    const parsed = new URL(value, 'https://evidence.invalid');
+    return !parsed.hash && `${parsed.pathname}${parsed.search}` === value;
+  } catch { return false; }
+}
+
+const controlledFailurePathSchema = relativePathSchema.refine(validControlledFailurePath,
+  'Must be one exact, same-origin /api/ GET path (optional query, no fragment or wildcard)');
+
 function credentialLike(value, fixtureDomains = ['example.test', 'example.invalid', 'test.invalid']) {
   const text = String(value || '');
   if (CREDENTIAL_PATTERNS.some((pattern) => pattern.test(text))) return true;
@@ -143,6 +155,7 @@ const intentSchema = z.object({
   // media is never inferred to mean absence.
   baseState: z.enum(['present', 'not_present']).default('present'),
   animation: z.enum(ANIMATIONS).default('none'),
+  controlledFailurePath: controlledFailurePathSchema.optional(),
 }).strict();
 
 const storyIntentObject = z.object({
@@ -154,6 +167,10 @@ const storyIntentObject = z.object({
 }).strict();
 
 const storyIntentSchema = storyIntentObject.superRefine((story, ctx) => {
+  if (story.intent.controlledFailurePath && story.intent.steps[0] !== CONTROLLED_FAILURE_LABEL) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['intent', 'steps', 0],
+      message: `A controlled failure must begin its reviewer-visible steps with: ${CONTROLLED_FAILURE_LABEL}` });
+  }
   const names = new Set();
   story.viewports.forEach((viewport, index) => {
     if (names.has(viewport.name)) {
@@ -194,6 +211,8 @@ const actionBase = {
 
 const pointerRatio = z.number().min(0).max(1);
 const actionSchema = z.union([
+  z.object({ ...actionBase, type: z.literal('requestFailure'), path: controlledFailurePathSchema,
+    enabled: z.boolean() }).strict(),
   z.object({ ...actionBase, type: z.literal('navigate'), path: relativePathSchema }).strict(),
   z.object({ ...actionBase, type: z.literal('click'), target: locatorSchema }).strict(),
   z.object({ ...actionBase, type: z.literal('fill'), target: locatorSchema, value: literalSchema() }).strict(),
@@ -280,6 +299,10 @@ const hostedReplayEntrySchema = z.object({
 
 const executableStorySchema = storyIntentObject.extend({ replay: replaySchema }).strict()
   .superRefine((story, ctx) => {
+    if (story.intent.controlledFailurePath && story.intent.steps[0] !== CONTROLLED_FAILURE_LABEL) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['intent', 'steps', 0],
+        message: `A controlled failure must begin its reviewer-visible steps with: ${CONTROLLED_FAILURE_LABEL}` });
+    }
     const names = new Set();
     story.viewports.forEach((viewport, index) => {
       if (names.has(viewport.name)) {
@@ -309,12 +332,26 @@ const replayPlanSchema = z.object({
     }
     if (story.replay.checkpoint.animation === 'steps'
         && [story.replay.before, story.replay.after].some((side) =>
-          side.actions.every((action) => action.type === 'waitFor'))) {
+          side.actions.every((action) => ['waitFor', 'requestFailure'].includes(action.type)))) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['stories', index, 'replay', 'checkpoint', 'animation'],
         message: 'Steps video requires a visible interaction on both revisions; wait-only flows use screenshots',
       });
+    }
+    const expectedPath = story.intent.controlledFailurePath;
+    const toggles = ['before', 'after'].map((side) => story.replay[side].actions
+      .filter((action) => action.type === 'requestFailure')
+      .map((action) => ({ path: action.path, enabled: action.enabled })));
+    if (!expectedPath && toggles.some((sequence) => sequence.length)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['stories', index, 'replay'],
+        message: 'A request failure must be declared in the accepted intent' });
+    } else if (expectedPath && (toggles.some((sequence) =>
+      !sequence.length || sequence[0].enabled !== true
+      || sequence.some((toggle) => toggle.path !== expectedPath))
+      || canonicalJson(toggles[0]) !== canonicalJson(toggles[1]))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['stories', index, 'replay'],
+        message: 'Both revisions must use the same declared request failure toggle sequence, beginning enabled' });
     }
   });
 });
@@ -465,6 +502,7 @@ module.exports = {
   IMPACTS,
   PERSONAS,
   ANIMATIONS,
+  CONTROLLED_FAILURE_LABEL,
   LOCATOR_KINDS,
   ACTION_TYPES,
   ASSERTION_TYPES,
