@@ -31,13 +31,13 @@ test('the scrolled session strip keeps the strip fill and frost', () => {
   assert.ok(at > rule('.dc-lift-strip').at);
 });
 
-test('scrolled, it is solid in the strip colour on every platform', () => {
-  // The transcript scrolls under a scrolled header, and nothing blurs any
-  // more (app.css "No glass, on any platform"), so it is the strip's colour
-  // made opaque, the same everywhere, after the strip rule it sits on.
-  const at = CSS.indexOf('#dc-session-header.un-scrolled { background-color: var(--dc-strip-solid); }');
-  assert.ok(at > rule('.dc-lift-strip').at, 'the solid rule follows the strip rule');
-  assert.doesNotMatch(CSS, /#dc-session-header\.un-scrolled \{ background-color: var\(--dc-strip\); \}/);
+test('scrolled, it keeps the strip fill on every platform', () => {
+  // It sits in flow above #dc-messages, so the transcript never passes
+  // behind it, and nothing blurs any more (app.css "No glass, on any
+  // platform"): the strip's own translucent fill is the glass, no fallback
+  // swaps it for an opaque colour.
+  assert.match(CSS, /#dc-session-header\.un-scrolled \{\s*background-color: var\(--dc-strip-fill\);/);
+  assert.doesNotMatch(CSS, /#dc-session-header\.un-scrolled \{ background-color: var\(--dc-strip(-solid)?\); \}/);
 });
 
 test('the strip is still the .dc-lift-strip the rule is written for', () => {

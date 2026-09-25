@@ -65,42 +65,74 @@ test('the solid plane colours are the fills composited over the wallpaper', () =
 
 test('what content scrolls or slides behind is solid, in the plane colour', () => {
   const solid = [
-    [/\.platform-parked \{ background-color: var\(--dc-sheet-solid\); \}/, 'the parked strip'],
     [/\.dc-lift-panel \{ background-color: var\(--dc-sheet-solid\); \}/, 'the bell and Homeroom menu sheets'],
     [/\.un-sheet, \.un-sheet::after, \.un-panel, \.un-panel::after,[\s\S]*?\{\s*background-color: var\(--dc-sheet-solid\);\s*\}/, 'kit sheets and panels'],
     [/\.un-modal \{ background-color: var\(--dc-sheet\); \}/, 'kit dialogs (a 95% fill, so the opaque sheet)'],
     [/\.un-modal:has\(#feedback-form\) \{ background-color: var\(--dc-sheet-solid\); \}/, 'Send Feedback, in the plane colour like the sheets'],
     [/background-color: var\(--create-modal-fill, var\(--dc-strip-solid\)\)/, 'the centred create dialog'],
-    [/#dc-session-header\.un-scrolled \{ background-color: var\(--dc-strip-solid\); \}/, 'the scrolled session header'],
     [/\.dev-ws-pane-head, \.dev-ws-pane-body, \.dev-ws-ear \{ background-color: var\(--dc-sheet-solid\); \}/, 'the Workshop pane, head, body and ear together'],
     [/@media \(max-width: 767px\) \{\s*#browse-screen \.browse-pane-head,\s*#browse-screen \.browse-pane-body,\s*#browse-screen \.browse-pane-note \{ background-color: var\(--dc-sheet-solid\); \}/, 'the Browse pane, on a phone, all three together'],
-    [/\.global-chat-composer \{ background: var\(--dc-sheet-solid\); \}/, 'the Global Chat composer'],
   ];
   for (const [re, what] of solid) assert.match(css, re, `${what} is solid`);
 });
 
-// THE TAB BAR AND THE HEADER KEEP THE GLASS LOOK, FAKED. The wallpaper is
-// fixed, so what the glass showed over it never changed: the tint over the
-// washes. Each bar paints exactly that once, from a viewport-sized fixed
-// layer clipped to the bar, with no filter anywhere.
-const FAKE = /\{\s*content: '';\s*position: fixed;\s*inset: 0;\s*z-index: -1;\s*pointer-events: none;[\s\S]*?background: linear-gradient\(var\(--dc-sheet-fill\), var\(--dc-sheet-fill\)\), var\(--home-washes, var\(--dc-sheet-solid\)\);\s*\}/;
+// THE GLASS LOOK, FAKED, where content passes behind a surface over the
+// fixed wallpaper: the tab bar, the parked strip, the header and the
+// signed-out landing header. What the glass showed there never changed (the
+// tint over the washes), so each paints exactly that once, from one shared
+// viewport-sized fixed layer clipped to the surface, with no filter anywhere.
+function block(selectorStart) {
+  const at = css.indexOf(selectorStart);
+  assert.ok(at >= 0, `found ${selectorStart.slice(0, 40)}`);
+  return css.slice(at, css.indexOf('}', at) + 1);
+}
 
-test('the tab bar and the header fake their glass from the fixed wallpaper', () => {
-  const tabs = css.slice(css.indexOf('.platform-tabs {\n  background-color: transparent;'));
-  assert.match(tabs, /^\.platform-tabs \{\s*background-color: transparent;\s*clip-path: inset\(0\);\s*\}/,
-    'the tab bar is see-through to its own layer, and clips it');
-  assert.match(tabs, new RegExp('\\.platform-tabs::before ' + FAKE.source), 'the tab bar paints the tint over the washes');
-  const head = css.indexOf('#platform-header::before');
-  assert.ok(head > 0, 'the header has its layer');
-  assert.match(css.slice(css.lastIndexOf('body:has(:is(#home-screen', head), css.indexOf('}', head) + 1), FAKE,
-    'the header paints the same tint over the same washes');
+test('one shared faked layer: the tint over the washes, fixed to the viewport', () => {
+  const layer = block('.platform-tabs::before,\n.platform-parked::before,');
+  for (const sel of ['#platform-header::before', 'html[data-browser-scroller] #landing-header::before']) {
+    assert.ok(layer.includes(sel), `${sel} shares the layer`);
+  }
+  assert.match(layer, /content: '';\s*position: fixed;\s*inset: 0;\s*z-index: -1;\s*pointer-events: none;/);
+  assert.match(layer, /linear-gradient\(var\(--fake-glass-tint, var\(--dc-sheet-fill\)\), var\(--fake-glass-tint, var\(--dc-sheet-fill\)\)\),\s*var\(--home-washes, var\(--dc-sheet-solid\)\);/,
+    'the surface\'s glass tint (the pane fill by default) over the washes, solid where a route has none');
+});
+
+test('each faked surface is see-through to its layer and clips it', () => {
+  assert.match(css, /\n\.platform-tabs \{\s*background-color: transparent;\s*clip-path: inset\(0\);\s*\}/, 'the tab bar');
+  assert.match(css, /\n\.platform-parked \{\s*background-color: transparent;\s*clip-path: inset\(0\);\s*\}/, 'the parked strip');
   assert.match(css, /#platform-header \{\s*background-color: transparent;\s*clip-path: inset\(0 round 0 0 1\.25rem 1\.25rem\);\s*\}/,
-    'the header clips to its own rounded-b-2xl notch (1.25rem, tailwind.config.js)');
-  const peek = css.slice(css.indexOf('.platform-tabs.platform-tabs-peek {'));
-  assert.match(peek.slice(0, peek.indexOf('}')), /background-color: transparent;/,
-    'the peeked rail is the same faked glass as the docked one');
-  assert.doesNotMatch(css, /(\.platform-tabs|#platform-header)[^{]*\{[^}]*backdrop-filter: blur/,
+    'the header, clipped to its own rounded-b-2xl notch (1.25rem, tailwind.config.js)');
+  assert.match(block('html[data-browser-scroller] #landing-header {\n  --fake-glass-tint'),
+    /--fake-glass-tint: color-mix\(in srgb, var\(--home-ground\) 92%, transparent\);\s*background: transparent;\s*clip-path: inset\(0\);/,
+    'the landing header keeps its own 92% ground tint');
+  assert.doesNotMatch(css, /(\.platform-tabs|\.platform-parked|#platform-header|#landing-header)[^{]*\{[^}]*backdrop-filter: blur/,
     'no live blur came back with the look');
+});
+
+test('a faked bar whose edge is a border redraws it above the layer', () => {
+  // The layer paints over its surface's own border, so on a phone the tab
+  // bar and the parked strip draw their top hairline again on top.
+  const phone = css.slice(css.indexOf('@media (max-width: 767px) {\n  .platform-tabs::after,\n  .platform-parked::after {'));
+  assert.match(phone.slice(0, phone.indexOf('}\n}') + 3),
+    /position: absolute;\s*top: -1px;\s*left: 0;\s*right: 0;\s*height: 1px;\s*background: var\(--app-sheet-line\);/);
+});
+
+test('where nothing passes behind, the plain translucent fill is the glass', () => {
+  // The docked desktop rail has the page laid out beside it; the scrolled
+  // session header and the Global Chat composer sit in flow beside their
+  // scrollers. Only the fixed wallpaper is behind them, so their own
+  // translucent fills are exact, borders and shadows included.
+  const desk = css.slice(css.indexOf('@media (min-width: 768px) {\n  .platform-tabs {\n    background-color: var(--dc-sheet-fill);'));
+  assert.match(desk.slice(0, desk.indexOf('\n}') + 2), /clip-path: none;[\s\S]*?\.platform-tabs::before,\s*\.platform-parked::before \{ content: none; \}[\s\S]*?\.platform-parked \{ clip-path: none; \}/,
+    'the docked rail draws its fill, not the fake, and the parked row inside it drops its layer');
+  assert.match(block('#dc-session-header.un-scrolled {'), /background-color: var\(--dc-strip-fill\);/);
+  assert.doesNotMatch(css, /#dc-session-header\.un-scrolled \{ background-color: var\(--dc-strip(-solid)?\); \}/);
+  assert.match(block('.global-chat-composer {\n  display: flex;'), /background: var\(--dc-sheet-fill\);[\s\S]*?box-shadow: 0 -5px 18px/);
+  assert.doesNotMatch(css, /\.global-chat-composer \{ background: var\(--dc-sheet(-solid)?\); \}/);
+  // The peeked rail floats over the page: solid, unclipped, shadow intact.
+  const peek = block('.platform-tabs.platform-tabs-peek {');
+  assert.match(peek, /background-color: var\(--dc-sheet-solid\);/);
+  assert.match(peek, /box-shadow: 0 8px 32px/);
 });
 
 test('the fake and the wallpaper paint the same washes', () => {

@@ -278,8 +278,11 @@ test('a sticky header over a scrolling document keeps that glass too', () => {
   const sticky = rule('html[data-browser-scroller] :is(#platform-header, #landing-header)');
   assert.match(sticky, /position: sticky;/);
   assert.ok(!sticky.includes('background'), 'the shared rule sets position only');
+  // The landing header's wash is now its faked-glass tint (app.css "THE ONE
+  // FAKED LAYER"): the same 92% ground, painted once over the washes rather
+  // than as a fill over a live blur.
   const landing = rule('html[data-browser-scroller] #landing-header');
-  assert.match(landing, /background: color-mix\(in srgb, var\(--home-ground\) 92%, transparent\);/);
+  assert.match(landing, /--fake-glass-tint: color-mix\(in srgb, var\(--home-ground\) 92%, transparent\);/);
   assert.ok(!/color-mix\(in srgb, var\(--home-ground\) 92%, transparent\) !important/.test(APP_CSS),
     'and nothing forces that wash onto the platform header any more');
 });

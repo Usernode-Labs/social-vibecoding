@@ -2518,8 +2518,6 @@ form.agent-session-composer:focus-within {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-/* The transcript scrolls under the composer, so it is solid. */
-.global-chat-composer { background: var(--dc-sheet-solid); }
 .global-chat-composer textarea {
   flex: 1 1 auto;
   min-width: 0;
@@ -3338,9 +3336,13 @@ html[data-browser-scroller] :is(#platform-header, #landing-header) {
   top: var(--browser-banner-h);
   z-index: 30;
 }
+/* Faked glass, not a live blur: the landing scrolls under this header over
+   the fixed wallpaper, so it paints its tint over the washes once (see "THE
+   ONE FAKED LAYER"). */
 html[data-browser-scroller] #landing-header {
-  background: color-mix(in srgb, var(--home-ground) 92%, transparent);
-  backdrop-filter: blur(12px);
+  --fake-glass-tint: color-mix(in srgb, var(--home-ground) 92%, transparent);
+  background: transparent;
+  clip-path: inset(0);
 }
 html[data-browser-scroller="browse-screen"] #browse-search-bar {
   top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top));
@@ -3723,7 +3725,8 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-/* …AND THE HEADER, faked the same way as the tab bar ("FAKED GLASS" below),
+/* …AND THE HEADER, faked the same way as the tab bar ("FAKED GLASS" below;
+   its layer is in the shared rule there),
    on exactly the routes the glass rules above cover. The clip follows the
    bar's own `rounded-b-2xl` (1.25rem in tailwind.config.js), so the notch
    the surfaces below tuck into keeps its shape. Nothing inside the header
@@ -3734,19 +3737,6 @@ body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   background-color: transparent;
   clip-path: inset(0 round 0 0 1.25rem 1.25rem);
-}
-body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
-             #settings-screen, #messages-screen, #workshop-screen,
-             #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header::before,
-body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  /* Resolved here, on the bar, so it reads the route's --home-washes (set on
-     <body>); a route with no wallpaper gets the solid plane colour. */
-  background: linear-gradient(var(--dc-sheet-fill), var(--dc-sheet-fill)), var(--home-washes, var(--dc-sheet-solid));
 }
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
@@ -10089,9 +10079,8 @@ html.un-kb #settings-content-col > .settings-sheet {
    white on those, warm glass everywhere else. The washes are soft shapes
    either way, and measured against the glass the fill alone lands within a
    few points of it, so every platform now draws the fill and nothing else
-   (see --dc-frost). The transcript scrolls under a scrolled header, so that
-   one is solid. */
-#dc-session-header.un-scrolled { background-color: var(--dc-strip-solid); }
+   (see --dc-frost). That includes the scrolled session header: it sits in
+   flow above #dc-messages, so the transcript never passes behind it. */
 
 /* Mounted panes retain their DOM and state, but stop painting after exit.
    The separate overlay-scrim paint layer cuts out the rounded surface. It is
@@ -17737,15 +17726,58 @@ html.un-kb #platform-tabs {
   background-color: transparent;
   clip-path: inset(0);
 }
-.platform-tabs::before {
+/* THE ONE FAKED LAYER, for every surface that fakes its glass: the tab bar,
+   the parked strip, the header and the signed-out landing header. Each sets
+   the transparent background and the clip on itself; `--fake-glass-tint` is
+   its glass fill (the pane fill unless it says otherwise). Resolved here, on
+   the surface, so it reads the route's --home-washes (set on <body>); a
+   route with no wallpaper gets the solid plane colour. */
+.platform-tabs::before,
+.platform-parked::before,
+body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
+             #settings-screen, #messages-screen, #workshop-screen,
+             #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header::before,
+body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header::before,
+html[data-browser-scroller] #landing-header::before {
   content: '';
   position: fixed;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  /* Resolved here, on the bar, so it reads the route's --home-washes (set on
-     <body>); a route with no wallpaper gets the solid plane colour. */
-  background: linear-gradient(var(--dc-sheet-fill), var(--dc-sheet-fill)), var(--home-washes, var(--dc-sheet-solid));
+  background:
+    linear-gradient(var(--fake-glass-tint, var(--dc-sheet-fill)), var(--fake-glass-tint, var(--dc-sheet-fill))),
+    var(--home-washes, var(--dc-sheet-solid));
+}
+/* THE HAIRLINE GOES BACK ON TOP. The layer paints over its surface's own
+   border (a stacking context's negative layer comes after its background and
+   border), so a bar whose edge is a border redraws it above the layer. */
+@media (max-width: 767px) {
+  .platform-tabs::after,
+  .platform-parked::after {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--app-sheet-line);
+    pointer-events: none;
+  }
+}
+/* THE DOCKED DESKTOP RAIL NEEDS NO FAKE. The page is laid out beside it, not
+   under it, so only the fixed wallpaper is ever behind it and its own
+   translucent fill is exactly the glass without the blur; its edge borders
+   draw as they always did. (The peeked rail floats over the page, so it is
+   solid; see `.platform-tabs.platform-tabs-peek`.) The parked row sits in
+   the rail here and is transparent there, so it drops its layer too. */
+@media (min-width: 768px) {
+  .platform-tabs {
+    background-color: var(--dc-sheet-fill);
+    clip-path: none;
+  }
+  .platform-tabs::before,
+  .platform-parked::before { content: none; }
+  .platform-parked { clip-path: none; }
 }
 
 /* THE BAR SITS LOWER ON iOS (#2766). The inset under it there is the
@@ -17995,8 +18027,13 @@ html.un-ios {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-/* Pages scroll under the strip, so it is solid on every platform. */
-.platform-parked { background-color: var(--dc-sheet-solid); }
+/* Pages scroll under the strip, which sits on the tab bar: faked glass, the
+   same layer as the bar (see "THE ONE FAKED LAYER"), so the two read as one
+   material on every platform. */
+.platform-parked {
+  background-color: transparent;
+  clip-path: inset(0);
+}
 
 /* THE WHOLE STRIP IS THE TARGET. A shortcut whose tappable area is a 60px
    pill inside a full-width bar is a shortcut you miss; the pill is a LABEL
@@ -19026,9 +19063,9 @@ html.un-kb #platform-parked {
        `--dc-sheet`, so the rail came back over the page as a white panel
        rather than as the rail. `.platform-tabs` already carries the frost;
        restating the fill is what stops the solid one winning, and the
-       rule above (`.platform-tabs`, faked glass on every platform) is what
-       it matches: transparent, so the bar's fixed layer is the surface. */
-    background-color: transparent;
+       peeked rail floats over the page, so with no blur it is solid in the
+       plane colour, and unclipped, so its shadow still falls. */
+    background-color: var(--dc-sheet-solid);
     backdrop-filter: var(--dc-frost);
     -webkit-backdrop-filter: var(--dc-frost);
     border-right: 1px solid var(--app-sheet-line);
