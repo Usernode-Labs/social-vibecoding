@@ -7,7 +7,7 @@
 // app: "ONE branch and ONE pull request", a spec, a worker. An agent session
 // is a standing conversation that works on any app, one change at a time, so
 // its prompt says where the conversation stands instead: the app it was
-// opened from, the change it is working on, the changes it has parked. The
+// opened from, the change it is working on, its earlier changes. The
 // rules that hold for any reader of the platform's tools come from the
 // connector charter's `agent_mayor` variant (services/mcp-charter.js), so the
 // Mayor and an external client cannot be told different things about them.
@@ -49,7 +49,11 @@ function changeRef(change) {
 function changeLine(change) {
   const title = change.title ? ` ${untrusted(change.title)}` : '';
   const where = change.appSlug ? ` on ${change.appSlug}` : '';
-  return `${changeRef(change)}${where}:${title} (${change.status || 'unknown'})`;
+  // "paused" is the platform's bookkeeping (a worker released, everything
+  // kept, resumed on use), never something to tell the user: it reads as the
+  // work being in progress, which it is.
+  const status = change.status === 'paused' ? 'active' : (change.status || 'unknown');
+  return `${changeRef(change)}${where}:${title} (${status})`;
 }
 
 function focusBlock(session) {
@@ -68,7 +72,8 @@ function focusBlock(session) {
   ];
   if (context.issueNumber) {
     lines.push(`They were looking at request #${context.issueNumber} on ${app.slug}. Read it with get_request before `
-      + 'acting on it, and pass linkedIssues when you start a change for it.');
+      + `acting on it. The first change you start on ${app.slug} in this conversation links and claims it unless you `
+      + 'pass linkedIssues yourself: pass [] when that change is for something else.');
   }
   if (context.proposalId) {
     lines.push(`They were looking at proposal ${context.proposalId} on ${app.slug}. Read it with get_proposal before `
@@ -118,7 +123,7 @@ function getAgentMayorPrompt({ username, session, summary = null }) {
       + 'guessing.\n'
       + '- A change is one proposal on one app: a branch, a staging preview, the checks that gate merge, and a vote. '
       + 'This conversation works on one active change at a time. start_change opens a new change and makes it '
-      + 'active, parking the one before it (its branch and preview are kept). switch_active_change makes one of '
+      + 'active; the one before it keeps its branch, preview and progress. switch_active_change makes one of '
       + 'this conversation\'s earlier changes active again. set_focus_app records which app the user means when '
       + 'they do not say.\n'
       + '- Name a change by its pull request number first when it has one: PR #N (change M).\n'
@@ -127,6 +132,11 @@ function getAgentMayorPrompt({ username, session, summary = null }) {
       + 'write a short wrap-up: what changed, what to look at, and the natural next step.\n'
       + '- For new work, start a change first (the user confirms it on a card). After they confirm you get a short '
       + 'follow-up turn: if they already asked for the work, dispatch it then without asking again.\n'
+      + '- Who is working on what is shared with the group. When a change is for a request, read it with get_request '
+      + 'first: its inProgress names anyone who has claimed it or is building on it, and somebody else there is '
+      + 'something to tell the user before you start. Then pass the request number in start_change\'s linkedIssues, '
+      + 'including a request you just filed: that links the change and claims the request for the user, so the '
+      + 'board shows it being worked on. update_proposal_issues links a request to a change already open.\n'
       + '- Building on a change that is up for a vote revises it and clears its votes. Say so before you dispatch on '
       + 'one.',
     focusBlock(session),

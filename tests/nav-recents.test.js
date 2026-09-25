@@ -22,7 +22,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const {
-  buildRecents, groupRecents, recentDayLabel, RECENTS_LIMIT, RECENT_DAYS,
+  buildRecents, groupRecents, recentDayLabel, RECENTS_LIMIT, RECENT_DAYS, RECENTS_MIN_SHOWN,
 } = loadTsx('frontend/src/features/nav/recents.ts');
 
 function conversation(id, kind, at, extra = {}) {
@@ -105,7 +105,8 @@ test('#2878: an app row draws the app\'s own icon, the glyph only when it has no
   assert.match(list, /import \{ AppIconContent, appIconKind \} from '\.\.\/apps\/app-card-view';/,
     'the launcher\'s own icon renderer');
   assert.match(list, /const app = item\.app && \(item\.app\.iconUrl \|\| item\.app\.iconEmoji\) \? item\.app : null;/);
-  assert.match(list, /\{app \? <AppTile app=\{app\} \/> : <Glyph className="platform-recent-glyph" aria-hidden="true" \/>\}/);
+  // #3028: a working agent session's spinner takes the icon's place first.
+  assert.match(list, /: app \? <AppTile app=\{app\} \/> : <Glyph className="platform-recent-glyph" aria-hidden="true" \/>\}/);
   assert.match(list, /className="app-icon-tile platform-recent-tile"/);
 
   const { AppIconContent } = loadTsx('frontend/src/features/apps/app-card-view.tsx');
@@ -197,9 +198,12 @@ test('#2919: a daylight-saving day is still one day', () => {
       discussions: [],
       agents: [],
     });
-    const { days, older } = groupRecents(items, now);
+    const { days, earlier, older } = groupRecents(items, now);
     assert.deepEqual(days.map((d) => [d.label, d.items.length]), [['Yesterday', 1]]);
-    assert.equal(older.length, 1, 'six calendar days back across the change is older');
+    // QA 2026-09-24 Q31: with only two rows in the list, the one past the
+    // labelled days is shown under "Earlier" rather than folded; either way
+    // it is not given a day label.
+    assert.equal(earlier.length + older.length, 1, 'six calendar days back across the change is past the labelled days');
   } finally {
     if (zone === undefined) delete process.env.TZ;
     else process.env.TZ = zone;
@@ -246,6 +250,66 @@ test('#2919: small labels before each day, and "Show N older" folded until press
   assert.match(list, /const \[showOlder, setShowOlder\] = useState\(false\);/);
   assert.match(list, /onToggleOlder=\{\(\) => setShowOlder\(\(open\) => !open\)\}/);
   assert.doesNotMatch(list, /showOlder[^\n]*(localStorage|sessionStorage)/);
+});
+
+// QA 2026-09-24 Q31: a history that is all older than the labelled days used
+// to fold completely, leaving "RECENTS" over "Show N older" and nothing else.
+// The newest older rows now top the folded list up to RECENTS_MIN_SHOWN,
+// under "Earlier", and only the rest fold.
+test('QA 2026-09-24 Q31: nothing recent still shows the newest three, under Earlier', () => {
+  assert.equal(RECENTS_MIN_SHOWN, 3);
+  const at = (daysBack) => new Date(NOW - daysBack * 86400e3).toISOString();
+  const items = buildRecents({
+    apps: [],
+    conversations: [8, 9, 11, 14, 20].map((d, i) => conversation(i + 1, 'group', at(d))),
+    discussions: [],
+    agents: [],
+  });
+  const grouped = groupRecents(items, NOW);
+  assert.deepEqual(grouped.days, []);
+  assert.deepEqual(grouped.earlier.map((i) => i.key), ['conversation:1', 'conversation:2', 'conversation:3'],
+    'the three newest, in the list\'s order');
+  assert.deepEqual(grouped.older.map((i) => i.key), ['conversation:4', 'conversation:5']);
+  assert.deepEqual([...grouped.earlier, ...grouped.older], items, 'grouping only: no row moves or drops');
+
+  // One row in the labelled days: two older rows top it up.
+  const mixed = buildRecents({
+    apps: [],
+    conversations: [0, 8, 9, 11].map((d, i) => conversation(i + 1, 'group', at(d))),
+    discussions: [],
+    agents: [],
+  });
+  const mixedGroups = groupRecents(mixed, NOW);
+  assert.deepEqual(mixedGroups.days.map((d) => [d.label, d.items.length]), [['Today', 1]]);
+  assert.deepEqual(mixedGroups.earlier.map((i) => i.key), ['conversation:2', 'conversation:3']);
+  assert.deepEqual(mixedGroups.older.map((i) => i.key), ['conversation:4']);
+
+  // Days that already hold three rows take nothing from the older ones.
+  const full = groupRecents(byDayFixture(), NOW);
+  assert.deepEqual(full.earlier, []);
+  assert.equal(full.older.length, 2);
+
+  const { RecentsByDay } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const render = (showOlder) => renderToHtml(createElement(RecentsByDay, {
+    items, live: [], showOlder, onToggleOlder: () => {}, now: NOW,
+  }));
+  const labels = (html) => [...html.matchAll(/<div class="platform-recents-day">([^<]*)<\/div>/g)].map((m) => m[1]);
+  const keys = (html) => [...html.matchAll(/data-recent-key="([^"]*)"/g)].map((m) => m[1]);
+  const closed = render(false);
+  assert.deepEqual(labels(closed), ['Earlier']);
+  assert.deepEqual(keys(closed), ['conversation:1', 'conversation:2', 'conversation:3']);
+  assert.match(closed, /<span>Show 2 older<\/span><\/button>$/, 'the fold stays the last child and counts only the rest');
+  const open = render(true);
+  assert.deepEqual(labels(open), ['Earlier'], 'the rest follow on under Earlier, with no second label');
+  assert.deepEqual(keys(open), items.map((i) => i.key));
+  assert.match(open, /<span>Show less<\/span><\/button>$/);
+
+  // Three or fewer rows, all old: every one shows and there is nothing to fold.
+  const few = renderToHtml(createElement(RecentsByDay, {
+    items: items.slice(0, 3), live: [], showOlder: false, onToggleOlder: () => {}, now: NOW,
+  }));
+  assert.deepEqual(labels(few), ['Earlier']);
+  assert.doesNotMatch(few, /<button/);
 });
 
 test('#2919: the day labels and the fold are drawn in the desktop block only', () => {

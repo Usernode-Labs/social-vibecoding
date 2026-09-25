@@ -219,7 +219,7 @@ export function BrowseLink() {
     <button
       type="button"
       id="home-browse-btn"
-      className="home-panel-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--brand-ink)] hover:underline whitespace-nowrap"
+      className="home-panel-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--brand-ink)] hover:underline whitespace-nowrap un-touch-target"
       title="Browse every app in the directory"
       aria-label="Browse all apps"
       onClick={(e) => {
@@ -310,7 +310,7 @@ export function LeaderboardLink() {
   return (
     <button
       type="button"
-      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--brand-ink)] hover:underline whitespace-nowrap"
+      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--brand-ink)] hover:underline whitespace-nowrap un-touch-target"
       title="Go to the Challenges tab on the Leaderboard screen"
       aria-label="Open challenges"
       onClick={(e) => {
@@ -354,7 +354,7 @@ export function PanelFooter({
     <div className="home-panel-footer flex-none flex items-center gap-2 pt-2">
       <button
         type="button"
-        className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
+        className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap un-touch-target"
         data-panel-key={panelKey}
         aria-expanded={expanded}
         title={expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}

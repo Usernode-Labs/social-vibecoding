@@ -218,6 +218,16 @@ function credentialRoutes(config) {
       });
     } catch (err) {
       if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
+        // QA 2026-09-24: the unconfigured case names an environment variable
+        // in its message. That stays in the log; the person gets plain words.
+        if (err.code === 'not_configured') {
+          log.warn('credentials', 'managed OpenRouter claim refused: not configured', {
+            userId: req.user.id, err: err.message,
+          });
+          return res.status(err.statusCode).json({
+            error: managedOpenRouter.NOT_CONFIGURED_USER_MESSAGE, code: err.code,
+          });
+        }
         return res.status(err.statusCode).json({ error: err.message, code: err.code });
       }
       log.error('credentials', 'managed OpenRouter claim failed', {

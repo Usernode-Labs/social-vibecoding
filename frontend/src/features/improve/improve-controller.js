@@ -80,8 +80,9 @@ function liveBusy(session) {
 
 /**
  * Whether the session is WAITING ON THE USER (#1959) — the one fact behind
- * both the caption's "Needs you" and the pill's "Ready for your input", so
- * the two cannot say different things.
+ * both the caption's "Needs you" and the pill's "Needs you" (QA 2026-09-24
+ * Q29; it read "Ready for your input" until then), so the two cannot say
+ * different things.
  *
  * `awaiting_input` is the verdict GET /api/me/active-sessions reaches from
  * the transcript (sessionAwaitsInput in routes/sessions.js): the last
@@ -107,19 +108,6 @@ function awaitsInput(session) {
 }
 
 /**
- * A PARKED session (owner review).
- *
- * "Changes in progress" and "Changes in other apps" are lists of what is
- * MOVING. A paused session is not in progress — it is set down — and listing
- * it under that heading both overstates the list and pushes the rows that are
- * actually running further from the thumb. Paused work stays reachable where
- * parked work belongs: the Board, and the session's own screen.
- */
-function isParked(session) {
-  return String((session && session.status) || '').toLowerCase() === 'paused';
-}
-
-/**
  * A session row's display status.
  *
  * Deliberately the same three words the cog drawer used, so a viewer who knew
@@ -127,8 +115,10 @@ function isParked(session) {
  */
 function statusLabel(session) {
   if (isBusy(session)) return 'Working…';
-  const state = String(session.status || '').toLowerCase();
-  if (state === 'paused') return 'Paused';
+  // No 'Paused' (#2779 follow-up): a paused session is the platform's
+  // bookkeeping, not a state of the work. It pauses by itself when idle and
+  // resumes by itself when opened or messaged, so it reads like any other
+  // session that is waiting for its owner.
   if (awaitsInput(session)) return 'Needs you';
   return null;
 }
@@ -171,8 +161,12 @@ function toRow(session, appNameFallback) {
     title: session.session_title || session.pr_title || session.branch_name
       || `Session #${session.id}`,
     // A row represents the change, not just its chat. The lifecycle-aware
-    // page keeps the context around the workspace and still embeds it.
-    href: `#app/${session.app_slug}/dev/proposals/${session.id}`,
+    // page keeps the context around the workspace and still embeds it. A
+    // change an agent session started is worked on in that conversation
+    // (#2779), so its row opens the conversation.
+    href: session.agent_session_id
+      ? `#messages/agent/${session.agent_session_id}`
+      : `#app/${session.app_slug}/dev/proposals/${session.id}`,
     status: statusLabel(session),
     busy: liveBusy(session),
     awaitingInput: awaitsInput(session),
@@ -729,10 +723,10 @@ const Improve = {
       else others.push(row);
     };
     for (const session of Improve._all) {
-      // Active only — see isParked. (statusLabel keeps its 'Paused' branch:
-      // it is the shared vocabulary, and a caller that does not filter still
-      // gets the right word.)
-      if (isParked(session)) continue;
+      // Paused sessions included (#2779 follow-up): the platform pauses a
+      // session five idle minutes after it was last used and resumes it when
+      // it is opened, so "paused" is not "set down". Leaving them out made
+      // work vanish from Messages and the bell minutes after it was touched.
       place(toRow(session, session.app_slug === slug ? name : null), session.app_slug);
     }
     // #1417: open connector work orders go in the SAME two buckets, by the
@@ -857,9 +851,16 @@ const Improve = {
     }
   },
 
-  /** `SessionState.anyActive()`, as store state. Safe before it exists. */
+  /**
+   * `SessionState.anyActiveFor(<viewer>)`, as store state: one of the
+   * viewer's OWN sessions is mid-turn. Not anyActive(), which also counts
+   * every shared session and auto-run on the apps the viewer can see, so the
+   * mark lit up for other people's builds (#2779 follow-up). Safe before
+   * either exists.
+   */
   refreshWorking() {
-    const working = !!window.SessionState?.anyActive?.();
+    const me = window.App?.user?.id;
+    const working = me != null && !!window.SessionState?.anyActiveFor?.(me);
     if (improveStore.get().working !== working) improveStore.set({ working });
   },
 

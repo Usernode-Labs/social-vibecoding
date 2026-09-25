@@ -184,8 +184,12 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
           'truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100',
           titleClassName,
         )}>{title}</div>
+        {/* dark:text-zinc-400, not -500 (QA 2026-09-24 Q20): zinc-500 is
+            3.54:1 on the #0b0b0c page and 3.06 on a zinc-900 card, the
+            Discover rows' and the Me screen's meta lines. zinc-400 is 6.0 and
+            5.2, and is still the quiet line under a bold title. */}
         {subtitle ? (
-          <div className={cn('truncate text-[0.9375rem] text-zinc-500 dark:text-zinc-500', subtitleClassName)}>{subtitle}</div>
+          <div className={cn('truncate text-[0.9375rem] text-zinc-500 dark:text-zinc-400', subtitleClassName)}>{subtitle}</div>
         ) : null}
       </div>
       {dot ? (

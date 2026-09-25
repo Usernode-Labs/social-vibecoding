@@ -163,7 +163,13 @@ test('a public app without a launch URL does not open an empty viewer', async ()
   assert.equal(h.historyEntries.length, 0);
 });
 
-test('the waiting-room CTA describes the expanded app access', () => {
-  assert.match(waitingSource, />\s*Use apps while you wait\s*</);
+test('the waiting room promises no app access it cannot deliver (QA 2026-09-24 Q12)', () => {
+  // "Use apps while you wait" pointed at #landing, which stopped listing apps
+  // when its directory grid went and shows a waiting-room session one pill,
+  // back to this screen. Nothing a waiting-room account can reach lists apps,
+  // so the CTA is gone rather than pointed somewhere empty.
+  assert.doesNotMatch(waitingSource, />\s*Use apps while you wait\s*</);
   assert.doesNotMatch(waitingSource, /Browse public apps while you wait/);
+  assert.doesNotMatch(waitingSource, /href="#landing"/, 'no link into the empty landing');
+  assert.match(waitingSource, /id="waiting-logout"/, 'Log out is still offered');
 });

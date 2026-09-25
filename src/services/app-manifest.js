@@ -248,7 +248,17 @@ const MANIFEST_FILENAME = 'dapp.json';
 // TESTS_DEADLINE_MS still clears the 2x margin by ~255s, so neither the
 // deadline nor RUN_TIMEOUT_MS moves. The step buys 35 slots over the 775
 // declared here.
-const MAX_DECLARED_TESTS = 810;
+//
+// 810 → 830 (#2386, mutual friends): main stood at 790 exactly, the 20-slot
+// floor, after #2779 folded its four checks into two to fit, so any proposal
+// declaring a single check was red before it started. The friends change
+// declares two (a person's friend button, the own profile's Friends section),
+// already folded from five with :has(). Thirteenth crossing, same
+// arithmetic: 830 checks at ~3.9s over the pool of 16 is ~202s, and the
+// unchanged 650s TESTS_DEADLINE_MS still clears the 2x margin by ~245s, so
+// neither the deadline nor RUN_TIMEOUT_MS moves. The step buys 38 slots over
+// the 792 declared here; #2387's six, merged beside it, leave 32 over 798.
+const MAX_DECLARED_TESTS = 830;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

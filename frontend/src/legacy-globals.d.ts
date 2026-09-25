@@ -46,6 +46,8 @@ declare global {
        * lookup as `unknown` and so makes the call itself an error.
        */
       markConversationRead(conversationId: number): void;
+      /** The same, for one reply thread's alerts (#2387). */
+      markConversationThreadRead(conversationId: number, rootId: number): void;
       open: boolean;
       [key: string]: unknown;
     };
@@ -127,6 +129,17 @@ declare global {
       panel?(opts: KitSurfaceOpts & { side?: 'left' | 'right' }): KitHandle | null;
       pullToRefresh(el: Element, fn: () => Promise<unknown> | void): void;
       toast?(message: string): void;
+      /** A native-style confirm card; resolves true on the confirm button. */
+      confirm?(opts: { title?: string; message?: string; confirmLabel?: string; cancelLabel?: string; danger?: boolean }): Promise<boolean>;
+      /** A one-field prompt; resolves the text, or null when cancelled. */
+      prompt?(opts: { title?: string; message?: string; value?: string; placeholder?: string; confirmLabel?: string; cancelLabel?: string }): Promise<string | null>;
+      /** The adaptive menu: a sheet on touch, an anchored popover on desktop. */
+      menu?(opts: {
+        anchorEl?: HTMLElement;
+        title?: string;
+        items: Array<{ label: string; title?: string; destructive?: boolean; handler: () => void }>;
+      }): Promise<unknown>;
+      copyText?(text: string): Promise<boolean>;
       [key: string]: unknown;
     };
     /** features/header/node-pill.js */
@@ -183,6 +196,31 @@ declare global {
        * called by the per-card ledger's button and the board banner alike.
        */
       resumeMainMerges?(slug: string, btn?: HTMLButtonElement | null): Promise<boolean | undefined>;
+      /** The "Proposal checks" dialog for one change: its checks, Refresh and Re-run. */
+      openSessionChecks?(sessionId: number): void;
+      /** POST /api/sessions/:id/recheck, with the platform's own toasts; true once it started. */
+      castRecheck?(sessionId: number): Promise<boolean | undefined>;
+      /**
+       * The staging preview (#439, #771), shared with an agent session's side
+       * pane (#2779): ensure-then-open a change's preview, docked beside the
+       * chat when a dock host's slot is mounted, for an explicit app.
+       */
+      ensureStaging?(
+        sessionId: number,
+        fallbackUrl: string | null,
+        testing: { md?: string | null; path?: string | null } | null,
+        opts?: { dock?: boolean; app?: { slug: string; self_hosted?: boolean }; readOnly?: boolean; jump?: boolean },
+      ): Promise<void>;
+      closeStagingOverlay?(): void;
+      setStagingDockHost?(host: {
+        slotId: string;
+        live(): boolean;
+        collapse(): void;
+        redock(): void;
+        closed: (() => void) | null;
+      } | null): void;
+      onStagingRebuildResult?(sessionId: number, result: { url?: string | null; failed?: boolean; error?: string | null }): void;
+      _syncStagingDockGeometry?(): void;
       [key: string]: unknown;
     };
     /** features/home/home.js — refreshed after app creation. */
@@ -236,17 +274,22 @@ declare global {
         paintSaved(messageId: number, saved: boolean): void;
         refresh(): Promise<void> | void;
       };
-      /** features/agent-session/store.ts (#2779). */
+      /**
+       * features/agent-session/store.ts (#2779). `new` is the conversation
+       * New change opens, unsent until its first message creates it.
+       */
       agentSession?: {
-        open(id: number, options?: { host?: 'screen' | 'messages' }): Promise<void> | void;
-        route(id: number, options?: { drawer?: boolean }): Promise<void> | void;
+        open(id: number | 'new', options?: { host?: 'screen' | 'messages' }): Promise<void> | void;
+        route(id: number | 'new', options?: { drawer?: boolean }): Promise<void> | void;
         start(
           hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
-          options?: { message?: string | null },
-        ): Promise<unknown>;
+        ): void;
+        prepareDraft(
+          hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
+        ): void;
         deactivate(): void;
         isOpen(): boolean;
-        currentId(): number | null;
+        currentId(): number | 'new' | null;
         refreshList(): Promise<void> | void;
       };
       globalChat?: {
@@ -264,6 +307,8 @@ declare global {
       renderMarkdown(text: string, opts?: { breaks?: boolean; images?: boolean }): string;
       dismissReturnHint(): void;
       _importOwnToolsPr(): void;
+      /** An agent session's turn is running on screen: the tab's "⏳ Thinking…". */
+      setAgentSessionThinking?(on: boolean): void;
       [key: string]: unknown;
     };
     /** The inline head-blocking theme module in src/head.html. */

@@ -14,7 +14,8 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const {
-  readTests, checkFingerprint, validatePath, parseArgs, runGroup,
+  readTests, readInLoopCheckAuth, localAuthUrl, authenticateLocalChecks,
+  checkFingerprint, validatePath, parseArgs, runGroup,
 } = require(path.join(__dirname, '..', 'worker', 'usernode-run-checks'));
 
 // ── manifest normalization (mirrors app-manifest readTests) ─────────────
@@ -60,6 +61,64 @@ test('parseArgs understands the documented flags', () => {
   assert.equal(args.filter, 'feedback');
   assert.equal(args.baseUrl, 'http://127.0.0.1:4000');
   assert.equal(args.manifest, 'dapp.json');
+});
+
+test('local check auth accepts a JSON login fixture and refuses external destinations', () => {
+  const auth = readInLoopCheckAuth({ inLoopCheckAuth: {
+    path: '/api/auth/login', body: { username: 'fixture@example.test', password: 'fake-password' },
+  } });
+  assert.deepEqual(auth, {
+    path: '/api/auth/login', body: { username: 'fixture@example.test', password: 'fake-password' },
+  });
+  assert.equal(readInLoopCheckAuth({}), null);
+  assert.equal(localAuthUrl('http://127.0.0.1:3100', auth.path), 'http://127.0.0.1:3100/api/auth/login');
+  assert.throws(() => localAuthUrl('https://example.com', auth.path), /loopback HTTP/);
+  assert.throws(() => localAuthUrl('http://127.0.0.1:3100@evil.test', auth.path), /loopback HTTP/);
+  assert.throws(() => localAuthUrl('http://127.0.0.1:3100', '/\\evil.test/steal'), /local app origin/);
+  assert.throws(() => readInLoopCheckAuth({ inLoopCheckAuth: { path: '//evil.test', body: auth.body } }), /root-relative/);
+});
+
+test('local check auth signs in once and returns reusable browser state', async () => {
+  const calls = [];
+  const state = { cookies: [{ name: 'session', value: 'fake', domain: '127.0.0.1', path: '/' }], origins: [] };
+  const browser = {
+    async newContext() {
+      calls.push('context');
+      return {
+        request: {
+          async post(url, options) {
+            calls.push({ url, options });
+            return { ok: () => true, status: () => 200 };
+          },
+        },
+        async storageState() { calls.push('state'); return state; },
+        async close() { calls.push('close'); },
+      };
+    },
+  };
+  const auth = { path: '/login', body: { username: 'fixture', password: 'fake' } };
+  assert.equal(await authenticateLocalChecks(browser, 'http://localhost:3100', auth), state);
+  assert.deepEqual(calls, [
+    'context',
+    { url: 'http://localhost:3100/login', options: { data: auth.body, timeout: 30000 } },
+    'state', 'close',
+  ]);
+});
+
+test('failed or cookieless local sign-in is a setup error, never a passing check', async () => {
+  const browser = (status, state) => ({
+    async newContext() {
+      return {
+        request: { async post() { return { ok: () => status === 200, status: () => status }; } },
+        async storageState() { return state; },
+        async close() {},
+      };
+    },
+  });
+  const auth = { path: '/login', body: { username: 'fixture', password: 'fake' } };
+  await assert.rejects(authenticateLocalChecks(browser(401), 'http://localhost:3100', auth), /HTTP 401/);
+  await assert.rejects(authenticateLocalChecks(browser(200, { cookies: [], origins: [] }),
+    'http://localhost:3100', auth), /no browser session/);
 });
 
 // ── runGroup semantics against a fake page ───────────────────────────────

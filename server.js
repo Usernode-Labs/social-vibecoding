@@ -21,6 +21,7 @@ const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/cha
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
 const { conversationRoutes } = require('./src/routes/conversations');
+const { friendRoutes } = require('./src/routes/friends');
 const { contentReportRoutes } = require('./src/routes/content-reports');
 const { sessionRoutes } = require('./src/routes/sessions');
 const { agentSessionRoutes } = require('./src/routes/agent-sessions');
@@ -72,6 +73,7 @@ const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
 const { chatDraftsRoutes } = require('./src/routes/chat-drafts');
+const { agentSessionDraftsRoutes } = require('./src/routes/agent-session-drafts');
 const { devFlowRoutes } = require('./src/routes/dev-flow');
 const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
@@ -563,6 +565,8 @@ app.use(illustrationRoutes(config));
 app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
 app.use(conversationRoutes(config));
+// #2386: mutual friends — the viewer's own lists, requests and answers.
+app.use(friendRoutes(config));
 app.use(contentReportRoutes(config));
 app.use(proposalHandoffRoutes(config));
 // #2779: agent sessions, the per-user conversation that starts changes.
@@ -670,6 +674,7 @@ app.use(stakingRoutes(config));
 // across devices. Owner-scoped per session, like the /api/sessions/* family
 // in routes/sessions.js.
 app.use(chatDraftsRoutes(config));
+app.use(agentSessionDraftsRoutes(config));
 // #1049: the alternate development flows (Claude Code / Codex web UI) as
 // ordinary browser routes rather than MCP-only tools. App-scoped with the
 // same 'collab' bar as the other dev surfaces, so behind authMiddleware.
@@ -3648,7 +3653,7 @@ async function finalizeRecoveredTurn({
 // stopPolicy.killsWorkerInPhase true so the request drives the
 // in-container kill; it moves to 'mayor2' when the wrap-up starts, where
 // stopping is refused by design.
-function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadcastGlobal }) {
+function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadcastGlobal, relayTo = [] }) {
   // Recovery narration now fans out on BOTH channels. The global WS
   // broadcast reaches tabs listening for session_event; the per-session bus
   // is what a client reconnecting over GET /events replays from. The live
@@ -3665,6 +3670,17 @@ function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadca
       broadcastGlobal({ ...payload, sessionId, event, type: 'session_event' });
     } catch {}
     try { sessionBus.publish(sessionId, payload); } catch {}
+    // The conversations whose Mayor dispatched this run follow it on their
+    // own bus, as they follow a live dispatch. Its end is theirs to announce
+    // (handBackAfterRecovery), not the change's.
+    if (event === 'done' || event === 'stopped') return;
+    for (const agentSessionId of relayTo) {
+      try {
+        sessionBus.publish(require('./src/services/mayor/agent-turn').busKey(agentSessionId), {
+          ...payload, changeId: sessionId, agentSessionId,
+        });
+      } catch {}
+    }
   };
   const handle = stopRegistry.createHandle({
     sessionId,
@@ -3687,8 +3703,20 @@ function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadca
 
 async function resumeDetachedTurn(args) {
   const { pool, sessionId, containerName, activeTurn, broadcastGlobal } = args;
+  const relayTo = [];
+  require('./src/services/agent-sessions').conversationsOfChange(pool, sessionId)
+    .then((conversations) => {
+      for (const c of conversations) {
+        relayTo.push(c.agentSessionId);
+        // Their lists read the dead Mayor's lease as idle; this run is theirs.
+        require('./src/services/ws').pushToUser(c.userId, {
+          type: 'agent_session_changed', agentSessionId: c.agentSessionId, busy: true,
+        });
+      }
+    })
+    .catch(() => {});
   const stopHandle = buildRecoveryStopHandle({
-    sessionId, containerName, activeTurn, broadcastGlobal,
+    sessionId, containerName, activeTurn, broadcastGlobal, relayTo,
   });
   stopRegistry.set(sessionId, stopHandle);
   // Register the whole recovery (journal tail + finalize's PR/staging
@@ -3724,6 +3752,14 @@ async function resumeDetachedTurn(args) {
     // this recovery unwinds, and clearing unconditionally would strand it.
     stopRegistry.deleteIf(sessionId, stopHandle);
     activeWorkersSvc.activeWorkers.delete(sessionId);
+    // The conversation whose Mayor dispatched this run is still leased to
+    // that Mayor's dead turn, and its screen follows the run. Whether the run
+    // finished, stopped or failed, it is over.
+    require('./src/services/mayor/agent-turn')
+      .handBackAfterRecovery({ pool, changeId: sessionId })
+      .catch((err) => log.warn('server', 'Recovered turn: conversation hand-back failed (non-fatal)', {
+        sessionId, err: err.message,
+      }));
     // Turn completion counts as activity: give the freshly recovered
     // session a full idle window instead of leaving last_activity_at at
     // the pre-restart user message (which made it instantly pause-

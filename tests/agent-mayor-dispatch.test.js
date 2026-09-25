@@ -117,11 +117,10 @@ function dispatchStub({ dispatchable = true, outcome = null, onRun = null } = {}
   };
 }
 
-async function runTurn({ steps, stub = dispatchStub(), message = 'Add dark mode', followUp = null, pool = recordingPool(), extra = {} }) {
+async function runTurn({ steps, stub = dispatchStub(), message = 'Add dark mode', followUp = null, pool = recordingPool(), extra = {}, res = fakeRes() }) {
   const model = scriptedModel(steps);
   const spend = [];
   const events = [];
-  const res = fakeRes();
   const deps = {
     llm: { estimateCostCents: () => 4, isEnabled: () => true },
     limits: {
@@ -202,6 +201,71 @@ test('a dispatch runs on the active change, then the Mayor wraps up from its res
     'mayor_reasoning', 'quick_replies', 'usage', 'done',
   ]);
   assert.deepEqual(spend.map((s) => s[2]), [4, 4], 'each Mayor call is billed as it happens');
+});
+
+test('the owner\'s lists hear when a turn starts and ends, and the end stamps "finished"', async () => {
+  const pushed = [];
+  const released = [];
+  await runTurn({
+    steps: [{ text: 'Hello.' }],
+    extra: {
+      notifyUser: (userId, payload) => { pushed.push([userId, payload]); },
+      agentSessions: {
+        getAgentSession: async () => SESSION,
+        appendConversationEvent: async () => {},
+        releaseTurnLease: async (_pool, args) => { released.push(args); pushed.push(['released']); },
+        renewTurnLease: async () => true,
+      },
+    },
+  });
+  assert.deepEqual(pushed, [
+    [USER.id, { type: 'agent_session_changed', agentSessionId: 5, busy: true }],
+    ['released'],
+    [USER.id, { type: 'agent_session_changed', agentSessionId: 5, busy: false }],
+  ], 'working when it starts; finished only once the lease is back, so a re-read sees it');
+  assert.deepEqual(released, [{ agentSessionId: 5, turnId: 'turn-0002-bbbb', finished: true }]);
+
+  // A push that throws never costs the turn.
+  const { model } = await runTurn({ steps: [{ text: 'Still here.' }], extra: { notifyUser: () => { throw new Error('socket down'); } } });
+  assert.equal(model.requests.length, 1, "the turn ran to its answer");
+});
+
+test('a run that finishes while nobody is watching lands in the bell, once per change', async () => {
+  const steps = [
+    { text: 'Building it.', toolUses: [{ id: 'd1', name: 'dispatch_coding_agent', input: { prompt: 'Add the toggle' } }] },
+    { text: 'Built.' },
+  ];
+  // The user left: this turn's stream is closed and nobody follows the events.
+  const notified = [];
+  const left = fakeRes();
+  left.destroyed = true;
+  await runTurn({ steps, res: left, extra: { notifyDone: async (_pool, changeId) => { notified.push(changeId); } } });
+  assert.deepEqual(notified, [50], 'the dev chat\'s own "Session finished", on the change the run was on');
+
+  // Still watching, through the turn's stream or the conversation's events.
+  const watched = [];
+  await runTurn({ steps, extra: { notifyDone: async (_pool, id) => { watched.push(id); } } });
+  const followed = fakeRes();
+  followed.destroyed = true;
+  await runTurn({
+    steps,
+    res: followed,
+    extra: {
+      notifyDone: async (_pool, id) => { watched.push(id); },
+      sessionBus: { publish() {}, clearSession() {}, subscriberCount: () => 1 },
+    },
+  });
+  assert.deepEqual(watched, [], 'nobody is told what they are looking at');
+
+  // A stopped run is the user's own doing, and says nothing.
+  const stopped = [];
+  await runTurn({
+    steps,
+    res: left,
+    stub: dispatchStub({ outcome: { ran: true, changeId: 50, kind: 'build', isError: false, stopped: true, toolResultText: 'stopped' } }),
+    extra: { notifyDone: async (_pool, id) => { stopped.push(id); } },
+  });
+  assert.deepEqual(stopped, []);
 });
 
 test('one dispatch per turn; one the change cannot take is refused to the model', async () => {
@@ -344,7 +408,7 @@ test('a follow-up turn records no user message and carries on from the card', as
 });
 
 test('the turn keeps its lease fresh while it runs', async () => {
-  assert.equal(agentTurn.LEASE_RENEW_MS, 60000);
+  assert.equal(agentTurn.LEASE_RENEW_MS, 30000);
   assert.ok(agentTurn.LEASE_RENEW_MS < require('../src/services/agent-sessions').TURN_LEASE_STALE_MINUTES * 60000 / 5,
     'renewed many times inside the stale window');
 });
@@ -426,13 +490,17 @@ test('a long conversation is compacted after the turn, and replays only what fol
 
 // ── The dispatch ───────────────────────────────────────────────────────
 
-function dispatchDeps({ change = CHANGE_ROW, busy = false, tool = null, cleared = true } = {}) {
+function dispatchDeps({
+  change = CHANGE_ROW, busy = false, tool = null, cleared = true, choice = null, switched = { ok: true },
+} = {}) {
   const log = [];
   const registry = new Map();
   const deps = {
     log,
     registry,
+    agentSessions: { getAgentChoice: async () => choice },
     turnDeps: {
+      switchSessionAgent: async (_pool, args) => { log.push(['switch', args]); return switched; },
       runScoutTool: async (args) => { log.push(['scout', args]); return tool ? tool(args) : { toolResultText: 'spec', turnId: 't-1' }; },
       runClaudeCodeTool: async (args) => { log.push(['build', args]); return tool ? tool(args) : { toolResultText: 'built', turnId: 't-1', stagingUrl: 'https://s' }; },
       scheduleRetainedInteractiveTurn: async (args) => { log.push(['retain', args]); return true; },
@@ -542,6 +610,45 @@ test('a parked change is reopened through the resume route first', async () => {
   assert.deepEqual(log.find((e) => e[0] === 'revoke')[1], { grantId: 'g1', reason: 'action_done' });
   const order = log.map((e) => e[0]).filter((k) => ['call', 'revoke', 'begin'].includes(k));
   assert.deepEqual(order, ['call', 'revoke', 'begin'], 'reopened and the grant gone before the change is claimed');
+});
+
+test('the conversation\'s model applies from the next build: a Claude pick picks the model, a backend or OpenRouter change switches the change first', async () => {
+  const onClaude = await dispatchWith({ choice: { backend: 'claude_code', model: 'claude-fable-5-1', reasoningEffort: null } });
+  const [, claudeArgs] = onClaude.log.find((e) => e[0] === 'build');
+  assert.equal(claudeArgs.selectedModel, 'claude-fable-5-1');
+  assert.ok(!onClaude.log.some((e) => e[0] === 'switch'), 'a Claude model is chosen per run, not by a reset');
+
+  let reads = 0;
+  const toCodex = await dispatchWith({
+    change: () => ((reads += 1) === 1 ? CHANGE_ROW : { ...CHANGE_ROW, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5' }),
+    choice: { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: 'high' },
+  });
+  const [, switchArgs] = toCodex.log.find((e) => e[0] === 'switch');
+  assert.deepEqual(switchArgs, {
+    sessionId: 50, userId: 7,
+    pref: { backend: 'codex_openrouter', provider: 'openrouter', model: 'z-ai/glm-5', reasoningEffort: 'high' },
+  });
+  const order = toCodex.log.map((e) => e[0]).filter((k) => ['switch', 'begin', 'build'].includes(k));
+  assert.deepEqual(order, ['switch', 'begin', 'build'], 'switched before the change is claimed (the switch refuses a busy one)');
+  const [, codexArgs] = toCodex.log.find((e) => e[0] === 'build');
+  assert.equal(codexArgs.session.agent_backend, 'codex_openrouter', 'the build runs on the switched row');
+
+  const refused = await dispatchWith({
+    choice: { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: null },
+    switched: { ok: false, status: 409, error: 'Session is busy' },
+  });
+  assert.equal(refused.outcome.toolResultText, 'built', 'a switch that cannot happen does not stop the build');
+
+  assert.equal(dispatch.needsAgentSwitch(CHANGE_ROW, null), false, 'no choice follows what the change has');
+  assert.equal(dispatch.needsAgentSwitch({ ...CHANGE_ROW, agent_backend: null }, { backend: 'claude_code', model: 'x' }), false);
+  const codexChange = { ...CHANGE_ROW, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5', agent_reasoning_effort: 'low' };
+  assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: 'low' }), false);
+  assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: 'high' }), true);
+  assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'codex_openrouter', model: 'moonshot/kimi', reasoningEffort: 'low' }), true);
+  assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'claude_code', model: null }), true);
+  assert.deepEqual(dispatch.agentPrefFor({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: 'high' }),
+    { backend: 'claude_code', provider: 'anthropic', model: null, reasoningEffort: null },
+    'a Claude change stores no model: each run picks it');
 });
 
 test('a dispatch is refused when there is nothing to build on', async () => {

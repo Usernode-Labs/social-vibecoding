@@ -23,6 +23,12 @@ export const CARD_GAP = 12;
 export const VIEWPORT_MARGIN = 12;
 /** The card's width on anything wider than a phone. */
 export const CARD_MAX_WIDTH = 340;
+/**
+ * The outline is `ring-2`: a 2px box-shadow drawn OUTSIDE the hole. A hole
+ * that reaches the edge of the screen therefore loses that side of its ring,
+ * which is how step 8's ring round the Me tab came to be cut off.
+ */
+export const RING_WIDTH = 2;
 
 /**
  * The first candidate that is really on screen.
@@ -67,6 +73,32 @@ export function padRect(rect: Box, pad = SPOTLIGHT_PAD): Box {
   };
 }
 
+/**
+ * Keep the hole where its whole ring can be seen (QA 2026-09-24 Q30d).
+ *
+ * Two things clip a ring. The viewport's own edges: a target in a corner
+ * (the Me tab, bottom right) pads past them, and the ring goes with the
+ * overflow. And the tab bar: a target taller than the screen (Challenges on
+ * a phone) padded straight down over the bar, so the ring was drawn across
+ * Home, Discover and the rest. `bottomInset` is the bar's height when the
+ * target is NOT in it, and 0 when it is, so the tab step keeps its ring.
+ *
+ * Only ever shrinks the hole; a hole the insets would erase is returned as a
+ * zero-height box at the band's edge rather than a negative one.
+ */
+export function fitHole(
+  hole: Box,
+  viewport: { width: number; height: number },
+  bottomInset = 0,
+): Box {
+  const left = Math.max(hole.left, RING_WIDTH);
+  const right = Math.max(left, Math.min(hole.left + hole.width, viewport.width - RING_WIDTH));
+  const top = Math.max(hole.top, RING_WIDTH);
+  const floor = viewport.height - Math.max(0, bottomInset) - RING_WIDTH;
+  const bottom = Math.max(top, Math.min(hole.top + hole.height, floor));
+  return { top, left, width: right - left, height: bottom - top };
+}
+
 /** The card's width for a viewport, so a phone gets a full-bleed card. */
 export function cardWidth(viewportWidth: number): number {
   return Math.min(CARD_MAX_WIDTH, Math.max(0, viewportWidth - VIEWPORT_MARGIN * 2));
@@ -79,18 +111,28 @@ export function cardWidth(viewportWidth: number): number {
  * pinned inside the viewport either way. With no hole (step 1, or a step
  * whose target went missing) the card centres, because there is nothing for
  * it to point at.
+ *
+ * `bottomInset` is the tab bar's height when the target is not in it: the
+ * card then stays above the bar rather than covering it.
  */
 export function placeCard(
   viewport: { width: number; height: number },
   card: { width: number; height: number },
   hole: Box | null,
+  safeTop = 0,
+  bottomInset = 0,
 ): { top: number; left: number } {
-  const maxTop = Math.max(VIEWPORT_MARGIN, viewport.height - card.height - VIEWPORT_MARGIN);
+  // The status bar is drawn over the page in the app, so the card's top
+  // edge keeps clear of it as well as of the viewport's own edge.
+  const minTop = VIEWPORT_MARGIN + Math.max(0, safeTop);
+  const maxTop = Math.max(
+    minTop, viewport.height - Math.max(0, bottomInset) - card.height - VIEWPORT_MARGIN,
+  );
   const maxLeft = Math.max(VIEWPORT_MARGIN, viewport.width - card.width - VIEWPORT_MARGIN);
 
   if (!hole) {
     return {
-      top: Math.max(VIEWPORT_MARGIN, Math.round((viewport.height - card.height) / 2)),
+      top: Math.max(minTop, Math.round((viewport.height - card.height) / 2)),
       left: Math.max(VIEWPORT_MARGIN, Math.round((viewport.width - card.width) / 2)),
     };
   }
@@ -98,15 +140,20 @@ export function placeCard(
   const below = hole.top + hole.height + CARD_GAP;
   const above = hole.top - CARD_GAP - card.height;
   let top: number;
-  if (below + card.height + VIEWPORT_MARGIN <= viewport.height) top = below;
-  else if (above >= VIEWPORT_MARGIN) top = above;
+  if (below <= maxTop) top = below;
+  else if (above >= minTop) top = above;
   // Neither side has room: the hole is taller than the space around it, so
-  // the card takes the larger gap and the clamp below does the rest.
-  else top = hole.top > viewport.height - (hole.top + hole.height) ? VIEWPORT_MARGIN : below;
+  // the card has to sit ON it. QA 2026-09-24 Q30d: it used to take the
+  // larger gap, which for a section taller than a phone meant the top, over
+  // the very heading and progress the step was describing. A target reads
+  // from its START, so while that start is on screen the card covers the
+  // END instead (the bottom of the band, above the tab bar); only a target
+  // whose start has scrolled off the top gets the card at the top.
+  else top = hole.top >= minTop ? maxTop : minTop;
 
   const centred = hole.left + hole.width / 2 - card.width / 2;
   return {
-    top: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(top, maxTop))),
+    top: Math.round(Math.max(minTop, Math.min(top, maxTop))),
     left: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(centred, maxLeft))),
   };
 }
@@ -196,14 +243,17 @@ export function placeCardForPanel(
   card: { width: number; height: number },
   hole: Box | null,
   panel: Box | null,
+  safeTop = 0,
+  bottomInset = 0,
 ): { top: number; left: number } {
   if (!hole || !panel || !roomLeftOfPanel(card, panel)) {
-    return placeCard(viewport, card, hole);
+    return placeCard(viewport, card, hole, safeTop, bottomInset);
   }
-  const maxTop = Math.max(VIEWPORT_MARGIN, viewport.height - card.height - VIEWPORT_MARGIN);
+  const minTop = VIEWPORT_MARGIN + Math.max(0, safeTop);
+  const maxTop = Math.max(minTop, viewport.height - card.height - VIEWPORT_MARGIN);
   const centred = hole.top + hole.height / 2 - card.height / 2;
   return {
-    top: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(centred, maxTop))),
+    top: Math.round(Math.max(minTop, Math.min(centred, maxTop))),
     left: Math.round(Math.max(VIEWPORT_MARGIN, panel.left - CARD_GAP - card.width)),
   };
 }

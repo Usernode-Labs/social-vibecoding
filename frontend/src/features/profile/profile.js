@@ -66,6 +66,14 @@ import {
   displayNameOf,
   initialOf,
 } from './profile-store.js';
+import { pushDismissible } from '../../lib/back-stack';
+import {
+  act as actOnFriend,
+  announceFriendsChanged,
+  errorMessage as friendErrorMessage,
+  FRIENDS_CHANGED_EVENT,
+  listFriends,
+} from '../friends/api';
 
 const Profile = {
   _open: false,
@@ -96,6 +104,22 @@ const Profile = {
   // what the store carries.
   _pendingAvatar: null,
   _pendingAvatarUrl: null,
+
+  // THE EDITOR'S CLAIM ON THE BACK BUTTON, and what Back leaves behind
+  // (QA 2026-09-24 Q16). Back used to walk past the open editor to the entry
+  // under Profile, so it closed the card AND left the screen, and a half-typed
+  // bio went with it. The editor claims the press the way the dialogs do
+  // (lib/back-stack.ts), and Back closes the card and nothing else.
+  //
+  // What was typed survives that close: `_draft` holds the name and bio until
+  // the editor opens again, which seeds its fields from it. Only Back and the
+  // kit's own dismiss (the backdrop, Escape) keep it; Cancel, Save and leaving
+  // the screen are decisions, and discard it. A staged photo is not kept: it
+  // shows on the identity card as soon as it is staged, which would read as
+  // saved. `_draftSource` is the open editor's own read of its fields.
+  _releaseBack: null,
+  _draft: null,
+  _draftSource: null,
 
   // Field limits, kept in step with src/routes/profile.js. The server is
   // the authority; these exist so the sheet can show a counter and stop an
@@ -215,11 +239,18 @@ const Profile = {
       if (Profile._targetUsername) {
         const target = Profile._targetUsername;
         try {
+          // `?demo=1` rides this read too (#2386): the staging fixtures
+          // for the friend button live behind it (routes/profiles.js).
           const payload = await Profile._fetchJson(
-            `/api/public/profiles/${encodeURIComponent(target)}`
+            `/api/public/profiles/${encodeURIComponent(target)}${Profile._demoQuery()}`
           );
           if (token !== Profile._loadToken || target !== Profile._targetUsername) return;
-          Profile._data = { publicProfile: payload.profile };
+          // `friendship` is the SIGNED-IN viewer's own relationship with this
+          // person (#2386) — absent for an anonymous read and on your own page.
+          Profile._data = {
+            publicProfile: payload.profile,
+            publicFriendship: payload.friendship || null,
+          };
         } catch (err) {
           if (token !== Profile._loadToken || target !== Profile._targetUsername) return;
           Profile._data = err && err.status === 404
@@ -253,11 +284,17 @@ const Profile = {
       // public-profile state backs the Edit profile sheet's "Public page".
       // Both are non-fatal: a failure leaves the rest of the screen intact
       // (the cards read "–", the list says nothing arrived).
+      //
+      // The friends lists (#2386) back the private Friends section. Non-fatal
+      // like the two above: a failure draws "could not be loaded" there and
+      // leaves the rest of the screen alone.
       const demo = Profile._demoQuery();
-      const [ranking, summary, ownerPublicProfile] = await Promise.all([
+      const [ranking, summary, ownerPublicProfile, friends] = await Promise.all([
         Profile._fetchJson('/challenges-api/me/ranking?season_id=active'),
         Profile._fetchJson(`/api/me/summary${demo}`).catch(() => null),
         Profile._fetchJson('/api/me/public-profile').catch(() => null),
+        // The friends client carries `?demo=1` itself.
+        listFriends().catch(() => null),
       ]);
 
       // Written before the staleness check: a load that finished after the
@@ -270,6 +307,7 @@ const Profile = {
         ranking,
         summary,
         ownerPublicProfile,
+        friends,
       };
       if (username) Profile._ownCache = { username, data };
       if (token !== Profile._loadToken || Profile._targetUsername) return;
@@ -318,6 +356,82 @@ const Profile = {
   // features/leaderboard/my-standing.js (MyStanding.revealTokens /
   // reviewTerms), under the same storage key, so an allocation revealed here
   // stays revealed there.
+
+  // ── friends (#2386) ─────────────────────────────────────────────────
+  //
+  // Accept / Decline on the own profile's Friends section. The answer goes
+  // through the same client the person page's button uses. The row moves at
+  // once, and the change announcement then re-reads the lists
+  // (_refreshFriends, below): GET /api/friends is the one authority on who is
+  // a friend, and an accept can race the other person's cancel.
+
+  async answerFriendRequest(userId, accept) {
+    const id = Number(userId);
+    const state = profileStore.get();
+    if (!Number.isSafeInteger(id) || id <= 0 || state.friendsPending) return;
+    const lists = Profile._data && Profile._data.friends;
+    const row = ((lists && lists.incoming) || []).find((p) => Number(p.id) === id);
+    profileStore.set({ friendsPending: id, friendsStatus: '' });
+    try {
+      const next = await actOnFriend(id, accept ? 'accept' : 'decline');
+      if (lists && Profile._data && Profile._data.friends === lists) {
+        const incoming = lists.incoming.filter((p) => Number(p.id) !== id);
+        const friends = next === 'friends' && row
+          ? [...lists.friends, { ...row, since: new Date().toISOString() }]
+            .sort((a, b) => String(a.username).toLowerCase().localeCompare(String(b.username).toLowerCase()))
+          : lists.friends;
+        Profile._data = { ...Profile._data, friends: { ...lists, incoming, friends } };
+        Profile._render();
+      }
+      announceFriendsChanged();
+    } catch (err) {
+      profileStore.set({ friendsStatus: friendErrorMessage(err, row ? row.username : 'them') });
+    } finally {
+      profileStore.set({ friendsPending: null });
+    }
+  },
+
+  // Cancel a request you sent, from the Sent requests group. Withdrawn at
+  // once here; the person it went to loses it from their bell and their own
+  // list, the way a request that was never sent would look.
+  async cancelFriendRequest(userId) {
+    const id = Number(userId);
+    const state = profileStore.get();
+    if (!Number.isSafeInteger(id) || id <= 0 || state.friendsPending) return;
+    const lists = Profile._data && Profile._data.friends;
+    const row = ((lists && lists.outgoing) || []).find((p) => Number(p.id) === id);
+    profileStore.set({ friendsPending: id, friendsStatus: '' });
+    try {
+      await actOnFriend(id, 'cancel');
+      if (lists && Profile._data && Profile._data.friends === lists) {
+        const outgoing = (lists.outgoing || []).filter((p) => Number(p.id) !== id);
+        Profile._data = { ...Profile._data, friends: { ...lists, outgoing } };
+        Profile._render();
+      }
+      announceFriendsChanged();
+    } catch (err) {
+      profileStore.set({ friendsStatus: friendErrorMessage(err, row ? row.username : 'them') });
+    } finally {
+      profileStore.set({ friendsPending: null });
+    }
+  },
+
+  // Re-read the lists while the viewer's OWN profile is on screen — after an
+  // answer here, or any friend change elsewhere on the page (the person
+  // page's button, a notification's Accept). Anywhere else it is a no-op.
+  async _refreshFriends() {
+    if (!Profile._open || Profile._targetUsername || !Profile._data
+        || Profile._data.signedOut || Profile._data.error) return;
+    const token = Profile._loadToken;
+    const username = Profile._user().username || null;
+    const friends = await listFriends().catch(() => null);
+    if (!friends || token !== Profile._loadToken || Profile._targetUsername || !Profile._data) return;
+    Profile._data = { ...Profile._data, friends };
+    if (username && Profile._ownCache && Profile._ownCache.username === username) {
+      Profile._ownCache = { username, data: Profile._data };
+    }
+    Profile._render();
+  },
 
   // ── opt-in public profile (#582) ────────────────────────────────────
 
@@ -393,14 +507,45 @@ const Profile = {
   // unreachable.
 
   showEditSheet() {
-    // Re-entering replaces any open sheet rather than stacking two.
+    // Re-entering replaces any open sheet rather than stacking two. A kept
+    // draft is not thrown away by the re-entry: it is what this open shows.
+    const draft = Profile._draft;
     Profile._dismissSheet();
+    Profile._draft = draft;
     profileStore.set({ sheetOpen: true });
+    Profile._releaseBack = pushDismissible(() => {
+      Profile._releaseBack = null;
+      Profile._dismissSheet({ keepDraft: true });
+      return true;
+    });
   },
 
-  _dismissSheet() {
+  /**
+   * Close the editor. `keepDraft` for a dismissal that is not a decision about
+   * the draft (Back, the kit's backdrop); see `_draft`.
+   */
+  _dismissSheet({ keepDraft = false } = {}) {
+    const source = Profile._draftSource;
+    const user = Profile._user();
+    Profile._draft = keepDraft && typeof source === 'function' && user.username
+      ? { username: user.username, ...source() }
+      : null;
+    // Navigating, because several closes here are the first half of a link
+    // (Email & recovery, Open public page, leaving the screen): the record is
+    // spent a task later, and only if nothing moved (lib/back-stack.ts).
+    const release = Profile._releaseBack;
+    Profile._releaseBack = null;
+    if (release) release({ navigating: true });
     profileStore.set({ sheetOpen: false });
     Profile._clearPendingAvatar();
+  },
+
+  /** The kept draft for the signed-in user, taken once by the opening editor. */
+  takeDraft() {
+    const draft = Profile._draft;
+    Profile._draft = null;
+    const username = Profile._user().username;
+    return draft && username && draft.username === username ? draft : null;
   },
 
   _clearPendingAvatar() {
@@ -615,5 +760,12 @@ const Profile = {
 // Guarded because the SSG prerender pass evaluates this module in Node (the
 // island imports it).
 if (typeof window !== 'undefined') window.Profile = Profile;
+
+// #2386: a friend change anywhere on the page (the person page's button, a
+// notification row's Accept) refreshes the own profile's Friends section if
+// that is what is on screen. Same guard, same reason.
+if (typeof window !== 'undefined') {
+  window.addEventListener(FRIENDS_CHANGED_EVENT, () => { void Profile._refreshFriends(); });
+}
 
 export { Profile };

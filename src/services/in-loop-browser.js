@@ -32,8 +32,8 @@
 const INLOOP_PORT = 3100;
 
 // Local DB for the in-loop launch. This URL resolves for real (#659): the
-// worker image ships a container-local Postgres 15 with trust auth on
-// loopback (worker/Dockerfile), and run-cc.sh starts it and recreates the
+// worker image ships a container-local Postgres 17 with trust auth on
+// loopback (worker/Dockerfile), and both coding runners start it and recreate the
 // `inloop` database FRESH at the start of every build turn. The app boots
 // with USERNODE_ENV=staging, so it follows the same fresh-empty-DB +
 // manifest staging_default secret contract a real staging container does.
@@ -77,17 +77,26 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
   changes where rendering tells you nothing; this is a tool in reach, not a
   gate you must pass every turn.
   - To use it: boot the app you just edited locally, e.g.
-    \`USERNODE_ENV=$INLOOP_ENV PORT=$INLOOP_PORT DATABASE_URL=$INLOOP_DATABASE_URL node server.js &\`
-    (or the entrypoint this app's \`dapp.json\` declares), then point the
+    \`usernode-run-inloop node server.js &\`
+    (or the entrypoint this app's \`dapp.json\` declares). This command sets
+    \`USERNODE_ENV=$INLOOP_ENV\`, \`PORT=$INLOOP_PORT\`, and
+    \`DATABASE_URL=$INLOOP_DATABASE_URL\`, and applies only the manifest's
+    committed \`staging_default\` / \`default\` values. If a required value
+    has no committed local fallback, it reports the missing key and stops;
+    do not invent one. Then point the
     browser at \`http://127.0.0.1:$INLOOP_PORT\` joined with the SAME route(s)
     you put in the TESTING block's \`path:\` lines. The app boots in staging
     mode against a FRESH, EMPTY local database — a real Postgres runs in
     this container and the \`inloop\` DB is recreated for each build turn —
     so seed any data your route needs in this same commit per the "Staging
-    mock data" convention.
+    mock data" convention. A protected route also needs an existing local
+    test sign-in; a login screen is not evidence that the changed route works.
   - A BLANK or empty-looking page usually means MISSING SEED DATA, not a bug —
-    the local DB starts empty. Add the \`IS_STAGING\` seed (or a
-    \`?demo=1\` route) and re-check, rather than "fixing" working code.
+    the local DB starts empty. Check the app's existing staging fixtures or
+    \`?demo=1\` route first. A sign-in screen means the browser is signed out.
+    Use the app's already documented fake staging account through its normal
+    sign-in flow if one exists. Do not edit product authentication or create a
+    new user or password solely to make this local visual check pass.
   - SELF-APP (social-vibecoding) only: it is a hash-routed SPA, so put the
     route after the \`#\` (e.g. \`http://127.0.0.1:$INLOOP_PORT/#/leaderboard\`)
     or the page just boots to the home feed.
@@ -117,17 +126,27 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
     makes a route fail).
   - RUN THE DECLARED CHECKS IN-LOOP with \`usernode-run-checks\` (via Bash):
     with the app booted on \`$INLOOP_PORT\` as above, run
-    \`usernode-run-checks --changed\` to execute exactly the checks you added
-    or changed this branch, with the SAME semantics the platform's capture
-    container uses (console errors, wait-based selector/text assertions).
-    \`--filter <substr>\` narrows by name/path; no flags runs the whole
-    declared suite (fine for small suites, slow for hundreds of checks).
-    This is EXPECTED whenever you touched \`dapp.json\` tests or changed a
+    \`usernode-run-checks --changed\` for checks you added or edited in
+    \`dapp.json\`. For a screen change covered by an UNCHANGED declared check,
+    use \`usernode-run-checks --filter <distinctive name or path>\` instead:
+    \`--changed\` will report zero checks in that case. Both commands use
+    the same navigation, console-error and
+    wait-based selector/text assertions as staging. If \`dapp.json\` declares
+    \`inLoopCheckAuth\`, the checker signs in once with that existing local
+    fixture and copies its browser session into each isolated check. The
+    Playwright MCP browser has a separate session; sign it in through the app
+    UI only if that works promptly. Staging uses a platform-issued capture
+    identity, so local checks with a different account are not proof of
+    identical account permissions.
+    No flags runs the whole declared suite (fine for small suites, slow for
+    hundreds of checks).
+    Attempt this when you touched \`dapp.json\` tests or changed a
     screen an existing check covers: \`npm test\` does NOT cover these, and a
     check that fails on staging after your turn ends blocks the merge with
-    no way for you to react. A check that fails in-loop only because the
-    local DB lacks data that REAL staging seeds is worth double-checking
-    against the seed conventions before "fixing".`;
+    no way for you to react. If the local app or fixture sign-in cannot be
+    brought up within the time budget above, report the setup failure, skip
+    this optional check, and finish the commit. Do not alter authentication
+    code, users, or seed passwords to make an unrelated UI check pass.`;
 
 // Hosted Claude builds fail closed unless the authoritative platform handbook
 // is supplied through --append-system-prompt-file. Repeating the handbook's
@@ -140,10 +159,13 @@ const HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE = `- Follow the complete "In-loop b
   "Staging mock data", and screenshot-state rules supplied in the authoritative
   system instructions. The browser remains optional for ordinary work and is
   expected when verifying a screenshot-state deep link added this turn.
-  - If you changed \`dapp.json\` tests or a screen covered by one, boot the app
-    as described there and run \`usernode-run-checks --changed\`. Use
-    \`--filter <substr>\` to narrow by name/path; no flags runs the full declared
-    suite. \`npm test\` does not run these proposal checks.`;
+  - If you changed \`dapp.json\` tests, try to boot the app and run
+    \`usernode-run-checks --changed\`. If you changed a screen covered by an
+    unchanged check, use \`usernode-run-checks --filter <distinctive name or path>\`;
+    \`--changed\` would run nothing. No flags runs the full declared suite.
+    \`npm test\` does not run these proposal checks. If local runtime or
+    fixture authentication fails promptly, report the setup gap and finish
+    the commit; do not edit app authentication merely to satisfy the check.`;
 
 module.exports = {
   INLOOP_PORT,

@@ -271,15 +271,20 @@ test('the drawer can be opened by URL, so the section is screenshot-able', () =>
 // `<RowActions>` — one component, rendered by each of the three rows.
 test('every message kind carries the save button', () => {
   const tsx = read('frontend/src/features/group-chat/transcript.tsx');
-  const rows = ['MessageRow', 'SystemRow', 'SpecShareRow'];
-  for (const row of rows) {
+  // #2387: a person's row carries the shared hover bar, whose Save is the
+  // same toggle; the system and spec rows keep the module's header controls.
+  const rows = [['MessageRow', /<MessageActions msg=\{msg\}/], ['SystemRow', /<RowActions msg=\{msg\}(?:\s|\/)/], ['SpecShareRow', /<RowActions msg=\{msg\}(?:\s|\/)/]];
+  for (const [row, controls] of rows) {
     const start = tsx.indexOf(`function ${row}(`);
     assert.ok(start > 0, `located ${row}`);
-    const body = tsx.slice(start, tsx.indexOf('\n}', start));
-    assert.match(body, /<RowActions msg=\{msg\}(?:\s|\/)/,
-      `${row} renders the row's header controls`);
+    // To the next top-level declaration: a typed props block closes with
+    // `\n})` before the body does, so the first `\n}` is not the end.
+    const next = tsx.slice(start + 1).search(/\n(?:export )?function /);
+    const body = tsx.slice(start, next < 0 ? undefined : start + 1 + next);
+    assert.match(body, controls, `${row} renders the row's controls`);
   }
-  // …and the save button is inside it, gated on a signed-in viewer.
+  // …and the save button is in both, gated on a signed-in viewer.
+  assert.match(tsx, /onToggleSave=\{msg\.showBookmark && msg\.id \? \(\) => chat\?\.toggleBookmark\?\.\(msg\.id\)/);
   assert.match(tsx, /msg\.showBookmark \? \(/);
   assert.match(tsx, /className=\{saved \? 'gc-msg-save gc-msg-saved' : 'gc-msg-save'\}/);
 });
@@ -299,7 +304,7 @@ test('the message button draws the shell’s own bookmark, not a second one', ()
   assert.doesNotMatch(chatCode, /_bookmarkSvg|_BOOKMARK_PATH/,
     'nor the renderer that drew it');
   const row = read('frontend/src/features/group-chat/transcript.tsx');
-  assert.match(row, /import \{ BookmarkIcon, BookmarkSolidIcon \} from '@\/components\/ui\/icons'/,
+  assert.match(row, /import \{[^}]*\bBookmarkIcon, BookmarkSolidIcon\b[^}]*\} from '@\/components\/ui\/icons'/,
     'the message button imports the glyph rather than inlining one');
   assert.match(LIST_SRC, /BookmarkSolidIcon/,
     'the drawer row imports the glyph rather than inlining one');

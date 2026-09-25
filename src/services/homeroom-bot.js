@@ -95,12 +95,13 @@ const MAX_BATCH_SIZE = 500;
 // and 13 more returned nothing at all after 25 to 149 minutes. The 67 that
 // behaved cost $1.36 between them, and 90% finished inside 9 minutes.
 //
-// Both limits are needed. The clock alone misses a turn that burns tokens
-// fast — two of the seven finished inside 20 minutes — and the token limit
-// alone misses a turn that hangs without spending. Note that input_tokens
-// as the worker reports it is the LAST usage event, not a running sum, and
-// excludes cached reads: it tracks cost well across the ledger but is a
-// tripwire here, not accounting.
+// Only the clock can STOP a turn (#3035). The token limit was meant to
+// catch a turn that burns tokens fast, but neither agent the bot runs
+// reports usage until the turn is over, so a token stop can only land on a
+// finished turn. It is read after the turn instead: the verdict is kept and
+// the overrun logged. The figure is the worker's `inputTokens`, which on
+// Codex is the THREAD's running total — meaningful per turn only because
+// each triage now starts a fresh thread.
 const MIN_TURN_SECONDS = 30;
 const MAX_TURN_SECONDS = 3 * 60 * 60;
 const MIN_TURN_INPUT_TOKENS = 100_000;
@@ -568,11 +569,26 @@ async function threadActivityByIssue(pool, appId) {
   return new Map(rows.map((r) => [Number(r.n), r.last_at]));
 }
 
+/**
+ * The run each issue was last judged by, for the "unchanged since" check.
+ *
+ * Two kinds of row are not a judgement of the issue and are skipped (#3035):
+ * a turn killed as collateral from a stop on the same session, and a turn
+ * discarded by the token check between #2870 and #3035, which fired on every
+ * finished turn because it compared a whole conversation's running total.
+ * Counting either as "seen" left the issue unchanged-since-its-last-run and
+ * so never queued again, which is how issues dropped out without a verdict.
+ * Skipping them puts those issues back on the next refresh; no new rows of
+ * either kind are written once the causes are gone, so the filter is a
+ * recovery that costs nothing afterwards.
+ */
 async function lastRunsByIssue(pool, appId) {
   const { rows } = await pool.query(
     `SELECT DISTINCT ON (issue_number) issue_number, thread_seen_at, verdict, created_at
        FROM homeroom_bot_runs
       WHERE app_id = $1
+        AND budget_stop IS DISTINCT FROM 'input tokens'
+        AND (error IS NULL OR error NOT LIKE 'collateral:%')
       ORDER BY issue_number, created_at DESC`,
     [appId],
   );
@@ -851,6 +867,24 @@ function wasStoppedRecently(sessionId, now = Date.now()) {
 }
 
 /**
+ * What a turn used, from the relay's per-request sum, and what that costs
+ * at the turn's catalog price (#3038). Null when the relay saw no request
+ * finish; `costUsd` is null when the turn had no pricing snapshot.
+ */
+function relaySpend(relayUsage, pricing, agentTurn) {
+  const count = n => Number.isSafeInteger(n) && n >= 0 ? n : null;
+  const requests = count(relayUsage?.requests);
+  if (!requests) return null;
+  const inputTokens = count(relayUsage.inputTokens) ?? 0;
+  const outputTokens = count(relayUsage.outputTokens) ?? 0;
+  const { estimatedCostUsd } = agentTurn.estimateRequestedModelCost({ inputTokens, outputTokens }, pricing);
+  return {
+    requests, inputTokens, outputTokens,
+    costUsd: Number.isFinite(estimatedCostUsd) ? estimatedCostUsd : null,
+  };
+}
+
+/**
  * Why a turn came back with nothing (#2870).
  *
  * The worker's watch state is what `execInWorker` returns, and it already
@@ -1029,16 +1063,32 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   await clearStaleTurn(pool, session, { worker, maxAgeMs: turnBudgetMs })
     .catch((err) => log.warn('homeroom-bot', 'Stale turn check failed', { err: err.message }));
 
+  // A fresh model conversation for every issue (#3035). Passing a null
+  // thread below is NOT enough: the platform reads null as "carry on the
+  // session's saved thread" (resolveCodexRuntimeContext falls back to
+  // `session.agent_thread_id`, the attempt loop to the runtime's thread),
+  // and every finished turn saves its thread back. So the bot's one session
+  // per app was one conversation per app — the Homeroom app's ran from
+  // 2026-09-21 onward, every issue triaged with all the earlier ones in
+  // context, its usage a running total that passed 2.7 billion tokens.
+  // Clearing the saved thread here, in the row and in the object the
+  // runtime is resolved from, is what makes every path resolve to none.
   await pool.query(
-    "UPDATE chat_sessions SET status = 'active', last_activity_at = NOW() WHERE id = $1",
+    "UPDATE chat_sessions SET status = 'active', agent_thread_id = NULL, last_activity_at = NOW() WHERE id = $1",
     [session.id],
   );
+  session.agent_thread_id = null;
   activeWorkers.add(session.id);
 
-  // The budget (#2737). Both guards end the turn the same way a person's
+  // The budget (#2737). The wall clock ends the turn the same way a person's
   // Stop button does: the in-container kill plus the journal exit marker,
   // which the attempt loop below resolves on within milliseconds.
   let budgetHit = null;
+  // The kill in flight, awaited before this function returns (#3035). It
+  // used to be fire-and-forget, and the next issue starts in the same
+  // container the moment this one returns: a kill still landing takes that
+  // issue down one to three seconds in.
+  let stopping = null;
   const spendBudget = (kind) => {
     if (budgetHit) return;
     budgetHit = kind;
@@ -1048,7 +1098,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     // Recorded BEFORE the kill, not after it: the bystander dispatch this
     // protects has already failed by the time stopTurn resolves (#2870).
     noteStopped(session.id);
-    Promise.resolve(worker.stopTurn(session.id)).catch((err) => {
+    stopping = Promise.resolve(worker.stopTurn(session.id)).catch((err) => {
       log.warn('homeroom-bot', 'Budget stop failed', { sessionId: session.id, err: err.message });
     });
   };
@@ -1056,6 +1106,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   if (typeof budgetTimer.unref === 'function') budgetTimer.unref();
 
   let routed;
+  // The turn's pricing snapshot, as the runtime resolved it, so a turn the
+  // ledger could not price is priced from the same catalog (#3038).
+  let pricing = null;
   try {
     routed = await sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
@@ -1064,22 +1117,14 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
       }),
-      dispatchOnce: (ctx) => worker.execInWorker(session.id, {
+      dispatchOnce: (ctx) => { pricing = ctx?.pricingSnapshot || pricing; return worker.execInWorker(session.id, {
         mode: 'scout',
-        // The token half of the budget: a tripwire on a turn that has
-        // plainly run away, not an accounting limit — `inputTokens` is the
-        // last usage event rather than a running sum.
-        //
-        // #2870: this hook reached no path the bot actually takes until
-        // worker.js was corrected, and even now it only STOPS a turn on an
-        // agent that reports usage while the turn runs. `codex-openrouter`
-        // reports once, at turn.completed, so on the model the bot runs
-        // today the wall-clock half is what bounds a turn and this one
-        // reports the breach after the fact (see the warning below).
-        onUsage: (usage) => {
-          const seen = Number(usage?.inputTokens);
-          if (Number.isFinite(seen) && seen > turnInputTokens) spendBudget('input tokens');
-        },
+        // No `onUsage` here, deliberately (#3035). Neither agent the bot can
+        // run reports usage until its turn is over, so a token check wired
+        // to the stop can only ever fire on a finished turn — and did, on
+        // every one, discarding the verdict and killing the next issue. The
+        // token limit is read after the turn instead, below, and never
+        // throws a result away. The wall clock is what ends a runaway.
         prompt,
         model,
         commitMsg: '',
@@ -1088,7 +1133,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
         ...(ctx || {}),
         telemetryComponent: 'homeroom_bot_triage',
         onProgress: () => {},
-      }),
+      }); },
       retryPredicate: () => null,
       sendStatus: async () => {},
       waitForStopped: async () => {},
@@ -1100,6 +1145,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     routed = { error: `dispatch: ${err.message}` };
   } finally {
     clearTimeout(budgetTimer);
+    if (stopping) await stopping;
     activeWorkers.delete(session.id);
     await pool.query(
       "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1",
@@ -1113,13 +1159,35 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   // branch took first, so the turns that wasted the most were the only ones
   // the weekly cap never saw.
   const result = (routed && routed.result) || {};
-  const costUsd = Number.isFinite(routed && routed.estimatedCostUsd)
+  const ledgerCostUsd = Number.isFinite(routed && routed.estimatedCostUsd)
     ? routed.estimatedCostUsd
     : null;
+  // When the ledger has no figure — always, for a turn stopped before
+  // turn.completed — fall back to what the relay saw each model request use
+  // (#3038), priced by the same estimator the ledger uses for a finished
+  // turn, so a stopped turn and a finished one are measured alike. It is a
+  // floor: the request in flight at the stop never reports.
+  const relay = relaySpend(result.relayUsage, pricing, agentTurn);
+  const costUsd = ledgerCostUsd ?? relay?.costUsd ?? null;
   const usage = {
-    inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : null,
-    outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : null,
+    inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : (relay?.inputTokens ?? null),
+    outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : (relay?.outputTokens ?? null),
   };
+  if (ledgerCostUsd == null && relay) {
+    log.info('homeroom-bot', 'Turn priced from the relay: the agent reported no usage', {
+      app: app.slug, issueNumber, stopped: budgetHit || null, costUsd: relay.costUsd,
+      requests: relay.requests, inputTokens: relay.inputTokens, outputTokens: relay.outputTokens,
+    });
+  } else if (relay && Number.isFinite(result.inputTokens)) {
+    // Both figures exist on a finished turn. With a fresh thread per issue
+    // they should agree; this is how production confirms the relay figure
+    // before anything relies on it for a turn that did not finish.
+    log.info('homeroom-bot', 'Turn usage: agent total vs relay sum', {
+      app: app.slug, issueNumber, agentInputTokens: result.inputTokens, relayInputTokens: relay.inputTokens,
+      agentOutputTokens: result.outputTokens ?? null, relayOutputTokens: relay.outputTokens,
+      requests: relay.requests,
+    });
+  }
 
   // #2571: an included (company-funded) key's spend joins the shared weekly
   // pool the budget gate above measures; a personal key would be nobody's
@@ -1134,11 +1202,12 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     }
   }
 
-  // The token budget, observed rather than enforced (#2870). The agent the
-  // bot runs on reports usage once, when the turn is already over, so there
-  // is nothing left to stop by the time this is true — but a turn that ran
-  // away is worth saying out loud rather than leaving in a column nobody
-  // reads. The wall-clock half is what actually bounds these turns.
+  // The token budget, observed rather than enforced (#2870, #3035). Usage
+  // arrives once, when the turn is already over, so there is nothing left
+  // to stop and the verdict is kept — but a turn that ran away is worth
+  // saying out loud. With a fresh thread per issue this is the turn's own
+  // usage; before #3035 it was the conversation's running total, which is
+  // why it read in the billions. The wall clock is what bounds a turn.
   if (!budgetHit && usage.inputTokens != null && usage.inputTokens > turnInputTokens) {
     log.warn('homeroom-bot', 'Triage turn finished over its token budget', {
       app: app.slug, issueNumber, inputTokens: usage.inputTokens, budget: turnInputTokens,
@@ -1707,6 +1776,7 @@ module.exports = {
   noteStopped,
   wasStoppedRecently,
   describeStop,
+  relaySpend,
   STOP_SETTLE_MS,
   BACKOFF_BASE_MS,
   BACKOFF_CEILING_MS,

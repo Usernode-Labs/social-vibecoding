@@ -19,7 +19,10 @@
 //   4. THE DISCUSSIONS READ FAILS QUIETLY. Conversations are this screen's
 //      reason to exist; a second request must not be able to blank it.
 //   5. MEMBERSHIP, NOT VISIBILITY. A public app you have never joined is
-//      something to go and read, not something in your messages.
+//      something to go and read, not something in your messages. (#2967
+//      widens this to "an app you have taken part in", in a second "more"
+//      section — still never an app you have not touched, and never one you
+//      cannot open.)
 //
 // #2783 sections the list the way Discord does: the CHATS (people and
 // agents) on the one clock, then the CHANNELS — #general, then one per app
@@ -182,27 +185,52 @@ test('Agent chat picks one of the viewer\'s apps and opens a new dev session the
   assert.match(body, /navigateToApp\(slug, 'dev', ref, 'sessions'\)/, 'straight to /dev/sessions/new');
 });
 
-test('the endpoint is members-only, newest first, one row per app', () => {
-  assert.match(ROUTE, /JOIN app_collaborators me[\s\S]{0,80}me\.user_id = \$1 AND me\.status = 'member'/,
-    'membership, not visibility');
+test('the endpoint lists yours then more, one row per app, never an app the viewer cannot open', () => {
+  // #2967 widened #2783's members-only scope into two sections: "yours" is
+  // Home's `isYours` (member and not hidden from Your apps, or favorited),
+  // "more" is every other app the viewer took part in. Pinned by clause
+  // here; tests/app-chat-postgres.test.js runs the SQL against the real
+  // schema.
+  assert.match(ROUTE, /FROM app_collaborators me\s+WHERE me\.user_id = \$1 AND me\.status = 'member'/,
+    'membership is one way in');
+  assert.match(ROUTE, /LEFT JOIN app_favorites fav ON fav\.app_id = a\.id AND fav\.user_id = \$1/,
+    'a favorite (or a hidden-from-Your-apps opt-out) is read per viewer');
+  assert.match(ROUTE, /WHEN \(member\.app_id IS NOT NULL AND NOT COALESCE\(fav\.hidden, FALSE\)\)\s+OR \(fav\.app_id IS NOT NULL AND NOT fav\.hidden\)\s+THEN 'yours'/,
+    'yours = Home.isYours: a visible membership, or a favorite');
+  for (const [source, why] of [
+    [/FROM chat_messages posted\s+WHERE posted\.user_id = \$1/, 'posted in its chat'],
+    [/FROM message_reactions reaction/, 'reacted in its chat'],
+    [/FROM pr_votes vote/, 'voted on a proposal'],
+    [/FROM issue_votes vote/, 'voted on a governance question'],
+    [/FROM chat_sessions proposed[\s\S]{0,120}is_headless = FALSE/, 'proposed a change (not an auto session)'],
+    [/FROM issues filed\s+WHERE filed\.created_by = \$1/, 'filed a request'],
+  ]) assert.match(ROUTE, source, `activity: ${why}`);
+  // Visibility is the app routes' view rule, whatever put the app in scope.
+  assert.match(ROUTE, /\(\$2::boolean OR a\.view_visibility = 'public' OR member\.app_id IS NOT NULL\)/,
+    'an app gone view-private drops out for a non-member, favorite or no favorite');
   assert.match(ROUTE, /NOT a\.self_hosted OR \$2::boolean/,
     'and the platform’s own app keeps its admin gate');
   assert.match(ROUTE, /SELECT DISTINCT ON \(m\.app_id\)/, 'one row per app');
   assert.match(ROUTE, /ORDER BY m\.app_id, m\.created_at DESC, m\.id DESC/,
     'the id tiebreak matters: created_at defaults to NOW() and two messages '
     + 'in one transaction share it');
-  assert.match(ROUTE, /WHERE m\.thread_type IS NULL/, 'the general thread, not a card’s');
-  // #2783: EVERY app the viewer is in is a channel, including one nobody has
+  assert.match(ROUTE, /WHERE m\.thread_type IS NULL\s+AND m\.deleted_at IS NULL/,
+    'the general thread, not a card’s or a reply thread’s, and never a deleted message');
+  // #2783: EVERY app in scope is a channel, including one nobody has
   // spoken in — so the latest message is joined optionally, and those sort
   // after the ones with activity.
   assert.match(ROUTE, /LEFT JOIN latest ON latest\.app_id = mine\.id/);
-  assert.match(ROUTE, /ORDER BY latest\.created_at DESC NULLS LAST/, 'newest first, silent last');
-  // No unread count, and its absence is honest: chat_messages has no
-  // per-viewer read cursor, so a number here would be invented. Comments
-  // stripped first — the file SAYS why there is none, and a prose match for
-  // the thing being forbidden fails on the note explaining it.
-  const code = ROUTE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  assert.doesNotMatch(code, /unread/i);
+  assert.match(ROUTE, /ORDER BY \(mine\.section = 'yours'\) DESC,\s+latest\.created_at DESC NULLS LAST, LOWER\(mine\.name\), mine\.slug/,
+    'yours before more; newest first inside each, silent last');
+  // #2387 gives chat_messages a per-viewer read cursor (app_chat_reads), so
+  // the count this test used to forbid is now a real one — and it is
+  // computed from that cursor, not invented.
+  assert.match(ROUTE, /JOIN app_chat_reads rc ON rc\.app_id = m\.app_id AND rc\.user_id = \$1/);
+  assert.match(ROUTE, /m\.id > rc\.last_read_message_id/);
+  assert.match(ROUTE, /m\.user_id IS NOT NULL AND m\.user_id <> \$1/,
+    'from other people: your own lines and authorless system lines are not unread');
+  assert.match(ROUTE, /appChat\.ensureReadCursors\(pool, req\.user\.id, missing\)/,
+    'an app seen for the first time starts at zero');
 });
 
 test('the route is registered after the workshop one', () => {
@@ -361,6 +389,25 @@ test('an app\'s channel handle is its name folded, unique within the viewer\'s l
   ]);
   assert.deepEqual(list.map((d) => d.channel), ['recipe-box', 'recipe-cd34', 'general-99'],
     'a second "Recipe Box" and an app named General fall back to their slugs');
+  // #2967: the handles stay unique across BOTH sections — a `#name` in a
+  // message resolves against the whole list, not one half of it.
+  const sectioned = overview.channelHandles([
+    overview.toDiscussion({ slug: 'notes-a1', name: 'Notes', section: 'yours' }),
+    overview.toDiscussion({ slug: 'notes-b2', name: 'Notes', section: 'more' }),
+  ]);
+  assert.deepEqual(sectioned.map((d) => [d.section, d.channel]), [['yours', 'notes'], ['more', 'notes-b2']]);
+});
+
+test('a discussion row carries its section and unread count (#2967, #2387)', () => {
+  const row = overview.toDiscussion({
+    slug: 'recipe-ab12', name: 'Recipe Box', section: 'more', unread_count: '4',
+    last_message: 'hi', last_at: '2026-01-02T00:00:00Z', last_by: 'ada',
+  });
+  assert.equal(row.section, 'more');
+  assert.equal(row.unreadCount, 4, 'COUNT(*) arrives as a number; a string one is coerced');
+  const bare = overview.toDiscussion({ slug: 'x', name: 'X' });
+  assert.equal(bare.section, 'yours', 'anything but "more" is yours');
+  assert.equal(bare.unreadCount, 0);
 });
 
 test('an app channel opened in Messages mounts its chat after React commits, so its composer is wired', () => {

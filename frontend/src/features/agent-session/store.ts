@@ -9,21 +9,45 @@
 //   - what a turn is doing right now (streamed text, the tool it is running,
 //     the coding agent's latest progress line), which only lives until the
 //     turn's rows are persisted.
+//
+// A conversation New change opens is UNSENT (`draft`, addressed `new`): no
+// row exists until its first message, so opening and leaving it leaves
+// nothing behind in Messages. The first send creates the session with what
+// the draft carried (the hint, the model picked while it was unsent), swaps
+// the address for the session's own in place, and posts the message.
 
 import { useSyncExternalStore } from 'react';
 
+import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
+import { acceptFiles, pickedKind, type PendingFile } from './attachments';
 import type {
   AgentAction,
   AgentCard,
+  AgentChange,
+  AgentChoice,
   AgentHint,
   AgentMessage,
   AgentSession,
   AgentTurnEvent,
+  ModelCatalog,
+  SavedDraft,
 } from './api';
+import { sameChoice } from './model-choice';
 import { toolActivity } from './transcript';
 
 export type AgentSessionHost = 'screen' | 'messages';
+
+/** A conversation's id, or `new` for the one not sent yet. */
+export type AgentSessionTarget = number | 'new';
+
+/** An unsent conversation: what it is about, and the model picked for it. */
+export interface AgentDraft {
+  hint: AgentHint | null;
+  focusApp: AgentSession['focusApp'];
+  focusContext: Record<string, unknown>;
+  agent: AgentChoice | null;
+}
 
 export interface LiveTurn {
   running: boolean;
@@ -35,6 +59,61 @@ export interface LiveTurn {
   startedAt: number | null;
   cards: AgentCard[];
   pendingUserText: string | null;
+  /**
+   * The newest message id on screen when the pending text was sent. The
+   * saved row is the first user message after it; once a refresh brings it
+   * in, the pending bubble goes (settlePending).
+   */
+  pendingAfterId: number | null;
+}
+
+/** The spec viewer over the conversation: one change's spec, one version. */
+export interface SpecSheetState {
+  changeId: number;
+  /** The version on screen; null is the latest. */
+  version: number | null;
+  versions: number[];
+  text: string;
+  phase: 'loading' | 'ready' | 'error';
+  error: string;
+  /**
+   * Which half of a two-half spec is showing (the platform's convention, see
+   * public/js/spec-sections.js): the plain-language half first, as the dev
+   * chat's viewer does. Kept across a version switch, reset for another change.
+   */
+  tab: SpecTab;
+}
+
+export type SpecTab = 'user' | 'tech';
+
+/**
+ * A change's staging preview in the side pane (#2779 follow-up), beside the
+ * spec: the platform's own preview (AppView.ensureStaging), docked over the
+ * pane's slot. Only on a wide screen; a narrow one opens the preview in a tab.
+ */
+export interface PreviewPaneState {
+  changeId: number;
+  url: string;
+  prNumber: number | null;
+  /** The app the preview is of, for signing in to it. */
+  app: { slug: string; self_hosted: boolean } | null;
+}
+
+/** Which of the side pane's two pages is showing, when it holds both. */
+export type PaneTab = 'spec' | 'preview';
+
+/** The coding agents a change can be handed to on the web. */
+export type HandoffAgent = 'claude-code' | 'codex';
+
+/**
+ * A message the platform credits refused (POST .../turns answered 429
+ * `budget_exceeded`): the card that says so and how to keep building, in
+ * place of a raw error line.
+ */
+export interface CreditsRefusal {
+  error: string;
+  reason: string | null;
+  verificationRequired: boolean;
 }
 
 export interface AgentSessionState {
@@ -42,6 +121,8 @@ export interface AgentSessionState {
   host: AgentSessionHost;
   id: number | null;
   session: AgentSession | null;
+  /** Set while the conversation on screen is unsent (`id` is null). */
+  draft: AgentDraft | null;
   messages: AgentMessage[];
   actions: AgentAction[];
   phase: 'idle' | 'loading' | 'ready' | 'error';
@@ -51,6 +132,35 @@ export interface AgentSessionState {
   deciding: string | null;
   sessions: AgentSession[];
   sessionsLoaded: boolean;
+  /** The picker's options, read once per page. */
+  catalog: ModelCatalog | null;
+  /** A pick on its way to the server. */
+  choosing: boolean;
+  /** A message the server refused, handed back to the composer to send again. */
+  returnedText: string | null;
+  /**
+   * A suggested reply the user tapped (#3033): it goes INTO the box, to be
+   * edited or sent, the way the dev chat's pills do, rather than straight
+   * out. `seq` makes the same pill tapped twice a second fill.
+   */
+  composerFill: { text: string; seq: number } | null;
+  specSheet: SpecSheetState | null;
+  preview: PreviewPaneState | null;
+  paneTab: PaneTab;
+  /** A staging card's action on its way: proposing, retrying the build, or re-running its checks. */
+  changeAction: { changeId: number; kind: 'propose' | 'retry' | 'recheck' } | null;
+  /** The last message was refused for credits; cleared by the next send. */
+  credits: CreditsRefusal | null;
+  /** The hand-off walkthrough over the conversation, for this agent. */
+  handoff: HandoffAgent | null;
+  /**
+   * The conversation's saved drafts (#2779 follow-up, the dev chat's #798
+   * list): what the owner parked while the Mayor worked, oldest first, as
+   * the server holds them for every device.
+   */
+  drafts: SavedDraft[];
+  /** Files in the tray above the box, sent with the next message (./attachments.ts). */
+  attachments: PendingFile[];
 }
 
 const IDLE_TURN: LiveTurn = {
@@ -63,6 +173,7 @@ const IDLE_TURN: LiveTurn = {
   startedAt: null,
   cards: [],
   pendingUserText: null,
+  pendingAfterId: null,
 };
 
 export const INITIAL_STATE: AgentSessionState = {
@@ -70,6 +181,7 @@ export const INITIAL_STATE: AgentSessionState = {
   host: 'screen',
   id: null,
   session: null,
+  draft: null,
   messages: [],
   actions: [],
   phase: 'idle',
@@ -79,6 +191,18 @@ export const INITIAL_STATE: AgentSessionState = {
   deciding: null,
   sessions: [],
   sessionsLoaded: false,
+  catalog: null,
+  choosing: false,
+  returnedText: null,
+  composerFill: null,
+  specSheet: null,
+  preview: null,
+  paneTab: 'spec',
+  changeAction: null,
+  drafts: [],
+  attachments: [],
+  credits: null,
+  handoff: null,
 };
 
 let state: AgentSessionState = INITIAL_STATE;
@@ -88,11 +212,27 @@ let turnAbort: AbortController | null = null;
 let events: EventSource | null = null;
 let eventFilter: string | null = null;
 const seen = new Set<string>();
+// The hint the next `new` open starts from: undefined when nothing has been
+// prepared (a reload of `#agent/new`, or the same draft routed again).
+let pendingHint: AgentHint | null | undefined;
+let catalogRequest: Promise<void> | null = null;
 
 function publish(patch: Partial<AgentSessionState> | ((current: AgentSessionState) => Partial<AgentSessionState>)) {
   const next = typeof patch === 'function' ? patch(state) : patch;
   state = { ...state, ...next };
+  syncTabTitle();
   for (const listener of listeners) listener();
+}
+
+// The browser tab says "⏳ Thinking…" while the conversation on screen is
+// working, as the dev chat's does (#108). The dev chat's module stays the
+// title's one writer: this only tells it when an agent turn is running.
+let tabThinking = false;
+function syncTabTitle() {
+  const thinking = state.open && state.turn.running;
+  if (thinking === tabThinking || typeof window === 'undefined') return;
+  tabThinking = thinking;
+  try { window.DevChat?.setAgentSessionThinking?.(thinking); } catch { /* the title keeps its last marker */ }
 }
 
 function patchTurn(patch: Partial<LiveTurn>) {
@@ -138,10 +278,19 @@ function syncTitle() {
 
 // ── Reading ────────────────────────────────────────────────────────────
 
+/**
+ * The lists (Recents, the mark's menu, Messages) read the same session as
+ * the screen: reading it marked it seen, and a turn that just ended is no
+ * longer working, so their mark follows the conversation on screen at once.
+ */
+function withListed(current: AgentSessionState, session: AgentSession): AgentSession[] {
+  return current.sessions.map((s) => (s.id === session.id ? session : s));
+}
+
 async function refreshSession(id: number) {
   const { session } = await api.getSession(id);
   if (state.id !== id) return;
-  publish({ session });
+  publish((current) => ({ session, sessions: withListed(current, session) }));
   syncTitle();
 }
 
@@ -156,7 +305,42 @@ async function refreshMessages(id: number) {
     after = nextAfter;
   }
   if (state.id !== id) return;
-  publish({ messages: all });
+  publish((current) => ({ messages: all, turn: settlePending(current.turn, all) }));
+}
+
+/**
+ * A progress line as the build card shows it. The runner's phase markers
+ * arrive as "[codex (resume <thread>, mode build)]"; the dev chat labels
+ * them through cc-progress-summary.js's ccPhaseLabel ("Coding agent is
+ * working"), and so does this, rather than printing the marker.
+ */
+export function progressLine(text: string): string {
+  const marker = /^\[([^\]]+)\]$/.exec(text);
+  if (!marker) return text;
+  const label = typeof window !== 'undefined'
+    && typeof (window as unknown as { ccPhaseLabel?: (phase: string) => string }).ccPhaseLabel === 'function'
+    ? (window as unknown as { ccPhaseLabel: (phase: string) => string }).ccPhaseLabel(marker[1])
+    : '';
+  return label && label !== marker[1].trim() ? label : 'The coding agent is working';
+}
+
+function newestMessageId(messages: AgentMessage[]): number {
+  return messages.reduce((max, message) => (message.id > max ? message.id : max), 0);
+}
+
+/**
+ * The pending bubble stands in for the message until its saved row is on
+ * screen, and not a moment longer. It used to wait for the Mayor's first
+ * reply, but a turn that goes straight to a build says nothing until the
+ * build's wrap-up: the refresh a build's progress triggers brought the saved
+ * row in above the run card while the bubble stayed under it, so the message
+ * showed twice until the turn ended or the page was reloaded.
+ */
+export function settlePending(turn: LiveTurn, messages: AgentMessage[]): LiveTurn {
+  if (!turn.pendingUserText) return turn;
+  const after = turn.pendingAfterId || 0;
+  const landed = messages.some((message) => message.role === 'user' && message.id > after);
+  return landed ? { ...turn, pendingUserText: null, pendingAfterId: null } : turn;
 }
 
 async function refreshActions(id: number) {
@@ -215,7 +399,9 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
         phase,
         streamText: phase === 'mayor2' ? '' : state.turn.streamText,
         activity: phase === 'cc' ? 'The coding agent is working' : '',
-        startedAt: phase === 'cc' ? Date.now() : (state.turn.startedAt || Date.now()),
+        startedAt: phase === 'cc'
+          ? (typeof event.startedAt === 'number' ? event.startedAt : Date.now())
+          : (state.turn.startedAt || Date.now()),
         progress: phase === 'cc' ? '' : state.turn.progress,
       });
       break;
@@ -232,11 +418,26 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
       break;
     case 'status':
     case 'cc_progress':
-      if (typeof event.text === 'string' && event.text.trim()) patchTurn({ progress: event.text.trim() });
+      if (typeof event.text === 'string' && event.text.trim()) patchTurn({ progress: progressLine(event.text.trim()) });
       if (event.type === 'status' && fromChange) void refreshMessages(id).catch(() => {});
       break;
     case 'staging_ready':
     case 'staging_failed':
+      if ((event.type === 'staging_ready' || event.type === 'staging_failed') && fromChange) {
+        const changeId = Number(event.changeId);
+        // A preview in the pane waiting on this rebuild opens (or says why not).
+        try {
+          window.AppView?.onStagingRebuildResult?.(changeId, {
+            url: typeof event.url === 'string' ? event.url : null,
+            failed: event.type === 'staging_failed',
+            error: typeof event.error === 'string' ? event.error : null,
+          });
+        } catch { /* the preview's own loader says so */ }
+        if (state.changeAction && state.changeAction.kind === 'retry' && state.changeAction.changeId === changeId) {
+          publish({ changeAction: null });
+        }
+      }
+      // falls through
     case 'pr_created':
     case 'pr_updated':
     case 'spec_updated':
@@ -276,32 +477,47 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
 // ── Opening and closing ────────────────────────────────────────────────
 
 export async function openAgentSession({ id, host = 'screen', drawer = false }: {
-  id: number;
+  id: AgentSessionTarget;
   host?: AgentSessionHost;
   drawer?: boolean;
 }) {
+  if (id === 'new') return openDraft(host);
+  // THE SAME SESSION AGAIN changes where it is drawn and nothing else — and in
+  // particular does not claim the load (QA 2026-09-24 Q23). A cold deep link
+  // opens it twice (the screen's own effect, then app.js's router), and the
+  // second call used to take a new `navigation` version and return. The first
+  // call's answer then belonged to nobody: a session that does not exist left
+  // the full screen blank, with no "Agent session not found" and no spinner,
+  // while the Messages pane, opened once, said so. It also used to clear the
+  // error it would never set again.
+  if (state.id === id && state.open) {
+    publish({ open: true, host, drawerOpen: drawer || state.drawerOpen });
+    syncTitle();
+    return;
+  }
   const version = ++navigation;
-  const same = state.id === id && state.open;
   publish({
     open: true,
     host,
     id,
-    phase: same ? state.phase : 'loading',
+    phase: 'loading',
     error: '',
-    drawerOpen: drawer || (same ? state.drawerOpen : false),
-    ...(same ? {} : { session: null, messages: [], actions: [], turn: IDLE_TURN }),
+    drawerOpen: drawer,
+    session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null, drafts: [],
+    credits: null, handoff: null, attachments: dropAllAttachments(),
   });
   syncTitle();
-  if (same) return;
   seen.clear();
   closeEvents();
   try {
     const [{ session, turn }] = await Promise.all([api.getSession(id), refreshMessages(id), refreshActions(id)]);
     if (version !== navigation) return;
-    publish({ session, phase: 'ready' });
+    publish((current) => ({ session, phase: 'ready', sessions: withListed(current, session) }));
     syncTitle();
+    void loadDrafts(id);
+    refreshCredits();
     if (session.busy) {
-      patchTurn({ running: true, phase: turn ? turn.phase : 'mayor', startedAt: Date.now() });
+      patchTurn({ running: true, phase: turn ? turn.phase : 'mayor', startedAt: (turn && turn.startedAt) || Date.now() });
       followEvents(id);
     }
   } catch (error) {
@@ -310,21 +526,125 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   }
 }
 
+/**
+ * Where to start the next unsent conversation from. Called by New change
+ * (startAgentSession) in this document, and by the side panel's own document
+ * with the hint the top window handed it.
+ */
+export function prepareAgentDraft(hint: AgentHint | null | undefined) {
+  pendingHint = hint || null;
+}
+
+/**
+ * Show an unsent conversation. A freshly prepared hint starts a new draft;
+ * routing the one already on screen again (a resize, a same-address
+ * restore) keeps it, typed model pick included.
+ */
+function openDraft(host: AgentSessionHost) {
+  const version = ++navigation;
+  const fresh = pendingHint !== undefined;
+  if (!fresh && state.open && state.id === null && state.draft) {
+    publish({ host });
+    syncTitle();
+    return;
+  }
+  const hint = fresh ? (pendingHint || null) : null;
+  pendingHint = undefined;
+  seen.clear();
+  closeEvents();
+  const draft: AgentDraft = {
+    hint,
+    focusApp: null,
+    focusContext: hint && hint.entry ? { entry: hint.entry } : {},
+    agent: null,
+  };
+  publish({
+    open: true,
+    host,
+    id: null,
+    session: null,
+    draft,
+    messages: [],
+    actions: [],
+    phase: 'ready',
+    error: '',
+    drawerOpen: false,
+    specSheet: null,
+    turn: IDLE_TURN,
+    drafts: [],
+    attachments: dropAllAttachments(),
+    credits: null,
+    handoff: null,
+  });
+  syncTitle();
+  refreshCredits();
+  if (!hint || !(hint.slug || hint.issueNumber || hint.proposalId)) return;
+  // What it is about, resolved as creating it would resolve it, written
+  // nowhere. A failure only leaves the bar saying "Any app".
+  void api.previewDraft(hint).then((preview) => {
+    if (version !== navigation || state.draft?.hint !== hint) return;
+    publish((current) => ({
+      draft: current.draft ? { ...current.draft, focusApp: preview.focusApp, focusContext: preview.focusContext } : null,
+    }));
+  }).catch(() => {});
+}
+
 /** The screen or pane stopped showing this conversation. A running turn goes on server-side. */
 export function deactivateAgentSession() {
   navigation += 1;
   closeEvents();
   if (turnAbort) turnAbort.abort();
   turnAbort = null;
-  publish({ open: false, drawerOpen: false, turn: IDLE_TURN });
+  if (state.preview) closePreview();
+  publish({ open: false, drawerOpen: false, specSheet: null, preview: null, turn: IDLE_TURN, handoff: null });
 }
 
 /** Where a conversation lives: beside the inbox on a desktop, its own screen on a phone (app.js swaps). */
-export function agentSessionAddress(id: number) {
+export function agentSessionAddress(id: AgentSessionTarget) {
   return `#messages/agent/${id}`;
 }
 
-function go(hash: string) {
+/**
+ * The unsent conversation became session `id`: give the page the session's
+ * own address in place, so a reload, Back or Expand finds it, and let the
+ * router hear it (its same-id checks make that a no-op for this store).
+ */
+function adoptAddress(id: number) {
+  if (typeof window === 'undefined') return;
+  const hash = window.location.hash;
+  const next = /^#agent\/new(?:\/|$)/.test(hash)
+    ? `#agent/${id}`
+    : /^#messages\/agent\/new(?:\/|$)/.test(hash) ? agentSessionAddress(id) : null;
+  if (!next) return;
+  try {
+    window.history.replaceState(window.history.state, '', next);
+  } catch {
+    return;
+  }
+  const restore = window.App?.restoreFromHash;
+  if (typeof restore === 'function') restore.call(window.App);
+}
+
+/**
+ * THE SIDE PANEL (desktop): while an app runs on its App tab, a conversation
+ * opens in the panel beside it instead of replacing it, as a change or a
+ * thread does (frontend/src/features/side-panel/). False whenever that is not
+ * the moment — no app on screen, a narrow window, or this IS the panel's own
+ * document, where the address below is followed in place.
+ */
+function sidePanelTakes(hash: string, agentHint?: AgentHint | null): boolean {
+  const panel = (window as unknown as {
+    UsernodeReact?: { sidePanel?: { take?: (route: string, hint?: { agentHint?: AgentHint | null } | null) => boolean } };
+  }).UsernodeReact?.sidePanel;
+  try {
+    return !!panel?.take?.(hash.replace(/^#/, ''), agentHint !== undefined ? { agentHint } : null);
+  } catch {
+    return false;
+  }
+}
+
+function go(hash: string, agentHint?: AgentHint | null) {
+  if (sidePanelTakes(hash, agentHint)) return;
   if (window.location.hash === hash) {
     const restore = window.App?.restoreFromHash;
     if (typeof restore === 'function') restore.call(window.App);
@@ -335,23 +655,22 @@ function go(hash: string) {
 
 /**
  * Start a conversation from an entry point, carrying what it knows (the app,
- * a request, a proposal) as the hint, and open it. An optional first message
- * is sent straight away.
+ * a request, a proposal) as the hint, and open it UNSENT — in the side panel
+ * when an app is running beside it, where the hint rides into the panel's own
+ * document. Nothing is created here: the first message creates the session,
+ * in whichever document is showing it.
  */
-export async function startAgentSession(hint: AgentHint | null = null, { message = null }: { message?: string | null } = {}) {
-  try {
-    const session = await api.createSession(hint);
-    publish((current) => ({ sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)] }));
-    go(agentSessionAddress(session.id));
-    if (message && message.trim()) {
-      // The route opens the conversation first; the message follows it.
-      setTimeout(() => { void sendAgentMessage(message); }, 0);
-    }
-    return session;
-  } catch (error) {
-    window.PlatformUI?.toast?.(errorText(error, 'Could not start an agent session.'));
-    return null;
+export function startAgentSession(hint: AgentHint | null = null) {
+  prepareAgentDraft(hint);
+  if (sidePanelTakes(agentSessionAddress('new'), hint)) {
+    // The panel's document starts the draft; this one has nothing to open.
+    pendingHint = undefined;
+    return;
   }
+  // Already showing an unsent conversation: the address may not change, and
+  // then no router pass would pick the new hint up. Start it here.
+  if (state.open && state.id === null && state.draft) openDraft(state.host);
+  go(agentSessionAddress('new'));
 }
 
 export function closeAgentSession() {
@@ -361,21 +680,180 @@ export function closeAgentSession() {
 
 // ── Talking ────────────────────────────────────────────────────────────
 
-export async function sendAgentMessage(text: string) {
-  const id = state.id;
-  const message = text.trim();
-  if (!id || !message || state.turn.running) return;
-  publish({ error: '' });
-  patchTurn({ running: true, phase: 'mayor', pendingUserText: message, startedAt: Date.now(), streamText: '', cards: [] });
-  const abort = new AbortController();
-  turnAbort = abort;
+/**
+ * Create the session an unsent conversation stands for, with what it carried.
+ * Its id, or null when the create was refused (said on screen, and the draft
+ * stays as it was).
+ */
+async function createFromDraft(draft: AgentDraft): Promise<number | null> {
   try {
-    await api.sendTurn(id, message, { signal: abort.signal, onEvent: (event) => handleEvent(id, event) });
+    const session = await api.createSession(draft.hint, draft.agent);
+    publish((current) => ({ sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)] }));
+    // Still on screen: this is the conversation now. Left meanwhile: it
+    // still gets its message, it just is not what the screen shows.
+    if (state.open && state.draft === draft) {
+      publish({ id: session.id, session, draft: null, phase: 'ready' });
+      syncTitle();
+      adoptAddress(session.id);
+    }
+    return session.id;
+  } catch (error) {
+    if (state.draft === draft) publish({ error: errorText(error, 'Could not start an agent session.') });
+    return null;
+  }
+}
+
+// ── Attachments (#2779 follow-up) ──────────────────────────────────────
+//
+// Files wait in a tray above the box and go with the next message. In a
+// conversation that exists each one uploads as it is picked, so a refusal
+// (too big, the wrong bytes) shows at once; an unsent conversation has
+// nowhere to upload to yet, so its files upload on send, after the
+// conversation is created — nothing is created before the first message.
+
+let attachmentSeq = 0;
+
+function revokeThumb(item: PendingFile) {
+  if (item.thumbUrl) {
+    try { URL.revokeObjectURL(item.thumbUrl); } catch { /* not ours to keep */ }
+  }
+}
+
+/** Empties the tray, letting its previews go; returns the empty tray for a publish. */
+function dropAllAttachments(): PendingFile[] {
+  for (const item of state.attachments || []) revokeThumb(item);
+  return [];
+}
+
+function patchAttachment(key: string, patch: Partial<PendingFile>) {
+  publish((current) => ({
+    attachments: current.attachments.map((item) => (item.key === key ? { ...item, ...patch } : item)),
+  }));
+}
+
+function dropAttachments(keys: string[]) {
+  const gone = state.attachments.filter((item) => keys.includes(item.key));
+  gone.forEach(revokeThumb);
+  publish((current) => ({ attachments: current.attachments.filter((item) => !keys.includes(item.key)) }));
+}
+
+async function uploadPending(id: number, key: string): Promise<boolean> {
+  const item = state.attachments.find((entry) => entry.key === key);
+  if (!item) return false;
+  if (item.status === 'ready' && item.id) return true;
+  patchAttachment(key, { status: 'uploading' });
+  try {
+    const uploaded = await api.uploadAttachment(id, item.file, item.name);
+    if (state.id !== id) return false;
+    patchAttachment(key, { status: 'ready', id: uploaded.id, kind: uploaded.kind });
+    return true;
+  } catch (error) {
+    if (state.id === id) {
+      dropAttachments([key]);
+      toast(errorText(error, `Could not attach ${item.name}.`));
+    }
+    return false;
+  }
+}
+
+/** Put picked, pasted or dropped files in the tray; the first refusal is said once. */
+export function addAttachments(files: Array<{ name: string; size: number; type?: string } & Blob>) {
+  if (state.session?.status === 'archived') return;
+  const { accepted, error } = acceptFiles(state.attachments.length, files);
+  if (error) toast(error);
+  if (!accepted.length) return;
+  const id = state.id;
+  const added: PendingFile[] = accepted.map((file) => {
+    const kind = pickedKind(file.name);
+    let thumbUrl: string | null = null;
+    if (kind === 'image' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+      try { thumbUrl = URL.createObjectURL(file); } catch { thumbUrl = null; }
+    }
+    attachmentSeq += 1;
+    return {
+      key: `att${attachmentSeq}`,
+      file,
+      name: file.name,
+      kind,
+      size: file.size,
+      thumbUrl,
+      status: id ? 'uploading' : 'local',
+      id: null,
+    };
+  });
+  publish((current) => ({ attachments: [...current.attachments, ...added] }));
+  if (id) for (const item of added) void uploadPending(id, item.key);
+}
+
+/** The tray's remove control; an upload in flight has none (pending-strip.tsx). */
+export function removeAttachment(index: number) {
+  const item = state.attachments[index];
+  if (!item || item.status === 'uploading') return;
+  dropAttachments([item.key]);
+}
+
+export async function sendAgentMessage(text: string) {
+  const draft = state.id ? null : state.draft;
+  const message = text.trim();
+  const files = state.attachments;
+  if ((!state.id && !draft) || (!message && !files.length) || state.turn.running) return;
+  // The button waits for uploads in flight; Enter must too.
+  if (files.some((item) => item.status === 'uploading')) return;
+  publish({ error: '', credits: null });
+  const shown = message || (files.length === 1 ? `Attached ${files[0].name}` : `Attached ${files.length} files`);
+  patchTurn({
+    running: true, phase: 'mayor', pendingUserText: shown, pendingAfterId: newestMessageId(state.messages),
+    startedAt: Date.now(), streamText: '', cards: [],
+  });
+  const id = draft ? await createFromDraft(draft) : state.id;
+  if (!id) {
+    if (draft && state.draft === draft) publish({ turn: IDLE_TURN, returnedText: message });
+    return;
+  }
+  // The files an unsent conversation held: they upload now that it exists.
+  for (const item of state.attachments.filter((entry) => entry.status === 'local')) {
+    // eslint-disable-next-line no-await-in-loop
+    if (!await uploadPending(id, item.key)) {
+      if (state.id === id) publish({ turn: IDLE_TURN, returnedText: message });
+      return;
+    }
+  }
+  const sending = state.attachments.filter((item) => item.status === 'ready' && item.id);
+  const attachmentIds = sending.map((item) => item.id as string);
+  // The tray empties once the server has taken the message (its first
+  // event), not before: a refused message keeps its files for the retry.
+  let accepted = false;
+  const abort = new AbortController();
+  // A conversation the viewer left while it was being created still gets its
+  // message, but its stream is not this screen's to stop.
+  if (state.id === id) turnAbort = abort;
+  try {
+    await api.sendTurn(id, message, {
+      signal: abort.signal,
+      attachmentIds,
+      onEvent: (event) => {
+        if (!accepted) {
+          accepted = true;
+          if (sending.length && state.id === id) dropAttachments(sending.map((item) => item.key));
+        }
+        handleEvent(id, event);
+      },
+    });
   } catch (error) {
     if (abort.signal.aborted) return;
+    const refused = creditsRefusal(error);
+    if (refused) {
+      // Out of platform credits: the card that says how to keep building,
+      // and the text back in the box to send once there is a way.
+      publish({ credits: refused, turn: IDLE_TURN, ...(state.id === id ? { returnedText: message } : {}) });
+      refreshCredits(true);
+      return;
+    }
     const busy = (error as { body?: { busy?: boolean } }).body?.busy;
     publish({ error: busy ? 'The Mayor is already answering in this conversation.' : errorText(error, 'The Mayor could not take that message.') });
-    publish({ turn: IDLE_TURN });
+    // Refused before it was recorded: the text goes back to the composer
+    // rather than vanishing with the pending bubble.
+    publish({ turn: IDLE_TURN, ...(state.id === id ? { returnedText: message } : {}) });
     if (busy) followEvents(id);
   } finally {
     if (turnAbort === abort) turnAbort = null;
@@ -388,13 +866,95 @@ export async function sendAgentMessage(text: string) {
   }
 }
 
+/**
+ * A turn the platform credits refused: POST .../turns answers 429 with
+ * `code: 'budget_exceeded'` (services/mayor/agent-turn.js, the dev chat's
+ * own shape), and the error text names the limit and when it resets.
+ */
+export function creditsRefusal(error: unknown): CreditsRefusal | null {
+  const failure = error as { status?: number; body?: { code?: unknown; error?: unknown; reason?: unknown; verificationRequired?: unknown } };
+  if (!failure || failure.status !== 429 || !failure.body || failure.body.code !== 'budget_exceeded') return null;
+  return {
+    error: typeof failure.body.error === 'string' ? failure.body.error : '',
+    reason: typeof failure.body.reason === 'string' ? failure.body.reason : null,
+    verificationRequired: failure.body.verificationRequired === true,
+  };
+}
+
+/**
+ * The viewer's AI credits, which the composer's meter shows: the header's
+ * own figures (features/header/ai-credit.js), kept live by the server's
+ * `budget_updated` pushes. Read when a conversation opens, throttled there,
+ * and again at once after a refusal.
+ */
+function refreshCredits(force = false) {
+  if (typeof window === 'undefined') return;
+  const budget = (window as unknown as { AiCredit?: { Budget?: { refresh?: (opts?: { force?: boolean }) => unknown } } }).AiCredit?.Budget;
+  try { void budget?.refresh?.({ force }); } catch { /* the meter keeps its last figures */ }
+}
+
+export function dismissCredits() {
+  if (state.credits) publish({ credits: null });
+}
+
+/** The composer took a refused message back. */
+export function clearReturnedText() {
+  if (state.returnedText !== null) publish({ returnedText: null });
+}
+
+let fillSeq = 0;
+
+/** Put a suggested reply in the box (#3033); the composer takes it and clears it. */
+export function fillComposer(text: string) {
+  const body = String(text || '');
+  if (!body.trim()) return;
+  fillSeq += 1;
+  publish({ composerFill: { text: body, seq: fillSeq } });
+}
+
+/** The composer took the tapped reply. */
+export function clearComposerFill() {
+  if (state.composerFill !== null) publish({ composerFill: null });
+}
+
+/**
+ * The message a Stop hands back: the one still waiting to be answered, or the
+ * newest the user sent. The composer takes it only when it is empty, so a
+ * half-typed follow-up is never overwritten (the dev chat's rule).
+ */
+export function stoppedText(current: Pick<AgentSessionState, 'turn' | 'messages'>): string | null {
+  if (current.turn.pendingUserText) return current.turn.pendingUserText;
+  for (let i = current.messages.length - 1; i >= 0; i -= 1) {
+    const row = current.messages[i];
+    if (row.role === 'user' && typeof row.content === 'string' && row.content.trim()) return row.content;
+  }
+  return null;
+}
+
 export async function stopAgentTurn() {
   const id = state.id;
   if (!id || !state.turn.running) return;
+  // Back in the box to edit and send again, as the dev chat's Stop does. The
+  // sent bubble stays: that turn really ran. Stopping first, so the box
+  // filling up never turns the button under this click into Save.
+  const text = stoppedText(state);
   patchTurn({ stopping: true });
+  if (text) publish({ returnedText: text });
   try {
     const answer = await api.stopTurn(id);
     if (!answer.stopped && answer.reason === 'wrap_up_not_stoppable') patchTurn({ stopping: false });
+    if (!answer.stopped && answer.reason === 'no_active_turn') {
+      // Nothing is running here to send a `done`: settle from the server.
+      patchTurn({ stopping: false });
+      const { session } = await api.getSession(id);
+      if (state.id !== id) return;
+      publish((current) => ({ session, sessions: withListed(current, session) }));
+      if (!session.busy && !turnAbort) {
+        publish({ turn: IDLE_TURN });
+        closeEvents();
+        void refreshAll(id).catch(() => {});
+      }
+    }
   } catch (error) {
     patchTurn({ stopping: false });
     publish({ error: errorText(error, 'Could not stop the Mayor.') });
@@ -439,9 +999,468 @@ export function setDrawerOpen(open: boolean) {
   publish({ drawerOpen: open });
 }
 
+// ── The session's own actions (the bar's ⋯) ────────────────────────────
+
+/** Rename the conversation; asks for the name. */
+export async function renameCurrentSession() {
+  const id = state.id;
+  const session = state.session;
+  if (!id || !session) return;
+  const title = await window.PlatformUI?.prompt?.({
+    title: 'Rename this session',
+    value: session.title || '',
+    placeholder: 'What this conversation is about',
+    confirmLabel: 'Rename',
+  });
+  if (title == null || !title.trim() || title.trim() === session.title || state.id !== id) return;
+  try {
+    const renamed = await api.renameSession(id, title.trim());
+    if (state.id !== id) return;
+    publish((current) => ({ session: renamed, sessions: withListed(current, renamed) }));
+    syncTitle();
+  } catch (error) {
+    if (state.id === id) publish({ error: errorText(error, 'Could not rename this session.') });
+  }
+}
+
+/**
+ * Archive the conversation, after a confirm. It leaves the lists; its
+ * active change is paused (a change up for a vote keeps its vote), and the
+ * conversation stays on screen, read-only, with Unarchive.
+ */
+export async function archiveCurrentSession() {
+  const id = state.id;
+  if (!id || state.session?.status === 'archived') return;
+  const ok = await window.PlatformUI?.confirm?.({
+    title: 'Archive this session?',
+    message: 'It leaves your lists and its change is paused. A change up for a vote keeps its vote, and you can unarchive the session at any time.',
+    confirmLabel: 'Archive',
+  });
+  if (!ok || state.id !== id) return;
+  try {
+    const session = await api.archiveSession(id);
+    if (state.id !== id) return;
+    publish((current) => ({ session, sessions: current.sessions.filter((s) => s.id !== id) }));
+    void loadAgentSessions();
+  } catch (error) {
+    if (state.id === id) publish({ error: errorText(error, 'Could not archive this session.') });
+  }
+}
+
+export async function unarchiveCurrentSession() {
+  const id = state.id;
+  if (!id || state.session?.status !== 'archived') return;
+  try {
+    const session = await api.unarchiveSession(id);
+    if (state.id !== id) return;
+    publish({ session });
+    void loadAgentSessions();
+  } catch (error) {
+    if (state.id === id) publish({ error: errorText(error, 'Could not unarchive this session.') });
+  }
+}
+
+// ── Handing the work to a coding agent on the web ──────────────────────
+
+/** Show the walkthrough for handing this conversation's change to `agent`. */
+export function openHandoff(agent: HandoffAgent) {
+  if (state.handoff !== agent) publish({ handoff: agent });
+}
+
+export function closeHandoff() {
+  if (state.handoff) publish({ handoff: null });
+}
+
+// ── Checks ─────────────────────────────────────────────────────────────
+
+/**
+ * Re-run a change's checks on its current commit: the platform's own
+ * recheck (AppView.castRecheck, POST /api/sessions/:id/recheck), which says
+ * itself when it cannot. The change's `checks_ready` event, or the re-read
+ * here, moves the card's line.
+ */
+export async function recheckChange(changeId: number) {
+  const id = state.id;
+  if (!id || state.changeAction) return;
+  const cast = window.AppView?.castRecheck;
+  if (typeof cast !== 'function') return;
+  publish({ changeAction: { changeId, kind: 'recheck' } });
+  try {
+    await cast.call(window.AppView, changeId);
+  } finally {
+    if (actionOn(changeId, 'recheck')) publish({ changeAction: null });
+    if (state.id === id) void refreshSession(id).catch(() => {});
+  }
+}
+
+// ── Saved drafts ───────────────────────────────────────────────────────
+//
+// The dev chat's #798 list, per account (#940), for the conversation with the
+// Mayor. While a turn runs the composer's button saves instead of sending:
+// the text is parked here and sent later, always by a tap, never on its own.
+// The server's list is the truth and every write answers with it; the screen
+// updates first and settles on the answer.
+
+export const MAX_SAVED_DRAFTS = 20;
+
+function newDraftId() {
+  return `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+}
+
+async function loadDrafts(id: number) {
+  try {
+    const drafts = await api.listDrafts(id);
+    if (state.id === id) publish({ drafts });
+  } catch { /* the list stays as it was; the next write or event re-reads it */ }
+}
+
+/** Another device saved, sent or deleted one of this conversation's drafts. */
+export function agentSessionDraftsChanged(event: { agentSessionId?: unknown } | null | undefined) {
+  const id = Number(event?.agentSessionId);
+  if (state.open && state.id && state.id === id) void loadDrafts(id);
+}
+
+async function parkDraft(id: number, text: string): Promise<boolean> {
+  const draft: SavedDraft = { id: newDraftId(), text, savedAt: new Date().toISOString() };
+  publish((current) => ({ drafts: [...current.drafts, draft] }));
+  try {
+    const drafts = await api.saveDraft(id, draft);
+    if (state.id === id) publish({ drafts });
+    return true;
+  } catch (error) {
+    if (state.id === id) {
+      publish((current) => ({ drafts: current.drafts.filter((d) => d.id !== draft.id) }));
+      toast(errorText(error, 'Could not save that draft.'));
+    }
+    return false;
+  }
+}
+
+/**
+ * The composer's Save while the Mayor works. Refused when no turn is running,
+ * when the list is full, or with nothing typed: false, and the text stays in
+ * the box. True once the list shows the draft, and the composer empties; a
+ * save the server then refuses hands the text back to it.
+ */
+export function saveComposerDraft(text: string): boolean {
+  const id = state.id;
+  const body = text.trim();
+  if (!id || !body || !state.turn.running) return false;
+  if (state.drafts.length >= MAX_SAVED_DRAFTS) {
+    toast(`That's ${MAX_SAVED_DRAFTS} saved drafts. Send or delete one first`);
+    return false;
+  }
+  void parkDraft(id, body).then((saved) => {
+    if (!saved && state.id === id) publish({ returnedText: body });
+  });
+  toast("Draft saved. Send it whenever you're ready");
+  return true;
+}
+
+async function dropDraft(id: number, draftId: string) {
+  publish((current) => ({ drafts: current.drafts.filter((d) => d.id !== draftId) }));
+  try {
+    const drafts = await api.deleteDraft(id, draftId);
+    if (state.id === id) publish({ drafts });
+  } catch (error) {
+    if (state.id === id) {
+      toast(errorText(error, 'Could not delete that draft.'));
+      void loadDrafts(id);
+    }
+  }
+}
+
+/**
+ * Send a saved draft now. Refused while the Mayor is working. What the box
+ * held is kept as a draft of its own first, so emptying it for the send
+ * never throws away something the user wrote (the dev chat's #1962 rule).
+ */
+export async function sendSavedDraft(draftId: string, typed = '') {
+  const id = state.id;
+  if (!id || state.turn.running) return;
+  const draft = state.drafts.find((d) => d.id === draftId);
+  if (!draft) return;
+  const parked = typed.trim();
+  void dropDraft(id, draftId);
+  if (parked && parked !== draft.text && state.drafts.length < MAX_SAVED_DRAFTS) {
+    void parkDraft(id, parked);
+    toast('Kept what you had typed as another draft');
+  }
+  await sendAgentMessage(draft.text);
+}
+
+/**
+ * Put a saved draft back in the box to reword it. Its text, for the composer
+ * to take; what the box held is kept as a draft of its own first.
+ */
+export function editSavedDraft(draftId: string, typed = ''): string | null {
+  const id = state.id;
+  const draft = state.drafts.find((d) => d.id === draftId);
+  if (!id || !draft) return null;
+  const parked = typed.trim();
+  void dropDraft(id, draftId);
+  if (parked && parked !== draft.text && state.drafts.length < MAX_SAVED_DRAFTS) void parkDraft(id, parked);
+  return draft.text;
+}
+
+export function deleteSavedDraft(draftId: string) {
+  const id = state.id;
+  if (!id || !state.drafts.some((d) => d.id === draftId)) return;
+  void dropDraft(id, draftId);
+}
+
+// ── The spec viewer ────────────────────────────────────────────────────
+
+let specRequest = 0;
+
+/**
+ * Open a change's spec over the conversation: the version a spec card names,
+ * or the latest. The text is the change's own (GET /api/sessions/:id/spec and
+ * /specs/:version), so it is what the change page's viewer shows.
+ */
+export async function openSpec(changeId: number, version: number | null = null) {
+  const ticket = ++specRequest;
+  const same = state.specSheet?.changeId === changeId ? state.specSheet : null;
+  const tab: SpecTab = same ? same.tab : 'user';
+  publish({
+    drawerOpen: false,
+    paneTab: 'spec',
+    specSheet: { changeId, version, versions: same ? same.versions : [], text: '', phase: 'loading', error: '', tab },
+  });
+  try {
+    const { spec, versions } = await api.getSpec(changeId);
+    const numbers = versions.map((v) => Number(v.version)).filter((v) => Number.isInteger(v) && v > 0);
+    const newest = numbers.length ? Math.max(...numbers) : null;
+    const text = version != null && version !== newest ? await api.getSpecVersion(changeId, version) : spec;
+    if (ticket !== specRequest) return;
+    publish((current) => ({
+      specSheet: { changeId, version: version ?? newest, versions: numbers, text, phase: 'ready', error: '', tab: current.specSheet?.tab ?? tab },
+    }));
+  } catch (error) {
+    if (ticket !== specRequest) return;
+    publish((current) => ({
+      specSheet: current.specSheet
+        ? { ...current.specSheet, phase: 'error', error: errorText(error, 'Could not load the spec.') }
+        : null,
+    }));
+  }
+}
+
+export function closeSpec() {
+  specRequest += 1;
+  publish({ specSheet: null, paneTab: 'preview' });
+}
+
+// ── The preview in the side pane (#2779 follow-up) ─────────────────────
+
+export const PREVIEW_SLOT_ID = 'agent-session-preview-slot';
+
+/** The change a staging card is about, from the conversation on screen. */
+export function changeById(changeId: number | null | undefined): AgentChange | null {
+  if (changeId == null || !state.session) return null;
+  return [state.session.activeChange, ...(state.session.changes || [])]
+    .find((change) => change && change.id === changeId) || null;
+}
+
+/**
+ * Show a change's preview in the side pane. The pane mounts its slot, then
+ * asks the platform's preview to open docked over it (`dockPreview`).
+ */
+export function openPreview(preview: { changeId: number; url: string; prNumber: number | null }) {
+  const change = changeById(preview.changeId);
+  const app = change && change.appSlug ? { slug: change.appSlug, self_hosted: !!change.appSelfHosted } : null;
+  publish({ drawerOpen: false, paneTab: 'preview', preview: { ...preview, app } });
+}
+
+/**
+ * Called by the pane once its slot is on screen: this conversation becomes
+ * the preview's dock host, and the platform's preview opens over the slot,
+ * signed in to the change's app. Its own chrome (Full screen, the dev
+ * console, x) works as it does beside the dev chat.
+ */
+export function dockPreview(preview: PreviewPaneState) {
+  const view = typeof window !== 'undefined' ? window.AppView : null;
+  if (!view || typeof view.ensureStaging !== 'function') return;
+  view.setStagingDockHost?.({
+    slotId: PREVIEW_SLOT_ID,
+    live: () => state.open && !!state.preview,
+    // Full screen leaves the slot where it is: exiting puts the preview back.
+    collapse: () => {},
+    redock: () => publish({ paneTab: 'preview' }),
+    closed: () => {
+      if (state.preview) publish({ preview: null, paneTab: 'spec' });
+    },
+  });
+  void view.ensureStaging(preview.changeId, preview.url, null, {
+    dock: true,
+    readOnly: false,
+    ...(preview.app ? { app: preview.app } : {}),
+  });
+}
+
+/** Close the preview: the platform's overlay closes, and tells us (`closed`). */
+export function closePreview() {
+  const view = typeof window !== 'undefined' ? window.AppView : null;
+  if (view && typeof view.closeStagingOverlay === 'function') view.closeStagingOverlay();
+  if (state.preview) publish({ preview: null, paneTab: 'spec' });
+}
+
+export function setPaneTab(tab: PaneTab) {
+  if (state.paneTab !== tab) publish({ paneTab: tab });
+}
+
+function toast(message: string) {
+  try { window.PlatformUI?.toast?.(message); } catch { /* the card keeps its buttons */ }
+}
+
+/** Read afresh: the action can end while an await is outstanding. */
+function actionOn(changeId: number, kind?: NonNullable<AgentSessionState['changeAction']>['kind']): boolean {
+  const action: AgentSessionState['changeAction'] = state.changeAction;
+  return !!action && action.changeId === changeId && (!kind || action.kind === kind);
+}
+
+/**
+ * The staging card's Propose, once confirmed: the owner's propose route. The
+ * confirmation is the card's own panel under the button (#3032,
+ * ./propose-confirm.tsx), no longer a dialog asked for here. The card then
+ * reads "In vote" from the refreshed change.
+ */
+export async function proposeChange(changeId: number) {
+  if (state.changeAction) return;
+  publish({ changeAction: { changeId, kind: 'propose' } });
+  try {
+    await api.promoteChange(changeId);
+    if (state.id != null) await refreshSession(state.id).catch(() => {});
+  } catch (error) {
+    toast(errorText(error, 'Could not put this change up for the vote.'));
+  } finally {
+    if (actionOn(changeId)) publish({ changeAction: null });
+  }
+}
+
+/**
+ * The failed card's Retry: rebuild the preview. The build's own
+ * staging_ready or staging_failed comes back through the conversation and
+ * writes the next card; this one reads "Retrying" until then.
+ */
+export const RETRY_GIVE_UP_MS = 180_000;
+
+export async function retryStaging(changeId: number) {
+  if (state.changeAction) return;
+  publish({ changeAction: { changeId, kind: 'retry' } });
+  try {
+    const result = await api.ensureChangeStaging(changeId);
+    if (result.status === 'rebuilding') {
+      // The dev chat preview's give-up: a build whose answer never lands (a
+      // restart, a lost event) must not leave the card saying "Retrying…".
+      const timer = setTimeout(() => {
+        const action: AgentSessionState['changeAction'] = state.changeAction;
+        if (action && action.changeId === changeId && action.kind === 'retry') {
+          publish({ changeAction: null });
+          toast('The rebuild is still running. Its result will appear in this conversation.');
+        }
+      }, RETRY_GIVE_UP_MS) as unknown as { unref?: () => void };
+      timer.unref?.();
+      return;
+    }
+    if (result.status === 'unavailable') toast('This preview can\'t be rebuilt right now. Ask the agent to look at the build.');
+    if (state.id != null) await refreshMessages(state.id).catch(() => {});
+  } catch (error) {
+    toast(errorText(error, 'Could not rebuild the preview.'));
+  }
+  if (actionOn(changeId)) publish({ changeAction: null });
+}
+
+/** Switch the open spec between its plain-language and technical halves. No fetch. */
+export function setSpecTab(tab: SpecTab) {
+  const next: SpecTab = tab === 'tech' ? 'tech' : 'user';
+  publish((current) => (current.specSheet && current.specSheet.tab !== next
+    ? { specSheet: { ...current.specSheet, tab: next } }
+    : {}));
+}
+
+// ── The model ──────────────────────────────────────────────────────────
+
+/**
+ * Read the picker's options once per page; a failed read is retried on the next open.
+ *
+ * Member-only, so it waits for a viewer the endpoint answers (QA 2026-09-24
+ * Q35, ../../lib/platform-viewer.ts) instead of spending a 401 or 403 on a
+ * signed-out or waitlisted document; `sv:authed` asks again.
+ */
+let catalogDeferred = false;
+export function loadModelCatalog(): Promise<void> {
+  if (state.catalog) return Promise.resolve();
+  if (!hasPlatformViewer()) {
+    if (!catalogDeferred) {
+      catalogDeferred = true;
+      whenPlatformViewer(() => { catalogDeferred = false; void loadModelCatalog(); });
+    }
+    return Promise.resolve();
+  }
+  if (!catalogRequest) {
+    catalogRequest = api.loadModelCatalog()
+      .then((catalog) => { publish({ catalog }); })
+      .catch(() => {})
+      .finally(() => { catalogRequest = null; });
+  }
+  return catalogRequest;
+}
+
+/**
+ * The picker. On an unsent conversation the pick is held and sent with the
+ * first message; on a session it is saved now and applies from the Mayor's
+ * next turn and the active change's next build, so it may be made mid-turn.
+ */
+export async function chooseAgent(choice: AgentChoice) {
+  if (!state.id && state.draft) {
+    if (!sameChoice(state.draft.agent, choice)) publish({ draft: { ...state.draft, agent: choice } });
+    return;
+  }
+  const id = state.id;
+  if (!id || state.choosing) return;
+  if (sameChoice(state.session?.agent || null, choice)) return;
+  publish({ choosing: true, error: '' });
+  try {
+    const session = await api.setAgentChoice(id, choice);
+    if (state.id === id) publish({ session });
+  } catch (error) {
+    if (state.id === id) publish({ error: errorText(error, 'Could not change the model.') });
+  } finally {
+    publish({ choosing: false });
+  }
+}
+
 // ── The list, for Messages ─────────────────────────────────────────────
 
+// One of the user's conversations started or finished a turn, or was read in
+// another tab (the server's `agent_session_changed`, routed by app.js). The
+// lists redraw their marks from a fresh read; a burst of events is one read.
+let listTimer: ReturnType<typeof setTimeout> | null = null;
+export function agentSessionListChanged() {
+  if (listTimer) return;
+  listTimer = setTimeout(() => {
+    listTimer = null;
+    void loadAgentSessions();
+  }, 250);
+}
+
+/**
+ * The list is per-user, and this is called at mount by Messages, the nav's
+ * recents and the app sheet, all of which are mounted on every document. So
+ * it waits for a viewer `/api/agent-sessions` answers (QA 2026-09-24 Q35,
+ * ../../lib/platform-viewer.ts) rather than logging a 401 on the signed-out
+ * landing or a 403 in the waiting room, and loads on `sv:authed` instead.
+ */
+let sessionsDeferred = false;
 export async function loadAgentSessions() {
+  if (!hasPlatformViewer()) {
+    if (!sessionsDeferred) {
+      sessionsDeferred = true;
+      whenPlatformViewer(() => { sessionsDeferred = false; void loadAgentSessions(); });
+    }
+    return;
+  }
   try {
     const sessions = await api.listSessions();
     publish({ sessions, sessionsLoaded: true });
@@ -451,13 +1470,17 @@ export async function loadAgentSessions() {
 }
 
 export const agentSessionController = {
-  open: (id: number, options: { host?: AgentSessionHost } = {}) => openAgentSession({ id, host: options.host }),
-  route: (id: number, options: { drawer?: boolean } = {}) => openAgentSession({ id, host: 'screen', drawer: !!options.drawer }),
-  start: (hint: AgentHint | null = null, options: { message?: string | null } = {}) => startAgentSession(hint, options),
+  open: (id: AgentSessionTarget, options: { host?: AgentSessionHost } = {}) => openAgentSession({ id, host: options.host }),
+  route: (id: AgentSessionTarget, options: { drawer?: boolean } = {}) => openAgentSession({ id, host: 'screen', drawer: !!options.drawer }),
+  start: (hint: AgentHint | null = null) => startAgentSession(hint),
+  prepareDraft: prepareAgentDraft,
   deactivate: deactivateAgentSession,
   isOpen: () => state.open,
-  currentId: () => state.id,
+  /** The conversation on screen: its id, `new` while it is unsent, or null. */
+  currentId: (): AgentSessionTarget | null => (state.id ?? (state.draft ? 'new' : null)),
   refreshList: loadAgentSessions,
+  listChanged: agentSessionListChanged,
+  draftsChanged: agentSessionDraftsChanged,
 };
 
 if (typeof window !== 'undefined') {

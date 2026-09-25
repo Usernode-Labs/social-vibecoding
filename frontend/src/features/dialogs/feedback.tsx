@@ -41,6 +41,11 @@ import { useDialog } from './use-dialog';
 /** Reserved for callers that still pass `{ fromDev: true }` — see #226/#312. */
 interface OpenOptions {
   fromDev?: boolean;
+  /**
+   * QA 2026-09-24: what the person asked for. The Workshop "+" menu's "File
+   * an issue" row passes 'issue'; everything else is feedback.
+   */
+  intent?: 'issue' | 'feedback';
   firstFeedback?: { userId: number; appSlug: string | null; issueNumber: number; canFix: boolean };
 }
 
@@ -65,8 +70,11 @@ export function FeedbackDialog() {
     >
       <DialogCard size="sm">
         <div id="feedback-form">
+        {/* QA 2026-09-24: the resting heading. The controller renames it on
+            each open to match the way in ("File an issue" from the Workshop
+            "+" menu), like every other string inside this card. */}
         <h2 className="text-lg font-bold mb-4">
-          Send Feedback
+          Send feedback
         </h2>
         {/*
             Target toggle: file this feedback against the app being viewed
@@ -153,7 +161,7 @@ export function FeedbackDialog() {
             id="feedback-title"
             type="text"
             maxLength={200}
-            placeholder="Title, generated as you type; edit as you like"
+            placeholder="Suggested as you type"
           />
         </div>
         {/*

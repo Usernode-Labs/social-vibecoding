@@ -36,7 +36,24 @@ export function ProfileScreen() {
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
       style={{ position: "relative" }}
     >
-      <div id="profile-root" className="max-w-3xl mx-auto p-4">
+      {/*
+          THE COLUMN IS THE WORKSHOP TAB'S (#2832). Me is a tab like Workshop,
+          built from the same shapes (a SectionHeader over a GroupedList card),
+          so it takes the same frame rather than one of its own:
+
+          - `max-w-2xl`, Workshop's column (and Discover's app page). It was
+            `max-w-3xl`, so on a desktop the cards jumped 96px wider moving
+            from Workshop to Me.
+          - `pt-5`: the platform bar is `rounded-b-2xl -mb-2`, so every screen
+            root starts 8px UNDER it; `pt-5` is those 8 plus the 12px of air
+            Workshop and Messages leave above their first element. `p-4` left
+            the identity card 8px from the bar.
+          - `px-4` is the 16px gutter GroupedList's own `mx-4` gives Workshop;
+            the cards here are hand-drawn as well as grouped, so the gutter is
+            the column's and the lists pass `mx-0`.
+          - `pb-8`, Workshop's foot.
+      */}
+      <div id="profile-root" className="max-w-2xl mx-auto px-4 pt-5 pb-8">
         <ProfileRoot />
       </div>
     </main>

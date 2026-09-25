@@ -1,49 +1,143 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
   ArrowUpIcon,
   CheckIcon,
+  ChevronDownIcon,
+  DraftEditIcon,
+  DraftSendIcon,
+  DraftTrashIcon,
+  EllipsisHorizontalIcon,
+  PlusIcon,
+  SaveDraftIcon,
   SparklesIcon,
   SpinnerArcIcon,
   XIcon,
 } from '@/components/ui/icons';
 
+import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
-import type { AgentChange, AgentSession } from './api';
+import type { AiBudgetState } from '../header/ai-budget';
+import { aiBudgetStore } from '../header/ai-budget-store.js';
+import { Attached } from '../dev-chat/transcript';
+import { PendingStrip } from '../attachments/pending-strip';
+import { nowStore, type TranscriptRow } from '../dev-chat/transcript-store';
+import type { AgentChange, AgentSession, SavedDraft } from './api';
+import {
+  choiceFromValue,
+  choiceValue,
+  effectiveChoice,
+  effortOptions,
+  effortValue,
+  offersReasoning,
+  pickerOptions,
+} from './model-choice';
+import { badgeFor, formatSize, pastedName } from './attachments';
+import {
+  CreditPill,
+  CreditRing,
+  ModelPill,
+  ModelSheet,
+  ModelSheetBody,
+  SentAttachments,
+  creditView,
+  modelGroups,
+  type CreditView,
+} from './composer-parts';
 import {
   buildTranscript,
+  checksSummary,
   cardView,
   changeStatusLabel,
+  durationLabel,
   latestReplies,
+  runHeading,
   type CardView,
+  type PreviewItem,
+  type RunItem,
   type TranscriptItem,
 } from './transcript';
 import {
+  addAttachments,
+  chooseAgent,
+  clearComposerFill,
+  clearReturnedText,
+  closeSpec,
   composerId,
+  archiveCurrentSession,
   decideCard,
+  deleteSavedDraft,
+  editSavedDraft,
+  loadModelCatalog,
   openAgentSession,
+  openSpec,
+  fillComposer,
   sendAgentMessage,
   setDrawerOpen,
+  setSpecTab,
+  setPaneTab,
+  dockPreview,
+  openPreview,
+  recheckChange,
+  removeAttachment,
+  renameCurrentSession,
+  retryStaging,
+  unarchiveCurrentSession,
+  PREVIEW_SLOT_ID,
+  saveComposerDraft,
+  sendSavedDraft,
   stopAgentTurn,
   switchActiveChange,
   useAgentSessionState,
+  type PaneTab,
+  type PreviewPaneState,
+  type SpecSheetState,
+  type SpecTab,
 } from './store';
+import {
+  PREVIEW_MIN_WIDTH,
+  SPEC_DEFAULT_WIDTH,
+  SPEC_MIN_WIDTH,
+  SPEC_WIDTH_STEP,
+  clampSpecWidth,
+  readSpecWidth,
+  splitSpec,
+  useSidePaneBeside,
+  useWideEnoughForSpec,
+  writeSpecWidth,
+  type SpecSplit,
+} from './spec-layout';
+import { ProposeButton } from './propose-confirm';
+import { readUnsent, writeUnsent } from './unsent';
+import { CreditsCard, HandoffDialog, VenuePicker } from './handoff';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
 // like Global Chat: its own screen (#agent/<id>, a phone's only surface) and
 // the Messages pane beside the inbox on a desktop (#messages/agent/<id>).
-// One panel, so the two cannot drift.
+// One panel, so the two cannot drift. New change opens it UNSENT at `new`
+// (the store's `draft`): the same panel, with nothing created until the
+// first message.
 //
 // React owns every node below the screen root; no legacy module writes into
 // it. The first render is the hidden, empty root the prerendered shell
 // ships, and everything loads in effects.
 
-function markdown(text: string): string | null {
-  const render = window.DevChat?.renderMarkdown;
+function markdown(text: string, breaks = true): string | null {
+  const render = typeof window === 'undefined' ? null : window.DevChat?.renderMarkdown;
   if (typeof render !== 'function') return null;
-  try { return render(text, { breaks: true }); } catch { return null; }
+  try { return render(text, { breaks }); } catch { return null; }
 }
 
 function MayorText({ text }: { text: string }) {
@@ -71,8 +165,10 @@ function statusTone(status: string | null | undefined) {
   switch (status) {
     case 'promoted': return 'bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-200';
     case 'merged': return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200';
-    case 'paused': return 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
-    case 'active': return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200';
+    // A paused change is an active one whose worker was released (#2779
+    // follow-up); it looks the same.
+    case 'active':
+    case 'paused': return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200';
     default: return 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
   }
 }
@@ -83,18 +179,32 @@ function changeRef(change: AgentChange) {
 
 // ── Header ─────────────────────────────────────────────────────────────
 
-function SessionBar({ session, embedded }: { session: AgentSession | null; embedded: boolean }) {
+/** What the conversation is about: the session's, or the unsent draft's. */
+type About = Pick<AgentSession, 'focusApp' | 'focusContext'> | null;
+
+function SessionBar({ session, about, embedded, action }: {
+  session: AgentSession | null;
+  about: About;
+  embedded: boolean;
+  /** The pane's own control at the bar's end — Messages' full-width toggle. */
+  action?: ReactNode;
+}) {
   const snapshot = useAgentSessionState();
   const active = session?.activeChange || null;
   const building = snapshot.turn.running && snapshot.turn.phase === 'cc';
   const count = session?.changes?.length || 0;
+  // It wraps on both surfaces (#3016). On a phone its five controls are wider
+  // than the screen, and a bar that cannot wrap made the whole conversation
+  // that wide: the right edge of every message and the Send button were off
+  // screen. Below `sm` the Build picker starts the second row and Changes and
+  // the ⋯ end it; from `sm` up everything fits on one, as before.
   return (
-    <div className={`flex items-center gap-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800 ${embedded ? 'flex-wrap' : ''}`} data-agent-session-bar>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
       {embedded ? (
         <div className="mr-auto min-w-0 basis-full sm:basis-auto">
           <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">{session?.title || 'New session'}</h2>
           <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
-            Agent session{session?.focusApp?.name ? ` · started from ${session.focusApp.name}` : ''}
+            Agent session{about?.focusApp?.name ? ` · started from ${about.focusApp.name}` : ''}
           </p>
         </div>
       ) : null}
@@ -103,26 +213,73 @@ function SessionBar({ session, embedded }: { session: AgentSession | null; embed
         className="inline-flex min-w-0 max-w-[10rem] items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
         title="The app this conversation is about when a request does not name one. The Mayor moves it when you ask."
       >
-        {session?.focusApp ? <AppMark name={session.focusApp.name} /> : null}
-        <span className="truncate">{session?.focusApp?.name || 'Any app'}</span>
+        {about?.focusApp ? <AppMark name={about.focusApp.name} /> : null}
+        <span className="truncate">{about?.focusApp?.name || 'Any app'}</span>
       </span>
       <span
         data-agent-session-change-pill
-        className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
+        className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
       >
         {active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : 'No change yet'}
       </span>
+      {/* Siblings of the pills, not a group of their own: a declared check
+          reads the bar as focus ~ change pill ~ Changes. */}
+      <VenuePicker disabled={snapshot.phase === 'loading'} className={embedded ? '' : 'sm:ml-auto'} />
       <button
         type="button"
         data-agent-session-changes-button
-        className={`${embedded ? '' : 'ml-auto '}inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800`}
+        className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 sm:ml-0 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
         onClick={() => setDrawerOpen(true)}
         disabled={!session}
         aria-haspopup="dialog"
       >
         Changes · {count}
       </button>
+      {action}
+      <SessionMenu session={session} />
     </div>
+  );
+}
+
+/**
+ * The session's own actions, the dev chat's ⋯: Rename, and Archive or
+ * Unarchive. Nothing to act on while the conversation is unsent.
+ */
+function SessionMenu({ session }: { session: AgentSession | null }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <button
+      type="button"
+      data-agent-session-menu
+      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-zinc-700 hover:bg-zinc-200 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+      aria-label="Session actions"
+      title="Session actions"
+      aria-haspopup="menu"
+      aria-expanded={open}
+      disabled={!session}
+      onClick={(event) => {
+        const menu = window.PlatformUI?.menu;
+        if (!session || open || typeof menu !== 'function') return;
+        const archived = session.status === 'archived';
+        setOpen(true);
+        void menu.call(window.PlatformUI, {
+          anchorEl: event.currentTarget,
+          items: [
+            { label: 'Rename…', handler: () => { void renameCurrentSession(); } },
+            archived
+              ? { label: 'Unarchive', title: 'Bring this session back to your lists', handler: () => { void unarchiveCurrentSession(); } }
+              : {
+                label: 'Archive',
+                title: 'Hide this session from your lists and pause its change',
+                destructive: true,
+                handler: () => { void archiveCurrentSession(); },
+              },
+          ],
+        }).finally(() => setOpen(false));
+      }}
+    >
+      <EllipsisHorizontalIcon className="h-4 w-4" aria-hidden="true" />
+    </button>
   );
 }
 
@@ -195,18 +352,26 @@ function Card({ card, live = false }: { card: CardView; live?: boolean }) {
   );
 }
 
-function Item({ item }: { item: TranscriptItem }) {
+function Item({ item, sessionId = null }: { item: TranscriptItem; sessionId?: number | null }) {
   switch (item.kind) {
     case 'user':
       return (
-        <div className="flex justify-end" data-agent-session-user>
-          <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">{item.text}</p>
+        <div className="flex flex-col items-end gap-1.5" data-agent-session-user>
+          <SentAttachments sessionId={sessionId} attachments={item.attachments} />
+          {item.text ? (
+            <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">{item.text}</p>
+          ) : null}
         </div>
       );
     case 'mayor':
       return (
         <article data-agent-session-mayor>
-          <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Mayor</p>
+          <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+            Mayor
+            {item.cost ? (
+              <span className="font-normal text-zinc-500 dark:text-zinc-400" data-agent-session-reply-cost>{` · ${item.cost}`}</span>
+            ) : null}
+          </p>
           {item.text ? <MayorText text={item.text} /> : null}
           {item.cards.map((card) => <Card key={card.id} card={card} />)}
         </article>
@@ -228,35 +393,526 @@ function Item({ item }: { item: TranscriptItem }) {
           {item.text}
         </p>
       );
-    case 'agent':
-      return (
-        <section className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900" data-agent-session-agent={item.outcome}>
-          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            {item.outcome === 'error' ? 'The coding agent did not finish' : item.outcome === 'no_changes' ? 'The coding agent changed nothing' : 'The coding agent finished'}
-          </p>
-          {item.summary ? <p className="mt-1 line-clamp-4 whitespace-pre-wrap text-sm text-zinc-600 dark:text-zinc-300">{item.summary}</p> : null}
-        </section>
-      );
+    case 'run':
+      return <RunCard run={item} />;
+    case 'spec':
+      return <SpecCard item={item} />;
     case 'preview':
-      return (
-        <section className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900" data-agent-session-preview>
-          <p className="text-sm text-zinc-600 dark:text-zinc-300">{item.text}</p>
-          <a
-            className="mt-2 inline-flex rounded-full border border-violet-300 px-3 py-1 text-sm font-semibold text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-950/40"
-            href={item.url}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Open preview{item.prNumber ? ` · PR #${item.prNumber}` : ''}
-          </a>
-        </section>
-      );
+      return <PreviewCard item={item} />;
     default:
       return null;
   }
 }
 
-function LiveTurn() {
+/**
+ * A coding-agent run, as the dev chat draws one: its `Attached` card, a
+ * status line that opens in place onto the run's log, or onto a build's own
+ * summary of what it did. The caption names the agent that ran. The running
+ * run carries the turn's live progress line and clock.
+ */
+export function RunCard({ run }: { run: RunItem }) {
+  const snapshot = useAgentSessionState();
+  const running = run.status === 'running';
+  const html = useMemo(() => (run.output ? markdown(run.output) : null), [run.output]);
+  const duration = durationLabel(run.durationMs);
+  const logText = [...run.steps, ...run.log].join('\n');
+  const row: Extract<TranscriptRow, { t: 'attached' }> = {
+    t: 'attached',
+    key: run.key,
+    details: { persistId: `agent-run-${run.key}`, defaultOpen: false },
+    icon: running ? 'spinner' : run.status === 'failed' || run.status === 'stopped' ? 'flag' : 'check',
+    text: runHeading(run),
+    caption: run.agent || undefined,
+    elapsed: running
+      ? (snapshot.turn.startedAt ? { kind: 'since', since: snapshot.turn.startedAt } : null)
+      : duration ? { kind: 'fixed', label: `(took ${duration})` } : null,
+    stamp: '',
+    progress: running && snapshot.turn.progress
+      ? { current: snapshot.turn.progress, steps: run.log.length, phase: '', estimate: '', countdownTo: null, cohortSince: null }
+      : undefined,
+    body: html
+      ? { kind: 'md', html }
+      : { kind: 'log', persistId: `agent-run-log-${run.key}`, text: run.output || logText || (running ? 'Starting…' : 'No output.') },
+  };
+  return (
+    <div data-agent-session-run={run.status} data-agent-session-run-mode={run.mode}>
+      <Attached r={row} />
+    </div>
+  );
+}
+
+const CARD_BUTTON = 'inline-flex rounded-full border border-violet-300 px-3 py-1 text-sm font-semibold text-violet-700 '
+  + 'hover:bg-violet-50 disabled:opacity-60 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-950/40';
+const CARD_PRIMARY = 'inline-flex rounded-full bg-violet-600 px-3 py-1 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-60';
+const CHECK_TONE: Record<string, string> = {
+  passing: 'text-green-700 dark:text-green-400',
+  failing: 'text-red-700 dark:text-red-300',
+  running: 'text-zinc-500 dark:text-zinc-400',
+  error: 'text-amber-700 dark:text-amber-300',
+};
+
+function findChange(session: AgentSession | null, changeId: number | null): AgentChange | null {
+  if (!session || changeId == null) return null;
+  return [session.activeChange, ...(session.changes || [])].find((change) => change && change.id === changeId) || null;
+}
+
+/**
+ * A change's staging build, as a card (#2779 follow-up). The newest one of a
+ * change is live:
+ *   - deployed: Open preview (in the side pane on a wide screen, a new tab
+ *     otherwise), View change (its card), and Propose to group while it has
+ *     not been proposed; then "In vote" with the proposal.
+ *   - failed: why, and Retry (a rebuild; its result writes the next card).
+ * It says where the change's checks stand, because they gate merge. An older
+ * card is "Superseded by a newer preview" and offers nothing: its build is
+ * gone or stale.
+ */
+export function PreviewCard({ item }: { item: PreviewItem }) {
+  const snapshot = useAgentSessionState();
+  const wide = useWideEnoughForSpec();
+  const action = snapshot.changeAction && snapshot.changeAction.changeId === item.changeId ? snapshot.changeAction.kind : null;
+  return (
+    <PreviewCardView
+      item={item}
+      change={findChange(snapshot.session, item.changeId)}
+      wide={wide}
+      action={action}
+      busy={!!snapshot.changeAction}
+    />
+  );
+}
+
+/** The card itself, from plain props (a test renders it without a store). */
+export function PreviewCardView({ item, change, wide, action, busy }: {
+  item: PreviewItem;
+  change: AgentChange | null;
+  wide: boolean;
+  action: 'propose' | 'retry' | 'recheck' | null;
+  busy: boolean;
+}) {
+  const prNumber = item.prNumber || change?.prNumber || null;
+  const heading = `${item.failed ? 'Staging build failed' : 'Staging deployed'}${prNumber ? ` · PR #${prNumber}` : ''}`;
+  if (item.superseded) {
+    return (
+      <section className="rounded-2xl border border-zinc-200 px-3 py-2 dark:border-zinc-800" data-agent-session-preview="superseded">
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">{heading} · Superseded by a newer preview</p>
+      </section>
+    );
+  }
+  const checks = checksSummary(change?.checkState, change?.checkFailing);
+  const changeHref = change && change.appSlug && item.changeId != null
+    ? `#app/${encodeURIComponent(change.appSlug)}/dev/proposals/${item.changeId}`
+    : null;
+  const inVote = change && (change.status === 'promoted' || change.status === 'merging');
+  const merged = change && change.status === 'merged';
+  const proposable = change && (change.status === 'active' || change.status === 'paused');
+  return (
+    <section
+      className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900"
+      data-agent-session-preview={item.failed ? 'failed' : 'deployed'}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <p className={`text-sm font-medium ${item.failed ? 'text-red-700 dark:text-red-300' : 'text-zinc-800 dark:text-zinc-100'}`}>{heading}</p>
+        {inVote || merged ? (
+          <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300" data-agent-session-preview-status>
+            {merged ? 'Merged' : 'In vote'}
+          </span>
+        ) : null}
+        {checks ? (
+          <button
+            type="button"
+            className={`ml-auto inline-flex items-center gap-1 rounded text-xs hover:underline ${CHECK_TONE[checks.key]}`}
+            data-agent-session-checks={checks.key}
+            title="See each check and its result"
+            onClick={() => { if (item.changeId != null) window.AppView?.openSessionChecks?.(item.changeId); }}
+          >
+            {checks.key === 'running'
+              ? <SpinnerArcIcon className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              : checks.key === 'passing' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+            {checks.text}
+          </button>
+        ) : null}
+      </div>
+      {item.failed && item.error ? <p className="mt-1 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">{item.error}</p> : null}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {item.failed ? (
+          item.changeId != null ? (
+            <button type="button" className={CARD_BUTTON} disabled={busy} onClick={() => void retryStaging(item.changeId as number)} data-agent-session-preview-retry>
+              {action === 'retry' ? 'Retrying…' : 'Retry'}
+            </button>
+          ) : null
+        ) : item.url ? (
+          wide && item.changeId != null ? (
+            <button
+              type="button"
+              className={CARD_BUTTON}
+              onClick={() => openPreview({ changeId: item.changeId as number, url: item.url as string, prNumber })}
+              data-agent-session-preview-open
+            >
+              Open preview
+            </button>
+          ) : (
+            <a className={CARD_BUTTON} href={item.url} target="_blank" rel="noopener noreferrer" data-agent-session-preview-open>
+              Open preview
+            </a>
+          )
+        ) : null}
+        {changeHref ? (
+          <a className={CARD_BUTTON} href={changeHref} data-agent-session-preview-change>
+            {inVote ? 'View proposal' : 'View change'}
+          </a>
+        ) : null}
+        {proposable && item.changeId != null ? (
+          <ProposeButton
+            changeId={item.changeId}
+            title={change?.title}
+            prNumber={prNumber}
+            className={CARD_PRIMARY}
+            busy={busy}
+            proposing={action === 'propose'}
+          />
+        ) : null}
+        {checks && (checks.key === 'failing' || checks.key === 'error') && item.changeId != null && !merged ? (
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={busy}
+            title="Rebuild the preview if needed and run the automated checks again, on the same commit"
+            onClick={() => void recheckChange(item.changeId as number)}
+            data-agent-session-preview-recheck
+          >
+            {action === 'recheck' ? 'Re-running…' : 'Re-run checks'}
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+/** A spec the scout drafted: the dev chat's spec card, opening the viewer over the conversation. */
+export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec' }> }) {
+  const snippet = useMemo(() => (item.preview ? markdown(item.preview, false) : null), [item.preview]);
+  const open = () => { if (item.changeId) void openSpec(item.changeId, item.version); };
+  const title = `Spec${item.version ? ` v${item.version}` : ''}${item.lines ? ` · ${item.lines} lines` : ''}`;
+  return (
+    <div
+      className="dc-spec-preview-card"
+      data-agent-session-spec={item.version ?? 'latest'}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${title}`}
+      onClick={open}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          open();
+        }
+      }}
+    >
+      <div className="dc-spec-preview-header">
+        <span className="dc-spec-preview-title">{title}</span>
+        <span className="dc-spec-preview-cta">View full spec →</span>
+      </div>
+      {snippet
+        ? <div className="dc-spec-preview-snippet" dangerouslySetInnerHTML={{ __html: snippet }} />
+        : item.preview ? <div className="dc-spec-preview-snippet">{item.preview}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * A change's spec, read-only, any saved version. The change page's own
+ * viewer keeps sharing and mentions; this is for reading what the scout wrote
+ * without leaving the conversation.
+ *
+ * ONE VIEW, TWO FRAMES (./spec-layout.ts): beside the conversation from
+ * 1024px up, with a divider that drags; a sheet over it below that. Both show
+ * the same header and body, so the frame is the only thing the window width
+ * decides.
+ */
+function SpecMarkdown({ text, tagged = false }: { text: string; tagged?: boolean }) {
+  const html = useMemo(() => markdown(text, false), [text]);
+  const tag = tagged ? { 'data-agent-session-spec-text': '' } : {};
+  return html
+    ? <div className="dc-msg-content text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100" {...tag} dangerouslySetInnerHTML={{ __html: html }} />
+    : <pre className="whitespace-pre-wrap text-sm text-zinc-900 dark:text-zinc-100" {...tag}>{text}</pre>;
+}
+
+function SpecTabButton({ tab, active, label, onTab }: {
+  tab: SpecTab;
+  active: SpecTab;
+  label: string;
+  onTab: (tab: SpecTab) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active === tab}
+      className={active === tab ? 'dc-spec-viewer-tab dc-spec-viewer-tab-active' : 'dc-spec-viewer-tab'}
+      data-spec-tab={tab}
+      onClick={() => onTab(tab)}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * The spec's text: the dev chat viewer's two tabs when it has both halves —
+ * the title and summary above them, the plain-language half first — and the
+ * whole document otherwise. Same classes as that viewer, so the two read alike.
+ */
+export function SpecBody({ text, tab, split, onTab }: {
+  text: string;
+  tab: SpecTab;
+  split: SpecSplit | null;
+  onTab: (tab: SpecTab) => void;
+}) {
+  if (!split) return <SpecMarkdown text={text} tagged />;
+  const half = tab === 'tech' ? split.technical : split.userFacing;
+  return (
+    <>
+      {split.preamble ? <div className="dc-spec-viewer-preamble"><SpecMarkdown text={split.preamble} /></div> : null}
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+        <SpecTabButton tab="user" active={tab} label="User-facing" onTab={onTab} />
+        <SpecTabButton tab="tech" active={tab} label="Technical" onTab={onTab} />
+      </div>
+      <div role="tabpanel" data-agent-session-spec-half={tab}>
+        {half ? <SpecMarkdown text={half} tagged /> : <p className="dc-spec-tab-empty">Nothing in this section.</p>}
+      </div>
+    </>
+  );
+}
+
+function SpecContent({ sheet }: { sheet: SpecSheetState }) {
+  const snapshot = useAgentSessionState();
+  const split = useMemo(() => (sheet.text ? splitSpec(sheet.text) : null), [sheet.text]);
+  const change = [snapshot.session?.activeChange, ...(snapshot.session?.changes || [])]
+    .find((c) => c && c.id === sheet.changeId) || null;
+  return (
+    <>
+      <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">Spec</h2>
+          {change ? <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{change.title || changeRef(change)}{change.appName ? ` · ${change.appName}` : ''}</p> : null}
+        </div>
+        {sheet.versions.length > 1 ? (
+          <span className="dc-venue-detail-inline">
+            <select
+              className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100"
+              aria-label="Spec version"
+              value={sheet.version ?? ''}
+              onChange={(event) => void openSpec(sheet.changeId, Number(event.currentTarget.value))}
+            >
+              {sheet.versions.map((v) => <option key={v} value={v}>{`v${v}`}</option>)}
+            </select>
+            <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
+          </span>
+        ) : sheet.version ? <span className="text-xs font-semibold text-zinc-500">{`v${sheet.version}`}</span> : null}
+        <button type="button" className="rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label="Close" onClick={closeSpec}>
+          <XIcon className="h-5 w-5" aria-hidden="true" />
+        </button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        {sheet.phase === 'loading' ? (
+          <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
+        ) : null}
+        {sheet.phase === 'error' ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{sheet.error}</p> : null}
+        {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no spec yet.</p> : null}
+        {sheet.phase === 'ready' && sheet.text ? <SpecBody text={sheet.text} tab={sheet.tab} split={split} onTab={setSpecTab} /> : null}
+      </div>
+    </>
+  );
+}
+
+/** Below 1024px, and in the side panel: the spec over the conversation, as a sheet. */
+function SpecSheet({ sheet }: { sheet: SpecSheetState }) {
+  return (
+    <div
+      className="absolute inset-0 z-30 flex flex-col bg-zinc-950/30"
+      data-agent-session-spec-sheet={sheet.changeId}
+      onClick={(event) => { if (event.target === event.currentTarget) closeSpec(); }}
+    >
+      <section
+        role="dialog"
+        aria-label="Spec"
+        className="platform-safe-bar mt-auto flex max-h-[92%] w-full flex-col rounded-t-3xl bg-white shadow-xl dark:bg-zinc-900 sm:mt-0 sm:h-full sm:max-h-none sm:rounded-none"
+      >
+        <SpecContent sheet={sheet} />
+      </section>
+    </div>
+  );
+}
+
+/** Spec | Preview, when the side pane holds both. */
+function PaneTabs({ tab }: { tab: PaneTab }) {
+  const button = (key: PaneTab, label: string) => (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={tab === key}
+      data-agent-session-pane-tab={key}
+      className={tab === key
+        ? 'border-b-2 border-violet-600 px-3 py-2 text-sm font-semibold text-zinc-900 dark:border-violet-400 dark:text-zinc-100'
+        : 'border-b-2 border-transparent px-3 py-2 text-sm font-medium text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200'}
+      onClick={() => setPaneTab(key)}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div role="tablist" aria-label="Side pane" className="flex shrink-0 gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
+      {button('spec', 'Spec')}
+      {button('preview', 'Preview')}
+    </div>
+  );
+}
+
+/**
+ * From 1024px up: the side pane beside the conversation, behind a divider
+ * that drags (and moves with the arrow keys). It holds the spec, a change's
+ * staging preview, or both as tabs.
+ *
+ * THE WIDTH is the dev chat viewer's remembered one, clamped so the chat keeps
+ * 320px beside the 4px divider; `max-w` holds the same ceiling when the window
+ * narrows after the drag. A preview renders a real app's screen, so while one
+ * is open the floor is the dev chat staging panel's 320px, not the spec's 280.
+ *
+ * THE PREVIEW is the platform's own (AppView.ensureStaging): its fixed
+ * overlay is pinned over this pane's slot, the way it is pinned beside the
+ * dev chat, so sign-in, Full screen and the dev console are the same ones. The
+ * slot stays mounted while the Spec tab shows (hidden, so the overlay shrinks
+ * to nothing and the preview keeps its state).
+ */
+function SidePane({ sheet, preview, tab, containerRef }: {
+  sheet: SpecSheetState | null;
+  preview: PreviewPaneState | null;
+  tab: PaneTab;
+  containerRef: { current: HTMLDivElement | null };
+}) {
+  const floor = preview ? PREVIEW_MIN_WIDTH : SPEC_MIN_WIDTH;
+  const [width, setWidth] = useState(SPEC_DEFAULT_WIDTH);
+  const paneRef = useRef<HTMLElement | null>(null);
+  const containerWidth = () => containerRef.current?.getBoundingClientRect().width ?? null;
+  useEffect(() => { setWidth(clampSpecWidth(readSpecWidth(), containerWidth(), floor)); }, [floor]);
+  const showing: PaneTab = sheet && preview ? tab : (preview ? 'preview' : 'spec');
+
+  // The platform's preview opens over the slot once the slot is on screen,
+  // and again only for another preview.
+  const previewKey = preview ? `${preview.changeId}:${preview.url}` : null;
+  useEffect(() => {
+    if (preview) dockPreview(preview);
+  }, [previewKey]);
+  // The overlay follows the slot's size on its own; a move without a resize
+  // (the tab strip appearing, the list stepping aside) needs a nudge.
+  useEffect(() => {
+    if (preview) window.AppView?._syncStagingDockGeometry?.();
+  }, [width, showing, !!sheet, previewKey]);
+
+  const commit = (next: number) => {
+    const clamped = clampSpecWidth(next, containerWidth(), floor);
+    setWidth(clamped);
+    return clamped;
+  };
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const handle = event.currentTarget;
+    const startX = event.clientX;
+    const startWidth = paneRef.current?.getBoundingClientRect().width ?? width;
+    let latest = startWidth;
+    event.preventDefault();
+    try { handle.setPointerCapture(event.pointerId); } catch { /* moves still arrive on the handle */ }
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    // An iframe swallows pointer moves: the preview's, while the drag runs.
+    const frame = document.getElementById('staging-iframe');
+    if (frame) frame.style.pointerEvents = 'none';
+    // Dragging right narrows the pane: its left edge is the divider.
+    const onMove = (move: PointerEvent) => { latest = commit(startWidth - (move.clientX - startX)); };
+    const onUp = () => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      try { handle.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      if (frame) frame.style.pointerEvents = '';
+      writeSpecWidth(latest);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  };
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    writeSpecWidth(commit(width + (event.key === 'ArrowLeft' ? SPEC_WIDTH_STEP : -SPEC_WIDTH_STEP)));
+  };
+
+  return (
+    <>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={showing === 'preview' ? 'Resize the preview' : 'Resize the spec'}
+        aria-valuenow={width}
+        aria-valuemin={floor}
+        tabIndex={0}
+        className="w-1 shrink-0 cursor-col-resize touch-none bg-zinc-200 transition-colors hover:bg-violet-500 focus-visible:bg-violet-500 focus-visible:outline-none dark:bg-zinc-800"
+        data-agent-session-spec-resizer
+        onPointerDown={onPointerDown}
+        onKeyDown={onKeyDown}
+      />
+      <aside
+        ref={paneRef}
+        aria-label={showing === 'preview' ? 'Preview' : 'Spec'}
+        className={`flex min-h-0 ${preview ? 'min-w-[320px]' : 'min-w-[280px]'} max-w-[calc(100%-324px)] shrink-0 flex-col bg-white dark:bg-zinc-900`}
+        style={{ width }}
+        data-agent-session-side-pane={showing}
+      >
+        {sheet && preview ? <PaneTabs tab={showing} /> : null}
+        {sheet && showing === 'spec' ? (
+          <div
+            className="flex min-h-0 flex-1 flex-col"
+            data-agent-session-spec-sheet={sheet.changeId}
+            data-agent-session-spec-beside=""
+          >
+            <SpecContent sheet={sheet} />
+          </div>
+        ) : null}
+        {preview ? (
+          <div
+            id={PREVIEW_SLOT_ID}
+            className={showing === 'preview' ? 'min-h-0 flex-1' : 'hidden'}
+            data-agent-session-preview-slot={preview.changeId}
+          />
+        ) : null}
+      </aside>
+    </>
+  );
+}
+
+/**
+ * The Mayor at work, as a conversation shows someone typing (#2779
+ * follow-up): its name and three dots where its reply will appear, and what
+ * it is doing beside them when that is known ("Reading the app", "Wrapping
+ * up", the coding agent's progress with its clock). Once it has said
+ * something the dots follow the words. Not a box across the pane: the old
+ * full-width bubble read as a message of its own.
+ */
+function TypingDots() {
+  return (
+    <span className="inline-flex h-5 shrink-0 items-center gap-1" aria-hidden="true" data-agent-session-typing>
+      <span className="agent-session-typing-dot block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-500" />
+      <span className="agent-session-typing-dot block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-500" />
+      <span className="agent-session-typing-dot block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-500" />
+    </span>
+  );
+}
+
+function LiveTurn({ runShown }: { runShown: boolean }) {
   const snapshot = useAgentSessionState();
   const turn = snapshot.turn;
   const [clock, setClock] = useState(Date.now());
@@ -268,6 +924,14 @@ function LiveTurn() {
   if (!turn.running && !turn.pendingUserText) return null;
   const actions = new Map(snapshot.actions.map((action) => [action.id, action]));
   const seconds = turn.startedAt ? Math.max(0, Math.round((clock - turn.startedAt) / 1000)) : 0;
+  // A running build draws its own card with the progress and the clock.
+  const working = turn.running && !(runShown && turn.phase === 'cc');
+  const said = !!(turn.streamText || turn.cards.length);
+  const status = turn.stopping
+    ? 'Stopping…'
+    : turn.phase === 'cc'
+      ? (turn.progress || turn.activity || 'The coding agent is working')
+      : (turn.activity || (turn.phase === 'mayor2' ? 'Wrapping up' : ''));
   return (
     <>
       {turn.pendingUserText ? (
@@ -275,32 +939,30 @@ function LiveTurn() {
           <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">{turn.pendingUserText}</p>
         </div>
       ) : null}
-      {turn.streamText || turn.cards.length ? (
-        <article>
+      {said || working ? (
+        <article data-agent-session-live>
           <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Mayor</p>
           {turn.streamText ? <MayorText text={turn.streamText} /> : null}
           {turn.cards.map((card) => <Card key={card.id} card={cardView(card, actions)} live />)}
+          {working ? (
+            <div
+              className={`flex min-w-0 items-center gap-2 text-[13px] text-zinc-500 dark:text-zinc-400 ${said ? 'mt-2' : ''}`}
+              data-agent-session-activity={turn.phase || 'mayor'}
+              aria-live="polite"
+            >
+              <TypingDots />
+              {status ? <span className="min-w-0 truncate">{status}</span> : <span className="sr-only">The Mayor is thinking</span>}
+              {turn.phase === 'cc' ? <span className="shrink-0 tabular-nums text-xs">{Math.floor(seconds / 60)}m {seconds % 60}s</span> : null}
+            </div>
+          ) : null}
         </article>
-      ) : null}
-      {turn.running ? (
-        <div
-          className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
-          data-agent-session-activity={turn.phase || 'mayor'}
-          aria-live="polite"
-        >
-          <SpinnerArcIcon className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate">
-            {turn.stopping ? 'Stopping…' : (turn.phase === 'cc' ? (turn.progress || turn.activity || 'The coding agent is working') : (turn.activity || (turn.phase === 'mayor2' ? 'Wrapping up' : 'Thinking')))}
-          </span>
-          {turn.phase === 'cc' ? <span className="shrink-0 tabular-nums text-xs text-zinc-500">{Math.floor(seconds / 60)}m {seconds % 60}s</span> : null}
-        </div>
       ) : null}
     </>
   );
 }
 
-function EmptyState({ session }: { session: AgentSession | null }) {
-  const app = session?.focusApp?.name || null;
+function EmptyState({ about }: { about: About }) {
+  const app = about?.focusApp?.name || null;
   return (
     <section className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center" data-agent-session-empty>
       <span className="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
@@ -317,9 +979,9 @@ function EmptyState({ session }: { session: AgentSession | null }) {
 
 // The first things to say, from where the conversation was opened: a
 // request or a proposal the user was looking at comes first.
-function starters(session: AgentSession | null) {
-  const app = session?.focusApp?.name || null;
-  const context = (session?.focusContext || {}) as { issueNumber?: number; proposalId?: number };
+function starters(about: About) {
+  const app = about?.focusApp?.name || null;
+  const context = (about?.focusContext || {}) as { issueNumber?: number; proposalId?: number };
   const first = context.issueNumber
     ? [`Work on request #${context.issueNumber}`]
     : context.proposalId
@@ -333,6 +995,11 @@ function starters(session: AgentSession | null) {
   ].slice(0, 3);
 }
 
+/**
+ * The suggested replies over the box. A tap puts one IN the box, to be
+ * edited or sent (#3033), as the dev chat's pills do; it no longer sends on
+ * its own.
+ */
 function Replies({ replies }: { replies: string[] }) {
   const snapshot = useAgentSessionState();
   if (!replies.length || snapshot.turn.running) return null;
@@ -343,7 +1010,8 @@ function Replies({ replies }: { replies: string[] }) {
           key={reply}
           type="button"
           className="shrink-0 rounded-full border border-violet-200 bg-white px-3 py-1.5 text-sm text-violet-700 hover:bg-violet-50 dark:border-violet-800 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
-          onClick={() => void sendAgentMessage(reply)}
+          data-agent-session-reply
+          onClick={() => fillComposer(reply)}
         >
           {reply}
         </button>
@@ -352,42 +1020,323 @@ function Replies({ replies }: { replies: string[] }) {
   );
 }
 
+/**
+ * The composer's model and credits (#2779 follow-up): one pill that names the
+ * model and opens the sheet (./composer-parts.tsx), and what is left of the
+ * week's credits in a pill beside Send, with a ring round Send that empties
+ * as they go. Both read what the old picker and meter read: the conversation's
+ * choice (./model-choice.ts) and the header's own budget figures, kept live by
+ * `budget_updated` (../header/ai-credit.js).
+ */
+function useModelChoice() {
+  const snapshot = useAgentSessionState();
+  useEffect(() => { void loadModelCatalog(); }, []);
+  const catalog = snapshot.catalog;
+  const explicit = snapshot.session ? (snapshot.session.agent || null) : (snapshot.draft?.agent || null);
+  const current = effectiveChoice(explicit, catalog);
+  const options = pickerOptions(catalog, current);
+  const value = choiceValue(current);
+  const selected = options.find((option) => option.value === value) || null;
+  const effort = current && offersReasoning(current, catalog)
+    ? {
+      value: effortValue(current, catalog),
+      options: effortOptions(catalog),
+      onPick: (picked: string) => void chooseAgent({ ...current, reasoningEffort: picked || null }),
+    }
+    : null;
+  return {
+    ready: !!(options.length && current),
+    label: selected ? selected.label : 'Model',
+    groups: modelGroups(options),
+    value,
+    effort,
+    pick: (picked: string) => {
+      const next = choiceFromValue(picked, catalog, current);
+      if (next) void chooseAgent(next);
+    },
+    busy: snapshot.choosing || snapshot.phase === 'loading',
+  };
+}
+
+function useCredit(): CreditView | null {
+  const { figures } = useStoreState<AiBudgetState>(aiBudgetStore);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  return mounted ? creditView(figures) : null;
+}
+
+const BUSY_PLACEHOLDER = 'The Mayor is working. Type your next message and save it for later.';
+const SAVE_TITLE = 'Save this as a draft (Enter). It stays here until you send it';
+
+/**
+ * The saved drafts above the composer (the dev chat's #798 list, per account):
+ * each can be sent once the Mayor is free, put back in the box to reword, or
+ * deleted. Sending is always a tap here, never automatic.
+ */
+export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
+  drafts: SavedDraft[];
+  busy: boolean;
+  onSend: (draft: SavedDraft) => void;
+  onEdit: (draft: SavedDraft) => void;
+}) {
+  if (!drafts.length) return null;
+  const button = 'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-zinc-500 transition-colors '
+    + 'hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent '
+    + 'dark:text-zinc-400 dark:hover:bg-zinc-800';
+  return (
+    <section
+      aria-label="Saved drafts"
+      className="mb-2 max-h-40 overflow-y-auto rounded-2xl bg-zinc-100 p-1.5 dark:bg-zinc-800/70"
+      data-agent-session-drafts={drafts.length}
+    >
+      <p className="flex flex-wrap items-baseline gap-x-1.5 px-2 pb-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+        <span className="font-semibold uppercase tracking-wide">{`Saved drafts (${drafts.length})`}</span>
+        <span>· on all your devices</span>
+        {busy ? <span className="ml-auto">sending unlocks when the Mayor finishes</span> : null}
+      </p>
+      <ul className="flex flex-col gap-1">
+        {drafts.map((draft) => (
+          <li
+            key={draft.id}
+            className="flex items-center gap-0.5 rounded-xl bg-white py-0.5 pl-3 pr-0.5 dark:bg-zinc-900"
+            data-agent-session-draft={draft.id}
+          >
+            <span className="min-w-0 flex-1 truncate text-sm text-zinc-700 dark:text-zinc-200" title={draft.text}>{draft.text}</span>
+            <button
+              type="button"
+              className={`${button} hover:text-emerald-700 dark:hover:text-emerald-400`}
+              aria-label="Send this draft"
+              title={busy ? 'The Mayor is still working. You can send this when it finishes' : 'Send this draft now'}
+              disabled={busy}
+              data-agent-session-draft-send
+              onClick={() => onSend(draft)}
+            >
+              <DraftSendIcon width={16} height={16} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={`${button} hover:text-violet-700 dark:hover:text-violet-300`}
+              aria-label="Edit this draft"
+              title="Put this draft back in the box to edit"
+              data-agent-session-draft-edit
+              onClick={() => onEdit(draft)}
+            >
+              <DraftEditIcon width={16} height={16} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={`${button} hover:text-red-700 dark:hover:text-red-300`}
+              aria-label="Delete this draft"
+              title="Delete this draft"
+              data-agent-session-draft-delete
+              onClick={() => deleteSavedDraft(draft.id)}
+            >
+              <DraftTrashIcon width={16} height={16} aria-hidden="true" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * The message box. Its ONE button follows the dev chat's (#798, #810):
+ * Send while the Mayor is free; while it works, Stop with nothing typed and
+ * a green Save with something typed, which parks the text as a saved draft
+ * (Enter does the same) so nothing typed mid-turn can leak into the running
+ * turn. What is typed and not sent is kept for the conversation (./unsent.ts).
+ *
+ * THE OUTLINE IS THE CARD'S, as on Messages' composer (#1954, #2882, #2387):
+ * `.agent-session-composer:focus-within` rings the whole card, and the field
+ * inside draws no edge of its own in any engine (public/css/app.css).
+ */
 function Composer({ id }: { id: string }) {
   const snapshot = useAgentSessionState();
   const [value, setValue] = useState('');
+  const input = useRef<HTMLTextAreaElement | null>(null);
   const running = snapshot.turn.running;
   const archived = snapshot.session?.status === 'archived';
+  const returned = snapshot.returnedText;
+  const target = snapshot.id ?? (snapshot.draft ? 'new' : null);
+  // Save needs something typed, and a turn not already stopping: Stop hands
+  // the message back to the box, and the button must stay Stop under the
+  // same click rather than become a Save that the click then submits.
+  const saving = running && !snapshot.turn.stopping && !!value.trim();
+  const model = useModelChoice();
+  const credit = useCredit();
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const pill = useRef<HTMLButtonElement | null>(null);
+  const picker = useRef<HTMLInputElement | null>(null);
+  const files = snapshot.attachments;
+  const uploading = files.some((item) => item.status === 'uploading');
+  const sendable = !!value.trim() || files.length > 0;
+  const closeSheet = useCallback(() => setSheetOpen(false), []);
+
+  const update = (next: string) => {
+    setValue(next);
+    if (target != null) writeUnsent(target, next);
+  };
+
+  // The conversation's unsent text, back after a reload or a switch.
+  useEffect(() => {
+    if (target != null) setValue(readUnsent(target));
+  }, [target]);
+
+  // A message the server refused, or a Stop, hands its text back, unless
+  // something new has been typed since.
+  useEffect(() => {
+    if (returned == null) return;
+    if (!value.trim()) update(returned);
+    clearReturnedText();
+  }, [returned]);
+
+  // A tapped suggested reply (#3033) replaces what is in the box, as the dev
+  // chat's pills do, with the caret at its end. Focus only with a fine
+  // pointer: on a phone it would raise the keyboard over the reply just
+  // chosen (the dev chat's _isCoarsePointer rule).
+  const fill = snapshot.composerFill;
+  useEffect(() => {
+    if (!fill) return;
+    update(fill.text);
+    clearComposerFill();
+    const field = input.current;
+    let coarse = false;
+    try { coarse = window.matchMedia('(pointer: coarse)').matches; } catch { /* no media queries: treat as fine */ }
+    if (field && !coarse) {
+      field.focus();
+      try { field.setSelectionRange(fill.text.length, fill.text.length); } catch { /* not a text field yet */ }
+    }
+  }, [fill]);
+
+  const placeholder = archived
+    ? 'This session is archived.'
+    : running ? BUSY_PLACEHOLDER : 'Describe a change to any app in plain English. No coding needed.';
+
+  // The field grows with what it holds, typed or put back. Empty, it is as
+  // tall as its hint, which wraps on a phone and was cut off mid-line under
+  // a one-line box (#3016): the hint is measured as the value for a moment
+  // and taken straight back out, which fires no input event.
+  const fitField = useCallback(() => {
+    const field = input.current;
+    if (!field) return;
+    field.style.height = 'auto';
+    let height = field.scrollHeight;
+    if (!field.value && field.placeholder) {
+      field.value = field.placeholder;
+      height = field.scrollHeight;
+      field.value = '';
+    }
+    field.style.height = `${Math.min(height, 144)}px`;
+  }, []);
+  useEffect(() => { fitField(); }, [value, placeholder, fitField]);
+  // And again whenever its width changes. The composer mounts with its
+  // screen, often while that screen is still hidden, where every measure is
+  // 0: the box then kept a one-line height and clipped the hint's second
+  // line until something was typed. Width only, so the height this sets
+  // cannot call it again.
+  useEffect(() => {
+    const field = input.current;
+    if (!field || typeof ResizeObserver === 'undefined') return undefined;
+    let width = field.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (field.clientWidth === width) return;
+      width = field.clientWidth;
+      fitField();
+    });
+    observer.observe(field);
+    return () => observer.disconnect();
+  }, [fitField]);
 
   function submit(event?: FormEvent) {
     event?.preventDefault();
     const text = value.trim();
-    if (!text || running) return;
-    setValue('');
+    if (running) {
+      if (saveComposerDraft(text)) update('');
+      return;
+    }
+    if (!text && !files.length) return;
+    // Files still uploading hold the send: the button says so, and Enter waits too.
+    if (uploading) return;
+    update('');
     void sendAgentMessage(text);
   }
 
+  // Pasted or dropped files join the tray (a pasted screenshot gets a name).
+  const takeFiles = (list: FileList | null | undefined) => {
+    const picked = Array.from(list || []);
+    if (!picked.length) return false;
+    addAttachments(picked.map((file, index) => (
+      file.name && file.name !== 'image.png' ? file : new File([file], pastedName(file, index), { type: file.type })
+    )));
+    return true;
+  };
+
+  const onSendDraft = (draft: SavedDraft) => {
+    if (running) return;
+    const typed = value;
+    update('');
+    void sendSavedDraft(draft.id, typed);
+  };
+  const onEditDraft = (draft: SavedDraft) => {
+    const text = editSavedDraft(draft.id, value);
+    if (text == null) return;
+    update(text);
+    input.current?.focus();
+  };
+
+  const kind = saving ? 'save' : running ? 'stop' : 'send';
   return (
     // `platform-safe-bar` on the outer box: its padding clears the tab bar
     // (a phone keeps it up on this screen) and the home-indicator strip, so
     // the bordered field above it never sits under either.
     <div className="platform-safe-bar shrink-0 px-3 pt-1">
+    {archived ? (
+      <p className="mb-2 flex flex-wrap items-center gap-2 rounded-2xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200" data-agent-session-archived>
+        <span className="min-w-0 flex-1">This session is archived. Unarchive it to keep going.</span>
+        <button type="button" className={CARD_BUTTON} onClick={() => void unarchiveCurrentSession()}>Unarchive</button>
+      </p>
+    ) : null}
+    <SavedDrafts drafts={snapshot.drafts} busy={running} onSend={onSendDraft} onEdit={onEditDraft} />
     <form
-      className="agent-session-composer flex items-end gap-2 rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
+      className="agent-session-composer flex flex-col gap-2 rounded-[1.75rem] border border-zinc-200 bg-white px-3 pb-2.5 pt-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
       onSubmit={submit}
+      onDragOver={(event) => { if (event.dataTransfer?.types?.includes('Files')) event.preventDefault(); }}
+      onDrop={(event) => {
+        if (archived || !event.dataTransfer?.files?.length) return;
+        event.preventDefault();
+        takeFiles(event.dataTransfer.files);
+      }}
     >
+      {files.length ? (
+        <PendingStrip
+          id={`${id}-attachments`}
+          items={files.map((item) => ({
+            key: item.key,
+            name: item.name,
+            kind: item.kind,
+            badge: badgeFor(item.kind, item.name),
+            size: formatSize(item.size),
+            thumbUrl: item.thumbUrl,
+            uploading: item.status === 'uploading',
+          }))}
+          onRemove={removeAttachment}
+        />
+      ) : null}
       <textarea
+        ref={input}
         id={id}
         rows={1}
         maxLength={20_000}
         value={value}
         disabled={archived || snapshot.phase === 'loading'}
-        placeholder={archived ? 'This session is archived.' : 'Describe a change to any app in plain English. No coding needed.'}
+        placeholder={placeholder}
         aria-label="Message the Mayor"
-        className="max-h-36 min-h-[2.5rem] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
-        onChange={(event) => {
-          setValue(event.target.value);
-          event.currentTarget.style.height = 'auto';
-          event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 144)}px`;
+        className="agent-session-composer-input max-h-36 min-h-[2.5rem] w-full resize-none bg-transparent px-2 py-1.5 text-base text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-400"
+        onChange={(event) => update(event.target.value)}
+        onPaste={(event) => {
+          if (archived || !event.clipboardData?.files?.length) return;
+          if (takeFiles(event.clipboardData.files)) event.preventDefault();
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -396,21 +1345,92 @@ function Composer({ id }: { id: string }) {
           }
         }}
       />
-      <Button
-        type={running ? 'button' : 'submit'}
-        data-agent-session-send={running ? 'stop' : 'send'}
-        variant={running ? 'pillDanger' : 'pillAccent'}
-        disabledStyle="dim"
-        size="icon"
-        ink={running ? 'dangerTint' : 'solid'}
-        className="inline-flex h-10 w-10 shrink-0 items-center justify-center"
-        disabled={running ? (snapshot.turn.stopping || snapshot.turn.phase === 'mayor2') : !value.trim()}
-        aria-label={running ? 'Stop' : 'Send'}
-        title={running ? (snapshot.turn.phase === 'mayor2' ? 'The wrap-up cannot be stopped' : 'Stop') : 'Send'}
-        onClick={running ? () => void stopAgentTurn() : undefined}
-      >
-        {running ? <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" /> : <ArrowUpIcon className="h-5 w-5" aria-hidden="true" />}
-      </Button>
+      <div className="flex items-center gap-2">
+        {/* One picker, no menu of our own: a phone's own file picker already
+            offers the photo library, the camera and files. */}
+        <button
+          type="button"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-800 hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+          aria-label="Add photos or files"
+          title="Add photos or files"
+          disabled={archived || snapshot.phase === 'loading'}
+          data-agent-session-attach
+          onClick={() => picker.current?.click()}
+        >
+          <PlusIcon className="h-5 w-5" aria-hidden="true" />
+        </button>
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          className="hidden"
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={(event) => {
+            takeFiles(event.currentTarget.files);
+            event.currentTarget.value = '';
+          }}
+        />
+        {model.ready ? (
+          <ModelPill
+            label={model.label}
+            disabled={archived || model.busy}
+            open={sheetOpen}
+            onOpen={() => setSheetOpen(true)}
+            pillRef={pill}
+          />
+        ) : null}
+        <div className="min-w-0 flex-1" />
+        {credit ? <CreditPill credit={credit} onOpen={() => setSheetOpen(true)} /> : null}
+        <CreditRing credit={credit}>
+          {kind === 'save' ? (
+            <Button
+              key="save"
+              type="submit"
+              data-agent-session-send="save"
+              variant="unstyled"
+              size="icon"
+              ink="solid"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 hover:bg-emerald-700"
+              aria-label="Save as draft"
+              title={SAVE_TITLE}
+            >
+              <SaveDraftIcon width={20} height={20} aria-hidden="true" />
+            </Button>
+          ) : (
+            <Button
+              key="send"
+              type={running ? 'button' : 'submit'}
+              data-agent-session-send={kind}
+              variant={running ? 'pillDanger' : 'pillAccent'}
+              disabledStyle="dim"
+              size="icon"
+              ink={running ? 'dangerTint' : 'solid'}
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center"
+              disabled={running ? (snapshot.turn.stopping || snapshot.turn.phase === 'mayor2') : (!sendable || uploading)}
+              aria-label={running ? 'Stop' : uploading ? 'Send (waiting for files to upload)' : 'Send'}
+              title={running
+                ? (snapshot.turn.phase === 'mayor2' ? 'The wrap-up cannot be stopped' : 'Stop')
+                : uploading ? 'Waiting for your files to upload' : 'Send'}
+              onClick={running ? () => void stopAgentTurn() : undefined}
+            >
+              {running ? <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" /> : <ArrowUpIcon className="h-5 w-5" aria-hidden="true" />}
+            </Button>
+          )}
+        </CreditRing>
+      </div>
+      {sheetOpen && model.ready ? (
+        <ModelSheet anchor={pill} onClose={closeSheet}>
+          <ModelSheetBody
+            groups={model.groups}
+            value={model.value}
+            onPick={(picked) => { model.pick(picked); closeSheet(); }}
+            effort={model.effort}
+            credit={credit}
+            onClose={closeSheet}
+          />
+        </ModelSheet>
+      ) : null}
     </form>
     </div>
   );
@@ -455,6 +1475,14 @@ function ChangesDrawer({ session }: { session: AgentSession }) {
               {active.stagingUrl ? (
                 <a className="rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500" href={active.stagingUrl} target="_blank" rel="noopener noreferrer">Open preview</a>
               ) : null}
+              <button
+                type="button"
+                data-agent-session-open-spec
+                className="rounded-full bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100"
+                onClick={() => void openSpec(active.id)}
+              >
+                Spec
+              </button>
               {active.appSlug ? (
                 <a
                   className="rounded-full bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100"
@@ -497,35 +1525,90 @@ function ChangesDrawer({ session }: { session: AgentSession }) {
 
 // ── The panel and the screen ───────────────────────────────────────────
 
-export function AgentSessionPanel({ embedded = false }: { embedded?: boolean }) {
+/**
+ * `headerAction` is a surface's addition to the session bar, drawn at its
+ * end: the Messages pane passes its full-width toggle, which every
+ * discussion pane carries in that place.
+ */
+export function AgentSessionPanel({ embedded = false, headerAction = null }: { embedded?: boolean; headerAction?: ReactNode }) {
   const snapshot = useAgentSessionState();
   const scroll = useRef<HTMLDivElement | null>(null);
-  const items = useMemo(() => buildTranscript(snapshot.messages, snapshot.actions), [snapshot.messages, snapshot.actions]);
+  const root = useRef<HTMLDivElement | null>(null);
+  // The side pane beside the chat (the spec, a preview, or both), or the
+  // spec over it (./spec-layout.ts). False until mounted, so the first
+  // render is the one the prerender printed.
+  const beside = useSidePaneBeside(embedded ? 'messages' : 'screen');
+  const liveRun = snapshot.turn.running && snapshot.turn.phase === 'cc';
+  const items = useMemo(
+    () => buildTranscript(snapshot.messages, snapshot.actions, Date.now(), { liveRun }),
+    [snapshot.messages, snapshot.actions, liveRun],
+  );
+  const runShown = items.some((item) => item.kind === 'run' && item.status === 'running');
+
+  // The run card's clock is the dev chat's (`nowStore`), whose heartbeat only
+  // beats inside the dev chat's own transcript; beat it here while a run is
+  // on screen.
+  useEffect(() => {
+    if (!runShown) return undefined;
+    const beat = () => nowStore.set({ now: Date.now() });
+    beat();
+    const timer = window.setInterval(beat, 1000);
+    return () => window.clearInterval(timer);
+  }, [runShown]);
   const replies = latestReplies(items);
   const empty = snapshot.phase === 'ready' && !items.length && !snapshot.turn.running && !snapshot.turn.pendingUserText;
+  const about: About = snapshot.session || snapshot.draft;
 
+  // Follow new output only while the reader is at the bottom (the dev chat's
+  // rule): scrolling up to read is not undone by the next token. Opening a
+  // conversation, or sending in it, goes back to the bottom.
+  const stick = useRef(true);
+  const onScroll = () => {
+    const el = scroll.current;
+    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
+  useEffect(() => { stick.current = true; }, [snapshot.id]);
+  useEffect(() => { if (snapshot.turn.pendingUserText) stick.current = true; }, [snapshot.turn.pendingUserText]);
   useEffect(() => {
-    if (!scroll.current) return;
+    if (!scroll.current || !stick.current) return;
     scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [items.length, snapshot.turn.streamText, snapshot.turn.running, snapshot.turn.cards.length]);
+  }, [snapshot.id, items.length, snapshot.turn.streamText, snapshot.turn.running, snapshot.turn.cards.length, snapshot.turn.pendingUserText]);
+  // The transcript shrinks when something grows under it (the saved drafts,
+  // a taller message box): a reader at the bottom stays there.
+  useEffect(() => {
+    const el = scroll.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <div className={`relative flex min-h-0 flex-1 flex-col ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
-      <SessionBar session={snapshot.session} embedded={embedded} />
-      <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite">
-        {snapshot.phase === 'loading' ? (
-          <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
-        ) : null}
-        {empty ? <EmptyState session={snapshot.session} /> : null}
-        {items.map((item) => <Item key={item.key} item={item} />)}
-        <LiveTurn />
-        {snapshot.error ? (
-          <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
-        ) : null}
+    <div ref={root} className={`relative flex min-h-0 min-w-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
+        <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
+        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite" onScroll={onScroll}>
+          {snapshot.phase === 'loading' ? (
+            <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
+          ) : null}
+          {empty ? <EmptyState about={about} /> : null}
+          {items.map((item) => <Item key={item.key} item={item} sessionId={snapshot.id} />)}
+          <LiveTurn runShown={runShown} />
+          {snapshot.credits ? <CreditsCard refusal={snapshot.credits} /> : null}
+          {snapshot.error ? (
+            <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
+          ) : null}
+        </div>
+        <Replies replies={empty ? starters(about) : replies} />
+        <Composer id={composerId(embedded ? 'messages' : 'screen')} />
+        {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
+        {snapshot.handoff ? <HandoffDialog /> : null}
       </div>
-      <Replies replies={empty ? starters(snapshot.session) : replies} />
-      <Composer id={composerId(embedded ? 'messages' : 'screen')} />
-      {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
+      {beside ? (
+        <SidePane sheet={snapshot.specSheet} preview={snapshot.preview} tab={snapshot.paneTab} containerRef={root} />
+      ) : snapshot.specSheet ? <SpecSheet sheet={snapshot.specSheet} /> : null}
     </div>
   );
 }
@@ -540,6 +1623,10 @@ export function AgentSessionScreen() {
   useEffect(() => {
     if (snapshot.open || !window.location.hash.startsWith('#agent/')) return;
     const [segment, section] = window.location.hash.slice('#agent/'.length).split('/');
+    if (segment === 'new') {
+      void openAgentSession({ id: 'new', host: 'screen' });
+      return;
+    }
     const id = Number(segment);
     if (Number.isSafeInteger(id) && id > 0) void openAgentSession({ id, host: 'screen', drawer: section === 'changes' });
   }, [snapshot.open]);

@@ -13,7 +13,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { renderComponent } = require('./lib/render-tsx');
+const { renderComponent, loadTsx } = require('./lib/render-tsx');
 
 function loadGroupChat() {
   const src = fs.readFileSync(
@@ -105,10 +105,13 @@ test('an unedited message has no marker', () => {
 });
 
 test('own ordinary message gets an Edit affordance; others do not', () => {
-  const own = row(baseMsg({ userId: 1 })); // App.user.id
-  assert.match(own, /gc-msg-edit/, 'edit button on own message');
-  const other = row(baseMsg({ userId: 2 }));
-  assert.doesNotMatch(other, /gc-msg-edit/, 'no edit button on someone else’s message');
+  // #2387: Edit lives in the row's ⋯ menu (the shared hover bar), so the gate
+  // is which items that menu builds, and the row carries the ⋯ that opens it.
+  const { messageMenuItems } = loadTsx('frontend/src/features/group-chat/transcript.tsx');
+  const keys = (msg) => messageMenuItems(GroupChat._messageView(msg), 'main', () => {}, () => {}).map((item) => item.key);
+  assert.ok(keys(baseMsg({ userId: 1 })).includes('edit'), 'edit on own message'); // App.user.id
+  assert.ok(!keys(baseMsg({ userId: 2 })).includes('edit'), 'no edit on someone else’s message');
+  assert.match(row(baseMsg({ userId: 1 })), /aria-label="More actions"/, 'the ⋯ is on the row');
 });
 
 test('multi-line content survives renderWithMentions with newlines intact', () => {

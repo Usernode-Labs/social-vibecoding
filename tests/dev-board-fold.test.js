@@ -317,7 +317,9 @@ test('the fold mark: the same two chevrons at both sizes, stretched open on the 
   const open = makeAppView({ search: '?cards=open&demo=1' });
   const n = cardRowsOf(open._kanbanView());
   const openHtml = kanbanHtml(open);
-  assert.equal(count(openHtml, new RegExp(esc('<button type="button" class="dev-fold-mark" data-open="1" aria-expanded="true" aria-label="Fold the card">' + GLYPH + '</button></div><div class="dev-card-meta">'), 'g')), n,
+  // `un-touch-target` (QA 2026-09-24 Q19): the 16px mark takes the kit's 44px
+  // hit-slop, so folding the card is not a 16px aim on a phone.
+  assert.equal(count(openHtml, new RegExp(esc('<button type="button" class="dev-fold-mark un-touch-target" data-open="1" aria-expanded="true" aria-label="Fold the card">' + GLYPH + '</button></div><div class="dev-card-meta">'), 'g')), n,
     'one open mark per card, closing the head');
   assert.ok(!openHtml.includes('<span class="dev-fold-mark"'), 'and no closed mark beside it');
   // The button folds through the fold's own toggle: the wrapper's
@@ -1210,7 +1212,55 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // conversation 990801. It had four; the manifest keeps 20 slots clear, so
   // they were folded into two with :has() once main's three landed.
   // Exactly 20 slots left under the 810 ceiling.
-  assert.equal(DAPP.tests.length, 790);
+  //
+  // 790 → 792: +2 (#2386): mutual friends. A person who asked you gets Accept
+  // and Decline under their name, and Me's private Friends section lists the
+  // requests to answer and then your friends. Five were folded into two with
+  // :has(); the button's other three states are rendered in
+  // tests/friends-ui.test.js. 790 was the floor already, so the ceiling moved
+  // to 830 (services/app-manifest.js), leaving 38 slots.
+  //
+  // 792 → 798: +6 (#2387): the Messages overhaul. The hover bar and the
+  // reply-count chip on a #general message; the reply thread beside its
+  // channel; a deleted message's placeholder reached by a message link, with
+  // the list toggle; the same bar, chip and placeholder in an app channel; a
+  // link to an app-channel reply opening its thread; and #2967's "Show N
+  // more". Ten were folded into six with :has(). 32 slots left under 830.
+  //
+  // 798 → 800: +2 (#2387 follow-up): a thread's replies drawn in the main
+  // transcript where they landed, one card for a run, with the thread card
+  // showing the newest reply — in #general and in an app channel. 30 slots
+  // left under 830.
+  //
+  // 800 → 802: +2 (#2387 follow-up): Full width moved to the right of every
+  // discussion pane's header — an app's channel ends its header with it, and
+  // a dev session's bar carries it after Open full view. The conversation
+  // header's place (just before ⋯) rides on the deleted-message check that
+  // already found the toggle. 28 slots left under 830.
+  //
+  // 802 → 803: +1 (#2779): an agent session's staging builds are cards: an
+  // older build superseded and the newest offering Open preview and View
+  // change, one selector over the staging conversation 990801's two build
+  // rows. 27 slots left under 830.
+  //
+  // 803 → 804: +1 (#2779): an agent session's saved draft above the message
+  // box, in a conversation whose Mayor reply shows what it cost: one
+  // selector over the staging conversation 990801's seeded draft. 26 slots
+  // left under 830.
+  //
+  // 804 → 810: +6 (QA 2026-09-24): the sweep's user-visible fixes.
+  // Discover's compact "Add" pill (Q10), the Skip to navigation link (Q18),
+  // sign-in's Back disc and the username rule under the register field (Q8,
+  // Q11), "Needs you" in a Messages row (Q29) and a group invitation's
+  // "Invitation pending" header (Q14). Seven more were drafted and left to
+  // unit tests (the conversation ⋯ as a menu button among them, pinned in
+  // tests/qa-menus-keyboard.test.js) to keep the 20 free slots the proposal
+  // suites require. 20 slots left under 830, the floor those suites allow.
+  //
+  // 810, unchanged (#2779): an agent session's "Build: Homeroom" and ⋯ ride
+  // on the saved-draft check over conversation 990801 as a :has(), since
+  // the floor above leaves no slot for a check of their own.
+  assert.equal(DAPP.tests.length, 810);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1328,7 +1378,9 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
   assert.ok(at > 0, 'the band pill rule exists');
   const pill = CSS.slice(at, CSS.indexOf('\n}', at));
   assert.match(pill, /background: var\(--accent-tint\);/);
-  assert.match(pill, /color: var\(--accent\);/);
+  // The ink is the accent one step darker in light (QA 2026-09-24 Q20): the
+  // accent itself is 4.34:1 on its own tint, under AA for these 12px labels.
+  assert.match(pill, /color: var\(--accent-tint-ink\);/);
   assert.match(pill, /border-color: transparent;/);
   assert.match(CSS, /\.dev-vote-btn-yes[^{]*\{ background: var\(--accent-tint\); color: var\(--accent\); \}/, 'the pair the Yes state uses');
   // The ⋯ was a well in the card's top-right rail. The menu is where the

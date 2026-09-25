@@ -165,10 +165,10 @@
     },
     {
       "source": "src/routes/chat.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "a8b771920b8319e47251",
+      "kind": "structural-template",
+      "fingerprint": "a8088914fba97dc374b7",
       "count": 1,
-      "preview": "query"
+      "preview": "`SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via, m.deleted_at FROM "
     },
     {
       "source": "src/routes/cli-auth.js",
@@ -369,9 +369,9 @@
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "7674fd3d848f4fdabba1",
+      "fingerprint": "6e15f5a9e6dc781720b1",
       "count": 1,
-      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, ${allTotalSql} AS all_total, COUNT(*) FILTER ( WHERE ${scopeFilter} AND (${totalSql(doneExpr)}) ):"
+      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, ${allTotalSql} AS all_total, ${allDoneSql} AS all_done, COUNT(*) FILTER ( WHERE ${scopeFilter} AND"
     },
     {
       "source": "src/routes/kudos.js",
@@ -845,13 +845,6 @@
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
-      "fingerprint": "13c2b3cb224c4420675a",
-      "count": 1,
-      "preview": "`${MESSAGE_SELECT} WHERE m.conversation_id = $1 ${beforeSql} AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sende"
-    },
-    {
-      "source": "src/services/conversations.js",
-      "kind": "structural-template",
       "fingerprint": "1ed50d96de6aeca2b5eb",
       "count": 1,
       "preview": "`SELECT c.id, c.kind, c.title, c.status AS conversation_status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, cm.role, cm.status AS membership_statu"
@@ -992,7 +985,14 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "4b91f922756499412a0f",
+      "fingerprint": "14bc9ec7c4bde86c6783",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "91df73aa6c2d685889c8",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
     },
@@ -1020,6 +1020,13 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
+      "fingerprint": "bf3729bc3cdae40f61c7",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
       "fingerprint": "cf837b937e37a4415dce",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind) SELECT v.user_id, v.app_id, v.chat_message_id, v.source_user_id, v.kind FROM"
@@ -1027,23 +1034,9 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "e62b89e44e4fa49ef857",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
       "fingerprint": "eb68b3940172c1cd1033",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail) SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.det"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "ee4689e980fe324049b7",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
     },
     {
       "source": "src/services/platform-env-check.js",

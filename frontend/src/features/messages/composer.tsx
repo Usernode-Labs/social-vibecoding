@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
-import { channels, draftFor, notifyTyping, replyFor, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
+import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
 import type { MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { orderFriendsFirst, useFriendIds } from '../friends/store';
+import { wantsKeyboardFocus } from '../message-actions/focus';
+import { completedShortcodeAt, findShortcodeToken, matchShortcodes, replaceShortcodeToken } from '../message-actions/emoji-shortcodes';
 
 const MAX_ATTACHMENTS = 4;
 
@@ -26,10 +29,19 @@ function objectLabel(object: SharedObjectReference): string {
   return `${app}Proposal ${object.sessionId}`;
 }
 
-export function MessageComposer() {
+/**
+ * The conversation's composer — or, with `threadRootId` (#2387), the composer
+ * of the reply thread open beside it. The two keep their own drafts and
+ * their own staged reply (the store's composer scope), and only the
+ * conversation's own composer takes shared items: a card shared into
+ * Messages lands in the conversation, never inside a thread.
+ */
+export function MessageComposer({ threadRootId = null }: { threadRootId?: number | null } = {}) {
   const snap = useMessagesSnapshot();
   const conversationId = snap.route.conversationId || 0;
   const active = snap.active;
+  const scope = scopeKey(conversationId, threadRootId);
+  const inThread = !!threadRootId;
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
   const [uploading, setUploading] = useState(0);
@@ -47,13 +59,23 @@ export function MessageComposer() {
   useAutoGrow(inputRef, value);
   const fileRef = useRef<HTMLInputElement>(null);
   const typingStop = useRef<number | null>(null);
-  const reply = replyFor(conversationId);
+  const reply = replyFor(scope);
+  // #2386: friends lead the @ list (features/friends/store.ts).
+  const friendIds = useFriendIds();
 
   useEffect(() => {
-    setValue(draftFor(conversationId)); setAttachments([]); setObject(null); setError('');
-  }, [conversationId]);
+    setValue(draftFor(scope)); setAttachments([]); setObject(null); setError('');
+  }, [scope]);
+
+  // Reply puts the caret here where there is a hardware keyboard, so the
+  // next keystroke is the reply (message-actions/focus.ts).
+  const replyId = reply?.id ?? null;
+  useEffect(() => {
+    if (replyId && wantsKeyboardFocus()) inputRef.current?.focus({ preventScroll: true });
+  }, [replyId]);
 
   useEffect(() => {
+    if (inThread) return undefined;
     const onSelected = (event: Event) => {
       const detail = (event as CustomEvent<SharedObjectReference>).detail;
       if (detail) { setObject(detail); inputRef.current?.focus(); }
@@ -81,7 +103,7 @@ export function MessageComposer() {
       window.removeEventListener('usernode:messages-object-selected', onSelected);
       window.removeEventListener('usernode:messages-share', onShare);
     };
-  }, [conversationId]);
+  }, [conversationId, inThread]);
 
   useEffect(() => () => {
     if (typingStop.current) window.clearTimeout(typingStop.current);
@@ -92,9 +114,9 @@ export function MessageComposer() {
     const cursor = inputRef.current?.selectionStart ?? value.length;
     const prefix = value.slice(0, cursor).match(/(?:^|\s)@([^\s@]*)$/)?.[1];
     if (prefix === undefined) return null;
-    return (active?.members || []).filter((member) => member.status === 'member'
-      && member.username.toLowerCase().startsWith(prefix.toLowerCase())).slice(0, 6);
-  }, [active?.members, value]);
+    return orderFriendsFirst((active?.members || []).filter((member) => member.status === 'member'
+      && member.username.toLowerCase().startsWith(prefix.toLowerCase())), friendIds).slice(0, 6);
+  }, [active?.members, value, friendIds]);
 
   // #2783: `#` offers the viewer's channels — #general and their apps' —
   // and inserts `#handle`, which every chat renders as a link to it. Only a
@@ -108,18 +130,160 @@ export function MessageComposer() {
     return channels().filter((item) => item.handle.startsWith(q)).slice(0, 6);
   }, [value, snap.conversations, snap.discussions]);
 
+  // ── Choosing a suggestion from the keyboard (QA 2026-09-24 Q13) ──────
+  //
+  // The @ and # lists were mouse-only: the arrows moved the caret, and Enter
+  // SENT the half-typed "@qaf" instead of picking the person it was
+  // suggesting. Now the open list is a listbox the textarea drives through
+  // `aria-activedescendant`: the first row is highlighted, ArrowUp/ArrowDown
+  // move the highlight, Enter or Tab picks it, and Escape closes the list
+  // for the text as it stands (typing brings it back). Enter sends only
+  // while no list is showing.
+  const listId = useId();
+  const [highlight, setHighlight] = useState(0);
+  const [dismissedAt, setDismissedAt] = useState<string | null>(null);
+  const listOpen = dismissedAt !== value;
+  const mentionShown = listOpen && !!mention?.length;
+  const channelShown = listOpen && !mentionShown && !!channelMatches?.length;
+  const suggestions: Array<{ key: string; pick: () => void }> = mentionShown
+    ? (mention || []).map((member) => ({ key: `@${member.id}`, pick: () => insertMention(member.username) }))
+    : channelShown
+      ? (channelMatches || []).map((item) => ({ key: `#${item.handle}`, pick: () => insertChannel(item.handle) }))
+      : [];
+  const suggestionKey = suggestions.map((item) => item.key).join(' ');
+  // A new list (or a narrower one) starts from its first row again.
+  useEffect(() => { setHighlight(0); }, [suggestionKey]);
+  const activeOption = suggestions.length ? Math.min(highlight, suggestions.length - 1) : -1;
+  const optionId = (index: number) => `${listId}-opt-${index}`;
+  useEffect(() => {
+    if (activeOption < 0) return;
+    document.getElementById(optionId(activeOption))?.scrollIntoView?.({ block: 'nearest' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOption, suggestionKey]);
+
+  /** The suggestion list's share of the textarea's keys; true when it took the key. */
+  function suggestionKeys(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
+    if (!suggestions.length || event.nativeEvent.isComposing) return false;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      setHighlight((activeOption + step + suggestions.length) % suggestions.length);
+      return true;
+    }
+    if ((event.key === 'Enter' && !event.shiftKey) || (event.key === 'Tab' && !event.shiftKey)) {
+      event.preventDefault();
+      suggestions[Math.max(0, activeOption)].pick();
+      return true;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setDismissedAt(value);
+      return true;
+    }
+    return false;
+  }
+
+  // `:th` offers emoji by shortcode, Discord's way, and a complete `:tada:`
+  // becomes 🎉 as its closing colon is typed. The token rules and the ranking
+  // are features/message-actions/emoji-shortcodes.ts, which the app chat's
+  // composer shares. ↑/↓ move the highlight, Enter or Tab inserts it, Escape
+  // closes the menu until the token changes.
+  const [emojiPick, setEmojiPick] = useState({ key: '', index: 0 });
+  const [emojiDismissed, setEmojiDismissed] = useState('');
+  const emojiListRef = useRef<HTMLDivElement>(null);
+  // Where the caret goes once a swap has rendered. A layout effect, not a
+  // frame later: a key typed inside that frame would land before the caret
+  // moved and end up on the wrong side of the emoji.
+  const emojiCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const at = emojiCaret.current;
+    if (at === null) return;
+    emojiCaret.current = null;
+    inputRef.current?.setSelectionRange(at, at);
+  }, [value]);
+  const emoji = useMemo(() => {
+    const input = inputRef.current;
+    const cursor = input?.selectionStart ?? value.length;
+    const token = findShortcodeToken(value, cursor, input?.selectionEnd ?? cursor);
+    const items = token ? matchShortcodes(token.query, 8) : [];
+    return token && items.length ? { ...token, key: `${token.start}:${token.query}`, items } : null;
+  }, [value]);
+  const emojiOpen = !!emoji && emoji.key !== emojiDismissed && !mention?.length && !channelMatches?.length;
+  const emojiActive = emoji && emojiPick.key === emoji.key ? emojiPick.index : 0;
+  useEffect(() => {
+    emojiListRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [emojiOpen, emojiActive]);
+
+  function insertEmoji(glyph: string) {
+    const input = inputRef.current;
+    const cursor = input?.selectionStart ?? value.length;
+    const token = findShortcodeToken(value, cursor, input?.selectionEnd ?? cursor);
+    if (!token) return;
+    const next = replaceShortcodeToken(value, token.start, cursor, glyph);
+    emojiCaret.current = next.caret;
+    input?.focus();
+    updateValue(next.value);
+  }
+
+  /** The menu's keys, ahead of Enter-to-send. True when the key was the menu's. */
+  function onEmojiKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
+    if (!emojiOpen || !emoji || event.nativeEvent.isComposing) return false;
+    // The caret can have moved off the token since the last keystroke (the
+    // menu follows the text, not the caret); then the key is not the menu's.
+    const input = event.currentTarget;
+    const live = findShortcodeToken(input.value, input.selectionStart, input.selectionEnd);
+    if (!live || `${live.start}:${live.query}` !== emoji.key) return false;
+    const count = emoji.items.length;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      setEmojiPick({ key: emoji.key, index: (emojiActive + step + count) % count });
+    } else if (event.key === 'Enter' || (event.key === 'Tab' && !event.shiftKey)) {
+      insertEmoji(emoji.items[emojiActive].emoji);
+    } else if (event.key === 'Escape') {
+      setEmojiDismissed(emoji.key);
+    } else {
+      return false;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
+  function onComposerChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    const input = event.target;
+    const done = (event.nativeEvent as InputEvent).data === ':' ? completedShortcodeAt(input.value, input.selectionStart) : null;
+    if (!done) { updateValue(input.value); return; }
+    const next = replaceShortcodeToken(input.value, done.start, done.end, done.emoji, '');
+    emojiCaret.current = next.caret;
+    updateValue(next.value);
+  }
+
   function insertChannel(handle: string) {
     const input = inputRef.current;
     const cursor = input?.selectionStart ?? value.length;
     const before = value.slice(0, cursor).replace(/#([A-Za-z][A-Za-z0-9-]*|)$/, `#${handle} `);
     const next = before + value.slice(cursor);
     updateValue(next);
-    requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(before.length, before.length); });
+    // A pick closes the list for the text it produced. The lists read the
+    // caret during render, before the caret moves past the inserted name, so
+    // without this the list reopened on the OLD caret and a second Enter
+    // picked again.
+    setDismissedAt(next.slice(0, 8000));
+    placeCaretAfterPick(input, before.length);
+  }
+
+  // The caret moves in the layout effect the new value renders, as an emoji
+  // swap's does (`emojiCaret`), not a frame later: a key typed straight after
+  // Enter picked a name would land before the caret moved and end up on the
+  // wrong side of it (QA 2026-09-24 Q13, where the keyboard made that fast).
+  function placeCaretAfterPick(input: HTMLTextAreaElement | null, at: number) {
+    emojiCaret.current = at;
+    input?.focus();
   }
 
   function updateValue(next: string) {
     const trimmed = next.slice(0, 8000);
-    setValue(trimmed); setDraft(conversationId, trimmed);
+    setValue(trimmed); setDraft(scope, trimmed);
     notifyTyping(true);
     if (typingStop.current) window.clearTimeout(typingStop.current);
     typingStop.current = window.setTimeout(() => notifyTyping(false), 2200);
@@ -131,7 +295,8 @@ export function MessageComposer() {
     const before = value.slice(0, cursor).replace(/@([^\s@]*)$/, `@${username} `);
     const next = before + value.slice(cursor);
     updateValue(next);
-    requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(before.length, before.length); });
+    setDismissedAt(next.slice(0, 8000));
+    placeCaretAfterPick(input, before.length);
   }
 
   async function addFiles(files: File[]) {
@@ -180,23 +345,62 @@ export function MessageComposer() {
     const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object || undefined };
     setValue(''); setAttachments([]); setObject(null);
     requestAnimationFrame(() => inputRef.current?.focus());
-    send(input).catch((err) => setError(err instanceof Error ? err.message : 'Your message wasn’t sent.'));
+    send({ ...input, threadRootId }).catch((err) => setError(err instanceof Error ? err.message : 'Your message wasn’t sent.'));
   }
 
   if (!active || active.membershipStatus !== 'member') return null;
+
+  // QA 2026-09-24 Q2: a direct request the other person has not accepted
+  // yet. It carries ONE opening message; once that is sent (or in flight —
+  // the optimistic row counts, so a quick second Enter cannot slip in) the
+  // composer gives way to a plain statement of what the thread is waiting
+  // for. Every later send used to come back "Not sent · Retry", and the
+  // Retry could never work.
+  const awaiting = !inThread && !!active.awaitingAcceptance;
+  const waitingOn = awaiting
+    ? active.peer?.username || active.members.find((member) => member.status === 'invited')?.username || ''
+    : '';
+  const who = waitingOn ? `@${waitingOn}` : 'them';
+  if (awaiting && (!active.canSend || snap.messages.length > 0)) {
+    return (
+      <div className="messages-composer messages-composer-awaiting platform-safe-bar" data-awaiting-acceptance="">
+        <div className="messages-awaiting" role="status">
+          <strong>Message request sent</strong>
+          <p>Waiting for {who} to accept your message request. You can send more once they do.</p>
+        </div>
+      </div>
+    );
+  }
   if (!active.canSend) return <div className="messages-composer-disabled platform-safe-bar">You can’t send messages in this conversation.</div>;
 
   return (
-    <div className={`messages-composer platform-safe-bar ${dragging ? 'messages-composer-dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={(event) => { event.preventDefault(); setDragging(false); void addFiles([...event.dataTransfer.files]); }}>
+    <div className={`messages-composer platform-safe-bar ${inThread ? 'messages-composer-thread' : ''} ${dragging ? 'messages-composer-dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={(event) => { event.preventDefault(); setDragging(false); void addFiles([...event.dataTransfer.files]); }}>
+      {/* QA 2026-09-24 Q2: before the opening message of a request, what it
+          will be — so the composer turning into a notice after it is no
+          surprise. */}
+      {awaiting ? <p className="messages-composer-hint" data-awaiting-acceptance="">{waitingOn ? `@${waitingOn} gets` : 'They get'} your first message as a message request. You can send more once they accept.</p> : null}
       {/* The white card. The bar around it is what carries the home-indicator
           inset (`platform-safe-bar`), so the card keeps its own padding on a
           notched phone instead of growing a tall blank foot. */}
       <div className="messages-composer-card">
-      {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to @{reply.sender.username}</span><p className="truncate">{reply.content || 'Attachment'}</p></div><button type="button" onClick={() => setReply(conversationId, null)} aria-label="Cancel reply">×</button></div> : null}
+      {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to @{reply.sender.username}</span><p className="truncate">{reply.content || 'Attachment'}</p></div><button type="button" onClick={() => setReply(scope, null)} aria-label="Cancel reply">×</button></div> : null}
       {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{objectLabel(object)}</span><button type="button" onClick={() => setObject(null)} aria-label="Remove shared item">×</button></div> : null}
       {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={`Remove ${item.name}`}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">Uploading {uploading}…</span> : null}</div> : null}
-      {channelMatches?.length && !mention?.length ? <div className="messages-mention-menu" role="listbox" aria-label="Channels">{channelMatches.map((item) => <button key={item.handle} type="button" role="option" data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
-      {mention?.length ? <div className="messages-mention-menu" role="listbox">{mention.map((member) => <button key={member.id} type="button" role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
+      {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label="Channels">{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
+      {mentionShown && mention ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label="People">{mention.map((member, index) => <button key={member.id} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
+      {emojiOpen && emoji ? (
+        <div className="messages-mention-menu messages-emoji-menu">
+          <div className="messages-emoji-menu-heading">Emoji matching <span className="messages-emoji-menu-query">:{emoji.query}</span></div>
+          <div ref={emojiListRef} className="messages-emoji-menu-list" role="listbox" aria-label="Emoji">
+            {emoji.items.map((item, i) => (
+              <button key={item.emoji} type="button" role="option" aria-selected={i === emojiActive} data-emoji-option={item.shortcode} onMouseDown={(event) => event.preventDefault()} onClick={() => insertEmoji(item.emoji)}>
+                <span className="messages-emoji-option-glyph" aria-hidden="true">{item.emoji}</span>
+                <span className="messages-emoji-option-code">:{item.shortcode}:</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
         <div className="messages-composer-add" ref={addRef}>
@@ -210,18 +414,22 @@ export function MessageComposer() {
                 <PaperClipIcon aria-hidden="true" />
                 <span>Attach files</span>
               </button>
-              <button type="button" role="menuitem" onClick={() => { setAddOpen(false); window.UsernodeReact?.dialogs?.messagesShare?.open(); }}>
-                <ArrowUpTrayIcon aria-hidden="true" />
-                <span>Share item</span>
-              </button>
+              {inThread ? null : (
+                <button type="button" role="menuitem" onClick={() => { setAddOpen(false); window.UsernodeReact?.dialogs?.messagesShare?.open(); }}>
+                  <ArrowUpTrayIcon aria-hidden="true" />
+                  <span>Share item</span>
+                </button>
+              )}
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(conversationId, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder="Message…" aria-label="Message" className="messages-composer-input" />
+        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : 'Message…'} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <button type="button" onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
-      <div className="mt-1 px-1 flex justify-end"><span className={`text-[10px] ${value.length > 7600 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
+      {/* The count's line is always laid out, empty or not: it appearing
+          with the first keystroke pushed the whole composer up by a line. */}
+      <div className="mt-1 px-1 flex justify-end h-[15px]" aria-hidden={!value.length}><span className={`text-[10px] leading-[15px] ${value.length > 7600 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
       </div>
       {dragging ? <div className="messages-drop-overlay">Drop files to attach</div> : null}
     </div>

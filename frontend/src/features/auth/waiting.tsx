@@ -176,13 +176,17 @@ export function WaitingScreen() {
               {checkState}
             </p>
           </div>
+          {/*
+              QA 2026-09-24 Q12: this used to open with a violet "Use apps
+              while you wait" pill to `#landing`. The landing stopped listing
+              apps when its directory grid was removed (landing.tsx,
+              `landingTileFor`), and for a waiting-room session it shows one
+              pill, "Your queue status", back to this screen: the promise led
+              in a circle. Nothing a waiting-room account can reach lists apps
+              today, so the pill is gone rather than pointed at something that
+              does not exist. Log out is the one action left.
+          */}
           <div className="mt-6 space-y-3">
-            <a
-              href="#landing"
-              className="flex h-12 w-full items-center justify-center rounded-full bg-violet-600 hover:bg-violet-500 px-5 text-[17px] font-semibold transition-colors text-white"
-            >
-              Use apps while you wait
-            </a>
             <button
               id="waiting-logout"
               className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors"

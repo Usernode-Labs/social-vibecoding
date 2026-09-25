@@ -167,6 +167,12 @@ export interface ProposalEvent {
    * force merge, and an announcement from before names were carried.
    */
   credits?: { author: string; backers: string[]; shapers: string[] } | null;
+  /**
+   * A merge on the platform's own app, whose release runs after the merge
+   * (follow-up to #2897): the announcement said it "will be live in a few
+   * minutes" rather than "is live". Absent on every other row.
+   */
+  liveSoon?: boolean;
 }
 
 /**
@@ -188,6 +194,27 @@ export interface Attachment {
   /** Pre-formatted by the module: "2 KB", "3.0 MB". */
   size: string;
   badge: string | null;
+}
+
+/** #2387: a reply thread's summary, as the chip under its first message draws it. */
+export interface ThreadSummaryView {
+  replyCount: number;
+  lastReplyAt: string | null;
+  participants: string[];
+  /** The newest reply, which the card under the message shows (#2387 follow-up). */
+  lastReply?: { name: string; text: string } | null;
+}
+
+/**
+ * A reply-thread reply read as part of the GENERAL stream (#2387 follow-up):
+ * which thread it is in, and the start of that thread's first message, which
+ * its line there names. The general transcript draws it as a card where it
+ * landed; a thread's own transcript draws it as the row it always was.
+ */
+export interface ReplyInStream {
+  rootId: number;
+  rootText: string;
+  rootDeleted: boolean;
 }
 
 export interface TranscriptMessage {
@@ -276,6 +303,22 @@ export interface TranscriptMessage {
    * compares by identity and `event` is an object.
    */
   eventHref?: string | null;
+  /**
+   * #2387: the message's own words, unrendered — what "Copy text" copies.
+   * `bodyHtml` is the markdown pipeline's output, which is not what someone
+   * pasting it elsewhere wants.
+   */
+  text?: string;
+  /** #2387: deleted by its author — drawn as a placeholder with no controls. */
+  deleted?: boolean;
+  /** #2387: the reply thread under this message, or null when it has none. */
+  thread?: ThreadSummaryView | null;
+  /** #2387: whether a reply thread can hang off this row (the general chat's people and specs). */
+  canThread?: boolean;
+  /** #2387: this row is the message a reply thread hangs off, drawn at the thread's head. */
+  threadRoot?: boolean;
+  /** Set on a reply-thread reply; the general transcript draws it as activity. */
+  replyOf?: ReplyInStream | null;
 }
 
 /**

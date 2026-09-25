@@ -35,6 +35,17 @@
  * you visit, not a conversation waiting on you, so it does not jump over a
  * DM because somebody said something in it. Within the section the clock
  * orders the app channels, and one nobody has spoken in sits at the end.
+ *
+ * ── Your apps first, the rest behind "Show more" (#2967) ──────────────
+ *
+ * The app channels split in two, the way Home's own list does: YOUR apps —
+ * the ones you are a member of and have not hidden, and the ones you added —
+ * and then every other app you have been active in (posted or reacted in its
+ * chat, voted, proposed, filed a request). The server says which is which
+ * (`section` on each row, src/routes/messages-overview.js); the second group
+ * is marked `more` here and the view folds it behind "Show N more". A server
+ * that sends no section is an older one whose rows are all member apps, so
+ * they are all yours, in the order they always had.
  */
 
 // `mayor` is an agent session (#2779): a conversation with the Mayor that
@@ -53,6 +64,8 @@ export interface InboxEntry {
   section: InboxSection;
   /** ISO, or null when the source has no clock (see the header). */
   at: string | null;
+  /** An app channel outside Your apps, folded behind "Show more" (#2967). */
+  more?: boolean;
 }
 
 /**
@@ -69,6 +82,10 @@ export interface AppDiscussion {
   lastMessage: string;
   lastAt: string | null;
   lastBy: string | null;
+  /** #2967: one of Your apps, or another app the viewer has been active in. */
+  section?: 'yours' | 'more';
+  /** #2387: general-chat messages from others since the viewer last read it. */
+  unreadCount?: number;
 }
 
 export interface AgentChat {
@@ -152,6 +169,7 @@ export function buildInbox(input: {
   const chats: InboxEntry[] = [];
   const rooms: InboxEntry[] = [];
   const apps: InboxEntry[] = [];
+  const moreApps: InboxEntry[] = [];
   for (const item of input.conversations) {
     if (item.kind === 'channel') {
       if (admits(input.filter, 'channel')) {
@@ -163,7 +181,11 @@ export function buildInbox(input: {
   }
   if (admits(input.filter, 'app')) {
     for (const item of input.discussions) {
-      apps.push({ key: `app:${item.slug}`, kind: 'app', section: 'channels', at: item.lastAt });
+      if (item.section === 'more') {
+        moreApps.push({ key: `app:${item.slug}`, kind: 'app', section: 'channels', at: item.lastAt, more: true });
+      } else {
+        apps.push({ key: `app:${item.slug}`, kind: 'app', section: 'channels', at: item.lastAt });
+      }
     }
   }
   if (admits(input.filter, 'agent')) {
@@ -189,5 +211,5 @@ export function buildInbox(input: {
   // Stable within a timestamp: `sort` is stable in every engine this ships
   // to, so two rows that happened in the same second keep the order their
   // own source gave them — which for conversations is the server's.
-  return [...chats.sort(byClock), ...rooms, ...apps.sort(byClock)];
+  return [...chats.sort(byClock), ...rooms, ...apps.sort(byClock), ...moreApps.sort(byClock)];
 }

@@ -62,7 +62,7 @@ async function connect(t, { beforeMigration = null } = {}) {
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id), user_id INTEGER REFERENCES users(id),
       status VARCHAR(32) NOT NULL DEFAULT 'active', source TEXT,
       pr_number INTEGER, pr_title VARCHAR(256), session_title TEXT,
-      staging_url TEXT, check_state VARCHAR(32));
+      staging_url TEXT, check_state VARCHAR(32), test_results JSONB NOT NULL DEFAULT '[]');
     CREATE TABLE chat_session_messages (
       id SERIAL PRIMARY KEY,
       session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE,
@@ -427,6 +427,102 @@ test('one Mayor turn at a time, and a dead turn\'s lease is taken over', async (
   }
 });
 
+test('a lease its turn stopped renewing is not busy, and only such a lease is handed back', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    const detail = () => agentSessions.getAgentSession(client, { userId: 7, id: session.id });
+    const listed = async () => (await agentSessions.listAgentSessions(client, { userId: 7 })).sessions.find((s) => s.id === session.id);
+    const age = (mins) => client.query(
+      `UPDATE agent_sessions
+          SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW() - make_interval(mins => $2))
+        WHERE id = $1`,
+      [session.id, mins]
+    );
+    const handBack = (userId = 7, finished = true) => agentSessions.releaseStaleTurnLease(client, { agentSessionId: session.id, userId, finished });
+
+    assert.equal(await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'dead-turn' }), true);
+    assert.equal(await handBack(), false, 'a live lease may be a turn on the other pod');
+    assert.equal((await detail()).busy, true);
+
+    await age(agentSessions.TURN_LEASE_STALE_MINUTES + 1);
+    assert.deepEqual([(await detail()).busy, (await listed()).busy], [false, false],
+      'its process died: the detail and the lists stop saying working');
+    assert.equal(await handBack(8), false, 'another user\'s hand-back clears nothing');
+    assert.equal(await handBack(), true);
+    const { rows: [row] } = await client.query('SELECT active_turn, last_done_at FROM agent_sessions WHERE id = $1', [session.id]);
+    assert.equal(row.active_turn, null);
+    assert.ok(row.last_done_at, 'a recovery that posted the wrap-up finished the dead turn\'s work');
+    assert.equal((await detail()).doneUnseen, true);
+    assert.equal(await handBack(), false, 'nothing left to hand back');
+
+    // A stale lease still on the row: the dot shows, and reading clears it.
+    assert.equal(await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'dead-again' }), true);
+    await age(agentSessions.TURN_LEASE_STALE_MINUTES + 1);
+    assert.equal((await listed()).doneUnseen, true);
+    assert.equal(await agentSessions.markSeen(client, { userId: 7, id: session.id }), true,
+      'the other tabs hear the dot went, as they do once a turn releases');
+  } finally {
+    await done(client);
+  }
+});
+
+test('a change names the open conversations it is the active change of', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    await client.query("INSERT INTO users (id, username) VALUES (7, 'ada') ON CONFLICT DO NOTHING");
+    await client.query("INSERT INTO apps (id, slug, name, created_by) VALUES (1, 'rss', 'RSS', 7) ON CONFLICT DO NOTHING");
+    const { rows: [change] } = await client.query('INSERT INTO chat_sessions (app_id, user_id) VALUES (1, 7) RETURNING id');
+    const open = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    const archived = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    await client.query('UPDATE agent_sessions SET active_change_id = $1 WHERE id = ANY($2)', [change.id, [open.id, archived.id]]);
+    await agentSessions.archiveAgentSession(client, { userId: 7, id: archived.id });
+    assert.deepEqual(await agentSessions.conversationsOfChange(client, change.id), [{ agentSessionId: open.id, userId: 7 }]);
+  } finally {
+    await done(client);
+  }
+});
+
+test('the lists\' marks: working while a turn runs, finished until the owner reads it', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    const listed = async () => (await agentSessions.listAgentSessions(client, { userId: 7 })).sessions.find((s) => s.id === session.id);
+    const read = () => agentSessions.markSeen(client, { userId: 7, id: session.id });
+
+    assert.deepEqual([(await listed()).busy, (await listed()).doneUnseen], [false, false], 'a new conversation has no mark');
+    assert.equal(await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'turn-a' }), true);
+    assert.deepEqual([(await listed()).busy, (await listed()).doneUnseen], [true, false], 'working');
+    await agentSessions.releaseTurnLease(client, { agentSessionId: session.id, turnId: 'turn-a', finished: true });
+    assert.deepEqual([(await listed()).busy, (await listed()).doneUnseen], [false, true], 'finished, and not read since');
+
+    assert.equal(await agentSessions.markSeen(client, { userId: 8, id: session.id }), false, 'another user reads nothing of it');
+    assert.equal((await listed()).doneUnseen, true);
+    assert.equal(await read(), true, 'reading it clears the dot, and says so');
+    assert.equal((await listed()).doneUnseen, false);
+    assert.equal(await read(), false, 'a second read clears nothing');
+
+    // A lease handed back before its turn ran (no Mayor, no payer) finished nothing.
+    assert.equal(await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'turn-b' }), true);
+    await agentSessions.releaseTurnLease(client, { agentSessionId: session.id, turnId: 'turn-b' });
+    assert.equal((await listed()).doneUnseen, false, 'a refused turn leaves no dot');
+
+    // Read mid-turn, finished after: the dot is the turn's.
+    assert.equal(await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'turn-c' }), true);
+    await read();
+    await client.query("UPDATE agent_sessions SET seen_at = NOW() - interval '1 second' WHERE id = $1", [session.id]);
+    await agentSessions.releaseTurnLease(client, { agentSessionId: session.id, turnId: 'turn-c', finished: true });
+    const got = await agentSessions.getAgentSession(client, { userId: 7, id: session.id });
+    assert.deepEqual([got.busy, got.doneUnseen], [false, true], 'the detail read says the same as the list');
+  } finally {
+    await done(client);
+  }
+});
+
 test('the Mayor switches between its own open changes only', async (t) => {
   const client = await connect(t);
   if (!client) return;
@@ -490,5 +586,54 @@ test('the sweeper drops delegations a week after they ended, with their tokens',
     assert.equal(await mcpOauth.pruneDelegations(pool), 0, 'and a second sweep finds nothing');
   } finally {
     await done(client, pool);
+  }
+});
+
+// Files sent in a conversation (#2779 follow-up) reuse the dev chat's table:
+// a row names a change (session_id) or a conversation (agent_session_id),
+// never neither, and goes with whichever it names.
+function attachmentsMigration() {
+  const table = SCHEMA.slice(SCHEMA.indexOf('CREATE TABLE IF NOT EXISTS chat_session_attachments ('));
+  const create = table.slice(0, table.indexOf(');') + 2);
+  const start = SCHEMA.indexOf('-- Files attached to an agent-session message (#2779 follow-up)');
+  assert.ok(start > 0, 'the attachments block must be findable in schema.sql');
+  const marker = 'ON chat_session_attachments(agent_session_id) WHERE agent_session_id IS NOT NULL;';
+  const end = SCHEMA.indexOf(marker, start);
+  assert.ok(end > start, 'and its end');
+  return { create, block: SCHEMA.slice(start, end + marker.length) };
+}
+
+test('a conversation\'s files name it, not a change, and go with it', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  try {
+    const { create, block } = attachmentsMigration();
+    await client.query(create);
+    const { rows: [change] } = await client.query('INSERT INTO chat_sessions (app_id, user_id) VALUES (3, 7) RETURNING id');
+    await client.query(
+      `INSERT INTO chat_session_attachments (id, session_id, user_id, kind, filename, content_type, size_bytes, data)
+       VALUES ('dev', $1, 7, 'text', 'a.txt', 'text/plain', 1, 'x')`, [change.id]
+    );
+    await client.query(block);
+    await client.query(block);
+    const { rows: checks } = await client.query(
+      "SELECT COUNT(*)::int AS n FROM pg_constraint WHERE conname = 'chat_session_attachments_owner_chk'"
+    );
+    assert.equal(checks[0].n, 1, 'idempotent, and a dev-chat row from before it still satisfies it');
+
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    await client.query(
+      `INSERT INTO chat_session_attachments (id, agent_session_id, user_id, kind, filename, content_type, size_bytes, data)
+       VALUES ('conv', $1, 7, 'image', 'b.png', 'image/png', 1, 'x')`, [session.id]
+    );
+    await assert.rejects(client.query(
+      `INSERT INTO chat_session_attachments (id, user_id, kind, filename, content_type, size_bytes, data)
+       VALUES ('none', 7, 'text', 'c.txt', 'text/plain', 1, 'x')`
+    ), /chat_session_attachments_owner_chk/, 'a row must name one or the other');
+    await client.query('DELETE FROM agent_sessions WHERE id = $1', [session.id]);
+    const { rows: left } = await client.query('SELECT id FROM chat_session_attachments ORDER BY id');
+    assert.deepEqual(left.map((r) => r.id), ['dev'], 'the conversation\'s files go with it');
+  } finally {
+    await done(client);
   }
 });

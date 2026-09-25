@@ -67,7 +67,23 @@ export interface ConversationMessage {
     id: number;
     sender: ConversationUser;
     content: string;
+    /** The quoted message was deleted: the quote says so instead of its words (#2387). */
+    deleted?: boolean;
   } | null;
+  /**
+   * Deleted by its author (#2387): a placeholder that keeps its place, its
+   * sender and its thread, with no words, files, cards or reactions left.
+   */
+  deleted?: boolean;
+  /** A reply inside a thread: the id of the message the thread hangs off. */
+  threadRootId?: number | null;
+  /**
+   * On a reply read as part of the main stream (#2387 follow-up): the start
+   * of the message its thread hangs off, which the reply's line there names.
+   */
+  threadRoot?: ThreadRootRef | null;
+  /** On a message a thread hangs off: how many replies, when the last, and who. */
+  thread?: MessageThreadSummary | null;
   reactions: MessageReaction[];
   attachments: MessageAttachment[];
   objects: SharedObjectCard[];
@@ -81,6 +97,24 @@ export interface ConversationMessage {
   pending?: boolean;
   failed?: boolean;
   clientKey?: string;
+}
+
+export interface MessageThreadSummary {
+  replyCount: number;
+  lastReplyAt: string;
+  /** Up to three of the most recent distinct repliers. */
+  participants: ConversationUser[];
+  /** The newest reply, which the card under the message shows (#2387 follow-up). */
+  lastReply?: { id: number; sender: ConversationUser; content: string; createdAt: string } | null;
+}
+
+/** The message a thread hangs off, as a reply's line in the main stream names it. */
+export interface ThreadRootRef {
+  id: number;
+  senderUsername: string;
+  /** Its start, one line's worth; empty when it was deleted. */
+  content: string;
+  deleted: boolean;
 }
 
 export interface ConversationSummary {
@@ -98,6 +132,12 @@ export interface ConversationSummary {
   latestSummary?: string;
   lastActivityAt: string;
   unreadCount: number;
+  /**
+   * QA 2026-09-24 Q2: the viewer asked for this direct conversation and the
+   * other person has not accepted yet. One opening message is allowed; after
+   * it `canSend` turns false and the thread says who it is waiting for.
+   */
+  awaitingAcceptance?: boolean;
   canSend: boolean;
   canInvite: boolean;
   canManage: boolean;
@@ -157,14 +197,26 @@ export interface MessagesRoute {
    * with each other: one thread is open.
    */
   agent: MessagesAgentThread | null;
+  /**
+   * #2387: a reply thread open beside the conversation or app channel — the
+   * id of the message it hangs off (`#messages/<id>/thread/<root>`,
+   * `#messages/app/<slug>/thread/<root>`). Null when no thread is open.
+   */
+  threadRootId: number | null;
+  /**
+   * #2387: a message link (`…/m/<id>`) — the message the transcript opens
+   * scrolled to and flashes. Cleared once shown.
+   */
+  focusMessageId: number | null;
 }
 
 /** An agent thread of the inbox (#2813). See `MessagesRoute.agent`. */
 export type MessagesAgentThread =
   | { kind: 'chat'; id: string }
   | { kind: 'session'; slug: string; id: number }
-  // #2779: an agent session, a conversation with the Mayor (a serial id).
-  | { kind: 'agent'; id: number };
+  // #2779: an agent session, a conversation with the Mayor (a serial id), or
+  // `new`: the one New change opens, unsent until its first message.
+  | { kind: 'agent'; id: number | 'new' };
 
 /** The app whose discussion is open, once its metadata has landed. */
 export interface DiscussionContext {
@@ -194,6 +246,13 @@ export interface MessagesSnapshot {
   listLoaded: boolean;
   error: string | null;
   threadError: string | null;
+  /**
+   * Why the open conversation cannot be shown when trying again cannot change
+   * it (QA 2026-09-24 Q16): `left`, the viewer left it in this tab (Back
+   * after Leave group lands here); `missing`, the server says it is not theirs
+   * to read. Null otherwise. Optional so a fixture without it reads as null.
+   */
+  threadGone?: 'left' | 'missing' | null;
   nextBefore: number | null;
   online: boolean;
   demo: boolean;
@@ -218,4 +277,30 @@ export interface MessagesSnapshot {
   discussionContext: DiscussionContext | null;
   discussionError: string | null;
   filter: InboxFilter;
+  /**
+   * #2387: the reply thread open beside the conversation, or null. Its own
+   * page of messages, loaded from `/threads/<root>`, so a thread never pushes
+   * the conversation's own transcript out of the store.
+   */
+  thread: ReplyThreadState | null;
+  /**
+   * #2387: a message link opened the transcript part-way back, so there are
+   * newer messages than the ones drawn; the cursor to fetch them. Null when
+   * the transcript ends at the present.
+   */
+  nextAfter: number | null;
+  /** #2387: the list pane folded away on a desktop — single-panel mode. */
+  listCollapsed: boolean;
+  /** #2967: the channels outside Your apps shown, under "Show more". */
+  showMoreChannels: boolean;
+}
+
+export interface ReplyThreadState {
+  conversationId: number;
+  rootId: number;
+  root: ConversationMessage | null;
+  messages: ConversationMessage[];
+  loading: boolean;
+  error: string | null;
+  nextBefore: number | null;
 }

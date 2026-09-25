@@ -55,8 +55,8 @@ function bannerHtml(state) {
 test('the sentence names the merge, what stopped it and what is running instead', () => {
   const { releaseStallText } = mod();
   assert.equal(releaseStallText(FAILED),
-    'PR #2589 (7817d05) merged but was not released: its release workflow failed. '
-    + 'The platform is still running 741b8f7. Re-running the failed jobs releases it; so would the next merge.');
+    'PR #2589 (7817d05) merged but was not released: its release workflow did not complete. '
+    + 'The platform is still running 741b8f7. Run it on main to release the latest commit; a later merge would also carry this change.');
   assert.equal(releaseStallText({ ...FAILED, kind: 'workflow_running' }),
     'PR #2589 (7817d05) merged and its release workflow is still running, well past the usual couple of minutes. '
     + 'The platform is still running 741b8f7.');
@@ -68,8 +68,8 @@ test('the sentence names the merge, what stopped it and what is running instead'
     + 'The platform is still running 741b8f7.');
   // A direct push has no PR to name; a record with no running sha still reads.
   assert.equal(releaseStallText({ kind: 'workflow_failed', sha: '7817d05', prNumber: null, running: null }),
-    'Commit 7817d05 landed on main but was not released: its release workflow failed. '
-    + 'Re-running the failed jobs releases it; so would the next merge.');
+    'Commit 7817d05 landed on main but was not released: its release workflow did not complete. '
+    + 'Run it on main to release the latest commit; a later merge would also carry this change.');
 });
 
 test('the initial render is the hidden, empty slot', () => {
@@ -103,8 +103,8 @@ test('without a run there is no link, and the kind still shows', () => {
 test('the store is published from the promoted list beside the other two notices', () => {
   assert.match(MOUNT_SRC, /publishReleaseStall\(state\) \{\s*releaseStallStore\.set\(state\);/);
   assert.match(APP_VIEW_SRC,
-    /AppView\._renderLockedNotice\(\);\s*AppView\._renderMainPauseNotice\(\);\s*AppView\._renderReleaseStallNotice\(\);/,
-    'published where the locked and pause notices are, on every promoted-list load');
+    /AppView\._renderMainPauseNotice\(\);\s*AppView\._renderReleaseStallNotice\(\);/,
+    'published where the pause notice is, on every promoted-list load');
   const fn = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('_renderReleaseStallNotice() {'));
   const body = fn.slice(0, fn.indexOf('\n  },'));
   assert.match(body, /publishReleaseStall\?\.\(\{/);

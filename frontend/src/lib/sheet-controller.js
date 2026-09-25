@@ -32,8 +32,22 @@
  * button, and a back button needs to know where it came from. Callers that
  * still answer a deep link (`#notifications`, `#messages/<id>`) resolve it to
  * a real screen first and then open the sheet over it.
+ *
+ * ── The back button closes it (QA 2026-09-24 Q16) ─────────────────────
+ *
+ * The dialogs already answered Back by closing (features/dialogs/use-dialog.ts
+ * through lib/back-stack.ts); the sheets did not, so Back walked the history
+ * UNDER an open sheet: the bell's sheet stayed up while Discover turned into
+ * Home, and the Homeroom menu closed and took the page with it. A sheet claims
+ * the next press the same way a dialog does, for as long as it is open.
+ *
+ * Every close hands the claim back as a NAVIGATING release, because most
+ * closes here are the first half of a navigation (a row, a link, "All
+ * messages"), written in the same task. lib/back-stack.ts explains why the
+ * record then waits a task before it is spent.
  */
 
+import { pushDismissible } from './back-stack';
 import { adoptKitSurface } from './kit-surface';
 
 const REGISTRY = new Set();
@@ -77,6 +91,10 @@ export function createSheetController({
   const controller = {
     _sheet: null,
     _dismissWaiters: [],
+    // The release for this sheet's claim on the back button, while it is open,
+    // and the address it was claimed at.
+    _releaseBack: null,
+    _openedAt: null,
 
     /** Matches the root's transition duration in app.css. */
     LEGACY_CLOSE_MS: legacyCloseMs,
@@ -104,6 +122,9 @@ export function createSheetController({
         store.set({ open: true });
         const sheet = adoptSheet(panel, () => {
           controller._sheet = null;
+          // A swipe or a tap on the kit's backdrop lands here without passing
+          // through close(); the claim goes back the same way.
+          controller._releaseBackClaim();
           store.set({ open: false, adopted: false });
           controller._resolveDismissWaiters();
         });
@@ -118,16 +139,19 @@ export function createSheetController({
           // synchronous, so the overlay's `data-open` never reaches a paint.
           // The hamburger's kit path has always skipped its overlay this way.
           store.set({ adopted: true });
+          controller._claimBack();
           if (onOpen) onOpen();
           return;
         }
         // Kit refused (desktop, or no kit): the CSS slide presents instead.
       }
       store.set({ open: true });
+      controller._claimBack();
       if (onOpen) onOpen();
     },
 
     close() {
+      controller._releaseBackClaim();
       if (controller._sheet) {
         const done = controller._afterDismiss();
         controller._sheet.dismiss();
@@ -144,6 +168,25 @@ export function createSheetController({
     dismissForNav() {
       if (controller.isOpen()) return controller.close();
       return Promise.resolve();
+    },
+
+    // Claim the next back press for as long as this sheet is up. Back closes
+    // it and nothing else: the press is spent on the sheet's own record, so
+    // the page underneath stays where it is.
+    _claimBack() {
+      if (controller._releaseBack) return;
+      controller._openedAt = currentHref();
+      controller._releaseBack = pushDismissible(() => {
+        controller._releaseBack = null;
+        controller.close();
+        return true;
+      });
+    },
+
+    _releaseBackClaim() {
+      const release = controller._releaseBack;
+      controller._releaseBack = null;
+      if (release) release({ navigating: true });
     },
 
     _closeSiblings() {
@@ -174,6 +217,28 @@ export function createSheetController({
 
   REGISTRY.add(controller);
   return controller;
+}
+
+function currentHref() {
+  try { return window.location.href; } catch (_) { return null; }
+}
+
+// ANY OTHER NAVIGATION CLOSES AN OPEN SHEET, too. The header stays live beside
+// a sheet (its backdrop starts below the bar), and code can write an address
+// with one up; left open, its back record would end up under the new page,
+// and the next Back would close it there instead of going back. Only a
+// move AWAY from the address the sheet opened at counts: the deep link that
+// opened it (#notifications, rewritten to the screen underneath before the
+// sheet presents) can still be delivering its own hashchange.
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  const closeOnNavigation = () => {
+    const here = currentHref();
+    for (const sheet of REGISTRY) {
+      if (sheet.isOpen() && sheet._openedAt && sheet._openedAt !== here) sheet.dismissForNav();
+    }
+  };
+  window.addEventListener('hashchange', closeOnNavigation);
+  window.addEventListener('popstate', closeOnNavigation);
 }
 
 /**

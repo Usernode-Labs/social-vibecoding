@@ -2235,10 +2235,19 @@ function voteRoutes(config) {
       // promotion without a generated title, and a NULL pr_title would
       // otherwise render as "Change by <user>" forever. Backfilling it
       // here updates both GitHub and pr_title/session_title.
-      if (!session.pr_number || !session.pr_title) {
+      //
+      // And for a change an agent session started (#2779), always: this is
+      // the moment the group starts reading it, so its title and description
+      // are written again from the change as it now stands (its name, spec
+      // and every build's summary; pr-metadata's gatherSessionContext), not
+      // left as the first build described it. A title a person set is kept.
+      // Best-effort like the backfill: it never blocks the promotion.
+      const refreshAtSubmission = session.agent_session_id != null && !!session.pr_number;
+      if (!session.pr_number || !session.pr_title || refreshAtSubmission) {
         // Distinguish creating a PR (no pr_number → a failure must block
         // promotion) from merely backfilling a missing title on an
-        // existing PR (best-effort — never block promotion on it).
+        // existing PR, or refreshing one (best-effort — never block
+        // promotion on it).
         const isBackfill = !!session.pr_number;
         const { rows: msgRows } = await pool.query(
           `SELECT content FROM chat_session_messages
@@ -5349,11 +5358,21 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     // merge, or a read that failed — the line reads as it did.
     const credits = mergedCredits;
     const creditLine = credits ? creditsSentence(credits) : 'Thanks to everyone who voted';
+    // Follow-up to #2897: a child app's merge rebuilt production above, so
+    // "is live" is true when this posts. The platform's own app
+    // (self_hosted) releases AFTER the merge and outside this process
+    // (GitHub Actions builds the image, Argo CD rolls it out,
+    // services/release-watch.js reports a stall), so its line says the
+    // change merged and will be live in a few minutes. group-chat.js
+    // _proposalEvent recognises both wordings (older rows keep "is live"
+    // forever) and reads `liveSoon` from the metadata where it rides.
+    const liveSoon = !!(app && app.self_hosted);
+    const liveClause = liveSoon
+      ? (session.pr_title ? `merged (${prRef}) and will be live in a few minutes` : 'merged and will be live in a few minutes')
+      : (session.pr_title ? `is live (${prRef})` : 'is live');
     const mergedLine = force && forceBy
       ? `${mergedLabel} force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
-      : session.pr_title
-        ? `${session.pr_title} is live (${prRef}). ${creditLine} (${yesCount}/${activeCount} votes)`
-        : `${prRef} is live. ${creditLine} (${yesCount}/${activeCount} votes)`;
+      : `${session.pr_title || prRef} ${liveClause}. ${creditLine} (${yesCount}/${activeCount} votes)`;
     // The names ride as metadata too, so the general chat's event row draws
     // from data rather than from the wording.
     const mergedMeta = credits ? {
@@ -5365,6 +5384,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         backers: credits.backers,
         shapers: credits.shapers,
         votes: `${yesCount}/${activeCount}`,
+        ...(liveSoon ? { liveSoon: true } : {}),
       },
     } : null;
     await sendSystemMessage(pool, session.app_id, mergedLine, 'system', mergedMeta);

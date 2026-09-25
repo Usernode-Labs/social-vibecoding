@@ -105,6 +105,51 @@ test('the page renders the four parts in the prototype\'s order', () => {
     'nothing that moved elsewhere is drawn twice');
 });
 
+test('Me sits in the Workshop tab\'s frame, and its labels on the rows\' edge (#2832)', () => {
+  const state = {
+    open: true,
+    data: { ranking: { season_name: 'Season 3', rank: 3 }, summary: SUMMARY, ownerPublicProfile: null },
+    user: { username: 'evan', links: {} },
+    sheetOpen: false, publicStatus: '', publishing: false, previewOpen: false,
+  };
+  const real = loadTsx(STORE);
+  const view = loadTsx('frontend/src/features/profile/profile-view.tsx', {
+    stubs: { './profile-store.js': { ...real, profileStore: { get: () => state, subscribe: () => () => {} } } },
+  });
+  // The screen root: rendered with the view stubbed out, so this reads the
+  // column's own classes and nothing the store draws inside it.
+  const screen = loadTsx('frontend/src/features/profile/index.tsx', {
+    stubs: { './profile-view': { ProfileRoot: () => null }, './mount': {} },
+  });
+  const rootHtml = renderToHtml(createElement(screen.ProfileScreen, {}));
+  const rootClass = (rootHtml.match(/id="profile-root" class="([^"]*)"/) || [])[1];
+  assert.ok(rootClass, '#profile-root renders');
+  const classes = rootClass.split(/\s+/);
+  // Workshop's column: the same width, and the same 8px notch + 12px of air.
+  const workshop = read('frontend/src/features/workshop/index.tsx');
+  assert.match(workshop, /className="max-w-2xl mx-auto pb-8"/, 'Workshop\'s column is still the reference');
+  assert.match(workshop, /className="px-4 pt-5 pb-2 /, 'and its first element still steps down pt-5');
+  for (const cls of ['max-w-2xl', 'mx-auto', 'px-4', 'pt-5', 'pb-8']) {
+    assert.ok(classes.includes(cls), `#profile-root carries ${cls}`);
+  }
+  assert.ok(!classes.includes('max-w-3xl') && !classes.includes('p-4'),
+    'not the wider column, nor the p-4 that left the card 8px under the bar');
+
+  // Both section labels are SectionHeader at its own px-4 — on the rows'
+  // content edge, as Settings and Discover set theirs — not the px-1 that
+  // sat them 12px left of the cards' rows.
+  const html = renderToHtml(createElement(view.ProfileRoot, {}));
+  const headings = [...html.matchAll(/<h2 class="([^"]*)">(More|Your contributions)<\/h2>/g)];
+  assert.deepEqual(headings.map((m) => m[2]), ['More', 'Your contributions']);
+  for (const [, cls, label] of headings) {
+    const list = cls.split(/\s+/);
+    assert.ok(list.includes('px-4') && !list.includes('px-1'), `"${label}" sits on the rows' edge: ${cls}`);
+  }
+  const seeAll = (html.match(/id="profile-contributions-all"[^>]*class="([^"]*)"/) || [])[1]
+    || (html.match(/class="([^"]*)"[^>]*id="profile-contributions-all"/) || [])[1];
+  assert.ok(seeAll && seeAll.split(/\s+/).includes('px-4'), '"See all" takes the same inset from the right');
+});
+
 test('every part of the older Profile has a home', () => {
   // points, rank, breakdown, token → the Challenges tab's standing card
   const standing = read('frontend/src/features/leaderboard/your-standing.tsx');
@@ -114,7 +159,7 @@ test('every part of the older Profile has a home', () => {
   // public-profile publishing → the Edit profile sheet
   const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
   assert.match(sheet, /id="public-profile-controls"/);
-  assert.match(sheet, /Profile\._setPublished\(!controls\.published\)/);
+  assert.match(sheet, /Profile\._setPublished\(!published\)/);
   assert.match(sheet, /Copy public link/);
   // Admin & moderation, node / wallet / staking → Settings; Log out already there
   const rows = read('frontend/src/features/settings/account-rows.tsx');
@@ -124,6 +169,65 @@ test('every part of the older Profile has a home', () => {
   assert.match(read('frontend/src/features/settings/index.tsx'), /id="settings-logout"/);
   // completions → counted on Me, listed on the Challenges tab
   assert.match(read(STORE), /summary\.challenges && summary\.challenges\.done/);
+});
+
+// #2787: "Publish profile" took five rows and a four-line footnote on a phone
+// and never said what publishing meant. It is one switch row now, with the
+// state spelled out underneath, and everything else behind a tap.
+function renderPublicGroup(owner, extra = {}) {
+  const real = loadTsx(STORE);
+  const ProfileStub = {
+    _user: () => ({ username: 'evan', links: {} }),
+    _setPublished: () => {}, togglePreview: () => {}, copyPublicLink: () => {},
+    _dismissSheet: () => {}, MAX_DISPLAY_NAME: 50, MAX_BIO: 280,
+  };
+  const mod = loadTsx('frontend/src/features/profile/profile-edit-sheet.tsx', {
+    stubs: { './profile.js': { Profile: ProfileStub } },
+  });
+  const controls = real.publicControlsView({ data: { ownerPublicProfile: owner } });
+  const html = renderToHtml(createElement(mod.ProfileEditSheet, {
+    avatarUrl: null, initial: 'E', publicControls: controls, ...extra,
+  }));
+  const start = html.indexOf('id="public-profile-controls"');
+  const end = html.indexOf('Verified social accounts');
+  assert.ok(start >= 0 && end > start, 'the Public page group renders before social accounts');
+  return html.slice(start, end);
+}
+
+test('Public page is one switch row that says what it means (#2787)', () => {
+  const off = renderPublicGroup({ published: false, profile: { username: 'evan' } });
+  assert.match(off, /<input[^>]*type="checkbox"[^>]*class="un-switch[^"]*"/, 'a switch, not a Publish button');
+  assert.match(off, /id="public-profile-publish"/);
+  assert.doesNotMatch(off, /<input[^>]*checked/, 'off while private');
+  assert.match(off, />Public profile</);
+  assert.match(off, /Off: your profile has no public link/);
+  assert.doesNotMatch(off, /Copy public link|Open public page/, 'no link actions for a page nobody can open');
+  assert.match(off, /What&#x27;s on it|What’s on it|What's on it/);
+  assert.doesNotMatch(off, /Homeroom-hosted photo/, 'the field list waits behind the disclosure');
+  assert.ok((off.match(/un-group-row/g) || []).length === 2, 'two rows while private');
+
+  const on = renderPublicGroup({ published: true, profile: { username: 'evan', url: '/profile/evan' } });
+  assert.match(on, /<input[^>]*checked/, 'on while published');
+  assert.match(on, /On: anyone with the link can view it, no account needed/);
+  assert.match(on, /href="\/profile\/evan"[^>]*>Open public page/);
+  assert.match(on, /Copy public link/);
+
+  const hidden = renderPublicGroup({ published: true, moderationDisabled: true, profile: { username: 'evan' } });
+  assert.match(hidden, /Hidden by moderation/);
+  assert.match(hidden, /public page stays unavailable/);
+});
+
+test('the disclosure holds the field list and the preview card (#2787)', () => {
+  const open = renderPublicGroup(
+    { published: false, profile: { username: 'evan', displayName: 'Evan' } },
+    { previewOpen: true },
+  );
+  assert.match(open, /aria-expanded="true"/);
+  assert.match(open, /Homeroom-hosted photo/);
+  assert.match(open, /id="public-profile-card"/);
+  const closed = renderPublicGroup({ published: false, profile: { username: 'evan' } });
+  assert.match(closed, /aria-expanded="false"/);
+  assert.doesNotMatch(closed, /id="public-profile-card"/);
 });
 
 test('the prerender draws nothing: the Me screen\'s data only ever arrives from effects', () => {

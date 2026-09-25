@@ -206,6 +206,11 @@
     _pushedFromMenu: false,
     // #settings-screen scrollTop saved on drill-in, restored on the way back.
     _menuScrollTop: 0,
+    // A deep-linked section that is registered but not offered YET (#2893):
+    // its gate resolves after the route did — the Homeroom app one waits on
+    // the native bridge. _renderNavIfOpen spends it once the gate opens,
+    // provided the address still names it. open() and close() drop it.
+    _pendingSection: null,
     _mediaBound: false,
     _socialPushStateListener: null,
     // True between an open({ chrome: false }) and the syncChrome() that
@@ -801,10 +806,12 @@
       // visit to Settings, not once per document.
       Settings._usernodeAuthRetryUsed = false;
       Settings._ensureMediaListener();
+      Settings._pendingSection = null;
       Settings._renderAllSections();
 
       const visible = Settings._visibleSections();
       const valid = !!section && visible.some((s) => s.key === section);
+      Settings._notePendingSection(section, valid);
       const fallback = visible.some((s) => s.key === Settings._section)
         ? Settings._section
         : (visible[0] ? visible[0].key : Settings.DEFAULT_SECTION);
@@ -854,6 +861,7 @@
       Settings._ensureMounted();
       const visible = Settings._visibleSections();
       const valid = !!section && visible.some((s) => s.key === section);
+      Settings._notePendingSection(section, valid);
       const mobile = Settings._isMobile();
       // The level and section this call WOULD end on. Level 1 keeps whatever
       // section sits behind the menu, so there the level is the whole target.
@@ -995,12 +1003,33 @@
     // gate node is absent or currently un-hidden. Reading the node rather
     // than re-deriving the condition is what keeps this in step with
     // _renderWalletSection / _renderUsernodeSection / _renderAdminSection.
+    //
+    // ONE GATE IS READ FROM ITS MODEL (#2893). The Homeroom app gate is
+    // decided here, in _renderUsernodeSection, and reaches its node through
+    // usernodeSectionStore — which, unlike the nav store, commits on React's
+    // next tick rather than synchronously. On the first open of the screen in
+    // a document, open() reads the gate straight after that decision, so a
+    // deep link to #settings/usernode (the block-production challenge's
+    // button) found the node still hidden and fell back to the Settings
+    // root. `_usernodeGated` is the value the node is rendered FROM, so once
+    // it has been decided it is the truth; before that the node still is.
     _visibleSections() {
       return Settings.SECTIONS.filter((s) => {
         if (!s.gate) return true;
+        if (s.gate === 'settings-usernode-section' && typeof Settings._usernodeGated === 'boolean') {
+          return Settings._usernodeGated;
+        }
         const el = document.getElementById(s.gate);
         return !!el && !el.classList.contains('hidden');
       });
+    },
+
+    // Remember a deep link to a REGISTERED section that is not offered yet
+    // (its gate resolves later), so _renderNavIfOpen can finish the route
+    // instead of leaving the viewer on the menu. Anything else clears it.
+    _notePendingSection(section, valid) {
+      Settings._pendingSection = (!!section && !valid
+        && Settings.SECTIONS.some((s) => s.key === section && s.gate)) ? section : null;
     },
 
     // The visible sections bucketed by `group`, in first-appearance order.
@@ -1428,6 +1457,18 @@
     // menu would be missing those rows until the next navigation.
     _renderNavIfOpen() {
       if (!Settings._open) return;
+      // A deep link that arrived before its section's gate opened (#2893):
+      // finish it now, once, if the address still asks for that section —
+      // a viewer who has since moved elsewhere is not pulled back.
+      const want = Settings._pendingSection;
+      if (want && Settings._visibleSections().some((s) => s.key === want)) {
+        Settings._pendingSection = null;
+        const hash = String((typeof location !== 'undefined' && location.hash) || '');
+        if (hash === `#settings/${want}` || hash.startsWith(`#settings/${want}?`)) {
+          Settings.route(want);
+          return;
+        }
+      }
       Settings._ensureActiveGroupExpanded();
       Settings._renderNav();
       // A section that just became unavailable must not stay on screen.
@@ -2804,6 +2845,7 @@
     close() {
       Settings._open = false;
       Settings._pushedFromMenu = false;
+      Settings._pendingSection = null;
       const input = document.getElementById('settings-api-key');
       if (input) input.value = '';
       this._stopWalletPolling();
@@ -6281,6 +6323,16 @@
         if (window.PlatformUI) PlatformUI.toast('Request sent. An admin will release your keys');
         this._bpState = Object.assign({}, this._bpState || {}, { bp_requested: true });
         this._publishUsernode();
+        // #2960: the Android "Set up your device" sheet (exact alarms +
+        // unrestricted background) waits for exactly this moment. Re-run the
+        // first-run trigger now that the account has asked to produce; it
+        // re-reads the queue, and on iOS or an already-answered device it
+        // presents nothing.
+        // `force`: the user just asked, so skip the once-a-day wait.
+        if (window.NativeChrome &&
+            typeof NativeChrome.maybeShowFirstRunPermissions === 'function') {
+          NativeChrome.maybeShowFirstRunPermissions({ force: true });
+        }
       } catch (e) {
         if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
       }

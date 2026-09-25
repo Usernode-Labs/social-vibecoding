@@ -1237,8 +1237,12 @@ function agentSelectionErrorBody(err) {
 
 function automaticOpenRouterSetupError(err) {
   if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
+    // QA 2026-09-24: no environment variable in the toast. The caller has
+    // already logged err.message, which names USERNODE_OPENROUTER_MANAGEMENT_API_KEY
+    // for whoever reads the server log; the person who pressed "Start work"
+    // is told what it means for them.
     const message = err.code === 'not_configured'
-      ? 'OpenRouter could not be set up automatically because managed key provisioning is not configured. Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY.'
+      ? managedOpenRouter.NOT_CONFIGURED_USER_MESSAGE
       : `OpenRouter could not be set up automatically. ${err.message}`;
     return new AgentSelectionError(err.statusCode, message, err.code);
   }
@@ -1535,6 +1539,229 @@ async function resolveExplicitAgentPreference(client, userId, config, {
     model: modelId,
     reasoningEffort: selectedCatalogModel.supportsReasoning === false ? null : effort,
   };
+}
+
+// The switch behind POST /api/sessions/:id/reset-agent-context (its phases
+// 2-5), for any caller that has already resolved `pref`: the route, and an
+// agent session's dispatch, which applies the conversation's model choice to
+// its active change right before the next build (services/mayor/
+// agent-dispatch.js). Under a row lock: refuses a closed or busy change,
+// switches the backend, model and effort, drops both resume ids, records the
+// reset in the change's transcript, then evicts the warm worker.
+async function switchSessionAgent(pool, { sessionId, userId, pref }) {
+  const resolved = pref.backend;
+  const isCodex = resolved === 'codex_openrouter';
+  // ── Phase 2: one checked-out client + explicit transaction ──
+  // (plan 8.2). The row lock is held until COMMIT so a concurrently
+  // starting turn serializes correctly instead of racing the in-memory
+  // busy check.
+  const client = await pool.connect();
+  let updatedRow = null;
+  let contextMessage = null;
+  try {
+    await client.query('BEGIN');
+
+    const { rows } = await client.query(
+      `SELECT id, user_id, status, active_turn,
+              agent_backend, agent_model, agent_reasoning_effort,
+              agent_config_version
+         FROM chat_sessions
+        WHERE id = $1 AND user_id = $2
+        FOR UPDATE`,
+      [sessionId, userId],
+    );
+    const sess = rows[0];
+    if (!sess) {
+      await client.query('ROLLBACK').catch(() => {});
+      return { ok: false, status: 404, error: 'Session not found' };
+    }
+    if (sess.status === 'archived' || sess.status === 'merged') {
+      await client.query('ROLLBACK').catch(() => {});
+      return { ok: false, status: 409, error: 'Session is closed' };
+    }
+    // ── Phase 3: authoritative post-lock busy recheck ──
+    // (plan 8.3). The pre-lock check above is only a fast path; the
+    // post-lock check (activeWorkers / inFlight / persisted active_turn)
+    // is the source of truth now that we hold the row lock.
+    if (activeWorkers.has(sessionId) || worker.isInFlight(sessionId) || sess.active_turn) {
+      await client.query('ROLLBACK').catch(() => {});
+      return { ok: false, status: 409, error: 'Session is busy; stop the current turn first.' };
+    }
+
+    // ── Phase 4: conditional update ── (plan 8.4)
+    // `WHERE ... AND active_turn IS NULL` guarantees exactly one row is
+    // touched; RETURNING * lets us return the ACTUAL row we inserted.
+    const upd = await client.query(
+      `UPDATE chat_sessions SET
+         agent_backend = $2,
+         agent_provider = $3,
+         agent_model = $4,
+         agent_reasoning_effort = $5,
+         agent_thread_id = NULL,
+         cc_session_id = NULL,
+         agent_config_version = agent_config_version + 1,
+         agent_context_reset_at = NOW()
+       WHERE id = $1 AND active_turn IS NULL
+       RETURNING *`,
+      [sessionId, pref.backend, pref.provider,
+       pref.model, pref.reasoningEffort],
+    );
+    if (upd.rows.length !== 1) {
+      await client.query('ROLLBACK').catch(() => {});
+      return { ok: false, status: 409, error: 'Session is busy; stop the current turn first.' };
+    }
+    updatedRow = upd.rows[0];
+
+    const agentLabel = isCodex
+      ? `OpenRouter (${safeAgentModelLabel(pref.model)})`
+      : 'Claude Code';
+    const changedBackend = registry.resolveBackend(sess.agent_backend) !== pref.backend;
+    const messageText = isCodex
+      ? (changedBackend
+        ? `Session AI switched to ${agentLabel}. Fresh model context will start on the next turn; the branch and conversation were kept.`
+        : `${agentLabel} context was reset. Fresh model context will start on the next turn; the branch and conversation were kept.`)
+      : (changedBackend
+        ? `Coding agent switched to ${agentLabel}. A fresh agent context will start on the next turn; the branch and conversation were kept.`
+        : `${agentLabel} context was reset. A fresh agent context will start on the next turn; the branch and conversation were kept.`);
+    const msg = await client.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3) RETURNING *`,
+      [sessionId, messageText, JSON.stringify({
+        type: 'agent_context_reset',
+        previousBackend: sess.agent_backend,
+        agentBackend: pref.backend,
+        agentModel: pref.model,
+        reasoningEffort: pref.reasoningEffort,
+      })],
+    );
+    contextMessage = msg.rows[0] || null;
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // ── Phase 5: commit before worker eviction ── (plan 8.6)
+  // After Commit 1 the warm container no longer holds provider secrets,
+  // so eviction is best-effort (a failure still leaves a consistent DB).
+  if (typeof worker.evictWorker === 'function') {
+    await worker.evictWorker(sessionId).catch((evErr) => {
+      log.warn('sessions', 'reset-agent-context eviction warning', { sessionId, err: evErr.message });
+    });
+  }
+
+  return { ok: true, session: updatedRow, message: contextMessage };
+}
+
+// Resume a paused session of the user's: the body of POST
+// /api/sessions/:id/resume, shared with the chat route, which resumes a paused
+// session by itself when the user messages it (#2779 follow-up: "paused" is
+// bookkeeping the user never has to manage). Ownership is checked first, then
+// the global cap (another user's idle session may be paused), then the user's
+// own cap (their least recently used session is paused). Returns { ok: true }
+// or { ok: false, status, error }.
+async function resumePausedSession({ pool, config, user, sessionId }) {
+  // Ownership FIRST: everything below is platform-wide bookkeeping (the
+  // global-cap probe can pause a third party's idle session, the per-user
+  // LRU one of the requester's own), and none of it may run for a request
+  // that was going to 404 anyway.
+  const { rows: ownRows } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE id = $1 AND user_id = $2',
+    [sessionId, user.id]
+  );
+  if (!ownRows.length) return { ok: false, status: 404, error: 'Session not found or not paused' };
+
+  const { rows: globalRows } = await pool.query(
+    `SELECT COUNT(*) as cnt FROM chat_sessions
+      WHERE status IN ('active', 'promoted')
+        AND source IS DISTINCT FROM 'imported'
+        AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
+  );
+  if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
+    // At the global cap: reclaim a slot from a globally idle session
+    // (not this one) rather than blocking the reopen. Only 429 if
+    // everything else is genuinely active.
+    const { freed } = await sessionLifecycle.freeGlobalSlot({
+      pool, graceMs: config.sessionPressureGraceMs, excludeSessionId: sessionId,
+    });
+    if (!freed) {
+      return { ok: false, status: 429, error: 'Platform is at capacity right now. Try again in a few minutes.' };
+    }
+  }
+
+  // Per-user cap counts only 'active' sessions (#193) — promoted ones
+  // are un-pausable while their PR is in a vote, so they're exempt.
+  // This also keeps the count consistent with the LRU eviction below,
+  // which has always only considered 'active' victims. The ceiling is
+  // per-requester (full admins get a raised cap; see
+  // services/session-caps.js) — raising it just means the LRU pause
+  // below fires less often for them.
+  const caps = effectiveSessionCaps(config, user);
+  const { rows: countRows } = await pool.query(
+    `SELECT COUNT(*) as cnt FROM chat_sessions
+     WHERE user_id = $1 AND status = 'active'
+       AND source IS DISTINCT FROM 'imported'`,
+    [user.id]
+  );
+  if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
+    if (!config.sessionLruOnResume) {
+      return { ok: false, status: 429, error: `You already have ${caps.activeSessions} sessions in progress. Try again when one of them finishes.` };
+    }
+    // LRU: pause the user's least-recently-active 'active' session
+    // (not 'promoted' — those await merge votes) to free a slot.
+    // Skip any that are mid-turn; if none can be freed, 429.
+    const { freed } = await sessionLifecycle.freeUserSlot({
+      pool, userId: user.id, excludeSessionId: sessionId, includeHeadless: true,
+    });
+    if (!freed) return { ok: false, status: 429, error: sessionLifecycle.USER_SLOTS_BUSY };
+  }
+
+  const { rows } = await pool.query(
+    `UPDATE chat_sessions SET status = 'active', last_activity_at = NOW()
+     WHERE id = $1 AND user_id = $2 AND status = 'paused'
+     RETURNING id, app_id`,
+    [sessionId, user.id]
+  );
+  if (!rows.length) return { ok: false, status: 404, error: 'Session not found or not paused' };
+
+  const { rows: sessionRows } = await pool.query(
+    `SELECT a.slug as app_slug
+     FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+     WHERE cs.id = $1`,
+    [sessionId]
+  );
+  const appSlug = sessionRows[0]?.app_slug;
+
+  const { pushSessionUpdate } = require('../services/ws');
+  pushSessionUpdate({ action: 'resumed', sessionId, appSlug });
+  log.info('sessions', 'Session resumed', { sessionId });
+
+  // #8: if the resumed session is behind main, kick off a silent
+  // sync in the background. The HTTP response returns immediately
+  // (the UI doesn't wait for the sync to complete) — drift
+  // accounting is best-effort and the dev-chat banner will
+  // update via the session_update WS event when it lands. We
+  // run this only when the session has a known positive drift
+  // count from a prior turn; sessions that never ran a turn
+  // have behind_main=0 and the next /chat turn will populate it.
+  const { rows: driftRows } = await pool.query(
+    'SELECT behind_main FROM chat_sessions WHERE id = $1',
+    [sessionId]
+  );
+  if ((driftRows[0]?.behind_main || 0) > 0) {
+    // Fire-and-forget. Failures are logged but don't bubble up;
+    // the user explicitly clicking "Sync with main" later will
+    // re-attempt with full surface area for errors.
+    runSyncMain(config, pool, sessionId, { trigger: 'resume_autosync' }).catch((err) => {
+      log.warn('sessions', 'Background sync-on-resume failed', {
+        sessionId, err: err.message,
+      });
+    });
+  }
+  return { ok: true };
 }
 
 function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
@@ -2198,6 +2425,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         byId.set(row.id, {
           id: payload.sessionId,
           appSlug: payload.appSlug,
+          // Whose session it is, so the Homeroom mark's working indicator
+          // can count the viewer's own work only (SessionState.anyActiveFor).
+          userId: payload.userId,
           busy: payload.busy,
           phase: payload.phase,
           stopping: payload.stopping,
@@ -2218,7 +2448,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         sessions.push(
           {
-            id: 990102, appSlug: config.selfAppSlug, busy: true, phase: 'cc',
+            // The viewer's own mock busy session, so the demo's Homeroom
+            // mark shows its working indicator (SessionState.anyActiveFor).
+            id: 990102, appSlug: config.selfAppSlug, userId: req.user.id, busy: true, phase: 'cc',
             stopping: false, status: 'active', headless: null,
           },
           {
@@ -2474,7 +2706,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       // #2779: an optional name, as the user would call the change. The
       // agent-session Mayor's start_change sends one; the browser buttons
-      // do not, and their sessions are named from the first message.
+      // do not, and their sessions are named from the first message. It is
+      // the change's display name, not a title a person chose: it does NOT
+      // go in proposed_pr_title, which outranks every generated title and
+      // would pin the proposal to the Mayor's first guess. pr-metadata reads
+      // it back (from the change_started event) as the change's request, so
+      // the title and description are written from the change itself.
+      // PATCH /api/sessions/:id/title is how a person pins one.
       let initialTitle = null;
       if (req.body && req.body.title != null) {
         initialTitle = typeof req.body.title === 'string'
@@ -2523,8 +2761,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
            AND source IS DISTINCT FROM 'imported'`,
         [req.user.id]
       );
+      // At the cap, the least recently used of the user's own sessions is
+      // paused for them (session-lifecycle.freeUserSlot): pausing keeps
+      // everything and opening it resumes it, so nobody is asked to manage it.
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
-        return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
+        const { freed } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
+        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
       }
 
       // A browser that offers the coding-agent picker sends `backend`
@@ -2532,13 +2774,25 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // usable; legacy/API clients that omit it keep the saved-default
       // behavior. Resolve before global LRU reclamation or GitHub branch
       // creation so an invalid selection has no external side effects.
+      //
+      // #2779: a change an agent session starts is created on that
+      // conversation's model choice (its composer's picker), held to the same
+      // exact-or-refuse rule as a browser's explicit pick. A conversation
+      // with no choice follows the saved default like any other caller.
       let pref;
       try {
         const explicitAgent = req.body
           && Object.prototype.hasOwnProperty.call(req.body, 'backend');
-        pref = explicitAgent
-          ? await resolveExplicitAgentPreference(pool, req.user.id, config, req.body)
-          : await resolveDefaultAgentPreference(pool, req.user.id, config);
+        const conversationChoice = !explicitAgent && agentSessionId
+          ? await agentSessions.getAgentChoice(pool, agentSessionId)
+          : null;
+        if (explicitAgent) {
+          pref = await resolveExplicitAgentPreference(pool, req.user.id, config, req.body);
+        } else if (conversationChoice) {
+          pref = await resolveExplicitAgentPreference(pool, req.user.id, config, conversationChoice);
+        } else {
+          pref = await resolveDefaultAgentPreference(pool, req.user.id, config);
+        }
       } catch (err) {
         if (err instanceof AgentSelectionError) {
           return res.status(err.statusCode).json(agentSelectionErrorBody(err));
@@ -2615,8 +2869,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number,
             linked_issues, issue_link_seeded,
             agent_backend, agent_provider, agent_model, agent_reasoning_effort,
-            session_title, proposed_pr_title)
-         VALUES ($1, $2, NULL, 'active', $3, $4, $5, $6, $7, $8, $9, $10::text, $10::text)
+            session_title)
+         VALUES ($1, $2, NULL, 'active', $3, $4, $5, $6, $7, $8, $9, $10::text)
          RETURNING *`,
         [app.id, req.user.id, issueNumber,
          issueNumber ? [issueNumber] : [], !!issueNumber,
@@ -2938,7 +3192,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
-        return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
+        const { freed } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
+        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
       }
 
       // Resolve (and, for a first-time eligible user, provision) the coding
@@ -3852,107 +4107,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const resolved = pref.backend;
       const isCodex = resolved === 'codex_openrouter';
 
-      // ── Phase 2: one checked-out client + explicit transaction ──
-      // (plan 8.2). The row lock is held until COMMIT so a concurrently
-      // starting turn serializes correctly instead of racing the in-memory
-      // busy check.
-      const client = await pool.connect();
-      let updatedRow = null;
-      let contextMessage = null;
-      try {
-        await client.query('BEGIN');
-
-        const { rows } = await client.query(
-          `SELECT id, user_id, status, active_turn,
-                  agent_backend, agent_model, agent_reasoning_effort,
-                  agent_config_version
-             FROM chat_sessions
-            WHERE id = $1 AND user_id = $2
-            FOR UPDATE`,
-          [sessionId, req.user.id],
-        );
-        const sess = rows[0];
-        if (!sess) {
-          await client.query('ROLLBACK').catch(() => {});
-          return res.status(404).json({ error: 'Session not found' });
-        }
-        if (sess.status === 'archived' || sess.status === 'merged') {
-          await client.query('ROLLBACK').catch(() => {});
-          return res.status(409).json({ error: 'Session is closed' });
-        }
-        // ── Phase 3: authoritative post-lock busy recheck ──
-        // (plan 8.3). The pre-lock check above is only a fast path; the
-        // post-lock check (activeWorkers / inFlight / persisted active_turn)
-        // is the source of truth now that we hold the row lock.
-        if (activeWorkers.has(sessionId) || worker.isInFlight(sessionId) || sess.active_turn) {
-          await client.query('ROLLBACK').catch(() => {});
-          return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
-        }
-
-        // ── Phase 4: conditional update ── (plan 8.4)
-        // `WHERE ... AND active_turn IS NULL` guarantees exactly one row is
-        // touched; RETURNING * lets us return the ACTUAL row we inserted.
-        const upd = await client.query(
-          `UPDATE chat_sessions SET
-             agent_backend = $2,
-             agent_provider = $3,
-             agent_model = $4,
-             agent_reasoning_effort = $5,
-             agent_thread_id = NULL,
-             cc_session_id = NULL,
-             agent_config_version = agent_config_version + 1,
-             agent_context_reset_at = NOW()
-           WHERE id = $1 AND active_turn IS NULL
-           RETURNING *`,
-          [sessionId, pref.backend, pref.provider,
-           pref.model, pref.reasoningEffort],
-        );
-        if (upd.rows.length !== 1) {
-          await client.query('ROLLBACK').catch(() => {});
-          return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
-        }
-        updatedRow = upd.rows[0];
-
-        const agentLabel = isCodex
-          ? `OpenRouter (${safeAgentModelLabel(pref.model)})`
-          : 'Claude Code';
-        const changedBackend = registry.resolveBackend(sess.agent_backend) !== pref.backend;
-        const messageText = isCodex
-          ? (changedBackend
-            ? `Session AI switched to ${agentLabel}. Fresh model context will start on the next turn; the branch and conversation were kept.`
-            : `${agentLabel} context was reset. Fresh model context will start on the next turn; the branch and conversation were kept.`)
-          : (changedBackend
-            ? `Coding agent switched to ${agentLabel}. A fresh agent context will start on the next turn; the branch and conversation were kept.`
-            : `${agentLabel} context was reset. A fresh agent context will start on the next turn; the branch and conversation were kept.`);
-        const msg = await client.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-           VALUES ($1, 'system', $2, $3) RETURNING *`,
-          [sessionId, messageText, JSON.stringify({
-            type: 'agent_context_reset',
-            previousBackend: sess.agent_backend,
-            agentBackend: pref.backend,
-            agentModel: pref.model,
-            reasoningEffort: pref.reasoningEffort,
-          })],
-        );
-        contextMessage = msg.rows[0] || null;
-
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-      } finally {
-        client.release();
+      // ── Phases 2-5: the switch itself ──
+      // Shared with an agent session's dispatch, which applies the
+      // conversation's model choice to its active change the same way
+      // (switchSessionAgent, below the resolvers).
+      const switched = await switchSessionAgent(pool, {
+        sessionId, userId: req.user.id, pref,
+      });
+      if (!switched.ok) {
+        return res.status(switched.status).json({ error: switched.error });
       }
-
-      // ── Phase 5: commit before worker eviction ── (plan 8.6)
-      // After Commit 1 the warm container no longer holds provider secrets,
-      // so eviction is best-effort (a failure still leaves a consistent DB).
-      if (typeof worker.evictWorker === 'function') {
-        await worker.evictWorker(sessionId).catch((evErr) => {
-          log.warn('sessions', 'reset-agent-context eviction warning', { sessionId, err: evErr.message });
-        });
-      }
+      const updatedRow = switched.session;
+      const contextMessage = switched.message;
 
       // #1348: an EXPLICIT pick is also the answer to "which one did you
       // use last", so it is remembered. This is the rule the venue sheet
@@ -4364,7 +4530,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
-        return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
+        const { freed } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
+        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
       }
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
@@ -4591,124 +4758,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   router.post('/api/sessions/:id/resume', async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
-
-      // Ownership FIRST. The resuming UPDATE below is already owner-scoped
-      // (`AND user_id = $2`), but everything between here and there is
-      // platform-wide bookkeeping: the global-cap probe can pause a THIRD
-      // party's idle session to free a slot, and the per-user LRU can pause
-      // the requester's own. Both used to run for a request that was going
-      // to 404 on the UPDATE anyway — so a non-owner merely opening a paused
-      // session (an admin, or the capture suite) could evict a stranger's
-      // session and then get a 429 off the cap it just made room against.
-      // Cheap, boring, and answers before any of that.
-      const { rows: ownRows } = await pool.query(
-        'SELECT id FROM chat_sessions WHERE id = $1 AND user_id = $2',
-        [sessionId, req.user.id]
-      );
-      if (!ownRows.length) return res.status(404).json({ error: 'Session not found or not paused' });
-
-      const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
-      );
-      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-        // At the global cap: reclaim a slot from a globally idle session
-        // (not this one) rather than blocking the reopen. Only 429 if
-        // everything else is genuinely active.
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs, excludeSessionId: sessionId,
-        });
-        if (!freed) {
-          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-        }
-      }
-
-      // Per-user cap counts only 'active' sessions (#193) — promoted ones
-      // are un-pausable while their PR is in a vote, so they're exempt.
-      // This also keeps the count consistent with the LRU eviction below,
-      // which has always only considered 'active' victims. The ceiling is
-      // per-requester (full admins get a raised cap; see
-      // services/session-caps.js) — raising it just means the LRU pause
-      // below fires less often for them.
-      const caps = effectiveSessionCaps(config, req.user);
-      const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status = 'active'
-           AND source IS DISTINCT FROM 'imported'`,
-        [req.user.id]
-      );
-      if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
-        if (!config.sessionLruOnResume) {
-          return res.status(429).json({ error: `You already have ${caps.activeSessions} active sessions. Pause one first to free a slot.` });
-        }
-        // LRU: pause the user's least-recently-active 'active' session
-        // (not 'promoted' — those await merge votes) to free a slot.
-        // Skip any that are mid-turn; if none can be freed, 429.
-        const { rows: lruRows } = await pool.query(
-          `SELECT id FROM chat_sessions
-           WHERE user_id = $1 AND status = 'active' AND id <> $2
-             AND source IS DISTINCT FROM 'imported'
-           ORDER BY last_activity_at ASC`,
-          [req.user.id, sessionId]
-        );
-        let freed = false;
-        for (const victim of lruRows) {
-          if (isSessionBusy(victim.id)) continue;
-          const { paused } = await sessionLifecycle.pauseSession({
-            pool, sessionId: victim.id, userId: req.user.id, reason: 'lru',
-          });
-          if (paused) { freed = true; break; }
-        }
-        if (!freed) {
-          return res.status(429).json({ error: 'Your other sessions are busy finishing turns. Try again in a moment.' });
-        }
-      }
-
-      const { rows } = await pool.query(
-        `UPDATE chat_sessions SET status = 'active', last_activity_at = NOW()
-         WHERE id = $1 AND user_id = $2 AND status = 'paused'
-         RETURNING id, app_id`,
-        [sessionId, req.user.id]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Session not found or not paused' });
-
-      const { rows: sessionRows } = await pool.query(
-        `SELECT a.slug as app_slug
-         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-         WHERE cs.id = $1`,
-        [sessionId]
-      );
-      const appSlug = sessionRows[0]?.app_slug;
-
-      const { pushSessionUpdate } = require('../services/ws');
-      pushSessionUpdate({ action: 'resumed', sessionId, appSlug });
-      log.info('sessions', 'Session resumed', { sessionId });
-
-      // #8: if the resumed session is behind main, kick off a silent
-      // sync in the background. The HTTP response returns immediately
-      // (the UI doesn't wait for the sync to complete) — drift
-      // accounting is best-effort and the dev-chat banner will
-      // update via the session_update WS event when it lands. We
-      // run this only when the session has a known positive drift
-      // count from a prior turn; sessions that never ran a turn
-      // have behind_main=0 and the next /chat turn will populate it.
-      const { rows: driftRows } = await pool.query(
-        'SELECT behind_main FROM chat_sessions WHERE id = $1',
-        [sessionId]
-      );
-      if ((driftRows[0]?.behind_main || 0) > 0) {
-        // Fire-and-forget. Failures are logged but don't bubble up;
-        // the user explicitly clicking "Sync with main" later will
-        // re-attempt with full surface area for errors.
-        runSyncMain(config, pool, sessionId, { trigger: 'resume_autosync' }).catch((err) => {
-          log.warn('sessions', 'Background sync-on-resume failed', {
-            sessionId, err: err.message,
-          });
-        });
-      }
-
+      const resumed = await resumePausedSession({ pool, config, user: req.user, sessionId });
+      if (!resumed.ok) return res.status(resumed.status).json({ error: resumed.error });
       res.json({ ok: true });
     } catch (err) {
       log.error('sessions', 'Resume failed', { message: err.message });
@@ -4740,10 +4791,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         [sessionId, req.user.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
-      const session = rows[0];
+      let session = rows[0];
+      // A paused session is resumed for the user, as a message to it is:
+      // paused is bookkeeping, never a step anybody is asked to take first.
+      if (session.status === 'paused') {
+        const resumed = await resumePausedSession({ pool, config, user: req.user, sessionId });
+        if (!resumed.ok) return res.status(resumed.status).json({ error: resumed.error });
+        session = { ...session, status: 'active' };
+      }
       if (!['active', 'promoted'].includes(session.status)) {
         return res.status(409).json({
-          error: `Cannot sync a ${session.status} session. Resume or unarchive first.`,
+          error: `This ${session.status === 'archived' ? 'session is archived' : 'change is closed'}. Restore it first.`,
         });
       }
 
@@ -4887,7 +4945,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     const messageText = message?.trim() || attachmentsSvc.ATTACHMENTS_ONLY_TEXT;
 
     try {
-      const { rows: sessionRows } = await pool.query(
+      const loadChatSession = () => pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
                 a.self_hosted as app_self_hosted
          FROM chat_sessions cs
@@ -4902,6 +4960,34 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
            AND cs.source IS DISTINCT FROM 'imported'`,
         [req.params.id, req.user.id]
       );
+      let { rows: sessionRows } = await loadChatSession();
+      if (!sessionRows.length) {
+        // A message to a paused session resumes it (#2779 follow-up): paused
+        // is bookkeeping, never something the user is asked to undo first.
+        // The resume keeps every rule the resume route has (the caps, and
+        // pausing the user's least recently used session to make room).
+        const { rows: pausedRows } = await pool.query(
+          `SELECT id, agent_session_id FROM chat_sessions
+            WHERE id = $1 AND user_id = $2 AND status = 'paused'
+              AND is_headless = FALSE AND source IS DISTINCT FROM 'imported'`,
+          [req.params.id, req.user.id]
+        );
+        // Refused below anyway, so it is never resumed first: a resume
+        // spends a slot and may pause another of the user's sessions.
+        if (pausedRows.length && pausedRows[0].agent_session_id != null) {
+          return res.status(409).json({
+            error: 'This change belongs to an agent session. Continue it there.',
+            agentSessionId: pausedRows[0].agent_session_id,
+          });
+        }
+        if (pausedRows.length) {
+          const resumed = await resumePausedSession({
+            pool, config, user: req.user, sessionId: Number(pausedRows[0].id),
+          });
+          if (!resumed.ok) return res.status(resumed.status).json({ error: resumed.error });
+          ({ rows: sessionRows } = await loadChatSession());
+        }
+      }
       if (!sessionRows.length) {
         const { rows: importedRows } = await pool.query(
           `SELECT 1 FROM chat_sessions
@@ -12936,6 +13022,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   sharedPoolCodexSpend,
   snapshotMayorResponse,
   staticWrapUpText,
+  switchSessionAgent,
 });
 
-module.exports = { MAYOR_TURN_DEPS, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { MAYOR_TURN_DEPS, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

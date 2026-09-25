@@ -165,8 +165,24 @@ test('the scrim tokens are split into ink and alpha in both themes', () => {
 test('the create dialog sits on the strip\'s frosted tint, opaque strip as fallback', () => {
   const body = rule('.un-modal:has(> #create-card)');
   assert.match(body, /--un-sheet-bg: var\(--dc-strip\)/, 'the kit variable stays for whatever still reads it');
-  assert.match(body, /background-color: var\(--dc-strip-fill\)/);
+  // QA 2026-09-24 Q8: the centred (desktop) card keeps the frosted tint as
+  // the fallback of `--create-modal-fill`, which only the full-screen layouts
+  // set (next test).
+  assert.match(body, /background-color: var\(--create-modal-fill, var\(--dc-strip-fill\)\)/);
   assert.match(APP_CSS, /\.un-modal:has\(> #create-card\) \{ background-color: var\(--dc-strip\); \}/);
+});
+
+test('full screen, the create dialog is the opaque strip ground (QA 2026-09-24 Q8)', () => {
+  // At 38% the header, the bell and the "Get the app" strip read through
+  // behind the dialog's title on a phone. Both full-screen layouts (the
+  // mobile media query and the native webview) set the opaque ground, and
+  // nothing else does, so the desktop card is unchanged.
+  const decls = APP_CSS.match(/--create-modal-fill:[^;]+;/g) || [];
+  assert.equal(decls.length, 2, 'set in exactly the two full-screen layouts');
+  for (const d of decls) assert.equal(d, '--create-modal-fill: var(--dc-strip);');
+  const media = APP_CSS.indexOf('@media (max-width: 767px), (hover: none) and (pointer: coarse) {\n  :root {\n    --create-modal-fill');
+  assert.ok(media > 0, 'the phone full-screen block sets it');
+  assert.match(APP_CSS, /html\.in-native-webview \{\n  --create-modal-fill: var\(--dc-strip\);/);
 });
 
 // ── The adopted panes hand the surface to the kit ──────────────────────

@@ -26,6 +26,7 @@
 //     so a restart during the wrap-up is recovered the classic way.
 
 const log = require('../logger');
+const registry = require('../../agents/registry');
 
 const DISPATCH_KINDS = Object.freeze({ dispatch_scout: 'scout', dispatch_coding_agent: 'build' });
 const LIVE_STATUSES = new Set(['active', 'promoted']);
@@ -86,9 +87,11 @@ function defaults(deps = {}) {
     sessionBus: deps.sessionBus || require('../session-bus'),
     broadcastGlobal: deps.broadcastGlobal || ((payload) => require('../ws').broadcastGlobal(payload)),
     models: deps.models || require('../models'),
+    agentSessions: deps.agentSessions || require('../agent-sessions'),
     mcpOauth: deps.mcpOauth || require('../mcp-oauth'),
     callPlatform: deps.callPlatform || require('../mcp-tools').callPlatform,
     loopbackBaseUrl: deps.loopbackBaseUrl || require('./mcp-shim').loopbackBaseUrl,
+    attachments: deps.attachments || require('../attachments'),
   };
 }
 
@@ -151,9 +154,39 @@ async function resumeChange({ pool, config, userId, agentSessionId, change, d })
 }
 
 // The model the coding agent runs on. A Codex change carries its own; a
-// Claude change runs on its pinned model, or the platform default.
-function codingModelFor(change, d) {
-  return d.models.resolve(change.agent_backend === 'codex_openrouter' ? null : (change.agent_model || null));
+// Claude change runs on the conversation's Claude choice when it has one,
+// else its pinned model, else the platform default.
+function codingModelFor(change, d, choice = null) {
+  if (change.agent_backend === 'codex_openrouter') return d.models.resolve(null);
+  const chosen = choice && choice.backend === 'claude_code' ? choice.model : null;
+  return d.models.resolve(chosen || change.agent_model || null);
+}
+
+// Whether the active change has to be switched to the conversation's choice
+// before this build. A different backend always does; for OpenRouter a
+// different model or reasoning effort does too, because both are fixed for a
+// Codex thread. A Claude model is not: it is chosen per run (codingModelFor),
+// as the dev chat's picker chooses it per turn.
+function needsAgentSwitch(change, choice) {
+  if (!choice) return false;
+  const current = registry.resolveBackend(change.agent_backend);
+  if (current !== choice.backend) return true;
+  if (choice.backend !== 'codex_openrouter') return false;
+  return (change.agent_model || null) !== (choice.model || null)
+    || (change.agent_reasoning_effort || null) !== (choice.reasoningEffort || null);
+}
+
+// The dev chat's own reset (POST /api/sessions/:id/reset-agent-context):
+// the change keeps its branch and conversation, starts a fresh agent context
+// and says so in its own transcript.
+function agentPrefFor(choice) {
+  const codex = choice.backend === 'codex_openrouter';
+  return {
+    backend: choice.backend,
+    provider: codex ? 'openrouter' : 'anthropic',
+    model: codex ? choice.model : null,
+    reasoningEffort: codex ? (choice.reasoningEffort || null) : null,
+  };
 }
 
 function refusal(text) {
@@ -171,6 +204,12 @@ async function runDispatch({
   kind,
   prompt,
   userMessage,
+  // The files the user sent with the message this build is for
+  // (agent-turn.js dispatchAttachmentIds): named in the prompt as the dev
+  // chat names them, text inlined and the rest fetched with
+  // `usernode-attachments`, which reads a conversation's files through the
+  // change it builds (routes/internal.js).
+  attachmentIds = [],
   apiKey = null,
   sendAgent,
   res,
@@ -205,6 +244,23 @@ async function runDispatch({
   }
 
   const turnDeps = turnDepsOf(d);
+  // The conversation's model choice applies from the next build: switch the
+  // change to it now, before the operation guard is claimed (the switch
+  // refuses a busy change). A switch that cannot happen is logged, and the
+  // build runs on what the change already has rather than not at all.
+  const choice = await d.agentSessions.getAgentChoice(pool, agentSessionId);
+  if (needsAgentSwitch(change, choice)) {
+    const switched = await turnDeps.switchSessionAgent(pool, {
+      sessionId: changeId, userId: user.id, pref: agentPrefFor(choice),
+    }).catch((err) => ({ ok: false, error: err.message }));
+    if (switched.ok) {
+      change = (await loadActiveChange(pool, { agentSessionId, userId: user.id })) || change;
+    } else {
+      log.warn('agent-mayor', 'Could not switch the change to the conversation\'s model', {
+        agentSessionId, changeId, err: switched.error,
+      });
+    }
+  }
   const release = d.activeWorkers.beginSessionOperation(changeId);
   // #937: a new dispatch is the boundary that retires the previous turn's
   // pending stop, exactly as a new classic turn is.
@@ -241,16 +297,24 @@ async function runDispatch({
   const heartbeatRes = {
     write: (chunk) => { try { if (res && typeof res.write === 'function') res.write(chunk); } catch { /* gone */ } },
   };
+  let attachmentsBlock = '';
+  if (Array.isArray(attachmentIds) && attachmentIds.length) {
+    try {
+      attachmentsBlock = d.attachments.buildDispatchBlock(await d.attachments.loadByIds(pool, attachmentIds));
+    } catch (err) {
+      log.warn('agent-dispatch', 'Attachments could not be read for the build', { agentSessionId, err: err.message });
+    }
+  }
   const args = {
     pool,
     config,
     req: { user },
     res: heartbeatRes,
     session: change,
-    selectedModel: codingModelFor(change, d),
+    selectedModel: codingModelFor(change, d, choice),
     userMessage: userMessage || prompt,
     toolPromptArg: prompt || userMessage,
-    attachmentsBlock: '',
+    attachmentsBlock,
     discussionBlock: '',
     repoOwner,
     repoName,
@@ -343,5 +407,7 @@ module.exports = {
   canDispatch,
   resumeChange,
   codingModelFor,
+  needsAgentSwitch,
+  agentPrefFor,
   runDispatch,
 };

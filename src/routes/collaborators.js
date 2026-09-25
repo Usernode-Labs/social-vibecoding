@@ -103,9 +103,18 @@ function collaboratorRoutes(config) {
       // block before applying the result limit. Keep escaping and projection
       // on the shared directory helpers so their public-user contract cannot
       // drift from the other username search surfaces.
+      //
+      // #2386: the viewer's friends lead, and say so with `friend: true` —
+      // the one key added to the projection, and only ever for the viewer's
+      // own relationship.
       const escaped = userDirectory.escapeLike(q);
       const { rows } = await pool.query(
-        `SELECT id, username FROM users
+        `SELECT id, username,
+                EXISTS (SELECT 1 FROM friendships f
+                         WHERE f.status = 'accepted'
+                           AND f.user_low_id = LEAST(users.id, $4::int)
+                           AND f.user_high_id = GREATEST(users.id, $4::int)) AS friend
+           FROM users
           WHERE LOWER(username) LIKE LOWER($1) || '%' ESCAPE '\\'
             AND ($2::int IS NULL OR id NOT IN (
               SELECT user_id FROM app_collaborators WHERE app_id = $2
@@ -116,11 +125,15 @@ function collaboratorRoutes(config) {
                WHERE (b.blocker_id = $4 AND b.blocked_user_id = users.id)
                   OR (b.blocker_id = users.id AND b.blocked_user_id = $4)
             ))
-          ORDER BY LOWER(username), id
+          ORDER BY friend DESC, LOWER(username), id
           LIMIT 10`,
         [escaped, excludeAppId, messageScope, req.user.id]
       );
-      res.json({ users: rows.map(userDirectory.projectUser) });
+      res.json({
+        users: rows.map((row) => (row.friend
+          ? { ...userDirectory.projectUser(row), friend: true }
+          : userDirectory.projectUser(row))),
+      });
     } catch (err) {
       log.error('collab', 'user search failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

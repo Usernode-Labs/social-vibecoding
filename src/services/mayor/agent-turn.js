@@ -50,7 +50,7 @@ const MAX_TOOL_ROUNDS = 6;
 // history well under it in practice.
 const HISTORY_ROWS = 400;
 const TITLE_MAX = 80;
-const LEASE_RENEW_MS = 60_000;
+const LEASE_RENEW_MS = 30_000;
 const EMPTY_REPLY_TEXT = 'I could not put an answer together that time. Could you say that again?';
 
 const IMMEDIATE_WRITE_TOOLS = new Set(['recheck_change']);
@@ -60,7 +60,7 @@ const GET_PROD_STATUS = 'get_prod_status';
 
 const SWITCH_ACTIVE_CHANGE_TOOL = Object.freeze({
   name: 'switch_active_change',
-  description: 'Make one of this conversation\'s earlier changes the active change again, parking the current one. '
+  description: 'Make one of this conversation\'s earlier changes the active change again; the current one keeps its progress. '
     + 'Only changes this conversation started, and only ones still open. Use it when the user wants to go back to '
     + 'earlier work ("the dark-mode one").',
   input_schema: {
@@ -104,6 +104,7 @@ function defaults(deps = {}) {
     sessionBus: deps.sessionBus || require('../session-bus'),
     getAgentMayorPrompt: deps.getAgentMayorPrompt || require('./agent-prompt').getAgentMayorPrompt,
     buildMayorMessages: deps.buildMayorMessages || require('./messages').buildMayorMessages,
+    attachments: deps.attachments || require('../attachments'),
     stripFakeCompletionMarker: deps.stripFakeCompletionMarker || require('./messages').stripFakeCompletionMarker,
     dispatch: deps.dispatch || require('./agent-dispatch'),
     dispatchDeps: deps.dispatchDeps || {},
@@ -111,24 +112,40 @@ function defaults(deps = {}) {
     tools: deps.tools || require('./tools'),
     dataTools: deps.dataTools || require('./data-tools'),
     debugAccess: deps.debugAccess || require('../debug-access'),
+    // The dev chat's own "Session finished" (routes/sessions.js), read at
+    // call time: that module requires this one at load.
+    notifyDone: deps.notifyDone || ((pool, changeId) => require('../../routes/sessions').notifySessionDone(pool, changeId)),
+    // The owner's lists (Recents, the mark's menu, Messages) show a spinner
+    // while a turn runs and a dot once it has finished: tell every tab, on
+    // every pod, when either happens.
+    notifyUser: deps.notifyUser || ((userId, payload) => require('../ws').pushToUser(userId, payload)),
+    isChangeBusy: deps.isChangeBusy || ((changeId) => require('../active-workers').isSessionBusy(changeId)),
   };
 }
 
 // ── Who runs the Mayor, and who pays ───────────────────────────────────
 //
-// The same rules as a classic session's Mayor, keyed on the user's default
-// coding backend because an agent session has no backend of its own yet: an
-// OpenRouter user's Mayor runs on their OpenRouter model and key (and an
-// included key is gated on, and billed to, the shared weekly pool); everyone
-// else's runs on Anthropic through the limit-first platform or BYOK path.
+// The same rules as a classic session's Mayor, keyed on the conversation's
+// model choice (the composer's picker) and, when it has none, on the user's
+// default coding backend: an OpenRouter choice runs the Mayor on that
+// OpenRouter model and key (and an included key is gated on, and billed to,
+// the shared weekly pool); a Claude one runs it on Anthropic, on the chosen
+// model, through the limit-first platform or BYOK path. Read when a turn
+// starts, so a pick made mid-turn applies from the next one.
 async function resolveAgentMayor({ pool, config, userId, agentSessionId, requestedModel, deps = {} }) {
   const d = defaults(deps);
-  const { rows } = await pool.query(
-    `SELECT backend, model_id FROM user_agent_preferences
-      WHERE user_id = $1 AND is_default = TRUE`,
-    [userId]
-  );
-  const pref = rows[0];
+  const choice = await d.agentSessions.getAgentChoice(pool, agentSessionId);
+  let pref;
+  if (choice) {
+    pref = { backend: choice.backend, model_id: choice.model };
+  } else {
+    const { rows } = await pool.query(
+      `SELECT backend, model_id FROM user_agent_preferences
+        WHERE user_id = $1 AND is_default = TRUE`,
+      [userId]
+    );
+    pref = rows[0];
+  }
   if (pref && pref.backend === 'codex_openrouter') {
     const resolved = await d.openrouterMayor.resolveForSession({
       pool,
@@ -170,11 +187,14 @@ async function resolveAgentMayor({ pool, config, userId, agentSessionId, request
       reason: billing.reason || null, verificationRequired: !!billing.verificationRequired,
     };
   }
+  // A model named on the request still wins (the turn route accepts one);
+  // otherwise the conversation's Claude choice, otherwise the default.
+  const claudeModel = requestedModel || (choice && choice.backend === 'claude_code' ? choice.model : null);
   return {
     ok: true,
     provider: 'anthropic',
     client: d.llm,
-    model: d.models.resolve(requestedModel),
+    model: d.models.resolve(claudeModel),
     apiKey: billing.apiKey || null,
     spendRecorded: true,
     byok: !!billing.apiKey,
@@ -232,7 +252,7 @@ async function loadSummary(pool, agentSessionId) {
 // happened without having been asked. A coding agent's result is labelled
 // with the change it ran on, because one conversation spans several. The
 // history must open with the user.
-function historyToMessages(rows, buildMayorMessages) {
+function historyToMessages(rows, buildMayorMessages, attachmentsByMessageId = new Map()) {
   const mapped = rows.map((row) => {
     const metadata = row.metadata || {};
     if (row.role === 'system' && metadata.agentSessionEvent) {
@@ -243,7 +263,10 @@ function historyToMessages(rows, buildMayorMessages) {
     }
     return row;
   });
-  const messages = buildMayorMessages(mapped);
+  // Files the user attached come back as the dev chat's Mayor reads them
+  // (messages.js / attachments.js): recent images as vision blocks, text
+  // files inlined, the rest named.
+  const messages = buildMayorMessages(mapped, attachmentsByMessageId);
   while (messages.length && messages[0].role !== 'user') messages.shift();
   return messages;
 }
@@ -263,7 +286,24 @@ function withTrailingUserText(messages, text) {
   if (last && last.role === 'user' && typeof last.content === 'string') {
     return [...messages.slice(0, -1), { role: 'user', content: `${last.content}\n\n${text}` }];
   }
+  // A user message with files is a list of blocks: the note joins it as one
+  // more, rather than following it as a second user message in a row.
+  if (last && last.role === 'user' && Array.isArray(last.content)) {
+    return [...messages.slice(0, -1), { role: 'user', content: [...last.content, { type: 'text', text }] }];
+  }
   return [...messages, { role: 'user', content: text }];
+}
+
+// The files the coding agent is handed: the ones sent with this turn's
+// message, or on a follow-up turn (which has none), the latest message's.
+function dispatchAttachmentIds(rows, attachments) {
+  if (Array.isArray(attachments) && attachments.length) return attachments.map((att) => att.id);
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (rows[i].role !== 'user') continue;
+    const listed = rows[i].metadata && Array.isArray(rows[i].metadata.attachments) ? rows[i].metadata.attachments : [];
+    return listed.map((att) => att && att.id).filter((attId) => typeof attId === 'string');
+  }
+  return [];
 }
 
 function lastUserText(rows) {
@@ -313,6 +353,9 @@ async function runAgentTurn({
   agentSessionId,
   turnId,
   messageText = null,
+  // The files sent with messageText, already checked as this user's own,
+  // unsent uploads to this conversation (routes/agent-sessions.js).
+  attachments = [],
   followUp = null,
   mayor,
   res,
@@ -320,6 +363,10 @@ async function runAgentTurn({
   deps = {},
 }) {
   const d = defaults(deps);
+  const listChanged = (busy) => {
+    try { d.notifyUser(user.id, { type: 'agent_session_changed', agentSessionId, busy }); } catch { /* the lists catch up on their next read */ }
+  };
+  listChanged(true);
   const seqPrefix = String(turnId).slice(0, 8);
   let eventSeq = 0;
   const send = (type, data = {}) => {
@@ -329,13 +376,17 @@ async function runAgentTurn({
   };
   const stop = {
     abort: new AbortController(), stopped: false, stoppedBy: null, send, phase: 'mayor', change: null,
+    startedAt: Date.now(), buildStartedAt: null,
   };
   const prior = stopRegistry.get(agentSessionId);
   if (prior && prior !== stop) { try { prior.abort.abort(); } catch { /* already gone */ } }
   stopRegistry.set(agentSessionId, stop);
+  // The build's clock starts at the dispatch, so a screen that opens or
+  // reconnects mid-build counts from there, not from when it arrived.
   const setPhase = (phase, extra = {}) => {
     stop.phase = phase;
-    send('phase', { phase, ...extra });
+    if (phase === 'cc') stop.buildStartedAt = Date.now();
+    send('phase', { phase, ...(phase === 'cc' ? { startedAt: stop.buildStartedAt } : {}), ...extra });
   };
 
   // The turn keeps its lease fresh while it runs: a dispatch can outlast the
@@ -379,12 +430,15 @@ async function runAgentTurn({
   };
 
   const insertAssistant = async ({ text, cost, metadata, changeId }) => {
+    // An OpenRouter Mayor's figure is the list-price estimate, never a
+    // provider-reported amount, and the reply's cost label says so (#2118).
+    const estimated = mayor.provider === 'openrouter' && cost > 0 ? { costEstimated: true } : {};
     const { rows } = await pool.query(
       `INSERT INTO chat_session_messages
          (session_id, agent_session_id, role, content, model, cost_cents, metadata)
        VALUES ($1, $2, 'assistant', $3, $4, $5, $6::jsonb)
        RETURNING id`,
-      [changeId || null, agentSessionId, text, mayor.model, cost, JSON.stringify(metadata)]
+      [changeId || null, agentSessionId, text, mayor.model, cost, JSON.stringify({ ...metadata, ...estimated })]
     );
     return rows[0].id;
   };
@@ -470,11 +524,15 @@ async function runAgentTurn({
         });
         cards.push(card);
         send('confirmation_required', { card });
+        // `input` is what the card will run, which is not always what the
+        // model sent: a change started from the request the conversation was
+        // opened on links that request (agent-session-actions.js).
         return {
           ok: true,
           text: JSON.stringify({
             status: 'pending_confirmation',
             actionId: card.id,
+            input: card.input,
             note: 'Shown to the user as a confirmation card. Nothing has happened yet: it runs only if they press '
               + 'Confirm on the card. Tell them in one line what it will do.',
           }),
@@ -529,6 +587,7 @@ async function runAgentTurn({
       kind,
       prompt: typeof input.prompt === 'string' ? input.prompt.trim() : '',
       userMessage: messageText || lastUserText(rows),
+      attachmentIds: dispatchAttachmentIds(rows, messageText ? attachments : []),
       apiKey: mayor.apiKey,
       sendAgent: send,
       res,
@@ -556,6 +615,23 @@ async function runAgentTurn({
         });
       }
     }
+    // A spec drafted or a build done while nobody is looking is the bell's,
+    // as a dev chat's finished turn is ("Session finished", one unread per
+    // change). Looking means this turn's own stream is still open, or the
+    // conversation screen is following the conversation's events.
+    if (outcome.ran && outcome.changeId && !watching()) {
+      await d.notifyDone(pool, outcome.changeId);
+    }
+  };
+
+  // Is anybody watching this conversation right now?
+  const watching = () => {
+    const streamOpen = !!res && !res.destroyed && !res.writableEnded
+      && !(res.socket && res.socket.destroyed);
+    const following = typeof d.sessionBus.subscriberCount === 'function'
+      ? d.sessionBus.subscriberCount(busKey(agentSessionId)) > 0
+      : false;
+    return streamOpen || following;
   };
 
   // The wrap-up. It answers every tool call of the dispatching round, and it
@@ -628,12 +704,22 @@ async function runAgentTurn({
       // The user's message: on the active change's slice when there is one,
       // so the change page reads the conversation that shaped it, and on the
       // conversation always.
-      await pool.query(
+      const { rows: inserted } = await pool.query(
         `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata)
-         VALUES ($1, $2, 'user', $3, $4::jsonb)`,
+         VALUES ($1, $2, 'user', $3, $4::jsonb)
+         RETURNING id`,
         [session.activeChange ? session.activeChange.id : null, agentSessionId, messageText,
-          JSON.stringify({ agentTurnId: turnId })]
+          JSON.stringify({ agentTurnId: turnId, ...(attachments.length ? { attachments } : {}) })]
       );
+      // The files belong to this message now: out of the orphan sweep's
+      // reach, and what the Mayor's history reads back.
+      if (attachments.length && inserted && inserted[0]) {
+        await pool.query(
+          `UPDATE chat_session_attachments SET message_id = $1
+            WHERE id = ANY($2) AND agent_session_id = $3 AND message_id IS NULL`,
+          [inserted[0].id, attachments.map((att) => att.id), agentSessionId]
+        );
+      }
       if (!session.title) {
         await pool.query(
           `UPDATE agent_sessions SET title = $1
@@ -647,7 +733,8 @@ async function runAgentTurn({
     summary = await loadSummary(pool, agentSessionId);
     const history = await loadHistory(pool, agentSessionId, summary.throughId);
     compactionPlan = d.compaction.planCompaction(history);
-    let convo = historyToMessages(history, d.buildMayorMessages);
+    const historyAttachments = await d.attachments.loadForHistory(pool, history);
+    let convo = historyToMessages(history, d.buildMayorMessages, historyAttachments);
     if (!messageText) convo = withTrailingUserText(convo, followUpNote(followUp));
     const systemPrompt = d.getAgentMayorPrompt({ username: user.username, session, summary: summary.text });
     shim = await d.openMayorMcp({ pool, config, userId: user.id, agentSessionId });
@@ -767,9 +854,10 @@ async function runAgentTurn({
     clearInterval(leaseTimer);
     if (shim) await shim.close('turn_finished');
     if (stopRegistry.get(agentSessionId) === stop) stopRegistry.delete(agentSessionId);
-    await d.agentSessions.releaseTurnLease(pool, { agentSessionId, turnId }).catch((err) => {
+    await d.agentSessions.releaseTurnLease(pool, { agentSessionId, turnId, finished: true }).catch((err) => {
       log.warn('agent-mayor', 'Could not release the turn lease', { agentSessionId, err: err.message });
     });
+    listChanged(false);
     send('done', {});
     try { if (res) res.end(); } catch { /* already closed */ }
     setTimeout(() => d.sessionBus.clearSession(busKey(agentSessionId)), 30_000).unref?.();
@@ -834,7 +922,64 @@ function turnState(agentSessionId) {
     phase: handle.phase,
     stopping: !!handle.stopped,
     changeId: handle.change ? handle.change.changeId : null,
+    // What the screen's clock counts from: the build once one was
+    // dispatched (the wrap-up keeps counting it), else the turn.
+    startedAt: handle.buildStartedAt || handle.startedAt || null,
   };
+}
+
+// A build that restart recovery adopted runs on the conversation's active
+// change with no Mayor turn behind it: the turn that dispatched it died with
+// the old process. It is still the conversation's running work, so it reads
+// as a running dispatch, and stop goes to the change.
+function recoveredRunState(agentSessionId, changeId, deps = {}) {
+  if (stopRegistry.has(agentSessionId) || !changeId) return null;
+  if (!defaults(deps).isChangeBusy(changeId)) return null;
+  return { phase: 'cc', stopping: false, changeId };
+}
+
+// A turn whose process died (a restart mid-dispatch) leaves its lease and
+// its open screens behind: nothing will ever send their `done`. Once the
+// lease is stale, clear it and send that `done` in the dead turn's place, so
+// the screen settles on what the transcript holds. Never while this process
+// runs a turn there. `finished` stamps the green dot: a recovery that posted
+// the wrap-up finished the dead turn's work. True when it handed one back.
+async function handBackOrphanedTurn({ pool, agentSessionId, userId, finished = false, deps = {} }) {
+  if (stopRegistry.has(agentSessionId)) return false;
+  const d = defaults(deps);
+  const released = await d.agentSessions.releaseStaleTurnLease(pool, { agentSessionId, userId, finished });
+  if (!released) return false;
+  log.info('agent-mayor', 'Handed back an orphaned turn lease', { agentSessionId, finished });
+  try { d.notifyUser(userId, { type: 'agent_session_changed', agentSessionId, busy: false }); } catch { /* the lists catch up on their next read */ }
+  d.sessionBus.publish(busKey(agentSessionId), {
+    type: 'done', _seq: `orphan-${Date.now().toString(36)}`, agentSessionId,
+  });
+  return true;
+}
+
+// A recovered run on `changeId` has ended, however it ended: hand back the
+// dead dispatching turn of every conversation it is the active change of. A
+// screen following the run settles now; a lease not yet stale (the restart
+// was moments ago) is released once it is.
+async function handBackAfterRecovery({ pool, changeId, deps = {}, retryMs = null }) {
+  const d = defaults(deps);
+  const conversations = await d.agentSessions.conversationsOfChange(pool, changeId);
+  for (const { agentSessionId, userId } of conversations) {
+    // eslint-disable-next-line no-await-in-loop
+    const handed = await handBackOrphanedTurn({ pool, agentSessionId, userId, finished: true, deps });
+    if (handed || stopRegistry.has(agentSessionId)) continue;
+    try { d.notifyUser(userId, { type: 'agent_session_changed', agentSessionId, busy: false }); } catch { /* the lists catch up on their next read */ }
+    d.sessionBus.publish(busKey(agentSessionId), {
+      type: 'done', _seq: `recovered-${Date.now().toString(36)}`, agentSessionId,
+    });
+    const wait = retryMs ?? (d.agentSessions.TURN_LEASE_STALE_MINUTES * 60_000 + LEASE_RENEW_MS);
+    const timer = setTimeout(() => {
+      handBackOrphanedTurn({ pool, agentSessionId, userId, finished: true, deps }).catch((err) => {
+        log.warn('agent-mayor', 'Could not hand back an orphaned turn lease', { agentSessionId, err: err.message });
+      });
+    }, wait);
+    if (typeof timer.unref === 'function') timer.unref();
+  }
 }
 
 function newTurnId() {
@@ -855,12 +1000,17 @@ module.exports = {
   loadHistory,
   loadSummary,
   historyToMessages,
+  withTrailingUserText,
+  dispatchAttachmentIds,
   followUpNote,
   titleFromMessage,
   fallbackWrapUp,
   runAgentTurn,
   stopAgentTurn,
   turnState,
+  handBackOrphanedTurn,
+  handBackAfterRecovery,
+  recoveredRunState,
   newTurnId,
   _stopRegistry: stopRegistry,
 };

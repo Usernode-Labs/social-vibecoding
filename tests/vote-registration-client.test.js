@@ -210,3 +210,74 @@ test('refreshDevData asks for a fresh load on a vote and nothing else', () => {
   AppView.refreshDevData('vote');
   assert.deepEqual(asked, [null, { fresh: true }]);
 });
+
+// ── QA 2026-09-24 Q3: castVote says whether the vote landed ─────────────
+//
+// The Workshop's Needs-you deck marked its card "Voted no" before castVote
+// had asked for a No's line, so cancelling "What's not working for you?" left
+// a card claiming a vote nothing had sent. It waits on castVote's answer now,
+// so the answer has to be right in every branch: TRUE only once the server
+// took the vote, and `opts.onSend` only once the vote is committed to.
+
+function outcomeHarness({ prompt = async () => 'Too long', fetch } = {}) {
+  const AppView = makeAppView();
+  const pr = openRow();
+  AppView._proposals = [pr];
+  AppView._repaintDevBody = () => {};
+  AppView._renderTopicHead = () => {};
+  AppView.refreshDevData = async () => {};
+  const seen = [];
+  const toasts = [];
+  AppView.__sandbox.PlatformUI = { prompt, toast: (m) => toasts.push(m) };
+  AppView.__sandbox.fetch = fetch || (async () => {
+    seen.push('fetch');
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  });
+  const onSend = (vote) => seen.push(`send:${vote}`);
+  return { AppView, pr, seen, toasts, onSend };
+}
+
+test('a cancelled No resolves false, sends nothing and leaves the card as it was', async () => {
+  const h = outcomeHarness({ prompt: async () => null });
+  const ok = await h.AppView.castVote(7, 'no', 3, { onSend: h.onSend });
+  assert.equal(ok, false);
+  assert.deepEqual(h.seen, [], 'no onSend and no request');
+  assert.equal(h.pr.my_vote, null, 'the row keeps its vote (none)');
+  assert.equal(h.pr.no_count, 0);
+  assert.equal(h.AppView._voteInFlight.size, 0, 'and the next press is not blocked');
+});
+
+test('a vote the server takes resolves true, with onSend before the request', async () => {
+  const h = outcomeHarness();
+  const ok = await h.AppView.castVote(7, 'no', 3, { onSend: h.onSend });
+  assert.equal(ok, true);
+  assert.deepEqual(h.seen, ['send:no', 'fetch']);
+});
+
+test('a refused vote resolves false and says why', async () => {
+  const h = outcomeHarness({
+    fetch: async () => ({ ok: false, status: 409, json: async () => ({ error: 'This proposal changed' }) }),
+  });
+  const ok = await h.AppView.castVote(7, 'yes', 3, { reason: null, onSend: h.onSend });
+  assert.equal(ok, false);
+  assert.deepEqual(h.toasts, ['This proposal changed']);
+  assert.equal(h.pr.my_vote, null, 'the optimistic vote was put back');
+});
+
+test('a vote that never reaches the server resolves false and is no longer silent', async () => {
+  const h = outcomeHarness({ fetch: async () => { throw new TypeError('Failed to fetch'); } });
+  const ok = await h.AppView.castVote(7, 'yes', 3, { reason: null, onSend: h.onSend });
+  assert.equal(ok, false);
+  assert.equal(h.pr.my_vote, null, 'the optimistic vote was put back');
+  assert.equal(h.toasts.length, 1, 'the failure is said out loud');
+  assert.match(h.toasts[0], /did not go through/);
+  assert.doesNotMatch(h.toasts[0], /—/, 'in plain words, with no em dash');
+});
+
+test('a second press while the first is in flight resolves false without a request', async () => {
+  const h = outcomeHarness({ prompt: () => new Promise(() => {}) });
+  h.AppView.castVote(7, 'no', 3, { onSend: h.onSend }); // stuck at the prompt
+  const ok = await h.AppView.castVote(7, 'no', 3, { onSend: h.onSend });
+  assert.equal(ok, false);
+  assert.deepEqual(h.seen, []);
+});

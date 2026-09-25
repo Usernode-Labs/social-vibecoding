@@ -2546,6 +2546,17 @@ const App = {
           case 'user_blocks_changed':
             window.UsernodeReact?.messages?.refreshBlockedView?.(data.userId, data.blocked);
             break;
+          case 'agent_session_changed':
+            // #2779: one of this user's agent sessions started or finished
+            // a turn, or was read in another tab. Recents, the mark's menu
+            // and Messages redraw its spinner or green dot from the list.
+            window.UsernodeReact?.agentSession?.listChanged?.(data);
+            break;
+          case 'agent_session_drafts_changed':
+            // A draft saved, sent or deleted on another device: the open
+            // conversation re-reads its saved drafts.
+            window.UsernodeReact?.agentSession?.draftsChanged?.(data);
+            break;
           case 'conversation_message_created':
           case 'conversation_message_updated':
           case 'conversation_reaction_updated':
@@ -3802,6 +3813,12 @@ const App = {
 
       if (!hash) {
         App.setChromeless(false);
+        // Every screen that sets an `_inX` flag on entry is listed here: one
+        // left out takes the "already on home" branch below, which reveals
+        // home without hiding the screen it was on. Messages and the Workshop
+        // were left out (QA 2026-09-24 Q1), so Back from either to "/" drew
+        // Home over the list or the panel, with that tab still lit and the
+        // phone's bar floating mid-page.
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
         else if (App._inProfile) App.navigateHome();
@@ -3810,6 +3827,8 @@ const App = {
         else if (App._inBrowse) App.navigateHome();
         else if (App._inGlobalChat) App.navigateHome();
         else if (App._inAgentSession) App.navigateHome();
+        else if (App._inMessages) App.navigateHome();
+        else if (App._inWorkshop) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -3833,9 +3852,11 @@ const App = {
         // home feed. Doubles as the addressable route the dapp.json
         // regression test for the mode toggle uses (#748).
         App.setChromeless(false);
+        // The same list as the `!hash` branch above (QA 2026-09-24 Q1).
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings || App._inBrowse
-          || App._inGlobalChat || App._inAgentSession) {
+          || App._inGlobalChat || App._inAgentSession
+          || App._inMessages || App._inWorkshop) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -3995,8 +4016,9 @@ const App = {
         if (parts[1] === 'app' && parts[2]) {
           // The raw segment, like the #app route's own slug a few blocks
           // below: the store validates it and the server is the authority on
-          // whether it names anything.
-          App.navigateToMessages(null, parts[2]);
+          // whether it names anything. #2387: `/thread/<id>` opens a reply
+          // thread beside the channel, `/m/<id>` a message link into it.
+          App.navigateToMessages(null, parts[2], null, App._messagesExtras(parts.slice(3)));
           return;
         }
         // #2813: AN AGENT THREAD OPENS BESIDE THE LIST TOO, on a desktop —
@@ -4041,9 +4063,12 @@ const App = {
         // Conversations use SERIAL ids, so keep their signed-int32 bound
         // local to this route.
         const conversationId = App._numericSegment(parts[1]);
+        const validConversation = conversationId != null && conversationId <= 2147483647;
         App.navigateToMessages(
-          conversationId != null && conversationId <= 2147483647
-            ? conversationId : null
+          validConversation ? conversationId : null,
+          null,
+          null,
+          validConversation ? App._messagesExtras(parts.slice(2)) : {},
         );
         return;
       }
@@ -4059,8 +4084,13 @@ const App = {
         // #2779: an agent session, one conversation with the Mayor that works
         // on any app. Its own screen at #agent/<id> (a phone's surface; a
         // desktop can also draw it beside the inbox at #messages/agent/<id>).
-        // A serial id, so the same signed-int32 bound as a conversation's.
+        // A serial id, so the same signed-int32 bound as a conversation's;
+        // `#agent/new` is one not sent yet, created by its first message.
         App.setChromeless(false);
+        if (parts[1] === 'new') {
+          App.navigateToAgentSession('new');
+          return;
+        }
         const agentSessionId = App._numericSegment(parts[1]);
         if (agentSessionId == null || agentSessionId > 2147483647) {
           App.navigateToMessages(null);
@@ -5772,8 +5802,9 @@ const App = {
   //
   // The `navigateToMessages` name is kept below because push handling and
   // notifications.js's conversation rows still say it.
-  navigateToMessages(conversationId, appSlug, agent) {
+  navigateToMessages(conversationId, appSlug, agent, extras) {
     const messages = window.UsernodeReact?.messages;
+    const more = extras || {};
     // ALREADY HERE: route the island in place rather than replaying a screen
     // swap onto the screen you are on. The screen ITSELF is asked, not just
     // the flag — a stale `_inMessages` used to make this return early with
@@ -5781,7 +5812,7 @@ const App = {
     // in _showOnlyScreen is what keeps the flag honest; this is the belt to
     // its braces, and costs one condition.
     if (App._inMessages && App._isScreenVisible('messages-screen') && messages?.isOpen?.()) {
-      messages.route?.(conversationId || null, appSlug || null, agent || null);
+      messages.route?.(conversationId || null, appSlug || null, agent || null, more);
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -5797,7 +5828,7 @@ const App = {
     App._inMessages = true;
     // Route the still-hidden island first. It renders no remote data until its
     // effects resolve, and chrome remains suspended until the callback below.
-    messages?.route?.(conversationId || null, appSlug || null, agent || null);
+    messages?.route?.(conversationId || null, appSlug || null, agent || null, more);
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('messages-screen');
@@ -5805,6 +5836,22 @@ const App = {
       App.setHeaderTitle('Messages');
       messages?.syncChrome?.();
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // #2387: what follows a conversation or an app channel in a Messages
+  // address — `thread/<root>` opens a reply thread beside it, `m/<id>` is a
+  // message link, and the two combine (`thread/<root>/m/<id>`). Serial ids
+  // under the same int32 bound as the conversation's; anything else is
+  // ignored and the conversation opens as it would have.
+  _messagesExtras(rest) {
+    const out = {};
+    for (let i = 0; i + 1 < rest.length; i += 2) {
+      const id = App._numericSegment(rest[i + 1]);
+      if (id == null || id > 2147483647) continue;
+      if (rest[i] === 'thread') out.threadRootId = id;
+      else if (rest[i] === 'm') out.focusMessageId = id;
+    }
+    return out;
   },
 
   // #2813: the agent thread a `#messages/agent/…` or `#messages/session/…`
@@ -5815,7 +5862,9 @@ const App = {
       let id = null;
       try { id = decodeURIComponent(parts[2]); } catch (_) { return null; }
       // #2779: an agent session's id is a serial; a Global Chat thread's is
-      // a UUID, never all digits. So a number names an agent session.
+      // a UUID, never all digits. So a number names an agent session, and so
+      // does `new`: the one New change opens, unsent until its first message.
+      if (id === 'new') return { kind: 'agent', id: 'new' };
       const agentSessionId = App._numericSegment(id);
       if (agentSessionId != null && agentSessionId <= 2147483647) {
         return { kind: 'agent', id: agentSessionId };
@@ -5946,20 +5995,37 @@ const App = {
   // cannot fight the address it is currently reading. The flag clears in that
   // function's `finally`, so a task scheduled here is the first moment the
   // rewrite is allowed to land.
-  _restoreAddressUnderSheet() {
+  //
+  // THE ADDRESS IS PUT BACK FIRST, AND REPLACED (QA 2026-09-24 Q16). The
+  // sheet claims the back button when it presents (lib/sheet-controller.js),
+  // which pushes a record at whatever address is in the bar at that moment.
+  // Presented first, that was `#notifications`, and the rewrite then PUSHED
+  // the screen's address on top of it, so Back closed the sheet onto an
+  // address that reopened it. So `present` runs after the rewrite, in the same
+  // task, and the rewrite replaces: `#notifications` names nothing a Back
+  // press should return to.
+  //
+  // AND HOME UNDERNEATH IS SETTLED THE WAY THE `!hash` BRANCH SETTLES IT (Q30a).
+  // A cold boot straight to #notifications finds the PRERENDERED home already
+  // showing, so it never calls navigateHome, and the header kept whatever
+  // title the boot snapshot carried: open an app, then load /#notifications,
+  // and Home sat under the sheet titled with the app's name.
+  _restoreAddressUnderSheet(present) {
     const onAScreen = App.currentApp || App.SCREEN_IDS.some(App._isScreenVisible);
     if (!onAScreen) {
       App.navigateHome();
-      return;
+    } else if (!App.currentApp && App._isScreenVisible('home-screen')) {
+      App._ensureHomeVisible();
+      App.setHeaderTitle('Homeroom');
     }
     setTimeout(() => {
-      try { App.updateHash(); } catch (err) { /* opaque origin — the sheet still opens */ }
+      try { App.updateHash({ replace: true }); } catch (err) { /* opaque origin — the sheet still opens */ }
+      if (typeof present === 'function') present();
     }, 0);
   },
 
   openNotificationsSheet() {
-    App._restoreAddressUnderSheet();
-    App.openNotifications();
+    App._restoreAddressUnderSheet(() => App.openNotifications());
   },
 
   /** Present the sheet. The one call every entry point funnels through. */

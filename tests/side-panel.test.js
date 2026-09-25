@@ -99,6 +99,36 @@ test('the panel\'s pages: an app\'s Workshop and work, its discussion, conversat
   }
 });
 
+test('an agent session opens beside the app by either address, climbs to Messages, and titles itself (#2779)', () => {
+  // `agent/<id>` is the conversation's own screen; `messages/agent/<id>` is
+  // the address Messages links it with. The panel is phone-width, so its
+  // document swaps the second for the first in place: one page, one key.
+  for (const route of ['agent/7', 'agent/7/changes', 'messages/agent/7']) {
+    const page = R.panelPage(route);
+    assert.equal(page && page.kind, 'agent', route);
+    assert.equal(page.key, 'agent/7', route);
+    assert.equal(R.isPanelRoute(route), true, `${route} opens beside the app`);
+    assert.equal(R.embeddedAllows(route), true, `the panel's own document shows ${route}`);
+    assert.equal(R.parentRoute(route), 'messages', 'Back climbs to the inbox, like any conversation');
+  }
+  assert.equal(R.samePage('messages/agent/7', 'agent/7'), true, 'the in-place swap is not a navigation');
+  assert.equal(R.samePage('agent/7/changes', 'agent/7'), true, 'the drawer is the same page');
+  assert.equal(R.samePage('agent/7', 'agent/8'), false);
+  // A UUID under messages/agent is a Global Chat thread, which stays out.
+  assert.equal(R.isPanelRoute('messages/agent/5f0c1d2e-aaaa-bbbb-cccc-000000000001'), false);
+  for (const route of ['agent', 'agent/abc', 'agent/0']) {
+    assert.equal(R.panelPage(route), null, `${route} is not a panel page`);
+  }
+  // Its header names the session, as a conversation's does.
+  assert.equal(R.titleFor('agent/7', 'Dark mode for the dev board'), 'Dark mode for the dev board');
+  assert.equal(R.titleFor('agent/7', ''), 'Agent session');
+  // Expand lands on its desktop home, beside the inbox; every other page as is.
+  assert.equal(R.expandRoute('agent/7/changes'), 'messages/agent/7');
+  assert.equal(R.expandRoute('messages/agent/7'), 'messages/agent/7');
+  assert.equal(R.expandRoute('messages/4242'), 'messages/4242');
+  assert.equal(R.expandRoute('app/notes-ab12/dev/sessions/41'), 'app/notes-ab12/dev/sessions/41');
+});
+
 test('the inbox is where Back climbs to, but a link to it is the Messages TAB and leaves the app', () => {
   assert.equal(R.isPanelRoute('messages'), false, 'the sidebar\'s tabs keep their meaning');
   assert.equal(R.embeddedAllows('messages'), true, 'and the panel\'s own document still shows it');
@@ -263,7 +293,11 @@ function topWindow({ width = 1280, app = 'notes-ab12', tab = 'app', chromeless =
   const classes = new Set([native ? 'in-native-webview' : null, embedded ? 'in-side-panel' : null].filter(Boolean));
   const win = {
     location: new URL(`https://homeroom.test/app/${app || 'none'}?demo=1`),
-    history: { pushState: (s, t, url) => pushed.push(url) },
+    history: {
+      state: null,
+      pushState: (s, t, url) => pushed.push(url),
+      replaceState: (s, t, url) => { win.location = new URL(url, win.location.href); },
+    },
     matchMedia: (q) => ({ matches: q === '(min-width: 1024px)' ? width >= 1024 : false }),
     setTimeout: (fn) => { timers.push(fn); return timers.length; },
     App: {
@@ -447,6 +481,95 @@ test('Expand is ONE real navigation of the top window, with its own routing, the
   assert.deepEqual(pushed, ['/?demo=1#messages/4242'], 'pushed, as a history entry of its own');
   assert.equal(routed.length, 1, 'and routed once, at once');
   assert.equal(api.sidePanelStore.get().frameSrc, null, 'the panel is gone');
+  cleanup();
+});
+
+test('Expand from an agent session goes to Messages, the conversation beside the inbox (#2779)', () => {
+  const { pushed, routed } = topWindow();
+  assert.equal(api.take('messages/agent/7'), true, 'a conversation opened beside the running app');
+  fakeFrame();
+  // The panel's document settles on the phone screen's address, same page.
+  api.embeddedApi.ready('agent/7', 'Dark mode for the dev board');
+  assert.equal(api.sidePanelStore.get().title, 'Dark mode for the dev board');
+  api.expand();
+  assert.deepEqual(pushed, ['/?demo=1#messages/agent/7'], 'its desktop home, not the phone screen');
+  assert.equal(routed.length, 1);
+  assert.equal(api.sidePanelStore.get().frameSrc, null, 'the panel is gone');
+  cleanup();
+});
+
+test('an unsent agent session opens beside the app with its hint, and becomes the session in place (#2779)', () => {
+  // `agent/new` is New change before its first message: a panel page like
+  // any conversation, with no row behind it yet.
+  for (const route of ['agent/new', 'messages/agent/new']) {
+    assert.equal(R.panelPage(route).key, 'agent/new', route);
+    assert.equal(R.isPanelRoute(route), true, route);
+    assert.equal(R.embeddedAllows(route), true, route);
+  }
+  assert.equal(R.samePage('agent/new', 'agent/7'), false);
+  assert.equal(R.panelPage('agent/newer'), null);
+
+  const { pushed } = topWindow();
+  const hint = { agentHint: { slug: 'notes-ab12', entry: 'improve' } };
+  assert.equal(api.take('messages/agent/new', hint), true);
+  // The first page is the frame's own address: the hint waits for its boot.
+  assert.deepEqual(api.embeddedApi.takeBootHint(), hint);
+  assert.equal(api.embeddedApi.takeBootHint(), null, 'once');
+  fakeFrame();
+  api.embeddedApi.ready('agent/new', '');
+  // The first message created session 7, and the panel's document replaced
+  // its address: the same page settling, not a step Back would undo.
+  api.embeddedApi.navigated('agent/7', 'Dark mode', false);
+  assert.equal(api.sidePanelStore.get().route, 'agent/7');
+  assert.equal(api.sidePanelStore.get().canBack, true, 'Back still climbs to the inbox, and only there');
+  api.expand();
+  assert.deepEqual(pushed, ['/?demo=1#messages/agent/7'], 'Expand finds the session, not a fresh draft');
+  cleanup();
+});
+
+test('the page the panel shows is in the top window\'s address, so a reload brings the panel back', () => {
+  const { win, flush } = topWindow();
+  const address = () => `${win.location.pathname}${win.location.search}`;
+  assert.equal(api.take('messages/agent/7'), true);
+  assert.equal(address(), '/app/notes-ab12?demo=1&side=messages/agent/7', 'in place, every other parameter kept');
+  const gone = fakeFrame();
+  api.embeddedApi.ready('agent/7', 'Dark mode');
+  api.embeddedApi.navigated('app/notes-ab12/dev/proposals/12', 'Notes', true);
+  assert.equal(address(), '/app/notes-ab12?demo=1&side=app/notes-ab12/dev/proposals/12', 'and it follows the panel');
+  api.close();
+  assert.equal(address(), '/app/notes-ab12?demo=1', 'closed: out of the address');
+  assert.equal(gone.length, 0);
+  api._resetForTests();
+
+  // A reload: the router reports no app while it boots, then the app comes
+  // back on screen with ?side= and the panel opens there.
+  win.location = new URL('https://homeroom.test/app/notes-ab12?side=agent/7&demo=1');
+  api.appPresence(false);
+  assert.equal(win.location.search, '?side=agent/7&demo=1', 'booting past "no app" keeps the note');
+  api.appPresence(true);
+  flush();
+  const s = api.sidePanelStore.get();
+  assert.equal(s.open, true);
+  assert.equal(s.route, 'agent/7');
+  assert.equal(s.frameSrc, '/?demo=1&panel=1#agent/7', 'the panel\'s own document does not inherit the note');
+  // Leaving the app takes it out, so a later visit starts without a panel.
+  api.appPresence(false);
+  assert.equal(address(), '/app/notes-ab12?demo=1');
+
+  // Only a page the panel shows is honoured; anything else is dropped.
+  assert.equal(api.sideRouteFrom('?side=settings'), null);
+  assert.equal(api.sideRouteFrom('?side=agent%2Fnew'), 'agent/new');
+  assert.equal(api.sideRouteFrom('?demo=1'), null);
+  cleanup();
+});
+
+test('a panel that cannot open where the address asks gives up and cleans the address', () => {
+  const { win, flush } = topWindow({ width: 800 });
+  win.location = new URL('https://homeroom.test/app/notes-ab12?demo=1&side=agent/7');
+  api.appPresence(true);
+  for (let i = 0; i < 25; i += 1) flush();
+  assert.equal(api.sidePanelStore.get().frameSrc, null, 'a narrow window has no room for it');
+  assert.equal(`${win.location.search}`, '?demo=1');
   cleanup();
 });
 

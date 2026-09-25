@@ -264,7 +264,9 @@
       // Per-route side effects run even when the screen element is
       // already up (e.g. login ↔ signup share one screen).
       if (route === 'landing') AuthScreens._landingOnShow();
-      if (route === 'login') AuthScreens._loginOnShow(false);
+      // seg is `forgot` on #login/forgot, the recovery view's own address
+      // (QA 2026-09-24 Q16), so Back from it lands on Sign in.
+      if (route === 'login') AuthScreens._loginOnShow(false, seg);
       // seg is the url-encoded email address from a waitlist-release link
       // (#signup/<address>); the login island prefills it and asks for a code.
       if (route === 'signup') AuthScreens._loginOnShow(true, seg);

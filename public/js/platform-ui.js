@@ -53,14 +53,48 @@
     },
 
     /** Transient, non-blocking feedback ("Copied", "Failed to save").
-        Fire-and-forget; returns the kit handle or null. */
+        Fire-and-forget; returns the kit handle or null.
+
+        QA 2026-09-24 Q28: the toast rests ABOVE the bottom chrome. The kit
+        reads `--un-toast-inset-bottom` for that; app.css gives it the tab
+        bar's height, and this adds a composer when one is on screen, which
+        only a measurement can know. */
     toast(message, opts) {
       const un = kit();
       if (!un) {
         console.log('[toast]', message);
         return null;
       }
-      return un.toast(String(message), opts || {});
+      const handle = un.toast(String(message), opts || {});
+      try {
+        const clear = PlatformUI.toastClearance();
+        if (handle && handle.el && clear > 0) {
+          handle.el.style.setProperty('--un-toast-inset-bottom', `${clear}px`);
+        } else if (handle && handle.el) {
+          handle.el.style.removeProperty('--un-toast-inset-bottom');
+        }
+      } catch (err) { /* a toast never fails over its placement */ }
+      return handle;
+    },
+
+    /** How much of the viewport's foot is bottom chrome a toast must clear:
+        the tab bar and any composer block (`.platform-safe-bar`, which every
+        composer wears) that is pinned to the bottom edge. A tall panel that
+        merely ends at the edge (its top in the upper half) is content, not
+        a bar, and is ignored, as is anything hidden or off-screen. 0 when
+        nothing qualifies. */
+    toastClearance() {
+      const root = document.documentElement;
+      const vh = window.innerHeight || (root && root.clientHeight) || 0;
+      if (!vh || typeof document.querySelectorAll !== 'function') return 0;
+      let clear = 0;
+      for (const el of document.querySelectorAll('#platform-tabs, .platform-safe-bar')) {
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        if (r.bottom < vh - 2 || r.top < vh / 2 || r.top >= vh) continue;
+        clear = Math.max(clear, vh - r.top);
+      }
+      return Math.round(clear);
     },
 
     /** Copy text to the clipboard. Resolves true on success, false on
@@ -144,7 +178,9 @@
     },
 
     /** Single-field prompt (replaces window.prompt — the kit alert's
-        inset text field). Resolves the string, or null on cancel. */
+        inset text field). Resolves the string, or null on cancel. Enter
+        in the field confirms, as it does in any one-field form, and an
+        optional `maxLength` caps it. */
     prompt(opts) {
       const o = typeof opts === 'string' ? { title: opts } : (opts || {});
       const un = kit();
@@ -157,7 +193,12 @@
         .alert({
           title: o.title || '',
           message: o.message || undefined,
-          field: { placeholder: o.placeholder || '', value: o.value || '' },
+          field: {
+            placeholder: o.placeholder || '',
+            value: o.value || '',
+            submitOnEnter: true,
+            ...(o.maxLength > 0 ? { maxLength: o.maxLength } : {}),
+          },
           buttons: [
             { label: o.cancelLabel || 'Cancel', style: 'cancel' },
             { label: o.confirmLabel || 'OK', style: 'default' },
