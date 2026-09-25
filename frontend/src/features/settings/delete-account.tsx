@@ -56,7 +56,13 @@ export function DeleteAccount() {
       <p className="text-sm text-zinc-600 dark:text-zinc-400">Your profile, sign-in access and private account data will be removed. You will be signed out on all devices. This cannot be undone.</p>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">Messages, shared attachments and public contributions stay available to other participants under “Deleted user.” Their contents are kept, including any personal information you shared in them.</p>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">Necessary financial and moderation records are retained without your account link. External cleanup may take longer. Copies in backups, other apps, GitHub or the blockchain follow their own retention rules.</p>
-      {passwordRequired === null ? <p role="status">Loading account details…</p> : passwordRequired ?
+      {/* A failed check leaves passwordRequired null, so without this branch the
+          loading line would sit beside the error forever with the submit
+          disabled and no way back in (#2993). show() clears the error and
+          re-arms the loading line; submit stays disabled until it succeeds. */}
+      {passwordRequired === null ? (error ?
+        <Button type="button" variant="pillNeutral" ink="neutral" onClick={() => void show()}>Try again</Button> :
+        <p role="status">Loading account details…</p>) : passwordRequired ?
         <label className="block text-sm">Current password<PasswordInput autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} disabled={busy} required /></label> :
         <p className="text-sm">For security, sign out and sign in again if you signed in more than 10 minutes ago.</p>}
       <label className="block text-sm">Type DELETE to confirm<Input value={confirmation} onChange={e => setConfirmation(e.target.value)} autoComplete="off" spellCheck={false} disabled={busy} /></label>
