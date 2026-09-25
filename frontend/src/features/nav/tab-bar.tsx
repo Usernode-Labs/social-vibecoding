@@ -68,6 +68,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   BoardIcon,
   ChatIcon,
+  CogIcon,
   HomeIcon,
   SearchIcon,
   UserIcon,
@@ -555,6 +556,33 @@ export function PlatformTabs() {
           <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
         </a>,
       ])}
+      {/*
+          SETTINGS, ONE CLICK FROM THE RAIL'S FOOT (#3120). A cog beside the
+          account row, the way Slack, Discord and Linear put the settings
+          control next to you rather than inside a page about you. Before
+          this, Settings on a desktop was Me → scroll → the Settings row.
+
+          DESKTOP ONLY. app.css draws it inside `@media (min-width: 768px)`
+          and nowhere else: the phone's bar is five equal cells and stays
+          that way, and Settings stays a row of the Profile screen there.
+
+          AFTER Me in the markup, so the reading order is "you, then your
+          settings" and the declared check's sibling chain that ENDS at
+          #platform-tab-me is untouched. It is not a `.platform-tab` (the
+          phone's marker and the bar's grid count those), and it lights on
+          the Settings screen itself — the Me row stays lit too, because
+          Settings still belongs to the Me section on both bars.
+      */}
+      <a
+        id="platform-rail-settings"
+        className="platform-rail-settings"
+        href="#settings"
+        aria-label="Settings"
+        title="Settings"
+        aria-current={screen === 'settings-screen' ? 'page' : undefined}
+      >
+        <CogIcon className="platform-rail-settings-glyph" aria-hidden="true" />
+      </a>
       </nav>
     </>
   );
