@@ -389,6 +389,73 @@ test('initial navigation never retries application failures or a second transpor
   assert.deepEqual(retries, [{ attempt: 2, code: 'network_changed' }]);
 });
 
+test('a successful initial navigation retry discards only its recovered document failure', () => {
+  const mainFrame = {};
+  const page = { mainFrame: () => mainFrame };
+  const startUrl = 'http://base-evidence:3000/?demo=1&token=member.jwt#messages';
+  const request = (url, error, { frame = mainFrame, navigation = true, type = 'document' } = {}) => ({
+    url: () => url,
+    failure: () => ({ errorText: error }),
+    frame: () => frame,
+    isNavigationRequest: () => navigation,
+    resourceType: () => type,
+  });
+  const recovered = { error: 'net::ERR_NETWORK_CHANGED' };
+  const apiFailure = { error: 'net::ERR_NETWORK_CHANGED' };
+  const unrelatedDocument = { error: 'net::ERR_CONNECTION_RESET' };
+  const diagnostics = { failedRequests: [recovered, apiFailure, unrelatedDocument] };
+  const failures = [
+    { failure: recovered, request: request('http://base-evidence:3000/?demo=1&token=member.jwt', recovered.error) },
+    { failure: apiFailure, request: request('http://base-evidence:3000/api/messages', apiFailure.error, { navigation: false, type: 'fetch' }) },
+    { failure: unrelatedDocument, request: request('http://base-evidence:3000/other?demo=1&token=member.jwt', unrelatedDocument.error) },
+  ];
+
+  assert.equal(replay.discardRecoveredInitialNavigationFailures(
+    diagnostics, failures, page, startUrl, new Set(['network_changed']), 200
+  ), 1);
+  assert.deepEqual(diagnostics.failedRequests, [apiFailure, unrelatedDocument]);
+
+  const failedRetry = { failedRequests: [recovered] };
+  assert.equal(replay.discardRecoveredInitialNavigationFailures(
+    failedRetry, failures, page, startUrl, new Set(['network_changed']), 500
+  ), 0);
+  assert.deepEqual(failedRetry.failedRequests, [recovered]);
+});
+
+test('a later successful request clears only the matching transient network-change diagnostic', () => {
+  const recovered = { error: 'net::ERR_NETWORK_CHANGED' };
+  const wrongMethod = { error: 'net::ERR_NETWORK_CHANGED' };
+  const unrecovered = { error: 'net::ERR_NETWORK_CHANGED' };
+  const realFailure = { error: 'net::ERR_CONNECTION_RESET' };
+  const recoveredConsole = { message: 'Failed to load resource: net::ERR_NETWORK_CHANGED' };
+  const otherConsole = { message: 'Failed to load resource: net::ERR_NETWORK_CHANGED' };
+  const diagnostics = {
+    failedRequests: [recovered, wrongMethod, unrecovered, realFailure],
+    consoleErrors: [recoveredConsole, otherConsole],
+  };
+  const failures = [
+    { entry: recovered, url: 'http://evidence:3000/health', method: 'GET', error: recovered.error, order: 2 },
+    { entry: wrongMethod, url: 'http://evidence:3000/health', method: 'POST', error: wrongMethod.error, order: 3 },
+    { entry: unrecovered, url: 'http://evidence:3000/api/items', method: 'GET', error: unrecovered.error, order: 4 },
+    { entry: realFailure, url: 'http://evidence:3000/other', method: 'GET', error: realFailure.error, order: 5 },
+  ];
+  const successes = new Map([
+    ['GET http://evidence:3000/health', 6],
+    ['GET http://evidence:3000/api/items', 1],
+    ['GET http://evidence:3000/other', 7],
+  ]);
+  const consoleEvents = [
+    { entry: recoveredConsole, url: 'http://evidence:3000/health', method: 'GET', message: recoveredConsole.message },
+    { entry: otherConsole, url: 'http://evidence:3000/api/items', method: 'GET', message: otherConsole.message },
+  ];
+
+  assert.deepEqual(replay.discardRecoveredNetworkChanges(
+    diagnostics, failures, successes, consoleEvents
+  ), { requests: 1, consoleErrors: 1 });
+  assert.deepEqual(diagnostics.failedRequests, [wrongMethod, unrecovered, realFailure]);
+  assert.deepEqual(diagnostics.consoleErrors, [otherConsole]);
+});
+
 test('session bootstrap accepts only a bounded session cookie value', () => {
   assert.equal(replay.sessionCookieValue([
     { name: 'set-cookie', value: 'theme=light; Path=/' },

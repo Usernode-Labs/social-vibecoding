@@ -167,6 +167,11 @@ This section applies to an external agent authoring a PR from a local
 checkout. A Homeroom hosted dev-chat worker records semantic intent through
 its supplied tool and lets the platform create and replay the evidence plan.
 
+`impact: none` applies only when no user-visible state changes. Changed text,
+counts, loading, error, and status states need a `ui` claim even if the code
+reuses existing markup and styles. If a required fixture or failure state is
+missing, report that blocker instead of declaring `none` to skip evidence.
+
 Before opening a PR for a platform UI change with `visualEvidence` impact
 `ui` or `motion`, write the semantic intent and replay plan locally, then run
 `npm run verify:visual-evidence:local -- --base <40-char-sha> --head <40-char-sha> --intent <file> --plan <file>`

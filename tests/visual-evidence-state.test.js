@@ -83,6 +83,16 @@ test('terminal-state and required-evidence policy distinguish an explicit no-imp
   });
 });
 
+test('an intent conflict does not offer a retry that would repeat the same failure', () => {
+  const row = {
+    state: 'failed', failure_code: 'visual_evidence_intent_conflict',
+    intent: { version: 1, impact: 'none', rationale: 'Error UI changed.', stories: [] },
+    base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), repair_attempt: 0,
+  };
+  assert.equal(state.runSummary(row).repairAvailable, false);
+  assert.equal(state.runSummary({ ...row, failure_code: 'browser_diagnostics' }).repairAvailable, true);
+});
+
 test('evidence heartbeat renews only the current active run and stores a bounded stage', async () => {
   let statement;
   const pool = { query: async (sql, values) => {

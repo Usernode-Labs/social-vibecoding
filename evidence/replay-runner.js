@@ -380,6 +380,73 @@ async function navigateStart(page, url, onRetry = () => {}, wait = (ms) => new P
   }
 }
 
+function recoveredInitialDocumentFailure(request, page, startUrl, retryCodes) {
+  if (!retryCodes?.size || !request?.isNavigationRequest?.()
+      || request.resourceType?.() !== 'document') return false;
+  try {
+    if (request.frame() !== page.mainFrame()) return false;
+    const requested = new URL(request.url());
+    const start = new URL(startUrl);
+    // URL fragments are local to the browser and never identify an HTTP
+    // request. Match the exact origin, path and query (including the fixture
+    // token) so an unrelated API or document failure cannot be suppressed.
+    if (requested.origin !== start.origin || requested.pathname !== start.pathname
+        || requested.search !== start.search) return false;
+    const code = RETRYABLE_INITIAL_NAVIGATION.exec(String(request.failure()?.errorText || ''))?.[1]?.toLowerCase();
+    return !!code && retryCodes.has(code);
+  } catch { return false; }
+}
+
+function discardRecoveredInitialNavigationFailures(
+  diagnostics, failures, page, startUrl, retryCodes, navigationStatus
+) {
+  if (navigationStatus < 200 || navigationStatus >= 400 || !retryCodes?.size) return 0;
+  const recovered = new Set(failures
+    .filter(({ request }) => recoveredInitialDocumentFailure(request, page, startUrl, retryCodes))
+    .map(({ failure }) => failure));
+  diagnostics.failedRequests = diagnostics.failedRequests.filter((failure) => !recovered.has(failure));
+  return recovered.size;
+}
+
+function requestIdentity(url, method) {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    return `${String(method || 'GET').toUpperCase()} ${parsed.toString()}`;
+  } catch { return null; }
+}
+
+// Chromium keeps requestfailed and console records after an app successfully
+// retries the same request. Suppress only an ERR_NETWORK_CHANGED entry with a
+// later 2xx/3xx response for the exact method and URL. Any unrecovered
+// request, other network error, unrelated console error, or page exception
+// still fails the replay. The two clean passes and UI assertions are unchanged.
+function discardRecoveredNetworkChanges(diagnostics, failures, successes, consoleEvents) {
+  const recovered = new Set();
+  const unrecoveredKeys = new Set();
+  const recordedFailures = new Set(diagnostics.failedRequests);
+  for (const failure of failures) {
+    if (!recordedFailures.has(failure.entry)) continue;
+    const key = requestIdentity(failure.url, failure.method);
+    const laterSuccess = key && successes.get(key) > failure.order;
+    if (key && /\bnet::ERR_NETWORK_CHANGED\b/i.test(failure.error) && laterSuccess) {
+      recovered.add(failure.entry);
+    } else if (key) {
+      unrecoveredKeys.add(key);
+    }
+  }
+  diagnostics.failedRequests = diagnostics.failedRequests.filter((entry) => !recovered.has(entry));
+  const recoveredKeys = new Set(failures.filter((failure) => recovered.has(failure.entry))
+    .map((failure) => requestIdentity(failure.url, failure.method)));
+  const recoveredConsole = new Set(consoleEvents.filter((event) => {
+    const key = requestIdentity(event.url, event.method);
+    return key && recoveredKeys.has(key) && !unrecoveredKeys.has(key)
+      && /\bnet::ERR_NETWORK_CHANGED\b/i.test(event.message);
+  }).map((event) => event.entry));
+  diagnostics.consoleErrors = diagnostics.consoleErrors.filter((entry) => !recoveredConsole.has(entry));
+  return { requests: recovered.size, consoleErrors: recoveredConsole.size };
+}
+
 function publicRelativePath(value) {
   const url = value instanceof URL ? new URL(value.toString()) : new URL(value);
   url.searchParams.delete('token');
@@ -926,12 +993,22 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     });
   }
   const network = networkTracker(page);
+  const startUrl = authorizedUrl(origin, sidePlan.startPath, authToken);
+  const initialNavigationFailures = [];
+  const initialNavigationRetries = new Set();
+  let initialNavigationPending = true;
+  const networkFailures = [];
+  const successfulRequests = new Map();
+  const consoleEvents = [];
+  let networkOrder = 0;
   page.on('console', (message) => {
     if (message.type() === 'error' && diagnostics.consoleErrors.length < MAX_CONSOLE_ITEMS) {
-      diagnostics.consoleErrors.push({
+      const entry = {
         message: safeDiagnosticText(message.text()),
         source: diagnosticLocation(message.location()?.url || '', origin),
-      });
+      };
+      diagnostics.consoleErrors.push(entry);
+      consoleEvents.push({ entry, url: message.location()?.url || '', method: 'GET', message: message.text() });
     }
   });
   page.on('pageerror', (error) => {
@@ -943,14 +1020,24 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     let sameOrigin = false;
     try { sameOrigin = new URL(request.url()).origin === origin; } catch {}
     if (sameOrigin && diagnostics.failedRequests.length < MAX_CONSOLE_ITEMS) {
-      diagnostics.failedRequests.push({
+      const failure = {
         location: diagnosticLocation(request.url(), origin),
         error: safeDiagnosticText(request.failure()?.errorText || '', 120),
+      };
+      diagnostics.failedRequests.push(failure);
+      if (initialNavigationPending) initialNavigationFailures.push({ request, failure });
+      networkFailures.push({
+        entry: failure, url: request.url(), method: request.method(),
+        error: request.failure()?.errorText || '', order: ++networkOrder,
       });
     }
   });
   page.on('response', (response) => {
     const status = response.status();
+    if (status >= 200 && status < 400) {
+      const key = requestIdentity(response.url(), response.request().method());
+      if (key) successfulRequests.set(key, ++networkOrder);
+    }
     if (status < 400 || diagnostics.httpErrors.length >= MAX_CONSOLE_ITEMS) return;
     const location = diagnosticLocation(response.url(), origin);
     if (location.sameOrigin) diagnostics.httpErrors.push({ status, location });
@@ -963,15 +1050,23 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   let failureStage = { phase: 'navigate_start' };
   try {
     emitEvent({ type: 'navigation_started', ...eventBase });
-    const response = await navigateStart(page, authorizedUrl(origin, sidePlan.startPath, authToken),
-      ({ attempt, code }) => emitEvent({ type: 'navigation_retry', ...eventBase, attempt, code }));
+    const response = await navigateStart(page, startUrl, ({ attempt, code }) => {
+      initialNavigationRetries.add(code);
+      emitEvent({ type: 'navigation_retry', ...eventBase, attempt, code });
+    });
+    initialNavigationPending = false;
     navigation = {
       status: typeof response?.status === 'function' ? response.status() : null,
     };
+    const recoveredRequestCount = discardRecoveredInitialNavigationFailures(
+      diagnostics, initialNavigationFailures, page, startUrl,
+      initialNavigationRetries, navigation.status
+    );
     await settlePage(page, { motion });
     emitEvent({
       type: 'navigation_completed', ...eventBase,
       status: navigation.status,
+      recoveredRequestCount,
       location: diagnosticLocation(page.url(), origin),
     });
     failureStage = { phase: 'capture_start' };
@@ -1034,6 +1129,9 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     stages.push({ stage: '__checkpoint__', image: contextPng });
 
     failureStage = { phase: 'browser_diagnostics' };
+    const recoveredNetwork = discardRecoveredNetworkChanges(
+      diagnostics, networkFailures, successfulRequests, consoleEvents
+    );
     if (diagnostics.consoleErrors.length || diagnostics.pageErrors.length
         || diagnostics.failedRequests.length || diagnostics.blockedRequests.length) {
       throw new ReplayFailure(
@@ -1065,6 +1163,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       recordedFrameCount: result.recordedFrameCount,
       location: diagnosticLocation(page.url(), origin),
       httpErrorCount: diagnostics.httpErrors.length,
+      recoveredNetworkChanges: recoveredNetwork.requests,
     });
     return result;
   } catch (error) {
@@ -1312,6 +1411,8 @@ module.exports = {
   waitForVisibleText,
   authorizedUrl,
   navigateStart,
+  discardRecoveredInitialNavigationFailures,
+  discardRecoveredNetworkChanges,
   publicRelativePath,
   redactedUrl,
   sessionCookieValue,

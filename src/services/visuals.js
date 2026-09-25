@@ -36,6 +36,7 @@ const assetRouteCheck = require('./asset-route-check');
 const checkRuns = require('./check-runs');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { sameSha } = require('./pr-vote-revision');
+const { isFrontendFile, isUiAffecting } = require('./visual-file-classifier');
 const { getPool } = require('../db/pool');
 const {
   connectionCensus, mentionsConnectionLimit, connectionExhaustionMessage,
@@ -90,21 +91,6 @@ const CAPTURE_USERNAME = 'usernode-capture';
 // Never signs a public screenshot — see the testsToken block below.
 const CAPTURE_ADMIN_USERNAME = 'usernode-capture-admin';
 const CAPTURE_AUTH_TTL_MS = 15 * 60 * 1000;
-
-// ── "Is this UI-affecting?" heuristic ──────────────────────────────────
-// Deterministic and cheap — no LLM call. A changed file counts as
-// frontend if its extension is plainly presentational, OR if it lives
-// under a conventionally-frontend directory segment at any depth (which
-// catches .js/.ts UI code across arbitrary vibe-coded apps). One match
-// in the commit range triggers capture.
-const FRONTEND_EXTENSIONS = new Set([
-  '.html', '.htm', '.css', '.scss', '.less', '.styl',
-  '.vue', '.svelte', '.jsx', '.tsx',
-]);
-const FRONTEND_DIR_SEGMENTS = new Set([
-  'public', 'static', 'assets', 'client', 'frontend',
-  'www', 'views', 'templates', 'components', 'pages',
-]);
 
 // Per-artifact storage caps. Over-cap artifacts are dropped individually —
 // the rest of the set still stores, and the PR embed falls back from GIF
@@ -381,18 +367,6 @@ function dnsHostname(name, alias, { aliasConfirmed = false } = {}) {
   if (!short) return value;
   if (value.length > MAX_DNS_LABEL) return short;
   return aliasConfirmed ? short : value;
-}
-
-function isFrontendFile(file) {
-  const f = String(file || '').replace(/\\/g, '/');
-  const ext = path.extname(f).toLowerCase();
-  if (FRONTEND_EXTENSIONS.has(ext)) return true;
-  const segments = f.split('/').slice(0, -1);
-  return segments.some((s) => FRONTEND_DIR_SEGMENTS.has(s.toLowerCase()));
-}
-
-function isUiAffecting(files) {
-  return Array.isArray(files) && files.some(isFrontendFile);
 }
 
 // The dapp.json visual-impact glob matcher lives in its own module now.

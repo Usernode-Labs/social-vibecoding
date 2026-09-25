@@ -17,6 +17,7 @@ const identities = require('./visual-evidence-identities');
 const planContract = require('./visual-evidence-plan');
 const replay = require('./visual-evidence-replay');
 const state = require('./visual-evidence-state');
+const { isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
 const worker = require('./worker');
 
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
@@ -207,11 +208,6 @@ function intentForSession(session) {
   return detail && typeof detail === 'object' && detail.intent
     ? planContract.parseIntent(detail.intent)
     : null;
-}
-
-function uiFileHeuristic(files) {
-  return (files || []).some((name) => /(?:^|\/)(?:frontend|public|client|web|ui|components?|pages?|views?|styles?)(?:\/|$)/i.test(name)
-    || /\.(?:html?|css|scss|sass|less|tsx?|jsx?|vue|svelte|svg)$/i.test(name));
 }
 
 function publicSessionAndApp(row) {
@@ -931,6 +927,12 @@ async function executeRun(config, options, injected = {}) {
       );
     }
     if (run.state === 'not_required') return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
+    if (intent.impact === 'none') {
+      throw new VisualEvidenceOrchestrationError(
+        'visual_evidence_intent_conflict',
+        'This revision changes browser UI files but declares no visual change. The author must provide a visible claim and replayable steps, or revise the change or declaration before evidence can run.'
+      );
+    }
 
     failurePhase = 'wait_for_idle';
     stage(failurePhase);
