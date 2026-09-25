@@ -30,16 +30,30 @@ const REPAIRABLE_LOCATOR_CODES = new Set([
 ]);
 const MAX_REPAIR_ATTEMPTS = 2;
 
-function repairableReplayFailure(error) {
+function replayRepairKind(error, plan) {
   const code = errorCode(error);
-  if (REPAIRABLE_LOCATOR_CODES.has(code)) return true;
+  if (REPAIRABLE_LOCATOR_CODES.has(code)) return 'locator';
   // A missing element in a positive assertion is another locator error.
-  // An existing element with the wrong state/value, or an expected absence
-  // that failed, may be a real app regression and must remain a hard failure.
-  return code === 'assertion_failed' && error?.detail?.phase === 'assertion'
-    && error.detail.count === 0
+  // Wrong values and states remain hard failures except for an exact motion
+  // checkpoint that can be verified after an observed, bounded state wait.
+  if (code !== 'assertion_failed' || error?.detail?.phase !== 'assertion') return null;
+  if (error.detail.count === 0
     && ['visible', 'attached', 'checked', 'text', 'value', 'focusWithin']
-      .includes(error.detail.assertion?.type);
+      .includes(error.detail.assertion?.type)) return 'locator';
+  const detail = error.detail;
+  const story = plan?.stories?.find((item) => item.id === detail.storyId);
+  const side = detail.side === 'base' ? 'before' : detail.side === 'head' ? 'after' : null;
+  const assertion = side && Number.isInteger(detail.assertionIndex)
+    ? story?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex] : null;
+  if (story?.intent?.animation !== 'motion' || !assertion
+      || planContract.canonicalJson(assertion) !== planContract.canonicalJson(detail.assertion)) return null;
+  // A motion marker can still be visible at the checkpoint even though it
+  // will settle moments later. Permit one bounded plan correction, but only
+  // when the exact recorded assertion failed for that transient state.
+  if (assertion.type === 'hidden' && detail.count === 1 && detail.actual === true) return 'motion_timing';
+  if (assertion.type === 'count' && assertion.count === 0
+      && Number.isInteger(detail.count) && detail.count > 0) return 'motion_timing';
+  return null;
 }
 
 function progressPhase(event) {
@@ -1204,23 +1218,27 @@ async function executeRun(config, options, injected = {}) {
           && registration.control.planCalls === metrics.repairCount + 1
           && metrics.repairCount < MAX_REPAIR_ATTEMPTS
           && ['pass_1', 'pass_2'].includes(failurePhase)
-          && repairableReplayFailure(registration.control.lastReplayFailure?.error)) {
+          && replayRepairKind(registration.control.lastReplayFailure?.error,
+            registration.control.lastSubmittedPlan)) {
         const replayFailure = registration.control.lastReplayFailure.error;
-        // A wrong role/name is a planner error, not a reason to publish
-        // partial captures or silently substitute another DOM element.
-        // The platform explicitly starts a bounded correction turn with the exact
-        // failed plan and replay location; its replacement still has to pass
-        // both clean, provenance-fenced replay passes.
+        const repairKind = replayRepairKind(replayFailure, registration.control.lastSubmittedPlan);
+        // A wrong locator or premature motion checkpoint can get a bounded
+        // correction turn. No failed media is published; the replacement must
+        // still pass both clean, provenance-fenced replay passes.
         const failureDetail = boundedReplayDetail(replayFailure);
         registration.control.allowRepair(
-          'A planned locator did not match the intended visible element during replay. Inspect its actual state on both revisions and correct the replays.',
+          repairKind === 'motion_timing'
+            ? 'A motion checkpoint ran while an observed element was still visible. Inspect both revisions and add an observed, bounded wait without changing the checkpoint assertions or interactions.'
+            : 'A planned locator did not match the intended visible element during replay. Inspect its actual state on both revisions and correct the replays.',
           {
+            kind: repairKind,
             code: errorCode(replayFailure),
             message: visibleError(replayFailure),
             detail: failureDetail,
           }
         );
         metrics.repairTrigger = {
+          kind: repairKind,
           code: errorCode(replayFailure),
           ...(Number.isInteger(metrics.lastReplayEvent?.pass)
             ? { pass: metrics.lastReplayEvent.pass } : {}),
@@ -1240,7 +1258,9 @@ async function executeRun(config, options, injected = {}) {
         finally { replaySuspendedMs += Date.now() - repairResetStartedAt; }
         metrics.repairCount += 1;
         failurePhase = 'agent_repair';
-        progress('A planned control did not match the page; the evidence agent is inspecting and correcting it…');
+        progress(repairKind === 'motion_timing'
+          ? 'A motion checkpoint ran before the animation settled; the evidence agent is checking the timing…'
+          : 'A planned control did not match the page; the evidence agent is inspecting and correcting it…');
         const priorBackend = metrics.agentDispatches.at(-1)?.requestedBackend;
         agentOutcome = await dispatchOnce(priorBackend === 'claude_code' ? 'claude_code' : null, metrics.repairCount);
         await awaitSubmittedReplay();
