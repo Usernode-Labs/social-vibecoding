@@ -360,10 +360,12 @@ test('admin-authored copy is escaped in text AND attribute contexts', () => {
 // ITERATION 03 (S3): Challenges says the event in its own season line, so the
 // shared bar draws only the picker there. Standings keeps its hero.
 test('the event bar draws no hero on the Challenges tab, and names its picker', () => {
+  // Two events of the running season, so Challenges has a choice to offer
+  // (#3049: with one, it draws no picker at all — see the tests below).
   const props = {
     mounted: true,
     history: true,
-    options: [{ id: 7, label: 'Season 2 (season)' }],
+    options: [{ id: 7, label: 'Season 2 (season)' }, { id: 8, label: 'Season 2 Beta' }],
     placeholder: null,
     selectedId: 7,
     hero: {
@@ -382,6 +384,83 @@ test('the event bar draws no hero on the Challenges tab, and names its picker', 
   const standings = renderComponent(file, 'EventBarView', { ...props, section: 'topochain' });
   assert.match(standings, /<h2[^>]*>Season 2<\/h2>/, 'Standings keeps the hero');
   assert.match(standings, /id="tc-ev-season-note"/);
+});
+
+// Issue #3049: the Challenges tab named the season three times (the picker,
+// the standing card, the progress line) and listed every past season in its
+// picker beside the History tab that exists for them. Challenges now offers
+// the CURRENT season's events only, draws no picker when that leaves one, and
+// hands the rest to History through a single link. Standings is unchanged.
+const SEASONED = {
+  mounted: true,
+  history: true,
+  options: [
+    { id: 7, label: 'Season 2 (season)', seasonId: 2 },
+    { id: 8, label: 'Season 2 Beta', seasonId: 2 },
+    { id: 3, label: 'Season 1 (season)', seasonId: 1 },
+    { id: 4, label: 'Season 1 Beta (past)', seasonId: 1 },
+  ],
+  placeholder: null,
+  selectedId: 7,
+  currentSeasonId: 2,
+  hero: {
+    kind: 'event', name: 'Season 2', statusLabel: 'season', statusClass: '',
+    description: null, dates: 'Sep 1, 2026 – Sep 30, 2026', participants: null,
+    seasonNote: true, fallbackNote: false,
+  },
+};
+const BAR_TSX = 'frontend/src/features/leaderboard/event-bar.tsx';
+
+test('#3049: the Challenges picker offers the current season only, and links past seasons to History', () => {
+  const html = renderComponent(BAR_TSX, 'EventBarView', { ...SEASONED, section: 'challenges' });
+  assert.match(html, /<option value="7"[^>]*>Season 2 \(season\)/);
+  assert.match(html, /<option value="8"[^>]*>Season 2 Beta/);
+  assert.doesNotMatch(html, /Season 1/, 'no past season in the Challenges picker');
+  assert.match(html, /<button[^>]*id="tc-ev-past-seasons"[^>]*>Past seasons →<\/button>/,
+    'one link to History instead');
+  const bar = fs.readFileSync(path.join(root, BAR_TSX), 'utf8');
+  assert.match(bar, /Leaderboard\?\._setSection\?\.\('seasons'\)/,
+    'the link takes the tab strip\'s own path to History');
+
+  const standings = renderComponent(BAR_TSX, 'EventBarView', { ...SEASONED, section: 'topochain' });
+  assert.match(standings, /<option value="3"[^>]*>Season 1 \(season\)/, 'Standings keeps every season');
+  assert.doesNotMatch(standings, /tc-ev-past-seasons/, 'and needs no link');
+});
+
+test('#3049: with one current-season event, Challenges draws no picker — the progress line names it', () => {
+  const one = { ...SEASONED, options: SEASONED.options.filter((o) => o.id !== 8) };
+  const html = renderComponent(BAR_TSX, 'EventBarView', { ...one, section: 'challenges' });
+  assert.doesNotMatch(html, /tc-ev-select/, 'no one-option picker repeating the season name');
+  assert.match(html, /id="tc-ev-past-seasons"/, 'the way to past seasons stays');
+
+  // No past season either: nothing at all, so no gap between the strip and the board.
+  const alone = { ...one, options: one.options.filter((o) => o.seasonId === 2) };
+  assert.equal(renderComponent(BAR_TSX, 'EventBarView', { ...alone, section: 'challenges' }), '');
+  // Standings still gets its picker and hero for the same viewer.
+  assert.match(renderComponent(BAR_TSX, 'EventBarView', { ...alone, section: 'topochain' }), /tc-ev-select/);
+});
+
+test('#3049: a past-season selection made on Standings stays listed on Challenges, with the way back', () => {
+  const html = renderComponent(BAR_TSX, 'EventBarView',
+    { ...SEASONED, selectedId: 4, section: 'challenges' });
+  assert.match(html, /<option value="4"[^>]*>Season 1 Beta \(past\)/, 'the selection is never a blank control');
+  assert.match(html, /<option value="7"[^>]*>Season 2 \(season\)/, 'and the current season is one pick away');
+  assert.doesNotMatch(html, /<option value="3"/, 'the other past events are still History\'s');
+});
+
+test('#3049: an unknown current season filters nothing, and a reloading list draws no placeholder picker', () => {
+  const unknown = { ...SEASONED, currentSeasonId: null };
+  const html = renderComponent(BAR_TSX, 'EventBarView', { ...unknown, section: 'challenges' });
+  assert.match(html, /<option value="3"/, 'an older server without season_id keeps the old picker');
+  assert.doesNotMatch(html, /tc-ev-past-seasons/);
+  const loading = { ...SEASONED, options: [], placeholder: 'Loading…', selectedId: null };
+  assert.equal(renderComponent(BAR_TSX, 'EventBarView', { ...loading, section: 'challenges' }), '');
+
+  // The context supplies both halves: each option's season and the season
+  // pickDefault opens on.
+  assert.match(contextJs, /seasonId: Number\.isInteger\(ev\.season_id\) \? ev\.season_id : null,/);
+  assert.match(contextJs, /currentSeasonId: TopochainEventContext\._currentSeasonId\(events\),/);
+  assert.match(contextJs, /TopochainEvents\.pickDefault\(events\)/);
 });
 
 // Issue #2495: the picker reaches standings other than the ones on screen, so

@@ -111,7 +111,9 @@ test('each filter admits exactly its own kind, and All admits every one', () => 
 });
 
 test('agent chats are read, not copied', () => {
-  assert.match(SCREEN, /useGlobalChatState\(\)/,
+  // Through a selector, the two fields it draws, so a turn streaming in the
+  // chat does not redraw the list.
+  assert.match(SCREEN, /useGlobalChatSelector\(\(s\) => s\.threads\)/,
     'the screen reads the chat’s own store');
   // The word appears once in this store, in a comment about typing indicators
   // hopping between threads, so the check is on the STATE rather than on the
@@ -271,7 +273,7 @@ test('one row shape per kind; the channels are headed rather than pilled', () =>
 // ── The agent half has to ask for itself (#2718 review) ────────────────
 
 test('the inbox initialises the global-chat bootstrap it reads', () => {
-  // `useGlobalChatState()` reads a store nothing on this screen was filling:
+  // `useGlobalChatSelector` reads a store nothing on this screen was filling:
   // the only caller of initializeGlobalChat outside Settings was the Improve
   // panel's own New chat button. So an inbox opened without ever having
   // opened Improve saw `bootstrap: null` — which reads as "the feature is
@@ -281,7 +283,7 @@ test('the inbox initialises the global-chat bootstrap it reads', () => {
   // list of these chats was the only surface that offered the delete, so the
   // delete came to this one rather than going away (#2718 review).
   const imports = SCREEN.slice(0, SCREEN.indexOf("} from '../global-chat/store';"));
-  for (const name of ['initializeGlobalChat', 'removeGlobalChatThread', 'useGlobalChatState']) {
+  for (const name of ['initializeGlobalChat', 'removeGlobalChatThread', 'useGlobalChatSelector']) {
     assert.match(imports.slice(imports.lastIndexOf('import {')), new RegExp(`\\b${name},`));
   }
   const screen = SCREEN.slice(SCREEN.indexOf('export function MessagesScreen'));
@@ -320,7 +322,7 @@ test('changes are read from the Improve store, drawn by SessionRow, and not gate
   assert.match(SCREEN, /<SessionRow\b/, 'drawn by the same row the bell’s Messages tab uses for agents');
   const list = SCREEN.slice(SCREEN.indexOf('function ConversationList'));
   const body = list.slice(0, list.indexOf('\n}\n'));
-  assert.match(body, /const sessions: SessionRowView\[\] = mounted\s*\?/,
+  assert.match(body, /const sessions = useMemo<SessionRowView\[\]>\(\(\) => \(mounted\s*\?/,
     'after mount only, so the first client render matches the prerender');
   assert.doesNotMatch(body.slice(body.indexOf('const sessions'), body.indexOf('const inbox')), /agentsOn/,
     'a change is not the experimental global chat');

@@ -48,6 +48,9 @@ const METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
 // the --check run every time an unrelated edit shifted the file (#2502 added
 // one require and moved the auth.js boundary from line 168 to 169).
 const REGISTRATION = Symbol('registration');
+// The route counts this script reports, kept off the committed file for the
+// same reason as `line` (see buildInventory()).
+const COUNTS = Symbol('counts');
 
 const FILE_EXEMPTIONS = new Map([
   ['src/routes/anthropic-proxy.js', 'provider proxy used by development agents, not a Classic control'],
@@ -639,16 +642,12 @@ function buildInventory() {
     // readiness marker, not a cohort flag: Classic still starts every launch
     // and remains the immediate escape hatch.
     parityReady: true,
-    summary: {
-      totalRoutes: routes.length,
-      mappedRoutes: counts.mapped,
-      exemptRoutes: counts.exempt,
-      reviewRequiredRoutes: counts.review_required,
-      clientApiReferences: clientRefs.size,
-      unmatchedClientApiReferences: unmatchedClientReferences.length,
-      settingsSections: settings.length,
-      navigationSurfaces: NAVIGATION_SURFACES.length,
-    },
+    // No totals are written. Every count is the length of a list below, and
+    // two changes that each add a route made the same edit to a committed
+    // total, which a merge applied once: main went stale though both changes
+    // had regenerated correctly (#3127 and #3133). The totals ride on the
+    // Symbol key JSON.stringify skips, for this script's own report.
+    [COUNTS]: { mapped: counts.mapped, reviewRequired: counts.review_required },
     navigation: NAVIGATION_SURFACES.map((item) => ({ ...item, mobileSupported: true })),
     settings,
     routes,
@@ -673,8 +672,8 @@ if (process.argv.includes('--check')) {
     console.error('Global Chat Classic inventory is stale. Run npm run global-chat:inventory.');
     process.exit(1);
   }
-  console.log(`Global Chat inventory current: ${inventory.summary.mappedRoutes} mapped, ${inventory.summary.reviewRequiredRoutes} need review.`);
+  console.log(`Global Chat inventory current: ${inventory[COUNTS].mapped} mapped, ${inventory[COUNTS].reviewRequired} need review.`);
 } else {
   fs.writeFileSync(OUTPUT, output);
-  console.log(`Wrote ${path.relative(ROOT, OUTPUT)}: ${inventory.summary.mappedRoutes} mapped, ${inventory.summary.reviewRequiredRoutes} need review.`);
+  console.log(`Wrote ${path.relative(ROOT, OUTPUT)}: ${inventory[COUNTS].mapped} mapped, ${inventory[COUNTS].reviewRequired} need review.`);
 }

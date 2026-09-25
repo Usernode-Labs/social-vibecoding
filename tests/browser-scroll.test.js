@@ -14,7 +14,13 @@ function fixture() {
   const html = { scrollTop: 0, dataset: {}, classList: { contains: () => false } };
   const doc = { documentElement: html, scrollingElement: html, getElementById: (id) => elements[id] || null };
   const win = { navigator: {}, history: { scrollRestoration: 'auto' }, mobile: true, standalone: false, dispatchEvent() {},
-    matchMedia(q) { return { matches: q === MOBILE_PAGE_QUERY ? win.mobile : win.standalone }; } };
+    // A live `matches`, as a real MediaQueryList's is: the module keeps the
+    // list it was handed and reads it again on every sync.
+    matchMedia(q) {
+      win.lists += 1;
+      return { get matches() { return q === MOBILE_PAGE_QUERY ? win.mobile : win.standalone; } };
+    },
+    lists: 0 };
   win.self = win.top = win;
   const controller = createBrowserScroll(doc, win);
   const scroll = (top) => { html.scrollTop = top; controller.onScroll({ target: doc }); };
@@ -273,4 +279,36 @@ test('the reset is re-armed on every moment a stranded pan can surface', () => {
     const re = new RegExp(`${target.replace(/[.?]/g, '\\$&')}\\.addEventListener\\('${event}'`);
     assert.match(src, re, `${target} ${event} settles a stranded pan`);
   }
+});
+
+// ── sync() runs after every batch of DOM mutations ─────────────────────
+// The observer watches the whole document's childList, so a streamed reply or
+// a list repaint runs sync() once per batch. It used to call matchMedia twice
+// per run, which parses and evaluates a fresh MediaQueryList each time.
+
+test('sync reuses one MediaQueryList per query, and still follows it', () => {
+  const { add, win, html, controller } = fixture();
+  add('home-screen');
+  for (let i = 0; i < 50; i += 1) controller.sync();
+  assert.ok(win.lists <= 2, `built ${win.lists} lists for 50 syncs; one per query is the ceiling`);
+  assert.equal(html.dataset.browserScroller, 'home-screen');
+  // The list is kept and read again: its live answer still switches the page.
+  win.mobile = false;
+  controller.sync();
+  assert.equal(html.dataset.browserScroller, undefined, 'a desktop width hands the scroll back to the screen');
+  assert.ok(win.lists <= 2);
+});
+
+test('sync writes history.scrollRestoration only when it changes', () => {
+  const { add, win, controller } = fixture();
+  add('home-screen');
+  let writes = 0;
+  let value = win.history.scrollRestoration;
+  Object.defineProperty(win.history, 'scrollRestoration', {
+    get: () => value,
+    set: (next) => { writes += 1; value = next; },
+  });
+  for (let i = 0; i < 20; i += 1) controller.sync();
+  assert.equal(value, 'manual');
+  assert.equal(writes, 1, 'one write for twenty syncs that all want the same value');
 });

@@ -58,6 +58,12 @@ export const eventBarStore = createStore({
   hero: null,
   /** The server's verdict on the viewer; false until the list lands. */
   history: false,
+  /**
+   * The season the screen opens on (each option carries its own `seasonId`),
+   * or null when unknown. The Challenges tab offers only this season's
+   * events and links to History for the rest (issue #3049).
+   */
+  currentSeasonId: null,
 });
 
 // Published for the same reason its siblings are: ./topochain-event-context.js

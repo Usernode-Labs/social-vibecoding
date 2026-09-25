@@ -17,8 +17,7 @@ test('the generated Classic inventory is current and fully reviewed', () => {
     { cwd: ROOT, stdio: 'pipe' },
   ));
   assert.equal(inventory.inventoryReviewed, true);
-  assert.equal(inventory.summary.reviewRequiredRoutes, 0);
-  assert.equal(inventory.summary.unmatchedClientApiReferences, 0);
+  assert.deepEqual(inventory.routes.filter((route) => route.status === 'review_required'), []);
   assert.deepEqual(inventory.unmatchedClientReferences, []);
   assert.ok(inventory.reviewedClientReferences.length > 0);
   assert.ok(inventory.ignoredClientSources.some(
@@ -29,9 +28,7 @@ test('the generated Classic inventory is current and fully reviewed', () => {
 test('every mapped route has one stable mobile-capable capability contract', () => {
   const mapped = inventory.routes.filter((route) => route.status === 'mapped');
   const exempt = inventory.routes.filter((route) => route.status === 'exempt');
-  assert.equal(mapped.length, inventory.summary.mappedRoutes);
-  assert.equal(exempt.length, inventory.summary.exemptRoutes);
-  assert.equal(mapped.length + exempt.length, inventory.summary.totalRoutes);
+  assert.equal(mapped.length + exempt.length, inventory.routes.length, 'every route is mapped or exempt');
 
   const ids = mapped.map((route) => route.capabilityId);
   assert.equal(new Set(ids).size, ids.length, 'capability ids must be unique');
@@ -93,8 +90,8 @@ test('credentials and protocol endpoints are reviewed exemptions, not model tool
 });
 
 test('every Settings section and navigation surface is discoverable on mobile', () => {
-  assert.equal(inventory.settings.length, inventory.summary.settingsSections);
-  assert.equal(inventory.navigation.length, inventory.summary.navigationSurfaces);
+  assert.ok(inventory.settings.length > 0);
+  assert.ok(inventory.navigation.length > 0);
   for (const item of [...inventory.settings, ...inventory.navigation]) {
     assert.ok(item.capabilityId || item.id);
     assert.match(item.classicPath, /^#/);
@@ -155,4 +152,30 @@ test('the committed inventory carries no line numbers, so moving a route is not 
     'the line rides on the Symbol key JSON.stringify skips');
   assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'src/services/global-chat/classic-capabilities.js'), 'utf8'), /route\.line\b/,
     'and nothing that reads the inventory expects one');
+});
+
+test('the committed inventory carries no totals, so two changes that each add a route merge cleanly', () => {
+  // Two changes that each added a route each moved the committed totals by
+  // one, the same edit, which their merge applied once: main went stale though
+  // both had regenerated correctly (#3127 and #3133). Every count is the
+  // length of a list the file already has.
+  const topLevel = Object.keys(inventory);
+  assert.ok(!topLevel.includes('summary'), 'no summary block');
+  for (const key of topLevel.filter((name) => name !== 'schemaVersion')) {
+    assert.ok(typeof inventory[key] !== 'number', `${key} is not a committed count`);
+  }
+  const source = fs.readFileSync(path.join(ROOT, 'scripts/generate-global-chat-inventory.js'), 'utf8');
+  assert.match(source, /\[COUNTS\]: \{ mapped: counts\.mapped, reviewRequired: counts\.review_required \}/,
+    'the counts the script reports ride on the Symbol key JSON.stringify skips');
+  const readers = [
+    'src/routes/global-chat.js',
+    'src/services/global-chat/classic-api-client.js',
+    'src/services/global-chat/classic-capabilities.js',
+    'src/services/global-chat/suggestion-actions.js',
+    'tests/global-chat-classic-capabilities.test.js',
+  ];
+  for (const file of readers) {
+    assert.doesNotMatch(fs.readFileSync(path.join(ROOT, file), 'utf8'), /\binventory\.summary\b|classicInventory\.summary\b/,
+      `${file} does not read a total`);
+  }
 });

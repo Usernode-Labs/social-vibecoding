@@ -16,7 +16,7 @@
 // the draft carried (the hint, the model picked while it was unsent), swaps
 // the address for the session's own in place, and posts the message.
 
-import { useSyncExternalStore } from 'react';
+import { useRef, useSyncExternalStore } from 'react';
 
 import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
@@ -223,10 +223,58 @@ let pendingHint: AgentHint | null | undefined;
 let catalogRequest: Promise<void> | null = null;
 
 function publish(patch: Partial<AgentSessionState> | ((current: AgentSessionState) => Partial<AgentSessionState>)) {
+  // Streamed text still waiting for its frame lands first, so every publish
+  // (and every patch computed from `current`) sees the reply as it stands.
+  absorbStream();
   const next = typeof patch === 'function' ? patch(state) : patch;
   state = { ...state, ...next };
   syncTabTitle();
   for (const listener of listeners) listener();
+}
+
+// ── Streamed text, one publish per frame ──────────────────────────────
+//
+// A reply arrives a token at a time, dozens a second, and each token used to
+// be a publish: every subscriber re-rendered for every word (the panel, the
+// composer, every row of the transcript, and the inbox, Recents and the app
+// sheet, which only read `sessions`). Tokens now collect here and land in ONE
+// publish per animation frame, which is as often as a change can be seen.
+// Any other event flushes them first (handleEvent), and every publish folds
+// them in before its own patch (`publish` above), so nothing that follows a
+// token (a tool, a card, a phase, an error, a stop, the turn's end) is ever
+// applied ahead of the words that came before it.
+let streamBuffer = '';
+let streamFrame: number | null = null;
+
+function cancelStreamFrame() {
+  if (streamFrame == null) return;
+  if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(streamFrame);
+  else clearTimeout(streamFrame);
+  streamFrame = null;
+}
+
+/** Fold the buffered tokens into `state` without notifying: the caller publishes. */
+function absorbStream() {
+  if (!streamBuffer) return;
+  const text = streamBuffer;
+  streamBuffer = '';
+  cancelStreamFrame();
+  state = { ...state, turn: { ...state.turn, running: true, streamText: state.turn.streamText + text } };
+}
+
+/** Publish the buffered tokens now, if there are any. */
+function flushStream() {
+  if (streamBuffer) publish({});
+  else cancelStreamFrame();
+}
+
+function bufferToken(text: string) {
+  streamBuffer += text;
+  if (streamFrame != null) return;
+  const land = () => { streamFrame = null; flushStream(); };
+  streamFrame = typeof requestAnimationFrame === 'function'
+    ? requestAnimationFrame(land)
+    : (setTimeout(land, 16) as unknown as number);
 }
 
 // The browser tab says "⏳ Thinking…" while the conversation on screen is
@@ -251,6 +299,52 @@ function subscribe(listener: () => void) {
 
 export function useAgentSessionState() {
   return useSyncExternalStore(subscribe, () => state, () => INITIAL_STATE);
+}
+
+/**
+ * One value from the store, re-rendering only when THAT value changes.
+ * `select` must return something stable: a primitive, or an object the store
+ * already holds (`s.session`, `s.messages`), never a fresh one.
+ *
+ * Most readers need a field or two, and the whole snapshot changes on every
+ * publish: a component that reads `sessions` through useAgentSessionState()
+ * re-renders for a streamed reply it does not draw.
+ */
+export function useAgentSessionSelector<T>(select: (current: AgentSessionState) => T): T {
+  return useSyncExternalStore(subscribe, () => select(state), () => select(INITIAL_STATE));
+}
+
+function shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((key) => Object.is(a[key], b[key]));
+}
+
+/**
+ * Several values at once, as an object compared field by field: the same
+ * object comes back until one of them changes, so a render follows only a
+ * change the component draws. Each field follows useAgentSessionSelector's
+ * rule: a primitive, or an object the store holds.
+ */
+export function useAgentSessionPick<T extends Record<string, unknown>>(select: (current: AgentSessionState) => T): T {
+  const last = useRef<{ client: T | null; server: T | null }>({ client: null, server: null });
+  const read = (source: AgentSessionState, slot: 'client' | 'server') => {
+    const next = select(source);
+    const held = last.current[slot];
+    if (held && shallowEqual(held, next)) return held;
+    last.current[slot] = next;
+    return next;
+  };
+  return useSyncExternalStore(subscribe, () => read(state, 'client'), () => read(INITIAL_STATE, 'server'));
+}
+
+/**
+ * The conversation list, for the readers outside the conversation (the
+ * inbox, Recents, the app sheet). A streamed reply leaves it alone, so they
+ * do not re-render with it.
+ */
+export function useAgentSessions(): AgentSession[] {
+  return useAgentSessionSelector((current) => current.sessions);
 }
 
 export function getAgentSessionState() {
@@ -489,6 +583,9 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
     seen.add(event._seq);
   }
   const fromChange = event.changeId != null;
+  // Anything but the Mayor's own words lands after the words before it; the
+  // cases below also read `state.turn` to build their patches.
+  if (event.type !== 'token' || fromChange) flushStream();
   switch (event.type) {
     case 'phase': {
       const phase = event.phase === 'cc' || event.phase === 'mayor2' ? event.phase : 'mayor';
@@ -505,7 +602,11 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
       break;
     }
     case 'token':
-      if (!fromChange && typeof event.text === 'string') patchTurn({ running: true, streamText: state.turn.streamText + event.text });
+      if (fromChange || typeof event.text !== 'string') break;
+      // The first words of a turn show at once and mark it running; the
+      // rest collect for the next frame (bufferToken).
+      if (state.turn.running) bufferToken(event.text);
+      else patchTurn({ running: true, streamText: state.turn.streamText + event.text });
       break;
     case 'tool':
       if (event.state === 'running') patchTurn({ activity: toolActivity(String(event.name || '')) });

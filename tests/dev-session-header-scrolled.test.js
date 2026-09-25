@@ -31,15 +31,13 @@ test('the scrolled session strip keeps the strip fill and frost', () => {
   assert.ok(at > rule('.dc-lift-strip').at);
 });
 
-test('without backdrop-filter it falls back to the opaque strip colour', () => {
-  // The first `@supports not` block after the strip rule it backs up, not
-  // the first in the file: earlier frosted surfaces (the #apps pane, #1919)
-  // carry fallbacks of their own.
-  const at = CSS.indexOf('@supports not ((backdrop-filter', rule('.dc-lift-strip').at);
-  assert.ok(at > 0, 'the no-backdrop-filter fallback must exist');
-  const block = CSS.slice(at, CSS.indexOf('\n}\n', at));
-  assert.match(block, /\.dc-lift-strip \{ background-color: var\(--dc-strip\); \}/);
-  assert.match(block, /#dc-session-header\.un-scrolled \{ background-color: var\(--dc-strip\); \}/);
+test('scrolled, it keeps the strip fill on every platform', () => {
+  // It sits in flow above #dc-messages, so the transcript never passes
+  // behind it, and nothing blurs any more (app.css "No glass, on any
+  // platform"): the strip's own translucent fill is the glass, no fallback
+  // swaps it for an opaque colour.
+  assert.match(CSS, /#dc-session-header\.un-scrolled \{\s*background-color: var\(--dc-strip-fill\);/);
+  assert.doesNotMatch(CSS, /#dc-session-header\.un-scrolled \{ background-color: var\(--dc-strip(-solid)?\); \}/);
 });
 
 test('the strip is still the .dc-lift-strip the rule is written for', () => {

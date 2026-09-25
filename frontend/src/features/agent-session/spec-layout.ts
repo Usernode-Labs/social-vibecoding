@@ -23,7 +23,7 @@
 
 import { useEffect, useState } from 'react';
 
-import { useAgentSessionState, type AgentSessionHost } from './store';
+import { useAgentSessionSelector, type AgentSessionHost } from './store';
 
 export const SPEC_BESIDE_QUERY = '(min-width: 1024px)';
 export const SPEC_WIDTH_KEY = 'dc-spec-viewer-width-v1';
@@ -113,7 +113,9 @@ export function useWideEnoughForSpec(): boolean {
  * spec, or a change's staging preview, or both as tabs.
  */
 export function useSidePaneBeside(host: AgentSessionHost): boolean {
-  const snapshot = useAgentSessionState();
+  // A boolean, so its readers (the panel, and the inbox's list and toggle
+  // beside it) re-render when it flips and not on every publish.
+  const open = useAgentSessionSelector((s) => s.open && s.host === host && !!(s.specSheet || s.preview));
   const wide = useWideEnoughForSpec();
-  return wide && snapshot.open && snapshot.host === host && !!(snapshot.specSheet || snapshot.preview);
+  return wide && open;
 }

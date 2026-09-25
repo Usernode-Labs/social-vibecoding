@@ -162,10 +162,43 @@
     return Math.abs(state.v) < REST_VELOCITY && Math.abs(state.x - target) < REST_DELTA;
   }
 
+  // A DISMISSAL IS DONE WHEN THE SURFACE IS OFF-SCREEN, not when its spring
+  // is at rest. The rest thresholds above are for a surface you can see: an
+  // entrance has to land on its pixel. An exit's target is the position
+  // where the surface has just left the screen, and the underdamped `sheet`
+  // preset spent another ~200ms there settling an overshoot nobody could
+  // see, holding back teardown, onDismiss and an action sheet's handler
+  // (Messages' "+" → New message started ~0.5s after the tap). So an exit
+  // finishes once the surface is within EXIT_DELTA of its target along the
+  // way it is travelling, or past it, while moving toward it (or already
+  // there); `from` fixes that direction. Entrances keep isAtRest.
+  var EXIT_DELTA = 1; // px
+
+  function isExitDone(state, from, target) {
+    var dir = target > from ? 1 : (target < from ? -1 : 0);
+    return (target - state.x) * dir < EXIT_DELTA && state.v * dir >= 0;
+  }
+
+  // How much time a runtime spring integrates on an animation frame. The
+  // clock starts on the FIRST frame, not when the spring is created: a tap
+  // handler that does real work after presenting a sheet used to hand the
+  // first frame up to 64ms of integration, so the sheet's first painted
+  // position was already part-way up. The first frame advances one nominal
+  // frame; later ones the real gap, clamped so a background tab or a long
+  // task cannot make the spring jump.
+  var FRAME_MS = 1000 / 60;
+  var MAX_FRAME_GAP_MS = 64;
+
+  function springFrameDelta(now, last) {
+    if (last == null) return FRAME_MS;
+    return Math.min(now - last, MAX_FRAME_GAP_MS);
+  }
+
   // Run a spring to rest synchronously (tests, curve pre-computation).
   // Returns { x, v, durationMs, samples: [{t, x}] }. Hard cap keeps a
-  // mis-tuned preset from hanging.
-  function simulateSpring(from, to, velocity, params, maxMs) {
+  // mis-tuned preset from hanging. `exit` ends it where a dismissal would
+  // (isExitDone) instead of at rest.
+  function simulateSpring(from, to, velocity, params, maxMs, exit) {
     var state = { x: from, v: velocity || 0 };
     var samples = [{ t: 0, x: from }];
     var t = 0;
@@ -174,7 +207,7 @@
       springStep(state, to, params, STEP_MS);
       t += STEP_MS;
       samples.push({ t: t, x: state.x });
-      if (isAtRest(state, to)) break;
+      if (isAtRest(state, to) || (exit && isExitDone(state, from, to))) break;
     }
     return { x: state.x, v: state.v, durationMs: t, samples: samples };
   }
@@ -783,6 +816,13 @@
     DECEL_RATE: DECEL_RATE,
     REST_VELOCITY: REST_VELOCITY,
     REST_DELTA: REST_DELTA,
+    EXIT_DELTA: EXIT_DELTA,
+    STEP_MS: STEP_MS,
+    FRAME_MS: FRAME_MS,
+    MAX_FRAME_GAP_MS: MAX_FRAME_GAP_MS,
+    isAtRest: isAtRest,
+    isExitDone: isExitDone,
+    springFrameDelta: springFrameDelta,
     // Default horizon (ms) for release-decision projection. Mutable via the
     // ?un-tune=1 overlay; projectDisplacement reads it at call time.
     COMMIT_HORIZON_MS: 120,
@@ -956,12 +996,16 @@
   // spring(target, opts) — target is an Element (transform written per
   // frame; opts.axis 'x'|'y' picks translateX/translateY) or a callback
   // called with the current value. opts: { from, to, velocity (px/ms),
-  // preset | mass/tension/friction, onUpdate, onRest }.
+  // preset | mass/tension/friction, exit, onUpdate, onRest }. `exit: true`
+  // marks a dismissal: it rests as soon as isExitDone says the surface has
+  // left the screen, and onRest runs then.
   // Returns { current(): {x, v}, stop(), done }.
   function spring(target, opts) {
     var params = resolvePreset(opts);
+    var from = opts.from;
     var to = opts.to;
-    var state = { x: opts.from, v: opts.velocity || 0 };
+    var exit = opts.exit === true;
+    var state = { x: from, v: opts.velocity || 0 };
     var axis = opts.axis === 'y' ? 'Y' : 'X';
     var apply = typeof target === 'function'
       ? target
@@ -975,19 +1019,21 @@
         if (raf) cancelAnimationFrame(raf);
       },
     };
-    var last = performance.now();
+    // The clock starts on the first frame (springFrameDelta): the time a
+    // handler spends between creating the spring and yielding to the frame
+    // is not motion anyone saw.
+    var last = null;
     var acc = 0;
     var raf = null;
     function frame(now) {
       if (handle.done) return;
-      // Clamp huge gaps (background tab) so the spring can't explode.
-      acc += Math.min(now - last, 64);
+      acc += springFrameDelta(now, last);
       last = now;
       var rested = false;
       while (acc >= STEP_MS) {
         springStep(state, to, params, STEP_MS);
         acc -= STEP_MS;
-        if (isAtRest(state, to)) {
+        if (isAtRest(state, to) || (exit && isExitDone(state, from, to))) {
           state.x = to;
           state.v = 0;
           rested = true;
@@ -1417,8 +1463,8 @@
       } else if (!windowMode) {
         var sr = scrollEl.getBoundingClientRect();
         // A hidden scroller measures 0 — keep the last good anchor rather
-        // than snapping the puck to the top of the shell. Re-measured at
-        // touchstart, so the first pull after a screen shows is correct.
+        // than snapping the puck to the top of the shell. Re-measured when
+        // a pull locks, so the first pull after a screen shows is correct.
         if (sr.height || sr.width) top = sr.top - puckHome.getBoundingClientRect().top;
       }
       // Window mode with no anchor keeps the stylesheet's safe-area top;
@@ -1496,10 +1542,49 @@
       });
     }
 
+    // THE BLOCKING LISTENER IS ONLY THERE WHILE A PULL CAN START. A
+    // non-passive `touchmove` makes the browser wait for this script before
+    // it scrolls, on every gesture that starts over the scroller: WebKit
+    // and Chromium both decide at touchstart, from the listeners present
+    // then, whether a touch's moves must be sent to the page synchronously.
+    // Attached for the life of the recognizer it held every scroll of Home,
+    // Discover, the leaderboard and the Workshop back on the main thread,
+    // mid-list, where no pull can begin. So it is attached only while the
+    // content is at its top (or a pull or its settle is in flight), and a
+    // passive `scroll` listener moves it on and off as the offset crosses
+    // 0; touchstart re-checks for an offset that changed with no scroll
+    // event. At the top nothing changes: the listener is there before the
+    // finger lands, as it always was.
+    var moveBound = false;
+    function bindMove(on) {
+      if (on === moveBound) return;
+      moveBound = on;
+      if (on) listenEl.addEventListener('touchmove', onTouchMove, { passive: false });
+      else listenEl.removeEventListener('touchmove', onTouchMove, { passive: false });
+    }
+    function syncMove(top) {
+      bindMove(!!drag || !!activeSpring || refreshing || display > 0 ||
+        (top == null ? scrollTop() : top) <= 0);
+    }
+    // Per scroll event this reads only the offset of the element that
+    // scrolled, and asks scrollTop() (which may resolve the scroll owner)
+    // only when that says the answer may have changed.
+    function onScroll(e) {
+      var t = e && e.target;
+      var own = t && t.nodeType === 1 ? t.scrollTop : (window.scrollY || 0);
+      if ((own <= 0) === moveBound) return;
+      syncMove();
+    }
+    // Element mode scrolls the element; a getScrollTop reader means the
+    // document may be the scroller instead (the platform's browser pages).
+    var scrollTargets = windowMode ? [window]
+      : (opts && typeof opts.getScrollTop === 'function' ? [scrollEl, window] : [scrollEl]);
+
     function onTouchStart(e) {
       if (refreshing || e.touches.length !== 1) return;
-      measureAnchor();
-      if (scrollTop() > 0 && !activeSpring && display === 0) return;
+      var top = scrollTop();
+      syncMove(top);
+      if (top > 0 && !activeSpring && display === 0) return;
       var baseRaw = 0;
       if (activeSpring) {
         // Catch the list mid-settle — which means claiming the sequence
@@ -1535,6 +1620,10 @@
             return;
           }
           drag.locked = 'y';
+          // Measured here, where a pull has actually begun, rather than on
+          // every touchstart: the anchor is two rect reads, and a touch that
+          // becomes a scroll or a tap never needs them.
+          measureAnchor();
         } else if (axis === 'y') { drag = null; return; }
       }
       if (drag.locked !== 'y') return;
@@ -1553,7 +1642,9 @@
       var samples = drag.samples;
       var locked = drag.locked === 'y';
       drag = null;
-      if (!locked || display === 0) return;
+      // A touch that scrolled away with no momentum left no scroll event
+      // behind to take the blocking listener off; do it here.
+      if (!locked || display === 0) { syncMove(); return; }
       // Anchor the velocity window at release (see the swipe handler) so a
       // held-still pause decays momentum before the commit decision.
       samples.push({ t: e.timeStamp, x: display });
@@ -1563,9 +1654,10 @@
     }
 
     listenEl.addEventListener('touchstart', onTouchStart, { passive: true });
-    listenEl.addEventListener('touchmove', onTouchMove, { passive: false });
     listenEl.addEventListener('touchend', onTouchEnd, { passive: true });
     listenEl.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    scrollTargets.forEach(function (el) { el.addEventListener('scroll', onScroll, { passive: true }); });
+    syncMove();
 
     return {
       // Programmatic refresh — the kit's beginRefreshing(). Used by the
@@ -1577,9 +1669,10 @@
       },
       detach: function () {
         listenEl.removeEventListener('touchstart', onTouchStart);
-        listenEl.removeEventListener('touchmove', onTouchMove);
+        bindMove(false);
         listenEl.removeEventListener('touchend', onTouchEnd);
         listenEl.removeEventListener('touchcancel', onTouchEnd);
+        scrollTargets.forEach(function (el) { el.removeEventListener('scroll', onScroll, { passive: true }); });
         window.removeEventListener('resize', measureAnchor);
         window.removeEventListener('orientationchange', measureAnchor);
         if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
@@ -3217,10 +3310,13 @@
       sheet.style.setProperty('--un-presence', presence);
     }
 
+    // Once closed, every spring is the exit (dismiss, or the retarget
+    // below when the height changes mid-exit): it ends off-screen, not at
+    // rest, so teardown and onDismiss are not held by an invisible settle.
     function springTo(to, velocity, onRest) {
       if (activeSpring) activeSpring.stop();
       activeSpring = spring(function (v) { render(v); }, {
-        from: y, to: to, velocity: velocity || 0, preset: 'sheet',
+        from: y, to: to, velocity: velocity || 0, preset: 'sheet', exit: closed,
         onRest: function () { activeSpring = null; if (onRest) onRest(); },
       });
     }
@@ -3593,8 +3689,10 @@
         if (onRest) onRest();
         return;
       }
+      // Once closed the spring is the exit: it ends off-screen (see the
+      // sheet's springTo).
       activeSpring = spring(function (v) { render(v); }, {
-        from: x, to: to, preset: 'sheet',
+        from: x, to: to, preset: 'sheet', exit: closed,
         onRest: function () { activeSpring = null; if (onRest) onRest(); },
       });
     }
@@ -3792,10 +3890,13 @@
         backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / height)));
       }
 
+      // Once settled the spring is the exit, and it ends off-screen, so the
+      // chosen action's handler runs as the sheet leaves rather than ~200ms
+      // after (see the sheet's springTo).
       function springTo(to, velocity, onRest) {
         if (activeSpring) activeSpring.stop();
         activeSpring = spring(function (v) { render(v); }, {
-          from: y, to: to, velocity: velocity || 0, preset: 'sheet',
+          from: y, to: to, velocity: velocity || 0, preset: 'sheet', exit: settled,
           onRest: function () { activeSpring = null; if (onRest) onRest(); },
         });
       }

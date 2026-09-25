@@ -120,7 +120,11 @@ test('scrollToEnd and revealDisclosure are the two DOM writes, and tolerate a ba
   assert.equal(el.scrollTop, 500);
   const calls = [];
   revealDisclosure({ scrollIntoView: (o) => calls.push(o) });
-  assert.deepEqual(calls, [{ block: 'nearest', inline: 'nearest' }], 'the least scroll that shows the card');
+  // `behavior: 'smooth'` is asked for here because the reader asked for the
+  // movement: the container's CSS `scroll-behavior: smooth` that used to
+  // animate it also animated every follow-to-bottom, and is gone.
+  assert.deepEqual(calls, [{ block: 'nearest', inline: 'nearest', behavior: 'smooth' }],
+    'the least scroll that shows the card, animated');
   assert.doesNotThrow(() => revealDisclosure({}), 'no scrollIntoView, no call');
   assert.doesNotThrow(() => revealDisclosure(null));
 });
@@ -176,7 +180,9 @@ test('a batch that is only <details> open flips is the reader\'s toggle; anythin
 
 test('initScrollTracking asks before following, and the follow is otherwise unchanged', () => {
   const body = DEV_CHAT.slice(DEV_CHAT.indexOf('  initScrollTracking() {'), DEV_CHAT.indexOf('  _isDisclosureToggle(records) {'));
-  assert.match(body, /new MutationObserver\(\(records\) => \{\s*if \(DevChat\._isDisclosureToggle\(records\)\) return;\s*if \(DevChat\._lockedToBottom\) \{\s*requestAnimationFrame\(\(\) => \{ container\.scrollTop = container\.scrollHeight; \}\);/);
+  // The follow itself is `_followToBottom`'s one pending frame now
+  // (tests/dev-chat-smoothness.test.js pins it).
+  assert.match(body, /new MutationObserver\(\(records\) => \{\s*if \(DevChat\._isDisclosureToggle\(records\)\) return;\s*if \(DevChat\._lockedToBottom\) DevChat\._followToBottom\(container, false\);/);
   assert.match(body, /observer\.observe\(container, \{ childList: true, subtree: true, attributes: true \}\)/, 'still watches attributes: `hidden` and class flips on rows are content changes');
 });
 

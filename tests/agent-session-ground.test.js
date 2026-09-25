@@ -44,10 +44,10 @@ test('#3082: every wallpaper rule lists the agent session screen beside Messages
 });
 
 test('#3082: the bar over an agent session is cleared and frosted as it is over Messages', () => {
-  // The iOS app's opaque twin of the glass rule is pinned with the other
-  // #787 fallbacks (tests/ios-native-performance.test.js).
-  const bars = routeRules((sel) => /#platform-header\s*$/.test(sel.trim()) && !/in-native-webview/.test(sel));
-  assert.equal(bars.length, 2, 'the clear rule and the glass rule');
+  // The clear rule, the glass rule, and the solid fill every platform draws
+  // there now that nothing blurs (tests/no-glass-one-scheme.test.js).
+  const bars = routeRules((sel) => /#platform-header\s*$/.test(sel.trim()));
+  assert.equal(bars.length, 3, 'the clear rule, the glass rule and the solid fill');
   for (const { roots } of bars) {
     assert.ok(roots.includes('#messages-screen'));
     assert.ok(roots.includes('#agent-session-screen'), 'the session screen matches Messages\' bar');
