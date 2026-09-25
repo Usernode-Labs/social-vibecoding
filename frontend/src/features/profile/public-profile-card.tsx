@@ -32,6 +32,7 @@ import { Profile } from './profile.js';
 import { MessageButton } from './message-button';
 import { FriendButton } from '../friends/friend-button';
 import type { FriendState } from '../friends/api';
+import { PLANE_FILL } from '@/components/ui/grouped-list';
 
 const REPORT_REASONS: Array<[string, string]> = [
   ['impersonation', 'Impersonation'],
@@ -145,7 +146,7 @@ export function PublicProfileCard({
     <>
       <article
         id="public-profile-card"
-        className="rounded-2xl bg-white dark:bg-zinc-900 p-5"
+        className={`rounded-2xl ${PLANE_FILL} p-5`}
       >
         <div className="flex items-start gap-4">
           <PublicAvatar profile={profile} />

@@ -19,7 +19,7 @@
 import { type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { GroupedList, ListRow, PLANE_FILL, SectionHeader } from '@/components/ui/grouped-list';
 import { FriendSearch } from '../friends/friend-search';
 import { Profile } from './profile.js';
 
@@ -80,7 +80,7 @@ export function FriendsSection({
       {/* #3048: find people by username and add them right here. */}
       <FriendSearch lists={view} />
       {view.incoming.length ? (
-        <GroupedList id="profile-friend-requests" className="mx-0 mb-3">
+        <GroupedList id="profile-friend-requests" className="mx-0 mb-3" tone="plane">
           {view.incoming.map((row) => (
             <ListRow
               key={row.key}
@@ -124,7 +124,7 @@ export function FriendsSection({
         </GroupedList>
       ) : null}
       {view.friends.length ? (
-        <GroupedList id="profile-friends-list" className="mx-0">
+        <GroupedList id="profile-friends-list" className="mx-0" tone="plane">
           {view.friends.map((row) => (
             <ListRow
               key={row.key}
@@ -142,7 +142,7 @@ export function FriendsSection({
       ) : (
         <div
           id="profile-friends-empty"
-          className="rounded-2xl bg-white dark:bg-zinc-900 p-4 text-center text-sm text-zinc-500 dark:text-zinc-400"
+          className={`rounded-2xl ${PLANE_FILL} p-4 text-center text-sm text-zinc-500 dark:text-zinc-400`}
         >
           {view.loaded
             ? 'No friends yet. Find someone by username above.'
@@ -152,7 +152,7 @@ export function FriendsSection({
       {view.outgoing?.length ? (
         <>
           <p className="px-4 pt-4 pb-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">Sent requests</p>
-          <GroupedList id="profile-friend-sent" className="mx-0">
+          <GroupedList id="profile-friend-sent" className="mx-0" tone="plane">
             {view.outgoing.map((row) => (
               <ListRow
                 key={row.key}

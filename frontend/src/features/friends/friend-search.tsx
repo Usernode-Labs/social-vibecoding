@@ -26,6 +26,7 @@ import { searchUsers } from '../messages/api';
 import type { ConversationUser } from '../messages/types';
 import { FriendButton } from './friend-button';
 import type { FriendState } from './api';
+import { PLANE_FILL } from '@/components/ui/grouped-list';
 
 type IdRow = { id: number };
 
@@ -102,7 +103,7 @@ export function FriendSearchResults({
     <div
       id="profile-friend-search-results"
       aria-live="polite"
-      className="mt-2 rounded-2xl bg-white dark:bg-zinc-900 divide-y divide-zinc-100 dark:divide-zinc-800"
+      className={`mt-2 rounded-2xl ${PLANE_FILL} divide-y divide-zinc-100 dark:divide-zinc-800`}
     >
       {users.map((user) => (
         <div

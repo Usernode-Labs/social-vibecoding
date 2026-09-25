@@ -49,10 +49,34 @@ export function SectionHeader({ className, ...props }: React.HTMLAttributes<HTML
   );
 }
 
-export function GroupedList({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+/*
+ * ── Tone ──────────────────────────────────────────────────────────────
+ *
+ * `card` (the default) is the white card the deck draws. `plane` is the warm
+ * off-white the Discover pane and the sheets use: app.css `--dc-sheet-solid`,
+ * the pane glass over the wallpaper made solid, which already follows the
+ * dark theme. A screen that sits on the wallpaper asks for it so its lists
+ * read as the same material as Discover rather than as white cutouts.
+ * `PLANE_FILL` is the same class for a card that is not a list (a profile
+ * header, a stat tile), so the literal lives once, here, where Tailwind's
+ * extractor sees it.
+ */
+export const PLANE_FILL = 'bg-[color:var(--dc-sheet-solid)]';
+
+const groupedList = cva('mx-4 overflow-hidden rounded-2xl', {
+  variants: {
+    tone: {
+      card: 'bg-white dark:bg-zinc-900',
+      plane: 'bg-[color:var(--dc-sheet-solid)]',
+    },
+  },
+  defaultVariants: { tone: 'card' },
+});
+
+export function GroupedList({ className, tone, ...props }: React.HTMLAttributes<HTMLDivElement> & VariantProps<typeof groupedList>) {
   return (
     <div
-      className={cn('mx-4 overflow-hidden rounded-2xl bg-white dark:bg-zinc-900', className)}
+      className={cn(groupedList({ tone }), className)}
       {...props}
     />
   );
