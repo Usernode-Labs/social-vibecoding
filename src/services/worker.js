@@ -2325,6 +2325,14 @@ async function _bootstrapWarmContainer(sessionId, {
     try {
       const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
         sessionId, env: safeEnv, onProgress,
+        reclaimVolumes: async () => {
+          const pool = _getPoolSafe();
+          if (!pool) return 0;
+          const freed = await require('./worker-volume-reclaim').reclaimWorkerVolumes({
+            pool, excludeSessionId: sessionId,
+          });
+          return freed.length;
+        },
       });
       containerName = result.runtimeName;
       log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName });
@@ -4120,6 +4128,13 @@ async function destroyCcVolume(sessionId) {
   }
 }
 
+// Kubernetes worker state volumes, one per change (see
+// worker-volume-reclaim.js). A Docker host has no volume quota to manage.
+async function listWorkerVolumes() {
+  if (!usesKubernetesWorkers()) return [];
+  return kubernetes.listWorkerVolumes(kubernetesWorkerConfig());
+}
+
 // #155: copy one session's CC memory volume (~/.claude) into another
 // session's volume, so a dev chat cloned from a headless auto session can
 // `--resume` the auto session's Claude Code conversation. Uses the worker
@@ -4355,6 +4370,7 @@ module.exports = {
   listOrphanWorkers,
   destroyWorker,
   destroyCcVolume,
+  listWorkerVolumes,
   eraseAccountWorkspace,
   setAccountDeletionGuard,
   cloneCcVolume,

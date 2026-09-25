@@ -20,6 +20,7 @@ const state = require('./visual-evidence-state');
 const worker = require('./worker');
 
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
+const CLOSED_STATUSES = new Set(['merged', 'archived']);
 const DIFF_CONTEXT_CHARS = 8_000;
 const inFlight = new Map();
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -1440,6 +1441,9 @@ async function scheduleForSession(config, options, injected = {}) {
     return { scheduled: false, reason: 'disabled' };
   }
   const session = await loadSession(pool, sessionId);
+  // A merged or archived change takes no more evidence. The run would only
+  // start the change's worker again, and with it the volume its close freed.
+  if (CLOSED_STATUSES.has(session.status)) return { scheduled: false, reason: 'closed' };
   const intent = intentForSession(session);
   if (!intent) {
     await noteNotStarted(pool, sessionId, 'missing_intent', injected);

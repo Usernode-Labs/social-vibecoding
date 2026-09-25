@@ -9106,6 +9106,10 @@ function describeTurnError(err) {
     if (message.startsWith('warm-ready timeout')) {
       return 'Setting up the coding agent timed out before it was ready, so the agent never started and no code was changed. Try again in a minute.';
     }
+    if (/exceeded quota/i.test(message)) {
+      return 'Setting up the coding agent failed because the platform has no free workspace storage for coding agents right now, so the agent never started and no code was changed. '
+        + 'Space frees up as other changes merge, close or sit idle; try again in a few minutes.';
+    }
     return 'Setting up the coding agent stopped unexpectedly before it was ready, so the agent never started and no code was changed. Try again, and if it keeps happening the platform log for this session holds the container output.';
   }
   return message;
