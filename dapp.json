@@ -2383,10 +2383,10 @@
       "expectText": "Staging demo: one line on what the open issues and waiting proposals are about."
     },
     {
-      "name": "A project's Workshop page says who it is for, who is in it and how a change gets in (the community card)",
+      "name": "A project's Workshop page leads with a hero that says who it is for and how a change gets in (communities)",
       "path": "/#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-community][data-audience=\"open\"] > [data-ws-community-rule]",
-      "expectText": "Who it’s for"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"] > [data-ws-community-rule]",
+      "expectText": "Community"
     },
     {
       "id": "workshop.grouping-ear",
@@ -3025,7 +3025,7 @@
       "id": "messages.channels",
       "name": "#2783: the Messages list is sectioned Discord-style — chats on top, then a Channels heading led by #general",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll h3.messages-section-head[data-inbox-section=\"chats\"] ~ h3.messages-section-head[data-inbox-section=\"channels\"] + a.messages-channel-row[data-inbox-channel=\"general\"][href=\"#messages/910004\"]",
+      "expectSelector": "#messages-screen:not(.hidden) h3.messages-section-head[data-inbox-section=\"chats\"] ~ h3.messages-section-head[data-inbox-section=\"channels\"] + .messages-section-card > a.messages-channel-row[data-inbox-channel=\"general\"][href=\"#messages/910004\"]",
       "expectText": "Channels",
       "visual": true,
       "impact": [

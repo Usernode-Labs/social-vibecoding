@@ -3100,6 +3100,20 @@ export function DevWorkshop(): ReactNode {
       <div className="dev-ws-tabbody">
       {tab === 'status' ? (
       <>
+      {/* ── The hero: what this is, who it is for, Join (communities) ──
+          FIRST ON THE PAGE. A person arriving from Discover or a shared link
+          met four numbers about the code before the thing's own name; the
+          page now leads with identity, the way a profile does, and the
+          dashboard follows. It is also where the channel went when Messages
+          stopped listing one per app. See ./community-card.tsx. */}
+      {slug ? (
+        <CommunityCard
+          slug={slug}
+          name={app.name || undefined}
+          iconUrl={app.iconUrl}
+          iconEmoji={app.iconEmoji}
+        />
+      ) : null}
       {/* #2573: ABOVE the empty note, because the two answer different
           questions on the same screen. The note says what the board holds
           and points at the "+"; this says what to do about an app nobody
@@ -3257,16 +3271,6 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {/* ── Who it is for (communities) ──
-          The community this project belongs to: its audience, its members,
-          its approval rule and its channel, and Join for an outsider. Under
-          the pane about where the app is and above the viewer's own work,
-          because it answers the question a newcomer arrives with — can I
-          take part here, and how — before the ones only a member has. It
-          is also where the channel went when Messages stopped listing one
-          per app (#2718's review took the door off the pane above; this is
-          its home now). See ./community-card.tsx. */}
-      {slug ? <CommunityCard slug={slug} /> : null}
 
       {/* ── Yours, first ──
           The first question a returning member has is about their OWN work,

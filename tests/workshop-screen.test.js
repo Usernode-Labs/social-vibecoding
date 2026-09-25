@@ -292,7 +292,7 @@ test('the empty state is a card that offers the directory, not a grey caption', 
     'the card (a GroupedList of its own) is an anchor, and it goes where '
     + 'Discover\'s own empty card goes — the directory, where you join');
 
-  assert.match(inner, /font-bold[^"]*">You haven’t joined anything yet</,
+  assert.match(inner, /font-\[650\][^"]*">You haven’t joined anything yet</,
     'a title in the row\'s own subject weight — the list is the communities '
     + 'you are in, so the empty state says you are in none');
   assert.match(inner, /text-zinc-500[^"]*">Browse the directory to find a project to join\.</,
@@ -520,6 +520,22 @@ test('rowSubtitle: one short fact, members for a community or group, recency for
   assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', last_active_at: '2026-09-22T12:00:00Z', working: 0, needs: 0 }, now), '3d ago');
   assert.equal(rowSubtitle({ slug: 'x', audience: 'open', member_count: 0, working: 0, needs: 0 }, now), '');
   assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', last_active_at: null, working: 0, needs: 0 }, now), '');
+});
+
+test('a row says its status in words, leaves zeroes out, and keeps both numbers in the document', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const line = (working, needs) => renderToHtml(createElement(mod.StatusLine, { working, needs }));
+  const both = line(2, 3);
+  assert.match(both, /<span data-workshop-working="2" class="[^"]*">2 in progress<\/span><span data-workshop-needs="3" class="[^"]*violet[^"]*">/,
+    'working then needs, adjacent siblings: the declared check reads `[data-workshop-working] + [data-workshop-needs]`');
+  assert.match(both, />3 to vote<\/span>$/);
+  assert.match(both, /aria-hidden="true"> · </, 'the separator is decoration');
+  const quiet = line(0, 0);
+  assert.match(quiet, /data-workshop-working="0" class="hidden"/, 'a zero says nothing');
+  assert.match(quiet, /data-workshop-needs="0" class="hidden"/);
+  assert.doesNotMatch(line(0, 1), / · /, 'no separator ahead of the only half showing');
+  assert.doesNotMatch(read('frontend/src/features/workshop/index.tsx'), /function Count\(/,
+    'the glyph pills are gone from the rows');
 });
 
 test('the controller loads both reads and survives losing the counts', async () => {

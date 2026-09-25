@@ -212,7 +212,7 @@ test('each primitive’s class strings live in exactly one file', () => {
   const owned = [
     ['text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1', FIELD_PATH],
     ['text-xs text-zinc-500 dark:text-zinc-500 mb-3', FIELD_PATH],
-    ['px-4 pb-2 pt-6 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500', GROUPED_PATH],
+    ['px-4 pb-2 pt-6 text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400', GROUPED_PATH],
   ];
   for (const [literal, owner] of owned) {
     const holders = SOURCES.filter((s) => s.text.includes(literal)).map((s) => s.path);

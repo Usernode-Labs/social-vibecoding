@@ -83,7 +83,7 @@ import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
 import {
-  INBOX_FILTERS, buildInbox,
+  INBOX_FILTERS, buildInbox, sectionRuns,
   type AgentChat, type AppDiscussion, type InboxFilter, type InboxSection,
 } from './inbox';
 import type { ConversationMessage, ConversationSummary, MessagesAgentThread } from './types';
@@ -876,13 +876,20 @@ function ConversationList() {
             that knows how. Under All each section is headed, the way Discord
             heads its DMs and its channels; under a filter the strip already
             says which one this is. */}
-        {shown.map((entry, i) => {
-          const head = snap.filter === 'all' && (i === 0 || shown[i - 1].section !== entry.section)
-            ? <h3 key={`head-${entry.section}`} className="messages-section-head" data-inbox-section={entry.section}>{SECTION_LABELS[entry.section]}</h3>
-            : null;
-          const row = inboxRow(entry);
-          return [head, row].filter(Boolean);
-        })}
+        {/* EACH SECTION'S ROWS SIT IN A CARD, under its label: the grouped
+            list's label-over-card shape that Workshop and Discover draw,
+            rather than rows ruled straight onto the strip. The card is the
+            rows' parent, so `:last-child` (which drops the last separator)
+            now means the last row of its section. Under a filter there is no
+            label and one card. */}
+        {sectionRuns(shown, snap.filter === 'all').map((run) => [
+          run.head
+            ? <h3 key={`head-${run.section}`} className="messages-section-head" data-inbox-section={run.section}>{SECTION_LABELS[run.section]}</h3>
+            : null,
+          <div key={`card-${run.section}`} className="messages-section-card" data-inbox-card={run.section}>
+            {run.entries.map((entry) => inboxRow(entry))}
+          </div>,
+        ])}
       </div>
     </section>
   );

@@ -198,11 +198,11 @@ export function groupRows(rows: WorkshopRow[]): Array<{ key: Audience; label: st
 }
 
 /**
- * The row's second line: ONE short fact, because at phone width the row's two
- * counts take the trailing edge and the text column is about fifteen
- * characters wide. "12 members · 2h ago" was cut to "12 members · …" on a
- * 390px screen before it reached the part that changes, so each audience
- * gets the fact that says the most about it:
+ * The quiet fact on the row's second line, after its status (see StatusLine):
+ * ONE short fact, because the status leads that line and at phone width the
+ * text column is about thirty characters wide. "12 members · 2h ago" after
+ * "3 to vote" is cut before it says anything, so each audience gets the fact
+ * that says the most about it:
  *
  *   Community / Group → how many people are in it ("12 members"). The order
  *     of the section already says which moved last.
@@ -328,7 +328,9 @@ function ItemGroup({ app, items, more, section }: {
   };
   return (
     <section data-workshop-group={app.slug}>
-      <SectionHeader className="flex items-center gap-2">
+      {/* An app's name, not a label: normal case, at the row title's weight
+          and a step down in size, over its items. */}
+      <SectionHeader className="flex items-center gap-2 normal-case tracking-normal text-sm font-semibold text-zinc-700 dark:text-zinc-300">
         <span
           aria-hidden="true"
           className="app-icon-tile w-6 h-6 shrink-0 rounded-lg overflow-hidden flex items-center justify-center text-xs font-bold"
@@ -439,38 +441,38 @@ function ItemPane({ rows, items, itemsError, section, emptyText, heading }: {
 }
 
 /**
- * One number with its glyph.
+ * The row's status IN WORDS: "3 to vote", "2 in progress". Both halves are
+ * always in the document, each carrying its number in a data attribute, and
+ * a half with nothing to say is `hidden` rather than absent: the declared
+ * checks select `[data-workshop-working="2"] + [data-workshop-needs="3"]`,
+ * an adjacency that has to hold whichever of the two is showing.
  *
- * TINTED ONLY WHEN IT IS NOT ZERO. A row of grey zeroes is the common case on
- * a big account, and painting those in the accent would make every app look
- * like it was asking for something. The glyphs are the ones the app's own
- * Workshop uses for the same two things — the raised hand for your own work,
- * the bubble-with-a-tick for the Needs-you deck — so the number here and the
- * pane it counts wear the same mark.
+ * WORDS, NOT TWO GLYPH PILLS. The pills put a raised hand and a speech
+ * bubble on every row, grey zeroes included, and a bare number next to a
+ * glyph is a legend lookup: the eye goes to the line at the top of the
+ * screen to find out what "2" means. "2 in progress · 3 to vote" says it
+ * where it is. A ZERO SAYS NOTHING: a row with no work in it reads quiet
+ * rather than as two measured nothings, which is what a big account's
+ * forty-row list mostly is. The one thing that asks for the viewer, a vote,
+ * is the accent colour; everything else stays grey.
  */
-function Count({ kind, n, label }: { kind: 'working' | 'needs'; n: number; label: string }) {
-  const lit = n > 0;
-  const tint = kind === 'needs'
-    ? 'text-violet-700 dark:text-violet-300 bg-violet-500/10'
-    : 'text-zinc-700 dark:text-zinc-200 bg-zinc-500/10';
+export function StatusLine({ working, needs }: { working: number; needs: number }) {
   return (
-    <span
-      {...{ [`data-workshop-${kind}`]: String(n) }}
-      // ONE accessible name, not a glyph plus a bare digit. The pill reads
-      // "2 items you are working on" to a screen reader and carries the same
-      // sentence as its pointer tooltip; the glyph is decoration, which is
-      // what a legend a thumb cannot hover is for.
-      aria-label={`${n} ${label}`}
-      title={`${n} ${label}`}
-      className={'shrink-0 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 '
-        + 'text-xs font-semibold tabular-nums '
-        + (lit ? tint : 'text-zinc-400 dark:text-zinc-500')}
-    >
-      {kind === 'needs'
-        ? <SpeechCheckIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-        : <HandRaisedIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
-      {n}
-    </span>
+    <>
+      <span
+        data-workshop-working={String(working)}
+        className={working > 0 ? 'text-zinc-700 dark:text-zinc-300' : 'hidden'}
+      >
+        {working} in progress
+      </span>
+      <span
+        data-workshop-needs={String(needs)}
+        className={needs > 0 ? 'font-semibold text-violet-700 dark:text-violet-300' : 'hidden'}
+      >
+        {working > 0 ? <span className="font-normal text-zinc-500 dark:text-zinc-400" aria-hidden="true"> · </span> : null}
+        {needs} to vote
+      </span>
+    </>
   );
 }
 
@@ -479,8 +481,8 @@ function Count({ kind, n, label }: { kind: 'working' | 'needs'; n: number; label
  *
  * `ListRow` from @/components/ui/grouped-list is the widget language's primary
  * content shape, and this is the shape it is for: a leading app tile, the
- * app's name as the row's subject, something on the trailing edge and a
- * disclosure chevron. It draws the inset hairline between rows (a
+ * app's name as the row's subject, its status and one fact on the second line
+ * and a disclosure chevron. It draws the inset hairline between rows (a
  * pseudo-element, so the last row has none without this file knowing which
  * one is last) and the `active:` press state.
  *
@@ -502,7 +504,8 @@ function Count({ kind, n, label }: { kind: 'working' | 'needs'; n: number; label
  * app.css owns that face, and a call site must not repaint it.
  */
 function AppRow({ row }: { row: WorkshopRow }) {
-  const subtitle = rowSubtitle(row);
+  const fact = rowSubtitle(row);
+  const busy = row.working > 0 || row.needs > 0;
   return (
     <ListRow
       as="a"
@@ -525,17 +528,17 @@ function AppRow({ row }: { row: WorkshopRow }) {
         </div>
       )}
       title={row.name || row.slug}
-      subtitle={subtitle || undefined}
-      trailing={(
-        /* ONE trailing group, with its own tight gap. `ListRow` sets `gap-4`
-           between every element it lays out, which is right between the tile,
-           the title and the trailing edge and is 16px too much BETWEEN two
-           numbers that read as one column. Grouping them also buys the title
-           that width back, and at phone width the title is what truncates. */
-        <span className="flex shrink-0 items-center gap-1.5">
-          <Count kind="working" n={row.working} label="items you are working on" />
-          <Count kind="needs" n={row.needs} label="votes waiting on you" />
-        </span>
+      // THE STATUS LEADS THE SECOND LINE, then the quiet fact after it, so a
+      // narrow screen truncates the fact and never the part that changes.
+      // The status spans are always here (see StatusLine) so the checks'
+      // adjacency holds on every row, busy or not.
+      subtitle={(
+        <>
+          <StatusLine working={row.working} needs={row.needs} />
+          {fact ? (
+            <span>{busy ? <span aria-hidden="true"> · </span> : null}{fact}</span>
+          ) : null}
+        </>
       )}
     />
   );
@@ -558,12 +561,7 @@ function RowSkeletons(): ReactNode {
           chevron={false}
           leading={<Skeleton shape="block" className="w-11 h-11 rounded-xl" />}
           title={<Skeleton className="max-w-[40%]" />}
-          trailing={(
-            <>
-              <Skeleton shape="block" className="w-10 h-5 rounded-full" />
-              <Skeleton shape="block" className="w-10 h-5 rounded-full" />
-            </>
-          )}
+          subtitle={<Skeleton className="max-w-[30%]" />}
         />
       ))}
     </SkeletonGroup>
@@ -608,7 +606,7 @@ function Section({ audience, label, rows }: { audience: Audience; label: string;
             aria-expanded={expanded}
             onClick={() => setExpanded((open) => !open)}
             title={expanded ? 'Show fewer' : `Show ${hidden} more`}
-            titleClassName="font-medium text-violet-700 dark:text-violet-300"
+            titleClassName="text-center font-semibold text-violet-700 dark:text-violet-300"
           />
         ) : null}
       </GroupedList>
@@ -682,10 +680,11 @@ export function WorkshopScreen() {
             read across all of your apps, and "All apps" is what says so: the
             same chip an app's Workshop wears with that app's name
             (./workshop-chrome.tsx), at its other end. */}
-        {/* THE LEGEND IS NOT DECORATION. Two bare numbers on a row cannot be
-            read, and the per-pill tooltip is not available to a thumb — so the
-            two glyphs are named once, here, in the muted line the language
-            uses under a section label.
+        {/* THE LEGEND NAMES THE TWO THINGS A ROW COUNTS. It began as the key
+            to two glyph pills on every row; the rows say their status in
+            words now (StatusLine), and this line is where the two are named
+            once and totalled, in the muted line the language uses under a
+            section label.
 
             IT CARRIES THE TOTALS NOW (#2718). The design study put three
             count cards at the top of this screen — "4 in vote / 2 working / 7

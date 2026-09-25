@@ -1,61 +1,63 @@
 /**
- * The community card: who a project is for, who is in it, how a change gets
- * in, and where they talk — on that project's own Workshop page.
+ * The project page's hero: what this is, who it is for, and Join, at the top
+ * of the project's own Workshop page, above where the app is.
  *
- * ── Why it is here ─────────────────────────────────────────────────────
+ * ── Why it leads the page ──────────────────────────────────────────────
  *
  * Every project belongs to one community (src/services/communities.js), and
  * while the two are one-to-one the community is drawn AS its project: there
  * is no separate community page, so the facts that are the community's
- * rather than the code's live on the page the Workshop tab's row opens. Four
- * of them, one row each:
+ * rather than the code's live on the page the Workshop tab's row opens. The
+ * page used to open on its dashboard, four numbers about the code, with the
+ * community in a card under it; a person arriving from Discover or a shared
+ * link met "18 open items" before they met the thing's name. So the page
+ * leads with identity, the way a profile does, and the dashboard follows:
  *
- *   WHO IT IS FOR. The audience, in the words people see — Community, Group,
- *   Just you — and the member count. "Community", not "public": the label is
- *   the same one the Workshop tab heads its section with, so the row you
- *   tapped and the page you landed on agree about what this is.
+ *   WHAT IT IS. The app's tile and name (the header chip's, from the page's
+ *   own store) and dapp.json's one-line description when it has one.
  *
- *   WHO IS IN IT. A few names, and the door to Members & approvals, which is
- *   where the roster, invites and approvers are managed. This card lists; it
- *   does not manage — that dialog already does, and a second copy of its
- *   controls is a copy that drifts.
+ *   WHO IT IS FOR. The audience, in the words people see (Community, Group,
+ *   Just you) as a chip, and the member count. "Community", not "public":
+ *   the label is the same one the Workshop tab heads its section with, so
+ *   the row you tapped and the page you landed on agree about what this is.
+ *
+ *   JOIN, JOINED, INVITE. An outsider sees Join, which asks in a popup under
+ *   itself (below). A member sees Joined, which is also the way out: a tap
+ *   asks before leaving, the same pill Discover draws. Invite opens Members
+ *   & approvals, where the roster, invites and approvers are managed, for
+ *   exactly whom the "+" menu offers it. This hero lists; it does not manage.
  *
  *   HOW A CHANGE GETS IN. The approval rule, read from the server rather
  *   than restated here (GET /api/apps/:slug/community, `approval`): the
  *   headline number an unopposed change needs. It is a headline and it says
- *   so — "to merge", not "exactly" — because opposition raises it and the
+ *   so ("to merge", not "exactly") because opposition raises it and the
  *   quiet-week path can merge below it (services/active-users.js).
  *
  *   WHERE THEY TALK. The channel: the app's general discussion, which the
- *   Messages list carried as one row per app until this card took it over
- *   (see features/messages/inbox.ts). Its address is unchanged —
- *   `#messages/app/<slug>` — so it opens where it always opened; what moved
+ *   Messages list carried as one row per app until this took it over (see
+ *   features/messages/inbox.ts). Its address is unchanged,
+ *   `#messages/app/<slug>`, so it opens where it always opened; what moved
  *   is where you find it. A viewer who may not talk here (a view-public,
  *   collab-private app) gets no row rather than a door that refuses them.
  *
- * And JOIN. Joining is what lets you take part here, so an outsider sees the
- * button at the top of the card and a member sees Leave at its foot. The
- * button asks before it joins, in a popup UNDER it — the way Vote asks under
- * Vote (the Workshop's vote popover, whose lines and answer button this
- * wears) — and while it is on screen it is also where every other refusal
- * for this app is asked: file a request or start a change from this page
- * without having joined, and the question opens here rather than in a
- * dialog over the page (lib/join-required.ts, registerJoinAnchor). The join
- * itself is Home.setMembership's, the same call Discover's pill makes, so
- * every path leaves the same flags behind.
+ * Joining is what lets you take part here. The button asks the question every
+ * join_required refusal asks, through lib/join-required.ts's offerJoin, and
+ * while it shows it registers itself as that app's anchor, so a refusal from
+ * anywhere on this page asks in the same popup.
  *
  * ── The island rules it keeps ──────────────────────────────────────────
  *
- * The card renders nothing until its read has answered: the first render is
- * null, the fetch runs in an effect, and a failed read leaves the page as it
- * was before this card existed rather than drawing an error where nothing
- * was asked for.
+ * The hero's community half waits for its read: the fetch runs in an
+ * effect, the first render is the identity alone (or nothing, without a
+ * name), and a failed read leaves just that, rather than drawing an error
+ * where nothing was asked for.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { HashIcon, LockIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
+import { CheckIcon, HashIcon, LockIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
+import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 import { agoStamp } from '../../../lib/timestamp';
 
@@ -64,6 +66,8 @@ type Audience = 'open' | 'invited' | 'solo';
 export type CommunityPayload = {
   slug: string;
   name?: string;
+  /** dapp.json's one-line description, when the repository declares one. */
+  description?: string | null;
   member_count: number;
   is_member: boolean;
   is_creator: boolean;
@@ -110,10 +114,28 @@ export function audienceLine(p: Pick<CommunityPayload, 'audience' | 'audience_la
 }
 
 function AudienceGlyph({ audience }: { audience: Audience }) {
-  const cls = 'w-4 h-4 shrink-0';
+  const cls = 'w-3.5 h-3.5 shrink-0';
   if (audience === 'solo') return <UserIcon className={cls} aria-hidden="true" />;
   if (audience === 'invited') return <LockIcon className={cls} aria-hidden="true" />;
   return <UserGroupIcon className={cls} aria-hidden="true" />;
+}
+
+/** The tile and the name, with whatever line goes under the name. */
+function HeroId({ app, children }: {
+  app: { slug: string; name: string; icon_url: string | null; icon_emoji: string | null };
+  children: ReactNode;
+}) {
+  return (
+    <div className="dev-ws-hero-id">
+      <div className="app-icon-tile dev-ws-hero-tile" data-icon={appIconKind(app)} aria-hidden="true">
+        <AppIconContent app={app} />
+      </div>
+      <div className="min-w-0">
+        <h2 className="dev-ws-hero-name">{app.name}</h2>
+        {children}
+      </div>
+    </div>
+  );
 }
 
 async function readCommunity(slug: string): Promise<CommunityPayload | null> {
@@ -126,7 +148,14 @@ async function readCommunity(slug: string): Promise<CommunityPayload | null> {
   }
 }
 
-export function CommunityCard({ slug }: { slug: string }) {
+export function CommunityCard({ slug, name, iconUrl, iconEmoji }: {
+  slug: string;
+  /** The app's identity as the page already knows it (improveStore), so the
+      hero draws the same tile and name as the header's chip. */
+  name?: string;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
+}) {
   const [data, setData] = useState<CommunityPayload | null>(null);
   const [busy, setBusy] = useState(false);
   // The open Join question, if one is: its answer goes back to whoever asked
@@ -194,7 +223,18 @@ export function CommunityCard({ slug }: { slug: string }) {
     };
   }, [asking]);
 
-  if (!data) return null;
+  // BEFORE THE READ: the identity alone, when the page already knows it, so
+  // the dashboard under the hero does not jump down when the read answers.
+  // Nothing when it does not (the page's own store has not loaded either).
+  if (!data) {
+    return name ? (
+      <section className="dev-ws-hero" data-ws-community-pending="">
+        <HeroId app={{ slug, name, icon_url: iconUrl || null, icon_emoji: iconEmoji || null }}>
+          <div className="dev-ws-hero-meta" aria-hidden="true">&nbsp;</div>
+        </HeroId>
+      </section>
+    ) : null;
+  }
 
   // The button asks the same question every other refusal asks, through the
   // same function, which finds this card as its anchor.
@@ -203,7 +243,7 @@ export function CommunityCard({ slug }: { slug: string }) {
     if (asking) { asking.answer(false); return; }
     setBusy(true);
     try {
-      await offerJoin({ code: 'join_required', app: { slug, name: data.name || slug } });
+      await offerJoin({ code: 'join_required', app: { slug, name: name || data.name || slug } });
     } finally {
       setBusy(false);
       void load();
@@ -227,30 +267,33 @@ export function CommunityCard({ slug }: { slug: string }) {
   // render, which is safe because this card has no server render — it is
   // null until its fetch has answered in the browser.
   const showsMembers = !!(window as any).AppView?._plusMenuShowsMembers?.();
-  // Three names, then a count: enough to say who is here, short enough that
-  // the rule under it is still on the first screen at phone width.
-  const names = data.members.slice(0, 3).map((m) => m.display_name || m.username);
-  const more = Math.max(0, (Number(data.member_count) || 0) - names.length);
   const channel = data.channel;
   const when = channel?.last_at ? agoStamp(channel.last_at) : null;
+  const displayName = name || data.name || slug;
+  const tileApp = { slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null };
 
   return (
     <section
       ref={cardRef}
-      className="dev-ws-strip"
+      className="dev-ws-hero"
       data-ws-community=""
       data-audience={data.audience}
-      // Lifted while the popup is open: the popup hangs below this card, and
-      // the card after it is its own stacking context (backdrop-filter) that
-      // would otherwise paint over it.
+      // Lifted while the popup is open: the popup hangs below the hero, over
+      // the dashboard card after it.
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
-      <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Who it’s for</span>
-      </div>
-      <div className="flex items-center gap-2 text-sm text-zinc-900 dark:text-zinc-100" data-ws-community-audience="">
-        <AudienceGlyph audience={data.audience} />
-        <span className="font-medium">{audienceLine(data)}</span>
+      <HeroId app={tileApp}>
+        <div className="dev-ws-hero-meta" data-ws-community-audience="">
+          <span className="dev-ws-hero-chip">
+            <AudienceGlyph audience={data.audience} />
+            {data.audience_label}
+          </span>
+          {data.audience !== 'solo' ? (
+            <span>{plural(Number(data.member_count) || 0, 'member', 'members')}</span>
+          ) : null}
+        </div>
+      </HeroId>
+      <div className="dev-ws-hero-actions">
         {!data.is_member ? (
           <span className="dev-ws-join-anchor">
             <Button
@@ -272,10 +315,10 @@ export function CommunityCard({ slug }: { slug: string }) {
                 ref={popRef}
                 className="dev-ws-join-pop"
                 role="dialog"
-                aria-label={`Join ${data.name || slug}?`}
+                aria-label={`Join ${displayName}?`}
                 data-ws-join-pop=""
               >
-                <p className="dev-ws-ask-q">Join {data.name || slug}?</p>
+                <p className="dev-ws-ask-q">Join {displayName}?</p>
                 <p className="dev-ws-vote-sub">Members start changes, file requests, vote and chat here.</p>
                 <div className="dev-ws-answer-row">
                   <button
@@ -294,38 +337,55 @@ export function CommunityCard({ slug }: { slug: string }) {
               </div>
             ) : null}
           </span>
+        ) : data.is_creator ? null : (
+          // JOINED IS THE LEAVE CONTROL. A state you can see, with a check,
+          // and a tap asks before it takes you out (Home.setMembership), the
+          // same pill Discover draws. The creator gets none: they cannot
+          // leave what they started.
+          <Button
+            type="button"
+            variant="pillNeutral"
+            size="sm"
+            ink="neutral"
+            className="inline-flex items-center gap-1"
+            data-ws-community-leave=""
+            title={`Joined. Tap to leave ${displayName}`}
+            disabled={busy}
+            onClick={() => { void leave(); }}
+          >
+            <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
+            Joined
+          </Button>
+        )}
+        {showsMembers ? (
+          <Button
+            type="button"
+            variant="pillNeutral"
+            size="sm"
+            ink="neutral"
+            data-ws-community-manage=""
+            title="Members & approvals"
+            onClick={() => { (window as any).AppView?.openMembersModal?.(); }}
+          >
+            Invite
+          </Button>
         ) : null}
       </div>
-      {names.length ? (
-        <p className="m-0 text-sm text-zinc-600 dark:text-zinc-400" data-ws-community-members="">
-          {names.join(', ')}{more > 0 ? ` and ${plural(more, 'other', 'others')}` : ''}
-          {showsMembers ? (
-            <>
-              {' · '}
-              <button
-                type="button"
-                className="font-medium text-violet-700 dark:text-violet-300 hover:underline"
-                data-ws-community-manage=""
-                onClick={() => { (window as any).AppView?.openMembersModal?.(); }}
-              >
-                Members &amp; approvals
-              </button>
-            </>
-          ) : null}
-        </p>
+      {data.description ? (
+        <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
       ) : null}
-      <p className="m-0 text-sm text-zinc-600 dark:text-zinc-400" data-ws-community-rule="">
+      <p className="dev-ws-hero-line" data-ws-community-rule="">
         {approvalLine(data.approval)}
       </p>
       {channel ? (
         <a
           href={`#messages/app/${encodeURIComponent(slug)}`}
-          className="flex items-center gap-2 rounded-xl px-2 py-2 -mx-2 hover:bg-zinc-500/10 text-sm text-zinc-900 dark:text-zinc-100 no-underline"
+          className="dev-ws-hero-channel"
           data-ws-community-channel=""
         >
           <HashIcon className="w-4 h-4 shrink-0 text-zinc-500" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">
-            <span className="font-medium">Channel</span>
+            <span className="font-semibold">Channel</span>
             <span className="text-zinc-500 dark:text-zinc-400">
               {' · '}
               {channel.last_message
@@ -340,19 +400,6 @@ export function CommunityCard({ slug }: { slug: string }) {
             </span>
           ) : null}
         </a>
-      ) : null}
-      {data.is_member && !data.is_creator ? (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            className="text-xs text-zinc-500 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
-            data-ws-community-leave=""
-            disabled={busy}
-            onClick={() => { void leave(); }}
-          >
-            Leave
-          </button>
-        </div>
       ) : null}
     </section>
   );

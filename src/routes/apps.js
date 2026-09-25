@@ -3215,7 +3215,9 @@ function appRoutes(config) {
     try {
       const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
       const { rows: appRows } = await pool.query(
-        `SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
+        `SELECT ${appAccess.ACCESS_COLUMNS}, name,
+                LEFT(manifest_snapshot->>'description', 280) AS description
+           FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
         [req.params.slug, showSelfHosted]
       );
       const app = appRows[0];
@@ -3238,6 +3240,9 @@ function appRoutes(config) {
       res.json({
         slug: app.slug,
         name: app.name,
+        // dapp.json's one line about what the app is, for the page's hero.
+        description: typeof app.description === 'string' && app.description.trim()
+          ? app.description.replace(/\s+/g, ' ').trim() : null,
         ...membership,
         members,
         channel,

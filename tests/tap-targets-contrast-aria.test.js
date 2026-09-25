@@ -125,7 +125,7 @@ test('Q20: the bell badge, the Discover meta line and the list subtitles use the
     'the meta line takes the blurb\'s ink on the pastel tints');
 
   const list = read('frontend/@/components/ui/grouped-list.tsx');
-  assert.match(list, /cn\('truncate text-\[0\.9375rem\] text-zinc-500 dark:text-zinc-400', subtitleClassName\)/,
+  assert.match(list, /cn\('mt-0\.5 truncate text-\[0\.8125rem\] leading-\[1\.125rem\] text-zinc-500 dark:text-zinc-400', subtitleClassName\)/,
     'a list row\'s subtitle is zinc-400 in dark, not zinc-500 (3.54:1 on the page)');
 });
 

@@ -443,9 +443,9 @@ test('#2798: no resting disc on the toggle or the bell; a blue hover on them and
 
   const css = read('public/css/app.css');
   assert.match(css,
-    /@media \(hover: hover\) \{\s*\.platform-tab:not\(\[aria-current="page"\]\):hover,\s*\.platform-recent:hover \{\s*background: color-mix\(in srgb, var\(--brand-tint\) 55%, transparent\);/,
+    /@media \(hover: hover\) \{\s*\.platform-tab:not\(\[aria-current="page"\]\):hover,\s*\.platform-recent:hover \{\s*background: color-mix\(in srgb, var\(--lit-tint\) 55%, transparent\);/,
     'the hovered tab is a lighter blue than the current one');
-  assert.match(css, /\.platform-tab\[aria-current="page"\] \{\s*background: var\(--brand-tint\);/);
+  assert.match(css, /\.platform-tab\[aria-current="page"\] \{\s*background: var\(--lit-tint\);/);
 });
 
 // ── #3074: the running apps, in an Active section above Recents ───────
@@ -552,6 +552,6 @@ test('#3074: Active is drawn in the desktop block only, the app you are in lit l
   const at = css.indexOf('.platform-active {');
   assert.ok(desktop > 0 && at > desktop, 'inside the desktop block; the phone bar never draws #platform-recents');
   assert.match(css.slice(at), /^\.platform-active \{[^}]*display: flex;[^}]*flex: none;/);
-  assert.match(css, /\.platform-recent\[aria-current="true"\] \{\s*background: var\(--brand-tint\);\s*color: var\(--brand-ink\);\s*\}/);
+  assert.match(css, /\.platform-recent\[aria-current="true"\] \{\s*background: var\(--lit-tint\);\s*color: var\(--lit-ink\);\s*\}/);
   assert.match(css, /\.platform-recents-head:last-child \{\s*display: none;\s*\}/, 'no Recents heading over nothing');
 });

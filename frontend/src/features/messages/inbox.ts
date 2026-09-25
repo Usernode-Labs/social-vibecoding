@@ -122,6 +122,22 @@ export const INBOX_FILTERS: ReadonlyArray<readonly [InboxFilter, string]> = [
   ['agents', 'Agents'],
 ];
 
+/**
+ * The shown entries as consecutive runs of one section, each with whether it
+ * is headed. Exported and pure so the grouping is tested without a render.
+ * Under a filter nothing is headed and the runs still split by section, so a
+ * row never lands in another section's card.
+ */
+export function sectionRuns<T extends { section: InboxSection }>(entries: T[], headed: boolean) {
+  const runs: Array<{ section: InboxSection; head: boolean; entries: T[] }> = [];
+  for (const entry of entries) {
+    const last = runs[runs.length - 1];
+    if (last && last.section === entry.section) last.entries.push(entry);
+    else runs.push({ section: entry.section, head: headed, entries: [entry] });
+  }
+  return runs;
+}
+
 /** Which kinds a filter admits. `all` admits every one. */
 export function admits(filter: InboxFilter, kind: InboxKind): boolean {
   if (filter === 'all') return true;

@@ -235,6 +235,15 @@
   --brand-ink: #37477b;
   --brand-tint: #e4e9f7;
   --brand-line: #c9d2f2;
+  /* WHERE YOU ARE: the lit tab on the phone's bar and the lit row on the
+     rail, in the product's one accent (AGENTS.md, "Type and colour"). It was
+     the periwinkle above, which beside the action blue made two blues that
+     meant nearly the same thing; the periwinkle stays the header's own ink
+     (the chip, the bell, the back disc) and "you are here" is the accent,
+     one step darker as ink so the 11px label clears 4.5:1 on the tint. */
+  --lit-ink: #0062cc;
+  --lit-tint: #eaf4ff;
+  --lit-line: rgba(10, 110, 224, 0.25);
   /* The running app's sheet edge (#1571) — see "THE APP SHEET" below for
      which element wears it and why. Straight off the design's render
      (node 736:4306): a black-at-10% hairline, and a two-layer shadow in
@@ -563,7 +572,8 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 
 /* A conversation row, drawn straight on the strip: the square swatch
    avatar, then two lines — the name with the time on its trailing edge, the
-   preview with the unread count on its. 17/15px, the grouped list's scale. */
+   preview with the unread count on its. 15/13px, the grouped list's scale
+   (AGENTS.md, "Type and colour"): 17px bold made every name a heading. */
 .messages-conversation-row {
   position: relative;
   display: flex;
@@ -616,15 +626,15 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.messages-row-name { color: var(--text-primary); font-size: 17px; font-weight: 700; }
-.messages-row-preview { margin-top: 1px; color: var(--text-muted); font-size: 15px; }
+.messages-row-name { color: var(--text-primary); font-size: 15px; font-weight: 650; line-height: 20px; }
+.messages-row-preview { margin-top: 2px; color: var(--text-muted); font-size: 13px; line-height: 18px; }
 /* An invitation's preview is the ACTION the row offers, so it takes the
    accent — the language's "actionable / yours". */
 .messages-row-preview-invited { color: var(--accent); font-weight: 500; }
 .messages-row-time {
   flex: 0 0 auto;
   color: var(--text-muted);
-  font-size: 15px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 .messages-row-time-unread { color: var(--accent); font-weight: 600; }
@@ -2663,6 +2673,9 @@ form.agent-session-composer:focus-within {
   --brand-ink: #c7d0f5;
   --brand-tint: #262b45;
   --brand-line: #3a4270;
+  --lit-ink: #8cc4ff;
+  --lit-tint: rgba(90, 169, 255, 0.16);
+  --lit-line: rgba(90, 169, 255, 0.35);
   /* Dark inverts both halves rather than dimming them: the hairline goes
      to white-at-low-alpha (a black one is invisible on a near-black
      ground) and the shadow goes DEEPER, not softer, because a shadow has
@@ -15709,7 +15722,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   width: 40px; height: 40px; padding: 0;
   border: 0; border-radius: 999px;
   background: transparent;
-  color: var(--brand-ink);
+  color: var(--lit-ink);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
@@ -15717,17 +15730,25 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    until the next tap elsewhere, which would leave the "+" tinted after the
    action sheet closes. */
 @media (hover: hover) {
-  .dev-ws-plus-btn:hover { background: var(--brand-tint); }
+  .dev-ws-plus-btn:hover { background: var(--lit-tint); }
 }
 .dev-ws-plus-btn[aria-expanded="true"] {
-  background: var(--brand-tint);
-  box-shadow: inset 0 0 0 1px var(--brand-line);
+  background: var(--lit-tint);
+  box-shadow: inset 0 0 0 1px var(--lit-line);
 }
 .dev-ws-plus-glyph { width: 20px; height: 20px; stroke-width: 2.2; flex: none; }
 /* Size lives here, not on the component: icons.tsx has no size variant by
    design, so every call site passes its own class. `flex: none` so a label
    that is trying to fit squeezes itself, not the glyph. */
 .dev-ws-tab-glyph { width: 16px; height: 16px; flex: none; }
+/* UNDER 400px THE LABELS WIN THE WIDTH. The three labels and their glyphs
+   need 316px beside the "+", which a 390px phone has and a 360-375px one
+   does not: there "Current status" came out "Current sta…" with its glyph
+   still whole, which spends the width on the half a reader cannot read.
+   Without the glyphs the labels fit whole down to 320px. */
+@media (max-width: 399px) {
+  .dev-ws-tab-glyph { display: none; }
+}
 .dev-ws-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* #2915: THE DOT ON ALL ITEMS, while its search or filters are on. They
    narrow that tab alone, so from the other two this is the only sign a search
@@ -15751,11 +15772,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   margin-right: -10px;
   transform: translate(12px, -8px);
 }
-/* THE HEADER'S PERIWINKLE, not black. `--brand-ink` on `--brand-tint` with a
-   hairline of `--brand-line` is how the bar above draws its own controls —
-   the back glyph, the bell, the app chip — and these are the same kind of
-   thing: where you are, and where you could go. A black pill was the only
-   flat-black object on the screen and read as a different product.
+/* THE ACCENT, not black and no longer the header's periwinkle: `--lit-ink`
+   on `--lit-tint` with a hairline of `--lit-line`, the phone's tab bar's own
+   lit state, because this is the same kind of thing: where you are, among
+   the places you could be. A black pill was the only flat-black object on the
+   screen and read as a different product; the periwinkle beside the action
+   blue was a second blue for nearly the same meaning.
    The tokens carry their own dark values, so there is no dark variant. */
 /* THE INK STAYS ON THE TAB; THE FILL MOVED TO THE MARKER. A background drawn
    by the selected tab itself cannot travel — it can only appear on one and
@@ -15763,7 +15785,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    is the whole idea, so the tab is left with the colour change, which has
    nothing to animate between. */
 .dev-ws-tab[aria-selected="true"] {
-  color: var(--brand-ink);
+  color: var(--lit-ink);
 }
 /* Above the marker, which is painted first and sits at the floor of the
    stacking context. `position: relative` is what puts them on that ladder at
@@ -15794,8 +15816,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   top: 0; left: 0;
   z-index: 0;
   border-radius: 999px;
-  background: var(--brand-tint);
-  box-shadow: inset 0 0 0 1px var(--brand-line);
+  background: var(--lit-tint);
+  box-shadow: inset 0 0 0 1px var(--lit-line);
   pointer-events: none;
   /* Hidden until measured — see the note in workshop.tsx. */
   opacity: 0;
@@ -16268,6 +16290,57 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   .dev-ws-join-pop { animation: dev-ws-join-pop-in .18s ease-out both; transform-origin: calc(100% - 32px) 0; }
 }
 @keyframes dev-ws-join-pop-in { from { opacity: 0; transform: translateY(-4px) scale(.96); } to { opacity: 1; transform: none; } }
+
+/* ── The project page's hero (community-card.tsx) ──────────────────────
+   On the ground, not in a card: it is the page's title, and the cards under
+   it are what the page holds. A 56px tile and the name at 22px, the audience
+   as a chip, then the actions, then a paragraph of what it is. The type is
+   the scale AGENTS.md "Type and colour" sets: one heading size per page, the
+   rows' 15/13 below it. */
+.dev-ws-hero { display: flex; flex-direction: column; gap: 12px; padding: 6px 4px 4px; }
+.dev-ws-hero-id { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.dev-ws-hero-tile {
+  width: 56px; height: 56px; flex: none; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 16px; font-size: 28px; font-weight: 700;
+}
+.dev-ws-hero-name {
+  margin: 0; font-size: 22px; font-weight: 700; line-height: 28px;
+  letter-spacing: -.01em; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dev-ws-hero-meta {
+  display: flex; align-items: center; gap: 8px; margin-top: 4px;
+  font-size: 13px; line-height: 22px; color: var(--text-muted);
+}
+.dev-ws-hero-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 8px; border-radius: 999px;
+  background: var(--bg-tertiary); color: var(--text-primary);
+  font-size: 12px; font-weight: 600;
+}
+.dev-ws-hero-actions { display: flex; align-items: center; gap: 8px; }
+.dev-ws-hero-actions:empty { display: none; }
+.dev-ws-hero-desc { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
+.dev-ws-hero-line { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
+.dev-ws-hero-channel {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-radius: 14px;
+  background: var(--dc-sheet-solid); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  font-size: 13px; color: var(--text-primary); text-decoration: none;
+}
+@media (hover: hover) {
+  .dev-ws-hero-channel:hover { background: var(--bg-secondary); }
+}
+/* The Join popup hangs from the LEFT of its button here: the button leads
+   the actions row, and a popup opening leftward from it would leave the
+   screen. The arrow moves with it. */
+.dev-ws-hero .dev-ws-join-anchor { margin-left: 0; }
+.dev-ws-hero .dev-ws-join-pop { left: -6px; right: auto; }
+.dev-ws-hero .dev-ws-join-pop::before { left: 26px; right: auto; }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-hero .dev-ws-join-pop { transform-origin: 32px 0; }
+}
 
 /* ── The ask pane, inside its sheet ────────────────────────────────── */
 .dev-ws-ask { gap: 8px; }
@@ -16854,7 +16927,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      by anyone who cannot separate the two, and it put a status colour on
      text where the rest of the product keeps text in text ink. The mark
      moved to the label; the number is a number. */
-  font-size: 26px; font-weight: 600; line-height: 1.1;
+  font-size: 24px; font-weight: 650; line-height: 1.1;
   letter-spacing: -.02em; color: var(--text-primary);
 }
 /* A GRID, not an inline run. The label wraps at phone widths, and under
@@ -16900,9 +16973,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    plain sheet with a drop shadow, against the bar's raised track and its
    periwinkle. Two tab strips two rows apart on one screen, in two
    vocabularies. So the track is `--dc-sheet-raise` with no ring, and the
-   selected half is `--brand-tint` / `--brand-ink` / `--brand-line` — the
+   selected half is `--lit-tint` / `--lit-ink` / `--lit-line` — the
    bar's own three tokens, for the reason its note gives: this is where you
-   are, drawn the way the header above draws where you are.
+   are, drawn the way both tab bars draw where you are.
 
    TWO THINGS STAY DIFFERENT, both on purpose. The WIDTH, which is the real
    distinction from the sort chips a row below. And the selected state is
@@ -16930,8 +17003,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* The tokens carry their own dark values, so there is no dark variant —
    the same note `.dev-ws-tab[aria-selected="true"]` carries. */
 .dev-ws-group-tab[aria-selected="true"] {
-  background: var(--brand-tint); color: var(--brand-ink);
-  box-shadow: inset 0 0 0 1px var(--brand-line);
+  background: var(--lit-tint); color: var(--lit-ink);
+  box-shadow: inset 0 0 0 1px var(--lit-line);
 }
 
 /* ── The grouping strip as an EAR on the pane's top-right corner ───────
@@ -17931,7 +18004,7 @@ html.un-ios {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
   height: 56px;
   padding: 0 2px;
@@ -17946,12 +18019,13 @@ html.un-ios {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* THE HEADER'S PERIWINKLE, not black — the same choice and the same tokens
-   as `.dev-ws-tab[aria-selected="true"]`, because these are the same kind of
-   thing: where you are, among the places you could be. `aria-current` is the
-   only marker the component renders, so it is the only one this reads. */
+/* THE ACCENT, the `--lit-*` tokens: where you are, among the places you
+   could be. It was the header's periwinkle; the accent is the product's one
+   blue, and the lit tab is the one place on the bar that says "here".
+   `aria-current` is the only marker the component renders, so it is the only
+   one this reads. */
 .platform-tab[aria-current="page"] {
-  color: var(--brand-ink);
+  color: var(--lit-ink);
 }
 
 /* THE LIT TAB'S MARKER (#2824) — the Workshop's sliding pill, on the phone's
@@ -17961,9 +18035,12 @@ html.un-ios {
    between tabs, so this is that answer with the same tokens and the same
    curve (`.dev-ws-tab-marker`).
 
-   Its geometry is measured off the lit tab (useTabMarker in
-   frontend/src/features/nav/tab-bar.tsx), so this rule carries none: the
-   transform is the only thing that moves. `.platform-tabs` is `position:
+   Its geometry is measured off the lit tab's GLYPH AND LABEL (useTabMarker
+   and markerBoxFor in frontend/src/features/nav/tab-bar.tsx), so this rule
+   carries none: the transform is the only thing that moves. It hugs them,
+   5px over the glyph, 8px either side of the wider of the two and 3px under
+   the label, and the tab under it stays the full cell, so the pill is sized
+   by what it holds and the tap target by the bar. `.platform-tabs` is `position:
    fixed`, which makes it the containing block the offsets are measured in.
 
    Each tab is raised one step so the marker, rendered before them, paints
@@ -17978,8 +18055,8 @@ html.un-ios {
   left: 0;
   z-index: 0;
   border-radius: 16px;
-  background: var(--brand-tint);
-  box-shadow: inset 0 0 0 1px var(--brand-line);
+  background: var(--lit-tint);
+  box-shadow: inset 0 0 0 1px var(--lit-line);
   pointer-events: none;
   /* Hidden until measured, and while nothing is lit. */
   opacity: 0;
@@ -18023,9 +18100,12 @@ html.un-ios {
   display: none;
 }
 .platform-tab-glyph {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   flex: none;
+  /* 1.8, not the icon set's 2: at 22px a 2px stroke reads heavier than the
+     11px label under it, and the glyph is the half of the tab that scans. */
+  stroke-width: 1.8;
 }
 .platform-tab-label {
   max-width: 100%;
@@ -18565,8 +18645,8 @@ html.un-kb #platform-parked {
     transition: background-color 120ms ease, color 120ms ease;
   }
   .platform-rail-settings[aria-current="page"] {
-    background: var(--brand-tint);
-    color: var(--brand-ink);
+    background: var(--lit-tint);
+    color: var(--lit-ink);
   }
   .platform-rail-settings-glyph {
     width: 22px;
@@ -18575,8 +18655,8 @@ html.un-kb #platform-parked {
   }
   @media (hover: hover) {
     .platform-rail-settings:not([aria-current="page"]):hover {
-      background: color-mix(in srgb, var(--brand-tint) 55%, transparent);
-      color: var(--brand-ink);
+      background: color-mix(in srgb, var(--lit-tint) 55%, transparent);
+      color: var(--lit-ink);
     }
   }
   .platform-parked {
@@ -18601,7 +18681,7 @@ html.un-kb #platform-parked {
     font-size: 15px;
   }
   .platform-tab[aria-current="page"] {
-    background: var(--brand-tint);
+    background: var(--lit-tint);
   }
   /* The rail keeps its own row fill; the phone's sliding marker is not
      drawn here (#2824). */
@@ -18667,8 +18747,8 @@ html.un-kb #platform-parked {
   @media (hover: hover) {
     .platform-tab:not([aria-current="page"]):hover,
     .platform-recent:hover {
-      background: color-mix(in srgb, var(--brand-tint) 55%, transparent);
-      color: var(--brand-ink);
+      background: color-mix(in srgb, var(--lit-tint) 55%, transparent);
+      color: var(--lit-ink);
     }
   }
 
@@ -18780,8 +18860,8 @@ html.un-kb #platform-parked {
   /* THE APP YOU ARE IN is lit as the tab you are on is: the same fill, so
      the rail says "you are here" once, in one voice. */
   .platform-recent[aria-current="true"] {
-    background: var(--brand-tint);
-    color: var(--brand-ink);
+    background: var(--lit-tint);
+    color: var(--lit-ink);
   }
   /* Only apps are running and none has been left yet: no RECENTS heading
      over nothing. The heading is the list's last child only then. */
@@ -19079,12 +19159,25 @@ html.un-kb #platform-parked {
    they divide the list without competing with its rows. */
 .messages-section-head {
   margin: 0;
-  padding: 12px 16px 4px;
+  padding: 16px 16px 8px;
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: .04em;
+  letter-spacing: .06em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+/* A SECTION'S ROWS ARE A CARD: the grouped list's shape (@/components/ui/
+   grouped-list.tsx), spelled here because these rows are app.css's. The same
+   plane colour, the same 20px radius and the same inset hairline in the
+   sheets' edge colour, so Messages, Workshop and Discover read as one
+   material. `overflow: hidden` clips a row's hover and selected fill to the
+   card's corners. */
+.messages-section-card {
+  margin: 0 16px 8px;
+  overflow: hidden;
+  border-radius: 20px;
+  background: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
 }
 /* A channel's tile is the `#` it is named with. */
 .messages-channel-tile {

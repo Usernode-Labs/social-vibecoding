@@ -174,7 +174,7 @@
       "source": "src/routes/apps.js",
       "kind": "structural-template",
       "fingerprint": "606267a1970143fe0d00",
-      "count": 2,
+      "count": 1,
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
     },
     {
@@ -183,6 +183,13 @@
       "fingerprint": "7b1ff9cff45031446175",
       "count": 1,
       "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
+      "fingerprint": "c803ef2d58849531c800",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boo"
     },
     {
       "source": "src/routes/chat.js",

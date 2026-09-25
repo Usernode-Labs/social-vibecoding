@@ -38,24 +38,29 @@ test('the audience line uses the words on screen, and "Just you" counts nobody',
   assert.equal(audienceLine({ audience: 'solo', audience_label: 'Just you', member_count: 1 }), 'Just you');
 });
 
-test('the card renders nothing until its read has answered', () => {
-  // No server render of it, so no hydration to mismatch: the first render is
-  // null and the fetch runs in an effect.
+test('the hero draws its identity before the read, and the rest only after it', () => {
+  // No server render of it, so no hydration to mismatch. Before the read it
+  // is the tile and name the page already knows (so the dashboard under it
+  // does not jump), or nothing without a name; the fetch runs in an effect.
   const { CommunityCard } = loadTsx(CARD);
   assert.equal(renderToHtml(createElement(CommunityCard, { slug: 'notes' })), '');
+  const pending = renderToHtml(createElement(CommunityCard, { slug: 'notes', name: 'Notes', iconEmoji: '📝' }));
+  assert.match(pending, /class="dev-ws-hero" data-ws-community-pending=""/);
+  assert.match(pending, /<h2 class="dev-ws-hero-name">Notes<\/h2>/);
+  assert.doesNotMatch(pending, /data-ws-community=""|Join|data-ws-community-rule/,
+    'nothing that depends on membership is drawn before it is known');
   const src = read(CARD);
   assert.match(src, /useEffect\(\(\) => \{\s*setData\(null\);\s*void load\(\);/);
-  assert.match(src, /if \(!data\) return null;/);
 });
 
 test('the channel opens at its old address; Join asks under its button and joins through offerJoin', () => {
   const src = read(CARD);
   assert.match(src, /href=\{`#messages\/app\/\$\{encodeURIComponent\(slug\)\}`\}/,
     'the channel keeps its address: what moved is where you find it');
-  assert.match(src, /await offerJoin\(\{ code: 'join_required', app: \{ slug, name: data\.name \|\| slug \} \}\)/,
+  assert.match(src, /await offerJoin\(\{ code: 'join_required', app: \{ slug, name: name \|\| data\.name \|\| slug \} \}\)/,
     'the button asks the question every refusal asks, through the same function');
   assert.match(src, /registerJoinAnchor\(slug, \{/,
-    'and while it shows, the card is where that question is asked');
+    'and while it shows, the hero is where that question is asked');
   assert.match(src, /getClientRects\(\)\.length > 0/,
     'but only while it is actually on screen');
   assert.match(src, /className="dev-ws-join-pop"[\s\S]*className="dev-ws-ask-q"[\s\S]*className="dev-ws-vote-sub"[\s\S]*dev-ws-answer-btn dev-ws-answer-join[\s\S]*className="dev-ws-vote-later"/,
@@ -63,17 +68,23 @@ test('the channel opens at its old address; Join asks under its button and joins
   const css = read('public/css/app.css');
   assert.match(css, /\.dev-ws-join-pop \{\s*position: absolute; top: calc\(100% \+ 12px\)/,
     'it hangs from the button');
-  assert.match(src, /home\.setMembership\(slug, false\)/, 'Leave is the same call Discover makes');
+  assert.match(css, /\.dev-ws-hero \.dev-ws-join-pop \{ left: -6px; right: auto; \}/,
+    'from its left edge in the hero, where Join leads the row');
+  assert.match(src, /home\.setMembership\(slug, false\)/, 'Joined leaves through the same call Discover makes');
+  assert.match(src, /data-ws-community-leave=""[\s\S]*Joined/, 'Joined is the leave control, as on Discover');
+  assert.match(src, /\) : data\.is_creator \? null : \(/, 'the creator is never offered Leave');
   assert.match(src, /_plusMenuShowsMembers/,
-    'Members & approvals is offered to exactly whom the "+" menu offers it');
-  assert.match(src, /data\.is_member && !data\.is_creator/, 'the creator is never offered Leave');
+    'Invite (Members & approvals) is offered to exactly whom the "+" menu offers it');
 });
 
-test('the card sits on the status tab between where the app is and your own work', () => {
+test('the hero leads the status tab, above where the app is', () => {
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const tab = lander.indexOf("{tab === 'status' ? (");
+  const hero = lander.indexOf('<CommunityCard\n          slug={slug}');
   const dash = lander.indexOf('data-ws-dashboard=""');
-  const card = lander.indexOf('<CommunityCard slug={slug} />');
   const mine = lander.indexOf('data-ws-mine=""');
-  assert.ok(dash > 0 && card > dash && mine > card,
-    'after the dashboard pane, before "What you are working on"');
+  assert.ok(tab > 0 && hero > tab && dash > hero && mine > dash,
+    'first on the status tab, then the dashboard, then your own work');
+  assert.match(lander, /<CommunityCard\s+slug=\{slug\}\s+name=\{app\.name \|\| undefined\}\s+iconUrl=\{app\.iconUrl\}\s+iconEmoji=\{app\.iconEmoji\}/,
+    'with the identity the header chip draws');
 });

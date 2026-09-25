@@ -365,6 +365,47 @@ registry: a section may not hand-write a class string a recipe of five or more
 utilities already covers — interpolate the key, or the copy stops tracking the
 recipe the first time it changes.
 
+### Type and colour on the platform shell — one scale, one accent
+
+The shell's screens read as one product because a few choices are made once.
+Make new UI from them rather than choosing again; the primitives already
+carry most of them.
+
+- **Rows are 15 over 13.** `ListRow`'s title is 15px at weight 650, its
+  subtitle 13px muted. Messages' `.messages-row-name` / `-preview` use the
+  same pair. A 17px bold row title makes every row a heading.
+- **A label over a card is small caps; a title inside a card is a
+  sentence.** `SectionHeader` is 12px bold uppercase, tracked `0.06em`, muted
+  (Messages' `.messages-section-head` matches it). It is the only uppercase
+  text in the shell. A heading inside a card (`.dev-ws-head-title`) stays
+  sentence case. A page has at most one large heading, such as the project
+  hero's name.
+- **Cards are the plane colour, 20px, one hairline.** `GroupedList` draws
+  them: `--dc-sheet-solid` (tone `plane`) or white, `rounded-[20px]`, and an
+  inset `--app-sheet-line` hairline. A list drawn outside the primitive (for
+  example `.messages-section-card`) spells the same three values.
+- **One accent, with three jobs kept apart.**
+  - `violet-*` (the blue: `tailwind.config.js` overrides it) and `--accent`
+    mark an action, or a number that asks for the viewer ("3 to vote").
+  - `--lit-ink` / `--lit-tint` / `--lit-line` mark where you are: the lit
+    tab on the phone bar, the rail row, and the Workshop strip's marker.
+  - `--brand-*` periwinkle is the header's own ink (the app chip, the bell,
+    the back disc) and nothing else.
+
+  A state that is already done gets no fill. "Joined" is grey with a check;
+  a filled green pill made the settled thing the loudest thing on screen.
+- **Say it in words, and let zero say nothing.** A count on a row is a
+  phrase ("2 in progress · 3 to vote"), not a glyph and a bare number that
+  need a legend. A zero is hidden (`hidden`, kept in the DOM when a declared
+  check selects on it). Show a status dot only when something is wrong,
+  never a green dot on every running app.
+- **At most one pill on a list row.** Use `AppPills limit={1}`. Pass the
+  heading's own words to a row's label so the row does not repeat them.
+
+Tests pin the literals where they live (`tests/section-heading-primitives`,
+`tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is
+a change to the rule. Make it here as well.
+
 ### The console is React — add a section the same way
 
 **Every admin section renders from React.** `admin-console.js` is a chassis

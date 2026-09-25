@@ -3082,9 +3082,9 @@ test('the grouping strip is the lander\'s own tab control, not a second vocabula
   const barOn = /\.dev-ws-tab\[aria-selected="true"\] \{([^}]*)\}/.exec(CSS);
   const marker = /\.dev-ws-tab-marker \{([^}]*)\}/.exec(CSS);
   assert.ok(on && barOn && marker, 'all three rules exist');
-  assert.ok(on[1].includes('color: var(--brand-ink)'));
-  assert.ok(barOn[1].includes('color: var(--brand-ink)'), 'which is the bar\'s own ink');
-  for (const decl of ['background: var(--brand-tint)', 'box-shadow: inset 0 0 0 1px var(--brand-line)']) {
+  assert.ok(on[1].includes('color: var(--lit-ink)'));
+  assert.ok(barOn[1].includes('color: var(--lit-ink)'), 'which is the bar\'s own ink');
+  for (const decl of ['background: var(--lit-tint)', 'box-shadow: inset 0 0 0 1px var(--lit-line)']) {
     assert.ok(on[1].includes(decl), `the grouping tab carries \`${decl}\``);
     assert.ok(marker[1].includes(decl), 'and so does the marker, which is where it comes from');
   }
@@ -3098,7 +3098,7 @@ test('the grouping strip is the lander\'s own tab control, not a second vocabula
     'and the rail itself is not shrunk to its content');
   // A token that does not resolve is a silently wrong colour, not an error —
   // and inside a box-shadow list one bad var() voids the whole declaration.
-  for (const token of ['--dc-sheet-raise', '--brand-tint', '--brand-ink', '--brand-line',
+  for (const token of ['--dc-sheet-raise', '--lit-tint', '--lit-ink', '--lit-line',
     '--text-muted', '--text-primary']) {
     assert.ok(CSS.includes(`${token}:`), `${token} is defined`);
   }
@@ -3550,12 +3550,12 @@ test('the "+" is drawn as part of the strip, not as a floating action', () => {
   assert.match(btn[1], /width: 40px; height: 40px;/, 'the tab height');
   assert.match(btn[1], /border: 0; border-radius: 999px;/, "the tab's radius and no border");
   assert.match(btn[1], /background: transparent;/, 'no ground of its own');
-  assert.match(btn[1], /color: var\(--brand-ink\);/, "the selected tab's ink");
+  assert.match(btn[1], /color: var\(--lit-ink\);/, "the selected tab's ink");
   // Open, it wears the marker's tint and ring: the strip's own "this one".
   assert.match(decls,
-    /\.dev-ws-plus-btn\[aria-expanded="true"\] \{\s*background: var\(--brand-tint\);\s*box-shadow: inset 0 0 0 1px var\(--brand-line\);\s*\}/);
+    /\.dev-ws-plus-btn\[aria-expanded="true"\] \{\s*background: var\(--lit-tint\);\s*box-shadow: inset 0 0 0 1px var\(--lit-line\);\s*\}/);
   // Hover only where there is hover, or a tapped "+" stays tinted on a phone.
-  assert.match(decls, /@media \(hover: hover\) \{\s*\.dev-ws-plus-btn:hover \{ background: var\(--brand-tint\); \}/);
+  assert.match(decls, /@media \(hover: hover\) \{\s*\.dev-ws-plus-btn:hover \{ background: var\(--lit-tint\); \}/);
   // The violet filled square is gone from the component.
   assert.ok(!ACTIONS_ROW.includes('bg-violet-600'), 'no primary fill on the "+"');
   assert.match(ACTIONS_ROW, /className="dev-ws-plus-btn un-touch-target"/, 'still a 44px hit box');
@@ -4806,9 +4806,9 @@ test('a wide window reads the tabs at the top, as a segmented control', () => {
   // instead of snapping: a background drawn by the tab itself can only appear
   // on one and vanish from another. The tab keeps the ink, which has nothing
   // to animate between.
-  assert.match(CSS, /\.dev-ws-tab\[aria-selected="true"\] \{\s*color: var\(--brand-ink\);\s*\}/,
+  assert.match(CSS, /\.dev-ws-tab\[aria-selected="true"\] \{\s*color: var\(--lit-ink\);\s*\}/,
     'the selected tab is ink only');
-  assert.match(CSS, /\.dev-ws-tab-marker \{[\s\S]*?background: var\(--brand-tint\);/,
+  assert.match(CSS, /\.dev-ws-tab-marker \{[\s\S]*?background: var\(--lit-tint\);/,
     'and the fill is the marker, at both widths — it carries no breakpoint');
 
   // Nothing overlays the content at ANY width now (#2767), so the tab body
