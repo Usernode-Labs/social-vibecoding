@@ -48,11 +48,11 @@ test('a user\'s own choice wins over the deployment default, both ways', () => {
   assert.equal(flag.choiceOf('t'), null, 'only a real boolean is a choice');
 });
 
-test('only admins may choose while the feature ships dark', () => {
+test('the opt-in audience decides who may choose', () => {
   assert.equal(flag.canChoose({ agentSessionsOptIn: 'admins' }, { isAdmin: false }), false);
   assert.equal(flag.canChoose({ agentSessionsOptIn: 'admins' }, { isAdmin: true }), true);
   assert.equal(flag.canChoose({ agentSessionsOptIn: 'all' }, { isAdmin: false }), true);
-  assert.equal(flag.canChoose({}, { isAdmin: false }), false, 'an unset audience means admins');
+  assert.equal(flag.canChoose({}, { isAdmin: false }), false, 'a config without the key fails closed');
   assert.equal(flag.canChoose({ agentSessionsOptIn: 'all' }, null), false);
 });
 
@@ -66,8 +66,9 @@ test('the flag reaches req.user on every browser path, and auth/me reports it', 
   assert.match(routes, /agentSessionsEnabled: !!req\.user\.agentSessionsEnabled/);
   assert.match(routes, /agentSessionsChoosable: agentSessionsFlag\.canChoose\(config, req\.user\)/);
   const config = read('src/config.js');
-  assert.match(config, /AGENT_SESSIONS_DEFAULT \|\| 'false'\) === 'true'/, 'ships dark');
-  assert.match(config, /AGENT_SESSIONS_OPT_IN === 'all' \? 'all' : 'admins'/);
+  assert.match(config, /AGENT_SESSIONS_DEFAULT \|\| 'false'\) === 'true'/, 'off until a user opts in');
+  assert.match(config, /AGENT_SESSIONS_OPT_IN === 'admins' \? 'admins' : 'all'/,
+    'stage 2: every user may opt in unless the deployment closes it to admins');
 });
 
 test('POST /api/me/agent-sessions sets, clears and refuses', async () => {

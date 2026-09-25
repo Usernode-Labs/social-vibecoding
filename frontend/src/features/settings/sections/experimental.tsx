@@ -22,7 +22,8 @@ import { LocalAgentsList } from '../local-agents-list';
  * #2779 Agent sessions (default from AGENT_SESSIONS_DEFAULT, off today): new
  * work starts in one conversation with the Mayor that works on any app. The
  * row ships hidden and settings.js shows it only to a user the server says
- * may choose (`agentSessionsChoosable`: admins until the opt-in opens), and
+ * may choose (`agentSessionsChoosable`: every user unless the deployment
+ * sets AGENT_SESSIONS_OPT_IN=admins), and
  * POSTs /api/me/agent-sessions on change. Global Chat keeps its own switch.
  *
  * #907 Local coding agent lives in the same pane (not the CLI section) because

@@ -105,7 +105,7 @@ One per-user flag decides where new work starts. It never changes how existing s
 **Stages**
 
 1. Ship dark. The flag is off for everyone. The Settings switch and \`POST /api/me/agent-sessions\` are admin-only until stage 2 (\`AGENT\_SESSIONS\_OPT\_IN=admins\`).
-2. Open opt-in for every user (\`AGENT\_SESSIONS\_OPT\_IN=all\`), with the Experimental label shown.
+2. Open opt-in for every user (\`AGENT\_SESSIONS\_OPT\_IN=all\`), with the Experimental label shown. **This is the current stage:** `src/config.js` defaults the audience to `all`, because the variable is not declared in `dapp.json`'s `platform_env` and so could not be set in production. `AGENT_SESSIONS_OPT_IN=admins` closes the switch to admins again.
 3. Flip `AGENT_SESSIONS_DEFAULT=true`. Users who opted out keep classic sessions.
 4. Remove the classic creation path in a separate, later change. Global Chat's future is decided separately. Classic sessions stay readable until their changes close.
 
@@ -536,7 +536,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 
 **As built in 3a.**
 
-- `users.agent_sessions_enabled` is read into `req.user` as `agentSessionsChoice` and `agentSessionsEnabled`. `/api/auth/me` reports `agentSessionsEnabled` and `agentSessionsChoosable`. `POST /api/me/agent-sessions {enabled: true | false | null}` answers 403 unless `AGENT_SESSIONS_OPT_IN=all` or the user is an admin.
+- `users.agent_sessions_enabled` is read into `req.user` as `agentSessionsChoice` and `agentSessionsEnabled`. `/api/auth/me` reports `agentSessionsEnabled` and `agentSessionsChoosable`. `POST /api/me/agent-sessions {enabled: true | false | null}` answers 403 when the opt-in audience is `admins` and the user is not an admin. Since stage 2 the audience defaults to `all`; `AGENT_SESSIONS_OPT_IN=admins` restores the stage-1 gate.
 - Only creating a session checks the flag. Reading, renaming and archiving check ownership alone, so turning the flag off never hides a conversation.
 - `POST /api/agent-sessions` takes `{hint}` only. The first message arrives with 3b's turn route.
 - `POST /api/apps/:slug/sessions` accepts an optional `title`. `start_change` names the change on the create itself, so the rename route is not on the Mayor's list.
