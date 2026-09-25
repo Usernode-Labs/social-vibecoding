@@ -189,6 +189,10 @@ function VerdictBody({ run }: { run: Run }) {
         <p className={AdminUI.muted}>
           It goes back to the end of the queue once. A second stop lets the issue go, rather than retrying it forever.
         </p>
+        <p className={AdminUI.muted}>
+          Its cost counts the model requests that finished before the stop. The one still running when it was
+          stopped never reports what it used, so the real cost is a little higher.
+        </p>
       </div>
     );
   }
@@ -442,15 +446,14 @@ function HomeroomBotSection() {
                     setStatus({ text: 'Millions of tokens must be a whole number from 1 to 5000.', tone: 'err' });
                     return;
                   }
-                  saveSettings({ turnInputTokens: n }, `The bot now stops an issue after ${millions} million tokens.`);
+                  saveSettings({ turnInputTokens: n }, `The bot now warns when an issue reads more than ${millions} million tokens.`);
                 }}
               />
             </div>
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-turn-tokens-note">
-              Only binds on models that report what they have read while they are
-              still reading. The model the bot runs today reports once, at the end,
-              so this is a warning in the logs rather than a stop. The minute limit
-              above is what actually ends a runaway turn.
+              A warning, not a stop. The bot only learns what a turn read once the
+              turn is over, so a turn past this keeps its verdict and the overrun is
+              logged. The minute limit above is what actually ends a runaway turn.
             </p>
           </div>
         </div>

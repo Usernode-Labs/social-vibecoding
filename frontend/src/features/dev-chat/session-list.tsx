@@ -20,7 +20,7 @@
  * next publish, which is the same behaviour without a second writer.
  */
 
-import { useState, type ReactNode } from 'react';
+import { useState, type KeyboardEvent, type ReactNode } from 'react';
 
 import { messageStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
@@ -86,12 +86,33 @@ function ActionButton({ a }: { a: SessionAction }): ReactNode {
   );
 }
 
+/**
+ * A row that opens a session IS a button (#1918, #2989): in the tab order,
+ * and Enter/Space open it like a click. The keys act only when the ROW has
+ * focus, so the nested PR link and action buttons keep their own Enter/Space.
+ * The row's visible text runs status, title, PR number, action labels and a
+ * time together, so it names itself after the session instead.
+ *
+ * The new attributes render BEFORE `class`: tests pin `class="dc-session-item…"
+ * data-id="7"` and `data-id="8"><span`, i.e. data-id stays last.
+ */
 function Row({ row }: { row: SessionRow }): ReactNode {
+  const open = () => { void call('openSessionFromList', [row.id]); };
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-label={`Open session: ${row.title} (${row.status})`}
       className="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800/50 flex items-center gap-2"
       data-id={row.id}
-      onClick={() => { void call('openSessionFromList', [row.id]); }}
+      onClick={open}
+      onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open();
+        }
+      }}
     >
       <span className={`text-xs ${STATUS_TONE[row.statusTone]} font-mono`}>{row.status}</span>
       <span className="text-sm text-zinc-800 dark:text-zinc-300 flex-1 truncate" title={row.branch}>{row.title}</span>

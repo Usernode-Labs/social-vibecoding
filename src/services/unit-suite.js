@@ -41,12 +41,9 @@ const github = require('./github');
 const checkHistory = require('./check-history');
 const appManifest = require('./app-manifest');
 const log = require('./logger');
-
-const UNIT_CHECK_NAME = 'Repo unit suite (npm test) passes';
-const UNIT_CHECK_PATH = 'package.json';
-// Synthetic-row index namespace: -1 is the missing-advisory rollup, -2 the
-// over-ceiling guard (visuals.js). This row is -3.
-const UNIT_CHECK_INDEX = -3;
+const {
+  UNIT_CHECK_NAME, UNIT_CHECK_PATH, UNIT_CHECK_INDEX, FAILURE_DETAIL_MAX, isUnitSuiteRow,
+} = require('./unit-suite-row');
 
 // The worker image ships node 22 + git + a local PostgreSQL 17 and is rebuilt
 // daily, so reusing it means no separate CI image to build or deploy. Repos
@@ -69,11 +66,13 @@ const UNIT_SUITE_CPUS = process.env.UNIT_SUITE_CPUS || '8';
 const UNIT_SUITE_MEMORY = process.env.UNIT_SUITE_MEMORY || '4g';
 const UNIT_SUITE_MAX_BUFFER = 32 * 1024 * 1024;
 
-// failureReason rides in test_results inside every proposal payload — keep
-// it a diagnostic pointer, not a log dump.
-const FAILURE_DETAIL_MAX = 1600;
-const MAX_NOT_OK_LINES = 8;
+// FAILURE_DETAIL_MAX (services/unit-suite-row.js) bounds the whole reason.
 const MAX_TAIL_LINES = 8;
+// One test's name, inside the reason. Long enough for this repo's
+// sentence-length names; a pathological one cannot eat the whole budget.
+const MAX_TEST_NAME = 200;
+// The group for a failing test whose TAP carried no `location:` line.
+const NO_FILE = '(file not reported)';
 
 // Printed by the container script between dependency install and `npm
 // test`. Output that never reached it failed in setup, not in the suite.
@@ -81,6 +80,11 @@ const SETUP_DONE_SENTINEL = '__UNIT_SUITE_SETUP_DONE__';
 // Printed once the checkout is in place, before `npm ci`. Only the live
 // phase reads it ("cloning" vs "installing"); the verdict never does.
 const CLONED_SENTINEL = '__UNIT_SUITE_CLONED__';
+// Printed as `<sentinel>=<workspace>` before anything else. node:test's
+// `location:` is an absolute path inside a mktemp workspace; failureDetail
+// strips this prefix so the reason names `tests/foo.test.js`, the path a fix
+// turn can hand straight back to `node --test`.
+const ROOT_SENTINEL = '__UNIT_SUITE_ROOT__';
 
 function isEnabled() {
   const v = String(process.env.UNIT_SUITE_CHECK_ENABLED ?? '1').trim().toLowerCase();
@@ -101,9 +105,122 @@ function hasRunnableTestScript(rawPackageJson) {
   return true;
 }
 
-// Distill a failed run's output into a bounded failureReason. TAP `not ok`
-// lines plus the summary counters when present (node:test, tap); otherwise
-// the last few non-empty lines of output (jest & friends, npm/git errors).
+// A `location:` value as a repo-relative file: the `:line:col` dropped and
+// the workspace prefix stripped. Absolute when the output never said where
+// the workspace was — still the right file, just longer.
+function relativeFile(location, root) {
+  let p = String(location || '').trim()
+    .replace(/^file:\/\//, '')
+    .replace(/:\d+(?::\d+)?$/, '');
+  if (root && p.startsWith(`${root}/`)) p = p.slice(root.length + 1);
+  return p || null;
+}
+
+// Every failing TOP-LEVEL test in TAP output, in order: `{ name, file }`.
+//
+// node:test prints the test's name on its `not ok` line and its file only
+// in the YAML block under it (`  location: '/…/tests/foo.test.js:347:1'`).
+// Nested subtests are indented and printed BEFORE their parent's line, so
+// the first two-space `location:` inside the block after a column-0
+// `not ok` is that test's own. A `# TODO` / `# SKIP` directive is not a
+// failure — the exit code ignores it, so the reason must not send a fix
+// turn to it. `file` is null when the block has no `location:` (other TAP
+// producers; a runner that died mid-block).
+function failingTests(lines) {
+  const rootLine = lines.find((l) => l.startsWith(`${ROOT_SENTINEL}=`));
+  const root = rootLine ? rootLine.slice(ROOT_SENTINEL.length + 1).trim().replace(/\/+$/, '') : null;
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = /^not ok\b\s*\d*\s*(?:-\s*)?(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    if (/\s#\s*(SKIP|TODO)\b/i.test(` ${m[1]}`)) continue;
+    let file = null;
+    if (i + 1 < lines.length && lines[i + 1].trim() === '---') {
+      for (let j = i + 2; j < lines.length && /^\s/.test(lines[j]); j += 1) {
+        if (lines[j].trim() === '...') break;
+        const loc = /^ {2}location:\s*['"]?(.*?)['"]?\s*$/.exec(lines[j]);
+        if (loc) { file = relativeFile(loc[1], root); break; }
+      }
+    }
+    out.push({ name: m[1].trim() || '(unnamed test)', file });
+  }
+  return out;
+}
+
+function clipName(name) {
+  return name.length > MAX_TEST_NAME ? `${name.slice(0, MAX_TEST_NAME - 1)}…` : name;
+}
+
+// The failing tests grouped by file, fitted into `budget` characters:
+//
+//   tests/a.test.js (8): <name>; <name>… | tests/b.test.js (1): <name>
+//
+// Every file and its count come first and are never traded for a name:
+// the file list is what lets a fix turn run just those files instead of
+// the whole suite. Names then fill what is left, dealt one per file per
+// round, so a file with many failures cannot crowd the others out of their
+// first name. `…` marks a file whose names did not all fit. Only when the
+// file list ALONE overflows (dozens of files — a shared module broken) does
+// it end early, and then it says how many files it left out.
+function groupedFailures(failures, budget) {
+  const byFile = new Map();
+  for (const f of failures) {
+    const key = f.file || NO_FILE;
+    if (!byFile.has(key)) byFile.set(key, []);
+    byFile.get(key).push(clipName(f.name));
+  }
+  const SEP = ' | '.length;
+  let groups = [...byFile].map(([file, names]) => ({ head: `${file} (${names.length})`, names, shown: 0 }));
+
+  // A group's rendered length with its first `k` names shown.
+  const width = (g, k) => g.head.length + (k === 0 ? 0
+    : 2 + g.names.slice(0, k).reduce((n, s) => n + s.length, 0) + 2 * (k - 1) + (k < g.names.length ? 1 : 0));
+  const total = (gs, extra = 0) => gs.reduce((n, g) => n + width(g, g.shown), 0)
+    + SEP * Math.max(0, gs.length - 1) + extra;
+
+  // The note that stands in for every group from index `from` on.
+  const omission = (from) => {
+    const dropped = groups.slice(from);
+    return dropped.length
+      ? `(+${dropped.length} more files, ${dropped.reduce((n, g) => n + g.names.length, 0)} failing tests)`
+      : null;
+  };
+  let omitted = null;
+  if (total(groups) > budget) {
+    let keep = 0;
+    while (keep < groups.length) {
+      const note = omission(keep + 1);
+      if (total(groups.slice(0, keep + 1), note ? SEP + note.length : 0) > budget) break;
+      keep += 1;
+    }
+    omitted = omission(keep);
+    groups = groups.slice(0, keep);
+  }
+
+  let used = total(groups, omitted ? SEP + omitted.length : 0);
+  const open = new Set(groups);
+  while (open.size) {
+    for (const g of [...open]) {
+      if (g.shown >= g.names.length) { open.delete(g); continue; }
+      const step = width(g, g.shown + 1) - width(g, g.shown);
+      if (used + step > budget) { open.delete(g); continue; }
+      g.shown += 1;
+      used += step;
+    }
+  }
+
+  const parts = groups.map((g) => (g.shown
+    ? `${g.head}: ${g.names.slice(0, g.shown).join('; ')}${g.shown < g.names.length ? '…' : ''}`
+    : g.head));
+  if (omitted) parts.push(omitted);
+  return parts;
+}
+
+// Distill a failed run's output into a bounded failureReason. When the
+// output is TAP (node:test, tap): the failing tests grouped by the file each
+// one is in, then the summary counters. Otherwise the last few non-empty
+// lines of output (jest & friends, npm/git errors). A timeout or a setup
+// failure leads, in words main-watch.js matches on.
 function failureDetail(stdout, stderr, { timedOut = false } = {}) {
   const out = `${String(stdout || '')}\n${String(stderr || '')}`;
   const lines = out.split('\n');
@@ -114,15 +231,15 @@ function failureDetail(stdout, stderr, { timedOut = false } = {}) {
   if (!out.includes(SETUP_DONE_SENTINEL) && !timedOut) {
     parts.push('Suite setup failed (clone / npm ci), so the tests never ran.');
   }
-  const notOk = lines.filter((l) => l.startsWith('not ok '));
-  if (notOk.length) {
-    parts.push(...notOk.slice(0, MAX_NOT_OK_LINES).map((l) => l.trim()));
-    if (notOk.length > MAX_NOT_OK_LINES) parts.push(`(+${notOk.length - MAX_NOT_OK_LINES} more failing tests)`);
-    const summary = lines.filter((l) => /^# (tests|pass|fail|cancelled) /.test(l));
-    parts.push(...summary.map((l) => l.trim()));
+  const failures = failingTests(lines);
+  if (failures.length) {
+    const counters = lines.filter((l) => /^# (tests|pass|fail|cancelled) /.test(l)).map((l) => l.trim());
+    const fixed = [...parts, ...counters].reduce((n, p) => n + p.length + ' | '.length, 0);
+    const grouped = groupedFailures(failures, FAILURE_DETAIL_MAX - fixed);
+    parts.push(...grouped, ...counters);
   } else {
     const tail = lines.map((l) => l.trim())
-      .filter((l) => l && l !== SETUP_DONE_SENTINEL)
+      .filter((l) => l && !/^__UNIT_SUITE_[A-Z_]+__(=|$)/.test(l))
       .slice(-MAX_TAIL_LINES);
     parts.push(...tail);
   }
@@ -139,6 +256,7 @@ set -eu
 # The worker image runs as USER node — work somewhere it can write.
 WS="$(mktemp -d)"
 cd "$WS"
+echo "${ROOT_SENTINEL}=$(pwd -P)"
 git init -q .
 git remote add origin "$REPO_URL"
 if git fetch -q --depth 1 origin "$GIT_REF"; then
@@ -369,8 +487,7 @@ function passedIn(testResults) {
     try { rows = JSON.parse(rows); } catch { return false; }
   }
   if (!Array.isArray(rows)) return false;
-  const row = rows.find((r) => r && typeof r === 'object'
-    && (r.index === UNIT_CHECK_INDEX || (r.name === UNIT_CHECK_NAME && r.path === UNIT_CHECK_PATH)));
+  const row = rows.find(isUnitSuiteRow);
   return !!row && row.status === 'pass';
 }
 
@@ -444,4 +561,6 @@ module.exports = {
   UNIT_CHECK_INDEX,
   SETUP_DONE_SENTINEL,
   CLONED_SENTINEL,
+  ROOT_SENTINEL,
+  FAILURE_DETAIL_MAX,
 };

@@ -93,6 +93,14 @@ if [ "$MODE" != "evidence" ]; then
   fi
 fi
 
+# The same throwaway Postgres preparation that Claude build turns receive.
+# Without it the supplied INLOOP_DATABASE_URL points at no server, and the
+# agent burns its turn trying to repair a test environment it did not break.
+if [ "$MODE" = "build" ]; then
+  sh "$(dirname "$0")/start-inloop-db.sh" \
+    || echo "__USERNODE_WARN__ in-loop postgres setup failed"
+fi
+
 # Codex home lives INSIDE the persistent Claude volume so session/rollout
 # state survives worker eviction. Export it so Codex reads the direct
 # OpenRouter config and persistent rollout dir.
@@ -258,9 +266,9 @@ TOML
     cat <<'TOML'
 
 [mcp_servers.playwright]
-command = "npx"
+command = "/usr/local/bin/mcp-server-playwright"
 TOML
-    printf 'args = ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "%s"]\n' "$ESCAPED_BROWSER_CONFIG"
+    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "%s"]\n' "$ESCAPED_BROWSER_CONFIG"
     cat <<'TOML'
 startup_timeout_sec = 30
 tool_timeout_sec = 60
@@ -371,8 +379,16 @@ TMP_STATUS=$(mktemp /home/node/.usernode/turn-codex-status-XXXX 2>/dev/null || m
 # before it reaches either tee's temporary copy or the host's durable turn
 # journal. awk's index/substr path is literal (not regex based), so keys that
 # contain replacement or regex metacharacters are handled safely.
+#
+# mawk (the image's awk) reads a pipe until its input buffer is full before
+# it processes a line, and that buffer grows to the longest line it has read.
+# Without -W interactive, one large command output holds the journal back by
+# that many bytes for the rest of the turn, so live progress stops until
+# enough later output arrives to fill it again.
+if command -v mawk >/dev/null 2>&1; then REDACT_AWK="mawk -W interactive"; else REDACT_AWK=awk; fi
 redact_codex_stream() {
-  awk '
+  # shellcheck disable=SC2086
+  $REDACT_AWK '
     BEGIN { secret = ENVIRON["OPENROUTER_API_KEY"]; grant = ENVIRON["HOMEROOM_MCP_TOKEN"] }
     {
       # Codex emits a structured JSON retry event immediately after this

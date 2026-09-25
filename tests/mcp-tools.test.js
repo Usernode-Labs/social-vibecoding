@@ -1928,11 +1928,15 @@ test('a request’s text stays wrapped all the way into the work order', () => {
   const idx = SRC.indexOf("server.registerTool('prepare_work'");
   const body = SRC.slice(idx, SRC.indexOf("server.registerTool('submit_work'"));
   assert.match(body, /parts\.push\(untrusted\(match\.title, MAX_TITLE_CHARS\)\)/);
-  assert.match(body, /parts\.push\(untrusted\(match\.body, MAX_BODY_CHARS\)\)/);
+  assert.match(body, /parts\.push\(untrusted\(match\.body, budget\.body\)\)/);
+  assert.match(body, /parts\.push\(untrusted\(discussion, budget\.discussion\)\)/);
   assert.match(body, /parts\.push\(untrusted\(brief, MAX_BODY_CHARS\)\)/);
-  // The request must actually be open on this app — a number is not a
-  // capability, so it is looked up rather than trusted.
-  assert.match(body, /list\.find\(\(i\) => i\.number === issueNumber\)/);
+  // One request keeps the budgets it always had.
+  assert.deepEqual(tools.requestTextBudget(1, 'x', 6000), { body: tools.MAX_BODY_CHARS, discussion: 2500 });
+  // Every request must actually be open on this app — a number is not a
+  // capability, so each is looked up rather than trusted.
+  assert.match(body, /const missing = requested\.filter\(\(n\) => !list\.some\(\(i\) => i\.number === n\)\)/);
+  assert.match(body, /list\.find\(\(i\) => i\.number === number\)/);
   // And both deliveries of the operating contract warn the receiving model
   // about exactly this — the truncation-proof brief and the full charter.
   assert.match(tools.SERVER_INSTRUCTIONS, /WHAT TO BUILD section/);
@@ -2068,6 +2072,22 @@ test('the checks a proposal reports name the tests that are failing', () => {
   assert.ok(shaped.failing.every((n) => n.startsWith('<untrusted-content>')));
   assert.ok(shaped.failing[0].includes('Board shows the snap toggle'));
   assert.ok(shaped.failing[1].includes('Settings saves'));
+});
+
+test('the unit suite row leads the failure reasons and keeps its whole file list', () => {
+  // It is appended after the browser checks, and its reason is the one
+  // place the agent learns which test files failed (change 4868).
+  const reason = `tests/a.test.js (8): t1; t2… | tests/b.test.js (1): t9 | # fail 9 ${'.'.repeat(1200)}`;
+  const shaped = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [
+      ...Array.from({ length: 12 }, (_, i) => ({ name: `browser ${i}`, status: 'fail', failureReason: 'x'.repeat(900) })),
+      { index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail', failureReason: reason },
+    ],
+  });
+  assert.equal(shaped.failures.length, 10);
+  assert.equal(shaped.failures[0].reason, `<untrusted-content>${reason}</untrusted-content>`);
+  assert.ok(shaped.failures[1].reason.includes('… [truncated]'), 'other rows keep their clip');
 });
 
 test('checks degrade to a knowable nothing rather than a guess', () => {

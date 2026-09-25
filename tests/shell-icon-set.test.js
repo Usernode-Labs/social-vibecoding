@@ -1,3 +1,4 @@
+// test:changed: always (every feature file, for glyphs drawn outside icons.tsx; scripts/test-changed.js)
 // The shell's glyphs come from ONE module, and their path data never moves.
 //
 // #1120 slice 4 pulled 36 inline `<svg>` blocks out of frontend/src/features/**

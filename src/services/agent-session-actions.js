@@ -57,8 +57,45 @@ function isConfirmedTool(name) {
 
 // ── Preparing a card ───────────────────────────────────────────────────
 
-async function prepareAction(pool, { config, userId, agentSessionId, toolName, input, now = new Date() }) {
+const MAX_ISSUE_NUMBER = 2147483647;
+
+// Who is working on a request is shared information: the board shows it, and
+// two people building the same request find out there. start_change links the
+// requests it is given, and the first is also claimed for the user. So a
+// change started in a conversation the user opened from a request links that
+// request unless the Mayor said otherwise: it names requests itself, or
+// passes an empty list because the change is for something else. Only the
+// conversation's first change on that request gets it, so a later, unrelated
+// change on the same app does not claim a request the user has moved on from.
+// It lands on the card's input, so the user sees the link before confirming.
+async function withOpenedRequest(pool, { userId, agentSessionId, toolName, input }) {
+  if (toolName !== 'start_change' || !input || typeof input !== 'object' || input.linkedIssues !== undefined) {
+    return input;
+  }
+  const { rows } = await pool.query(
+    `SELECT s.focus_context, a.slug
+       FROM agent_sessions s JOIN apps a ON a.id = s.focus_app_id
+      WHERE s.id = $1 AND s.user_id = $2`,
+    [agentSessionId, userId]
+  );
+  if (!rows.length) return input;
+  const context = rows[0].focus_context || {};
+  const issueNumber = Number(context.issueNumber);
+  if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0 || issueNumber > MAX_ISSUE_NUMBER) return input;
+  if (rows[0].slug !== input.slug) return input;
+  const { rows: linked } = await pool.query(
+    `SELECT 1 FROM chat_sessions
+      WHERE agent_session_id = $1 AND $2 = ANY(linked_issues)
+      LIMIT 1`,
+    [agentSessionId, issueNumber]
+  );
+  if (linked.length) return input;
+  return { ...input, linkedIssues: [issueNumber] };
+}
+
+async function prepareAction(pool, { config, userId, agentSessionId, toolName, input: given, now = new Date() }) {
   if (!isConfirmedTool(toolName)) throw new ActionError(400, 'invalid_action', `${toolName} is not a confirmed action.`);
+  const input = await withOpenedRequest(pool, { userId, agentSessionId, toolName, input: given });
   const { sealed, inputHash } = confirmations.sealAction(input, config && config.dataEncryptionKey);
   const { issuedAt, expiresAt } = confirmations.expiryFor(now, ACTION_TTL_MS);
   const id = crypto.randomUUID();
@@ -91,6 +128,8 @@ function shapeAction(row, now = new Date()) {
     title: ACTION_LABELS[row.tool_name] || row.tool_name,
     status: expired ? 'expired' : row.status,
     result: row.result || null,
+    // The card's "Confirmed · …" line (#3017).
+    outcome: row.result ? outcomeLine(row.tool_name, row.result) : null,
     expiresAt: new Date(row.expires_at).toISOString(),
     createdAt: new Date(row.created_at).toISOString(),
     decidedAt: row.decided_at ? new Date(row.decided_at).toISOString() : null,
@@ -148,11 +187,89 @@ function boundedResult(result) {
   };
 }
 
-// The line the conversation gets. The platform's own nextStep or message
-// when it has one, because that is what the browser would have said.
+// Tool answers wrap member-written text (a title, a username) in envelope
+// tags for the model. A person reads it without them.
+function plainText(value) {
+  return String(value == null ? '' : value)
+    .replace(/<\/?untrusted-content>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function requestNumber(value) {
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+function requestList(values) {
+  const numbers = (Array.isArray(values) ? values : []).map(requestNumber).filter(Boolean);
+  return numbers.map((n) => `#${n}`).join(', ');
+}
+
+// What a finished card says happened, in the user's words (#3017). The tools
+// whose answer has no nextStep, or one written for an agent, are read field
+// by field: create_request has none, so its card used to print the raw JSON.
+// The rest say their nextStep or message. A result that is only JSON says
+// nothing rather than print it.
+//
+// `forModel` is the conversation's note, which the Mayor reads: member-written
+// text in it stays inside its envelope, as it is in every tool result.
+function outcomeLine(toolName, stored, { forModel = false } = {}) {
+  if (!stored) return null;
+  const s = stored.structured && typeof stored.structured === 'object' ? stored.structured : null;
+  const member = (value) => {
+    const text = plainText(value);
+    return text && forModel ? `<untrusted-content>${text}</untrusted-content>` : text;
+  };
+  if (stored.ok && s) {
+    if (toolName === 'create_request') {
+      const n = requestNumber(s.number);
+      const title = member(s.title);
+      if (n) return `Filed request #${n}${title ? `: ${title}` : ''}.`;
+      return 'Filed the request.';
+    }
+    if (toolName === 'claim_request' && requestNumber(s.number)) {
+      const others = (Array.isArray(s.alsoClaimedBy) ? s.alsoClaimedBy : []).map(member).filter(Boolean);
+      return `Claimed request #${requestNumber(s.number)} for you`
+        + `${others.length ? `. Also claimed by ${others.join(', ')}` : ''}.`;
+    }
+    if (toolName === 'release_request' && requestNumber(s.number)) {
+      return s.cleared
+        ? `Released your claim on request #${requestNumber(s.number)}.`
+        : `You had no claim on request #${requestNumber(s.number)}.`;
+    }
+    if (toolName === 'start_change' && requestNumber(s.changeId)) {
+      const linked = requestList(s.linkedIssues);
+      return `Change ${requestNumber(s.changeId)} is open${s.appSlug ? ` on ${plainText(s.appSlug)}` : ''}`
+        + `${linked ? `, linked to request ${linked}` : ''}.`;
+    }
+    if (toolName === 'promote_change' && requestNumber(s.changeId)) {
+      const pr = requestNumber(s.prNumber);
+      return `${pr ? `PR #${pr} (change ${requestNumber(s.changeId)})` : `Change ${requestNumber(s.changeId)}`} `
+        + 'is up for the group\'s vote.';
+    }
+    if (toolName === 'update_proposal_issues' && Array.isArray(s.linkedIssues)) {
+      const added = requestList(s.addedIssues);
+      const removed = requestList(s.removedIssues);
+      const parts = [added && `linked request ${added}`, removed && `unlinked request ${removed}`].filter(Boolean);
+      if (!parts.length) return 'The linked requests were already as asked.';
+      const said = parts.join(' and ');
+      return `${said.charAt(0).toUpperCase()}${said.slice(1)}.`;
+    }
+  }
+  const said = s && (s.nextStep || s.message);
+  if (typeof said === 'string' && plainText(said)) return plainText(said);
+  const text = plainText(stored.text);
+  return text && !/^[[{]/.test(text) ? text : null;
+}
+
+// The line the conversation gets, which the Mayor reads on its next turn. The
+// platform's own nextStep or message when it has one, because that is what
+// the browser would have said, and the plain outcome otherwise.
 function outcomeSentence(toolName, stored) {
   const label = ACTION_LABELS[toolName] || toolName;
-  const said = stored.structured && (stored.structured.nextStep || stored.structured.message);
+  const next = stored.structured && (stored.structured.nextStep || stored.structured.message);
+  const said = (typeof next === 'string' && next) || outcomeLine(toolName, stored, { forModel: true });
   if (stored.ok) return said ? `Confirmed: ${label}. ${said}` : `Confirmed: ${label}.`;
   return said ? `${label} did not go through. ${said}` : `${label} did not go through.`;
 }
@@ -234,7 +351,9 @@ async function confirmAction(pool, { config, user, agentSessionId, actionId, dep
     event: 'action_result',
     metadata: { actionId, toolName, ok: stored.ok },
   });
-  return { id: actionId, toolName, status: stored.ok ? 'done' : 'failed', result: stored };
+  return {
+    id: actionId, toolName, status: stored.ok ? 'done' : 'failed', result: stored, outcome: outcomeLine(toolName, stored),
+  };
 }
 
 async function dismissAction(pool, { user, agentSessionId, actionId, deps = {} }) {
@@ -266,7 +385,9 @@ module.exports = {
   shapeAction,
   bindingFor,
   boundedResult,
+  outcomeLine,
   outcomeSentence,
+  withOpenedRequest,
   confirmAction,
   dismissAction,
 };

@@ -277,7 +277,11 @@ export function BrowseScreen() {
           // the pane treatment is `browse-pane-body` in app.css, scoped to
           // below md. At md+ nothing changes: every row is its own box in the
           // grid (app.css), so only the grid utilities live here.
-          className="browse-pane-body md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3"
+          //
+          // Three columns only from xl (1280px), not lg (QA 2026-09-24 Q10):
+          // at 1024 the sidebar leaves ~770px, and a third column squeezed
+          // the name out of every box entirely.
+          className="browse-pane-body md:grid md:grid-cols-2 xl:grid-cols-3 md:gap-3 md:p-3"
         >
           {state.error
             ? (

@@ -2038,6 +2038,8 @@ test('prepare_work reports the proposals already up for a vote on this request',
     prNumber: 52,
     mine: true,
     author: 'evan',
+    // Which of the job's requests it is for: the one this job names.
+    requests: [50],
     webPath: 'https://usernode.example/#app/recipe-box/dev/proposals/3140',
   }]);
 
@@ -2148,9 +2150,11 @@ test('only proposals actually up for a vote count, by either linkage', async () 
   // The Mayor's declared linkage, which is also what a connector submission
   // records; and the dev chat started from the issue row before anything has
   // been declared.
-  assert.match(q.sql, /\$2 = ANY\(cs\.linked_issues\)/);
-  assert.match(q.sql, /cs\.created_from_issue_number = \$2/);
-  assert.deepEqual(q.params, [APP.id, 50, svc.MAX_OPEN_PROPOSALS]);
+  // The job's requests go in as one array, so a job for several finds a
+  // proposal for any of them.
+  assert.match(q.sql, /cs\.linked_issues && \$2::int\[\]/);
+  assert.match(q.sql, /cs\.created_from_issue_number = ANY\(\$2::int\[\]\)/);
+  assert.deepEqual(q.params, [APP.id, [50], svc.MAX_OPEN_PROPOSALS]);
 });
 
 test('work with no request behind it is not checked for duplicates', async () => {
@@ -4497,8 +4501,8 @@ test('preparing records the launchpad it was prepared in', async () => {
   assert.equal(result.ok, true);
 
   const insert = queries.find((q) => /INSERT INTO external_agent_tasks/.test(q.sql));
-  assert.match(insert.sql, /origin_session_id\)/, 'the column is written');
-  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12\)/,
+  assert.match(insert.sql, /origin_session_id, linked_issues\)/, 'the column is written');
+  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12, \$13\)/,
     'and the placeholder list grew with it');
   assert.equal(insert.params[11], 990404, 'with the session that asked');
 

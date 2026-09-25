@@ -41,4 +41,4 @@ import { createStore } from '../../lib/plain-store.js';
  * the same arrangement ../app-frame/app-frame-store.js is in, for the same
  * reason. The TYPES live beside the component in ./ai-budget.tsx.
  */
-export const aiBudgetStore = createStore({ view: null, hidden: false });
+export const aiBudgetStore = createStore({ view: null, hidden: false, figures: null });

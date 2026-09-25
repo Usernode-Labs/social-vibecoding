@@ -19,6 +19,13 @@ const { performance } = require('node:perf_hooks');
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 const MAX_KEY_RESPONSE_BYTES = 32 * 1024;
 const MAX_ERROR_DIAGNOSTIC_BYTES = 64 * 1024;
+// A request's usage arrives on its terminal event, which carries the whole
+// response object — every output item of that request — so it can be far
+// larger than an error envelope. Retained up to this size so usage survives
+// a long answer; a larger terminal event is forwarded untouched and its
+// usage goes unreported, which only ever makes the turn's figure lower.
+const MAX_USAGE_EVENT_BYTES = 4 * 1024 * 1024;
+const TERMINAL_RESPONSE_EVENTS = new Set(['response.completed', 'response.incomplete', 'response.failed']);
 const HOP_HEADERS = new Set([
   'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
   'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length',
@@ -64,32 +71,73 @@ async function* observeErrorBody(body, recordError) {
   } catch { /* Malformed provider diagnostics do not alter the response. */ }
 }
 
-async function* observeEventStream(body, recordError) {
+/**
+ * One request's token usage, from a terminal Responses event (#3038).
+ * Counts only: nothing from the model's input or output leaves the worker.
+ * `input_tokens` includes cached reads, as the agent's own totals do.
+ */
+function usageFromResponse(usage) {
+  const count = n => Number.isSafeInteger(n) && n >= 0 ? n : null;
+  const inputTokens = count(usage?.input_tokens);
+  const outputTokens = count(usage?.output_tokens);
+  if (inputTokens == null && outputTokens == null) return null;
+  return {
+    inputTokens,
+    cachedInputTokens: count(usage?.input_tokens_details?.cached_tokens),
+    outputTokens,
+    reasoningOutputTokens: count(usage?.output_tokens_details?.reasoning_tokens),
+  };
+}
+
+async function inspectEvent(event, recordError, recordUsage) {
+  const small = event.length <= MAX_ERROR_DIAGNOSTIC_BYTES;
+  // A cheap substring test first: only a terminal event is worth parsing at
+  // a size no error envelope reaches.
+  const mayCarryUsage = !!recordUsage && event.includes('"usage"');
+  if (!small && !mayCarryUsage) return;
+  const data = event.split(/\r?\n/).filter(line => line.startsWith('data:'))
+    .map(line => line.slice(5).trimStart()).join('\n');
+  let parsed;
+  try { parsed = JSON.parse(data); } catch { return; /* Non-JSON events, including [DONE], pass through. */ }
+  if (small) {
+    try {
+      await recordError(parsed?.error || parsed?.response?.error || (parsed?.type === 'error' ? parsed : null));
+    } catch { /* Diagnostics never alter the response. */ }
+  }
+  if (mayCarryUsage && TERMINAL_RESPONSE_EVENTS.has(parsed?.type)) {
+    const usage = usageFromResponse(parsed.response?.usage);
+    if (usage) {
+      try { recordUsage(usage); } catch { /* Telemetry cannot affect the provider request. */ }
+    }
+  }
+}
+
+async function* observeEventStream(body, recordError, recordUsage = null) {
   const decoder = new StringDecoder('utf8');
   let pending = '';
   let oversized = false;
+  // Where the next boundary search starts. Rescanning the whole retained
+  // event on every chunk is quadratic once events may be megabytes long.
+  let scanFrom = 0;
+  const boundaryRe = /\r?\n\r?\n/g;
   for await (const chunk of body) {
     pending += decoder.write(Buffer.from(chunk));
+    boundaryRe.lastIndex = scanFrom;
     let boundary;
-    while ((boundary = /\r?\n\r?\n/.exec(pending))) {
+    while ((boundary = boundaryRe.exec(pending))) {
       const event = pending.slice(0, boundary.index);
       pending = pending.slice(boundary.index + boundary[0].length);
-      if (!oversized && event.length <= MAX_ERROR_DIAGNOSTIC_BYTES) {
-        const data = event.split(/\r?\n/).filter(line => line.startsWith('data:'))
-          .map(line => line.slice(5).trimStart()).join('\n');
-        try {
-          const parsed = JSON.parse(data);
-          await recordError(parsed?.error || parsed?.response?.error || (parsed?.type === 'error' ? parsed : null));
-        } catch { /* Non-JSON events, including [DONE], pass through. */ }
-      }
+      boundaryRe.lastIndex = 0;
+      if (!oversized) await inspectEvent(event, recordError, recordUsage);
       oversized = false;
     }
-    // Long text/image events need no inspection. Retain only enough bytes
+    // Events past the usage cap need no inspection. Retain only enough bytes
     // to recognize a split separator, then resume at the next event.
-    if (pending.length > MAX_ERROR_DIAGNOSTIC_BYTES) {
+    if (pending.length > MAX_USAGE_EVENT_BYTES) {
       pending = pending.slice(-3);
       oversized = true;
     }
+    scanFrom = Math.max(0, pending.length - 3);
     yield chunk;
   }
 }
@@ -122,7 +170,7 @@ async function readKeyAllowance(base, apiKey, fetchImpl, signal) {
 }
 
 async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
-  onRequest = () => {}, onTiming = null, timingIntervalMs = 15_000, fetchImpl = fetch }) {
+  onRequest = () => {}, onTiming = null, onUsage = null, timingIntervalMs = 15_000, fetchImpl = fetch }) {
   const base = new URL(baseUrl);
   if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
     throw new Error('invalid_provider_url');
@@ -172,12 +220,27 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         return;
       }
       body.max_output_tokens = Math.min(maxOutputTokens, incomingCap ?? maxOutputTokens);
+      const serializedBody = JSON.stringify(body);
+      const payloadBytes = Buffer.byteLength(serializedBody);
+      const inputBytes = body.input == null ? 0 : Buffer.byteLength(JSON.stringify(body.input));
       if (onTiming) {
         const ordinal = ++requestOrdinal;
         const startedAt = performance.now();
+        // Request content never enters the timing stream. These counts let
+        // the owner see whether a long coding turn is carrying its prior
+        // context, linking an earlier response, or suddenly sending a much
+        // smaller request after compaction. They are taken from the actual
+        // wire request rather than inferred from the initial prompt.
+        const instructionBytes = body.instructions == null
+          ? 0 : Buffer.byteLength(JSON.stringify(body.instructions));
+        const inputItems = Array.isArray(body.input) ? body.input.length : null;
+        const previousResponseLinked = typeof body.previous_response_id === 'string'
+          && body.previous_response_id.length > 0;
         timing = { ordinal, startedAt, stage: 'await_headers', status: null,
           responseBytes: 0, chunks: 0, outcome: 'ok' };
-        emitTiming({ kind: 'provider_request_start', requestOrdinal: ordinal });
+        emitTiming({ kind: 'provider_request_start', requestOrdinal: ordinal,
+          payloadBytes, inputBytes, instructionBytes, inputItems, previousResponseLinked,
+          maxOutputTokens: body.max_output_tokens });
         timing.interval = setInterval(() => emitTiming({
           kind: 'provider_request_pending', requestOrdinal: ordinal,
           stage: timing.stage,
@@ -195,7 +258,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
       headers['content-type'] = 'application/json';
       headers['accept-encoding'] = 'identity';
       const response = await fetchImpl(`${upstreamBase}/responses`, {
-        method: 'POST', headers, body: JSON.stringify(body), redirect: 'error', signal: controller.signal,
+        method: 'POST', headers, body: serializedBody, redirect: 'error', signal: controller.signal,
       });
       if (timing) {
         timing.status = response.status;
@@ -207,7 +270,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
       }
       const diagnostic = {
         model, maxOutputTokens: body.max_output_tokens,
-        inputBytes: Buffer.byteLength(JSON.stringify(body.input ?? [])),
+        inputBytes,
         inputItems: Array.isArray(body.input) ? body.input.length : null,
         httpStatus: response.status,
         requestId: safeRequestId(response.headers.get('x-request-id') || response.headers.get('x-openrouter-request-id')),
@@ -250,7 +313,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
       if (response.body) {
         const isEventStream = response.headers.get('content-type')?.includes('text/event-stream');
         const bodyStream = isEventStream
-          ? Readable.from(observeEventStream(response.body, recordError))
+          ? Readable.from(observeEventStream(response.body, recordError, onUsage))
           : response.status === 402
             ? Readable.from(observeErrorBody(response.body, recordError))
             : Readable.fromWeb(response.body);
@@ -295,6 +358,7 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
   });
   return {
     baseUrl: `http://127.0.0.1:${server.address().port}`,
+    activeRequestCount() { return active.size; },
     async close() {
       for (const controller of active) controller.abort();
       server.closeAllConnections();
@@ -312,9 +376,16 @@ async function runCodex(args, env = process.env) {
     model: env.AGENT_MODEL,
     maxOutputTokens: selected?.max_output_tokens,
     onRequest: diagnostic => process.stdout.write(`${JSON.stringify({ type: 'usernode.openrouter.request', diagnostic })}\n`),
-    onTiming: env.MODE === 'evidence'
-      ? diagnostic => process.stdout.write(`__USERNODE_EVIDENCE_PROVIDER__ ${JSON.stringify(diagnostic)}\n`)
-      : null,
+    // #3038: each request's usage the moment it finishes, not once at the
+    // end of the turn. Codex reports usage only at turn.completed, so a turn
+    // stopped mid-flight used to leave no record of what it had spent; these
+    // lines reach the journal as they happen and survive the kill.
+    onUsage: usage => process.stdout.write(`${JSON.stringify({ type: 'usernode.openrouter.usage', usage })}\n`),
+    // Evidence retains its structured run diagnostics. Ordinary coding turns
+    // need the same content-free request timing so a quiet model call can be
+    // distinguished from a runner that never sent a request.
+    onTiming: diagnostic => process.stdout.write(
+      `${env.MODE === 'evidence' ? '__USERNODE_EVIDENCE_PROVIDER__' : '__USERNODE_CODING_PROVIDER__'} ${JSON.stringify(diagnostic)}\n`),
   });
   // The override is process-local. Neither the key nor the ephemeral listener
   // is written to the persistent Codex configuration.
@@ -322,11 +393,29 @@ async function runCodex(args, env = process.env) {
     '-c', `model_providers.usernode_openrouter.base_url=${JSON.stringify(adapter.baseUrl)}`,
     ...args,
   ], { env, stdio: ['inherit', 'pipe', 'pipe'] });
+  let lastCodexOutputAt = performance.now();
+  let lastIdleReportAt = null;
   // Serialize complete lines from both child streams and our diagnostics so
   // a diagnostic cannot land halfway through a large Codex JSONL event.
   for (const stream of [child.stdout, child.stderr]) {
-    createInterface({ input: stream, crlfDelay: Infinity }).on('line', line => process.stdout.write(`${line}\n`));
+    createInterface({ input: stream, crlfDelay: Infinity }).on('line', line => {
+      lastCodexOutputAt = performance.now();
+      lastIdleReportAt = null;
+      process.stdout.write(`${line}\n`);
+    });
   }
+  // A quiet Codex process with zero provider requests is a different failure
+  // boundary from an in-flight provider request. Record that fact at most once
+  // a minute, without inspecting the model's input or output.
+  const idleHeartbeat = env.MODE === 'evidence' ? null : setInterval(() => {
+    const idleMs = Math.max(0, Math.round(performance.now() - lastCodexOutputAt));
+    if (idleMs < 60_000 || (lastIdleReportAt != null && idleMs - lastIdleReportAt < 60_000)) return;
+    lastIdleReportAt = idleMs;
+    process.stdout.write(`__USERNODE_CODING_PROVIDER__ ${JSON.stringify({
+      kind: 'codex_output_idle', durationMs: idleMs, activeRequests: adapter.activeRequestCount(),
+    })}\n`);
+  }, 15_000);
+  idleHeartbeat?.unref();
   let killTimer;
   const stop = signal => {
     child.kill(signal);
@@ -345,6 +434,7 @@ async function runCodex(args, env = process.env) {
     process.removeListener('SIGTERM', onTerm);
     process.removeListener('SIGINT', onInt);
     clearTimeout(killTimer);
+    if (idleHeartbeat) clearInterval(idleHeartbeat);
     await adapter.close();
   }
 }

@@ -30,16 +30,30 @@ const REPAIRABLE_LOCATOR_CODES = new Set([
 ]);
 const MAX_REPAIR_ATTEMPTS = 2;
 
-function repairableReplayFailure(error) {
+function replayRepairKind(error, plan) {
   const code = errorCode(error);
-  if (REPAIRABLE_LOCATOR_CODES.has(code)) return true;
+  if (REPAIRABLE_LOCATOR_CODES.has(code)) return 'locator';
   // A missing element in a positive assertion is another locator error.
-  // An existing element with the wrong state/value, or an expected absence
-  // that failed, may be a real app regression and must remain a hard failure.
-  return code === 'assertion_failed' && error?.detail?.phase === 'assertion'
-    && error.detail.count === 0
+  // Wrong values and states remain hard failures except for an exact motion
+  // checkpoint that can be verified after an observed, bounded state wait.
+  if (code !== 'assertion_failed' || error?.detail?.phase !== 'assertion') return null;
+  if (error.detail.count === 0
     && ['visible', 'attached', 'checked', 'text', 'value', 'focusWithin']
-      .includes(error.detail.assertion?.type);
+      .includes(error.detail.assertion?.type)) return 'locator';
+  const detail = error.detail;
+  const story = plan?.stories?.find((item) => item.id === detail.storyId);
+  const side = detail.side === 'base' ? 'before' : detail.side === 'head' ? 'after' : null;
+  const assertion = side && Number.isInteger(detail.assertionIndex)
+    ? story?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex] : null;
+  if (story?.intent?.animation !== 'motion' || !assertion
+      || planContract.canonicalJson(assertion) !== planContract.canonicalJson(detail.assertion)) return null;
+  // A motion marker can still be visible at the checkpoint even though it
+  // will settle moments later. Permit one bounded plan correction, but only
+  // when the exact recorded assertion failed for that transient state.
+  if (assertion.type === 'hidden' && detail.count === 1 && detail.actual === true) return 'motion_timing';
+  if (assertion.type === 'count' && assertion.count === 0
+      && Number.isInteger(detail.count) && detail.count > 0) return 'motion_timing';
+  return null;
 }
 
 function progressPhase(event) {
@@ -121,7 +135,8 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
       // pod exits, this identifies the exact unfinished step. Less important
       // progress is throttled to avoid one database write per emitted event.
       if (event.type === 'action_started' || event.type === 'side_failed'
-          || event.type === 'animation_started' || event.type === 'result'
+          || event.type === 'animation_started' || event.type === 'navigation_retry'
+          || event.type === 'result'
           || Date.now() - lastReplayFlushAt >= 5000) {
         lastReplayFlushAt = Date.now();
         flush();
@@ -264,7 +279,15 @@ function evidenceWords(value) {
     .match(/[a-z0-9]{4,}/g) || []);
 }
 
-function declaredCheckSummary(checkout, intent = null) {
+function testingPathsForSession(session) {
+  const candidates = [session?.testing_path,
+    ...(Array.isArray(session?.testing_paths) ? session.testing_paths.map((entry) =>
+      typeof entry === 'string' ? entry : entry?.path) : [])];
+  return [...new Set(candidates.filter((value) =>
+    planContract.validRelativePath(value) && !planContract.credentialLike(value)))].slice(0, 8);
+}
+
+function declaredCheckSummary(checkout, intent = null, testingPaths = []) {
   try {
     const checks = appManifest.readTests(appManifest.read(checkout));
     // A large manifest's first 80 checks can omit the changed screen
@@ -278,6 +301,9 @@ function declaredCheckSummary(checkout, intent = null) {
     const navigationWords = evidenceWords((intent?.stories || []).map((story) => [
       story.intent?.startPath, ...(story.intent?.steps || []),
     ].join(' ')).join(' '));
+    const intentPaths = new Set((intent?.stories || []).map((story) => story.intent?.startPath)
+      .filter((value) => value && value !== '/'));
+    const knownTestingPaths = new Set(testingPaths);
     const frequencies = new Map();
     const indexed = checks.map((test, index) => {
       const nameWords = evidenceWords(test.name);
@@ -289,7 +315,11 @@ function declaredCheckSummary(checkout, intent = null) {
       return { test, index, nameWords, pathWords, selectorWords };
     });
     const ranked = indexed.map(({ test, index, nameWords, pathWords, selectorWords }) => {
-      let score = 0;
+      // The proposal's recorded manual test route is already a concrete
+      // navigation clue. Prefer its exact declared check over a word match
+      // to a generic screen, while leaving the browser agent to verify it.
+      let score = intentPaths.has(test.path) ? 1_000_000
+        : knownTestingPaths.has(test.path) ? 500_000 : 0;
       for (const word of words) {
         const weight = Math.log2(1 + checks.length / (frequencies.get(word) || 1))
           * (navigationWords.has(word) ? 3 : 1);
@@ -310,6 +340,7 @@ function declaredCheckSummary(checkout, intent = null) {
 }
 
 function evidenceContext({ run, session, revision, pair, deployment, intent }) {
+  const testingPaths = testingPathsForSession(session);
   return {
     version: 1,
     runId: run.id,
@@ -333,10 +364,12 @@ function evidenceContext({ run, session, revision, pair, deployment, intent }) {
     changeContext: {
       title: String(session.pr_title || '').trim().slice(0, 256) || null,
       specification: String(session.spec_md || '').trim().slice(0, 4_000) || null,
+      testingPaths,
+      testingSteps: String(session.testing_md || '').trim().slice(0, 2_000) || null,
       diff: revision.diffSummary,
       untrusted: true,
     },
-    declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent),
+    declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
     provenance: {
       fixtureFingerprint: pair.fixtureFingerprint,
       baseImageDigest: pair.sides.base.imageDigest,
@@ -513,6 +546,7 @@ function replayProgressEvent(event, pass) {
     ...(/^[a-zA-Z][a-zA-Z0-9]{0,31}$/.test(assertionType) ? { assertionType } : {}),
     ...(Number.isInteger(event?.durationMs) && event.durationMs >= 0
       ? { durationMs: event.durationMs } : {}),
+    ...(type === 'navigation_retry' && event?.attempt === 2 ? { attempt: 2 } : {}),
     ...(['actionCount', 'assertionCount', 'recordedFrameCount', 'httpErrorCount', 'baseFrames', 'headFrames', 'bytes'].reduce((counts, key) => {
       if (Number.isInteger(event?.[key]) && event[key] >= 0) counts[key] = event[key];
       return counts;
@@ -936,6 +970,7 @@ async function executeRun(config, options, injected = {}) {
     const context = evidenceContext({ run, session, revision, pair, deployment: exploration, intent });
     const navigationHints = {
       intentPaths: intent.stories.map((story) => story.intent.startPath),
+      testingPaths: context.changeContext.testingPaths,
       declaredPaths: context.declaredChecks.map((check) => check.path),
     };
     failurePhase = 'register_control';
@@ -1183,23 +1218,27 @@ async function executeRun(config, options, injected = {}) {
           && registration.control.planCalls === metrics.repairCount + 1
           && metrics.repairCount < MAX_REPAIR_ATTEMPTS
           && ['pass_1', 'pass_2'].includes(failurePhase)
-          && repairableReplayFailure(registration.control.lastReplayFailure?.error)) {
+          && replayRepairKind(registration.control.lastReplayFailure?.error,
+            registration.control.lastSubmittedPlan)) {
         const replayFailure = registration.control.lastReplayFailure.error;
-        // A wrong role/name is a planner error, not a reason to publish
-        // partial captures or silently substitute another DOM element.
-        // The platform explicitly starts a bounded correction turn with the exact
-        // failed plan and replay location; its replacement still has to pass
-        // both clean, provenance-fenced replay passes.
+        const repairKind = replayRepairKind(replayFailure, registration.control.lastSubmittedPlan);
+        // A wrong locator or premature motion checkpoint can get a bounded
+        // correction turn. No failed media is published; the replacement must
+        // still pass both clean, provenance-fenced replay passes.
         const failureDetail = boundedReplayDetail(replayFailure);
         registration.control.allowRepair(
-          'A planned locator did not match the intended visible element during replay. Inspect its actual state on both revisions and correct the replays.',
+          repairKind === 'motion_timing'
+            ? 'A motion checkpoint ran while an observed element was still visible. Inspect both revisions and add an observed, bounded wait without changing the checkpoint assertions or interactions.'
+            : 'A planned locator did not match the intended visible element during replay. Inspect its actual state on both revisions and correct the replays.',
           {
+            kind: repairKind,
             code: errorCode(replayFailure),
             message: visibleError(replayFailure),
             detail: failureDetail,
           }
         );
         metrics.repairTrigger = {
+          kind: repairKind,
           code: errorCode(replayFailure),
           ...(Number.isInteger(metrics.lastReplayEvent?.pass)
             ? { pass: metrics.lastReplayEvent.pass } : {}),
@@ -1219,7 +1258,9 @@ async function executeRun(config, options, injected = {}) {
         finally { replaySuspendedMs += Date.now() - repairResetStartedAt; }
         metrics.repairCount += 1;
         failurePhase = 'agent_repair';
-        progress('A planned control did not match the page; the evidence agent is inspecting and correcting it…');
+        progress(repairKind === 'motion_timing'
+          ? 'A motion checkpoint ran before the animation settled; the evidence agent is checking the timing…'
+          : 'A planned control did not match the page; the evidence agent is inspecting and correcting it…');
         const priorBackend = metrics.agentDispatches.at(-1)?.requestedBackend;
         agentOutcome = await dispatchOnce(priorBackend === 'claude_code' ? 'claude_code' : null, metrics.repairCount);
         await awaitSubmittedReplay();
@@ -1474,6 +1515,16 @@ function inFlightSnapshot() {
   return [...inFlight.keys()];
 }
 
+// The running evidence run on a change, whatever its head, or null. Settles
+// (never rejects) when the run ends.
+function inFlightRunFor(sessionId) {
+  const prefix = `${Number(sessionId)}:`;
+  for (const [key, promise] of inFlight) {
+    if (key.startsWith(prefix)) return promise.then(() => {}, () => {});
+  }
+  return null;
+}
+
 module.exports = {
   VisualEvidenceOrchestrationError,
   exactSha,
@@ -1500,4 +1551,5 @@ module.exports = {
   noteNotStarted,
   NOT_STARTED_REASONS,
   inFlightSnapshot,
+  inFlightRunFor,
 };

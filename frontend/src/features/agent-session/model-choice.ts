@@ -14,6 +14,13 @@
 // Anthropic models, then anything else this account already uses. What it
 // leaves out is the full catalog dialog; a model starred there shows up here
 // as a favourite.
+//
+// Each model carries what a typical change costs on it, the dev chat's own
+// figure (#2570, dev-chat.js `_modelCostNote`): the platform's estimate for a
+// model it curates, otherwise the viewer's catalog prices times the server's
+// token profile of a typical change. Never a bare amount: always "about $X
+// for a typical change", because a naked "$1.55" reads as per message, per
+// hour or per month just as easily.
 
 import type { AgentChoice, ModelCatalog, OpenRouterModel } from './api';
 
@@ -41,6 +48,52 @@ export interface PickerOption {
    * "(default)" after it; the closed control shows just the label.
    */
   isDefault?: boolean;
+  /**
+   * The model's note and cost, "general coding work · about $1.55 for a
+   * typical change", shown after its name in the open list.
+   */
+  detail?: string;
+}
+
+/** A model's note and the estimate of a typical change on it. */
+export interface ModelCost {
+  note: string;
+  /** "about $1.55 for a typical change", or '' with no estimate. */
+  perChange: string;
+  /** The note and the cost together, for the open list. */
+  compact: string;
+}
+
+/**
+ * What a typical change costs on a model: the platform's estimate for one it
+ * curates, else the catalog's per-token prices times the typical change's
+ * token profile. Under a cent reads "<$0.01", never "$0.00": a model that
+ * costs something must not look free.
+ */
+export function modelCost(id: string | null | undefined, catalog: ModelCatalog | null, model: OpenRouterModel | null = null): ModelCost {
+  const notes = catalog?.notes || null;
+  const entry = id && notes ? notes.models[id] || null : null;
+  const note = entry && typeof entry.note === 'string' ? entry.note : '';
+  let cents = entry && entry.estimateCents != null && Number.isFinite(Number(entry.estimateCents)) ? Number(entry.estimateCents) : null;
+  if (cents == null && notes?.typicalChange && model) {
+    const input = Number(model.inputPricePerMillion);
+    const output = Number(model.outputPricePerMillion);
+    if (model.inputPricePerMillion != null && model.outputPricePerMillion != null && Number.isFinite(input) && Number.isFinite(output)) {
+      const dollars = (notes.typicalChange.inputTokens / 1_000_000) * input
+        + (notes.typicalChange.outputTokens / 1_000_000) * output;
+      cents = Math.round(dollars * 100 * 100) / 100;
+    }
+  }
+  const money = cents == null ? '' : (cents > 0 && cents < 1 ? '<$0.01' : `$${(cents / 100).toFixed(2)}`);
+  const perChange = money ? `about ${money} for a typical change` : '';
+  return { note, perChange, compact: [note, perChange].filter(Boolean).join(' · ') };
+}
+
+function withCost(option: PickerOption, cost: ModelCost): PickerOption {
+  return {
+    ...option,
+    ...(cost.compact ? { detail: cost.compact } : {}),
+  };
 }
 
 export function choiceValue(choice: AgentChoice | null | undefined): string {
@@ -96,7 +149,7 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
   const pushOpenRouter = (id: string | null | undefined) => {
     if (!id) return;
     const model = openRouterModel(catalog, id);
-    push({ value: `${OPENROUTER_PREFIX}${id}`, label: model?.name || id, title: OPENROUTER_TITLE });
+    push(withCost({ value: `${OPENROUTER_PREFIX}${id}`, label: model?.name || id, title: OPENROUTER_TITLE }, modelCost(id, catalog, model)));
   };
   const openRouter = !!catalog && catalog.codexAvailable && catalog.openrouter.length > 0;
 
@@ -108,7 +161,7 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
   }
   // 2. The Anthropic models.
   for (const model of catalog?.anthropic || []) {
-    push({ value: `${ANTHROPIC_PREFIX}${model.id}`, label: model.label, title: ANTHROPIC_TITLE });
+    push(withCost({ value: `${ANTHROPIC_PREFIX}${model.id}`, label: model.label, title: ANTHROPIC_TITLE }, modelCost(model.id, catalog)));
   }
   // 3. What this account already uses: the saved default and the favourites.
   if (openRouter && catalog) {
@@ -122,7 +175,7 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
     const value = choiceValue(selected);
     if (!seen.has(value)) {
       if (selected.backend === 'codex_openrouter') pushOpenRouter(selected.model);
-      else push({ value, label: selected.model || 'Claude', title: ANTHROPIC_TITLE });
+      else push(withCost({ value, label: selected.model || 'Claude', title: ANTHROPIC_TITLE }, modelCost(selected.model, catalog)));
     }
   }
   const fallback = catalog ? choiceValue(effectiveChoice(null, catalog)) : null;
@@ -180,6 +233,18 @@ export function effortOptions(catalog: ModelCatalog | null): PickerOption[] {
 export function effortValue(choice: AgentChoice | null, catalog: ModelCatalog | null): string {
   const effort = (choice && choice.reasoningEffort) || '';
   return effort && effort === catalog?.defaultReasoningEffort ? '' : effort;
+}
+
+/**
+ * The thinking level the closed pill names after the model (#3079): the
+ * choice's own effort, or the deployment's default it follows. '' when no
+ * level applies (a model without reasoning) or none is known, never a
+ * placeholder "Default".
+ */
+export function effortLabel(choice: AgentChoice | null, catalog: ModelCatalog | null): string {
+  if (!offersReasoning(choice, catalog)) return '';
+  const effort = (choice && choice.reasoningEffort) || catalog?.defaultReasoningEffort || '';
+  return EFFORT_LABELS[effort] || '';
 }
 
 /** Two choices that run the same way. */

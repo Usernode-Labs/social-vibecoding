@@ -32,6 +32,7 @@
 const log = require('./logger');
 const { changeWebPath } = require('./change-destination');
 const visualEvidencePlan = require('./visual-evidence-plan');
+const unitSuiteRow = require('./unit-suite-row');
 const {
   READ_SCOPE,
   WRITE_SCOPE,
@@ -599,10 +600,19 @@ function shapeChecks(session) {
     failingTruncated: failed.length > MAX_LIST_ITEMS,
     // And WHY they failed, which the capture stored per row and this shape
     // used to drop on the floor.
-    failures: failed.slice(0, MAX_FAILURE_DETAILS).map((t) => ({
+    //
+    // The repo unit suite's row leads and keeps its whole reason: it is one
+    // row for every failing unit test, appended after the browser checks,
+    // and its reason is the per-file list that tells the agent which test
+    // files to run. Ten rows and 400 characters in, it held neither.
+    failures: [
+      ...failed.filter(unitSuiteRow.isUnitSuiteRow),
+      ...failed.filter((t) => !unitSuiteRow.isUnitSuiteRow(t)),
+    ].slice(0, MAX_FAILURE_DETAILS).map((t) => ({
       name: untrusted(t.name || t.path || 'unnamed test', MAX_TITLE_CHARS),
       path: t.path ? untrusted(String(t.path), MAX_TITLE_CHARS) : null,
-      reason: untrusted(failureReasonOf(t), MAX_FAILURE_REASON_CHARS) || null,
+      reason: untrusted(failureReasonOf(t), unitSuiteRow.isUnitSuiteRow(t)
+        ? unitSuiteRow.FAILURE_DETAIL_MAX : MAX_FAILURE_REASON_CHARS) || null,
     })),
     total: results.length,
     error: session.check_error_detail
@@ -1139,6 +1149,24 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
 // which clips the whole brief): the title and body come first and must not be
 // squeezed out by a long argument in the comments.
 const MAX_DISCUSSION_CHARS = 2500;
+
+// One change for SEVERAL requests puts every one's title, body and discussion
+// into that same clipped brief. At the one-request budgets, three requests
+// with long threads fill it before the third is reached, and the clip falls
+// on whatever came last: the last request, then the caller's own brief. So
+// each request gets an even share of what the caller's brief leaves, a little
+// under half of it for the body and the rest for the discussion. A single
+// request keeps the budgets it always had.
+const REQUEST_PART_OVERHEAD = 180; // its "Also request #N:" line, envelopes and clip marks
+const MIN_REQUEST_PART_CHARS = 200;
+function requestTextBudget(count, brief, briefLimit) {
+  if (!(count > 1)) return { body: MAX_BODY_CHARS, discussion: MAX_DISCUSSION_CHARS };
+  const briefChars = brief ? Math.min(String(brief).length, MAX_BODY_CHARS) + 64 : 0;
+  const share = Math.floor((briefLimit - briefChars) / count) - MAX_TITLE_CHARS - REQUEST_PART_OVERHEAD;
+  const body = Math.max(MIN_REQUEST_PART_CHARS, Math.min(MAX_BODY_CHARS, Math.floor(share * 0.45)));
+  const discussion = Math.max(MIN_REQUEST_PART_CHARS, Math.min(MAX_DISCUSSION_CHARS, share - body));
+  return { body, discussion };
+}
 
 // Both halves of one request's discussion, rendered by the module that
 // already owns that rendering for every other agent surface. Never throws:
@@ -3024,6 +3052,10 @@ function registerTools(server, ctx) {
 
   const externalAgentTasks = require('./external-agent-tasks');
   const connectorLimits = require('./connector-limits');
+  // How many requests one work order may implement (prepare_work's
+  // requestNumbers), read once so the input schema does not reach into the
+  // service ahead of the tool's scope check.
+  const MAX_WORK_ORDER_REQUESTS = externalAgentTasks.MAX_TASK_ISSUES;
 
   // Everything services/external-agent-tasks.js needs, assembled once. The
   // service holds the fork/branch/attribution logic; the token stays here,
@@ -3112,10 +3144,18 @@ function registerTools(server, ctx) {
     const open = Array.isArray(result.openProposals) ? result.openProposals : [];
     if (!open.length) return '';
     const mine = open.filter((p) => p.mine);
+    // A work order for several requests says which one each proposal is for.
+    const several = Array.isArray(result.requestNumbers) && result.requestNumbers.length > 1;
+    const tags = (p) => [
+      p.mine ? 'the user\'s own' : '',
+      several && Array.isArray(p.requests) && p.requests.length
+        ? `for ${p.requests.map((n) => `#${n}`).join(' and ')}`
+        : '',
+    ].filter(Boolean);
     const ids = open.map((p) => (Number(p.prNumber) > 0
-      ? `PR #${Number(p.prNumber)} (proposal ${p.proposalId}${p.mine ? ', the user\'s own' : ''})`
-      : `proposal ${p.proposalId}${p.mine ? ' (the user\'s own)' : ''}`));
-    return `THIS REQUEST IS ALREADY UP FOR A VOTE — ${ids.join(', ')}. `
+      ? `PR #${Number(p.prNumber)} (${[`proposal ${p.proposalId}`, ...tags(p)].join(', ')})`
+      : `proposal ${p.proposalId}${tags(p).length ? ` (${tags(p).join(', ')})` : ''}`));
+    return `${several ? 'ONE OF THESE REQUESTS IS ALREADY UP FOR A VOTE' : 'THIS REQUEST IS ALREADY UP FOR A VOTE'} — ${ids.join(', ')}. `
       + 'Say so before the user pastes anything, because a second proposal for '
       + 'work that is already built and waiting on the group is the failure this warning exists to '
       + 'stop. '
@@ -3127,6 +3167,30 @@ function registerTools(server, ctx) {
         : 'Only its author can update it, so the options are commenting on theirs or a deliberate '
           + 'rival approach — the user\'s call, not yours. ')
       + 'If they want the second proposal anyway, carry on below. ';
+  };
+
+  // A proposal linked to no request, whose brief names requests that are open.
+  // Nothing links them by itself — a number in free text may be a request the
+  // work only touches, or one it deliberately leaves — so the agent is pointed
+  // at update_proposal_issues, the owner's own metadata-only link, with the
+  // numbers filled in. Only open requests are named: the mentions are checked
+  // against the app's open list, which excludes pull requests, and a failed
+  // read says nothing rather than guessing.
+  const unlinkedRequestsNote = async (result) => {
+    const mentioned = Array.isArray(result.mentionedIssues) ? result.mentionedIssues : [];
+    if (!result.proposalId || !mentioned.length) return '';
+    if (Array.isArray(result.linkedIssues) && result.linkedIssues.length) return '';
+    const issues = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${result.appSlug}/github-issues`);
+    if (!issues.ok) return '';
+    const list = Array.isArray(issues.body && issues.body.issues) ? issues.body.issues : [];
+    const open = mentioned.filter((n) => list.some((i) => i.number === n));
+    if (!open.length) return '';
+    const refs = open.map((n) => `#${n}`).join(', ');
+    return ` It is linked to no request, so no request closes when it merges. Its brief mentions open `
+      + `request${open.length === 1 ? '' : 's'} ${refs}: if this change implements `
+      + `${open.length === 1 ? 'it' : 'them'}, call update_proposal_issues with proposalId ${result.proposalId} `
+      + `and addIssues [${open.join(', ')}], which links ${open.length === 1 ? 'it' : 'them'} and adds the `
+      + '`Closes` lines to the pull request. Next time, name them in prepare_work\'s requestNumbers.';
   };
 
   // The stale-checkout warning, and it leads even the duplicate one (#1462).
@@ -3178,6 +3242,8 @@ function registerTools(server, ctx) {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().optional()
         .describe('The number of an existing request to implement, from list_requests. Its title and body become the task description.'),
+      requestNumbers: z.array(z.number().int().positive().max(2147483647)).max(MAX_WORK_ORDER_REQUESTS).optional()
+        .describe(`Several existing requests this one change implements, from list_requests (at most ${MAX_WORK_ORDER_REQUESTS}; the first leads, and requestNumber, if also given, goes first). Each one's title, body and discussion go into the work order, each is marked as being worked on, and the pull request closes every one when it merges. Only requests named here or in requestNumber are linked: a number written into brief is not.`),
       brief: z.string().optional()
         .describe('What to build, when there is no existing request (or to add detail to one).'),
       proposalId: z.number().int().positive().optional()
@@ -3234,7 +3300,11 @@ function registerTools(server, ctx) {
         note: z.string(),
       }).nullable(),
       claimedRequest: z.boolean()
-        .describe('Whether the request was marked as being worked on. False when this work order names no request, or when the claim did not land — the work order itself is unaffected either way, and claim_request retries it.'),
+        .describe('Whether the request was marked as being worked on — every one of them, when it names several. False when this work order names no request, or when a claim did not land — the work order itself is unaffected either way, and claim_request retries it.'),
+      claimedRequests: z.array(z.number())
+        .describe('The requests whose claim landed. Any in requestNumbers missing from here can be claimed with claim_request.'),
+      requestNumbers: z.array(z.number())
+        .describe('Every request this work order implements. Its pull request gets a `Closes #N` line for each, and the proposal is linked to each, so all of them close when it merges. Empty for a brief with no request behind it.'),
       // Proposals the group is ALREADY voting on for this same request
       // (#1216) — empty when there are none, and never the same thing as
       // `proposalId` above. A job and a proposal are tracked separately, so
@@ -3252,11 +3322,13 @@ function registerTools(server, ctx) {
         mine: z.boolean(),
         author: z.string().nullable(),
         webPath: z.string().nullable(),
+        requests: z.array(z.number()).optional()
+          .describe('Which of the requests this work order names that proposal is for.'),
       })),
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, requestNumber, brief, restart, proposalId, headSha, remoteUrl }) => {
+  }, async ({ slug, requestNumber, requestNumbers, brief, restart, proposalId, headSha, remoteUrl }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -3282,44 +3354,64 @@ function registerTools(server, ctx) {
     // people's writing on its way to a second agent with a shell, so it
     // keeps its envelope all the way into the work order.
     const parts = [];
-    const issueNumber = Number.isInteger(requestNumber) ? requestNumber : null;
-    if (issueNumber) {
+    // Every request this change implements, the single-request parameter
+    // first. The first is the job's issue_number; all of them are linked.
+    const asked = [
+      ...(Number.isInteger(requestNumber) ? [requestNumber] : []),
+      ...(Array.isArray(requestNumbers) ? requestNumbers : []),
+    ];
+    if (new Set(asked).size > MAX_WORK_ORDER_REQUESTS) {
+      return toolError('invalid_request', `One work order implements at most ${MAX_WORK_ORDER_REQUESTS} requests. `
+        + 'Split the rest into another change.');
+    }
+    const requested = externalAgentTasks.normalizeIssueNumbers(asked);
+    if (requested.length) {
       const issues = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/github-issues`);
       if (!issues.ok) return platformError(issues);
       const list = Array.isArray(issues.body && issues.body.issues) ? issues.body.issues : [];
-      const match = list.find((i) => i.number === issueNumber);
-      if (!match) {
-        return toolError('no_access', `Request #${issueNumber} is not open on this app. Check list_requests.`);
+      const missing = requested.filter((n) => !list.some((i) => i.number === n));
+      if (missing.length) {
+        return toolError('no_access', missing.length === 1
+          ? `Request #${missing[0]} is not open on this app. Check list_requests.`
+          : `Requests ${missing.map((n) => `#${n}`).join(', ')} are not open on this app. Check list_requests.`);
       }
-      parts.push(untrusted(match.title, MAX_TITLE_CHARS));
-      if (match.body) parts.push(untrusted(match.body, MAX_BODY_CHARS));
+      const budget = requestTextBudget(requested.length, brief, externalAgentTasks.MAX_BRIEF_CHARS);
+      for (const [index, number] of requested.entries()) {
+        const match = list.find((i) => i.number === number);
+        // The first request's title stays the brief's first line — it names
+        // the job in the Improve panel and the pull request by default — and
+        // each one after it is introduced by its number.
+        if (index > 0) parts.push(`Also request #${number}:`);
+        parts.push(untrusted(match.title, MAX_TITLE_CHARS));
+        if (match.body) parts.push(untrusted(match.body, budget.body));
 
-      // The request's DISCUSSION, not just its body. A request on this
-      // platform is a conversation: the reporter opens it in one line, then
-      // the requirements, the reproduction and the "actually, not like that"
-      // all land in replies — the Homeroom thread on the app's Dev page and
-      // the GitHub issue's comments. The Mayor has read both since #945; a
-      // connector work order carried only the opening line, so the agent
-      // outside the platform built from strictly less than the agent inside
-      // it, and rediscovered answers already given.
-      //
-      // Advisory throughout: both loaders swallow their own errors and both
-      // halves are optional, so a GitHub hiccup or an empty thread costs the
-      // block and nothing else.
-      const discussion = await buildRequestDiscussion({
-        pool, baseUrl, accessToken, appId: app.id, slug, issueNumber,
-      });
-      if (discussion) parts.push(untrusted(discussion, MAX_DISCUSSION_CHARS));
+        // The request's DISCUSSION, not just its body. A request on this
+        // platform is a conversation: the reporter opens it in one line, then
+        // the requirements, the reproduction and the "actually, not like that"
+        // all land in replies — the Homeroom thread on the app's Dev page and
+        // the GitHub issue's comments. The Mayor has read both since #945; a
+        // connector work order carried only the opening line, so the agent
+        // outside the platform built from strictly less than the agent inside
+        // it, and rediscovered answers already given.
+        //
+        // Advisory throughout: both loaders swallow their own errors and both
+        // halves are optional, so a GitHub hiccup or an empty thread costs the
+        // block and nothing else.
+        const discussion = await buildRequestDiscussion({
+          pool, baseUrl, accessToken, appId: app.id, slug, issueNumber: number,
+        });
+        if (discussion) parts.push(untrusted(discussion, budget.discussion));
+      }
     }
     if (brief) parts.push(untrusted(brief, MAX_BODY_CHARS));
     if (!parts.length) {
-      return toolError('invalid_request', 'Pass requestNumber, brief, or both — there has to be something to build.');
+      return toolError('invalid_request', 'Pass requestNumber (or requestNumbers), brief, or both — there has to be something to build.');
     }
 
     const result = await externalAgentTasks.prepareWork(taskDeps(), {
       user,
       app,
-      issueNumber,
+      issueNumbers: requested,
       brief: parts.join('\n\n'),
       clientId: clientId || clientName || null,
       // The client's own registered name is what picks Claude Code vs Codex
@@ -3343,18 +3435,20 @@ function registerTools(server, ctx) {
     // work order names a request — a `brief`-only one has no board row to
     // mark. Renewals are silent platform-side, so calling prepare_work twice
     // does not announce twice.
-    let claimedRequest = false;
-    if (issueNumber) {
+    // Every request the work order names is claimed, one call each.
+    const claimedRequests = [];
+    for (const number of requested) {
       const claimed = await callPlatform(
-        baseUrl, accessToken, 'POST', `/api/apps/${slug}/github-issues/${issueNumber}/claim`
+        baseUrl, accessToken, 'POST', `/api/apps/${slug}/github-issues/${number}/claim`
       );
-      claimedRequest = !!claimed.ok;
-      if (!claimed.ok) {
+      if (claimed.ok) claimedRequests.push(number);
+      else {
         log.warn('mcp-tools', 'prepare_work claim failed (continuing)', {
-          slug, issueNumber, status: claimed.status,
+          slug, issueNumber: number, status: claimed.status,
         });
       }
     }
+    const claimedRequest = requested.length > 0 && claimedRequests.length === requested.length;
 
     // THE CHECKOUT CHECK, MOVED FORWARD (#1462).
     //
@@ -3429,6 +3523,8 @@ function registerTools(server, ctx) {
       branchHome: result.branchHome || null,
       checkout,
       claimedRequest,
+      claimedRequests,
+      requestNumbers: Array.isArray(result.requestNumbers) ? result.requestNumbers : requested,
       // The title is the proposal's own heading and the author is a username:
       // both are other Homeroom users' writing, so both keep the envelope
       // every other request- and proposal-shaped string here carries.
@@ -3566,6 +3662,8 @@ function registerTools(server, ctx) {
       // to promote it. `null` on every ordinary submission.
       shared: z.boolean().nullable(),
       sessionId: z.number().nullable(),
+      linkedIssues: z.array(z.number()).nullable().optional()
+        .describe('On a new proposal, the requests it is linked to and will close when it merges. Empty means none: a request number written only in the brief is never linked by itself, and nextStep says how to link one.'),
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
@@ -4064,10 +4162,12 @@ function registerTools(server, ctx) {
       webPath: result.proposalId
         ? changeWebPath(origin, result.appSlug, result.proposalId)
         : `${origin}/#app/${result.appSlug}`,
+      linkedIssues: Array.isArray(result.linkedIssues) ? result.linkedIssues : null,
       nextStep: 'It is now up for a vote'
         + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}. `
         + 'Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.'
-        + testingRouteNote(testing, false),
+        + testingRouteNote(testing, false)
+        + await unlinkedRequestsNote(result),
     });
   });
 
@@ -4650,5 +4750,6 @@ module.exports = {
   shapeChecks,
   shapeTestingNotes,
   testingRouteNote,
+  requestTextBudget,
   registerTools,
 };

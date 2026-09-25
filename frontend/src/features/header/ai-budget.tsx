@@ -39,9 +39,22 @@ export interface AiBudgetView {
   parts: MeterPart[];
 }
 
+/** The numbers the view is worded from (./ai-credit.js), for a reader that draws its own. */
+export interface AiBudgetFigures {
+  limitCents: number;
+  remainingCents: number;
+  spentCents: number;
+  byokCents: number;
+  /** The binding cap is the week's rather than the day's. */
+  weekly: boolean;
+  /** CreditOptions.creditState's level: 'locked', 'unavailable', 'low', …, or null without it. */
+  level: string | null;
+}
+
 export interface AiBudgetState {
   view: AiBudgetView | null;
   hidden: boolean;
+  figures?: AiBudgetFigures | null;
 }
 
 /** Complete literals — see the store's header on why these live here. */

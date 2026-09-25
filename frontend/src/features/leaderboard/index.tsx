@@ -63,6 +63,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui/tabs';
+import { useScrollFade } from '../../lib/use-scroll-fade';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useLeaderboardSection } from './section-store';
@@ -116,16 +117,30 @@ const SECTION_TABS = [
 ];
 
 // Four labels at the strip's px-4 are wider than a 390px phone's column, so
-// the triggers tighten to px-2.5 below `sm` — the same track, the same face —
+// the triggers tighten to px-2 below `sm` — the same track, the same face —
 // and the list scrolls sideways rather than wrapping on anything narrower
 // still (a 320px phone). Complete literals, for Tailwind's extractor.
-const STRIP_TAB = 'inline-flex items-center justify-center h-8 px-2.5 sm:px-4 rounded-full text-sm font-semibold transition-colors shrink-0';
+//
+// The scrollbar stays hidden, so the scroll is shown instead (QA 2026-09-24
+// Q21): useScrollFade fades whichever edge has more beyond it and brings the
+// selected tab into view. At 360px the strip used to end on "Histo" with
+// nothing to say it went on. (px-2, not px-2.5, since the same fix: at 390
+// the four labels overflowed their track by 4px.)
+const STRIP_TAB = 'inline-flex items-center justify-center h-8 px-2 sm:px-4 rounded-full text-sm font-semibold transition-colors shrink-0';
 const STRIP_LIST = `${SECTION_TABS_LIST} max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`;
+
+// Me's reading column, which the Kudos pane takes (see its root below). The
+// strip steps into it too while Kudos is showing, so the strip's left edge is
+// the list's rather than the wide frame's — 176px to the left of it on a
+// desktop, which read as the tab belonging to some other page.
+const KUDOS_COLUMN = 'max-w-[40rem] mx-auto';
 
 export function LeaderboardScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'leaderboard-screen', false);
   const { mounted, section } = useLeaderboardSection();
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const stripFade = useScrollFade(stripRef, `${mounted ? 1 : 0}:${section}`);
   // A challenge's detail page is a LEVEL of this screen (see
   // ./challenges-pane.tsx): while one is open the platform header is its nav
   // bar, and the screen's own title, tab strip and event bar step aside so the
@@ -137,7 +152,7 @@ export function LeaderboardScreen() {
     <main
       ref={screenRef}
       id="leaderboard-screen"
-      className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+      className="hidden flex-1 overflow-y-auto platform-safe-scroll [scrollbar-gutter:stable]"
       style={{ position: "relative" }}
     >
       {/*
@@ -152,8 +167,17 @@ export function LeaderboardScreen() {
           down together and the strip never jumps between them. `px-4`/`pb-4`
           are the 16px gutter and foot this frame always had.
       */}
+      {/*
+          `[scrollbar-gutter:stable]` on the scroller above: Kudos and
+          Standings run past the fold and Challenges and History do not, so
+          with a classic (non-overlay) scrollbar the centered column — strip
+          included — shifted half a scrollbar's width left on the long tabs
+          and back on the short ones. Reserving the gutter on every tab keeps
+          the column where it is; overlay scrollbars (phones, default macOS)
+          reserve nothing and are unaffected.
+      */}
       <div className="max-w-5xl mx-auto px-4 pt-5 pb-4 w-full">
-        <div className={detailOpen ? 'hidden' : undefined}>
+        <div className={detailOpen ? 'hidden' : section === 'kudos' ? KUDOS_COLUMN : undefined}>
           {/*
               No <h2> here any more. The screen said "Leaderboard" twice — once
               in the platform bar and once as this heading — and neither named
@@ -172,7 +196,7 @@ export function LeaderboardScreen() {
               window.Leaderboard?._setSection?.(key);
             }}
           >
-            <TabsList id="standings-tabs" className={STRIP_LIST}>
+            <TabsList id="standings-tabs" ref={stripRef} className={STRIP_LIST} style={stripFade}>
               {mounted
                 ? SECTION_TABS.map((s) => (
                     <TabsTrigger
@@ -229,7 +253,7 @@ export function LeaderboardScreen() {
             here span exactly the x-range Me's cards do, centered with its
             own `mx-auto` (#2921) as before.
         */}
-        <div id="leaderboard-root" className="hidden max-w-[40rem] mx-auto">
+        <div id="leaderboard-root" className={`hidden ${KUDOS_COLUMN}`}>
           <KudosPane />
         </div>
         {/*

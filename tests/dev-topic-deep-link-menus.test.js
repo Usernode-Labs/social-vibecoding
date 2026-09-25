@@ -177,8 +177,12 @@ test('every direct topic link replaces another app\'s remembered header title', 
     { kind: 'gov', id: 9 },
     { kind: 'session', id: 7 },
   ]) {
-    const { AppView, titles } = makeSandbox();
+    const { AppView, sandbox, titles } = makeSandbox();
     stubBranches(AppView);
+    // The loaded record is the open app's: a record naming another app is
+    // not this one's name, and the topic view asks for the right one first
+    // (tests/dev-topic-missing-app-record.test.js).
+    sandbox.App.currentApp = 'usernode-2d5619';
     AppView.appData = { slug: 'usernode-2d5619', name: 'Homeroom' };
 
     await AppView.renderDevView('topic', ref);

@@ -132,7 +132,11 @@ test('direct consent, retry, and block rules are explicit in canonical service',
   assert.match(serviceSource,
     /SELECT 1 FROM conversation_messages WHERE conversation_id = \$1 LIMIT 1/,
     'the requester gets exactly one pre-acceptance opening message');
-  assert.match(serviceSource, /if \(existingMessages\.rows\.length\) return null/);
+  // QA 2026-09-24 Q2: a second pre-acceptance message is refused with its
+  // own answer (409 awaiting_acceptance at the route), not the null that the
+  // route turned into a 404 "Conversation not found" and the client into a
+  // Retry that could never succeed.
+  assert.match(serviceSource, /if \(existingMessages\.rows\.length\) return \{ error: 'awaiting_acceptance' \}/);
   assert.match(serviceSource, /toggleReaction[\s\S]*blockedEitherWay/);
   assert.match(serviceSource, /editMessage[\s\S]*blockedEitherWay/);
   const interactionHelper = serviceSource.match(

@@ -702,7 +702,8 @@ test('the grid opens on its progress: the tally, scoped to the selected event', 
     'no event known yet: the bare tally');
   context.selectedEvent = () => ({ id: 900500, name: 'Season 2' });
   pane._renderGrid();
-  assert.equal(store.get().grid.progress.caption, 'done in Season 2');
+  // QA 2026-09-24 Q17: an event's tally says it is an event's.
+  assert.equal(store.get().grid.progress.caption, 'done in this event · Season 2');
   context.selectedEvent = () => ({ id: 900500, name: '  ' });
   pane._renderGrid();
   assert.equal(store.get().grid.progress.caption, 'done', 'a blank name is left out');

@@ -119,6 +119,58 @@ test('a readiness wait accepts repeated visible matches while an interaction sta
   }), { code: 'ambiguous_locator' });
 });
 
+test('hidden wait waits until every matching element is no longer visible', async () => {
+  let visibleCount = 2;
+  const calls = [];
+  const visible = {
+    first: () => ({ waitFor: async (options) => {
+      calls.push(options);
+      assert.equal(options.state, 'hidden');
+      visibleCount = 0;
+    } }),
+    count: async () => visibleCount,
+  };
+  const matches = {
+    filter: (options) => {
+      assert.deepEqual(options, { visible: true });
+      return visible;
+    },
+  };
+  const page = { locator: (value) => {
+    assert.equal(value, '.is-animating');
+    return matches;
+  } };
+  await replay.waitForNotVisible(page, { by: 'css', value: '.is-animating' }, 'settled', 3000);
+  assert.deepEqual(calls, [{ state: 'hidden', timeout: 3000 }]);
+  assert.equal(visibleCount, 0);
+});
+
+test('hidden wait reports a still-visible marker and allows an absent marker', async () => {
+  let visibleCount = 1;
+  const visible = {
+    first: () => ({ waitFor: async () => {
+      if (visibleCount) throw new Error('timeout');
+    } }),
+    count: async () => visibleCount,
+  };
+  const matches = {
+    filter: () => visible,
+    count: async () => visibleCount,
+    nth: () => ({ isVisible: async () => visibleCount > 0 }),
+  };
+  const page = { locator: () => matches };
+  await assert.rejects(replay.waitForNotVisible(page, {
+    by: 'css', value: '.is-animating',
+  }, 'settled', 100), (error) => {
+    assert.equal(error.code, 'locator_still_visible');
+    assert.equal(error.detail.waitState, 'hidden');
+    assert.equal(error.detail.visibleCount, 1);
+    return true;
+  });
+  visibleCount = 0;
+  await replay.waitForNotVisible(page, { by: 'css', value: '.is-animating' }, 'settled', 100);
+});
+
 test('text readiness matches a visible substring and reports a missing one as a locator error', async () => {
   let visible = true;
   const locator = {
@@ -294,6 +346,47 @@ test('internal HTTP replay bootstraps the clone-local platform session cookie', 
     httpOnly: true, secure: false, sameSite: 'Lax',
   }]);
   assert.equal(calls.some(([name]) => name === 'dispose'), true);
+});
+
+test('initial navigation retries one transport failure and keeps the same route', async () => {
+  const route = 'http://base-evidence:3000/?demo=1&ws=status&token=member.jwt#app/demo/workshop';
+  const calls = [];
+  const retries = [];
+  const waits = [];
+  const response = { status: () => 200 };
+  const page = { goto: async (url, options) => {
+    calls.push({ url, options });
+    if (calls.length === 1) throw new Error('page.goto: net::ERR_NETWORK_CHANGED at ' + url);
+    return response;
+  } };
+  assert.equal(await replay.navigateStart(page, route,
+    (event) => retries.push(event), async (ms) => waits.push(ms)), response);
+  assert.deepEqual(calls, [
+    { url: route, options: { waitUntil: 'domcontentloaded', timeout: 10000 } },
+    { url: route, options: { waitUntil: 'domcontentloaded', timeout: 10000 } },
+  ]);
+  assert.deepEqual(retries, [{ attempt: 2, code: 'network_changed' }]);
+  assert.deepEqual(waits, [500]);
+  assert.doesNotMatch(JSON.stringify(retries), /member\.jwt/);
+});
+
+test('initial navigation never retries application failures or a second transport failure', async () => {
+  const appError = new Error('page.goto: HTTP 500');
+  let calls = 0;
+  await assert.rejects(replay.navigateStart({ goto: async () => {
+    calls += 1;
+    throw appError;
+  } }, 'http://base-evidence:3000/', () => { throw new Error('unexpected retry'); }), appError);
+  assert.equal(calls, 1);
+
+  const networkError = new Error('page.goto: net::ERR_NETWORK_CHANGED');
+  const retries = [];
+  await assert.rejects(replay.navigateStart({ goto: async () => {
+    calls += 1;
+    throw networkError;
+  } }, 'http://base-evidence:3000/', (event) => retries.push(event), async () => {}), networkError);
+  assert.equal(calls, 3, 'one application attempt plus two bounded transport attempts');
+  assert.deepEqual(retries, [{ attempt: 2, code: 'network_changed' }]);
 });
 
 test('session bootstrap accepts only a bounded session cookie value', () => {

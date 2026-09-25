@@ -306,6 +306,20 @@ export const SpinnerArcIcon = ({ id, className, ...rest }: IconProps) => (
 SpinnerArcIcon.displayName = 'SpinnerArcIcon';
 
 /**
+ * An open ring, a little over two thirds drawn: the Homeroom mark's "one of
+ * your changes is building" cue and the menu note that explains it (#2779
+ * follow-up). One stroked circle in `currentColor`, no track, so it reads at
+ * 12px where SpinnerArcIcon's faint ring would not. Like that one, the spin
+ * (`animate-spin`) is the caller's.
+ */
+export const SpinnerRingIcon = ({ id, className, ...rest }: IconProps) => (
+  <svg id={id} className={className} fill="none" viewBox="0 0 24 24" {...rest}>
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeDasharray="40 57"></circle>
+  </svg>
+);
+SpinnerRingIcon.displayName = 'SpinnerRingIcon';
+
+/**
  * A trophy on a plinth — the door to the Leaderboard screen, drawn on the
  * 24 grid at a finer weight than TrophyIcon's blockier mark. TrophyIcon was
  * the hamburger drawer's row glyph; this is the one the home screen's

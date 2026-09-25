@@ -321,8 +321,11 @@ test('the card is always inside the viewport, hole or no hole', () => {
 test('in the app the card keeps clear of the status bar', () => {
   const viewport = { width: 390, height: 844 };
   const card = { width: 340, height: 160 };
-  // A tall target with no room below: the card pins to the top edge.
-  const tall = { top: 120, left: 10, width: 370, height: 720 };
+  // A tall target whose START has scrolled off the top, with no room on
+  // either side: the card pins to the top edge. (QA 2026-09-24 Q30d: a tall
+  // target whose start is ON screen now takes the card at the bottom
+  // instead, see the next test, so this one starts above the viewport.)
+  const tall = { top: -40, left: 10, width: 370, height: 880 };
   assert.equal(spotlight.placeCard(viewport, card, tall).top, spotlight.VIEWPORT_MARGIN);
   const inset = spotlight.placeCard(viewport, card, tall, 40);
   assert.ok(inset.top >= spotlight.VIEWPORT_MARGIN + 40, 'below the 40px status bar');
@@ -330,11 +333,50 @@ test('in the app the card keeps clear of the status bar', () => {
   assert.ok(spotlight.placeCardForPanel(viewport, card, tall, panel, 40).top >= 52);
 });
 
+// QA 2026-09-24 Q30d: on a phone, step 7 "Challenges" points at a section
+// taller than the screen. The card took the top of it, over the heading and
+// the progress it was describing, the ring ran across the tab bar, and on
+// step 8 the ring round the Me tab was cut off by the screen's edge.
+test('a target taller than the screen keeps its start visible, and its ring on screen', () => {
+  const viewport = { width: 390, height: 844 };
+  const card = { width: 340, height: 169 };
+  const tabs = 70;
+  // The Challenges section, heading at 99, running on past the tab bar.
+  const section = spotlight.padRect({ top: 99, left: 0, width: 390, height: 900 });
+  const hole = spotlight.fitHole(section, viewport, tabs);
+  assert.equal(hole.top, 91, 'the start is untouched');
+  assert.equal(hole.top + hole.height, 844 - tabs - spotlight.RING_WIDTH, 'the ring stops above the tab bar');
+  assert.equal(hole.left, spotlight.RING_WIDTH, 'and inside the left edge');
+  assert.equal(hole.left + hole.width, 390 - spotlight.RING_WIDTH, 'and the right one');
+  const placed = spotlight.placeCard(viewport, card, hole, 0, tabs);
+  assert.equal(placed.top, 844 - tabs - card.height - spotlight.VIEWPORT_MARGIN,
+    'the card covers the END of the section, just above the tab bar');
+  assert.ok(placed.top > 99 + 80, 'clear of the heading and the progress under it');
+  // Step 8: the Me tab, bottom right. The target IS in the bar, so there is
+  // no bottom inset, but the hole stays inside the screen's own edges.
+  const me = spotlight.fitHole(spotlight.padRect({ top: 788, left: 310, width: 76, height: 56 }), viewport, 0);
+  assert.equal(me.left + me.width, 390 - spotlight.RING_WIDTH);
+  assert.equal(me.top + me.height, 844 - spotlight.RING_WIDTH);
+  assert.equal(me.top, 780);
+  // An ordinary target is not moved at all.
+  const small = { top: 100, left: 50, width: 200, height: 40 };
+  assert.deepEqual(spotlight.fitHole(small, viewport, tabs), small);
+});
+
+test('a tall target is scrolled to its start, not centred past it', () => {
+  assert.match(OVERLAY_SRC, /if \(rect\.height \+ SPOTLIGHT_PAD \* 2 > band\) \{\s*scrollerOf\(target\)\.scrollBy\(/);
+  assert.match(OVERLAY_SRC, /target\.scrollIntoView\(\{ block: 'center', behavior \}\)/);
+  assert.match(OVERLAY_SRC, /const hole = target \? fitHole\(padRect\(target\.getBoundingClientRect\(\)\), viewport, bottomInset\) : null;/);
+  // The tab bar is an inset only for a target that is not one of its tabs.
+  assert.match(OVERLAY_SRC, /if \(!bar \|\| \(target && bar\.contains\(target\)\)\) return 0;/);
+});
+
 test('the tour waits for focus in the app and hands Home back at its top', () => {
   const start = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('if (started.current || userId == null) return;'));
   const body = start.slice(0, start.indexOf('}, [userId, start]);'));
-  assert.match(body, /await whenTermsSettled\(\);[\s\S]*await whenAppFocused\(\);[\s\S]*await whenHomeVisible\(\);/);
-  assert.match(OVERLAY_SRC, /FOCUS_WAIT_MAX_MS/, 'the focus wait is bounded');
+  assert.match(body, /await whenTermsSettled\(\);[\s\S]*await whenUserSettled\(\);[\s\S]*await whenHomeVisible\(\);/);
+  assert.match(OVERLAY_SRC, /FIRST_TOUCH_WAIT_MS/, 'the wait is bounded');
+  assert.match(OVERLAY_SRC, /--platform-safe-top/, 'the status bar is measured from the shell token');
   assert.match(OVERLAY_SRC, /clearStep\(userId\);[\s\S]{0,200}backToTopOfHome\(\);/);
 });
 
@@ -422,7 +464,8 @@ test('roomLeftOfPanel is the whole desktop/narrow decision', () => {
 
 test('only the panel steps consult the panel, and the overlay uses the pair', () => {
   assert.match(OVERLAY_SRC, /const panel = stepAt\(indexRef\.current\)\.needsPanel && panelOpenNow\(\) \? panelBox\(\) : null;/);
-  assert.match(OVERLAY_SRC, /placeCardForPanel\(\s*viewport, \{ width, height: card\.offsetHeight \}, hole, panel, safeTopInset\(\),\s*\)/);
+  // QA 2026-09-24 Q30d: plus the tab bar's inset, so the card stays above it.
+  assert.match(OVERLAY_SRC, /placeCardForPanel\(\s*viewport, \{ width, height: card\.offsetHeight \}, hole, panel, safeTopInset\(\), bottomInset,\s*\)/);
   // The panel is measured on the kit's sheet when it has been adopted into
   // one, because that wrapper is the surface the viewer sees.
   const SPOT_SRC = read(`${TOUR_DIR}/spotlight.ts`);

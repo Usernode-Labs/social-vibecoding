@@ -190,3 +190,47 @@ test('an empty list is the pitch; an unpublished one is nothing at all', () => {
   assert.equal(renderToHtml(createElement(m.SessionList)), '',
     'a chat-view render must not flash the pitch before the rows arrive');
 });
+
+// ── #2989: a row that opens a session is a button (#1918) ──────────────
+
+const ROW = {
+  id: 7, status: 'active', statusTone: 'active', title: 'Warm proposal',
+  branch: 'feat/warm', busy: false, pr: { url: 'https://gh/pr/9', number: 9 },
+  createdAt: '2026-06-01T00:00:00Z', actions: [],
+};
+
+test('#2989: a session row is a focusable, named button', () => {
+  const m = mod();
+  const html = renderToHtml(createElement(m.SessionListView, { rows: [ROW] }));
+  assert.match(html, /<div role="button" tabindex="0" aria-label="Open session: Warm proposal \(active\)" class="dc-session-item/);
+  assert.match(html, /class="dc-session-item[^"]*" data-id="7">/, 'data-id stays the last attribute');
+});
+
+test('#2989: Enter and Space on the row open the session; keys from a child do not', async () => {
+  const m = mod();
+  const list = m.SessionListView({ rows: [ROW] });
+  const rowEl = list.props.children[0];
+  const div = rowEl.type(rowEl.props);
+  const opened = [];
+  const prev = globalThis.window;
+  globalThis.window = { DevChat: { openSessionFromList: (id) => { opened.push(id); } } };
+  try {
+    const key = (k, own = true) => {
+      const target = {};
+      let prevented = false;
+      div.props.onKeyDown({
+        key: k, target, currentTarget: own ? target : {},
+        preventDefault: () => { prevented = true; },
+      });
+      return prevented;
+    };
+    assert.equal(key('Enter'), true, 'Enter is consumed');
+    assert.equal(key(' '), true, 'Space is consumed (no page scroll)');
+    assert.equal(key('a'), false, 'other keys pass through');
+    assert.equal(key('Enter', false), false, 'the nested PR link keeps its own Enter');
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(opened, [7, 7]);
+  } finally {
+    if (prev === undefined) delete globalThis.window; else globalThis.window = prev;
+  }
+});

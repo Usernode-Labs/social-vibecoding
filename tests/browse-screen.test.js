@@ -787,7 +787,10 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   const listTag = INDEX.match(/<div id="browse-list"[^>]*>/)[0];
   assert.match(listTag, /md:grid/);
   assert.match(listTag, /md:grid-cols-2/);
-  assert.match(listTag, /lg:grid-cols-3/);
+  // QA 2026-09-24 Q10: the third column waits for xl. From lg (1024px) it
+  // left the name column 0px wide beside the sidebar.
+  assert.match(listTag, /xl:grid-cols-3/);
+  assert.doesNotMatch(listTag, /lg:grid-cols-3/);
   assert.doesNotMatch(BROWSE_SRC, /matchMedia\(/, 'the breakpoint is CSS, not JS');
 
   // NO divide-* utility on the container. Tailwind's divide-y sets
@@ -1572,8 +1575,14 @@ test('#1553: the row button names the destination, like every other surface', ()
   // platform left that a guess — the detail page's button, the app-chip menu
   // and this button's own title attribute all spell out "Your apps".
   const listSrc = read('frontend/src/features/apps/browse-list.tsx');
-  assert.match(listSrc, /'Added' : 'Add to Your apps'/);
-  assert.doesNotMatch(listSrc, /'Added' : 'Add'/);
+  // QA 2026-09-24 Q10: the 127px "Add to Your apps" pill squeezed the app's
+  // name to ten characters on desktop and to nothing at 1024. The visible
+  // label is a "+ Add" pill again; the destination #1553 asked for is still
+  // spelled out, as the button's accessible name and its title.
+  assert.match(listSrc, /'Added' : 'Add'/);
+  assert.match(listSrc, /aria-label=\{view\.added \? undefined : 'Add to Your apps'\}/);
+  assert.match(listSrc, /title=\{view\.addTitle\}/);
+  assert.match(listSrc, /<PlusIcon /);
   // The state label stays short: the row it sits on already says which app.
   assert.match(listSrc, /view\.added \? 'Added'/);
 });

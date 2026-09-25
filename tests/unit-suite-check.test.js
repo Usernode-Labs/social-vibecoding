@@ -60,7 +60,7 @@ test('real test script → run', () => {
 
 const SENTINEL = unitSuite.SETUP_DONE_SENTINEL;
 
-test('TAP failure: not-ok lines and summary counters, nothing else', () => {
+test('TAP failure: failing tests and summary counters, nothing else', () => {
   const stdout = [
     SENTINEL,
     'ok 1 - fine',
@@ -73,19 +73,169 @@ test('TAP failure: not-ok lines and summary counters, nothing else', () => {
     '# cancelled 0',
   ].join('\n');
   const d = unitSuite.failureDetail(stdout, '');
-  assert.match(d, /not ok 2 - explodes/);
-  assert.match(d, /not ok 4 - also explodes/);
+  // No YAML under either line, so no file to group them by — they still
+  // show, under a group that says the runner did not report one.
+  assert.match(d, /^\(file not reported\) \(2\): explodes; also explodes \| /);
   assert.match(d, /# fail 2/);
   assert.match(d, /# cancelled 0/);
-  assert.doesNotMatch(d, /ok 1 - fine/);
+  assert.doesNotMatch(d, /fine/);
   assert.doesNotMatch(d, /setup failed/i);
 });
 
-test('TAP failure: not-ok flood is capped with a remainder count', () => {
-  const notOks = Array.from({ length: 30 }, (_, i) => `not ok ${i + 1} - t${i + 1}`);
-  const d = unitSuite.failureDetail(`${SENTINEL}\n${notOks.join('\n')}`, '');
-  assert.match(d, /\(\+22 more failing tests\)/);
-  assert.ok(d.length <= 1600);
+// ── failureDetail: grouped by file (change 4868) ───────────────────────
+//
+// 15 tests failed on change 4868. The summary named the first 8 `not ok`
+// lines — all in one file, with no file named — then "(+7 more failing
+// tests)". The fix turn searched for the named tests to find their file,
+// fixed them, and ran the whole suite (~11 minutes) to find the other
+// seven, which were in three other files. The file each test is in lives
+// in the YAML block under its `not ok` line (`location:`); the summary
+// reads it and groups by it, and the FILE LIST is what survives every cut.
+
+const WS = '/tmp/tmp.Ab12Cd34Ef';
+// One failing top-level test the way node:test prints it.
+const tapFail = (n, name, file, line = 10) => [
+  `# Subtest: ${name}`,
+  `not ok ${n} - ${name}`,
+  '  ---',
+  '  duration_ms: 1.25',
+  "  type: 'test'",
+  ...(file ? [`  location: '${WS}/${file}:${line}:1'`] : []),
+  "  failureType: 'testCodeFailure'",
+  "  error: 'boom'",
+  "  code: 'ERR_ASSERTION'",
+  '  stack: |-',
+  `    TestContext.<anonymous> (${WS}/${file || 'x.js'}:${line + 2}:5)`,
+  '  ...',
+].join('\n');
+const tapRun = (blocks, { fail = blocks.length, root = true } = {}) => [
+  ...(root ? [`${unitSuite.ROOT_SENTINEL}=${WS}`] : []),
+  unitSuite.CLONED_SENTINEL,
+  SENTINEL,
+  'TAP version 13',
+  ...blocks,
+  `1..${blocks.length}`,
+  `# tests ${13000 + fail}`,
+  '# suites 0',
+  '# pass 13000',
+  `# fail ${fail}`,
+  '# cancelled 0',
+  '# duration_ms 660123.4',
+].join('\n');
+
+// Change 4868's shape: eight in one file, then the check-cap guards.
+const CHANGE_4868 = [
+  ...Array.from({ length: 8 }, (_, i) => ['tests/agent-sessions-postgres.test.js', `agent session postgres case ${i + 1}`]),
+  ['tests/dev-board-fold.test.js', 'the manifest declares exactly the checks this file accounts for'],
+  ['tests/improve-session-spinner.test.js', 'the busy spinner is one check, retargeted rather than added'],
+  ['tests/proposal-tests-manifest.test.js', "this repo's own manifest fits under the ceiling, with room to grow"],
+  ...Array.from({ length: 4 }, (_, i) => ['tests/agent-sessions-postgres.test.js', `agent session postgres late case ${i + 1}`]),
+];
+
+test('more than 8 failures over several files: every file, with its count', () => {
+  const d = unitSuite.failureDetail(tapRun(CHANGE_4868.map(([f, n], i) => tapFail(i + 1, n, f))), '');
+  assert.match(d, /^tests\/agent-sessions-postgres\.test\.js \(12\): agent session postgres case 1; /);
+  assert.match(d, / \| tests\/dev-board-fold\.test\.js \(1\): the manifest declares exactly/);
+  assert.match(d, / \| tests\/improve-session-spinner\.test\.js \(1\): the busy spinner/);
+  assert.match(d, / \| tests\/proposal-tests-manifest\.test\.js \(1\): this repo's own manifest/);
+  // Repo-relative, so a fix turn can pass the paths straight to node --test.
+  assert.doesNotMatch(d, /\/tmp\/tmp\./);
+  assert.doesNotMatch(d, /:\d+:\d+/, 'the line:col of location: is dropped');
+  // Everything fits at this size: all twelve names, in order, and no `…`.
+  assert.match(d, /postgres case 8; agent session postgres late case 1;/);
+  assert.doesNotMatch(d, /…/);
+  assert.match(d, /\| # tests 13015 \| # pass 13000 \| # fail 15 \| # cancelled 0$/);
+  assert.doesNotMatch(d, /# suites|# duration_ms|not ok|ERR_ASSERTION|stack/);
+});
+
+test('a failure with no location: groups as "file not reported", and the files still list', () => {
+  const d = unitSuite.failureDetail(tapRun([
+    tapFail(1, 'located one', 'tests/a.test.js'),
+    tapFail(2, 'a runner that printed no location', null),
+    tapFail(3, 'located two', 'tests/b.test.js'),
+  ]), '');
+  assert.match(d, /^tests\/a\.test\.js \(1\): located one \| \(file not reported\) \(1\): a runner that printed no location \| tests\/b\.test\.js \(1\): located two \| # tests/);
+});
+
+test('at the size limit, names give way and every file and count survives', () => {
+  const long = (i) => `a very long descriptive test name number ${i} `.padEnd(190, 'x');
+  const blocks = [];
+  let n = 0;
+  const files = Array.from({ length: 9 }, (_, i) => `tests/suite-${i + 1}.test.js`);
+  for (const [i, f] of files.entries()) {
+    for (let k = 0; k < (i === 0 ? 40 : 3); k += 1) blocks.push(tapFail(++n, long(n), f));
+  }
+  const d = unitSuite.failureDetail(tapRun(blocks), '');
+  assert.ok(d.length <= unitSuite.FAILURE_DETAIL_MAX, `${d.length} > ${unitSuite.FAILURE_DETAIL_MAX}`);
+  assert.match(d, /^tests\/suite-1\.test\.js \(40\)/);
+  for (const f of files.slice(1)) assert.ok(d.includes(`${f} (3)`), `${f} and its count are listed`);
+  assert.match(d, /…/, 'a file whose names did not all fit says so');
+  // Names are dealt one per file per round: the 40-failure file cannot take
+  // the budget before the second file gets its first name.
+  assert.ok(d.includes(`tests/suite-2.test.js (3): ${long(41)}`), 'the second file keeps its first name');
+  assert.match(d, /\| # tests 13064 \| # pass 13000 \| # fail 64 \| # cancelled 0$/, 'the counters survive the cut');
+});
+
+test('when the file list alone overflows, it says how many files it left out', () => {
+  const blocks = Array.from({ length: 80 }, (_, i) =>
+    tapFail(i + 1, `t${i + 1}`, `tests/a-rather-long-directory-name/file-number-${String(i + 1).padStart(3, '0')}.test.js`));
+  const d = unitSuite.failureDetail(tapRun(blocks), '');
+  assert.ok(d.length <= unitSuite.FAILURE_DETAIL_MAX, `${d.length} > ${unitSuite.FAILURE_DETAIL_MAX}`);
+  const listed = (d.match(/file-number-\d+\.test\.js \(1\)/g) || []).length;
+  assert.ok(listed > 10 && listed < 80, `${listed} files listed`);
+  assert.ok(d.includes(`(+${80 - listed} more files, ${80 - listed} failing tests)`));
+  assert.match(d, /# fail 80 \| # cancelled 0$/);
+});
+
+test('without the workspace line the location stays absolute — still the right file', () => {
+  const d = unitSuite.failureDetail(tapRun([tapFail(1, 'old log', 'tests/a.test.js')], { root: false }), '');
+  assert.match(d, /^\/tmp\/tmp\.Ab12Cd34Ef\/tests\/a\.test\.js \(1\): old log \| /);
+});
+
+test('only top-level failures count, TODO and SKIP are not failures', () => {
+  const stdout = tapRun([
+    [
+      '# Subtest: a parent',
+      '    # Subtest: a child',
+      '    not ok 1 - a child',
+      '      ---',
+      `      location: '${WS}/tests/nested.test.js:5:3'`,
+      '      ...',
+      '    1..1',
+      'not ok 1 - a parent',
+      '  ---',
+      `  location: '${WS}/tests/nested.test.js:4:1'`,
+      "  failureType: 'subtestsFailed'",
+      '  ...',
+    ].join('\n'),
+    'not ok 2 - not finished yet # TODO',
+    'not ok 3 - skipped here # SKIP',
+    tapFail(4, 'real', 'tests/real.test.js'),
+  ], { fail: 2 });
+  const d = unitSuite.failureDetail(stdout, '');
+  assert.match(d, /^tests\/nested\.test\.js \(1\): a parent \| tests\/real\.test\.js \(1\): real \| # tests/);
+  assert.doesNotMatch(d, /a child|not finished|skipped here/);
+});
+
+test('the container script prints the workspace failureDetail strips', async (t) => {
+  const github = require('../src/services/github');
+  const docker = require('../src/services/docker');
+  const history = require('../src/services/check-history');
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getFileContent', async () => '{"scripts":{"test":"node --test"}}');
+  t.mock.method(github, 'getCloneUrl', async () => 'https://example.test/repo');
+  t.mock.method(history, 'loadGraduated', async () => new Set());
+  let script = '';
+  t.mock.method(docker, 'runOneShot', async (_name, options) => {
+    script = options.cmd[2];
+    throw Object.assign(new Error('exit 1'), {
+      stdout: tapRun([tapFail(1, 'regression', 'tests/x.test.js')]), code: 1,
+    });
+  });
+  const out = await unitSuite.maybeRunUnitSuite({ config: {}, pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 7, repoOwner: 'example', repoName: 'repo', ref: 'a'.repeat(40) });
+  assert.ok(script.includes(`echo "${unitSuite.ROOT_SENTINEL}=$(pwd -P)"`), 'printed from the workspace');
+  assert.ok(script.indexOf(unitSuite.ROOT_SENTINEL) < script.indexOf('npm ci'), 'before anything can fail');
+  assert.match(out.row.failureReason, /^tests\/x\.test\.js \(1\): regression \| /);
 });
 
 test('setup failure (no sentinel) says the tests never ran', () => {
@@ -112,6 +262,12 @@ test('non-TAP output falls back to the last lines', () => {
   assert.match(d, /line 40/);
   assert.match(d, /FAIL src\/foo\.test\.js/);
   assert.doesNotMatch(d, /line 1 \|/);
+});
+
+test('the non-TAP tail leaves the script\'s own marker lines out', () => {
+  const stdout = [`${unitSuite.ROOT_SENTINEL}=${WS}`, unitSuite.CLONED_SENTINEL, 'npm error code E404'].join('\n');
+  const d = unitSuite.failureDetail(stdout, '');
+  assert.equal(d, 'Suite setup failed (clone / npm ci), so the tests never ran. | npm error code E404');
 });
 
 // ── kill switch ────────────────────────────────────────────────────────
@@ -241,6 +397,6 @@ for (const failed of [false, true]) {
     assert.equal(out.row.status, failed ? 'fail' : 'pass');
     assert.equal(out.row.summary.tests, 2);
     assert.equal(out.row.summary.fail, failed ? 1 : 0);
-    if (failed) assert.match(out.row.failureReason, /not ok 2 - regression/);
+    if (failed) assert.match(out.row.failureReason, /^\(file not reported\) \(1\): regression \| # tests 2/);
   });
 }

@@ -158,6 +158,7 @@ const AppFrame = memo(function AppFrame({ slug }: { slug: string }): ReactNode {
         sandbox={look.sandboxReady ? APP_FRAME_SANDBOX : PENDING_FRAME_SANDBOX}
         allow={look.allow}
         data-app-slug={slug}
+        title={look.title || undefined}
         data-kept={active ? undefined : ''}
         inert={!active}
         aria-hidden={active ? undefined : 'true'}

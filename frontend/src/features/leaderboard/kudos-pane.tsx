@@ -57,12 +57,11 @@
  * store's initial value is what makes it do so.
  */
 
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, useRef, type ReactNode } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
   SECTION_TAB_ACTIVE,
-  SECTION_TAB_BASE,
   SECTION_TAB_INACTIVE,
   SECTION_TABS_LIST_BASE,
   Tabs,
@@ -70,6 +69,7 @@ import {
   TabsTrigger,
 } from '@/components/ui/tabs';
 
+import { useScrollFade } from '../../lib/use-scroll-fade';
 import { useStoreState } from '../../lib/use-store-state';
 import { MessageButton } from '../profile/message-button';
 import { kudosPaneStore } from './kudos-pane-store.js';
@@ -322,7 +322,21 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
   );
 }
 
-const WIN_TAB = 'px-3 py-1 text-xs font-medium rounded-full';
+// QA 2026-09-24 Q21: on a phone the sub-tabs and the window pills shared one
+// row that did not wrap, so each label broke onto two lines inside a 32px
+// pill and was cut top and bottom. Now:
+//   * every label stays on one line (`whitespace-nowrap`, `shrink-0`);
+//   * below `sm` the two groups stack, sub-tabs over window pills, and the
+//     sub-tabs tighten to px-3 (the section strip above does the same at
+//     px-2), which fits three labels in a 360px column;
+//   * narrower still (320px) the sub-strip scrolls sideways like the section
+//     strip, with the same edge fade, rather than clipping.
+// SECTION_TAB_BASE's face otherwise: h-8, rounded-full, text-sm semibold.
+const SUB_TAB = 'inline-flex items-center justify-center h-8 px-3 sm:px-4 rounded-full text-sm font-semibold transition-colors whitespace-nowrap shrink-0';
+const SUB_TABS_LIST = `${SECTION_TABS_LIST_BASE} max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`;
+const TAB_ROW = 'flex flex-col items-start gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3';
+
+const WIN_TAB = 'px-3 py-1 text-xs font-medium rounded-full whitespace-nowrap';
 const WIN_TAB_INACTIVE = 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 '
   + 'hover:bg-zinc-200 dark:hover:bg-zinc-700';
 
@@ -332,6 +346,9 @@ const WIN_TAB_INACTIVE = 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-z
  * section tab above says "Kudos".
  */
 function TabChrome({ view }: { view: Extract<ChromeView, { kind: 'tabs' }> }): ReactNode {
+  const activeSub = view.subTabs.find((t) => t.active)?.key ?? '';
+  const subRef = useRef<HTMLDivElement | null>(null);
+  const subFade = useScrollFade(subRef, activeSub);
   return (
     <>
       <header className="mb-4">
@@ -342,18 +359,18 @@ function TabChrome({ view }: { view: Extract<ChromeView, { kind: 'tabs' }> }): R
           figure/ground now, and a `border-b` beneath it would be the
           underline reintroduced one element out.
       */}
-      <div className="flex items-center justify-between gap-3 mb-3">
+      <div className={TAB_ROW}>
         <Tabs
           value={view.subTabs.find((t) => t.active)?.key ?? ''}
           onValueChange={(key) => controller()?._setSub(key)}
         >
-          <TabsList className={SECTION_TABS_LIST_BASE}>
+          <TabsList ref={subRef} className={SUB_TABS_LIST} style={subFade}>
             {view.subTabs.map((t) => (
               <TabsTrigger
                 key={t.key}
                 value={t.key}
                 data-lb-sub={t.key}
-                className={SECTION_TAB_BASE}
+                className={SUB_TAB}
                 activeClassName={SECTION_TAB_ACTIVE}
                 inactiveClassName={SECTION_TAB_INACTIVE}
               >
@@ -362,7 +379,7 @@ function TabChrome({ view }: { view: Extract<ChromeView, { kind: 'tabs' }> }): R
             ))}
           </TabsList>
         </Tabs>
-        <div className="flex gap-2">
+        <div className="flex shrink-0 gap-2">
           {view.winTabs.map((t) => (
             <button
               key={t.key}

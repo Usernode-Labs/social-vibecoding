@@ -36,6 +36,8 @@ const STEPS_TARGET_BYTES = 1_500_000;
 const STEPS_MAX_BYTES = 4_000_000;
 const MOTION_TARGET_BYTES = 2_000_000;
 const MOTION_MAX_BYTES = 6_000_000;
+const INITIAL_NAVIGATION_RETRY_DELAY_MS = 500;
+const RETRYABLE_INITIAL_NAVIGATION = /\bnet::ERR_(NETWORK_CHANGED|CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_REFUSED|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE)\b/i;
 
 const CHROMIUM_ARGS = Object.freeze([
   '--disable-dev-shm-usage',
@@ -325,6 +327,26 @@ async function waitForAnyVisible(page, spec, description, timeoutMs) {
   }
 }
 
+// A hidden wait succeeds only once no matching element is visible. Filter
+// before selecting the first match so a hidden duplicate cannot conceal a
+// still-visible one. An absent match is also hidden, matching assertions.
+async function waitForNotVisible(page, spec, description, timeoutMs) {
+  const visible = locatorFor(page, spec, { includeHidden: true }).filter({ visible: true });
+  try {
+    await visible.first().waitFor({ state: 'hidden', timeout: timeoutMs });
+  } catch (error) {
+    if (await visible.count().catch(() => null) === 0) return;
+    const snapshot = await locatorSnapshot(page, spec, { includeCandidates: true });
+    if (!Number.isInteger(snapshot.attachedCount)
+        && !Number.isInteger(snapshot.matchedCount)) throw error;
+    throw new ReplayFailure(
+      'locator_still_visible',
+      `${description} remained visible after ${timeoutMs} ms.`,
+      { ...snapshot, waitState: 'hidden', timeoutMs }
+    );
+  }
+}
+
 async function waitForVisibleText(page, text, description, timeoutMs) {
   return waitForAnyVisible(page, { by: 'text', value: text, exact: false }, description, timeoutMs);
 }
@@ -339,6 +361,23 @@ function authorizedUrl(origin, relativePath, token) {
   const url = new URL(joinedUrl(origin, relativePath));
   if (token) url.searchParams.set('token', token);
   return url.toString();
+}
+
+// A freshly reset internal service can change its network endpoint between
+// session bootstrap and Chromium's first document request. Retry only that
+// pre-document transport failure, never an app response, action, or assertion.
+// The same plan still has to pass both independent clean replays.
+async function navigateStart(page, url, onRetry = () => {}, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      return await page.goto(url, { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
+    } catch (error) {
+      const code = RETRYABLE_INITIAL_NAVIGATION.exec(String(error?.message || ''))?.[1]?.toLowerCase();
+      if (!code || attempt === 2) throw error;
+      onRetry({ attempt: attempt + 1, code });
+      await wait(INITIAL_NAVIGATION_RETRY_DELAY_MS);
+    }
+  }
 }
 
 function publicRelativePath(value) {
@@ -546,7 +585,10 @@ async function executeAction(page, action, origin, network, authToken = '') {
       await page.evaluate(({ x, y }) => window.scrollBy({ left: x, top: y, behavior: 'instant' }), { x: action.x, y: action.y });
       break;
     case 'waitFor':
-      if (action.target) await waitForAnyVisible(page, action.target, action.id, action.timeoutMs);
+      if (action.target) {
+        if (action.state === 'hidden') await waitForNotVisible(page, action.target, action.id, action.timeoutMs);
+        else await waitForAnyVisible(page, action.target, action.id, action.timeoutMs);
+      }
       else if (action.text) await waitForVisibleText(page, action.text, action.id, action.timeoutMs);
       else if (action.path) await page.waitForURL((url) => url.origin === origin && publicRelativePath(url) === action.path, { timeout: action.timeoutMs });
       else await network.quiet(action.timeoutMs);
@@ -572,7 +614,10 @@ async function evaluateAssertion(page, assertion, origin) {
   let actual = null;
   switch (assertion.type) {
     case 'visible': passed = count === 1 && await first.isVisible(); break;
-    case 'hidden': passed = count === 0 || (count === 1 && !await first.isVisible()); break;
+    case 'hidden':
+      if (count === 1) actual = await first.isVisible();
+      passed = count === 0 || (count === 1 && actual === false);
+      break;
     case 'attached': passed = count === 1; break;
     case 'detached': passed = count === 0; break;
     case 'text':
@@ -918,9 +963,8 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   let failureStage = { phase: 'navigate_start' };
   try {
     emitEvent({ type: 'navigation_started', ...eventBase });
-    const response = await page.goto(authorizedUrl(origin, sidePlan.startPath, authToken), {
-      waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS,
-    });
+    const response = await navigateStart(page, authorizedUrl(origin, sidePlan.startPath, authToken),
+      ({ attempt, code }) => emitEvent({ type: 'navigation_retry', ...eventBase, attempt, code }));
     navigation = {
       status: typeof response?.status === 'function' ? response.status() : null,
     };
@@ -1264,8 +1308,10 @@ module.exports = {
   locatorSnapshot,
   resolveOne,
   waitForAnyVisible,
+  waitForNotVisible,
   waitForVisibleText,
   authorizedUrl,
+  navigateStart,
   publicRelativePath,
   redactedUrl,
   sessionCookieValue,
