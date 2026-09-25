@@ -11,7 +11,7 @@ const appLlmEnv = require('./app-llm-env');
 const appStorageEnv = require('./app-storage-env');
 const { appIdentityEnv } = require('./app-identity-env');
 const deployFailure = require('./deploy-failure');
-const { getTemplateFiles, getConnectorScaffoldFiles } = require('./template');
+const { getTemplateFiles, getConnectorScaffoldFiles, getCanonicalRepoFile } = require('./template');
 const { getPool } = require('../db/pool');
 const appCreationPhase = require('./app-creation-phase');
 const { pushAppStatusUpdate, pushAppCreationPhase } = require('./ws');
@@ -114,7 +114,9 @@ async function createApp(config, appRow) {
         });
         repoUrl = repo.html_url;
 
-        const files = getTemplateFiles(name, slug, dbUrl);
+        // repoUrl makes the template name this repo as the app's canonical
+        // one (.claude/homeroom-canonical-repo, read by the freshness check).
+        const files = getTemplateFiles(name, slug, dbUrl, repoUrl);
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });
@@ -140,8 +142,9 @@ async function createApp(config, appRow) {
       // follow-up an imported app never received `.claude/settings.json`
       // and its users kept getting a permission prompt on every read-only
       // connector call, forever. Add just the connector scaffold — an
-      // import must keep the repo it imported, so this is the two
-      // `.claude/` files and nothing else.
+      // import must keep the repo it imported, so this is the `.claude/`
+      // scaffold, plus the pointer naming this repo as the app's canonical
+      // one, and nothing else.
       //
       // Deliberately NOT fatal, and deliberately NOT `repoFailed`: the
       // fresh-create branch above fails the whole creation when its push
@@ -155,8 +158,13 @@ async function createApp(config, appRow) {
           const existing = await github.getFileContent(
             parsed.owner, parsed.repo, '.claude/settings.json', 'main');
           if (existing === null) {
-            await github.pushFiles(parsed.owner, parsed.repo, getConnectorScaffoldFiles(), {
-              message: 'Add Homeroom connector permissions',
+            const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
+            const scaffold = [
+              ...getConnectorScaffoldFiles(),
+              ...(canonicalRepoFile ? [canonicalRepoFile] : []),
+            ];
+            await github.pushFiles(parsed.owner, parsed.repo, scaffold, {
+              message: 'Add Homeroom connector permissions and checkout freshness check',
             });
             log.info('app-creator', 'Added connector scaffold to imported repo',
                      { appId, slug, repoUrl });

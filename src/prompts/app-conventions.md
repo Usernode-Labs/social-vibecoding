@@ -1843,6 +1843,37 @@ credentials, and the only outbound calls back to the platform are
 the push/PR proxy endpoints (which only accept the session's
 canonical branch). Commit cleanly and let the harness finish the job.
 
+## Outside dev-chat: check that your checkout is current
+
+For a coding agent working on an app from its own checkout: Claude Code on
+someone's machine or on the web, Codex, and the like. Inside Homeroom's
+dev-chat the platform fixes your base commit; skip this section.
+
+The checkout you were handed may be a fork whose `main` is behind the app's
+canonical repository, and nothing in it says so: `git fetch origin` compares
+the fork with itself. So before you read code to answer a question about how
+the app behaves now, not only before you edit, check against the canonical
+repository. Homeroom names it in `.claude/homeroom-canonical-repo` in the
+repos it creates, imports and forks; otherwise it is the app's `repoUrl` from
+the connector's `list_apps`, and the connector's `get_checkout_status`
+answers the whole question for you.
+
+```sh
+git fetch <canonical repository URL> main
+git merge-base --is-ancestor FETCH_HEAD HEAD && echo current || echo behind
+```
+
+`behind` means the checkout does not contain the canonical `main`. To answer
+a question, read the canonical code instead: `git show FETCH_HEAD:<path>` or
+`git grep <pattern> FETCH_HEAD`. To change code, start from the exact base
+commit your work order (`prepare_work`) gives, and never merge or rebase onto
+the canonical `main` yourself: which commit a change is diffed against
+decides what the group votes on.
+
+Scaffolded repos run this check when a Claude Code session starts
+(`.claude/hooks/homeroom-freshness.sh`) and tell you when you are behind. It
+is silent offline, so its silence is not proof the checkout is current.
+
 ## Bridge — centrally hosted (not vendored)
 
 `usernode-bridge.js` is the one piece of cross-dapp infrastructure
