@@ -395,3 +395,14 @@ test('the message box re-fits its hint when it gets its width, not only when its
     'on a width change only, so the height it sets cannot loop');
   assert.match(panel, /return \(\) => observer\.disconnect\(\);/);
 });
+
+test('the attach button draws a paperclip and says it attaches files (#3080)', () => {
+  // It only ever opened the file picker, so a "+" promised more than it did.
+  const panel = read('frontend/src/features/agent-session/index.tsx');
+  const button = panel.match(/<button[^>]*?data-agent-session-attach[\s\S]*?<\/button>/);
+  assert.ok(button, 'the attach button is still marked data-agent-session-attach');
+  assert.match(button[0], /aria-label="Attach photos or files"/);
+  assert.match(button[0], /title="Attach photos or files"/);
+  assert.match(button[0], /<PaperclipIcon className="h-5 w-5" aria-hidden="true" \/>/);
+  assert.doesNotMatch(button[0], /PlusIcon/);
+});
