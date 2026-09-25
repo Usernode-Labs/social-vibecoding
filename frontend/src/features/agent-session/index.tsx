@@ -126,6 +126,7 @@ import { openFocusedApp } from './open-app';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { ProposeButton } from './propose-confirm';
 import { readUnsent, writeUnsent } from './unsent';
+import { draftRequest, requestSeed, type DraftRequest } from './request-seed';
 import { CreditsCard, HandoffPanel } from './handoff';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
@@ -1038,8 +1039,32 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
   );
 }
 
-function EmptyState({ about }: { about: About }) {
+function EmptyState({ about, request }: { about: About; request: DraftRequest | null }) {
   const app = about?.focusApp?.name || null;
+  // Started from a request (Start work): say which, before anything is sent.
+  // The number is known at once, from the card; the app once the draft's
+  // preview answers.
+  if (request) {
+    return (
+      <section
+        className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center"
+        data-agent-session-empty
+        data-agent-session-request={request.number}
+      >
+        <span className="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
+          <SparklesIcon className="h-6 w-6" aria-hidden="true" />
+        </span>
+        <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{`Request #${request.number}`}</h3>
+        {request.title ? (
+          <p className="mt-1 max-w-sm text-base font-medium text-zinc-800 dark:text-zinc-100" data-agent-session-request-title>{request.title}</p>
+        ) : null}
+        <p className="mt-2 max-w-sm text-sm text-zinc-600 dark:text-zinc-300">
+          {app ? <>On <strong>{app}</strong>. </> : null}
+          Send the message below to start. The Mayor reads the request, plans the change with you, and puts it up for a vote when you say so.
+        </p>
+      </section>
+    );
+  }
   return (
     <section className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center" data-agent-session-empty>
       <span className="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
@@ -1055,15 +1080,14 @@ function EmptyState({ about }: { about: About }) {
 }
 
 // The first things to say, from where the conversation was opened: a
-// request or a proposal the user was looking at comes first.
-function starters(about: About) {
+// proposal the user was looking at comes first. One opened from a request
+// has none: its first message is already in the box (./request-seed.ts),
+// and a tap would replace it.
+function starters(about: About, request: DraftRequest | null) {
+  if (request) return [];
   const app = about?.focusApp?.name || null;
-  const context = (about?.focusContext || {}) as { issueNumber?: number; proposalId?: number };
-  const first = context.issueNumber
-    ? [`Work on request #${context.issueNumber}`]
-    : context.proposalId
-      ? ['Tell me about this proposal']
-      : [];
+  const context = (about?.focusContext || {}) as { proposalId?: number };
+  const first = context.proposalId ? ['Tell me about this proposal'] : [];
   return [
     ...first,
     app ? `What's open on ${app}?` : 'What could I work on?',
@@ -1270,10 +1294,37 @@ function Composer({ id }: { id: string }) {
     if (target != null) writeUnsent(target, next);
   };
 
-  // The conversation's unsent text, back after a reload or a switch.
+  // Put `text` in the box's view with the caret at its end. Focus only with a
+  // fine pointer: on a phone it would raise the keyboard over what was just
+  // put there (the dev chat's _isCoarsePointer rule).
+  const focusAtEnd = (text: string) => {
+    const field = input.current;
+    let coarse = false;
+    try { coarse = window.matchMedia('(pointer: coarse)').matches; } catch { /* no media queries: treat as fine */ }
+    if (field && !coarse) {
+      field.focus();
+      try { field.setSelectionRange(text.length, text.length); } catch { /* not a text field yet */ }
+    }
+  };
+
+  // The conversation's unsent text, back after a reload or a switch. An
+  // unsent conversation started from a request (Start work) offers that
+  // request's first message when nothing was typed (./request-seed.ts),
+  // from the hint, so it is kept only once edited and never turns up in a
+  // later New change. A new hint is a new start, even on the same address.
+  const seed = target === 'new' ? requestSeed(snapshot.draft?.hint) : '';
+  const hint = snapshot.draft?.hint;
   useEffect(() => {
-    if (target != null) setValue(readUnsent(target));
-  }, [target]);
+    if (target == null) return;
+    const saved = readUnsent(target);
+    setValue(saved || seed);
+    if (!saved && seed) {
+      // The screen is revealed after this first render: focus once it shows.
+      const frame = window.requestAnimationFrame(() => focusAtEnd(seed));
+      return () => window.cancelAnimationFrame(frame);
+    }
+    return undefined;
+  }, [target, hint]);
 
   // A message the server refused, or a Stop, hands its text back, unless
   // something new has been typed since.
@@ -1284,21 +1335,13 @@ function Composer({ id }: { id: string }) {
   }, [returned]);
 
   // A tapped suggested reply (#3033) replaces what is in the box, as the dev
-  // chat's pills do, with the caret at its end. Focus only with a fine
-  // pointer: on a phone it would raise the keyboard over the reply just
-  // chosen (the dev chat's _isCoarsePointer rule).
+  // chat's pills do, with the caret at its end.
   const fill = snapshot.composerFill;
   useEffect(() => {
     if (!fill) return;
     update(fill.text);
     clearComposerFill();
-    const field = input.current;
-    let coarse = false;
-    try { coarse = window.matchMedia('(pointer: coarse)').matches; } catch { /* no media queries: treat as fine */ }
-    if (field && !coarse) {
-      field.focus();
-      try { field.setSelectionRange(fill.text.length, fill.text.length); } catch { /* not a text field yet */ }
-    }
+    focusAtEnd(fill.text);
   }, [fill]);
 
   const placeholder = archived
@@ -1658,6 +1701,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
   const replies = latestReplies(items);
   const empty = snapshot.phase === 'ready' && !items.length && !snapshot.turn.running && !snapshot.turn.pendingUserText;
   const about: About = snapshot.session || snapshot.draft;
+  const request = snapshot.draft ? draftRequest(snapshot.draft.hint) : null;
 
   // Follow new output only while the reader is at the bottom (the dev chat's
   // rule): scrolling up to read is not undone by the next token. Opening a
@@ -1693,7 +1737,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
           {snapshot.phase === 'loading' ? (
             <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
           ) : null}
-          {empty ? <EmptyState about={about} /> : null}
+          {empty ? <EmptyState about={about} request={request} /> : null}
           {items.map((item) => <Item key={item.key} item={item} sessionId={snapshot.id} />)}
           <LiveTurn runShown={runShown} />
           {snapshot.credits ? <CreditsCard refusal={snapshot.credits} /> : null}
@@ -1701,7 +1745,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
             <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
           ) : null}
         </div>
-        <Replies replies={empty ? starters(about) : replies} />
+        <Replies replies={empty ? starters(about, request) : replies} />
         <Composer id={composerId(embedded ? 'messages' : 'screen')} />
         {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
       </div>

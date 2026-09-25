@@ -380,6 +380,8 @@ The entry point passes whatever context it has when the session is created, and 
 | Proposal “Explore in dev chat” | `{slug, proposalId}` |
 | Messages “+” → Agent chat, Messages → Agents “New” | none |
 
+A request card's “Start work” also puts the request's title in the hint, for the screen only (`issueTitle`; `serverHint` in `frontend/src/features/agent-session/api.ts` drops it before either call). The unsent conversation says “Request #N”, its title and its app, and the box holds `Work on request #N: "<title>"`, unsent and editable, where the dev chat's Start work seeded its own box (`request-seed.ts`). The seed is not kept as unsent text until it is edited, so it never turns up in a later New change; it replaces what an earlier unsent conversation left in the box. The Mayor reads the request itself from the session's focus, which is why the seed names the request instead of pasting its description.
+
 **API.** `POST /api/agent-sessions {hint?: {slug, issueNumber?, proposalId?}, message?}`.
 
 - The server resolves the slug with the user's normal app access. If the user can't see the app (for example, the platform row when `restricted`), the hint is dropped, not refused.

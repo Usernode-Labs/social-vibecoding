@@ -34,7 +34,9 @@ import type {
   SavedDraft,
 } from './api';
 import { sameChoice } from './model-choice';
+import { requestSeed } from './request-seed';
 import { toolActivity } from './transcript';
+import { writeUnsent } from './unsent';
 
 export type AgentSessionHost = 'screen' | 'messages';
 
@@ -544,15 +546,24 @@ export function prepareAgentDraft(hint: AgentHint | null | undefined) {
  * restore) keeps it, typed model pick included.
  */
 function openDraft(host: AgentSessionHost) {
-  const version = ++navigation;
   const fresh = pendingHint !== undefined;
+  // The same unsent conversation again (a phone routes Start work twice, to
+  // Messages and then to the full screen) keeps it and does not claim the
+  // load, as the same SESSION again does not (openAgentSession): the first
+  // call's preview then still lands, and the bar names the app instead of
+  // staying on "Any app".
   if (!fresh && state.open && state.id === null && state.draft) {
     publish({ host });
     syncTitle();
     return;
   }
+  const version = ++navigation;
   const hint = fresh ? (pendingHint || null) : null;
   pendingHint = undefined;
+  // Started from a request (Start work): the box offers that request's first
+  // message (the composer reads it off the hint, ./request-seed.ts), not the
+  // text an earlier unsent conversation left behind.
+  if (requestSeed(hint)) writeUnsent('new', '');
   seen.clear();
   closeEvents();
   const draft: AgentDraft = {

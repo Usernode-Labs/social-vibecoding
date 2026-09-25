@@ -138,6 +138,24 @@ export interface AgentHint {
   issueNumber?: number;
   proposalId?: number;
   entry?: string;
+  /**
+   * The request's title, when the entry point had it (a request card's Start
+   * work). For the screen only: the unsent conversation names the request and
+   * seeds its first message with it (./request-seed.ts). The server reads the
+   * request itself, so this never leaves the browser (serverHint).
+   */
+  issueTitle?: string;
+}
+
+/** The hint as the server takes it: the fields it resolves, nothing the screen added. */
+export function serverHint(hint: AgentHint | null | undefined): AgentHint | null {
+  if (!hint) return null;
+  const out: AgentHint = {};
+  if (hint.slug != null) out.slug = hint.slug;
+  if (hint.issueNumber != null) out.issueNumber = hint.issueNumber;
+  if (hint.proposalId != null) out.proposalId = hint.proposalId;
+  if (hint.entry != null) out.entry = hint.entry;
+  return out;
 }
 
 /** What an unsent conversation is about: its hint, resolved and not saved. */
@@ -211,7 +229,8 @@ function request(path: string, init: RequestInit = {}) {
 /** Called on the first message of an unsent conversation, with what was picked while it was unsent. */
 export async function createSession(hint: AgentHint | null, agent: AgentChoice | null = null): Promise<AgentSession> {
   const payload: { hint?: AgentHint; agent?: AgentChoice } = {};
-  if (hint) payload.hint = hint;
+  const sent = serverHint(hint);
+  if (sent) payload.hint = sent;
   if (agent) payload.agent = agent;
   const body = await json<{ session: AgentSession }>(
     await request('/api/agent-sessions', { method: 'POST', body: JSON.stringify(payload) }),
@@ -222,7 +241,7 @@ export async function createSession(hint: AgentHint | null, agent: AgentChoice |
 
 export async function previewDraft(hint: AgentHint | null): Promise<AgentDraftPreview> {
   const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(hint || {})) {
+  for (const [key, value] of Object.entries(serverHint(hint) || {})) {
     if (value != null && value !== '') query.set(key, String(value));
   }
   const suffix = query.toString() ? `?${query}` : '';
