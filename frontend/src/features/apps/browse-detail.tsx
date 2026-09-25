@@ -54,6 +54,8 @@ type ContributorsView = {
   count: number | null;
   rows: ContributorRowView[];
   toggle: string | null;
+  /** The fold is open (Browse._contribExpanded); drives aria-expanded. */
+  expanded?: boolean;
   note: string | null;
 };
 
@@ -159,7 +161,7 @@ function Contributors({ view }: { view: ContributorsView }): ReactNode {
         // `:not(:last-child)`, so the LAST contributor must be the last child
         // of something that the toggle below is not inside — otherwise the
         // fold button would take the row rule and the list would end on one.
-        <div>
+        <div id="browse-contrib-list">
           {view.rows.map((row) => <ContributorRow key={row.who} row={row} />)}
         </div>
       ) : null}
@@ -167,6 +169,10 @@ function Contributors({ view }: { view: ContributorsView }): ReactNode {
         <button
           type="button"
           id="browse-contrib-toggle"
+          // The fold's state for assistive tech, as Discover's list's own
+          // "Show more" says it (./browse-list.tsx), #2991.
+          aria-expanded={!!view.expanded}
+          aria-controls="browse-contrib-list"
           className="w-full px-4 py-3.5 text-sm font-medium text-violet-700 dark:text-violet-400 text-left transition-colors hover:bg-zinc-500/5 border-t border-zinc-200 dark:border-zinc-800"
           onClick={() => controller()?.toggleContributors()}
         >{view.toggle}</button>

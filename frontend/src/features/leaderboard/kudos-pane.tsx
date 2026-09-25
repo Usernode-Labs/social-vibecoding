@@ -638,7 +638,10 @@ function HistoryBody({ view }: { view: Extract<BodyView, { kind: 'history' }> })
         {view.chips.map((chip) => (
           <button
             key={chip.key}
+            type="button"
             data-lb-hfilter={chip.key}
+            // The on-state is otherwise only a fill colour (#2991).
+            aria-pressed={chip.on}
             className={`px-3 py-1 text-xs font-medium rounded-full border ${
               chip.on
                 ? 'bg-violet-600 text-white border-violet-600'

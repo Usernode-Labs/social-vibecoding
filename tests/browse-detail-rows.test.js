@@ -320,3 +320,26 @@ test('Share is a <button> leading the action card, only when there is a link to 
   assert.equal(queryAll(shareOnly, '#browse-detail #browse-detail-share').length, 1,
     'a link alone still gets its card');
 });
+
+// #2991: the fold toggle said whether it was open only through its label.
+// It now says so as aria-expanded, and names the rows wrapper it opens, as
+// Discover's list's own "Show more" does (./browse-list.tsx).
+test('the contributors toggle exposes its fold state and the list it controls (#2991)', () => {
+  const toggleOf = (contributors) => {
+    const root = treeOf(renderDetail({ ...DETAIL, contributors: { ...DETAIL.contributors, ...contributors } }));
+    const toggle = all(root).find((n) => n.attrs.id === 'browse-contrib-toggle');
+    assert.ok(toggle, '#browse-contrib-toggle renders');
+    return { root, toggle };
+  };
+  const folded = toggleOf({ expanded: false, toggle: 'Show all 7 contributors' });
+  assert.equal(folded.toggle.attrs['aria-expanded'], 'false');
+  const open = toggleOf({ expanded: true, toggle: 'Show fewer' });
+  assert.equal(open.toggle.attrs['aria-expanded'], 'true');
+
+  const controls = open.toggle.attrs['aria-controls'];
+  assert.equal(controls, 'browse-contrib-list');
+  const target = all(open.root).find((n) => n.attrs.id === controls);
+  assert.ok(target, 'aria-controls names an element that exists');
+  assert.ok(queryAll(target, '.browse-contrib-row').length > 0,
+    'and that element is the rows wrapper');
+});

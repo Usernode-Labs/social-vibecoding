@@ -202,6 +202,54 @@ async function sharePlatform(name: string): Promise<'shared' | 'copied' | 'faile
   }
 }
 
+/**
+ * The roster's rows and its fold. The rows sit in their own wrapper so the
+ * toggle can name what it opens (aria-controls) and say whether it is open
+ * (aria-expanded), as Discover's list's "Show more" does (#2991). The wrapper
+ * adds no box of its own: each row is already a full-width flex line.
+ */
+export function ContributorsFold({ people, total, showAll, onToggle }: {
+  people: ReturnType<typeof contributorView>[];
+  total: number;
+  showAll: boolean;
+  onToggle: () => void;
+}): ReactNode {
+  const shown = showAll ? people : people.slice(0, CONTRIB_FOLD);
+  return (
+    <>
+      {shown.length ? (
+        <div id="app-about-contributors-list">
+          {shown.map((c) => (
+            <a
+              key={c.who}
+              data-contributor={c.who}
+              href={`#leaderboard/users/${encodeURIComponent(c.who)}`}
+              className={ROW}
+              onClick={() => { void AppContext.dismissForNav(); }}
+            >
+              <Avatar who={c.who} size="sm" />
+              <span className="flex-1 min-w-0 truncate font-medium">{`@${c.who}`}</span>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{`${c.merged} merged`}</span>
+            </a>
+          ))}
+        </div>
+      ) : null}
+      {people.length > CONTRIB_FOLD ? (
+        <button
+          id="app-about-contributors-toggle"
+          type="button"
+          aria-expanded={showAll}
+          aria-controls="app-about-contributors-list"
+          className="w-full px-5 min-h-[40px] text-left text-sm font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+          onClick={onToggle}
+        >
+          {showAll ? 'Show fewer' : `Show all ${total} contributors`}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 export function AboutPane({ label }: { label: string }): ReactNode {
   const {
     slug, target, restricted, repoUrl, canShare, version, iconUrl, iconEmoji, tab, deploying,
@@ -281,7 +329,6 @@ export function AboutPane({ label }: { label: string }): ReactNode {
     ? (restricted || row ? platformNote(row, !!restricted) : null)
     : appNote(row);
   const people = ready.map(contributorView);
-  const shown = showAll ? people : people.slice(0, CONTRIB_FOLD);
 
   return (
     <div id="app-about-pane" className="pb-1">
@@ -455,29 +502,12 @@ export function AboutPane({ label }: { label: string }): ReactNode {
           {contributors.state === 'loading' ? <p className={NOTE}>Loading contributors…</p> : null}
           {contributors.state === 'error' ? <p className={NOTE}>Couldn’t load contributors.</p> : null}
           {contributors.state === 'ready' && !people.length ? <p className={NOTE}>No contributors yet.</p> : null}
-          {shown.map((c) => (
-            <a
-              key={c.who}
-              data-contributor={c.who}
-              href={`#leaderboard/users/${encodeURIComponent(c.who)}`}
-              className={ROW}
-              onClick={() => { void AppContext.dismissForNav(); }}
-            >
-              <Avatar who={c.who} size="sm" />
-              <span className="flex-1 min-w-0 truncate font-medium">{`@${c.who}`}</span>
-              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{`${c.merged} merged`}</span>
-            </a>
-          ))}
-          {people.length > CONTRIB_FOLD ? (
-            <button
-              id="app-about-contributors-toggle"
-              type="button"
-              className="w-full px-5 min-h-[40px] text-left text-sm font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-              onClick={() => setShowAll((v) => !v)}
-            >
-              {showAll ? 'Show fewer' : `Show all ${contributors.total || people.length} contributors`}
-            </button>
-          ) : null}
+          <ContributorsFold
+            people={people}
+            total={contributors.total || people.length}
+            showAll={showAll}
+            onToggle={() => setShowAll((v) => !v)}
+          />
         </section>
       ) : null}
 

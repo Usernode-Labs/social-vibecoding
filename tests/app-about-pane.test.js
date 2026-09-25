@@ -192,6 +192,40 @@ test('About Homeroom for a viewer not served its row: no roster the API would re
   assert.match(html, /id="improve-row-share"/);
 });
 
+// #2991: the roster's "Show all" said whether it was open only through its
+// label. It now says so as aria-expanded, and names the rows wrapper it opens,
+// as Discover's list's own "Show more" does (./apps/browse-list.tsx).
+test('the contributors fold exposes its state and the list it controls (#2991)', () => {
+  const people = Array.from({ length: 7 }, (_, i) => ({ who: `u${i}`, merged: 7 - i }));
+  const fold = (showAll) => renderToHtml(createElement(ui.ContributorsFold,
+    { people, total: 9, showAll, onToggle: () => {} }));
+  const toggleOf = (html) => {
+    const m = html.match(/<button[^>]*id="app-about-contributors-toggle"[^>]*>/);
+    assert.ok(m, 'the toggle renders');
+    return m[0];
+  };
+
+  const folded = fold(false);
+  assert.match(toggleOf(folded), /aria-expanded="false"/);
+  assert.match(folded, /Show all 9 contributors/);
+  assert.equal((folded.match(/data-contributor=/g) || []).length, 5, 'folded at five');
+
+  const open = fold(true);
+  assert.match(toggleOf(open), /aria-expanded="true"/);
+  assert.match(open, /Show fewer/);
+  assert.equal((open.match(/data-contributor=/g) || []).length, 7);
+
+  assert.match(toggleOf(open), /aria-controls="app-about-contributors-list"/);
+  const list = open.slice(open.indexOf('id="app-about-contributors-list"'), open.indexOf('id="app-about-contributors-toggle"'));
+  assert.ok(list.length > 0, 'the controlled wrapper exists and precedes the toggle');
+  assert.equal((list.match(/data-contributor=/g) || []).length, 7, 'and it holds the rows');
+
+  // Five or fewer: no fold, so no toggle to describe.
+  const few = renderToHtml(createElement(ui.ContributorsFold,
+    { people: people.slice(0, 5), total: 5, showAll: false, onToggle: () => {} }));
+  assert.doesNotMatch(few, /app-about-contributors-toggle/);
+});
+
 // ── 3. The resolver ───────────────────────────────────────────────────
 
 function resolverEnv(routes, { home = {} } = {}) {
