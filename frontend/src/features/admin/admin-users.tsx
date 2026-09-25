@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AccountDeletions } from './account-deletions';
 import { AdminUI } from './admin-console.js';
 import { DetailCard, Row, fmtDate, orDash } from './admin-detail-parts.tsx';
+import { MergeEntryButton, UserMergePanel } from './admin-user-merge.tsx';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { ProgrammeUsers } from './topochain/programme-users.tsx';
 import { fetchAllEvents, fetchJson, send } from './topochain/api.ts';
@@ -595,10 +596,13 @@ function ProgrammeProfileCard({ user, profile, canWrite, onSaved }: {
   );
 }
 
-function UserDetails({ user, fullAdminCount, canWrite, onBack, onReload, onDeleted }: {
-  user: User; fullAdminCount: number; canWrite: boolean;
+function UserDetails({ user, allUsers, fullAdminCount, canWrite, notice, onBack, onReload, onDeleted, onMerged }: {
+  user: User; allUsers: User[]; fullAdminCount: number; canWrite: boolean; notice: string | null;
   onBack: () => void; onReload: () => void; onDeleted: () => void;
+  onMerged: (keptId: number, message: string) => void;
 }) {
+  // "Deduplicate user" (admin-user-merge.tsx): full admins only.
+  const [merging, setMerging] = useState(false);
   const role = roleOf(user);
   const isAdmin = !!user.is_admin;
   const isSelf = !!user.is_self;
@@ -772,6 +776,9 @@ function UserDetails({ user, fullAdminCount, canWrite, onBack, onReload, onDelet
       <button type="button" id="admin-user-details-back" className={`${AdminUI.btn.ghost} text-sm mb-3`} onClick={onBack}>
         ← Back to users
       </button>
+      {notice ? (
+        <p id="admin-user-merge-success" role="status" className="mb-3 text-sm font-medium text-emerald-700 dark:text-emerald-400">{notice}</p>
+      ) : null}
       <div className={`${AdminUI.card} p-5 mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
         <div className="min-w-0">
           <h2 className={`${AdminUI.cardTitle} break-words`}>{title}</h2>
@@ -790,6 +797,7 @@ function UserDetails({ user, fullAdminCount, canWrite, onBack, onReload, onDelet
           {canWrite ? (
             <>
               <button type="button" className={AdminUI.btn.outlineSm} onClick={() => resetUserPassword(user)}>Reset password</button>
+              <MergeEntryButton canWrite={canWrite} onOpen={() => setMerging(true)} />
               {!isAdmin && !isSelf ? (
                 <button type="button" className={AdminUI.btn.destructiveSm}
                   onClick={async () => { if (await deleteUser(user)) onDeleted(); }}>Delete account</button>
@@ -798,6 +806,13 @@ function UserDetails({ user, fullAdminCount, canWrite, onBack, onReload, onDelet
           ) : null}
         </div>
       </div>
+
+      {canWrite && merging ? (
+        <div className="mb-4">
+          <UserMergePanel user={user} candidates={allUsers} onClose={() => setMerging(false)}
+            onMerged={(keptId, message) => { setMerging(false); onMerged(keptId, message); }} />
+        </div>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <DetailCard title="Access" id="admin-user-details-access">
@@ -949,6 +964,8 @@ function UsersSection() {
   const [requestsOnly, setRequestsOnly] = useState(false);
   const [visible, setVisible] = useState(PAGE);
   const [detailId, setDetailId] = useState<number | null>(() => hashDetailId());
+  // The success line after a merge, shown on the kept account's details view.
+  const [notice, setNotice] = useState<string | null>(null);
   // One open overflow menu at a time, and ONE document-level listener pair,
   // installed only while one is open.
   const [openMenu, setOpenMenu] = useState<number | null>(null);
@@ -985,11 +1002,13 @@ function UsersSection() {
 
   const openDetails = useCallback((id: number) => {
     setOpenMenu(null);
+    setNotice(null);
     setDetailId(id);
     writeDetailHash(id);
     if (typeof window !== 'undefined') window.scrollTo(0, 0);
   }, []);
   const closeDetails = useCallback(() => {
+    setNotice(null);
     setDetailId(null);
     writeDetailHash(null);
   }, []);
@@ -1045,9 +1064,16 @@ function UsersSection() {
       );
     }
     return (
-      <UserDetails key={target.id} user={target} fullAdminCount={fullAdminCount} canWrite={canWrite}
-        onBack={closeDetails} onReload={load}
-        onDeleted={() => { closeDetails(); load(); }} />
+      <UserDetails key={target.id} user={target} allUsers={users} fullAdminCount={fullAdminCount} canWrite={canWrite}
+        notice={notice} onBack={closeDetails} onReload={load}
+        onDeleted={() => { closeDetails(); load(); }}
+        onMerged={(keptId, message) => {
+          // Land on the kept account with the success line, then refresh the
+          // list so both rows show their new state.
+          openDetails(keptId);
+          setNotice(message);
+          load();
+        }} />
     );
   }
 
