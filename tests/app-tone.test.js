@@ -94,6 +94,49 @@ test('the tone follows the frame store: on screen with a page colour, or nothing
 
 // ── publishing it onto the document ──────────────────────────────────────
 
+test('the tone is the app\'s only while the router shows the app', async () => {
+  // The frame stays ACTIVE when the app is left by a tab, the rail or New
+  // change: only the ✕ retires it. Keyed on the frame alone, a dark app's
+  // tone stayed on <html> and Messages, an agent session or Home drew the
+  // dark wallpaper under the light shell's panes.
+  const { toneForState, APP_SCREEN } = await loadTone();
+  assert.equal(APP_SCREEN, 'app-view');
+  assert.equal(toneForState(ON('#0b0d1b'), 'app-view'), 'dark');
+  for (const screen of ['messages-screen', 'agent-session-screen', 'home-screen', 'workshop-screen', null]) {
+    assert.equal(toneForState(ON('#0b0d1b'), screen), null, `no tone on ${screen}`);
+  }
+  // No router answer at all keeps the frame's own.
+  assert.equal(toneForState(ON('#0b0d1b')), 'dark');
+});
+
+test('leaving the app by a tab clears the tone it left on <html>', async () => {
+  const { publishAppTone, APP_TONE_ATTR } = await loadTone();
+  const doc = fakeDocument();
+  let applied = 0;
+  const win = { Theme: { apply() { applied += 1; } } };
+  const state = ON('#0b0d1b');
+  assert.equal(publishAppTone(doc, state, win, false, 'app-view'), 'dark');
+  assert.equal(doc.attrs.get(APP_TONE_ATTR), 'dark');
+  // The Messages tab: #app-view hidden, the frame untouched and still active.
+  assert.equal(publishAppTone(doc, state, win, false, 'messages-screen'), null);
+  assert.equal(doc.attrs.has(APP_TONE_ATTR), false);
+  assert.equal(applied, 1, 'the theme module takes the meta back');
+  // Resume: the app is on screen again, and so is its tone.
+  assert.equal(publishAppTone(doc, state, win, false, 'app-view'), 'dark');
+  assert.equal(doc.attrs.get(APP_TONE_ATTR), 'dark');
+});
+
+test('the frame host and the theme listener both read the revealed screen', () => {
+  const host = read('frontend/src/features/app-frame/app-frame.tsx');
+  assert.match(host, /import \{ navStore \} from '\.\.\/nav\/nav-store\.js';/);
+  assert.match(host, /const \{ screen \} = useStoreState\(navStore\)/);
+  const mount = read('frontend/src/features/app-frame/mount.ts');
+  assert.match(mount, /import \{ navStore \} from '\.\.\/nav\/nav-store\.js';/);
+  // The router publishes the revealed screen on every swap, the ✕ included.
+  const app = read('public/js/app.js');
+  assert.match(app, /window\.UsernodeReact\?\.nav\?\.setScreen\?\.\(\s*screen,/);
+});
+
 test('publishAppTone writes the attribute and the theme-color meta, and clears both', async () => {
   const { publishAppTone, APP_TONE_ATTR, TONE_GROUND } = await loadTone();
   assert.equal(APP_TONE_ATTR, 'data-app-tone');
@@ -168,7 +211,7 @@ test('the tone grounds match the head module\'s', async () => {
 test('the frame host publishes the tone from an effect on the store', () => {
   const src = read('frontend/src/features/app-frame/app-frame.tsx');
   assert.match(src, /import \{ publishAppTone \} from '\.\/app-tone\.js';/);
-  assert.match(src, /useEffect\(\(\) => \{\s*publishAppTone\(document, state, window\);\s*\}, \[state\.slug, state\.active, state\.background\]\);/,
+  assert.match(src, /useEffect\(\(\) => \{\s*publishAppTone\(document, state, window, false, screen\);\s*\}, \[state\.slug, state\.active, state\.background, screen\]\);/,
     'a plain useEffect keyed on slug, active and background');
   assert.doesNotMatch(src, /useIsomorphicLayoutEffect\(\(\) => \{\s*publishAppTone/,
     'never a layout effect: the tone is a repaint, and it must not run in the prerender');
@@ -177,7 +220,7 @@ test('the frame host publishes the tone from an effect on the store', () => {
 test('mount.ts re-publishes with force on every theme change', () => {
   const src = read('frontend/src/features/app-frame/mount.ts');
   assert.match(src, /import \{ publishAppTone \} from '\.\/app-tone\.js';/);
-  assert.match(src, /Theme\?\.onChange\?\.\(\(\) => \{\s*publishAppTone\(document, appFrameStore\.get\(\), window, true\);/);
+  assert.match(src, /Theme\?\.onChange\?\.\(\(\) => \{\s*publishAppTone\(document, appFrameStore\.get\(\), window, true, navStore\.get\(\)\.screen\);/);
 });
 
 test('the shipped document carries no tone', () => {
@@ -279,6 +322,9 @@ test('the two screenshot states mount a frame with the page colour of that tone'
   assert.match(body, /frame\.setBackground\?\.\(dark \? '#0b0d1b' : '#f4f2e4'\)/, 'the page colour goes through the bridge path');
   assert.doesNotMatch(body, /setSrc|\.src\s*=/, 'no document is loaded behind it');
   assert.match(body, /App\._setScreenVisible\('app-view', true\)/);
+  // …and tells the nav store the app is the screen, or the tone (which now
+  // needs the router's answer as well as the frame's) would never show.
+  assert.match(body, /window\.UsernodeReact\?\.nav\?\.setScreen\?\.\('app-view'\)/);
 });
 
 test('dapp.json checks both tones, each under the opposite shell', () => {

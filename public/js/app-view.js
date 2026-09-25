@@ -2496,6 +2496,11 @@ const AppView = {
     AppView._setSurface('app');
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
+    // The app is on screen as far as the tone is concerned only while the
+    // router says so (app-tone.js toneForState): a real open publishes it
+    // from _syncPlatformTabs. This shot swaps the roots by hand, so it
+    // publishes the one fact the tone reads, and not the bar's decision.
+    window.UsernodeReact?.nav?.setScreen?.('app-view');
   },
 
   // #2902: `?shot=apps-kept` — see App._applyKeptAppsShot. Frames with no
