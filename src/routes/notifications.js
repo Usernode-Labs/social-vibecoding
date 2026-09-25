@@ -541,6 +541,15 @@ function notificationsRoutes(config) {
       };
       if (!before) {
         payload.unread = await notifications.countUnread(pool, req.user.id);
+        // #3050: the bell just learned the true total, so re-badge the
+        // iPhone to it. The icon changes only when a push carries
+        // `aps.badge` — the native shell does not implement the WebView's
+        // setSocialBadgeCount seam — so a clear that never announced
+        // itself (a kudos retraction, a conversation left or archived, a
+        // cascade) otherwise left the icon on a number the bell no longer
+        // shows, with nothing in the app able to correct it. Debounced per
+        // user and a no-op without a live iOS registration.
+        try { require('../services/mobile-push').scheduleBadgeSync(req.user.id); } catch {}
         // Pending collaborator invites for the drawer's pinned Invites
         // section. Sourced from app_collaborators (authoritative about
         // what's still actionable), not from collab_invite notification

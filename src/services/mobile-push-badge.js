@@ -17,6 +17,12 @@
 // user's live iOS registrations. Best-effort throughout — a sync failure
 // is logged and dropped, never retried or surfaced; the next change or
 // alert push carries the right number again.
+//
+// #3050: not every clear announced itself (a kudos retraction, leaving or
+// being removed from a conversation, an un-reaction, cascades), and the app
+// shell cannot set the icon itself, so the bell's first-page load
+// (GET /api/notifications) schedules a sync too — opening Homeroom anywhere
+// re-badges the phone to the number the bell is showing.
 
 const { decrypt } = require('./secrets');
 const { buildBadgeMessage } = require('./mobile-push-policy');

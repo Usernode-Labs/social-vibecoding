@@ -1528,6 +1528,7 @@ async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
       [messageId, user.id, emoji]
     );
     const notifications = [];
+    let clearedUserIds = [];
     if (!deleted.rowCount) {
       await db.query(
         `INSERT INTO conversation_message_reactions (message_id, user_id, emoji)
@@ -1541,14 +1542,18 @@ async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
         }));
       }
     } else {
-      await db.query(
+      // #3050: name whose bell lost a row, so the route can refresh it and
+      // re-badge their iPhone — un-reacting must lower the icon too.
+      const removed = await db.query(
         `DELETE FROM notifications
           WHERE user_id = $1 AND conversation_id = $2 AND conversation_message_id = $3
-            AND source_user_id = $4 AND kind = 'conversation_reaction' AND detail = $5`,
+            AND source_user_id = $4 AND kind = 'conversation_reaction' AND detail = $5
+          RETURNING user_id`,
         [message.rows[0].sender_id, conversationId, messageId, user.id, emoji]
       );
+      clearedUserIds = [...new Set(removed.rows.map((row) => row.user_id))];
     }
-    return { notifications, memberIds: await activeMemberIds(db, conversationId) };
+    return { notifications, clearedUserIds, memberIds: await activeMemberIds(db, conversationId) };
   });
   if (!result || result.error) return result;
   const message = await getMessage(pool, user, conversationId, messageId);

@@ -207,3 +207,63 @@ test('a conversation read schedules a badge sync for the reader', () => {
   assert.ok(end > 0);
   assert.match(read.slice(0, end), /scheduleBadgeSync\(req\.user\.id\)/);
 });
+
+// ── #3050: clears that never announced themselves ──────────────────────
+//
+// The iPhone app shell does not implement the WebView's setSocialBadgeCount
+// seam, so the icon moves only when a push carries `aps.badge`. Any path that
+// lowers countUnread without a `notifications_changed` left the icon on a
+// number the bell no longer showed, and nothing in the app could correct it.
+
+function routeSource(name) {
+  return fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', name), 'utf8');
+}
+
+function handlerBody(src, marker) {
+  const start = src.indexOf(marker);
+  assert.ok(start >= 0, `handler ${marker} exists`);
+  const next = src.indexOf('router.', start + marker.length);
+  return src.slice(start, next > 0 ? next : undefined);
+}
+
+test('loading the bell re-badges the iPhone to the total it just counted', () => {
+  const body = handlerBody(routeSource('notifications.js'), "router.get('/api/notifications',");
+  const firstPage = body.slice(body.indexOf('if (!before) {'));
+  const count = firstPage.indexOf('payload.unread = await notifications.countUnread(pool, req.user.id);');
+  const sync = firstPage.indexOf("require('../services/mobile-push').scheduleBadgeSync(req.user.id)");
+  assert.ok(count >= 0, 'first page counts unread');
+  assert.ok(sync > count, 'the first page schedules a badge sync after counting');
+  // Only the first page: a cursor follow-up carries no total and must not
+  // re-badge on every scroll.
+  assert.ok(body.indexOf('scheduleBadgeSync') > body.indexOf('if (!before) {'));
+});
+
+test('retracting kudos refreshes the recipient bell and badge', () => {
+  const body = handlerBody(routeSource('kudos.js'), "router.delete('/api/sessions/:id/kudos'");
+  assert.match(body, /DELETE FROM notifications[\s\S]*?RETURNING user_id/);
+  assert.match(body, /pushNotificationToUser\(userId, \{ type: 'notifications_changed' \}\)/);
+});
+
+test('conversation membership changes and un-reacting announce notifications_changed', () => {
+  const src = routeSource('conversations.js');
+  assert.match(src, /function pushNotificationsChanged\(userIds\)[\s\S]*?pushToUser\(userId, \{ type: 'notifications_changed' \}\)/);
+  const cases = [
+    ["router.post('/api/conversations/:id/respond'", /pushNotificationsChanged\(\[req\.user\.id, \.\.\.\(result\.memberIds \|\| \[\]\)\]\)/],
+    ["router.delete('/api/conversations/:id/members/:userId'", /pushNotificationsChanged\(targetId === req\.user\.id \? result\.memberIds : \[targetId\]\)/],
+    ["router.post('/api/conversations/:id/leave'", /pushNotificationsChanged\(result\.memberIds\)/],
+    ["router.post('/api/conversations/:id/messages/:messageId/reactions'", /pushNotificationsChanged\(result\.clearedUserIds\)/],
+  ];
+  for (const [marker, pattern] of cases) {
+    assert.match(handlerBody(src, marker), pattern, marker);
+  }
+});
+
+test('un-reacting reports whose reaction notification it deleted', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'services', 'conversations.js'), 'utf8'
+  );
+  const fn = src.slice(src.indexOf('async function toggleReaction('),
+    src.indexOf('async function markRead('));
+  assert.match(fn, /kind = 'conversation_reaction' AND detail = \$5\s*RETURNING user_id/);
+  assert.match(fn, /return \{ notifications, clearedUserIds, memberIds:/);
+});
