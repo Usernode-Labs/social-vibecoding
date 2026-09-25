@@ -151,6 +151,14 @@ test('run diagnostics are private to the author or app manager, available live, 
         media: 'png', bytes: 345, width: 640, height: 480, sha256: 'c'.repeat(64),
       }] };
     }
+    if (String(sql).includes('FROM visual_evidence_diagnostic_artifacts')) {
+      assert.deepEqual(params, [runId]);
+      return { rows: [{
+        id: 'e'.repeat(32), attempt: 1, pass: 1,
+        story_id: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'context',
+        bytes: 123, width: 640, height: 480, sha256: 'f'.repeat(64),
+      }] };
+    }
     throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
   } };
   const savedPool = db.getPool;
@@ -201,6 +209,9 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.equal(diagnostics.repairAttempt, 1);
   assert.equal(diagnostics.provenance.fixtureFingerprint, 'fixture-1');
   assert.equal(diagnostics.artifacts[0].bytes, 345);
+  assert.equal(diagnostics.diagnosticArtifacts[0].pass, 1);
+  assert.equal(diagnostics.diagnosticArtifacts[0].url,
+    `/api/apps/demo/proposals/42/evidence/diagnostics/${'e'.repeat(32)}`);
   assert.equal(diagnostics.trace.failure.detail.side, 'head');
   assert.equal(diagnostics.trace.control.planCalls, 1);
 
@@ -251,6 +262,51 @@ test('the binary route is authenticated, current-run fenced, exact-head fenced, 
   assert.match(src, /res\.status\(206\)/);
   assert.match(src, /res\.status\(416\)/);
   assert.doesNotMatch(src, /\/visuals\//, 'evidence never uses the public legacy media route');
+});
+
+test('failed comparison PNGs are available only to the author or app manager', async (t) => {
+  const imageId = 'e'.repeat(32);
+  const runId = '1'.repeat(32);
+  const data = Buffer.from('private diagnostic png');
+  const session = { id: 42, app_id: 9, user_id: 7, visual_evidence_run_id: runId,
+    visual_evidence_state: 'failed' };
+  const pool = { query: async (sql, params) => {
+    if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
+    if (String(sql).includes('FROM visual_evidence_diagnostic_artifacts a')) {
+      assert.deepEqual(params, [imageId, 42]);
+      return { rows: [{ data, bytes: data.length, sha256: 'f'.repeat(64) }] };
+    }
+    throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
+  } };
+  const savedPool = db.getPool;
+  const savedAccess = appAccess.getAppForUser;
+  const savedManage = appAdmins.canManageApp;
+  db.getPool = () => pool;
+  appAccess.getAppForUser = async () => ({ id: 9, slug: 'demo' });
+  appAdmins.canManageApp = async (_pool, app, user) => app.id === 9 && user.id === 8;
+  const routePath = require.resolve('../src/routes/visual-evidence');
+  delete require.cache[routePath];
+  const app = express();
+  let userId = 7;
+  app.use((req, _res, next) => { req.user = { id: userId }; next(); });
+  app.use(require('../src/routes/visual-evidence').visualEvidenceRoutes({ visualEvidence: { present: true } }));
+  const server = app.listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  t.after(() => {
+    server.close(); db.getPool = savedPool; appAccess.getAppForUser = savedAccess;
+    appAdmins.canManageApp = savedManage; delete require.cache[routePath];
+  });
+  const url = `http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/evidence/diagnostics/${imageId}`;
+  const owner = await fetch(url);
+  assert.equal(owner.status, 200);
+  assert.equal(owner.headers.get('content-type'), 'image/png');
+  assert.match(owner.headers.get('cache-control'), /no-store/);
+  assert.deepEqual(Buffer.from(await owner.arrayBuffer()), data);
+  userId = 8;
+  assert.equal((await fetch(url)).status, 200);
+  userId = 9;
+  assert.equal((await fetch(url)).status, 404);
+  assert.equal((await fetch(`${url}bad`)).status, 404);
 });
 
 for (const status of ['active', 'paused', 'promoted']) {

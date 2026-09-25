@@ -43,7 +43,7 @@ type: navigate(path), click(target), fill(target,value), press(target?,key),
 select(target,value), check(target), uncheck(target), hover(target),
 drag(from,to), clickPoint(surface,xRatio,yRatio),
 dragPoints(surface,from:{xRatio,yRatio},to:{xRatio,yRatio}),
-scrollIntoView(target), scrollBy(x,y), or waitFor(exactly one of target, text,
+scrollIntoView(target), scrollBy(x,y), waitForHostedApp(slug,timeoutMs), or waitFor(exactly one of target, text,
 path, quietNetwork; optional timeoutMs up to 10000; target also accepts
 state:"visible" or state:"hidden", default visible).
 For example, a click is {"id":"open-menu","stage":"menu","type":"click",
@@ -62,6 +62,16 @@ will see a clear controlled-test label. Never invent a failure path or use a
 controlled failure for an undeclared story.
 waitFor text matches a visible substring. For an exact full-element text match,
 use waitFor target:{by:"text",value,exact:true}.
+Amounts, counts, timestamps, and user-specific names can change between
+clean passes. Unless the claim is about their exact value, assert a stable
+label or control structure you actually observed on both revisions instead
+of hard-coding a value from one exploratory visit.
+If a story opens a running app, choose a public app with a deployed commit in
+the actual app list. A staging demo card without a deployment is not an app
+runtime. After clicking the app tile, use waitForHostedApp with that app's
+exact slug before leaving the app view. This waits for a successful document
+response in Homeroom's managed app frame; seeing a tile or iframe element is
+not enough. If no real app runtime is available, report that as a blocker.
 
 A target is exactly one of:
 {by:"testId",value}, {by:"role",role,name?,exact?},

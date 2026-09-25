@@ -12308,6 +12308,14 @@
     {
       "source": "src/routes/visual-evidence.js",
       "method": "GET",
+      "path": "/api/apps/:slug/proposals/:sessionId/evidence/diagnostics/:artifactId",
+      "expression": null,
+      "status": "exempt",
+      "reason": "private binary comparison image represented by proposal evidence diagnostics"
+    },
+    {
+      "source": "src/routes/visual-evidence.js",
+      "method": "GET",
       "path": "/api/apps/:slug/proposals/:sessionId/evidence/:artifactId",
       "expression": null,
       "status": "mapped",

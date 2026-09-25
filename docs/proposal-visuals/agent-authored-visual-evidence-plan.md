@@ -556,6 +556,7 @@ clean replays and are labelled `relative-pointer` in provenance.
 - `scrollIntoView`;
 - `scrollBy` with bounded distance;
 - `waitFor` a locator, visible text substring, URL pattern, or quiet network;
+- `waitForHostedApp` with an exact app slug after opening a running public app;
 - `assert` through the checkpoint assertion collection.
 
 Each story and viewport replays against a fresh copy of the same paired app

@@ -245,10 +245,43 @@ test('a passing replay must cover every declared story, viewport, and requested 
   const first = { result: { passed: true, planHash, runId: 'a'.repeat(32), pass: 1, stories }, artifacts: [] };
   const second = { result: { passed: true, planHash, runId: 'a'.repeat(32), pass: 2, stories }, artifacts };
   assert.equal(replay.comparePasses(first, second, { plan }).passed, true);
+  const diagnosticImages = artifacts.filter((item) => item.media === 'png');
+  assert.equal(replay.comparePasses({ ...first, artifacts: diagnosticImages }, second, { plan }).passed, true);
+  assert.equal(replay.comparePasses({ ...first, artifacts }, second, { plan }).code,
+    'incomplete_replay_coverage', 'pass one cannot claim an animation as a diagnostic image');
   assert.equal(replay.comparePasses(first, { ...second, artifacts: artifacts.slice(1) }, { plan }).code,
     'incomplete_replay_coverage');
   assert.equal(replay.comparePasses({ ...first, artifacts: [artifacts[0]] }, second, { plan }).code,
     'incomplete_replay_coverage');
+});
+
+test('mismatched comparison stores only four private images behind the current run fence', async () => {
+  const data = Buffer.from('diagnostic image');
+  const digest = crypto.createHash('sha256').update(data).digest('hex');
+  const items = (pass) => ['focus', 'context'].map((variant) => ({
+    pass, storyId: 'dialog', viewport: 'desktop', side: 'head', variant,
+    media: 'png', width: 100, height: 80, sha256: digest, data,
+  }));
+  const writes = [];
+  let current = true;
+  const pool = { query: async (sql, values) => {
+    if (String(sql).includes('FROM visual_evidence_runs')) return { rowCount: current ? 1 : 0 };
+    writes.push({ sql: String(sql), values });
+    return { rowCount: 1 };
+  } };
+  const args = {
+    headSha: 'b'.repeat(40), planHash: 'c'.repeat(64), attempt: 1,
+    comparison: { storyId: 'dialog', viewport: 'desktop', side: 'head' },
+  };
+  assert.equal(await replay.storeDiagnosticArtifacts(pool, 'a'.repeat(32), items(1), items(2), args), 4);
+  assert.equal(writes.filter((item) => item.sql.includes('INSERT INTO visual_evidence_diagnostic_artifacts')).length, 4);
+  assert.deepEqual(writes.filter((item) => item.sql.includes('INSERT INTO visual_evidence_diagnostic_artifacts'))
+    .map((item) => item.values[3]), [1, 1, 2, 2]);
+  current = false;
+  await assert.rejects(replay.storeDiagnosticArtifacts(pool, 'a'.repeat(32), items(1), items(2), args),
+    { code: 'stale_evidence_operation' });
+  await assert.rejects(replay.storeDiagnosticArtifacts(pool, 'a'.repeat(32), [], items(2), args),
+    { code: 'missing_diagnostic_artifact' });
 });
 
 test('Kubernetes exposes a separate evidence command rather than changing legacy capture', () => {

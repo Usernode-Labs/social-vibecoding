@@ -285,6 +285,7 @@ async function verifyLocalPlan(options) {
     const config = { captureRuntime: 'docker', visualEvidence: { maxRunMs: 240_000 } };
     const origins = { base: `http://${names.base}:3000`, head: `http://${names.head}:3000` };
     const input = (pass) => ({ runId, pass, publishArtifacts: pass === 2,
+      diagnosticArtifacts: pass === 1,
       plan, origins, provenance, authTokens, cookies: {},
       browser: { locale: 'en-US', timezoneId: 'UTC', colorScheme: 'light', deviceScaleFactor: 1 } });
     const onEvent = (event) => {
@@ -331,6 +332,14 @@ async function verifyLocalPlan(options) {
     const verdict = replay.comparePasses(first, second, { plan, provenance, runId });
     if (!verdict.passed) {
       if (verdict.code === 'non_reproducible') {
+        const diagnosticDir = path.join(options.outputRoot, `pre-pr-${runId}-diagnostics`);
+        await fs.mkdir(diagnosticDir, { recursive: true });
+        for (const [pass, result] of [[1, first], [2, second]]) {
+          for (const artifact of result.artifacts.filter((item) => item.media === 'png')) {
+            const filename = `${artifact.storyId}-${artifact.viewport}-pass${pass}-${artifact.side}-${artifact.variant}.png`;
+            await fs.writeFile(path.join(diagnosticDir, filename), artifact.data);
+          }
+        }
         const changes = first.result.stories.flatMap((left, index) => {
           const right = second.result.stories[index];
           return ['base', 'head'].flatMap((side) => {
@@ -345,7 +354,7 @@ async function verifyLocalPlan(options) {
               focusRect: [before.focusRect, after?.focusRect] }];
           });
         });
-        throw new Error(`${verdict.code}: ${verdict.reason} ${JSON.stringify(changes)}`);
+        throw new Error(`${verdict.code}: ${verdict.reason} ${JSON.stringify(changes)} Diagnostic images: ${diagnosticDir}`);
       }
       throw new Error(`${verdict.code}: ${verdict.reason}`);
     }
@@ -360,7 +369,9 @@ async function verifyLocalPlan(options) {
       `${JSON.stringify({ passed: false, runId, baseSha: options.baseSha,
         headSha: options.headSha, planHash: contract.planHash(plan),
         code: error.code || null, message: error.message,
-        location: failureLocation(error) }, null, 2)}\n`).catch(() => {});
+        location: failureLocation(error),
+        browserDiagnostics: error?.detail?.browserDiagnostics || null,
+        trustedAppSlugs: error?.detail?.trustedAppSlugs || null }, null, 2)}\n`).catch(() => {});
     throw error;
   } finally {
     await stop();

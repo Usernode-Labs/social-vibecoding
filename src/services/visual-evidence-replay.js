@@ -217,14 +217,14 @@ function expectedCoverage(plan) {
   })));
 }
 
-function hasExactCoverage(stories, artifacts, plan, { publishArtifacts = true } = {}) {
+function hasExactCoverage(stories, artifacts, plan, { publishArtifacts = true, diagnosticArtifacts = false } = {}) {
   const expected = expectedCoverage(plan);
   const storyKeys = (stories || []).map((story) => `${story.id}\u0000${story.viewport}`);
   const expectedStoryKeys = expected.map((item) => `${item.storyId}\u0000${item.viewport}`);
   if (storyKeys.length !== expectedStoryKeys.length
       || new Set(storyKeys).size !== storyKeys.length
       || expectedStoryKeys.some((key) => !storyKeys.includes(key))) return false;
-  if (!publishArtifacts) return !artifacts?.length;
+  if (!publishArtifacts && !diagnosticArtifacts) return !artifacts?.length;
 
   const expectedArtifacts = [];
   for (const item of expected) {
@@ -233,7 +233,7 @@ function hasExactCoverage(stories, artifacts, plan, { publishArtifacts = true } 
         expectedArtifacts.push(`${item.storyId}\u0000${item.viewport}\u0000${side}\u0000${variant}\u0000png`);
       }
     }
-    if (item.animation !== 'none') {
+    if (publishArtifacts && item.animation !== 'none') {
       expectedArtifacts.push(`${item.storyId}\u0000${item.viewport}\u0000paired\u0000animation\u0000webm`);
     }
   }
@@ -270,12 +270,16 @@ function reproducibilityDifference(leftStories, rightStories) {
         first: left[side].fingerprint, second: right[side].fingerprint,
       };
       if (left[side].path !== right[side].path) return { ...at, field: 'path' };
+      const hashDistances = {};
       for (const hash of ['contextHash', 'focusHash']) {
         if (!/^[0-9a-f]{16}$/.test(String(left[side][hash] || ''))
             || !/^[0-9a-f]{16}$/.test(String(right[side][hash] || ''))) return { ...at, field: hash, invalidHash: true };
-        const distance = hammingHex(left[side][hash], right[side][hash]);
-        if (distance > 2) return { ...at, field: hash, hammingDistance: distance };
+        hashDistances[hash] = hammingHex(left[side][hash], right[side][hash]);
       }
+      const differingHash = ['contextHash', 'focusHash'].find((hash) => hashDistances[hash] > 2);
+      if (differingHash) return {
+        ...at, field: differingHash, hammingDistance: hashDistances[differingHash], hashDistances,
+      };
     }
   }
   return null;
@@ -311,7 +315,8 @@ function comparePasses(first, second, { plan = null, provenance = null, runId = 
   if (plan && first.result.planHash !== planContract.planHash(plan)) {
     return { passed: false, code: 'plan_hash_mismatch', reason: 'The clean replay passes did not execute the submitted replay plan.' };
   }
-  if (plan && (!hasExactCoverage(first.result.stories, first.artifacts, plan, { publishArtifacts: false })
+  if (plan && (!hasExactCoverage(first.result.stories, first.artifacts, plan,
+    { publishArtifacts: false, diagnosticArtifacts: first.artifacts.length > 0 })
       || !hasExactCoverage(second.result.stories, second.artifacts, plan))) {
     return {
       passed: false,
@@ -378,6 +383,8 @@ async function runPass(config, sessionId, input, { signal = null, onEvent = null
     try {
       execution = await docker.runOneShot(`usernode-evidence-${sessionId}-${input.pass}`, {
         image: require('./visuals').CAPTURE_IMAGE,
+        env: process.env.USERNODE_LOCAL_DEV === '1'
+          ? { USERNODE_EVIDENCE_LOCAL_HOST_ALIAS: 'host.docker.internal' } : {},
         stdinPayload: payload,
         cmd: ['node', '/app/evidence-replay.js'],
         memory: '6g', cpus: '8', timeoutMs: config.visualEvidence?.maxRunMs || 1_440_000,
@@ -458,7 +465,8 @@ async function runPassCases(config, sessionId, input, {
     events.push(...(partial.events || []));
   }
   if (!hasExactCoverage(stories, artifacts, plan,
-    { publishArtifacts: input.publishArtifacts === true })) {
+    { publishArtifacts: input.publishArtifacts === true,
+      diagnosticArtifacts: input.diagnosticArtifacts === true })) {
     throw new EvidenceReplayError('incomplete_replay_coverage',
       'Isolated browser jobs did not produce every declared story, viewport, and artifact.');
   }
@@ -516,6 +524,75 @@ async function storeArtifacts(pool, runId, artifacts, { headSha, planHash } = {}
   return artifacts.length;
 }
 
+// Store only the mismatched side's focus and context from both clean passes.
+// These images are diagnostic material for the proposal owner and managers;
+// they are never published as reviewer evidence.
+async function storeDiagnosticArtifacts(pool, runId, firstArtifacts, secondArtifacts,
+  { headSha, planHash, attempt, comparison } = {}) {
+  if (!/^[0-9a-f]{32}$/.test(String(runId || ''))
+      || !/^[0-9a-f]{40}$/.test(String(headSha || ''))
+      || !/^[0-9a-f]{64}$/.test(String(planHash || ''))
+      || !Number.isInteger(attempt) || attempt < 1 || attempt > 8) {
+    throw new EvidenceReplayError('invalid_artifact_fence', 'Diagnostic images require an exact run, revision, plan, and attempt.');
+  }
+  const { storyId, viewport, side } = comparison || {};
+  if (!/^[a-z0-9](?:[a-z0-9_-]{0,94}[a-z0-9])?$/.test(String(storyId || ''))
+      || !/^[a-z0-9](?:[a-z0-9_-]{0,30}[a-z0-9])?$/.test(String(viewport || ''))
+      || !['base', 'head'].includes(side)) {
+    throw new EvidenceReplayError('invalid_artifact_fence', 'Diagnostic images require one compared story, viewport, and side.');
+  }
+  const selected = [];
+  for (const [pass, artifacts] of [[1, firstArtifacts], [2, secondArtifacts]]) {
+    for (const variant of ['focus', 'context']) {
+      const matches = (artifacts || []).filter((item) => item.pass === pass
+        && item.storyId === storyId && item.viewport === viewport
+        && item.side === side && item.variant === variant && item.media === 'png');
+      if (matches.length !== 1 || !Buffer.isBuffer(matches[0].data)
+          || matches[0].data.length < 1 || matches[0].data.length > MAX_BYTES.png
+          || !Number.isInteger(matches[0].width) || matches[0].width < 1
+          || !Number.isInteger(matches[0].height) || matches[0].height < 1
+          || crypto.createHash('sha256').update(matches[0].data).digest('hex') !== matches[0].sha256) {
+        throw new EvidenceReplayError('missing_diagnostic_artifact',
+          'The mismatched side did not retain its four bounded comparison images.');
+      }
+      selected.push(matches[0]);
+    }
+  }
+  const client = typeof pool.connect === 'function' ? await pool.connect() : pool;
+  try {
+    if (client !== pool) await client.query('BEGIN');
+    const current = await client.query(
+      `SELECT r.id FROM visual_evidence_runs r
+         JOIN chat_sessions s ON s.id = r.session_id
+        WHERE r.id = $1 AND r.head_sha = $2 AND r.plan_hash = $3
+          AND r.state = 'replaying' AND s.visual_evidence_run_id = r.id
+          AND s.visual_evidence_state = 'replaying'
+        FOR UPDATE`,
+      [runId, headSha, planHash]
+    );
+    if (!current.rowCount) throw new EvidenceReplayError('stale_evidence_operation',
+      'This replay no longer owns the proposal evidence slot; its diagnostic images were discarded.');
+    await client.query('DELETE FROM visual_evidence_diagnostic_artifacts WHERE run_id = $1 AND attempt = $2',
+      [runId, attempt]);
+    for (const artifact of selected) {
+      await client.query(
+        `INSERT INTO visual_evidence_diagnostic_artifacts
+           (id, run_id, attempt, pass, story_id, viewport, side, variant,
+            data, width, height, bytes, sha256)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [crypto.randomBytes(16).toString('hex'), runId, attempt, artifact.pass,
+          storyId, viewport, side, artifact.variant, artifact.data,
+          artifact.width, artifact.height, artifact.data.length, artifact.sha256]
+      );
+    }
+    if (client !== pool) await client.query('COMMIT');
+  } catch (error) {
+    if (client !== pool) await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally { if (client !== pool) client.release(); }
+  return selected.length;
+}
+
 module.exports = {
   EVENT_PREFIX,
   ARTIFACT_PREFIX,
@@ -531,4 +608,5 @@ module.exports = {
   runPass,
   runPassCases,
   storeArtifacts,
+  storeDiagnosticArtifacts,
 };

@@ -8671,6 +8671,29 @@ CREATE INDEX IF NOT EXISTS idx_visual_evidence_artifacts_run
   ON visual_evidence_artifacts(run_id, story_id, viewport);
 COMMENT ON TABLE visual_evidence_artifacts IS 'staging:private';
 
+-- A failed two-pass comparison must retain the four images needed to see
+-- which pixels changed. These never enter reviewer-visible evidence.
+CREATE TABLE IF NOT EXISTS visual_evidence_diagnostic_artifacts (
+  id             VARCHAR(32) PRIMARY KEY CHECK (id ~ '^[0-9a-f]{32}$'),
+  run_id         VARCHAR(32) NOT NULL REFERENCES visual_evidence_runs(id) ON DELETE CASCADE,
+  attempt        SMALLINT NOT NULL CHECK (attempt BETWEEN 1 AND 8),
+  pass           SMALLINT NOT NULL CHECK (pass IN (1, 2)),
+  story_id       VARCHAR(96) NOT NULL,
+  viewport       VARCHAR(32) NOT NULL,
+  side           VARCHAR(8) NOT NULL CHECK (side IN ('base', 'head')),
+  variant        VARCHAR(16) NOT NULL CHECK (variant IN ('focus', 'context')),
+  data           BYTEA NOT NULL,
+  width          INTEGER NOT NULL CHECK (width > 0),
+  height         INTEGER NOT NULL CHECK (height > 0),
+  bytes          INTEGER NOT NULL CHECK (bytes BETWEEN 1 AND 8388608),
+  sha256         VARCHAR(64) NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(run_id, attempt, pass, story_id, viewport, side, variant)
+);
+CREATE INDEX IF NOT EXISTS idx_visual_evidence_diagnostic_artifacts_run
+  ON visual_evidence_diagnostic_artifacts(run_id, attempt);
+COMMENT ON TABLE visual_evidence_diagnostic_artifacts IS 'staging:private';
+
 -- #2377: experimental Global Chat. These records are deliberately separate
 -- from repository-development chat_sessions and user_agent_preferences: the
 -- inexpensive global assistant may discover and operate the product, while
