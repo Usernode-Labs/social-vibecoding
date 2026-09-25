@@ -347,7 +347,7 @@ async function act(h, parsed, { capSuppressed = null } = {}) {
   });
 }
 
-test('each verdict says its own thing; a verdict held by a cap says nothing', async (t) => {
+test('each verdict says its own thing; a verdict held by a cap says only that it is held', async (t) => {
   const h = actHarness();
   const realPost = live.post;
   const realBuild = live.buildAndPropose;
@@ -362,7 +362,11 @@ test('each verdict says its own thing; a verdict held by a cap says nothing', as
   h.posts.length = 0;
   assert.equal(await act(h, { verdict: 'question', question: 'Which feed?' }, { capSuppressed: 'question_tripwire' }), 'held');
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'proposals_per_app' }), 'held');
-  assert.deepEqual(h.posts, [], 'the caps hold the post, not only the build');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['held_question_tripwire', 'held_proposals_per_app'],
+    'the caps hold the question and the build, and say so in one line (#3152)');
+  assert.ok(!/Which feed/.test(h.posts[0].text), 'the held question itself is not posted');
+  assert.match(h.posts[1].text, /would build this, but it already has 2 proposals open on this app/);
+  assert.match(h.posts[1].text, /come back to this issue when one of them is merged or closed/);
 
   live.buildAndPropose = async () => ({ ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.25 });
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
@@ -378,6 +382,34 @@ test('each verdict says its own thing; a verdict held by a cap says nothing', as
   assert.match(h.posts.at(-1).text, /tried to build this but couldn't finish: the build produced no change to propose/);
 });
 
+
+test('a held issue is told once, not again on every retry that is held again (#3152)', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
+  t.after(() => { live.post = realPost; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind }); return { githubCreatedAt: '2026-09-25T17:00:05Z' }; };
+  let newest = null;
+  h.pool.query = async (sql) => {
+    if (/FROM homeroom_bot_posts/.test(String(sql))) return { rows: newest ? [{ kind: newest }] : [] };
+    return { rows: [] };
+  };
+  const held = { capSuppressed: 'proposals_per_app' };
+  await act(h, { verdict: 'ready', buildNote: 'x' }, held);
+  newest = 'held_proposals_per_app';
+  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, held), 'held');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['held_proposals_per_app'], 'the second hold says nothing new');
+  // Held for a different reason than the newest post: that is news.
+  await act(h, { verdict: 'question', question: 'q' }, { capSuppressed: 'question_tripwire' });
+  assert.deepEqual(h.posts.map((p) => p.kind), ['held_proposals_per_app', 'held_question_tripwire']);
+});
+
+test('the held lines name the limit and never promise more than the refresh does', () => {
+  assert.match(live.heldText({ cap: 'proposals_per_app', verdict: 'ready', limit: 2 }), /already has 2 proposals open on this app/);
+  const q = live.heldText({ cap: 'question_tripwire', verdict: 'question', limit: 10 });
+  assert.match(q, /has a question about this request, but it has already posted 10 questions and notes on this app in the last day/);
+  assert.match(live.heldText({ cap: 'question_tripwire', verdict: 'empty', limit: 10 }), /has a note on this request/);
+  for (const text of [q, live.heldText({ cap: 'proposals_per_app', limit: 2 })]) assert.ok(!/\u2014/.test(text));
+});
 test('runTriage acts only through the live module, and only when the app is live', () => {
   // Shadow mode stays structurally silent: none of the posting or proposing
   // calls appear in homeroom-bot.js at all, and every call into the live
