@@ -687,6 +687,13 @@ recoverable rather than a dead end.
 | `requestNotificationPermission()` | — | requests only the OS notification permission; snapshot plus a `granted` bool |
 | `requestAlarmPermissions()` | — | Android: opens the first missing producer permission only (the exact-alarm settings page, else the battery dialog), never the notification prompt; call again for the next step. Snapshot plus a `granted` bool (exact alarms) |
 
+The app advertises `webOwnedNotificationPrompt` in `getBridgeInfo().capabilities`
+when it has retired its own startup notification prompt. The web shell starts
+the first-run OS request only after seeing that flag. This lets the web change
+deploy before the Flutter cleanup without asking twice after a declined
+Android prompt. Settings can request notification permission directly on
+either app build.
+
 `setIosKeepAlive` was removed in v4 with the iOS keep-alive service.
 
 #### Actions — resolve `true`

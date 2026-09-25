@@ -40,7 +40,7 @@ function boot(opts = {}) {
   };
   const capabilities = opts.capabilities || [
     'getSettingsState', 'getSocialPushState', 'requestNotificationPermission',
-    'getWalletState', 'requestAlarmPermissions',
+    'getWalletState', 'requestAlarmPermissions', 'webOwnedNotificationPrompt',
   ];
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
@@ -137,6 +137,19 @@ test('determined iOS permission never requests again', async () => {
     await h.NativeChrome.maybeShowFirstRunPermissions();
     assert.equal(h.calls.includes('requestNotificationPermission'), false, status);
     assert.equal(h.sheets.length, 0);
+  }
+});
+
+test('Flutter startup flow retains the first prompt until it advertises web ownership', async () => {
+  const capabilities = [
+    'getSettingsState', 'getSocialPushState', 'requestNotificationPermission',
+    'getWalletState', 'requestAlarmPermissions',
+  ];
+  for (const permissions of [IOS, ANDROID]) {
+    const h = boot({ permissions, capabilities, kitUnavailable: true });
+    await h.NativeChrome.maybeShowFirstRunPermissions();
+    assert.equal(h.calls.includes('requestNotificationPermission'), false);
+    assert.equal(h.stored[askedKey], undefined);
   }
 });
 

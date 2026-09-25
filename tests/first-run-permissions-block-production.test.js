@@ -71,7 +71,7 @@ function boot(opts) {
       isNative: true,
       async getBridgeInfo() {
         return { version: 5, capabilities: ['getSettingsState', 'getSocialPushState',
-          'requestNotificationPermission'] };
+          'requestNotificationPermission', 'webOwnedNotificationPrompt'] };
       },
       async getSettingsState() { return { permissions: opts.permissions }; },
       async getSocialPushState() { return opts.socialPushState || null; },

@@ -637,6 +637,12 @@
     // Android's settings snapshot cannot, so record an answered request and
     // leave later changes to the permanent Settings control.
     async _requestFirstRunNotificationPermission(isAndroid, perms, pushStatus) {
+      // The earlier Flutter startup flow owns this prompt until the app
+      // explicitly hands first-run ownership to the web shell. Without this
+      // handshake, a declined Android prompt can be requested twice.
+      if ((await NativeChrome.supports('webOwnedNotificationPrompt')) !== true) {
+        return false;
+      }
       const bridge = window.usernode;
       const needsNotification = isAndroid
         ? perms.notificationsGranted === false
