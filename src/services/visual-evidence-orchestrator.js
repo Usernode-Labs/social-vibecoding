@@ -33,6 +33,25 @@ const MAX_REPAIR_ATTEMPTS = 2;
 function replayRepairKind(error, plan) {
   const code = errorCode(error);
   if (REPAIRABLE_LOCATOR_CODES.has(code)) return 'locator';
+  if (code === 'browser_diagnostics' && error?.detail?.phase === 'browser_diagnostics') {
+    const diagnostics = error.detail.browserDiagnostics || error.detail;
+    const httpErrors = diagnostics.httpErrors || [];
+    const consoleErrors = diagnostics.consoleErrors || [];
+    // A same-origin API 404 can mean the planner followed a check fixture
+    // under the wrong persona. Give it one bounded chance to find the real
+    // data path. JavaScript errors, failed network requests and blocked
+    // origins remain hard failures, never published as successful evidence.
+    if (httpErrors.length > 0
+        && httpErrors.every((item) => item.status === 404
+          && item.location?.sameOrigin === true
+          && String(item.location?.pathname || '').startsWith('/api/'))
+        && consoleErrors.every((item) => item.source?.sameOrigin === true
+          && httpErrors.some((response) => response.location.pathname === item.source.pathname)
+          && /^Failed to load resource: the server responded with a status of 404 \(Not Found\)$/.test(item.message || ''))
+        && !(diagnostics.pageErrors || []).length
+        && !(diagnostics.failedRequests || []).length
+        && !(diagnostics.blockedRequests || []).length) return 'route_data';
+  }
   // A missing element in a positive assertion is another locator error.
   // Wrong values and states remain hard failures except for an exact motion
   // checkpoint that can be verified after an observed, bounded state wait.
@@ -332,6 +351,7 @@ function declaredCheckSummary(checkout, intent = null, testingPaths = []) {
     return ranked.slice(0, 80).map(({ test }) => ({
       name: String(test.name || '').slice(0, 120),
       path: String(test.path || '').slice(0, 512),
+      testedAs: 'read_only_admin',
       ...(test.id ? { visualScenarioId: test.id } : {}),
     }));
   } catch {
@@ -370,6 +390,7 @@ function evidenceContext({ run, session, revision, pair, deployment, intent }) {
       untrusted: true,
     },
     declaredChecks: declaredCheckSummary(pair.sides.head.checkout, intent, testingPaths),
+    availableFixtures: deployment.availableFixtures || [],
     provenance: {
       fixtureFingerprint: pair.fixtureFingerprint,
       baseImageDigest: pair.sides.base.imageDigest,
@@ -942,7 +963,7 @@ async function executeRun(config, options, injected = {}) {
     pair = await deps.environment.preparePair(config, { pool, run, session, app, onProgress });
     failurePhase = 'exploration_reset';
     stage(failurePhase);
-    const exploration = await deps.environment.resetPair(config, pair);
+    const exploration = await deps.environment.resetPair(config, pair, { onProgress });
     const expectedProvenance = {
       baseSha: run.base_sha,
       headSha: run.head_sha,
@@ -982,7 +1003,7 @@ async function executeRun(config, options, injected = {}) {
       context,
       expiresAt: Date.now() + (config.visualEvidence?.maxRunMs || 1_440_000),
       resetSide: async (side) => {
-        const reset = await deps.environment.resetPair(config, pair);
+        const reset = await deps.environment.resetPair(config, pair, { onProgress });
         if (!sameProvenance(reset, expectedProvenance)) {
           throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'The exploration reset changed the paired fixture or image.');
         }
@@ -1010,7 +1031,7 @@ async function executeRun(config, options, injected = {}) {
             failurePhase = `reset_pass_${pass}`;
             stage(failurePhase);
             const resetStartedAt = Date.now();
-            const deployment = await deps.environment.resetPair(config, pair);
+            const deployment = await deps.environment.resetPair(config, pair, { onProgress });
             if (!sameProvenance(deployment, expectedProvenance)) {
               throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch',
                 `Replay pass ${pass} did not use the prepared fixture and images.`);
@@ -1229,6 +1250,8 @@ async function executeRun(config, options, injected = {}) {
         registration.control.allowRepair(
           repairKind === 'motion_timing'
             ? 'A motion checkpoint ran while an observed element was still visible. Inspect both revisions and add an observed, bounded wait without changing the checkpoint assertions or interactions.'
+            : repairKind === 'route_data'
+              ? 'The planned route produced same-origin API 404s. Inspect the accepted persona on both revisions, choose real accessible data, and follow the claimed user flow. Do not use an error page or a shell with missing content as evidence.'
             : 'A planned locator did not match the intended visible element during replay. Inspect its actual state on both revisions and correct the replays.',
           {
             kind: repairKind,
@@ -1260,6 +1283,8 @@ async function executeRun(config, options, injected = {}) {
         failurePhase = 'agent_repair';
         progress(repairKind === 'motion_timing'
           ? 'A motion checkpoint ran before the animation settled; the evidence agent is checking the timing…'
+          : repairKind === 'route_data'
+            ? 'The planned route could not load its data; the evidence agent is checking the account and fixture…'
           : 'A planned control did not match the page; the evidence agent is inspecting and correcting it…');
         const priorBackend = metrics.agentDispatches.at(-1)?.requestedBackend;
         agentOutcome = await dispatchOnce(priorBackend === 'claude_code' ? 'claude_code' : null, metrics.repairCount);

@@ -61,6 +61,11 @@ element remains visible. For motion, observe the actual moving state on both
 revisions. Where an animation starts, wait for its observed marker to appear,
 then wait for it to become hidden before asserting the settled checkpoint.
 Do not use unrelated actions as a timer or remove a failed checkpoint.
+Verify the data behind the claimed screen loaded for the story's persona.
+A visible page shell, composer, or heading does not prove that an owner-scoped
+record exists. If the page says "not found", a required list is empty, or an
+API request for the record fails, do not submit that route. Follow the actual
+claimed user interaction and assert visible content from the loaded record.
 Role, label, and text locators default to exact full-element
 matching; an accessible name can include description text inside a wrapping
 label. Copy the observed full name, use exact:false after checking uniqueness,
@@ -97,7 +102,10 @@ an alternate claim.
 The context includes the proposal's recorded testing paths and steps. They are
 navigation hints, not proof. If the accepted startPath is generic, inspect
 those paths and the most relevant declared checks before browsing unrelated
-screens. Verify the actual screen, actions, and locators on both revisions.
+screens. Declared checks were run as the read-only administrator; their routes
+may be inaccessible to a member. The availableFixtures entries, when present,
+name evidence-owned data and its persona. Verify the actual screen, loaded
+data, actions, and locators on both revisions with the story's persona.
 
 When you understand a robust flow, submit the typed replays for every story with
 evidence_run_plan. Ordinary platform code—not you—will reset both sides and
@@ -116,6 +124,10 @@ Inspect the failed action or checkpoint in the live browser on BOTH exact
 revisions. A locator error needs an observed stable target. A motion checkpoint
 that ran before an animation settled needs an observed state transition and a
 bounded wait, while retaining the original checkpoint assertions unchanged.
+Same-origin API 404s mean the planned data route was unavailable: inspect the
+account and available fixtures, then follow a real list row to a loaded record.
+If the claim cannot be reached with that persona, report the missing fixture
+instead of submitting another plan pointed at an error page.
 Review the remaining actions, assertions, and focus targets before resubmitting.
 Do not guess a replacement from the error text alone. Submit one complete
 corrected set of replays through evidence_run_plan. An accepted response means

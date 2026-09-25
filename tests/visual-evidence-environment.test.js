@@ -2,7 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const environment = require('../src/services/visual-evidence-environment');
+const runtime = require('../src/services/application-runtime');
+const dbManager = require('../src/services/db-manager');
+const fixtures = require('../src/services/visual-evidence-fixtures');
 
 test('evidence resource names are deterministic, side-specific, and bounded', () => {
   const runId = '0123456789abcdef0123456789abcdef';
@@ -44,4 +48,59 @@ test('parallel cleanup waits for every sibling before surfacing a failure', asyn
   release();
   await assert.rejects(pending, /boom/);
   assert.deepEqual(order, ['slow']);
+});
+
+test('each paired reset serializes clones and adds the same member fixture to both revisions', async () => {
+  const original = {
+    remove: runtime.remove, deploy: runtime.deploy, appOrigin: runtime.appOrigin,
+    clone: dbManager.cloneFromPreparedSource, connectionUrl: dbManager.connectionUrl,
+    inspect: fixtures.canCopyMemberAgentSession, copy: fixtures.copyMemberAgentSession,
+  };
+  const runId = '2'.repeat(32);
+  const slug = 'usernode-2d5619';
+  const pair = {
+    app: { slug }, runId, sessionId: 42,
+    preparedSource: { fingerprint: 'source-fingerprint' },
+    sides: Object.fromEntries(['base', 'head'].map((side) => [side, {
+      dbName: dbManager.evidenceDbName(slug, runId, side), runtimeName: `evidence-${side}`,
+      sha: side === 'base' ? 'a'.repeat(40) : 'b'.repeat(40),
+      imageRef: `image-${side}`, imageDigest: `digest-${side}`, env: {},
+    }])),
+  };
+  const order = [];
+  let cloneActive = false;
+  try {
+    runtime.remove = async () => {};
+    runtime.deploy = async (_config, spec) => ({ runtimeName: spec.runtimeName });
+    runtime.appOrigin = (_config, deployment) => `http://${deployment.runtimeName}`;
+    dbManager.cloneFromPreparedSource = async (_source, dbName) => {
+      assert.equal(cloneActive, false, 'the next clone must wait for the prior redaction pass');
+      cloneActive = true;
+      order.push(dbName);
+      await new Promise((resolve) => setImmediate(resolve));
+      cloneActive = false;
+      return { password: 'disposable' };
+    };
+    dbManager.connectionUrl = (dbName) => `postgres://fixture@db/${dbName}`;
+    fixtures.canCopyMemberAgentSession = async () => true;
+    fixtures.copyMemberAgentSession = async ({ side }) => ({ id: fixtures.PROFILE,
+      persona: 'member', path: '/#messages/agent/990899', side });
+    const progress = [];
+    const deployment = await environment.resetPair({ selfAppSlug: slug }, pair,
+      { onProgress: (event) => progress.push(event.stage) });
+    assert.deepEqual(order, [pair.sides.base.dbName, pair.sides.head.dbName]);
+    assert.deepEqual(progress.slice(0, 2), ['clone_base', 'clone_head']);
+    assert.equal(deployment.availableFixtures.length, 1);
+    assert.equal(deployment.availableFixtures[0].persona, 'member');
+    assert.equal(deployment.fixtureFingerprint, crypto.createHash('sha256')
+      .update(`source-fingerprint\n${fixtures.PROFILE}`).digest('hex'));
+  } finally {
+    runtime.remove = original.remove;
+    runtime.deploy = original.deploy;
+    runtime.appOrigin = original.appOrigin;
+    dbManager.cloneFromPreparedSource = original.clone;
+    dbManager.connectionUrl = original.connectionUrl;
+    fixtures.canCopyMemberAgentSession = original.inspect;
+    fixtures.copyMemberAgentSession = original.copy;
+  }
 });
