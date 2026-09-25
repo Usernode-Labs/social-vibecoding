@@ -21,7 +21,7 @@
 import { type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { GroupedList, ListRow, PLANE_FILL, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { useStoreState } from '../../lib/use-store-state';
@@ -68,7 +68,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
   return (
     <div
       id="profile-identity-card"
-      className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-3"
+      className={`rounded-2xl ${PLANE_FILL} p-4 mb-3`}
     >
       {/*
           QA 2026-09-24 Q30e: on a phone "Edit profile" took the right half of
@@ -151,7 +151,7 @@ function StatCards({ stats }: { stats: Array<{ key: string; value: string; label
         <div
           key={stat.key}
           data-profile-stat={stat.key}
-          className="rounded-2xl bg-white dark:bg-zinc-900 px-2 py-3 text-center"
+          className={`rounded-2xl ${PLANE_FILL} px-2 py-3 text-center`}
         >
           <div className="text-xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100">{stat.value}</div>
           <div className="text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{stat.label}</div>
@@ -208,7 +208,7 @@ function Contributions({ view }: { view: any }): ReactNode {
         ) : null}
       </div>
       {view.rows.length ? (
-        <GroupedList className="mx-0">
+        <GroupedList className="mx-0" tone="plane">
           {view.rows.map((row: any) => (
             <ListRow
               key={row.key}
@@ -233,7 +233,7 @@ function Contributions({ view }: { view: any }): ReactNode {
           ))}
         </GroupedList>
       ) : (
-        <div id="profile-contributions-empty" className="rounded-2xl bg-white dark:bg-zinc-900 p-4 text-center text-sm text-zinc-500 dark:text-zinc-400">
+        <div id="profile-contributions-empty" className={`rounded-2xl ${PLANE_FILL} p-4 text-center text-sm text-zinc-500 dark:text-zinc-400`}>
           {view.loaded
             ? 'Nothing merged yet. When a proposal of yours is voted in, it shows up here.'
             : 'Your contributions could not be loaded. Check your connection and try again.'}
@@ -258,7 +258,7 @@ function Contributions({ view }: { view: any }): ReactNode {
 function ProfileSkeleton(): ReactNode {
   return (
     <SkeletonGroup label="Loading your profile">
-      <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-3">
+      <div className={`rounded-2xl ${PLANE_FILL} p-4 mb-3`}>
         <div className="flex items-center gap-3">
           <Skeleton shape="circle" className="w-14 h-14" />
           <div className="flex-1 min-w-0">
@@ -271,7 +271,7 @@ function ProfileSkeleton(): ReactNode {
       {/* The three stat cards: a figure over its label. */}
       <div className="grid grid-cols-3 gap-2 mb-2">
         {Array.from({ length: 3 }, (_, i) => (
-          <div key={i} className="rounded-2xl bg-white dark:bg-zinc-900 px-2 py-3 flex flex-col items-center">
+          <div key={i} className={`rounded-2xl ${PLANE_FILL} px-2 py-3 flex flex-col items-center`}>
             <Skeleton shape="block" className="w-8 h-6" />
             <Skeleton shape="muted" className="mt-1.5 w-14" />
           </div>
@@ -279,7 +279,7 @@ function ProfileSkeleton(): ReactNode {
       </div>
       {/* "More", then "Your contributions": rows with a tile and two lines. */}
       {[3, 2].map((count, group) => (
-        <div key={group} className="mt-8 rounded-2xl bg-white dark:bg-zinc-900">
+        <div key={group} className={`mt-8 rounded-2xl ${PLANE_FILL}`}>
           {Array.from({ length: count }, (_, i) => (
             <div key={i} className="flex items-center gap-4 px-4 py-3.5">
               <Skeleton shape="block" className="w-11 h-11 rounded-xl" />

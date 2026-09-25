@@ -158,3 +158,30 @@ test('the planes that only sit on the wallpaper keep their fills', () => {
       `${sel} is never swapped for an opaque fill`);
   }
 });
+
+// WORKSHOP AND PROFILE WEAR THE PLANE COLOUR, like Discover. Their white
+// cards read as cutouts on the wallpaper beside Discover's warm pane, so the
+// grouped-list primitive has a `plane` tone (--dc-sheet-solid, which follows
+// the dark theme) and those two screens ask for it; the default stays white.
+test('Workshop and Profile draw their cards in the plane colour', () => {
+  const primitive = fs.readFileSync(path.join(root, 'frontend/@/components/ui/grouped-list.tsx'), 'utf8');
+  assert.match(primitive, /export const PLANE_FILL = 'bg-\[color:var\(--dc-sheet-solid\)\]';/);
+  assert.match(primitive, /tone: \{\s*card: 'bg-white dark:bg-zinc-900',\s*plane: 'bg-\[color:var\(--dc-sheet-solid\)\]',\s*\}/);
+  assert.match(primitive, /defaultVariants: \{ tone: 'card' \}/, 'every other list keeps the white card');
+  const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+  const workshop = read('frontend/src/features/workshop/index.tsx');
+  assert.match(workshop, /<GroupedList id="workshop-list" tone="plane">/);
+  assert.doesNotMatch(workshop, /<GroupedList(?![^>]*tone="plane")[^>]*>/,
+    'every list on the Workshop screen (the app list, the per-app item groups, their skeleton) is a plane list');
+  assert.match(read('frontend/src/features/profile/account-panel.tsx'), /<GroupedList className="mx-0" tone="plane">/);
+  const friends = read('frontend/src/features/profile/friends-section.tsx');
+  for (const id of ['profile-friend-requests', 'profile-friends-list', 'profile-friend-sent']) {
+    assert.match(friends, new RegExp(`<GroupedList id="${id}"[^>]*tone="plane">`), `${id} is a plane list`);
+  }
+  const profile = read('frontend/src/features/profile/profile-view.tsx');
+  assert.doesNotMatch(profile, /bg-white/, 'nothing on the profile screen is a white cutout');
+  assert.doesNotMatch(friends, /bg-white/);
+  assert.doesNotMatch(read('frontend/src/features/profile/public-profile-card.tsx'), /bg-white dark:bg-zinc-900 p-5/);
+  assert.doesNotMatch(read('frontend/src/features/friends/friend-search.tsx'), /bg-white/,
+    'the friend search results under Friends are the plane colour too');
+});

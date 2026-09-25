@@ -246,7 +246,7 @@ function ItemGroup({ app, items, more, section }: {
           {app.name || app.slug}
         </a>
       </SectionHeader>
-      <GroupedList>
+      <GroupedList tone="plane">
         {items.map((item) => (
           <ListRow
             key={`${item.kind}-${item.id}`}
@@ -311,7 +311,7 @@ function ItemPane({ rows, items, itemsError, section, emptyText, heading }: {
     if (heading) return null;
     return (
       <SkeletonGroup label="Loading items">
-        <GroupedList className="mt-2">
+        <GroupedList className="mt-2" tone="plane">
           {[0, 1].map((i) => (
             <ListRow
               key={i}
@@ -637,7 +637,7 @@ export function WorkshopScreen() {
               {totals ? <b id="workshop-total-needs" className={TOTAL}>{totals.needs}</b> : null}
             </span>
           </p>
-          <GroupedList id="workshop-list">
+          <GroupedList id="workshop-list" tone="plane">
             {/* #2445: THE EMPTY STATE IS A CARD, NOT A GREY CAPTION — the same
                 correction Home's Discover block took in #1913
                 (features/home/panels/discover.tsx): a title, a quieter second

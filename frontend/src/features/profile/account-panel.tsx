@@ -66,7 +66,7 @@ export function MorePanel({ rows }: { rows: { challenges: string | null; kudos: 
       {/* SectionHeader's own `px-4`, on the rows' content edge (#2832) — see
           Contributions in ./profile-view.tsx. */}
       <SectionHeader>More</SectionHeader>
-      <GroupedList className="mx-0">
+      <GroupedList className="mx-0" tone="plane">
         <ListRow
           as="a"
           id="profile-row-challenges"

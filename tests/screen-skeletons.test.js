@@ -122,9 +122,9 @@ test('the placeholders borrow the REAL row classes, so they cannot drift', () =>
     'standings: the table’s own container');
   assert.match(STANDINGS, /bg-zinc-50 dark:bg-zinc-900/,
     'and the <thead>’s own ground for the header strip');
-  assert.match(PROFILE, /rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-3/,
-    'profile: the identity card’s face, verbatim');
-  assert.match(PROFILE, /rounded-2xl bg-white dark:bg-zinc-900 px-2 py-3/,
+  assert.match(PROFILE, /rounded-2xl \$\{PLANE_FILL\} p-4 mb-3/,
+    'profile: the identity card’s face, verbatim (the plane colour, like Discover)');
+  assert.match(PROFILE, /rounded-2xl \$\{PLANE_FILL\} px-2 py-3/,
     'and the stat cards’ face');
 });
 
