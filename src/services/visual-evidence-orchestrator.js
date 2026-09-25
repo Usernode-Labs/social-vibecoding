@@ -489,6 +489,7 @@ function replayInput({ run, plan, deployment, authTokens, provenance, pass }) {
     runId: run.id,
     pass,
     publishArtifacts: pass === 2,
+    diagnosticArtifacts: pass === 1,
     origins: deployment.origins,
     authTokens,
     cookies: {},
@@ -1177,6 +1178,22 @@ async function executeRun(config, options, injected = {}) {
             runId: run.id,
           });
           if (!hardVerdict.passed) {
+            if (hardVerdict.code === 'non_reproducible' && hardVerdict.detail?.side) {
+              try {
+                await deps.replay.storeDiagnosticArtifacts(pool, run.id, first.artifacts, second.artifacts, {
+                  headSha: run.head_sha,
+                  planHash,
+                  attempt,
+                  comparison: hardVerdict.detail,
+                });
+              } catch (diagnosticError) {
+                log.warn('visual-evidence', 'Could not retain private comparison images', {
+                  sessionId: session.id, runId: run.id,
+                  code: errorCode(diagnosticError),
+                  message: visibleError(diagnosticError),
+                });
+              }
+            }
             throw new VisualEvidenceOrchestrationError(hardVerdict.code, hardVerdict.reason, hardVerdict.detail || null);
           }
           const replayTrace = traceSummary(metrics, {

@@ -27,7 +27,7 @@ const LOCATOR_KINDS = Object.freeze(['testId', 'role', 'label', 'placeholder', '
 const ACTION_TYPES = Object.freeze([
   'navigate', 'click', 'fill', 'press', 'select', 'check', 'uncheck',
   'hover', 'drag', 'clickPoint', 'dragPoints', 'scrollIntoView', 'scrollBy',
-  'waitFor', 'requestFailure',
+  'waitFor', 'waitForHostedApp', 'requestFailure',
 ]);
 const ASSERTION_TYPES = Object.freeze([
   'visible', 'hidden', 'attached', 'detached', 'text', 'count', 'value',
@@ -232,6 +232,9 @@ const actionSchema = z.union([
     to: z.object({ xRatio: pointerRatio, yRatio: pointerRatio }).strict(),
   }).strict(),
   z.object({ ...actionBase, type: z.literal('scrollIntoView'), target: locatorSchema }).strict(),
+  z.object({ ...actionBase, type: z.literal('waitForHostedApp'),
+    slug: z.string().min(1).max(63).regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/),
+    timeoutMs: z.number().int().min(100).max(MAX_WAIT_MS).default(MAX_WAIT_MS) }).strict(),
   z.object({
     ...actionBase,
     type: z.literal('scrollBy'),
@@ -332,7 +335,7 @@ const replayPlanSchema = z.object({
     }
     if (story.replay.checkpoint.animation === 'steps'
         && [story.replay.before, story.replay.after].some((side) =>
-          side.actions.every((action) => ['waitFor', 'requestFailure'].includes(action.type)))) {
+          side.actions.every((action) => ['waitFor', 'waitForHostedApp', 'requestFailure'].includes(action.type)))) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['stories', index, 'replay', 'checkpoint', 'animation'],

@@ -30,6 +30,11 @@ test('runner accepts a validated pair and only publishes artifacts on pass two',
   assert.match(parsed.planHash, /^[0-9a-f]{64}$/);
   const first = replay.validateInput(input({ pass: 1 }));
   assert.equal(first.publishArtifacts, false);
+  assert.equal(first.diagnosticArtifacts, false);
+  const diagnostic = replay.validateInput(input({ pass: 1, diagnosticArtifacts: true }));
+  assert.equal(diagnostic.diagnosticArtifacts, true);
+  assert.equal(diagnostic.publishArtifacts, false);
+  assert.equal(replay.validateInput(input({ diagnosticArtifacts: true })).diagnosticArtifacts, false);
 });
 
 test('controlled replay failure intercepts only its declared GET and counts a real hit', async () => {
@@ -59,6 +64,57 @@ test('controlled replay failure intercepts only its declared GET and counts a re
   await routeHandler({ request: () => request, abort: async (code) => calls.push(['abort', code]),
     continue: async () => calls.push(['continue']) });
   assert.deepEqual(calls.at(-1), ['continue']);
+});
+
+test('only deployed public apps can load inside the managed app frame', async () => {
+  const platform = 'http://base-evidence:3000';
+  const appOrigin = 'https://real-app.onhomeroom.com';
+  const apps = [
+    { slug: 'staging-demo-app', status: 'running', view_visibility: 'public',
+      url: 'https://staging-demo-app.onhomeroom.com', repo_url: null, main_sha: null },
+    { slug: 'real-app', status: 'running', view_visibility: 'public',
+      url: appOrigin, repo_url: 'https://github.com/usernode-bot/real-app', main_sha: 'a'.repeat(40) },
+    { slug: 'private-app', status: 'running', view_visibility: 'private',
+      url: 'https://private-app.onhomeroom.com', repo_url: 'https://github.com/usernode-bot/private-app', main_sha: 'b'.repeat(40) },
+  ];
+  const catalog = replay.trustedHostedAppOrigins(apps, platform);
+  assert.deepEqual([...catalog], [[appOrigin, 'real-app']]);
+  let routeHandler;
+  const context = { route: async (_glob, handler) => { routeHandler = handler; } };
+  const diagnostics = { blockedRequests: [] };
+  const hostedOrigins = new Set();
+  let catalogReads = 0;
+  await replay.installOriginFence(context, new Set([platform]), diagnostics, null, {
+    hostedOrigins, loadHostedOrigins: async () => { catalogReads += 1; return catalog; },
+  });
+  const mainFrame = { parentFrame: () => null };
+  const appFrame = { parentFrame: () => mainFrame,
+    frameElement: async () => ({ getAttribute: async () => 'app-iframe' }) };
+  const calls = [];
+  const run = async (url, type, frame) => routeHandler({
+    request: () => ({ url: () => url, method: () => 'GET', resourceType: () => type,
+      frame: () => frame }),
+    continue: async () => calls.push('continue'),
+    abort: async () => calls.push('abort'),
+  });
+  await run(`${appOrigin}/`, 'document', appFrame);
+  await run(`${appOrigin}/style.css`, 'stylesheet', appFrame);
+  await run(`${appOrigin}/`, 'document', mainFrame);
+  await run('https://staging-demo-app.onhomeroom.com/', 'document', appFrame);
+  assert.deepEqual(calls, ['continue', 'continue', 'abort', 'abort']);
+  assert.equal(catalogReads, 1);
+  assert.equal(hostedOrigins.has(appOrigin), true);
+  assert.equal(diagnostics.blockedRequests.length, 2);
+});
+
+test('hosted app readiness waits for a successful document response', async () => {
+  const page = { waitForTimeout: async () => {} };
+  const action = { id: 'app-loaded', stage: 'app', type: 'waitForHostedApp',
+    slug: 'real-app', timeoutMs: 100 };
+  await assert.rejects(replay.executeAction(page, action, '', null, '', null,
+    { loaded: new Map() }), { code: 'hosted_app_not_loaded' });
+  assert.ok((await replay.executeAction(page, action, '', null, '', null,
+    { loaded: new Map([['real-app', 'https://real-app.onhomeroom.com']]) })) >= 0);
 });
 
 test('only Chromium resource errors for deliberately failed exact requests are expected', () => {
@@ -325,7 +381,7 @@ test('failure diagnostics describe browser state without exposing tokens or cook
   assert.doesNotMatch(JSON.stringify(state), /secret\.jwt|never-emit-this/);
 });
 
-test('browser contexts forward the app-scoped token and failures never expose it', async () => {
+test('browser contexts never send the platform token as a global header', async () => {
   let contexts = 0;
   const options = [];
   const browser = { newContext: async (value) => {
@@ -343,7 +399,7 @@ test('browser contexts forward the app-scoped token and failures never expose it
     assert.doesNotMatch(error.message, /secret\.jwt/);
     return true;
   });
-  assert.deepEqual(options[1].extraHTTPHeaders, { 'x-usernode-token': 'member.jwt' });
+  assert.equal(options[1].extraHTTPHeaders, undefined);
 });
 
 test('internal HTTP replay bootstraps the clone-local platform session cookie', async () => {

@@ -160,6 +160,7 @@ function validateInput(raw) {
     runId: raw.runId,
     pass,
     publishArtifacts: raw.publishArtifacts === true && pass === 2,
+    diagnosticArtifacts: raw.diagnosticArtifacts === true && pass === 1,
     plan,
     planHash: planContract.planHash(plan),
     selection,
@@ -610,6 +611,40 @@ async function settlePage(page, { motion = false } = {}) {
   if (!motion) await page.waitForTimeout(150);
 }
 
+async function captureStableCheckpoint(page, network, { motion = false } = {}) {
+  if (motion) {
+    await settlePage(page, { motion: true });
+    return page.screenshot({ type: 'png' });
+  }
+  // A locator can become visible before the rest of an asynchronous screen
+  // has finished loading. Wait for its current reads, then require the actual
+  // pixels to agree across three separated samples. This keeps static
+  // evidence from freezing a partially painted route or modal backdrop.
+  try { await network.quiet(3_000, 350); }
+  catch (error) {
+    // Polling may keep the network busy while the page is visually settled.
+    // The pixel samples below are the actual checkpoint readiness test.
+    if (error?.code !== 'network_not_quiet') throw error;
+  }
+  const deadline = Date.now() + 3_000;
+  let previous = null;
+  let stablePairs = 0;
+  let samples = 0;
+  while (Date.now() < deadline) {
+    await settlePage(page);
+    const png = await page.screenshot({ type: 'png' });
+    const hash = perceptualHash(png);
+    samples += 1;
+    stablePairs = previous && hammingHex(previous, hash) <= 2 ? stablePairs + 1 : 0;
+    if (stablePairs >= 2) return png;
+    previous = hash;
+    await page.waitForTimeout(250);
+  }
+  throw new ReplayFailure('unstable_checkpoint',
+    'The static screen kept changing at its checkpoint; wait for a real settled state before capturing.',
+    { samples });
+}
+
 function networkTracker(page) {
   const active = new Set();
   let lastActivity = Date.now();
@@ -633,7 +668,8 @@ function networkTracker(page) {
   };
 }
 
-async function executeAction(page, action, origin, network, authToken = '', controlledFailure = null) {
+async function executeAction(page, action, origin, network, authToken = '', controlledFailure = null,
+  hostedAppState = null) {
   const startedAt = Date.now();
   switch (action.type) {
     case 'requestFailure':
@@ -690,6 +726,19 @@ async function executeAction(page, action, origin, network, authToken = '', cont
     case 'scrollIntoView':
       await (await resolveOne(page, action.target, action.id)).scrollIntoViewIfNeeded({ timeout: planContract.MAX_WAIT_MS });
       break;
+    case 'waitForHostedApp': {
+      const deadline = Date.now() + action.timeoutMs;
+      while (!hostedAppState?.loaded.has(action.slug) && Date.now() < deadline) {
+        await page.waitForTimeout(50);
+      }
+      if (!hostedAppState?.loaded.has(action.slug)) {
+        throw new ReplayFailure('hosted_app_not_loaded',
+          `The ${action.slug} app document did not load successfully in the managed app frame.`,
+          { appSlug: action.slug, loadedAppSlugs: [...(hostedAppState?.loaded.keys() || [])].slice(0, 10),
+            trustedAppSlugs: [...(hostedAppState?.catalog?.values() || [])].slice(0, 20) });
+      }
+      break;
+    }
     case 'scrollBy':
       await page.evaluate(({ x, y }) => window.scrollBy({ left: x, top: y, behavior: 'instant' }), { x: action.x, y: action.y });
       break;
@@ -887,7 +936,48 @@ async function encodeWebm(frames, { fps, targetBytes, maxBytes }) {
   } finally { await fsp.rm(dir, { recursive: true, force: true }); }
 }
 
-async function installOriginFence(context, allowedOrigins, diagnostics, controlledFailure = null) {
+function trustedHostedAppOrigins(apps, platformOrigin) {
+  const origins = new Map();
+  for (const app of Array.isArray(apps) ? apps.slice(0, 1000) : []) {
+    if (app?.status !== 'running' || app?.view_visibility !== 'public'
+        || app?.self_hosted === true || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(String(app?.slug || ''))) continue;
+    let url;
+    try { url = new URL(app.url); } catch { continue; }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
+        || url.pathname !== '/' || url.search || url.hash || url.origin === platformOrigin) continue;
+    const versionedRuntime = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(String(app.repo_url || ''))
+      && /^[0-9a-f]{40}$/.test(String(app.main_sha || ''));
+    const localRuntime = url.protocol === 'http:' && url.hostname === 'localhost'
+      && String(app.container_id || '') === `usernode-app-${app.slug}`;
+    if (!versionedRuntime && !localRuntime) continue;
+    origins.set(url.origin, app.slug);
+  }
+  return origins;
+}
+
+async function loadTrustedHostedAppOrigins(context, platformOrigin) {
+  let response;
+  try {
+    response = await context.request.get(`${platformOrigin}/api/apps`, {
+      failOnStatusCode: false, maxRedirects: 0, timeout: 10_000,
+    });
+    if (response.status() !== 200) return new Map();
+    const body = await response.json();
+    return trustedHostedAppOrigins(body?.apps, platformOrigin);
+  } catch { return new Map(); }
+  finally { await response?.dispose?.().catch(() => {}); }
+}
+
+async function installOriginFence(context, allowedOrigins, diagnostics, controlledFailure = null,
+  { loadHostedOrigins = null, hostedOrigins = new Set() } = {}) {
+  const admittedFrames = new WeakSet();
+  let trustedOrigins = null;
+  const insideAdmittedFrame = (frame) => {
+    for (let current = frame; current; current = current.parentFrame?.()) {
+      if (admittedFrames.has(current)) return true;
+    }
+    return false;
+  };
   await context.route('**/*', async (route) => {
     const request = route.request();
     const url = request.url();
@@ -904,10 +994,32 @@ async function installOriginFence(context, allowedOrigins, diagnostics, controll
       }
       return route.continue();
     }
+    // A child app is a different origin. Admit its actual document only when
+    // the platform's own app catalog says it is a deployed, public app AND
+    // the request comes from the managed app iframe. Subresources remain
+    // restricted to that frame; arbitrary cross-origin requests stay fenced.
+    let frame = null;
+    try { frame = request.frame(); } catch { /* service worker or pre-frame request */ }
+    if (origin && hostedOrigins.has(origin) && insideAdmittedFrame(frame)) return route.continue();
+    if (origin && loadHostedOrigins && request.resourceType() === 'document' && frame?.parentFrame?.()) {
+      let managedFrame = false;
+      try { managedFrame = await frame.frameElement().then((element) => element.getAttribute('id')) === 'app-iframe'; }
+      catch { /* an unmounted frame is never trusted */ }
+      if (managedFrame) {
+        if (!trustedOrigins) trustedOrigins = Promise.resolve().then(loadHostedOrigins);
+        const catalog = await trustedOrigins;
+        if (catalog.has(origin)) {
+          admittedFrames.add(frame);
+          hostedOrigins.add(origin);
+          return route.continue();
+        }
+      }
+    }
     if (diagnostics.blockedRequests.length < MAX_CONSOLE_ITEMS) {
       diagnostics.blockedRequests.push({
         origin: safeDiagnosticText(origin || 'invalid', 120),
         resourceType: safeDiagnosticText(request.resourceType(), 40),
+        ...(frame?.parentFrame?.() ? { embedded: true } : {}),
       });
     }
     return route.abort('blockedbyclient');
@@ -982,6 +1094,7 @@ function screenshotFingerprint(result) {
     assertions: result.assertions.map((item) => ({ type: item.type, passed: item.passed, actual: item.actual })),
     focus: Object.fromEntries(Object.entries(result.focusRect).map(([key, value]) => [key, Math.round(value)])),
     stages: result.stages.map((stage) => stage.stage),
+    hostedAppsLoaded: result.hostedAppsLoaded,
   })).digest('hex');
 }
 
@@ -1000,6 +1113,8 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       requests: new WeakSet(), urls: new Set() }
     : null;
   const bootstrap = { attempted: false, cookieAlreadyPresent: false, sessionCookieInstalled: false, responseStatus: null };
+  const hostedOrigins = new Set();
+  const hostedAppState = { catalog: new Map(), loaded: new Map() };
   const eventBase = {
     runId: input.runId, pass: input.pass, storyId: story.id,
     viewport: viewport.name, side,
@@ -1018,22 +1133,22 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       colorScheme: input.browser.colorScheme,
       reducedMotion: motion ? 'no-preference' : 'reduce',
       serviceWorkers: 'block',
-      // Evidence environments are deliberately reachable only over their
-      // private in-cluster HTTP origins. A production-mode self-app answers
-      // the initial token-bearing request with a Secure session cookie, which
-      // Chromium must reject on HTTP. Forward the same app-scoped credential
-      // through the standard app request header as well, so later API requests
-      // stay authenticated even when that cookie cannot be stored. The origin
-      // fence installed below prevents this context from sending any request
-      // outside the one evidence side.
-      extraHTTPHeaders: { 'x-usernode-token': authToken },
+      // The bootstrap below installs the clone-local session cookie on the
+      // platform origin. Never put its app-scoped token in context-wide
+      // headers: an embedded app or redirect would receive that header too.
     });
     // A side may never fetch from or navigate to its counterpart. Keeping the
     // origins in one input is an orchestration convenience, not a permission
     // for base and head to observe each other.
     const allowedOrigins = new Set([origin]);
     setupPhase = 'install_origin_fence';
-    await installOriginFence(context, allowedOrigins, diagnostics, controlledFailure);
+    await installOriginFence(context, allowedOrigins, diagnostics, controlledFailure, {
+      hostedOrigins,
+      loadHostedOrigins: async () => {
+        hostedAppState.catalog = await loadTrustedHostedAppOrigins(context, origin);
+        return hostedAppState.catalog;
+      },
+    });
     setupPhase = 'install_cookies';
     await addCookies(context, origin, input.cookies[side]);
     setupPhase = 'bootstrap_session';
@@ -1091,9 +1206,12 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   });
   page.on('requestfailed', (request) => {
     if (controlledFailure?.requests.has(request)) return;
-    let sameOrigin = false;
-    try { sameOrigin = new URL(request.url()).origin === origin; } catch {}
-    if (sameOrigin && diagnostics.failedRequests.length < MAX_CONSOLE_ITEMS) {
+    let inspectedOrigin = false;
+    try {
+      const requestOrigin = new URL(request.url()).origin;
+      inspectedOrigin = requestOrigin === origin || hostedOrigins.has(requestOrigin);
+    } catch {}
+    if (inspectedOrigin && diagnostics.failedRequests.length < MAX_CONSOLE_ITEMS) {
       const failure = {
         location: diagnosticLocation(request.url(), origin),
         error: safeDiagnosticText(request.failure()?.errorText || '', 120),
@@ -1115,13 +1233,25 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   });
   page.on('response', (response) => {
     const status = response.status();
+    let responseOrigin = null;
+    try { responseOrigin = new URL(response.url()).origin; } catch {}
+    if (status >= 200 && status < 300 && hostedOrigins.has(responseOrigin)
+        && response.request().resourceType() === 'document') {
+      const slug = hostedAppState.catalog.get(responseOrigin);
+      if (slug) hostedAppState.loaded.set(slug, responseOrigin);
+    }
     if (status >= 200 && status < 400) {
       const key = requestIdentity(response.url(), response.request().method());
       if (key) successfulRequests.set(key, ++networkOrder);
     }
     if (status < 400 || diagnostics.httpErrors.length >= MAX_CONSOLE_ITEMS) return;
     const location = diagnosticLocation(response.url(), origin);
-    if (location.sameOrigin) diagnostics.httpErrors.push({ status, location });
+    let hostedOrigin = null;
+    try { hostedOrigin = new URL(response.url()).origin; } catch {}
+    if (location.sameOrigin || hostedOrigins.has(hostedOrigin)) {
+      diagnostics.httpErrors.push({ status, location,
+        ...(location.sameOrigin ? {} : { hostedOrigin: safeDiagnosticText(hostedOrigin, 120) }) });
+    }
   });
 
   const stages = [];
@@ -1165,7 +1295,8 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
         actionId: action.id, actionStage: action.stage, actionType: action.type,
       });
       if (Date.now() >= sideDeadline) throw new ReplayFailure('side_timeout', `${side} exceeded its ${planContract.MAX_SIDE_MS} ms budget.`);
-      const durationMs = await executeAction(page, action, origin, network, authToken, controlledFailure);
+      const durationMs = await executeAction(page, action, origin, network, authToken,
+        controlledFailure, hostedAppState);
       await settlePage(page, { motion });
       actionResults.push({ id: action.id, stage: action.stage, type: action.type, durationMs, passed: true });
       emitEvent({
@@ -1204,9 +1335,8 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     if (!focusRect || focusRect.width < 8 || focusRect.height < 8) {
       throw new ReplayFailure('focus_too_small', `${story.id} ${side} focus is too small to review.`);
     }
-    await settlePage(page, { motion });
     failureStage = { phase: 'capture_checkpoint' };
-    const contextPng = await page.screenshot({ type: 'png' });
+    const contextPng = await captureStableCheckpoint(page, network, { motion });
     stages.push({ stage: '__checkpoint__', image: contextPng });
 
     failureStage = { phase: 'browser_diagnostics' };
@@ -1234,6 +1364,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     const result = {
       side, storyId: story.id, viewport: viewport.name, path: finalPath,
       actionResults, assertions, focusRect, contextPng, stages,
+      hostedAppsLoaded: [...hostedAppState.loaded.keys()].sort(),
       motionFrames: motionCapture
         ? [{ at: 0, data: stages[0].image }, ...motionCapture.frames,
           { at: motionCapture.durationMs, data: contextPng }]
@@ -1399,14 +1530,14 @@ async function runReplay(browser, input) {
             head: { fingerprint: head.fingerprint, contextHash: head.contextHash, focusHash: headFocusHash, path: head.path, actionResults: head.actionResults, assertions: head.assertions, focusRect: head.focusRect, cropRect: crops.head },
           };
           stories.push(storyResult);
-          if (input.publishArtifacts) {
+          if (input.publishArtifacts || input.diagnosticArtifacts) {
             artifacts.push(
               { storyId: story.id, viewport: viewport.name, side: 'base', variant: 'focus', media: 'png', contentType: 'image/png', width: Math.round(crops.base.width * input.browser.deviceScaleFactor), height: Math.round(crops.base.height * input.browser.deviceScaleFactor), focusRect: crops.base, data: baseFocus },
               { storyId: story.id, viewport: viewport.name, side: 'head', variant: 'focus', media: 'png', contentType: 'image/png', width: Math.round(crops.head.width * input.browser.deviceScaleFactor), height: Math.round(crops.head.height * input.browser.deviceScaleFactor), focusRect: crops.head, data: headFocus },
               { storyId: story.id, viewport: viewport.name, side: 'base', variant: 'context', media: 'png', contentType: 'image/png', width: viewport.width * input.browser.deviceScaleFactor, height: viewport.height * input.browser.deviceScaleFactor, focusRect: base.focusRect, data: base.contextPng },
               { storyId: story.id, viewport: viewport.name, side: 'head', variant: 'context', media: 'png', contentType: 'image/png', width: viewport.width * input.browser.deviceScaleFactor, height: viewport.height * input.browser.deviceScaleFactor, focusRect: head.focusRect, data: head.contextPng },
             );
-            if (story.replay.checkpoint.animation !== 'none') {
+            if (input.publishArtifacts && story.replay.checkpoint.animation !== 'none') {
               phase = 'encode_animation';
               emitEvent({
                 type: 'animation_started', runId: input.runId, pass: input.pass,
@@ -1462,7 +1593,11 @@ async function main({ chromium: injectedChromium, rawInput = null } = {}) {
   const browser = await chromium.launch({
     executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
     headless: true,
-    args: CHROMIUM_ARGS,
+    args: [
+      ...CHROMIUM_ARGS,
+      ...(process.env.USERNODE_EVIDENCE_LOCAL_HOST_ALIAS === 'host.docker.internal'
+        ? ['--host-resolver-rules=MAP localhost host.docker.internal'] : []),
+    ],
   });
   emitEvent({ type: 'browser_launch_completed', runId: input.runId, pass: input.pass });
   try {
@@ -1509,6 +1644,8 @@ module.exports = {
   discardRecoveredNetworkChanges,
   discardCancelledReads,
   discardExpectedControlledFailureConsole,
+  trustedHostedAppOrigins,
+  loadTrustedHostedAppOrigins,
   installOriginFence,
   executeAction,
   publicRelativePath,

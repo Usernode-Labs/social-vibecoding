@@ -142,6 +142,15 @@ function visualEvidenceRoutes(config) {
           LIMIT 256`,
         [run.id]
       );
+      const diagnosticArtifacts = await pool.query(
+        `SELECT id, attempt, pass, story_id, viewport, side, variant,
+                bytes, width, height, sha256
+           FROM visual_evidence_diagnostic_artifacts
+          WHERE run_id = $1
+          ORDER BY attempt, pass, story_id, viewport, side, variant
+          LIMIT 32`,
+        [run.id]
+      );
       res.set({
         'Cache-Control': 'private, no-store',
         Vary: 'Cookie, Authorization',
@@ -178,6 +187,20 @@ function visualEvidenceRoutes(config) {
           height: artifact.height,
           sha256: artifact.sha256,
         })),
+        diagnosticArtifacts: diagnosticArtifacts.rows.map((artifact) => ({
+          id: artifact.id,
+          attempt: artifact.attempt,
+          pass: artifact.pass,
+          storyId: artifact.story_id,
+          viewport: artifact.viewport,
+          side: artifact.side,
+          variant: artifact.variant,
+          bytes: artifact.bytes,
+          width: artifact.width,
+          height: artifact.height,
+          sha256: artifact.sha256,
+          url: `/api/apps/${encodeURIComponent(ctx.app.slug)}/proposals/${id}/evidence/diagnostics/${artifact.id}`,
+        })),
         failureCode: run.failure_code,
         failureReason: run.failure_reason,
         observer: orchestrator.liveRunObserver(run.id, pool),
@@ -207,6 +230,42 @@ function visualEvidenceRoutes(config) {
       } });
     } catch (err) {
       log.error('visual-evidence', 'Evidence diagnostics read failed', { sessionId: id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.get('/api/apps/:slug/proposals/:sessionId/evidence/diagnostics/:artifactId', async (req, res) => {
+    const id = sessionId(req.params.sessionId);
+    if (!config.visualEvidence?.present || !id || !ARTIFACT_ID_RE.test(String(req.params.artifactId || ''))) {
+      return res.status(404).json({ error: 'Evidence diagnostic image not found' });
+    }
+    try {
+      const ctx = await loadContext(pool, req.params.slug, id, req.user, 'view');
+      if (!ctx || (ctx.session.user_id !== req.user?.id
+          && !(await appAdmins.canManageApp(pool, ctx.app, req.user)))) {
+        return res.status(404).json({ error: 'Evidence diagnostic image not found' });
+      }
+      const { rows } = await pool.query(
+        `SELECT a.data, a.bytes, a.sha256
+           FROM visual_evidence_diagnostic_artifacts a
+           JOIN visual_evidence_runs r ON r.id = a.run_id
+          WHERE a.id = $1 AND r.session_id = $2`,
+        [req.params.artifactId, id]
+      );
+      if (!rows[0]) return res.status(404).json({ error: 'Evidence diagnostic image not found' });
+      const data = Buffer.isBuffer(rows[0].data) ? rows[0].data : Buffer.from(rows[0].data || '');
+      res.set({
+        'Content-Type': 'image/png',
+        'Content-Length': String(data.length),
+        'Cache-Control': 'private, no-store',
+        ETag: `"${rows[0].sha256}"`,
+        Vary: 'Cookie, Authorization',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': 'inline',
+      });
+      return res.end(data);
+    } catch (err) {
+      log.error('visual-evidence', 'Evidence diagnostic image read failed', { sessionId: id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
