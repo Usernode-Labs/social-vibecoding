@@ -1,14 +1,15 @@
 /**
  * The pieces of the agent-session composer's bottom row (#2779 follow-up,
- * the "composer, reworked" design): the model pill and the sheet it opens,
- * the credits pill and the ring it draws around Send, and the files sent
- * with a message as the transcript shows them.
+ * the "composer, reworked" design): the model pill and the "Build with"
+ * sheet it opens (#3078: Homeroom's models, or the hand-off to Claude Code or
+ * Codex, as three tabs), the credits pill and the ring it draws around Send,
+ * and the files sent with a message as the transcript shows them.
  *
  * None of this is in the prerendered shell: the composer mounts with a
  * conversation, so nothing here has a hydration twin to match.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
 import { CheckIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
@@ -117,8 +118,15 @@ export function CreditRing({ credit, children }: { credit: CreditView | null; ch
 
 // ── The model pill and its sheet ────────────────────────────────────────
 
-export function ModelPill({ label, disabled, open, onOpen, pillRef }: {
+/**
+ * The pill names the model and, for one that takes a thinking level, that
+ * level after it in small muted type (#3079): "GPT-5 High". The label block is
+ * centred in the pill; inside it the two words share one baseline.
+ */
+export function ModelPill({ label, effort = '', disabled, open, onOpen, pillRef }: {
   label: string;
+  /** The thinking level's label, or '' for a model that takes none. */
+  effort?: string;
   disabled: boolean;
   open: boolean;
   onOpen: () => void;
@@ -128,34 +136,35 @@ export function ModelPill({ label, disabled, open, onOpen, pillRef }: {
     <button
       ref={pillRef}
       type="button"
-      className="inline-flex h-10 min-w-0 max-w-[12rem] items-center rounded-full bg-zinc-100 px-4 text-[15px] font-medium text-zinc-900 hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+      className="inline-flex h-10 min-w-0 max-w-[14rem] items-center rounded-full bg-zinc-100 px-4 text-[15px] font-medium text-zinc-900 hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
       aria-haspopup="dialog"
       aria-expanded={open}
-      aria-label={`Model: ${label}`}
+      aria-label={effort ? `Model: ${label}, thinking ${effort}` : `Model: ${label}`}
       disabled={disabled}
       data-agent-session-model
       onClick={onOpen}
     >
-      <span className="truncate">{label}</span>
+      <span className="flex min-w-0 items-baseline gap-1.5">
+        <span className="truncate">{label}</span>
+        {effort ? (
+          <span className="shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400" data-agent-session-model-effort>{effort}</span>
+        ) : null}
+      </span>
     </button>
   );
 }
 
-export interface ModelGroup {
-  title: string;
-  options: PickerOption[];
-}
-
-/** The picker's options under the agent that runs them: Claude Code, then Codex. */
-export function modelGroups(options: PickerOption[]): ModelGroup[] {
+/**
+ * The Homeroom tab's one "Model" list: the Claude models, then the OpenRouter
+ * ones, then anything else. It used to be grouped under "Claude Code" and
+ * "Codex" headings, which read as the two web agents the other tabs hand the
+ * work to; here the Mayor runs every one of them.
+ */
+export function modelList(options: PickerOption[]): PickerOption[] {
   const claude = options.filter((option) => option.value.startsWith(ANTHROPIC_PREFIX));
   const codex = options.filter((option) => option.value.startsWith(OPENROUTER_PREFIX));
   const other = options.filter((option) => !claude.includes(option) && !codex.includes(option));
-  return [
-    { title: 'Claude Code', options: claude },
-    { title: 'Codex', options: codex },
-    { title: 'Other', options: other },
-  ].filter((group) => group.options.length);
+  return [...claude, ...codex, ...other];
 }
 
 export interface SheetEffort {
@@ -164,39 +173,25 @@ export interface SheetEffort {
   onPick: (value: string) => void;
 }
 
-/** The sheet's contents, from plain props so a test can draw it. */
-export function ModelSheetBody({ groups, value, onPick, effort, credit, onClose, heading = true }: {
-  groups: ModelGroup[];
+/** The Homeroom tab's contents, from plain props so a test can draw it. */
+export function ModelSheetBody({ options, value, onPick, effort, credit }: {
+  options: PickerOption[];
   value: string;
   onPick: (value: string) => void;
   effort: SheetEffort | null;
   credit: CreditView | null;
-  onClose: () => void;
-  heading?: boolean;
 }) {
   const [effortOpen, setEffortOpen] = useState(false);
   const effortLabel = effort ? (effort.options.find((option) => option.value === effort.value)?.label || effort.value) : '';
   const row = 'flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-700/60';
   return (
     <div className="flex flex-col gap-3" data-agent-session-model-sheet>
-      {heading ? (
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
-            aria-label="Close"
-            onClick={onClose}
-          >
-            <XIcon className="h-5 w-5" aria-hidden="true" />
-          </button>
-          <h2 className="mr-[52px] flex-1 text-center text-base font-semibold text-zinc-900 dark:text-zinc-100">Model</h2>
-        </div>
-      ) : null}
-      {groups.map((group) => (
-        <div key={group.title} className="flex flex-col gap-1">
-          <p className="px-1 text-xs font-semibold text-zinc-500 dark:text-zinc-400">{group.title}</p>
+      <p className="px-1 text-sm leading-snug text-zinc-600 dark:text-zinc-300">The Mayor builds it here, on your Homeroom credits.</p>
+      {options.length ? (
+        <div className="flex flex-col gap-1">
+          <p className="px-1 text-xs font-semibold text-zinc-500 dark:text-zinc-400">Model</p>
           <div className="overflow-hidden rounded-2xl bg-white dark:bg-zinc-800">
-            {group.options.map((option, index) => {
+            {options.map((option, index) => {
               const chosen = option.value === value;
               return (
                 <button
@@ -221,7 +216,7 @@ export function ModelSheetBody({ groups, value, onPick, effort, credit, onClose,
             })}
           </div>
         </div>
-      ))}
+      ) : null}
       {effort ? (
         <div className="overflow-hidden rounded-2xl bg-white dark:bg-zinc-800">
           <button
@@ -275,6 +270,99 @@ export function ModelSheetBody({ groups, value, onPick, effort, credit, onClose,
   );
 }
 
+// ── Build with: the sheet's three tabs (#3078) ─────────────────────────
+
+export type BuildTab = 'homeroom' | 'claude-code' | 'codex';
+
+export const BUILD_TABS: Array<{ id: BuildTab; label: string }> = [
+  { id: 'homeroom', label: 'Homeroom' },
+  { id: 'claude-code', label: 'Claude Code' },
+  { id: 'codex', label: 'Codex' },
+];
+
+/**
+ * "Build with": where this conversation's work is built. Homeroom is the
+ * model list the pill always opened; Claude Code and Codex ARE the hand-off,
+ * drawn in place rather than behind a second dialog. A real tablist: the
+ * arrow keys, Home and End move between the tabs, and only the selected one
+ * is in the Tab order.
+ */
+export function BuildSheetBody({ tab, onTab, onClose, heading = true, homeroom, handoff }: {
+  tab: BuildTab;
+  onTab: (tab: BuildTab) => void;
+  onClose: () => void;
+  heading?: boolean;
+  homeroom: ReactNode;
+  handoff: ReactNode;
+}) {
+  const strip = useRef<HTMLDivElement | null>(null);
+  const move = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const at = BUILD_TABS.findIndex((item) => item.id === tab);
+    const next = event.key === 'ArrowRight' ? (at + 1) % BUILD_TABS.length
+      : event.key === 'ArrowLeft' ? (at + BUILD_TABS.length - 1) % BUILD_TABS.length
+        : event.key === 'Home' ? 0
+          : event.key === 'End' ? BUILD_TABS.length - 1 : -1;
+    if (next < 0) return;
+    event.preventDefault();
+    onTab(BUILD_TABS[next].id);
+    strip.current?.querySelector<HTMLElement>(`[data-agent-session-build-tab="${BUILD_TABS[next].id}"]`)?.focus();
+  };
+  return (
+    <div className="flex flex-col gap-3" data-agent-session-build={tab}>
+      {heading ? (
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+            aria-label="Close"
+            onClick={onClose}
+          >
+            <XIcon className="h-5 w-5" aria-hidden="true" />
+          </button>
+          <h2 className="mr-[52px] flex-1 text-center text-base font-semibold text-zinc-900 dark:text-zinc-100">Build with</h2>
+        </div>
+      ) : null}
+      <div
+        ref={strip}
+        role="tablist"
+        aria-label="Build with"
+        className="flex gap-1 rounded-full bg-zinc-200/70 p-1 dark:bg-zinc-800"
+        onKeyDown={move}
+      >
+        {BUILD_TABS.map((item) => {
+          const selected = item.id === tab;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              id={`agent-session-build-tab-${item.id}`}
+              aria-selected={selected}
+              aria-controls="agent-session-build-panel"
+              tabIndex={selected ? 0 : -1}
+              className={`flex-1 whitespace-nowrap rounded-full px-2 py-1.5 text-sm font-semibold ${selected
+                ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-zinc-100'
+                : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100'}`}
+              data-agent-session-build-tab={item.id}
+              onClick={() => onTab(item.id)}
+            >
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+      <div
+        role="tabpanel"
+        id="agent-session-build-panel"
+        aria-labelledby={`agent-session-build-tab-${tab}`}
+        data-agent-session-build-panel={tab}
+      >
+        {tab === 'homeroom' ? homeroom : handoff}
+      </div>
+    </div>
+  );
+}
+
 function wide(): boolean {
   try { return window.matchMedia('(min-width: 640px)').matches; } catch { return false; }
 }
@@ -315,7 +403,8 @@ export function ModelSheet({ anchor, onClose, children }: {
       if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
     };
     document.addEventListener('keydown', onKey, true);
-    const first = panel.current?.querySelector<HTMLElement>('[aria-pressed="true"], button');
+    const first = panel.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+      || panel.current?.querySelector<HTMLElement>('button');
     first?.focus();
     return () => {
       document.removeEventListener('keydown', onKey, true);
@@ -335,7 +424,7 @@ export function ModelSheet({ anchor, onClose, children }: {
         ref={panel}
         role="dialog"
         aria-modal={desktop ? undefined : true}
-        aria-label="Model"
+        aria-label="Build with"
         className={desktop
           ? 'fixed z-[71] w-[22rem] overflow-y-auto rounded-2xl border border-zinc-200 bg-zinc-50 p-2 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900'
           : 'fixed inset-x-0 bottom-0 z-[71] max-h-[85vh] overflow-y-auto rounded-t-[28px] bg-zinc-50 px-4 pb-8 pt-2 dark:bg-zinc-900'}

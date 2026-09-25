@@ -32,11 +32,11 @@ test('#3016: the session bar wraps on every surface, and the panel cannot outgro
   assert.doesNotMatch(bar, /embedded \? 'flex-wrap' : ''/);
   assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap /,
     'the change pill stays one line');
-  // Below `sm` Build starts the second row and Changes and the ⋯ end it.
-  assert.match(bar, /<VenuePicker [^>]*className=\{embedded \? '' : 'sm:ml-auto'\} \/>/);
-  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*whitespace-nowrap[^"]* sm:ml-0 /);
-  assert.match(read('frontend/src/features/agent-session/handoff.tsx'),
-    /inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border/, 'and Build: Homeroom too');
+  // Changes and the ⋯ end whichever row they land on. Build left the bar
+  // for the composer's "Build with" (#3078).
+  assert.doesNotMatch(bar, /VenuePicker/);
+  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*whitespace-nowrap[^"]*"/);
+  assert.doesNotMatch(bar, /data-agent-session-changes-button\s+className="[^"]*sm:ml-0/, 'nothing before it to push it right any more');
 
   assert.match(panel, /<div ref=\{root\} className=\{`relative flex min-h-0 min-w-0 flex-1 /,
     'the panel shrinks below its content, so nothing inside can widen the screen');

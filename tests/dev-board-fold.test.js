@@ -1260,7 +1260,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // 810, unchanged (#2779): an agent session's "Build: Homeroom" and ⋯ ride
   // on the saved-draft check over conversation 990801 as a :has(), since
-  // the floor above leaves no slot for a check of their own.
+  // the floor above leaves no slot for a check of their own. (#3078 moved
+  // Build into the composer's "Build with"; the :has() reads Changes ~ ⋯.)
   //
   // 810 → 811: +1 (#4868): "Open app" lands as ONE check — its two halves
   // (the button offered on an ordinary app's chat, absent on the platform's
