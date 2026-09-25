@@ -12696,6 +12696,25 @@
       ]
     },
     {
+      "source": "src/routes/workshop-overview.js",
+      "method": "GET",
+      "path": "/api/workshop/items",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.workshop.items.c3e79db0",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/app-context/app-context-sheet.tsx",
+        "frontend/src/features/workshop/index.tsx"
+      ]
+    },
+    {
       "source": "src/routes/workshop-themes.js",
       "method": "GET",
       "path": "/api/apps/:slug/workshop-themes",

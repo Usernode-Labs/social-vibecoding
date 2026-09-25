@@ -1285,9 +1285,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // above. Neither set overlaps the other, so the merged manifest holds
   // every one of them: 811 + 1 + 3 = 815.
   //
+  // 815 → 816: +1, the all-apps Workshop's Needs you tab (#3051), reached
+  // with ?ws=needs because a declared check never clicks. The #2759 check
+  // that pinned the ABSENCE of the scope chip now pins its return (the owner
+  // reversed #2759), so that one changed in place rather than being added.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 815);
+  checkCap.assertPinned(DAPP.tests.length, 816);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

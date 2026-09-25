@@ -19,8 +19,17 @@
 //
 // AND THE SCOPE CHIP (#2759). It read "All apps" here and its panel listed
 // your apps — but this screen IS that list, every row the way into its app's
-// Workshop, so the chip was the page repeating itself. It lives on ONE app's
-// Workshop now, where naming the app and offering the others says something.
+// Workshop, so the chip was the page repeating itself.
+//
+// ── #3051 brought two of those back, on the owner's request ──────────
+//
+// The chip, reading "All apps", and two of the tabs: Current status and
+// Needs you. The argument above is answered rather than ignored: these tabs
+// do not filter the list of apps. Current status IS that list, unchanged,
+// with your in-flight items under it; Needs you lists the votes waiting on
+// you ITEM BY ITEM, grouped by app, from GET /api/workshop/items. All items
+// and the plus stay retired: every item of every app is not a page, and the
+// plus's two questions can still only be asked inside an app.
 //
 // Three things are still pinned, and each is a way the screens can be quietly
 // wrong:
@@ -51,8 +60,9 @@ const app = (slug, working, needs) => ({ slug, name: slug, working, needs });
 test('picking an app navigates: the chip is the link out', () => {
   assert.match(CHROME, /await win\(\)\.App\?\.navigateToApp\?\.\(slug, 'dev'\);/,
     'picking an app goes to that app’s own Workshop');
-  // NEVER DISABLED. The chip is only ever scoped to an app now, and scoped
-  // there is always somewhere to go — back up to all of them.
+  // NEVER DISABLED. Scoped to an app there is always somewhere to go (back
+  // up to all of them), and at the all-apps end (#3051) there is always an
+  // app to go into or, with none, the panel's own All apps row.
   assert.ok(!/disabled=\{/.test(CHROME), 'the chip is never a dead control');
 });
 
@@ -72,25 +82,54 @@ test('the action waits for the navigation', () => {
   assert.ok(!fn.includes('giveFeedback'), 'nor reported from it');
 });
 
-test('the tabs and the plus are gone, and took their panel modes with them', () => {
-  for (const id of ['workshop-tabs', 'workshop-tab-status', 'workshop-tab-needs',
-    'workshop-tab-all', 'workshop-tab-empty', 'workshop-plus',
-    'workshop-plus-change', 'workshop-plus-issue', 'workshop-plus-create']) {
+test('All items and the plus stay gone; Current status and Needs you are back (#3051)', () => {
+  for (const id of ['workshop-tabs', 'workshop-tab-all', 'workshop-tab-empty', 'workshop-plus',
+    'workshop-plus-change', 'workshop-plus-issue', 'workshop-plus-create', 'workshop-picker']) {
     assert.ok(!CHROME.includes(`id="${id}"`), `#${id} is not rendered`);
     assert.ok(!SCREEN.includes(`id="${id}"`), `#${id} is not on the screen either`);
     assert.ok(!HTML.includes(`id="${id}"`), `#${id} is not in the shipped shell`);
   }
-  // The store's `tab` went with the strip: nothing filters this list now, so
-  // a field naming which filter is on would be a fact with no reader.
+  // The two that came back ship in the cold document, the default one current.
+  assert.match(HTML, /<button id="workshop-tab-status" type="button" data-workshop-tab="status" aria-current="page"/);
+  assert.match(HTML, /<button id="workshop-tab-needs" type="button" data-workshop-tab="needs" aria-current="false"/);
+  // THEY DO NOT FILTER THE LIST OF APPS, which is the argument that retired
+  // the old strip. Both panes render; the list lives in Current status
+  // untouched, and nothing narrows `rows` by a tab.
+  assert.ok(!SCREEN.includes('filterRows'), 'the screen does not filter the app list');
   const store = read('frontend/src/features/workshop/workshop-store.js');
-  assert.ok(!/^\s*tab:/m.test(store), 'the store holds no tab');
-  assert.ok(!SCREEN.includes('filterRows'), 'and the screen does not filter');
-  // #2759: the scope chip went too, and `picker` — its open flag — with it.
-  assert.ok(!/picker/.test(store), 'the store holds no panel flag');
-  assert.ok(!/WorkshopScope|WorkshopPicker/.test(SCREEN), 'the all-apps screen renders no chip');
-  // ONE PANEL COMPONENT, and the ids are the caller's: there is one caller
-  // left (an app's own Workshop), and no default spelling to fall back on.
-  assert.ok(!/'workshop-(scope|picker)'/.test(CHROME), 'no all-apps ids survive as defaults');
+  assert.match(store, /^\s*tab: 'status',/m, 'Current status is the default, and the prerender');
+  assert.match(store, /^\s*scopeOpen: false,/m, 'the chip\'s panel ships closed');
+  // ONE PANEL COMPONENT for both ends of the chip.
+  assert.match(CHROME, /export const ALL_APPS_SCOPE_ID = 'workshop-scope';/);
+  assert.match(CHROME, /<WorkshopPicker\n\s+id=\{panelId\}\n\s+apps=\{apps\}\n\s+scope=\{null\}/);
+});
+
+test('#3051: the tabs switch panes without redrawing the list, and close the chip\'s panel', () => {
+  const html = () => renderToHtml(createElement(screen.WorkshopScreen, {}));
+  screen.workshopStore.set({
+    open: true, error: false, tab: 'status', scopeOpen: true, itemsError: false,
+    rows: [app('staging-demo-your-app', 2, 3)],
+    items: {
+      'staging-demo-your-app': {
+        working: [{ kind: 'session', id: 7, title: 'Dark theme', status: 'active', at: null }],
+        needs: [{ kind: 'proposal', id: 8, title: 'Sort by rating', status: 'promoted', at: null }],
+      },
+    },
+  });
+  let out = html();
+  assert.match(out, /data-workshop-pane="status" class=""/);
+  assert.doesNotMatch(out, /data-workshop-pane="needs"/, 'the Needs you pane renders only while showing');
+  assert.match(out, /id="workshop-scope-picker"/, 'the panel renders once open');
+  screen.workshopController.setTab('needs');
+  assert.equal(screen.workshopStore.get().scopeOpen, false, 'a tab press closes the panel');
+  out = html();
+  assert.match(out, /data-workshop-pane="status" class="hidden"/);
+  assert.match(out, /data-workshop-pane="needs"/);
+  assert.match(out, /data-workshop-app="staging-demo-your-app"/,
+    'the list is still in the document, hidden with its pane, not unmounted');
+  screen.workshopController.setTab('nonsense');
+  assert.equal(screen.workshopStore.get().tab, 'status', 'anything else is the default');
+  screen.workshopStore.set({ tab: 'status', scopeOpen: false, rows: null, items: null });
 });
 
 test('the legend carries the totals, and says nothing when there is nothing', () => {
@@ -128,16 +167,30 @@ test('the legend carries the totals, and says nothing when there is nothing', ()
     'a figure read from data is not in a cold document');
 });
 
-test('#2759: the all-apps screen ships no scope chip', () => {
-  // The screen is a flat list of your apps; a chip whose panel listed them
-  // again was redundant. Gone from the source and from the cold document.
-  for (const id of ['workshop-scope', 'workshop-picker']) {
-    assert.ok(!SCREEN.includes(id), `#${id} is not on the screen`);
-    assert.ok(!HTML.includes(`id="${id}"`), `#${id} is not in the shipped shell`);
-  }
-  // What leads the screen now is the legend, and it carries the header's
-  // notch clearance the chip's row used to.
-  assert.match(SCREEN, /<p className="px-4 pt-5 pb-2 flex flex-wrap/);
+test('#3051: the all-apps screen wears the All apps chip again (reverses #2759)', () => {
+  // #2759 took it off while the screen was only the list of your apps. The
+  // owner asked for it back as "All apps", heading the two tabs it scopes.
+  assert.match(SCREEN, /<AllAppsScope\n/);
+  assert.match(HTML, /<button id="workshop-scope" type="button"[^>]*aria-haspopup="menu" aria-expanded="false" aria-controls="workshop-scope-picker"/,
+    'it ships closed in the cold document, naming its panel');
+  assert.ok(!HTML.includes('id="workshop-scope-picker"'), 'and the panel is behind a press');
+  const html = renderToHtml(createElement(chrome.WorkshopScope, {
+    id: 'workshop-scope', open: false, scope: null, onToggle: () => {},
+  }));
+  assert.match(html, />All apps</);
+  // Its panel ticks All apps, and pressing that row only closes the panel:
+  // navigating to the screen you are on would throw its scroll away.
+  const panel = renderToHtml(createElement(chrome.WorkshopPicker, {
+    id: 'workshop-scope-picker', scope: null, onClose: () => {},
+    apps: [{ slug: 'notes-ab12', name: 'Notes' }],
+  }));
+  assert.match(panel, /id="workshop-scope-picker-all"[\s\S]*?<\/svg><\/span><span[^>]*><span[^>]*>All apps<\/span><\/span><svg/,
+    'All apps carries the tick');
+  assert.match(CHROME, /onClose\(\);\n\s*if \(scope === null\) return;\n\s*goToAllApps\(\);/);
+  // The chip's row leads the screen now, so it carries the header's notch
+  // clearance the legend carried while it led.
+  assert.match(SCREEN, /<div className="px-4 pt-5 pb-2 flex flex-wrap items-center gap-x-3 gap-y-2">\n\s*<AllAppsScope/);
+  assert.match(SCREEN, /<p className="px-4 pt-1 pb-2 flex flex-wrap/);
 });
 
 // ── The same chip, scoped to one app (#2718 review) ────────────────────
