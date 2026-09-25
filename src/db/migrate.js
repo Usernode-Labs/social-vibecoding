@@ -58,6 +58,7 @@ async function migrate(config) {
   // Must run BEFORE every staging fixture — a dozen of them own rows via a
   // hard-coded created_by = 900001. See seedStagingDemoUser.
   await seedStagingDemoUser(pool);
+  await seedStagingAdminDetailsUser(pool);
   await seedSelfApp(pool, config);
   finishPhase('coreSeedMs');
   await seedStagingNotifications(pool, config);
@@ -1129,6 +1130,38 @@ async function seedStagingDemoUser(pool) {
     log.info('db', 'Staging demo user seeded', { id: 900001 });
   } catch (err) {
     log.warn('db', 'Staging demo user seeding failed', { message: err.message });
+  }
+}
+
+// One fully populated account for the admin Users details view
+// (#admin/users/900301): programme identifiers, a location, a pending app
+// slot request, a weekly cap override, a linked wallet and one GitHub proof,
+// so every card of the view has something to show. It deliberately has no
+// company OpenRouter key, events, onchain accounts or leaderboard standing,
+// so those cards render their empty states. Same rules as the demo user
+// above: fixed id, cannot log in, idempotent, a no-op outside staging.
+async function seedStagingAdminDetailsUser(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, is_admin, can_create_apps,
+                          email, telegram, display_name, country, city,
+                          app_quota, app_quota_requested_at, weekly_limit_cents, usernode_pubkey)
+       VALUES (900301, 'staging-demo-admin-details', 'staging-demo-not-a-login', FALSE, FALSE,
+               'staging-demo-admin-details@example.invalid', 'staging_demo_details',
+               'Staging demo details user', 'FR', 'Staging demo city',
+               2, NOW(), 500, 'ut1stagingdemodetails0000000001')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO user_social_identities (user_id, provider, provider_subject, handle)
+       SELECT 900301, 'github', '900301900301', 'staging-demo-details'
+        WHERE EXISTS (SELECT 1 FROM users WHERE id = 900301 AND username = 'staging-demo-admin-details')
+       ON CONFLICT DO NOTHING`
+    );
+    log.info('db', 'Staging admin details user seeded', { id: 900301 });
+  } catch (err) {
+    log.warn('db', 'Staging admin details user seeding failed', { message: err.message });
   }
 }
 
