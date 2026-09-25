@@ -11058,8 +11058,14 @@ const AppView = {
       ? (s) => DevChat.renderMarkdown(s, { images: true })
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     // No box of its own: the About sheet is the box (topic/topic-head.tsx).
-    return issue && issue.body && issue.body.trim()
-      ? `<div class="dev-issue-body">${renderMd(issue.body)}</div>`
+    // #3132: issues filed before the rename say "**Source:** usernode user
+    // (name)" in their stored body; show the product's name instead. Display
+    // only: the stored body (and its parser) keep the original text.
+    const body = issue && typeof issue.body === 'string'
+      ? issue.body.replace(/^(\*\*Source:\*\*\s*)usernode (user|admin)\b/m, '$1Homeroom $2')
+      : '';
+    return body.trim()
+      ? `<div class="dev-issue-body">${renderMd(body)}</div>`
       : '';
   },
 

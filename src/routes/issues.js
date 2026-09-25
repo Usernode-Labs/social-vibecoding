@@ -50,15 +50,17 @@ function parseOwnerRepo(repoUrl) {
 // (written by routes/feedback.js): "usernode user (name)" for regular
 // users, "usernode admin (name)" for admins (#140; older issues used a
 // bare "usernode admin" with no name). Returns the creator's display name
-// or null when no Source line can be parsed.
+// or null when no Source line can be parsed. #3132: new issues say
+// "Homeroom user (name)" / "Homeroom admin (name)"; the older "usernode"
+// spelling is still accepted for issues filed before the rename.
 function creatorFromSourceLine(body) {
   if (typeof body !== 'string') return null;
   const m = body.match(/\*\*Source:\*\*\s*([^\n]+)/);
   if (!m) return null;
   const source = m[1].trim();
-  const named = source.match(/^usernode (?:user|admin) \(([^)]+)\)/);
+  const named = source.match(/^(?:usernode|Homeroom) (?:user|admin) \(([^)]+)\)/);
   if (named) return named[1];
-  if (/^usernode admin\b/.test(source)) return 'admin';
+  if (/^(?:usernode|Homeroom) admin\b/.test(source)) return 'admin';
   return null;
 }
 
