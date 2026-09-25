@@ -411,3 +411,21 @@ test('dapp.json exercises the dashboard on ids the module renders', () => {
     assert.ok(id && tsx.includes(`id="${id}"`), `${t.expectSelector} is rendered by the module`);
   }
 });
+
+test('every verdict opens to its own detail, and only a real failure shows the failure line (#3144)', () => {
+  // `empty` got a label and a badge but no branch in VerdictBody, so opening
+  // one fell through to "The run failed before it produced a verdict." The
+  // verdicts are read from VERDICT_LABEL, the table a new verdict has to be
+  // added to anyway, so the next one cannot fall through the same way.
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  const table = tsx.slice(tsx.indexOf('const VERDICT_LABEL'), tsx.indexOf('};', tsx.indexOf('const VERDICT_LABEL')));
+  const verdicts = [...table.matchAll(/^\s+(\w+): '/gm)].map((m) => m[1]);
+  assert.ok(verdicts.includes('empty') && verdicts.includes('failed'), 'the table was read');
+  const body = tsx.slice(tsx.indexOf('function VerdictBody'), tsx.indexOf('\n}\n', tsx.indexOf('function VerdictBody')));
+  for (const verdict of verdicts.filter((v) => v !== 'failed')) {
+    assert.match(body, new RegExp(`if \\(run\\.verdict === '${verdict}'\\)`),
+      `${verdict} has its own branch rather than falling through to the failure line`);
+  }
+  const empty = body.slice(body.indexOf("if (run.verdict === 'empty')"));
+  assert.match(empty.slice(0, 200), /run\.reason/, 'and an empty verdict shows the reason the bot gave');
+});
