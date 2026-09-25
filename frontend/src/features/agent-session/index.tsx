@@ -19,7 +19,7 @@ import {
   DraftSendIcon,
   DraftTrashIcon,
   EllipsisHorizontalIcon,
-  PlusIcon,
+  PaperclipIcon,
   SaveDraftIcon,
   SparklesIcon,
   SpinnerArcIcon,
@@ -39,7 +39,6 @@ import {
   choiceFromValue,
   choiceValue,
   effectiveChoice,
-  effortLabel,
   effortOptions,
   effortValue,
   offersReasoning,
@@ -49,12 +48,14 @@ import { badgeFor, formatSize, pastedName } from './attachments';
 import {
   CreditPill,
   CreditRing,
+  BuildSheetBody,
   ModelPill,
   ModelSheet,
   ModelSheetBody,
+  type BuildTab,
   SentAttachments,
   creditView,
-  modelGroups,
+  modelList,
   type CreditView,
 } from './composer-parts';
 import {
@@ -75,6 +76,7 @@ import {
   chooseAgent,
   clearComposerFill,
   clearReturnedText,
+  closeHandoff,
   closeSpec,
   composerId,
   archiveCurrentSession,
@@ -124,7 +126,7 @@ import { openFocusedApp } from './open-app';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { ProposeButton } from './propose-confirm';
 import { readUnsent, writeUnsent } from './unsent';
-import { CreditsCard, HandoffDialog, VenuePicker } from './handoff';
+import { CreditsCard, HandoffPanel } from './handoff';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -263,8 +265,9 @@ function SessionBar({ session, about, embedded, action }: {
   // It wraps on both surfaces (#3016). On a phone its five controls are wider
   // than the screen, and a bar that cannot wrap made the whole conversation
   // that wide: the right edge of every message and the Send button were off
-  // screen. Below `sm` the Build picker starts the second row and Changes and
-  // the ⋯ end it; from `sm` up everything fits on one, as before.
+  // screen. Changes and the ⋯ sit at the end of whichever row they land on;
+  // from `sm` up everything fits on one, as before. (The Build picker that
+  // started the second row is the composer's "Build with" now, #3078.)
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
       {embedded ? (
@@ -296,12 +299,12 @@ function SessionBar({ session, about, embedded, action }: {
         {active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : 'No change yet'}
       </span>
       {/* Siblings of the pills, not a group of their own: a declared check
-          reads the bar as focus ~ change pill ~ Changes. */}
-      <VenuePicker disabled={snapshot.phase === 'loading'} className={embedded ? '' : 'sm:ml-auto'} />
+          reads the bar as focus ~ change pill ~ Changes. Where the work is
+          built is the composer's "Build with" now (#3078), not a pill here. */}
       <button
         type="button"
         data-agent-session-changes-button
-        className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 sm:ml-0 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
         onClick={() => setDrawerOpen(true)}
         disabled={!session}
         aria-haspopup="dialog"
@@ -1118,11 +1121,14 @@ function useModelChoice() {
       onPick: (picked: string) => void chooseAgent({ ...current, reasoningEffort: picked || null }),
     }
     : null;
+  // #3079: the pill says the thinking level after the model, for a model
+  // that takes one: the label of the option the sheet ticks.
+  const effortLabel = effort ? (effort.options.find((option) => option.value === effort.value)?.label || '') : '';
   return {
     ready: !!(options.length && current),
     label: selected ? selected.label : 'Model',
-    effortLabel: effortLabel(current, catalog),
-    groups: modelGroups(options),
+    effortLabel,
+    options: modelList(options),
     value,
     effort,
     pick: (picked: string) => {
@@ -1241,12 +1247,23 @@ function Composer({ id }: { id: string }) {
   const model = useModelChoice();
   const credit = useCredit();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [buildTab, setBuildTab] = useState<BuildTab>('homeroom');
   const pill = useRef<HTMLButtonElement | null>(null);
+  const attach = useRef<HTMLButtonElement | null>(null);
   const picker = useRef<HTMLInputElement | null>(null);
   const files = snapshot.attachments;
   const uploading = files.some((item) => item.status === 'uploading');
   const sendable = !!value.trim() || files.length > 0;
   const closeSheet = useCallback(() => setSheetOpen(false), []);
+  const openSheet = (tab: BuildTab) => { setBuildTab(tab); setSheetOpen(true); };
+
+  // The credits card's hand-off rows open "Build with" on that agent's tab:
+  // one hand-off, drawn in one place (#3078).
+  useEffect(() => {
+    if (!snapshot.handoff) return;
+    openSheet(snapshot.handoff);
+    closeHandoff();
+  }, [snapshot.handoff]);
 
   const update = (next: string) => {
     setValue(next);
@@ -1424,15 +1441,16 @@ function Composer({ id }: { id: string }) {
         {/* One picker, no menu of our own: a phone's own file picker already
             offers the photo library, the camera and files. */}
         <button
+          ref={attach}
           type="button"
           className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-800 hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
-          aria-label="Add photos or files"
-          title="Add photos or files"
+          aria-label="Attach photos or files"
+          title="Attach photos or files"
           disabled={archived || snapshot.phase === 'loading'}
           data-agent-session-attach
           onClick={() => picker.current?.click()}
         >
-          <PlusIcon className="h-5 w-5" aria-hidden="true" />
+          <PaperclipIcon className="h-5 w-5" aria-hidden="true" />
         </button>
         <input
           ref={picker}
@@ -1452,12 +1470,12 @@ function Composer({ id }: { id: string }) {
             effort={model.effortLabel}
             disabled={archived || model.busy}
             open={sheetOpen}
-            onOpen={() => setSheetOpen(true)}
+            onOpen={() => openSheet('homeroom')}
             pillRef={pill}
           />
         ) : null}
         <div className="min-w-0 flex-1" />
-        {credit ? <CreditPill credit={credit} onOpen={() => setSheetOpen(true)} /> : null}
+        {credit ? <CreditPill credit={credit} onOpen={() => openSheet('homeroom')} /> : null}
         <CreditRing credit={credit}>
           {kind === 'save' ? (
             <Button
@@ -1495,15 +1513,22 @@ function Composer({ id }: { id: string }) {
           )}
         </CreditRing>
       </div>
-      {sheetOpen && model.ready ? (
-        <ModelSheet anchor={pill} onClose={closeSheet}>
-          <ModelSheetBody
-            groups={model.groups}
-            value={model.value}
-            onPick={(picked) => { model.pick(picked); closeSheet(); }}
-            effort={model.effort}
-            credit={credit}
+      {sheetOpen ? (
+        <ModelSheet anchor={model.ready ? pill : attach} onClose={closeSheet}>
+          <BuildSheetBody
+            tab={buildTab}
+            onTab={setBuildTab}
             onClose={closeSheet}
+            homeroom={(
+              <ModelSheetBody
+                options={model.ready ? model.options : []}
+                value={model.value}
+                onPick={(picked) => { model.pick(picked); closeSheet(); }}
+                effort={model.effort}
+                credit={credit}
+              />
+            )}
+            handoff={buildTab === 'homeroom' ? null : <HandoffPanel agent={buildTab} onClose={closeSheet} />}
           />
         </ModelSheet>
       ) : null}
@@ -1680,7 +1705,6 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
         <Replies replies={empty ? starters(about) : replies} />
         <Composer id={composerId(embedded ? 'messages' : 'screen')} />
         {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
-        {snapshot.handoff ? <HandoffDialog /> : null}
       </div>
       {beside ? (
         <SidePane sheet={snapshot.specSheet} preview={snapshot.preview} tab={snapshot.paneTab} containerRef={root} />

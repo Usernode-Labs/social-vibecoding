@@ -479,29 +479,23 @@ test('the picker offers the platform\'s models, keeps the conversation\'s own, a
     'the model a conversation with no choice runs on is the one marked default');
 });
 
-test('the model pill names the model; the sheet groups the models, marks the default, and ticks the one in use', () => {
+test('the model pill names the model; the sheet lists the models, marks the default, and ticks the one in use', () => {
   const { createElement, renderToHtml } = require('./lib/render-tsx');
   const parts = loadTsx('frontend/src/features/agent-session/composer-parts.tsx');
   const pill = renderToHtml(createElement(parts.ModelPill, { label: 'Opus 5.5', disabled: false, open: false, onOpen() {}, pillRef: { current: null } }));
   assert.match(pill, /aria-label="Model: Opus 5\.5"/, 'a screen reader hears what the pill is for');
   assert.match(pill, /aria-haspopup="dialog"[^>]*aria-expanded="false"/);
   assert.match(pill, /<span class="truncate">Opus 5\.5<\/span>/, 'closed: the model alone, no "(default)"');
-  assert.doesNotMatch(pill, /data-agent-session-model-effort/, 'no thinking level, nothing after the name');
-  const withEffort = renderToHtml(createElement(parts.ModelPill, { label: 'Kimi K3', effort: 'High', disabled: false, open: false, onOpen() {}, pillRef: { current: null } }));
-  assert.match(withEffort, /<span class="truncate">Kimi K3<\/span><span class="[^"]*text-xs[^"]*text-zinc-500[^"]*" data-agent-session-model-effort="true">High<\/span>/,
-    '#3079: the thinking level, small and muted, right after the model');
-  assert.match(withEffort, /aria-label="Model: Kimi K3, thinking level High"/);
 
   const options = [
     { value: 'anthropic:claude-sonnet-5', label: 'Sonnet 5', detail: 'about $6.20 for a typical change' },
     { value: 'anthropic:claude-opus-5-5', label: 'Opus 5.5', isDefault: true },
     { value: 'openrouter:z-ai/glm-5', label: 'GLM 5' },
   ];
-  const groups = parts.modelGroups(options);
-  assert.deepEqual(groups.map((g) => [g.title, g.options.map((o) => o.label)]),
-    [['Claude Code', ['Sonnet 5', 'Opus 5.5']], ['Codex', ['GLM 5']]], 'under the agent that runs them; an empty group is left out');
+  const list = parts.modelList(options);
+  assert.deepEqual(list.map((o) => o.label), ['Sonnet 5', 'Opus 5.5', 'GLM 5'], 'Claude, then OpenRouter, in one list');
   const body = renderToHtml(createElement(parts.ModelSheetBody, {
-    groups, value: 'anthropic:claude-sonnet-5', onPick() {}, onClose() {}, credit: null,
+    options: list, value: 'anthropic:claude-sonnet-5', onPick() {}, credit: null,
     effort: { value: 'high', options: [{ value: 'high', label: 'High', isDefault: true }, { value: 'xhigh', label: 'Extra high' }], onPick() {} },
   }));
   assert.match(body, /data-agent-session-model-option="anthropic:claude-sonnet-5"[^>]*>[\s\S]*?Sonnet 5[\s\S]*?about \$6\.20 for a typical change/);

@@ -151,7 +151,10 @@ export interface AgentSessionState {
   changeAction: { changeId: number; kind: 'propose' | 'retry' | 'recheck' } | null;
   /** The last message was refused for credits; cleared by the next send. */
   credits: CreditsRefusal | null;
-  /** The hand-off walkthrough over the conversation, for this agent. */
+  /**
+   * A request to open "Build with" on this agent's tab (the credits card's
+   * hand-off rows); the composer opens its sheet there and clears it.
+   */
   handoff: HandoffAgent | null;
   /**
    * The conversation's saved drafts (#2779 follow-up, the dev chat's #798
@@ -1062,7 +1065,7 @@ export async function unarchiveCurrentSession() {
 
 // ── Handing the work to a coding agent on the web ──────────────────────
 
-/** Show the walkthrough for handing this conversation's change to `agent`. */
+/** Open "Build with" on `agent`'s tab: the hand-off of this conversation's change. */
 export function openHandoff(agent: HandoffAgent) {
   if (state.handoff !== agent) publish({ handoff: agent });
 }
@@ -1453,6 +1456,12 @@ export function agentSessionListChanged() {
  * landing or a 403 in the waiting room, and loads on `sv:authed` instead.
  */
 let sessionsDeferred = false;
+// Which read of the list is the newest (#3073). Opening the Homeroom menu
+// reads it, and so does every push that a turn started or ended, so two reads
+// are often in flight at once; an older answer landing last used to put back
+// the marks from before the turn started, and the lists stopped spinning
+// while the session worked. Only the newest read's answer is published.
+let listRead = 0;
 export async function loadAgentSessions() {
   if (!hasPlatformViewer()) {
     if (!sessionsDeferred) {
@@ -1461,10 +1470,13 @@ export async function loadAgentSessions() {
     }
     return;
   }
+  const read = ++listRead;
   try {
     const sessions = await api.listSessions();
+    if (read !== listRead) return;
     publish({ sessions, sessionsLoaded: true });
   } catch {
+    if (read !== listRead) return;
     publish({ sessionsLoaded: true });
   }
 }

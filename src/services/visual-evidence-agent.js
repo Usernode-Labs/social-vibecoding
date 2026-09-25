@@ -41,7 +41,8 @@ select(target,value), check(target), uncheck(target), hover(target),
 drag(from,to), clickPoint(surface,xRatio,yRatio),
 dragPoints(surface,from:{xRatio,yRatio},to:{xRatio,yRatio}),
 scrollIntoView(target), scrollBy(x,y), or waitFor(exactly one of target, text,
-path, quietNetwork; optional timeoutMs up to 10000).
+path, quietNetwork; optional timeoutMs up to 10000; target also accepts
+state:"visible" or state:"hidden", default visible).
 waitFor text matches a visible substring. For an exact full-element text match,
 use waitFor target:{by:"text",value,exact:true}.
 
@@ -55,7 +56,12 @@ component but may not be html, body, or *.
 Before submitting the replays, inspect both revisions in the states where each
 target will be used. Every interaction target and each checkpoint focus must
 identify exactly one visible element; a waitFor target only needs one or more
-visible matches. Role, label, and text locators default to exact full-element
+visible matches when state is visible. A hidden wait succeeds when no matching
+element remains visible. For motion, observe the actual moving state on both
+revisions. Where an animation starts, wait for its observed marker to appear,
+then wait for it to become hidden before asserting the settled checkpoint.
+Do not use unrelated actions as a timer or remove a failed checkpoint.
+Role, label, and text locators default to exact full-element
 matching; an accessible name can include description text inside a wrapping
 label. Copy the observed full name, use exact:false after checking uniqueness,
 or use a stable id. Inspect every action, assertion, and focus target, not just
@@ -98,7 +104,7 @@ evidence_run_plan. Ordinary platform code—not you—will reset both sides and
 replay it twice in fresh browser contexts. The tool promptly acknowledges a
 validated submission; it does not wait for replay or return a verdict. After
 acceptance, finish your turn. The platform waits for replay, starts a separate
-correction turn if a locator fails, and makes passing media available to human
+correction turn for a repairable replay failure, and makes passing media available to human
 reviewers. You do not need image understanding or a relevance verdict. Do not
 merely narrate the replays in your final answer: submit them through the tool.`;
 
@@ -106,15 +112,16 @@ function promptFor({ repair = false } = {}) {
   const task = repair
     ? `The first submitted plan failed deterministic replay. Call
 evidence_get_context to read the rejected plan and the exact replay failure.
-Inspect the failed control in the live browser on BOTH exact revisions; use
-its observed role and accessible name or another stable unique locator.
-Review the remaining actions, assertions, and focus targets for the same
-mistake before resubmitting. Do not guess a replacement from the error text
-alone. Submit one complete
+Inspect the failed action or checkpoint in the live browser on BOTH exact
+revisions. A locator error needs an observed stable target. A motion checkpoint
+that ran before an animation settled needs an observed state transition and a
+bounded wait, while retaining the original checkpoint assertions unchanged.
+Review the remaining actions, assertions, and focus targets before resubmitting.
+Do not guess a replacement from the error text alone. Submit one complete
 corrected set of replays through evidence_run_plan. An accepted response means
 the platform is replaying in the background; finish your turn after acceptance.
 The platform starts another correction turn if that replay finds another
-repairable locator error. The failed plan's media is not published.`
+repairable replay error. The failed plan's media is not published.`
     : `Open the run context, explore the declared flow on both exact
 revisions, and submit one replay per accepted story id. The implementing
 agent's semantic intent is frozen; the platform attaches it automatically.`;

@@ -211,7 +211,7 @@ test('the version state is the glyph, not a second dot beside it', () => {
   // header's whole at-rest budget.
   const actions = fs.readFileSync(
     path.join(root, 'frontend/src/features/improve/actions.tsx'), 'utf8');
-  assert.match(actions, /const \{ versionState, deploying, appUpdateReady, working \} = useStoreState\(improveStore\);/);
+  assert.match(actions, /const \{ versionState, deploying, appUpdateReady \} = useStoreState\(improveStore\);/);
   assert.match(actions, /id="improve-update-ready"/, 'the ready state offers the reload');
   assert.doesNotMatch(actions, /VERSION_DOT/, 'and the colour table is long gone');
 

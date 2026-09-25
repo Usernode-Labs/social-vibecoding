@@ -16,7 +16,8 @@
 //   2. A CONVERSATION STANDS FOR THE CHANGES IT STARTED: they are opened
 //      through it, and not listed again beside it.
 //   3. The platform mark's menu offers your five most recent agent sessions,
-//      on every app and on Home, then "Show more" when there are others;
+//      on every app and on Home, then "Show more" when there are others,
+//      and every session that is working, as Recents shows it (#3073);
 //      Recents lists agent sessions on its one clock.
 
 const test = require('node:test');
@@ -80,6 +81,64 @@ test('the mark\'s Continue rows: every app\'s sessions, the five newest, and whe
   assert.doesNotMatch(read('frontend/src/features/app-context/continue-model.ts'), /improve/i, 'classic changes are the Workshop\'s, one row up');
 });
 
+test('#3073: a working session is always among the Continue rows, as it is in Recents', () => {
+  // Five newer sessions used to push a working one out of the menu's rows
+  // while Recents (thirty rows, same clock) still showed it spinning.
+  const sessions = [
+    conversation({ id: 1, lastActivityAt: '2026-09-24T08:00:00Z', busy: true }),
+    ...Array.from({ length: 6 }, (_, i) => conversation({ id: i + 2, lastActivityAt: `2026-09-24T1${i}:00:00Z` })),
+  ];
+  const list = model.continueRows(sessions);
+  assert.deepEqual(list.rows.map((r) => r.key), ['agent:7', 'agent:6', 'agent:5', 'agent:4', 'agent:1'],
+    'the working one takes a place, the newest others fill the rest, newest first');
+  assert.equal(list.rows[4].activity, 'working');
+  assert.equal(list.more, true);
+
+  const recentsRows = recents.buildRecents({ apps: [], conversations: [], discussions: [], agents: [], agentSessions: sessions });
+  const spinning = (rows) => rows.filter((r) => r.activity === 'working').map((r) => r.href);
+  assert.deepEqual(spinning(list.rows), spinning(recentsRows), 'the two lists spin for the same sessions');
+
+  const allWorking = Array.from({ length: 7 }, (_, i) => conversation({ id: i + 1, lastActivityAt: `2026-09-24T1${i}:00:00Z`, busy: true }));
+  const busy = model.continueRows(allWorking);
+  assert.equal(busy.rows.length, 7, 'every working session is listed');
+  assert.equal(busy.more, false);
+  assert.equal(model.continueRows(sessions.slice(1, 6)).more, false, 'five idle ones are still all of them');
+});
+
+test('#3073: only the newest read of the list is published, so an older answer cannot stop a spinner', async () => {
+  const answers = [];
+  globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {}, user: { id: 1 } }, UsernodeReact: {} };
+  globalThis.fetch = (url) => new Promise((resolve) => {
+    answers.push((sessions) => resolve({ ok: true, status: 200, json: async () => ({ sessions, nextBefore: null }) }));
+  });
+  try {
+    const store = loadTsx('frontend/src/features/agent-session/store.ts');
+    const first = store.loadAgentSessions();
+    const second = store.loadAgentSessions();
+    answers[1]([conversation({ busy: true })]);
+    await second;
+    answers[0]([conversation({ busy: false })]);
+    await first;
+    assert.equal(store.getAgentSessionState().sessions[0].busy, true, 'the older answer, landing last, is dropped');
+  } finally {
+    delete globalThis.window;
+    delete globalThis.fetch;
+  }
+});
+
+test('#3071: a menu row writes its address before the menu closes, so closing cannot take it back', () => {
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const fn = sheet.slice(sheet.indexOf('function followThenDismiss('), sheet.indexOf('function MenuRow('));
+  assert.match(fn, /e\.preventDefault\(\);\s*\/\/[^\n]*\n\s*if \(window\.location\.hash !== href\) window\.location\.hash = href;\s*AppContext\.dismissForNav\(\);/,
+    'the address first, synchronously; then the release, which finds the page off its record');
+  assert.match(fn, /if \(e\.defaultPrevented \|\| e\.nativeEvent\.defaultPrevented \|\| e\.button !== 0 \|\| e\.metaKey/,
+    'a click the side panel took, or a modified one, only closes the menu');
+  const row = sheet.slice(sheet.indexOf('function MenuRow('), sheet.indexOf('export function AppsSwitcherSheet('));
+  assert.match(row, /if \(onClick\) \{ onClick\(e\); return; \}\s*followThenDismiss\(e, href\);/,
+    'every plain row, the Continue rows among them');
+  assert.match(sheet, /setMessagesFilter\('agents'\);\s*followThenDismiss\(e, '#messages'\);/, 'and "Show more"');
+});
+
 test('the mark\'s menu: the app\'s own rows first, then Continue, after mount only, with "Show more" when there are more', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /const continuing = mounted && view !== 'about'\s*\? continueRows\(agentSessions \|\| \[\]\)\s*: \{ rows: \[\], more: false \};/,
@@ -94,7 +153,7 @@ test('the mark\'s menu: the app\'s own rows first, then Continue, after mount on
   assert.match(sheet, /\{continuing\.more \? \(\s*<MenuRow\s+id="app-menu-continue-all"[\s\S]{0,200}label="Show more"[\s\S]{0,200}setMessagesFilter\('agents'\)/,
     'only when there are more, and it opens Messages\' Agents list');
   assert.doesNotMatch(sheet, /See all sessions/);
-  assert.match(sheet, /<AgentActivityMark activity=\{row\.activity\} \/>/);
+  assert.match(sheet, /<AgentActivityIcon activity=\{row\.activity\} className="h-5 w-5" \/>/);
   assert.doesNotMatch(sheet, /See all your work|continue-change/);
 });
 

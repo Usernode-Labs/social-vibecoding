@@ -1,39 +1,40 @@
-// Where an agent session's work gets built (#2779 follow-up): here, by the
-// Mayor on Homeroom credits, or handed to Claude Code or Codex on the web,
-// which build on the person's own plan and push to their fork.
+// Where an agent session's work gets built (#2779 follow-up, #3078): here,
+// by the Mayor on Homeroom credits, or handed to Claude Code or Codex on the
+// web, which build on the person's own plan and push to their fork.
 //
-// THE PICKER in the session bar is always there, not only when the credits
-// run out: "Build: Homeroom". Its two other rows open the walkthrough for
-// handing the conversation's change to that agent. The conversation itself
-// keeps building here (the Mayor's dispatch has no venue), so the picker
-// does not change label; what a hand-off builds comes back as an update to
-// the change's proposal, or as a new proposal when there is no change yet.
+// THE PICKER is the composer's model pill, which opens "Build with"
+// (./composer-parts.tsx BuildSheetBody): Homeroom | Claude Code | Codex. It
+// used to be a "Build: Homeroom" pill in the session bar whose rows opened a
+// walkthrough dialog; the session bar no longer carries it, and the two web
+// tabs ARE the hand-off (HandoffPanel below). The conversation itself keeps
+// building here (the Mayor's dispatch has no venue); what a hand-off builds
+// comes back as an update to the change's proposal, or as a new proposal
+// when there is no change yet.
 //
-// THE WALKTHROUGH is the dev chat's own (#1049): its steps come from
+// THE CHECKS are the dev chat's own walkthrough (#1049): its steps come from
 // public/js/dev-flow-select.js `steps()` over GET
 // /api/apps/:slug/dev-flow/status, so the two cannot describe a hand-off
-// differently. Only the drawing is React's: link GitHub, fork the app,
-// connect Homeroom in the Claude or ChatGPT account the agent runs as, then
-// copy the instructions. Every step reads the server's status, so closing
-// the dialog mid-way and coming back resumes where it was.
+// differently. Only the drawing is React's, and compact: GitHub linked, fork
+// ready, Homeroom connected in the Claude or ChatGPT account the agent runs
+// as, each with the walkthrough's own action. Every check reads the server's
+// status, so leaving mid-way and coming back resumes where it was. The
+// instructions the one button copies carry this chat's spec (#3078), which
+// the server reads only for the viewer's own change.
 //
 // THE CREDITS CARD replaces the raw error line when the platform credits
 // refuse a message (429 `budget_exceeded`). Its copy and its rows are
 // public/js/credit-options.js's, the one source for the dev chat's card and
 // banner: the two web hand-offs first, then your own API key and the rest a
-// non-developer can follow.
+// non-developer can follow. Its hand-off rows open the same "Build with" tab.
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
-import { Button } from '@/components/ui/button';
-import { DialogCard } from '@/components/ui/dialog';
-import { ChevronDownIcon } from '@/components/ui/icons';
+import { CheckIcon } from '@/components/ui/icons';
 
 import { ChatgptSetupSteps, ClaudeSetupSteps } from '../settings/connector-setup-steps';
 import * as api from './api';
 import type { AgentChange, AgentSession, HandoffStatus } from './api';
 import {
-  closeHandoff,
   dismissCredits,
   openHandoff,
   useAgentSessionState,
@@ -89,59 +90,6 @@ export function handoffTarget(about: {
   return null;
 }
 
-/** The picker's rows: where this conversation's work can be built. */
-export const VENUE_ROWS: Array<{ id: 'homeroom' | HandoffAgent; label: string; title: string }> = [
-  {
-    id: 'homeroom',
-    label: 'Homeroom (here)',
-    title: 'The Mayor builds it in this conversation, on your Homeroom credits.',
-  },
-  {
-    id: 'claude-code',
-    label: 'Claude Code on the web',
-    title: 'Claude Code builds it on your own Claude plan and pushes to your fork. No Homeroom credits.',
-  },
-  {
-    id: 'codex',
-    label: 'Codex on the web',
-    title: 'Codex builds it on your own ChatGPT plan and pushes to your fork. No Homeroom credits.',
-  },
-];
-
-/** The session bar's "Build: Homeroom": the kit's menu, anchored to it. */
-export function VenuePicker({ disabled, className = '' }: { disabled: boolean; className?: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <button
-      type="button"
-      data-agent-session-venue
-      className={`${className ? `${className} ` : ''}inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800`}
-      title="Where this change is built"
-      aria-haspopup="menu"
-      aria-expanded={open}
-      disabled={disabled}
-      onClick={(event) => {
-        const menu = window.PlatformUI?.menu;
-        if (open || typeof menu !== 'function') return;
-        setOpen(true);
-        void menu.call(window.PlatformUI, {
-          anchorEl: event.currentTarget,
-          title: 'Where should this be built?',
-          items: VENUE_ROWS.map((row) => ({
-            label: row.label,
-            title: row.title,
-            handler: () => { if (row.id !== 'homeroom') openHandoff(row.id); },
-          })),
-        }).finally(() => setOpen(false));
-      }}
-    >
-      <span className="font-normal text-zinc-500 dark:text-zinc-400">Build:</span>
-      Homeroom
-      <ChevronDownIcon width={12} height={12} aria-hidden="true" />
-    </button>
-  );
-}
-
 // ── The walkthrough ────────────────────────────────────────────────────
 
 interface FlowAction { action: string; label: string; primary?: boolean; href?: string }
@@ -177,114 +125,147 @@ function lead(agent: HandoffAgent, target: HandoffTarget | null): string {
   return `${label} builds on your own ${product} plan and pushes to your fork of the app; ${lands}. No Homeroom credits.`;
 }
 
-export function HandoffDialog() {
+/**
+ * The three things a hand-off needs, as compact checks: each is a step of
+ * the walkthrough's own `steps()`, so the two cannot disagree about what is
+ * done. The last step never reports done (it is where the copying happens),
+ * so "Homeroom connected" is read from the status the step itself reads.
+ */
+export interface HandoffCheck {
+  key: 'github' | 'fork' | 'connector';
+  label: string;
+  done: boolean;
+  current: boolean;
+  detail: string;
+  actions: FlowAction[];
+}
+
+export function handoffChecks(status: HandoffStatus | null, agent: HandoffAgent): HandoffCheck[] {
+  const steps = handoffSteps(status, agent);
+  if (!steps.length) return [];
+  const byKey = (key: string) => steps.find((step) => step.key === key) || null;
+  const connected = !!(status?.connectors && Number(status.connectors.count) > 0);
+  const github = byKey('github');
+  const fork = byKey('fork');
+  const last = byKey('handoff');
+  const checks: HandoffCheck[] = [
+    { key: 'github', label: 'GitHub linked', done: github?.state === 'done', current: github?.state === 'current', detail: github?.detail || '', actions: github?.actions || [] },
+    { key: 'fork', label: 'Fork ready', done: fork?.state === 'done', current: fork?.state === 'current', detail: fork?.detail || '', actions: fork?.actions || [] },
+    {
+      key: 'connector',
+      label: `Homeroom connected in ${AGENT_PRODUCT[agent]}`,
+      done: connected,
+      current: !connected && last?.state === 'current',
+      detail: connected ? '' : (last?.detail || ''),
+      actions: connected ? [] : (last?.actions || []),
+    },
+  ];
+  return checks;
+}
+
+/**
+ * A Claude Code or Codex tab of the "Build with" sheet: the hand-off itself.
+ * The lead says what happens; the checks are what is left to set up, each
+ * with the walkthrough's own action; once all three are done, ONE button
+ * copies the instructions (which carry this chat's spec, when it has one)
+ * and opens the agent in a new tab. The credits card's hand-off rows open
+ * this same tab, so there is one hand-off, not two.
+ */
+export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose: () => void }) {
   const snapshot = useAgentSessionState();
-  const agent = snapshot.handoff;
   const about = snapshot.session || snapshot.draft;
-  const target = handoffTarget(about ? {
-    activeChange: snapshot.session?.activeChange || null,
-    focusApp: about.focusApp || null,
-  } : null);
-  const dialog = useRef<HTMLDialogElement | null>(null);
+  const active = snapshot.session?.activeChange || null;
+  const target = handoffTarget(about ? { activeChange: active, focusApp: about.focusApp || null } : null);
   const [status, setStatus] = useState<HandoffStatus | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [manual, setManual] = useState(false);
   const [connector, setConnector] = useState(false);
   const [revision, setRevision] = useState(0);
   const targetKey = target ? `${target.slug}:${target.change ? `${target.change.kind}:${target.change.id}` : 'new'}` : null;
 
   useEffect(() => {
-    const el = dialog.current;
-    if (!el || !agent) return undefined;
-    if (!el.open) {
-      try { el.showModal(); } catch { el.setAttribute('open', ''); }
-    }
-    return () => { try { el.close(); } catch { /* already closed */ } };
-  }, [!!agent]);
-
-  useEffect(() => {
-    if (!agent || !target) return undefined;
+    if (!target) return undefined;
     let live = true;
     setError('');
     void api.handoffStatus(target.slug, target.change ? { id: target.change.id, kind: target.change.kind } : null)
       .then((next) => { if (live) setStatus(next); })
       .catch((failure) => { if (live) setError(failure instanceof Error ? failure.message : 'Could not check where the hand-off stands.'); });
     return () => { live = false; };
-  }, [agent, targetKey, revision]);
+  }, [targetKey, revision]);
 
-  if (!agent) return null;
+  // Back from GitHub or the connector settings in another tab: look again.
+  useEffect(() => {
+    const again = () => setRevision((n) => n + 1);
+    window.addEventListener('focus', again);
+    return () => window.removeEventListener('focus', again);
+  }, []);
+
+  useEffect(() => { setConnector(false); setNotice(''); setManual(false); }, [agent]);
+
   const label = AGENT_LABELS[agent];
   const product = AGENT_PRODUCT[agent];
-  const steps = handoffSteps(status, agent);
+  const checks = handoffChecks(status, agent);
+  const ready = checks.length > 0 && checks.every((check) => check.done);
+  const instructions = status && typeof status.instructions === 'string' ? status.instructions : '';
   const unavailable = status && status.available === false
     ? (devFlowSelect()?.unavailableNote(status.reason) || 'Handing work to Claude Code or Codex is unavailable right now.')
     : '';
 
-  const act = async (action: FlowAction) => {
+  const act = (action: FlowAction) => {
     setNotice('');
-    if (action.action === 'refresh') { setRevision((n) => n + 1); return; }
-    if (action.action === 'link-connector') { setConnector(true); return; }
-    if (action.action === 'copy') {
-      const text = status && typeof status.instructions === 'string' ? status.instructions : '';
-      const ok = text ? await window.PlatformUI?.copyText?.(text) : false;
-      setNotice(ok ? `Copied. Paste it into a new ${label} session.` : 'Could not copy. Open "Instructions" below and copy them by hand.');
-    }
+    if (action.action === 'refresh') setRevision((n) => n + 1);
+    else if (action.action === 'link-connector') setConnector(true);
+  };
+
+  // Copied inside the click, before the new tab takes focus: a clipboard
+  // write needs the page focused and the click's user activation.
+  const copyAndOpen = () => {
+    setNotice('');
+    const copying = instructions ? window.PlatformUI?.copyText?.(instructions) : undefined;
+    void Promise.resolve(copying).then((ok) => {
+      setManual(!ok);
+      setNotice(ok ? `Copied. Paste it into the new ${label} session.` : 'Could not copy. Copy the instructions below by hand, then paste them into the new session.');
+    });
   };
 
   return (
-    <dialog
-      ref={dialog}
-      aria-label={`Build with ${label}`}
-      className="m-auto w-[calc(100%-2rem)] max-w-lg max-h-[85dvh] overflow-y-auto rounded-xl border-0 bg-transparent p-0 text-sm text-zinc-900 backdrop:bg-black/60 dark:text-zinc-100"
-      data-agent-session-handoff={agent}
-      onCancel={(event) => { event.preventDefault(); closeHandoff(); }}
-      onClick={(event) => { if (event.target === event.currentTarget) closeHandoff(); }}
-    >
-      <DialogCard size="lg" className="mx-0 max-w-none space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-bold">{`Build with ${label}`}</h2>
-          <Button variant="neutral" ink="neutral" onClick={() => closeHandoff()}>Close</Button>
-        </div>
-        <div className="flex gap-1 rounded-full bg-zinc-100 p-1 dark:bg-zinc-800" role="group" aria-label="Which agent builds this">
-          {(['claude-code', 'codex'] as HandoffAgent[]).map((id) => (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={id === agent}
-              className={`flex-1 rounded-full px-3 py-1 text-sm font-semibold ${id === agent ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-900 dark:text-zinc-100' : 'text-zinc-600 dark:text-zinc-300'}`}
-              onClick={() => { setConnector(false); setNotice(''); openHandoff(id); }}
+    <div className="flex flex-col gap-3 text-sm text-zinc-900 dark:text-zinc-100" data-agent-session-handoff={agent}>
+      {target ? <p className="px-1 leading-snug text-zinc-600 dark:text-zinc-300">{lead(agent, target)}</p> : (
+        <p className="px-1 leading-snug text-zinc-600 dark:text-zinc-300" data-agent-session-handoff-empty>
+          There is nothing to hand over yet. Tell the Mayor which app to change first, then come back here.
+        </p>
+      )}
+      {error ? <p role="alert" className="px-1 text-red-700 dark:text-red-300">{error}</p> : null}
+      {target && !status && !error ? <p role="status" className="px-1 text-zinc-500 dark:text-zinc-400">Checking where you are…</p> : null}
+      {unavailable ? <p className="px-1 text-zinc-600 dark:text-zinc-300" data-agent-session-handoff-unavailable>{unavailable}</p> : null}
+      {checks.length ? (
+        <ul className="overflow-hidden rounded-2xl bg-white dark:bg-zinc-800" data-agent-session-handoff-steps>
+          {checks.map((check, index) => (
+            <li
+              key={check.key}
+              className={`px-4 py-2.5 ${index ? 'border-t border-zinc-100 dark:border-zinc-700' : ''}`}
+              data-agent-session-handoff-step={check.key}
+              data-state={check.done ? 'done' : check.current ? 'current' : 'todo'}
             >
-              {AGENT_PRODUCT[id]}
-            </button>
-          ))}
-        </div>
-        {target ? <p className="leading-relaxed text-zinc-600 dark:text-zinc-300">{lead(agent, target)}</p> : (
-          <p className="leading-relaxed text-zinc-600 dark:text-zinc-300" data-agent-session-handoff-empty>
-            There is nothing to hand over yet. Tell the Mayor which app to change first, then come back here.
-          </p>
-        )}
-        {error ? <p role="alert" className="text-red-700 dark:text-red-300">{error}</p> : null}
-        {notice ? <p role="status" className="text-emerald-700 dark:text-emerald-400">{notice}</p> : null}
-        {target && !status && !error ? <p role="status" className="text-zinc-500 dark:text-zinc-400">Checking where you are…</p> : null}
-        {unavailable ? <p className="text-zinc-600 dark:text-zinc-300" data-agent-session-handoff-unavailable>{unavailable}</p> : null}
-        {steps.length ? (
-          <ol className="space-y-3" data-agent-session-handoff-steps>
-            {steps.map((step, index) => (
-              <li key={step.key} className="flex gap-3" data-agent-session-handoff-step={step.key} data-state={step.state}>
+              <div className="flex items-center gap-3">
                 <span
                   aria-hidden="true"
-                  className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${step.state === 'done'
-                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                    : step.state === 'current' ? 'bg-violet-600 text-white' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'}`}
+                  className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${check.done
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                    : 'border border-zinc-300 dark:border-zinc-600'}`}
                 >
-                  {step.state === 'done' ? '✓' : index + 1}
+                  {check.done ? <CheckIcon className="h-3.5 w-3.5" /> : null}
                 </span>
-                <div className="min-w-0 flex-1">
-                  <p className={`font-semibold ${step.state === 'todo' ? 'text-zinc-500 dark:text-zinc-400' : ''}`}>{step.title}</p>
-                  <p className="mt-0.5 leading-snug text-zinc-600 dark:text-zinc-300">{step.detail}</p>
-                  {step.actions.length ? (
+                <span className={`flex-1 font-medium ${check.done || check.current ? '' : 'text-zinc-500 dark:text-zinc-400'}`}>{check.label}</span>
+                <span className="sr-only">{check.done ? 'Done' : 'Not done yet'}</span>
+              </div>
+              {check.current && !check.done ? (
+                <div className="mt-1.5 pl-8">
+                  {check.detail ? <p className="text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">{check.detail}</p> : null}
+                  {check.actions.length ? (
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {step.actions.map((action) => (action.href ? (
+                      {check.actions.map((action) => (action.href ? (
                         <a
                           key={action.action}
                           className={action.primary ? ACTION_PRIMARY : ACTION}
@@ -292,7 +273,6 @@ export function HandoffDialog() {
                           target="_blank"
                           rel="noopener noreferrer"
                           data-agent-session-handoff-action={action.action}
-                          onClick={() => { if (action.action !== 'open-agent') window.setTimeout(() => setRevision((n) => n + 1), 4000); }}
                         >
                           {action.label}
                         </a>
@@ -302,7 +282,7 @@ export function HandoffDialog() {
                           type="button"
                           className={action.primary ? ACTION_PRIMARY : ACTION}
                           data-agent-session-handoff-action={action.action}
-                          onClick={() => void act(action)}
+                          onClick={() => act(action)}
                         >
                           {action.label}
                         </button>
@@ -310,43 +290,61 @@ export function HandoffDialog() {
                     </div>
                   ) : null}
                 </div>
-              </li>
-            ))}
-          </ol>
-        ) : null}
-        {connector ? (
-          <section className="space-y-3 rounded-xl bg-zinc-50 p-3 dark:bg-zinc-800/60" data-agent-session-handoff-connector={product}>
-            <p className="font-semibold">{`Add the Homeroom connector in ${product}`}</p>
-            <p className="text-zinc-600 dark:text-zinc-300">
-              {`Your MCP server URL: `}
-              <code className="break-all rounded bg-white px-1 py-0.5 text-xs dark:bg-zinc-900">{typeof window === 'undefined' ? '/mcp' : `${window.location.origin}/mcp`}</code>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {connector && !ready ? (
+        <section className="space-y-3 rounded-2xl bg-white p-3 dark:bg-zinc-800" data-agent-session-handoff-connector={product}>
+          <p className="font-semibold">{`Add the Homeroom connector in ${product}`}</p>
+          <p className="text-zinc-600 dark:text-zinc-300">
+            {'Your MCP server URL: '}
+            <code className="break-all rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-900">{typeof window === 'undefined' ? '/mcp' : `${window.location.origin}/mcp`}</code>
+          </p>
+          {product === 'ChatGPT' ? <ChatgptSetupSteps /> : <ClaudeSetupSteps />}
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            {`Then start a new ${product} conversation: one you already had open will not see a connector added after it started.`}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={ACTION_PRIMARY} onClick={() => { setConnector(false); setRevision((n) => n + 1); }}>
+              I&rsquo;ve added it. Check again
+            </button>
+            <a className={ACTION} href="#settings/connectors" onClick={onClose}>More connector settings</a>
+          </div>
+        </section>
+      ) : null}
+      {ready ? (
+        <>
+          <div className="rounded-2xl bg-white px-4 py-3 dark:bg-zinc-800" data-agent-session-handoff-ready>
+            <p className="font-semibold">Handed over with the instructions</p>
+            <p className="mt-0.5 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
+              {status?.specCarried && active?.title
+                ? `This chat's spec: "${active.title}"`
+                : status?.specCarried ? 'This chat\'s spec' : `No spec yet, so ${label} will ask what to build.`}
             </p>
-            {product === 'ChatGPT' ? <ChatgptSetupSteps /> : <ClaudeSetupSteps />}
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              {`Then start a new ${product} conversation: one you already had open will not see a connector added after it started.`}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className={ACTION_PRIMARY} onClick={() => { setConnector(false); setRevision((n) => n + 1); }}>
-                I&rsquo;ve added it. Check again
-              </button>
-              <a className={ACTION} href="#settings/connectors" onClick={() => closeHandoff()}>More connector settings</a>
-            </div>
-          </section>
-        ) : null}
-        {status && typeof status.instructions === 'string' && status.instructions ? (
-          <details className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
-            <summary className="cursor-pointer font-semibold">Instructions</summary>
-            <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-700 dark:text-zinc-300" data-agent-session-handoff-instructions>{status.instructions}</pre>
-          </details>
-        ) : null}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-          <a className="text-sm font-semibold text-violet-700 hover:underline dark:text-violet-300" href={AGENT_URL[agent]} target="_blank" rel="noopener noreferrer">
-            {`Open ${label}`}
+          </div>
+          <a
+            className="inline-flex w-full items-center justify-center rounded-full bg-violet-600 px-4 py-2.5 text-[15px] font-semibold text-white hover:bg-violet-500"
+            href={AGENT_URL[agent]}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-agent-session-handoff-action="copy-open"
+            onClick={copyAndOpen}
+          >
+            {`Copy instructions and open ${label}`}
           </a>
-          <button type="button" className={ACTION} onClick={() => closeHandoff()}>Keep building here</button>
-        </div>
-      </DialogCard>
-    </dialog>
+          <p className="px-1 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Paste into the new session. It starts building straight away.</p>
+        </>
+      ) : null}
+      {notice ? <p role="status" className={`px-1 ${manual ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>{notice}</p> : null}
+      {ready && instructions ? (
+        <details className="rounded-2xl bg-white px-4 py-3 dark:bg-zinc-800" open={manual}>
+          <summary className="cursor-pointer font-semibold">Instructions</summary>
+          <pre className="mt-2 max-h-60 select-all overflow-y-auto whitespace-pre-wrap break-words text-xs text-zinc-700 dark:text-zinc-300" data-agent-session-handoff-instructions>{instructions}</pre>
+        </details>
+      ) : null}
+    </div>
   );
 }
 

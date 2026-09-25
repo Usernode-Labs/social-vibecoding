@@ -45,6 +45,8 @@ export interface RecentItem {
   activity?: AgentActivity;
   /** Only for `app`: what the tile draws and what resuming opens. */
   app?: { slug: string; name: string; iconUrl: string | null; iconEmoji: string | null };
+  /** Only for an Active row (#3074): the app the viewer is in right now. */
+  current?: boolean;
 }
 
 /** The part of a conversation summary the merge reads. */
@@ -107,10 +109,15 @@ export function buildRecents(input: {
   agentSessions?: RecentAgentSession[];
   viewerId?: number | null;
   limit?: number;
+  /** #3074: the apps listed under Active, which Recents leaves out. Dropped
+   *  BEFORE the cut, so an active app never costs Recents a row. */
+  active?: string[];
 }): RecentItem[] {
   const viewerId = input.viewerId ?? null;
+  const active = input.active || [];
   const items: RecentItem[] = [];
   for (const app of input.apps) {
+    if (active.includes(app.slug)) continue;
     items.push({
       key: `app:${app.slug}`,
       kind: 'app',
@@ -177,6 +184,61 @@ export function buildRecents(input: {
     });
   }
   return pick(items, input.limit);
+}
+
+/* ── ACTIVE (#3074) ────────────────────────────────────────────────────
+ *
+ * The apps running right now: the ones with a live frame, which already carry
+ * the green "still open" dot (../app-frame/live-apps.tsx). The rail lists them
+ * in a section of their own ABOVE Recents, and Recents leaves them out
+ * (buildRecents' `active`), so nothing is listed twice. When a frame goes
+ * (evicted, rebuilt, sign-out) its app drops out of `live` and so back into
+ * Recents, at the time it was left.
+ *
+ * In the frame store's order: the app the viewer is in first (`current`,
+ * which the row highlights), then the kept ones, most recently used first.
+ *
+ * The name and icon are Recents' own (./recent-apps-store.js), so an active
+ * row is the row the app had in Recents. The app the viewer is in may never
+ * have been left, and so not be there yet: `known` is what else the caller
+ * has for it (the open app's header record), and the slug is the last resort,
+ * which is what the Resume strip falls back to as well. */
+
+export interface ActiveAppInfo {
+  slug: string;
+  name?: string | null;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
+}
+
+export function buildActive(input: {
+  /** Slugs with a live frame, in liveAppSlugs' order. */
+  live: string[];
+  /** The slug of the app on screen, or null when the viewer is in none. */
+  current: string | null;
+  apps: RecentApp[];
+  known?: ActiveAppInfo[];
+}): RecentItem[] {
+  const items: RecentItem[] = [];
+  for (const slug of input.live) {
+    if (!slug || items.some((item) => item.app?.slug === slug)) continue;
+    const found: ActiveAppInfo = input.apps.find((app) => app.slug === slug)
+      || (input.known || []).find((app) => app.slug === slug && app.name)
+      || { slug };
+    const name = found.name || slug;
+    items.push({
+      key: `app:${slug}`,
+      kind: 'app',
+      label: name,
+      href: `/app/${encodeURIComponent(slug)}`,
+      at: null,
+      unread: false,
+      app: { slug, name, iconUrl: found.iconUrl || null, iconEmoji: found.iconEmoji || null },
+      current: slug === input.current,
+    });
+  }
+  // The app the viewer is in leads, whatever order the caller passed.
+  return items.sort((a, b) => Number(!!b.current) - Number(!!a.current));
 }
 
 /** Newest first, a row with no clock last, stable within a timestamp. */

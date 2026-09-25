@@ -31,6 +31,36 @@ function cloneJson(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+function preservesTimingRepair(rejected, corrected, failure) {
+  if (!rejected || rejected.stories.length !== corrected.stories.length) return false;
+  const unchangedFlow = rejected.stories.every((story, index) => {
+    const next = corrected.stories[index];
+    if (story.id !== next.id || planContract.canonicalJson(story.replay.checkpoint)
+        !== planContract.canonicalJson(next.replay.checkpoint)) return false;
+    return ['before', 'after'].every((side) => story.replay[side].startPath === next.replay[side].startPath
+      && planContract.canonicalJson(story.replay[side].actions.filter((action) => action.type !== 'waitFor'))
+        === planContract.canonicalJson(next.replay[side].actions.filter((action) => action.type !== 'waitFor')));
+  });
+  if (!unchangedFlow) return false;
+
+  // The wait must observe the exact marker that failed and occur after the
+  // final interaction. Waiting on an unrelated control only burns time and
+  // can make a broken motion flow appear to have settled.
+  const detail = failure?.detail;
+  const side = detail?.side === 'base' ? 'before' : detail?.side === 'head' ? 'after' : null;
+  const oldStory = rejected.stories.find((story) => story.id === detail?.storyId);
+  const newStory = corrected.stories.find((story) => story.id === detail?.storyId);
+  const failedAssertion = side && Number.isInteger(detail?.assertionIndex)
+    ? oldStory?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex] : null;
+  if (!failedAssertion?.target || !newStory) return false;
+  const actions = newStory.replay[side].actions;
+  const finalInteraction = actions.findLastIndex((action) => action.type !== 'waitFor');
+  return actions.slice(finalInteraction + 1).some((action) => action.type === 'waitFor'
+    && action.state === 'hidden'
+    && action.target
+    && planContract.canonicalJson(action.target) === planContract.canonicalJson(failedAssertion.target));
+}
+
 class RunControl {
   constructor({ runId, sessionId, intent, context, resetSide, runPlan, expiresAt }) {
     this.runId = runId;
@@ -122,6 +152,14 @@ class RunControl {
         throw new EvidenceControlError(
           'evidence_repair_unchanged',
           'The corrected replay plan must differ from the rejected plan.',
+          400
+        );
+      }
+      if (this.repairFailure?.kind === 'motion_timing'
+          && !preservesTimingRepair(this.rejectedPlan, plan, this.repairFailure)) {
+        throw new EvidenceControlError(
+          'evidence_timing_repair_changed_flow',
+          'A motion timing correction may change waits only. Keep the original interactions, routes, and assertions, then wait for the failed marker to become hidden before the checkpoint.',
           400
         );
       }
