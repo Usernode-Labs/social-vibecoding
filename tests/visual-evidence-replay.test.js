@@ -119,6 +119,58 @@ test('a readiness wait accepts repeated visible matches while an interaction sta
   }), { code: 'ambiguous_locator' });
 });
 
+test('hidden wait waits until every matching element is no longer visible', async () => {
+  let visibleCount = 2;
+  const calls = [];
+  const visible = {
+    first: () => ({ waitFor: async (options) => {
+      calls.push(options);
+      assert.equal(options.state, 'hidden');
+      visibleCount = 0;
+    } }),
+    count: async () => visibleCount,
+  };
+  const matches = {
+    filter: (options) => {
+      assert.deepEqual(options, { visible: true });
+      return visible;
+    },
+  };
+  const page = { locator: (value) => {
+    assert.equal(value, '.is-animating');
+    return matches;
+  } };
+  await replay.waitForNotVisible(page, { by: 'css', value: '.is-animating' }, 'settled', 3000);
+  assert.deepEqual(calls, [{ state: 'hidden', timeout: 3000 }]);
+  assert.equal(visibleCount, 0);
+});
+
+test('hidden wait reports a still-visible marker and allows an absent marker', async () => {
+  let visibleCount = 1;
+  const visible = {
+    first: () => ({ waitFor: async () => {
+      if (visibleCount) throw new Error('timeout');
+    } }),
+    count: async () => visibleCount,
+  };
+  const matches = {
+    filter: () => visible,
+    count: async () => visibleCount,
+    nth: () => ({ isVisible: async () => visibleCount > 0 }),
+  };
+  const page = { locator: () => matches };
+  await assert.rejects(replay.waitForNotVisible(page, {
+    by: 'css', value: '.is-animating',
+  }, 'settled', 100), (error) => {
+    assert.equal(error.code, 'locator_still_visible');
+    assert.equal(error.detail.waitState, 'hidden');
+    assert.equal(error.detail.visibleCount, 1);
+    return true;
+  });
+  visibleCount = 0;
+  await replay.waitForNotVisible(page, { by: 'css', value: '.is-animating' }, 'settled', 100);
+});
+
 test('text readiness matches a visible substring and reports a missing one as a locator error', async () => {
   let visible = true;
   const locator = {
