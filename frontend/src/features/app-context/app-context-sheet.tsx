@@ -138,7 +138,7 @@ import { recordAppUse } from './app-recency';
 import { continueRows } from './continue-model';
 import { AgentActivityIcon } from '../agent-session/activity-mark';
 import { ACTIVITY_LABEL } from '../agent-session/activity';
-import { loadAgentSessions, useAgentSessionState } from '../agent-session/store';
+import { loadAgentSessions, useAgentSessions } from '../agent-session/store';
 import { setFilter as setMessagesFilter } from '../messages/store';
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
@@ -280,7 +280,7 @@ export function AppsSwitcherSheet(): ReactNode {
   const {
     slug, name, showTerminal, target, restricted,
   } = useStoreState(improveStore);
-  const { sessions: agentSessions } = useAgentSessionState();
+  const agentSessions = useAgentSessions();
   // Votes this viewer owes on the app in context — the badge on the
   // "Go to workshop" row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);

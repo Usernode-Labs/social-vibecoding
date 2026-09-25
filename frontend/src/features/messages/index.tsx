@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import {
+  memo, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 
 import { groupsWithPrevious } from '@/components/ui/chat';
@@ -67,7 +69,7 @@ import {
   loadAgentSessions,
   openAgentSession,
   startAgentSession,
-  useAgentSessionState,
+  useAgentSessions,
 } from '../agent-session/store';
 import type { AgentSession as MayorSession } from '../agent-session/api';
 import {
@@ -76,7 +78,7 @@ import {
   initializeGlobalChat,
   openGlobalChat,
   removeGlobalChatThread,
-  useGlobalChatState,
+  useGlobalChatSelector,
 } from '../global-chat/store';
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
@@ -140,7 +142,7 @@ function directPerson(conversation: ConversationSummary) {
     || (conversation.membershipStatus === 'invited' ? conversation.requester || null : null);
 }
 
-function ConversationRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
+const ConversationRow = memo(function ConversationRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
   const peer = directPerson(conversation);
   const invited = conversation.membershipStatus === 'invited';
   const unread = conversation.unreadCount > 0;
@@ -178,7 +180,7 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
       </div>
     </a>
   );
-}
+});
 
 /**
  * The mark that says what KIND of thread a row is (#2718).
@@ -207,7 +209,7 @@ function KindPill({ kind }: { kind: 'agent' }) {
  * cursor per member. The tile is the `#` a channel is named with, where a
  * person's row has their face.
  */
-function GeneralChannelRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
+const GeneralChannelRow = memo(function GeneralChannelRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
   const unread = conversation.unreadCount > 0;
   const activity = agoStamp(conversation.lastActivityAt);
   const by = conversation.latestMessage?.sender?.username;
@@ -242,7 +244,7 @@ function GeneralChannelRow({ conversation, active }: { conversation: Conversatio
       </div>
     </a>
   );
-}
+});
 
 /**
  * An app's channel — the general thread on its board, one per app the
@@ -256,7 +258,7 @@ function GeneralChannelRow({ conversation, active }: { conversation: Conversatio
  * An anchor at the channel's address in this inbox, so a modified click
  * opens it in a tab the way every other row on this screen does.
  */
-function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; active: boolean }) {
+const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; active: boolean }) {
   const activity = discussion.lastAt ? agoStamp(discussion.lastAt) : null;
   // #2387: app channels keep a read cursor now, so they carry a count like
   // #general's — only while the viewer is not reading it.
@@ -299,7 +301,7 @@ function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; acti
       </div>
     </a>
   );
-}
+});
 
 /**
  * An agent chat — a thread with the AI that builds.
@@ -327,7 +329,7 @@ function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; acti
  * cheap to lose and a modal over a list to delete one row from it is the
  * heavier gesture.
  */
-function AgentChatRow({ chat, active }: { chat: AgentChat; active: boolean }) {
+const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentChat; active: boolean }) {
   const at = chat.updatedAt || chat.createdAt || null;
   const activity = at ? agoStamp(at) : null;
   const [confirming, setConfirming] = useState(false);
@@ -411,7 +413,7 @@ function AgentChatRow({ chat, active }: { chat: AgentChat; active: boolean }) {
       </button>
     </a>
   );
-}
+});
 
 /**
  * A change in flight, as a row of this inbox (#2770, #2772).
@@ -462,7 +464,7 @@ function inboxSessionView(session: SessionRowView): SessionRowView {
   };
 }
 
-function AgentSessionRow({ session, active }: { session: SessionRowView; active: boolean }) {
+const AgentSessionRow = memo(function AgentSessionRow({ session, active }: { session: SessionRowView; active: boolean }) {
   return (
     <div
       className={`messages-inbox-session ${active ? 'messages-inbox-session-active' : ''}`}
@@ -472,7 +474,7 @@ function AgentSessionRow({ session, active }: { session: SessionRowView; active:
       <SessionRow session={session} showApp onNavigate={() => {}} />
     </div>
   );
-}
+});
 
 /**
  * The filter row — a SEGMENTED STRIP, the same one the app Workshop wears —
@@ -716,10 +718,20 @@ function ConversationList() {
   // screen. The filter IS in the store, because the thread pane and the
   // deep-link router both read it.
   const [query, setQuery] = useState('');
-  const chat = useGlobalChatState();
-  const agentsOn = !!chat.bootstrap?.parityReady
-    && chat.bootstrap.profiles.globalChat.enabled === true;
-  const agents: AgentChat[] = agentsOn ? (chat.threads as AgentChat[]) : [];
+  // The list filters on the DEFERRED query: the field takes the keystroke at
+  // once, and the rows follow in a render React can interrupt with the next
+  // one, so typing a word into a long inbox does not wait on it per letter.
+  const deferredQuery = useDeferredValue(query);
+  // Two fields of the chat's store, not the whole of it: a turn streaming
+  // its progress in the Agents pane is not a reason to redraw this list.
+  const chatBootstrap = useGlobalChatSelector((s) => s.bootstrap);
+  const chatThreads = useGlobalChatSelector((s) => s.threads);
+  const agentsOn = !!chatBootstrap?.parityReady
+    && chatBootstrap.profiles.globalChat.enabled === true;
+  const agents = useMemo<AgentChat[]>(
+    () => (agentsOn ? (chatThreads as AgentChat[]) : []),
+    [agentsOn, chatThreads],
+  );
   // The viewer's changes in flight (#2770) — see AgentSessionRow. AFTER
   // MOUNT ONLY: app.js can have filled the Improve store before this island
   // hydrates, and rows the prerendered document did not have are a hydration
@@ -733,38 +745,43 @@ function ConversationList() {
   useEffect(() => { setMounted(true); }, []);
   // A change started from an agent session (#2779) is that conversation's:
   // its row below says where it stands, so it is not listed twice.
-  const sessions: SessionRowView[] = mounted
+  // Memoised on the store's own arrays: inboxSessionView builds a new row
+  // object, and a new object per render is a memo()'d row drawn again.
+  const sessions = useMemo<SessionRowView[]>(() => (mounted
     ? [...(improve.sessions || []), ...(improve.otherSessions || [])]
       .filter((row) => !row.agentSessionId)
       .map(inboxSessionView)
-    : [];
+    : []), [mounted, improve.sessions, improve.otherSessions]);
   // Agent sessions (#2779), from their own store and, like the sessions
   // above, only after mount. Listed whatever the flag says: turning it off
-  // never hides a conversation that already exists.
-  const mayor = useAgentSessionState();
+  // never hides a conversation that already exists. The list alone: a reply
+  // streaming into the open conversation does not redraw the inbox.
+  const mayorSessions = useAgentSessions();
   useEffect(() => { void loadAgentSessions(); }, []);
-  const mayors: MayorSession[] = mounted ? mayor.sessions : [];
+  const mayors = useMemo<MayorSession[]>(() => (mounted ? mayorSessions : []), [mounted, mayorSessions]);
   // The side pane open BESIDE an agent session's chat (#2779 follow-up), a
   // spec or a preview, takes this column's width while it is open: at 1280
   // the thread pane alone is too narrow for two readable columns. Closing it
   // brings the list back. False until mounted, like everything above
   // (../agent-session/spec-layout).
   const specBeside = useSidePaneBeside('messages');
-  const inbox = buildInbox({
+  // Built once per change to what it is built from, not once per keystroke
+  // in the search box or per publish of a store this list does not draw.
+  const inbox = useMemo(() => buildInbox({
     conversations: snap.conversations,
     discussions: snap.discussions,
     agents,
     sessions,
     mayors,
     filter: snap.filter,
-  });
-  const byMayor = new Map(mayors.map((item) => [String(item.id), item]));
-  const byConversation = new Map(snap.conversations.map((item) => [String(item.id), item]));
-  const byApp = new Map(snap.discussions.map((item) => [item.slug, item]));
-  const byAgent = new Map(agents.map((item) => [item.id, item]));
-  const bySession = new Map(sessions.map((item) => [item.key, item]));
+  }), [snap.conversations, snap.discussions, agents, sessions, mayors, snap.filter]);
+  const byMayor = useMemo(() => new Map(mayors.map((item) => [String(item.id), item])), [mayors]);
+  const byConversation = useMemo(() => new Map(snap.conversations.map((item) => [String(item.id), item])), [snap.conversations]);
+  const byApp = useMemo(() => new Map(snap.discussions.map((item) => [item.slug, item])), [snap.discussions]);
+  const byAgent = useMemo(() => new Map(agents.map((item) => [item.id, item])), [agents]);
+  const bySession = useMemo(() => new Map(sessions.map((item) => [item.key, item])), [sessions]);
 
-  const q = query.trim().toLowerCase();
+  const q = deferredQuery.trim().toLowerCase();
   const matches = (entry: { kind: string; key: string }) => {
     if (!q) return true;
     if (entry.kind === 'channel') {
@@ -869,7 +886,7 @@ function ConversationList() {
             borrow the empty inbox's offer to start a conversation: the rows
             are there, this one word is what hid them. */}
         {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !shown.length
-          ? <div id="messages-search-empty" className="messages-state"><p>No messages match “{query.trim()}”.</p></div>
+          ? <div id="messages-search-empty" className="messages-state"><p>No messages match “{deferredQuery.trim()}”.</p></div>
           : null}
         {/* ONE LIST, TWO SECTIONS (#2783). ./inbox.ts orders them — the
             chats on one clock, then the channels — and returns DESCRIPTORS
@@ -1342,7 +1359,7 @@ function MayorSessionThread({ id }: { id: number | 'new' }) {
  * where its active change stands. A link to the inbox's own address for it,
  * which a phone's router swaps for the conversation's screen.
  */
-function MayorSessionRow({ session, active }: { session: MayorSession; active: boolean }) {
+const MayorSessionRow = memo(function MayorSessionRow({ session, active }: { session: MayorSession; active: boolean }) {
   const at = session.lastActivityAt || session.createdAt || null;
   const activity = at ? agoStamp(at) : null;
   const thread: MessagesAgentThread = { kind: 'agent', id: session.id };
@@ -1388,7 +1405,7 @@ function MayorSessionRow({ session, active }: { session: MayorSession; active: b
       </div>
     </a>
   );
-}
+});
 
 function AgentChatThread({ id }: { id: string }) {
   useEffect(() => {
@@ -1847,7 +1864,7 @@ export function MessagesScreen() {
   useEffect(() => initializeMessagesStore(), []);
   // THE AGENT HALF OF THIS INBOX HAS TO ASK FOR ITSELF (#2718 review).
   //
-  // `useGlobalChatState()` below reads a store that nothing on this screen
+  // The list's `useGlobalChatSelector` reads a store that nothing on this screen
   // was filling: the ONLY caller of initializeGlobalChat outside Settings
   // was the Improve panel's own New chat button. So an inbox opened without
   // ever having opened Improve saw `bootstrap: null`, which reads as "the

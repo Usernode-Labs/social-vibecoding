@@ -37,7 +37,7 @@ import type { AgentChange, AgentSession, HandoffStatus } from './api';
 import {
   dismissCredits,
   openHandoff,
-  useAgentSessionState,
+  useAgentSessionPick,
   type CreditsRefusal,
   type HandoffAgent,
 } from './store';
@@ -172,7 +172,7 @@ export function handoffChecks(status: HandoffStatus | null, agent: HandoffAgent)
  * this same tab, so there is one hand-off, not two.
  */
 export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose: () => void }) {
-  const snapshot = useAgentSessionState();
+  const snapshot = useAgentSessionPick((s) => ({ session: s.session, draft: s.draft }));
   const about = snapshot.session || snapshot.draft;
   const active = snapshot.session?.activeChange || null;
   const target = handoffTarget(about ? { activeChange: active, focusApp: about.focusApp || null } : null);

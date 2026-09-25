@@ -63,6 +63,51 @@ import {
   type TranscriptState,
 } from './transcript-store';
 
+/**
+ * Whether two view-model values hold the same data. The rows are plain data
+ * (strings, numbers, booleans, null, arrays and plain objects) that
+ * `GroupChat._messageView` builds afresh on every whole publish.
+ */
+export function sameData(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) if (!sameData(a[i], b[i])) return false;
+    return true;
+  }
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  if (keys.length !== Object.keys(right).length) return false;
+  return keys.every((k) => Object.prototype.hasOwnProperty.call(right, k) && sameData(left[k], right[k]));
+}
+
+/**
+ * A whole publish, with every row that says nothing new replaced by the row
+ * already on screen (by id), and the list itself kept when no row changed.
+ *
+ * `GroupChat.render()` rebuilds the whole list from its messages — after a
+ * delete, a history page, a membership change — so every row arrived as a
+ * new object, and the memo()'d rows (./transcript.tsx) all rendered again:
+ * every body's markup and every thumbnail rebuilt for one changed row. Kept,
+ * an unchanged row skips its render. The store is still published, so the
+ * rows' surroundings (the lead, which reply thread is open) are read again.
+ */
+export function keepUnchanged(previous: TranscriptMessage[] | undefined, next: TranscriptMessage[]): TranscriptMessage[] {
+  if (!previous || !previous.length) return next;
+  const byId = new Map<number, TranscriptMessage>();
+  for (const m of previous) if (m.id != null) byId.set(m.id, m);
+  let same = previous.length === next.length;
+  const kept = next.map((m, i) => {
+    const held = m.id != null ? byId.get(m.id) : undefined;
+    const row = held && sameData(held, m) ? held : m;
+    if (row !== previous[i]) same = false;
+    return row;
+  });
+  return same ? previous : kept;
+}
+
 /** Mount (or re-establish) the transcript inside the host app-view just built. */
 export function mountTranscript(host: Element | null, key = 'main'): void {
   if (!host) return;
@@ -98,7 +143,7 @@ export function publishTranscript(
 ): void {
   const set = () => transcriptStore.set((s: TranscriptState) => ({
     ready: true,
-    byKey: { ...s.byKey, [key]: { messages, lead } },
+    byKey: { ...s.byKey, [key]: { messages: keepUnchanged(s.byKey[key]?.messages, messages), lead } },
   }));
   if (opts.flush) flushSync(set);
   else set();
