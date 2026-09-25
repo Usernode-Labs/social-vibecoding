@@ -467,9 +467,48 @@ const DevChat = {
    * The one in-composer model picker, as a flat option list. Null
    * off-platform. See _flatModelOptions for the order and why there are no
    * provider headings any more.
+   *
+   * MEMOIZED on its inputs, and the same object comes back while none of
+   * them moved. The composer republishes on every keystroke (see
+   * `_syncSaveDraftBtn`), and this was a Map and a sort over the whole
+   * OpenRouter catalogue each time — for a list that only changes when the
+   * catalogue, the notes, the session's backend or a pick does. Keeping the
+   * identity is also what lets `_publishComposer` see that nothing changed.
+   *
+   * The inputs are every value `_buildModelPickerView` reads. The three
+   * objects are compared by identity, which holds because each is only ever
+   * REPLACED: `_modelPickerData` by `_ensureModelPickerData` (a fresh object
+   * per load, never edited — the catalog dialog stars models on its own
+   * copy), `_modelNotes` by `_ensureModelNotes`, `MODELS` by `loadModels`.
+   * The session is read field by field, because it IS edited in place.
    */
+  _modelPickerMemo: null,
+
   _modelPickerView() {
     const venue = DevChat._currentVenueId();
+    const s = DevChat.currentSession;
+    const inputs = [
+      venue,
+      DevChat._modelPickerData,
+      DevChat._modelNotes,
+      DevChat.MODELS,
+      DevChat.selectedModel,
+      DevChat._defaultModel,
+      !!DevChat._modelPickerChanging,
+      DevChat._stagedPickFor(s),
+      s ? !!s.pending : false,
+      s && s.pending_agent_choice ? s.pending_agent_choice.backend : undefined,
+      s ? s.agent_backend : undefined,
+      s ? s.agent_model : undefined,
+    ];
+    const memo = DevChat._modelPickerMemo;
+    if (memo && memo.inputs.every((v, i) => v === inputs[i])) return memo.view;
+    const view = DevChat._buildModelPickerView(venue);
+    DevChat._modelPickerMemo = { inputs, view };
+    return view;
+  },
+
+  _buildModelPickerView(venue) {
     if (venue !== 'usernode-claude' && venue !== 'usernode-openrouter') return null;
 
     const data = DevChat._modelPickerData;
@@ -6983,8 +7022,15 @@ const DevChat = {
   // The auto-scroll the old code did on the `<pre>` goes with it: the
   // container's own MutationObserver (`initScrollTracking`) already follows
   // the transcript to the bottom while the reader is locked there.
+  //
+  // Coalesced to one publish per frame (`_publishTranscriptSoon`): a run's
+  // log can land dozens of lines a second over SSE, plus the 3s /status
+  // poll's whole-log replace, and each publish rebuilds and reconciles the
+  // entire transcript model. Nothing reads the DOM after a progress line —
+  // the follow-to-bottom is itself a frame callback — so the frame is the
+  // finest grain anyone could see.
   _patchProgressDom(msg) {
-    DevChat._publishTranscript();
+    DevChat._publishTranscriptSoon();
   },
 
   // Experimental AI progress estimate (opt-in, server-gated). Stores the
@@ -7040,7 +7086,9 @@ const DevChat = {
       delete m._estimateRemaining;
       delete m._countdownTo;
     }
-    DevChat._publishTranscript();
+    // A progress-driven publish, like `_patchProgressDom`'s: the 3s /status
+    // poll lands here on every tick that carries no guess.
+    DevChat._publishTranscriptSoon();
   },
 
   // Is this message the row of a coding run that is CURRENTLY running?
@@ -7114,8 +7162,9 @@ const DevChat = {
     // what painted a guess onto an already-finished Claude Code card. The
     // model carries it on the row it belongs to now, which makes the same
     // guarantee structural: a publish can only paint the run whose message
-    // object holds `_estimate`.
-    DevChat._publishTranscript();
+    // object holds `_estimate`. Coalesced with the progress lines it rides
+    // beside — see `_patchProgressDom`.
+    DevChat._publishTranscriptSoon();
   },
 
   // ── #50: elapsed-time ticker ────────────────────────────────
@@ -8060,8 +8109,14 @@ const DevChat = {
         t: 'msg', key, who: isUser ? 'user' : 'ai',
         model: msg.model ? `${msg.model.split('-').slice(0, 2).join('-')}${DevChat._messageCostLabel(msg)}` : '',
         stamp: msgStamp,
+        // The live row's text is still growing, so each republish mid-turn
+        // would cache one more prefix of it that nobody asks for again. It
+        // renders uncached; the `renderMessages` after the seal caches the
+        // final text like any other row's.
         contentHtml: content.trim()
-          ? DevChat.renderMarkdown(content)
+          ? (msgIdx === liveIdx
+            ? DevChat.renderMarkdown(content, { cache: false })
+            : DevChat.renderMarkdown(content))
           : '<span style="color:var(--text-muted);font-style:italic">(no visible reply, see reasoning below)</span>',
         ...(msgIdx === liveIdx ? { live: true } : null),
         ...(isUser ? { attachments: DevChat._attachmentRows(msg) } : null),
@@ -8132,6 +8187,8 @@ const DevChat = {
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react || !react.publishTranscript) return;
+    // This publish carries everything a queued progress publish would have.
+    DevChat._cancelTranscriptPublishSoon();
     react.publishTranscript(DevChat._transcriptView());
 
     // The two FOREIGN cards in the transcript — `DevFlowSelect`'s walkthrough
@@ -8164,7 +8221,42 @@ const DevChat = {
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react || !react.publishTranscript) return;
+    DevChat._cancelTranscriptPublishSoon();
     react.publishTranscript(DevChat._transcriptView());
+  },
+
+  /**
+   * `_publishTranscript`, at most once per animation frame.
+   *
+   * For the PROGRESS-driven republishes only — a coding run's log lines, the
+   * 3s /status poll's log replace and its AI estimate — which can arrive many
+   * times inside one frame and of which only the last is ever painted. Every
+   * other caller stays synchronous: `renderMessages` is followed by DOM reads
+   * (`scrollToBottom`, the cards' `wire()` scans) that expect the rows to be
+   * in the document already, and a synchronous publish supersedes a queued
+   * one, which is cancelled.
+   *
+   * Without `requestAnimationFrame` (the Node sandboxes the tests drive) it
+   * publishes on the spot, which is the ordering those callers had before.
+   */
+  _transcriptPublishRaf: null,
+
+  _publishTranscriptSoon() {
+    if (DevChat._transcriptPublishRaf != null) return;
+    if (typeof requestAnimationFrame !== 'function') {
+      DevChat._publishTranscript();
+      return;
+    }
+    DevChat._transcriptPublishRaf = requestAnimationFrame(() => {
+      DevChat._transcriptPublishRaf = null;
+      DevChat._publishTranscript();
+    });
+  },
+
+  _cancelTranscriptPublishSoon() {
+    if (DevChat._transcriptPublishRaf == null) return;
+    if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(DevChat._transcriptPublishRaf);
+    DevChat._transcriptPublishRaf = null;
   },
 
   _onQaChipClick(chip) {
@@ -8872,6 +8964,22 @@ const DevChat = {
     // inline — the flag is read by the global image renderer above during
     // this synchronous parse, and 'img' joins the sanitizer allowlist.
     const allowImages = !!opts.images;
+
+    // The cache (see `_mdCacheGet`). `_renderImageWithinLink` is the one
+    // piece of module state the renderers read that no option sets: the
+    // `link` renderer raises it for the duration of its own children and the
+    // `finally` below lowers it, so it is always false on entry — unless a
+    // renderer ever re-entered this function mid-parse, which is exactly the
+    // case whose output the key could not describe. That call renders
+    // uncached rather than being answered from a key that does not hold.
+    const cacheable = opts.cache !== false && typeof text === 'string'
+      && !DevChat._renderImageWithinLink;
+    const flags = `${breaks ? 'b' : '-'}${allowImages ? 'i' : '-'}`;
+    if (cacheable) {
+      const hit = DevChat._mdCacheGet(text, flags);
+      if (hit !== undefined) return hit;
+    }
+
     DevChat._renderImagesInline = allowImages;
     let html;
     try {
@@ -8881,7 +8989,7 @@ const DevChat = {
       DevChat._renderImageWithinLink = false;
     }
 
-    return DOMPurify.sanitize(html, {
+    const out = DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4', 'h5',
         'p', 'br', 'ol', 'ul', 'li', 'div', 'span', 'table', 'thead', 'tbody',
         'tr', 'th', 'td', 'hr', 'del', ...(allowImages ? ['img'] : [])],
@@ -8890,6 +8998,99 @@ const DevChat = {
         ...(allowImages ? ['src', 'alt', 'loading', 'aria-label'] : [])],
       ALLOW_DATA_ATTR: false,
     });
+    if (cacheable && typeof out === 'string') DevChat._mdCachePut(text, flags, out);
+    return out;
+  },
+
+  // ── The rendered-markdown cache ───────────────────────────────────
+  //
+  // `_transcriptView` renders EVERY message on EVERY republish — a status
+  // line, a progress line, an estimate, a chip tap — and each render was a
+  // full `marked.parse` + `DOMPurify.sanitize` of text that had not changed.
+  // On a long session that is most of a republish's cost, paid on a phone
+  // many times a second while a coding run streams its log.
+  //
+  // The output is a pure function of the text and of what the key names:
+  //
+  //   - `breaks`, which marked reads per call;
+  //   - `images`, which the `image` and `html` renderers read (through
+  //     `_renderImagesInline`) and which widens the sanitizer's allowlists;
+  //   - `_renderImageWithinLink`, which is not keyed but EXCLUDED: see the
+  //     call site — it is false on every call that reaches the cache.
+  //
+  // Everything else the pipeline reads is fixed once `_markdownReady` is set:
+  // the renderers are registered once, DOMPurify's single hook is added once,
+  // and the sanitizer config is rebuilt from `allowImages` on every call. Only
+  // this module registers marked renderers or DOMPurify hooks. The one thing
+  // that could still change underneath — a different `marked` or `DOMPurify`
+  // object appearing on the page — empties the cache (`_mdCacheLibs`), and
+  // the fallback path that runs without them is never cached.
+  //
+  // Bounded both ways, least-recently-used first. The entry bound is generous
+  // on purpose: a republish walks the whole transcript in order, and an LRU
+  // smaller than the transcript it serves misses on EVERY row of every walk.
+  // The keys are mostly the very strings `DevChat.messages` already holds, so
+  // what an entry adds is its html, which the DOM is holding a copy of too.
+  //
+  // Streaming never writes here: a live turn's committed prefix changes on
+  // every newline and would fill the cache with prefixes of one message. See
+  // `_renderCommittedMarkdown`.
+  _MD_CACHE_MAX_ENTRIES: 1500,
+  _MD_CACHE_MAX_CHARS: 6000000,
+  /** Map<text, { size, html: { [flags]: string } }>, in LRU order. */
+  _mdCache: null,
+  _mdCacheChars: 0,
+  _mdCacheLibs: null,
+
+  _mdCacheGet(text, flags) {
+    const libs = DevChat._mdCacheLibs;
+    if (!DevChat._mdCache || !libs || libs[0] !== marked || libs[1] !== DOMPurify) {
+      DevChat._mdCacheClear();
+      return undefined;
+    }
+    const entry = DevChat._mdCache.get(text);
+    if (!entry || !Object.prototype.hasOwnProperty.call(entry.html, flags)) return undefined;
+    // Most recently used moves to the end of the Map's insertion order.
+    DevChat._mdCache.delete(text);
+    DevChat._mdCache.set(text, entry);
+    return entry.html[flags];
+  },
+
+  _mdCachePut(text, flags, html) {
+    if (!DevChat._mdCache) DevChat._mdCacheClear();
+    const cache = DevChat._mdCache;
+    let entry = cache.get(text);
+    if (entry) {
+      cache.delete(text);
+    } else {
+      entry = { size: text.length, html: Object.create(null) };
+      DevChat._mdCacheChars += entry.size;
+    }
+    if (Object.prototype.hasOwnProperty.call(entry.html, flags)) {
+      DevChat._mdCacheChars -= entry.html[flags].length;
+      entry.size -= entry.html[flags].length;
+    }
+    entry.html[flags] = html;
+    entry.size += html.length;
+    DevChat._mdCacheChars += html.length;
+    cache.set(text, entry);
+    // Evict from the least-recently-used end. The entry just written is the
+    // newest, so it survives unless it alone is over the character budget.
+    for (const [oldest, old] of cache) {
+      if (cache.size <= DevChat._MD_CACHE_MAX_ENTRIES
+        && DevChat._mdCacheChars <= DevChat._MD_CACHE_MAX_CHARS) break;
+      cache.delete(oldest);
+      DevChat._mdCacheChars -= old.size;
+    }
+  },
+
+  _mdCacheClear() {
+    DevChat._mdCache = new Map();
+    DevChat._mdCacheChars = 0;
+    DevChat._mdCacheLibs = [
+      typeof marked === 'undefined' ? undefined : marked,
+      typeof DOMPurify === 'undefined' ? undefined : DOMPurify,
+    ];
   },
 
   // ── The live bubble (#dc-messages' one 60fps writer) ──────────────
@@ -8958,22 +9159,43 @@ const DevChat = {
   _writeStreamingHtml(key, fullText, breaks, final) {
     let html;
     if (final) {
+      // The sealed text IS cached: the `renderMessages` that follows the seal
+      // renders the same content for the row model and finds it here.
       html = fullText ? DevChat.renderMarkdown(fullText, { breaks }) : '';
     } else if (typeof renderStreamingHtml === 'function') {
       html = renderStreamingHtml(
         fullText,
-        (md) => DevChat.renderMarkdown(md, { breaks }),
+        (md) => DevChat._renderCommittedMarkdown(md, breaks),
         escapeHtml
       );
     } else {
       // Helper script failed to load — degrade to the plain full render.
-      html = DevChat.renderMarkdown(fullText, { breaks });
+      html = DevChat.renderMarkdown(fullText, { breaks, cache: false });
     }
     if (DevChat._streamHtml === html) return;
     DevChat._streamHtml = html;
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (react && react.publishStream) react.publishStream({ key, html });
+  },
+
+  // The live bubble's FINISHED lines, rendered once per newline.
+  //
+  // `renderStreamingHtml` splits the text at its last newline and renders the
+  // part before it as markdown, every frame. That part only changes when a
+  // newline arrives, so the other frames of a line were re-parsing and
+  // re-sanitizing the whole reply so far to get the same html back. One slot
+  // is the whole cache this needs — the committed text only ever grows — and
+  // it deliberately bypasses `renderMarkdown`'s shared cache, which would
+  // otherwise gain a new, never-read-again prefix of this reply per line.
+  _streamCommitted: null,
+
+  _renderCommittedMarkdown(md, breaks) {
+    const last = DevChat._streamCommitted;
+    if (last && last.breaks === breaks && last.text === md) return last.html;
+    const html = DevChat.renderMarkdown(md, { breaks, cache: false });
+    DevChat._streamCommitted = { text: md, breaks, html };
+    return html;
   },
 
   // Flush any pending throttled render and re-render the active streaming
@@ -9001,6 +9223,7 @@ const DevChat = {
     DevChat._streamPending = null;
     if (pend) DevChat._writeStreamingHtml(pend.key, pend.fullText, pend.breaks, true);
     DevChat._streamHtml = null;
+    DevChat._streamCommitted = null;
   },
 
   _lockedToBottom: true,
@@ -9011,15 +9234,31 @@ const DevChat = {
   // regardless of saved scrollTop).
   _savedScrollBySession: {},
 
+  // The `#dc-messages` nodes `initScrollTracking` has already bound. See there.
+  _scrollTrackedNodes: null,
+
   initScrollTracking() {
     const container = document.getElementById('dc-messages');
     if (!container) return;
 
-    // Click delegation for inline spec preview cards. We rebind on
-    // every renderChatView re-render (since #dc-messages itself is
-    // recreated when the user navigates between sessions), so a single
-    // listener here is enough — innerHTML rewrites inside renderMessages
-    // don't break it.
+    // ONCE PER NODE. `renderChatView` calls this on every render — some
+    // thirty callers, a status poll among them — and `#dc-messages` is a
+    // React element now that survives those renders: it is replaced only
+    // when the session view itself remounts (a session switch). Binding per
+    // call stacked a click, a keydown and a scroll listener and a
+    // MutationObserver onto the same node each time, so a Q/A chip tap ran
+    // its handler once per render the screen had seen, and every mutation
+    // scheduled one scroll write per observer. A new node is a new entry
+    // here, and the old one takes its listeners with it when it goes.
+    const bound = DevChat._scrollTrackedNodes
+      || (DevChat._scrollTrackedNodes = new WeakSet());
+    if (bound.has(container)) return;
+    bound.add(container);
+    DevChat._transcriptTouchAt = 0;
+
+    // Click delegation for inline spec preview cards, Q/A chips and their
+    // actions. The host outlives every repaint of its contents, so one
+    // delegated listener on it covers every row a later publish adds.
     container.addEventListener('click', (e) => {
       // Q/A chips (#32) — delegated like the spec cards, so innerHTML
       // rewrites inside renderMessages don't drop the handlers.
@@ -9053,7 +9292,16 @@ const DevChat = {
           lockedToBottom: atBottom,
         };
       }
-    });
+    }, { passive: true });
+    // A finger on the transcript. See `_transcriptTouched`.
+    const touched = () => { DevChat._transcriptTouchAt = Date.now(); };
+    const released = (e) => {
+      if (!e || !e.touches || !e.touches.length) DevChat._transcriptTouchAt = 0;
+    };
+    container.addEventListener('touchstart', touched, { passive: true });
+    container.addEventListener('touchmove', touched, { passive: true });
+    container.addEventListener('touchend', released, { passive: true });
+    container.addEventListener('touchcancel', released, { passive: true });
     // Watch for DOM changes (new content) and auto-scroll.
     //
     // #1944: NOT for a disclosure the reader just toggled. This used to
@@ -9066,11 +9314,76 @@ const DevChat = {
     // nothing but that flip is the reader's, and the transcript leaves it.
     const observer = new MutationObserver((records) => {
       if (DevChat._isDisclosureToggle(records)) return;
-      if (DevChat._lockedToBottom) {
-        requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
-      }
+      if (DevChat._lockedToBottom) DevChat._followToBottom(container, false);
     });
     observer.observe(container, { childList: true, subtree: true, attributes: true });
+  },
+
+  // ── Following the transcript to the bottom ────────────────────────
+  //
+  // ONE pending frame, however many asked for it. A streamed frame, a
+  // republish and the MutationObserver batch each produce used to queue a
+  // write of their own, and a streaming turn asks on every token.
+  //
+  // The write is INSTANT. `.dc-messages-container` animated every
+  // programmatic scroll (`scroll-behavior: smooth`), so while a turn streamed
+  // the pane was always mid-animation towards a bottom that had already
+  // moved — the stutter the phone audit measured. A deliberate jump the
+  // reader asked for is animated where it is made, explicitly
+  // (`revealDisclosure` in ./log-follow.ts); following new content is not
+  // one.
+  //
+  // Both conditions are re-read when the frame runs rather than trusted from
+  // when it was asked for: a reader who scrolled up in between has unlocked,
+  // and a finger on the pane is the reader's, not the stream's.
+  _followRaf: null,
+  _followTarget: null,
+  _followForce: false,
+
+  _followToBottom(container, force) {
+    DevChat._followTarget = container;
+    if (force) DevChat._followForce = true;
+    if (DevChat._followRaf != null) return;
+    const run = () => {
+      DevChat._followRaf = null;
+      const el = DevChat._followTarget;
+      const forced = DevChat._followForce;
+      DevChat._followTarget = null;
+      DevChat._followForce = false;
+      if (!el) return;
+      if (!forced && (!DevChat._lockedToBottom || DevChat._transcriptTouched())) return;
+      DevChat._jumpToBottom(el);
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      DevChat._followRaf = requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  },
+
+  /** An instant jump to the end, whatever the stylesheet says. */
+  _jumpToBottom(el) {
+    const top = el.scrollHeight;
+    if (typeof el.scrollTo === 'function') el.scrollTo({ top, behavior: 'instant' });
+    else el.scrollTop = top;
+  },
+
+  // Is a finger on the transcript right now? A follow that fires under it
+  // yanks the pane out from under the drag that is about to unlock it — the
+  // scroll event that clears `_lockedToBottom` only comes once the drag has
+  // travelled 100px. So the follow waits while a touch is down and moving.
+  //
+  // SELF-HEALING, because a touch can lose its end: `touchend` is dispatched
+  // to the node the touch STARTED on, and when a republish replaces that
+  // node (the live bubble does, every frame) the event goes to a detached
+  // element and never bubbles here. A touch that has not moved for a second
+  // no longer counts, so a lost end cannot switch following off for good.
+  _transcriptTouchAt: 0,
+  _TRANSCRIPT_TOUCH_STALE_MS: 1000,
+
+  _transcriptTouched() {
+    const at = DevChat._transcriptTouchAt;
+    return !!at && Date.now() - at < DevChat._TRANSCRIPT_TOUCH_STALE_MS;
   },
 
   // A MutationObserver batch that is ONLY <details> open/closed flips. New
@@ -9091,12 +9404,12 @@ const DevChat = {
   // behavior on first entry into a session).
   //
   // We use scrollTo({ behavior: 'instant' }) rather than assigning
-  // .scrollTop directly because .dc-messages-container has CSS
-  // `scroll-behavior: smooth` set (so streaming messages glide nicely).
-  // That CSS rule applies to .scrollTop assignments too, which would
-  // otherwise turn the tab-switch restore into a multi-second animated
-  // scroll from 0 → scrollHeight. 'instant' overrides the CSS just for
-  // this one programmatic jump.
+  // .scrollTop directly because a CSS `scroll-behavior: smooth` on
+  // .dc-messages-container (it carried one, so streaming messages would
+  // glide) applies to .scrollTop assignments too, which turned the
+  // tab-switch restore into a multi-second animated scroll from
+  // 0 → scrollHeight. Saying 'instant' here keeps this jump instant
+  // whatever the stylesheet says — the same reason `_jumpToBottom` does.
   restoreSessionScroll() {
     const container = document.getElementById('dc-messages');
     if (!container) return;
@@ -9112,12 +9425,12 @@ const DevChat = {
     }
   },
 
+  // Every caller that just changed the transcript asks for this; they all
+  // share the one pending frame `_followToBottom` keeps.
   scrollToBottom(force) {
     const container = document.getElementById('dc-messages');
     if (!container) return;
-    if (force || DevChat._lockedToBottom) {
-      requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
-    }
+    if (force || DevChat._lockedToBottom) DevChat._followToBottom(container, !!force);
   },
 
   // ── Session list ──────────────────────────────────────────
@@ -10003,8 +10316,24 @@ const DevChat = {
    * The send button, as data — the four shapes `_setStreamingUI` painted by
    * hand. Every input is module state, so any caller can repaint it without
    * knowing which transition it is in the middle of.
+   *
+   * The same object comes back while the shape is the same, so a keystroke
+   * that does not flip it leaves the composer model untouched — see
+   * `_publishComposer`.
    */
+  _sendViewMemo: null,
+
   _sendButtonView() {
+    const next = DevChat._computeSendButtonView();
+    const last = DevChat._sendViewMemo;
+    if (last && last.kind === next.kind && last.label === next.label && last.title === next.title) {
+      return last;
+    }
+    DevChat._sendViewMemo = next;
+    return next;
+  },
+
+  _computeSendButtonView() {
     // TEXT IN THE BOX OUTRANKS EVERY BUSY SHAPE BELOW. This is #810's rule,
     // moved from a separate icon onto the button itself: while a turn runs
     // sending is impossible, so the only thing to do with typed text is park
@@ -10053,15 +10382,39 @@ const DevChat = {
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react || !react.publishComposer) return;
-    react.publishComposer(DevChat._composerView());
+    const view = DevChat._composerView();
+    DevChat._lastComposer = { react, view };
+    react.publishComposer(view);
   },
 
-  /** Republish without re-mounting — every one of the six writers' end. */
+  /**
+   * Republish without re-mounting — every one of the six writers' end.
+   *
+   * ONLY WHEN SOMETHING CHANGED. Every keystroke lands here (through
+   * `_syncSaveDraftBtn`), and each publish is a synchronous render of the
+   * whole composer (./mount.ts flushes it). The three object fields keep
+   * their identity while their inputs hold still — `_modelPickerView`,
+   * `_savedDraftsView` and `_sendButtonView` are each memoized — so "nothing
+   * changed" is one identity check per field, and a keystroke that does not
+   * flip the circle between Send / Stop / Save publishes nothing at all.
+   */
+  _lastComposer: null,
+
   _publishComposer() {
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react || !react.publishComposer) return;
-    react.publishComposer(DevChat._composerView());
+    const view = DevChat._composerView();
+    const last = DevChat._lastComposer;
+    if (last && last.react === react && DevChat._sameComposerView(last.view, view)) return;
+    DevChat._lastComposer = { react, view };
+    react.publishComposer(view);
+  },
+
+  _sameComposerView(a, b) {
+    const keys = Object.keys(b);
+    if (keys.length !== Object.keys(a).length) return false;
+    return keys.every((k) => a[k] === b[k]);
   },
 
   /** The venue sentence this render is showing. See `_composerView`. */
@@ -11294,6 +11647,11 @@ const DevChat = {
   //
   // Every streaming transition also funnels through `_setStreamingUI`, which
   // calls this — so no extra listeners are needed for the other half.
+  //
+  // A keystroke that leaves the circle's shape alone publishes nothing:
+  // `_publishComposer` compares the model it would publish with the last one
+  // and drops an identical one. It used to be a synchronous render of the
+  // whole composer per character, model catalogue and drafts list included.
   _syncSaveDraftBtn() {
     DevChat._publishComposer();
   },
@@ -11327,16 +11685,39 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
-  /** The saved-drafts list, as data. `busy` disables each row's Send. */
+  /**
+   * The saved-drafts list, as data. `busy` disables each row's Send.
+   *
+   * Memoized on the STORED STRING: the list is a pure function of the
+   * mirror's raw value (plus the `?shot=` demo pair, which only stands in
+   * while nothing is stored), so an unchanged string answers with the same
+   * object instead of a JSON.parse per keystroke. Every mutator writes the
+   * mirror, which changes the string, which is what invalidates this.
+   */
+  _savedDraftsMemo: null,
+
   _savedDraftsView() {
     const session = DevChat.currentSession;
+    const sid = session ? session.id : null;
+    // Paint-only predicate so `?shot=busy-drafts` renders the mid-turn
+    // rows; `_sendSavedDraft` still refuses on the real isStreaming flag.
+    const busy = DevChat._chatBusyForPaint();
+    let raw = null;
+    if (sid) {
+      try { raw = localStorage.getItem(DevChat._savedDraftsKey(sid)); } catch { raw = undefined; }
+    }
+    const demo = !!sid && raw == null && DevChat._wantsDemoDrafts();
+    const memo = DevChat._savedDraftsMemo;
+    if (memo && memo.sid === sid && memo.raw === raw && memo.busy === busy && memo.demo === demo) {
+      return memo.view;
+    }
     const drafts = session ? DevChat._getSavedDrafts(session.id) : [];
-    return {
+    const view = {
       rows: drafts.map((d) => ({ id: String(d.id), text: d.text })),
-      // Paint-only predicate so `?shot=busy-drafts` renders the mid-turn
-      // rows; `_sendSavedDraft` still refuses on the real isStreaming flag.
-      busy: DevChat._chatBusyForPaint(),
+      busy,
     };
+    DevChat._savedDraftsMemo = { sid, raw, busy, demo, view };
+    return view;
   },
 
   // Click delegation, bound once per renderChatView (the container node is

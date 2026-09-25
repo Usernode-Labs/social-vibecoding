@@ -585,7 +585,9 @@ test('#323: _applyEstimate stashes a pending estimate instead of dropping it', (
   const body = devChat.slice(at, devChat.indexOf('\n  },', at));
   assert.match(body, /target\._estimate = /, 'the guess is set on the row that owns it');
   assert.match(body, /target\._countdownTo = nextTarget;/, 'and so is its anchor');
-  assert.match(body, /DevChat\._publishTranscript\(\);/, 'and the row is republished');
+  // Coalesced to one publish per frame with the progress lines it rides
+  // beside (tests/dev-chat-smoothness.test.js pins the coalescing).
+  assert.match(body, /DevChat\._publishTranscriptSoon\(\);/, 'and the row is republished');
   assert.doesNotMatch(devChat, /\.dc-cc-estimate['"]\)/,
     'no path may resolve an estimate span by selector any more');
 });

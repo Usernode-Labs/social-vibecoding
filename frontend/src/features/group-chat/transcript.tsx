@@ -51,7 +51,7 @@
  * it the next time anything else about the message changed.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { ChatMessageRow, groupsWithPrevious } from '@/components/ui/chat';
@@ -393,7 +393,7 @@ export function foldRepeats(messages: TranscriptMessage[]): TranscriptMessage[] 
  * The topic threads' form; the general chat draws its two proposal events as
  * ./proposal-event.tsx's row instead, and nothing else of this kind.
  */
-export function SystemRow({ msg }: { msg: TranscriptMessage }) {
+export const SystemRow = memo(function SystemRow({ msg }: { msg: TranscriptMessage }) {
   return (
     <div
       className={`gc-msg-system ${msg.kind === 'vote' ? 'gc-msg-vote' : ''}${msg.voteRowClass ? ` ${msg.voteRowClass}` : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
@@ -432,7 +432,7 @@ export function SystemRow({ msg }: { msg: TranscriptMessage }) {
       <Reactions msg={msg} />
     </div>
   );
-}
+});
 
 /**
  * A shared spec, as a card in the transcript.
@@ -454,7 +454,7 @@ export function SystemRow({ msg }: { msg: TranscriptMessage }) {
  * `GroupChat.openSharedSpec` returns a promise and this brackets it. The
  * address bookkeeping, the fetch and every failure wording stay in the module.
  */
-export function SpecShareRow({ msg }: { msg: TranscriptMessage }) {
+export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: TranscriptMessage }) {
   const [loading, setLoading] = useState(false);
   const spec = msg.specShare;
   if (!spec) return null;
@@ -516,7 +516,7 @@ export function SpecShareRow({ msg }: { msg: TranscriptMessage }) {
       <RowActions msg={msg} />
     </div>
   );
-}
+});
 
 /** Memoised on the string, for the reason `Body` gives. */
 function SpecSnippet({ html }: { html: string }) {
@@ -662,11 +662,21 @@ export function messageMenuItems(
   return items;
 }
 
-export function MessageRow({ msg, grouped = false, surface = 'main' }: {
+/**
+ * memo()'d, as Messages' row is (#3104): an appended message, a reaction or
+ * an edit changes one row's object and leaves every other row's alone
+ * (./mount.ts keeps them), so only that row renders. Everything the row
+ * draws must therefore arrive as a prop. `threadOpen` is one: it was read
+ * from the controller here, and a memo()'d row would have kept the answer
+ * from its last render.
+ */
+export const MessageRow = memo(function MessageRow({ msg, grouped = false, surface = 'main', threadOpen = false }: {
   msg: TranscriptMessage;
   grouped?: boolean;
   /** #2387: `thread` inside a reply thread, where the row offers no thread of its own. */
   surface?: 'main' | 'thread';
+  /** #2387: this row's reply thread is the one open beside the channel, which lights its chip. */
+  threadOpen?: boolean;
 }) {
   const [reporting, setReporting] = useState<'message' | 'user' | null>(null);
   const [sheet, setSheet] = useState(false);
@@ -739,7 +749,7 @@ export function MessageRow({ msg, grouped = false, surface = 'main' }: {
         <ThreadSummaryChip
           replyCount={msg.thread.replyCount}
           lastReplyAt={msg.thread.lastReplyAt}
-          active={!!chat?.isReplyThreadOpen?.(msg.id)}
+          active={threadOpen}
           avatars={msg.thread.participants.slice(0, 3).map((name) => (
             <Avatar key={name} shape="square" size="sm" color={swatchFor(name)} aria-hidden="true">{name.charAt(0).toUpperCase()}</Avatar>
           ))}
@@ -767,7 +777,7 @@ export function MessageRow({ msg, grouped = false, surface = 'main' }: {
       ) : null}
     </ChatMessageRow>
   );
-}
+});
 
 /**
  * `source` names which transcript this host shows — `main` for the general
@@ -813,12 +823,27 @@ export function Transcript({ source = 'main', foldCards = false }: { source?: st
  * proposal event is that event's message row; the thread draws every row
  * flat, and the line itself where the general chat draws an event.
  */
+/**
+ * The thread-head copy of a message (`thread: null`), one per message
+ * OBJECT: a copy built during render is a new object every time, and the
+ * memo()'d row it is handed would render every time with it.
+ */
+const threadHeads = new WeakMap<TranscriptMessage, TranscriptMessage>();
+function threadHead(msg: TranscriptMessage): TranscriptMessage {
+  let head = threadHeads.get(msg);
+  if (!head) {
+    head = { ...msg, thread: null };
+    threadHeads.set(msg, head);
+  }
+  return head;
+}
+
 function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, chat = false, previous: TranscriptMessage | null = null) {
   const key = msg.id != null ? `m${msg.id}` : fallbackKey;
   // #2387: the message a reply thread hangs off, drawn at the thread's head —
   // a row of its own (never grouped with the first reply), with its thread
   // chip left off since the thread is what is open.
-  if (msg.threadRoot) return <MessageRow key={key} msg={{ ...msg, thread: null }} surface="thread" />;
+  if (msg.threadRoot) return <MessageRow key={key} msg={threadHead(msg)} surface="thread" />;
   if (msg.kind === 'spec_share') return <SpecShareRow key={key} msg={msg} />;
   // `chat` is a change page's own Discussion, drawn in the general chat's
   // language: every notice as a message (its rows arrive with an event from
@@ -832,7 +857,10 @@ function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, ch
         { author: previous.username, at: previous.at },
         { author: msg.username, at: msg.at, reply: !!msg.quote },
       );
-    return <MessageRow key={key} msg={msg} grouped={grouped} surface={main ? 'main' : 'thread'} />;
+    // Whether this row's reply thread is the open one: read here, on every
+    // render of the rows, and handed down, because the row itself is memo()'d.
+    const threadOpen = main && !!msg.thread && msg.id != null && !!controller()?.isReplyThreadOpen?.(msg.id);
+    return <MessageRow key={key} msg={msg} grouped={grouped} surface={main ? 'main' : 'thread'} threadOpen={threadOpen} />;
   }
   if ((main || chat) && msg.event) return <EventRow key={key} msg={msg} />;
   return <SystemRow key={key} msg={msg} />;
@@ -942,7 +970,10 @@ export function TranscriptRows({ view, source, foldCards = false }: {
   // ends with the quiet card when nobody has commented, as the general chat
   // does when nobody has posted.
   const chat = !main && view.lead.language === 'chat';
-  const rows = foldRepeats(view.messages).filter((m) => !main || drawnInGeneralChat(m));
+  // Folded once per message list: a fold is a new object, and one rebuilt on
+  // every render would redraw its memo()'d row every time.
+  const folded = useMemo(() => foldRepeats(view.messages), [view.messages]);
+  const rows = folded.filter((m) => !main || drawnInGeneralChat(m));
   const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message')
     ? view.lead.quiet
     : null;

@@ -98,14 +98,28 @@
      have let every chip and every code block see the card behind it, which
      is a different change and a wrong one. Only the plane is glass.
 
-     The blur is what makes it glass rather than a wash: without it the star
-     and the washes come through as recognisable shapes behind body text.
-     `saturate` compensates for the fact that averaging a wash with white
-     drains it — the deck's own frosted surfaces are more saturated than
-     their backdrop, not less. */
+     NO BLUR, ON ANY PLATFORM. `--dc-frost` was `blur(24px) saturate(1.6)`,
+     and WebKit re-ran that filter over every frosted surface on every frame
+     that content scrolled behind it or a spring moved it: the phone stutter
+     #787 and #3104 measured. It is `none` everywhere now, so every platform
+     draws the same colours: a plane that only ever sits on the fixed
+     wallpaper keeps its translucent fill (the washes are soft shapes already,
+     and measured against the glass the fill alone lands within a few points
+     of it), and a surface that content scrolls or slides behind, or that
+     floats over other UI, is opaque in the `-solid` colour below. The token
+     stays so every `backdrop-filter: var(--dc-frost)` keeps resolving. */
   --dc-strip-fill: rgba(244, 242, 228, 0.38);
   --dc-sheet-fill: rgba(255, 255, 255, 0.50);
-  --dc-frost: blur(24px) saturate(1.6);
+  --dc-frost: none;
+  /* THE PLANE COLOURS, OPAQUE: each fill composited over the wallpaper's
+     base (244, 242, 228), which is what the glass showed wherever nothing
+     but the wallpaper was behind it. Used by the bars, sheets, panels and
+     heads that content passes behind, so they read as the same material as
+     the planes without letting that content show through. Not --dc-sheet /
+     --dc-strip: those are the neutral #ffffff / #f5f5f7 surface values, and
+     a bar in them came out whiter and greyer than the glass it replaced. */
+  --dc-sheet-solid: #faf9f2;
+  --dc-strip-solid: #f4f2e4;
   /* FLOATING surfaces are denser (#2887). A pane is glass over the
      wallpaper, which the platform draws and keeps soft; a dialog or a menu
      floats over WHATEVER is under it — an app's dark UI, a code block, a
@@ -580,8 +594,14 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   pointer-events: none;
 }
 .messages-conversation-row:last-child::after { display: none; }
-.messages-conversation-row:hover,
 .messages-conversation-active { background: var(--messages-selected); }
+/* A pointer that can actually hover only (the #2892 rule for app tiles). On
+   a touch screen WebKit keeps :hover on the last row tapped, so the row you
+   opened, or merely scrolled from, stayed tinted like the active one after
+   you came back to the list. */
+@media (hover: hover) {
+  .messages-conversation-row:hover { background: var(--messages-selected); }
+}
 .messages-row-line {
   display: flex;
   align-items: center;
@@ -2159,8 +2179,6 @@ form.agent-session-composer:focus-within {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-/* iOS app: opaque, as the no-backdrop-filter blocks do (#787, "THE PANE GLASS GOES TOO"). */
-:where(html.un-ios.in-native-webview) .global-chat-result { background: var(--dc-sheet); }
 .global-chat-result-head {
   display: flex;
   align-items: center;
@@ -2500,8 +2518,6 @@ form.agent-session-composer:focus-within {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-/* iOS app: opaque, as the no-backdrop-filter blocks do (#787, "THE PANE GLASS GOES TOO"). */
-:where(html.un-ios.in-native-webview) .global-chat-composer { background: var(--dc-sheet); }
 .global-chat-composer textarea {
   flex: 1 1 auto;
   min-width: 0;
@@ -2596,6 +2612,10 @@ form.agent-session-composer:focus-within {
   --dc-strip-fill: rgba(11, 13, 27, 0.55);
   --dc-sheet-fill: rgba(28, 28, 30, 0.72);
   --dc-float-fill: rgba(28, 28, 30, 0.95);
+  /* The same fills composited over the dark wallpaper's ground (11, 13, 27);
+     see the light block for what these are for. */
+  --dc-sheet-solid: #17181d;
+  --dc-strip-solid: #0b0d1b;
   --bg-code: #141416;
   --bg-code-header: #1c1c1e;
   --bg-card: rgba(90, 169, 255, 0.10);
@@ -2968,49 +2988,42 @@ form.agent-session-composer:focus-within {
   --un-toast-inset-bottom: var(--platform-tabs-h, 0px);
 }
 
-/* ── Native iOS performance baseline (#787) ──────────────────────────
-   The Flutter shell marks the top document with .in-native-webview before
-   first paint (index.html) and the kit independently adds .un-ios.  Together
-   those are a reliable scope for the reported surface; do not guess a phone
-   model from the UA, and do not reduce motion in Safari/PWA or on Android.
+/* ── No glass, on any platform (#787, #3104, and since the phone audit) ──
+   Live backdrop blur is unusually expensive in WebKit on a phone while the
+   content behind it scrolls or a spring moves the surface every frame. #787
+   measured it in the app's WKWebView and #3104 took it off there, which left
+   the app drawing the opaque no-blur fallbacks (neutral #ffffff / #f5f5f7)
+   while Safari, the PWA, Android and desktop drew warm glass: two colour
+   schemes for one product. The decision since is ONE scheme and no blur: the
+   shell's `--dc-frost` is `none` everywhere (see the token), the planes keep
+   their translucent fills, and what content passes behind is opaque in the
+   `-solid` plane colours, identically on every platform.
 
-   Live backdrop blur is unusually expensive in a WKWebView while the content
-   behind it scrolls or a transition snapshot moves.  These surfaces already
-   own opaque sheet backgrounds, so dropping the blur preserves contrast while
-   avoiding a full-surface filter pass.  The nav tokens are translucent by
-   design, therefore pin them to the platform surface in this scope. */
-html.un-ios.in-native-webview {
+   The kit's own frosted chrome goes the same way here, for the shell only
+   (native.css keeps its defaults for apps): no blur on the nav bar, action
+   sheet cards, alerts and toasts, and the two nav tokens, translucent by
+   design, pinned to the platform surface so nothing reads through them.
+
+   THE MOTION CHANGES ONLY IN THE APP: `html.un-ios.in-native-webview`. The
+   Flutter shell marks the top document with .in-native-webview before first
+   paint (index.html); with .un-ios that is a reliable scope for the native
+   snapshot's view transition and the decorative loops further down. Do not
+   guess a phone model from the UA, and do not reduce motion in Safari/PWA or
+   on Android. */
+:root {
   --un-navbar-bg: var(--bg-primary);
   --un-toast-bg: #1c1c2a;
 }
 
-html.un-ios.in-native-webview .platform-chat-header.un-scrolled,
-html.un-ios.in-native-webview .un-navbar,
-html.un-ios.in-native-webview .un-action-card,
-html.un-ios.in-native-webview .un-alert,
-html.un-ios.in-native-webview .un-toast {
+.platform-chat-header.un-scrolled,
+.un-navbar,
+.un-action-card,
+.un-alert,
+.un-toast {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
-/* THE PANE GLASS GOES TOO. Since #787 the frost token (`--dc-frost`) spread to
-   the tab bar, the header, the Messages and Settings planes, the Workshop
-   panes and every kit sheet, panel and dialog: surfaces that content scrolls
-   behind, or that slide on every frame of a spring, which is the case #787
-   measured as expensive. The shell already defines what each of them looks
-   like with no backdrop-filter at all: every `@supports not
-   (backdrop-filter…)` block in this file drops the translucent fill for the
-   opaque `--dc-sheet` / `--dc-strip` behind it (the fill without the blur
-   leaves the star and the washes sitting unblurred under body text, which is
-   worse than a flat surface). In the iOS app each of those blocks has a twin
-   right after it, scoped here, so the app draws exactly that fallback. The
-   few frosted surfaces with no such block get the same `--dc-sheet` beside
-   their rules: the header, which matches the tab bar's material ("THE BAR IS
-   THE SAME MATERIAL…" below), and Global Chat's composer and result cards and
-   the app chat's event boxes. Safari, the PWA and Android keep the glass. */
-html.un-ios.in-native-webview {
-  --dc-frost: none;
-}
 /* The kit's default iOS page transition dims its full-page snapshot with a
    brightness filter while also translating it.  Keep the spatial push/pop
    cue, but use transform-only keyframes and a shorter capture lifetime in the
@@ -3323,9 +3336,13 @@ html[data-browser-scroller] :is(#platform-header, #landing-header) {
   top: var(--browser-banner-h);
   z-index: 30;
 }
+/* Faked glass, not a live blur: the landing scrolls under this header over
+   the fixed wallpaper, so it paints its tint over the washes once (see "THE
+   ONE FAKED LAYER"). */
 html[data-browser-scroller] #landing-header {
-  background: color-mix(in srgb, var(--home-ground) 92%, transparent);
-  backdrop-filter: blur(12px);
+  --fake-glass-tint: color-mix(in srgb, var(--home-ground) 92%, transparent);
+  background: transparent;
+  clip-path: inset(0);
 }
 html[data-browser-scroller="browse-screen"] #browse-search-bar {
   top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top));
@@ -3557,12 +3574,14 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      shorthand is what that variable has to hold; the body uses the same
      value, and the 640px rule below swaps in the wider one. Each layer is
      `<image> <position> / <size> <repeat>`, the colour rides on the last. */
-  --home-wallpaper:
-    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
-    var(--home-grain) 0 0 / 240px 240px repeat,
+  --home-washes:
     radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
+  --home-wallpaper:
+    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-grain) 0 0 / 240px 240px repeat,
+    var(--home-washes);
   background: var(--home-wallpaper);
 }
 /* THE WALLPAPER FOLLOWS THE APP'S TONE AS WELL AS THE SHELL'S (#1945). The
@@ -3595,12 +3614,14 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      image, so the shorthands below keep their shape and the desktop rule
      needs no second copy. */
   --home-grain: none;
-  --home-wallpaper:
-    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
-    var(--home-grain) 0 0 / 240px 240px repeat,
+  --home-washes:
     radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at 70px calc(100% - 69px), rgba(118, 31, 15, 0.75) 90px, rgba(118, 31, 15, 0.375) 170px, rgba(118, 31, 15, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
+  --home-wallpaper:
+    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-grain) 0 0 / 240px 240px repeat,
+    var(--home-washes);
 }
 /* WIDE VIEWPORTS. The three discs above are the phone frame's, anchored in
    px to its corners, and on a desktop window they shrink into the corners
@@ -3613,9 +3634,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
   body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
-    --home-wallpaper:
-      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
-      var(--home-grain) 0 0 / 240px 240px repeat,
+    --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat,
@@ -3623,11 +3642,13 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(245, 215, 230, 0.65), rgba(245, 215, 230, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(252, 219, 212, 0.7), rgba(252, 219, 212, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(229, 216, 239, 0.55), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
-  }
-  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-wallpaper:
       var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
+      var(--home-washes);
+  }
+  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+    --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at 70px calc(100% - 69px), rgba(118, 31, 15, 0.75) 90px, rgba(118, 31, 15, 0.375) 170px, rgba(118, 31, 15, 0) 250px) 0 0 / 100% 100% no-repeat,
@@ -3635,6 +3656,10 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(117, 36, 77, 0.65), rgba(117, 36, 77, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(118, 31, 15, 0.7), rgba(118, 31, 15, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(80, 48, 105, 0.55), rgba(80, 48, 105, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
+    --home-wallpaper:
+      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+      var(--home-grain) 0 0 / 240px 240px repeat,
+      var(--home-washes);
   }
 }
 /* THE BAR OVER THE WALLPAPER. On every wallpaper route the header's
@@ -3700,12 +3725,18 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-/* iOS app: opaque, as the no-backdrop-filter blocks do (#787, "THE PANE GLASS GOES TOO"). */
-:where(html.un-ios.in-native-webview) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
+/* …AND THE HEADER, faked the same way as the tab bar ("FAKED GLASS" below;
+   its layer is in the shared rule there),
+   on exactly the routes the glass rules above cover. The clip follows the
+   bar's own `rounded-b-2xl` (1.25rem in tailwind.config.js), so the notch
+   the surfaces below tuck into keeps its shape. Nothing inside the header
+   reaches past its box, so the clip cuts nothing. */
+body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
              #settings-screen, #messages-screen, #workshop-screen,
              #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header,
-:where(html.un-ios.in-native-webview) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
-  background-color: var(--dc-sheet);
+body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+  background-color: transparent;
+  clip-path: inset(0 round 0 0 1.25rem 1.25rem);
 }
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
@@ -5177,16 +5208,15 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
    with rows sliding crisply under the pinned head is the rendering fault the
    frost prevents. All three parts go opaque together, because they must stay
    the same colour as each other above all. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+/* SOLID ON A PHONE, ALL THREE TOGETHER, on every platform. The list scrolls
+   under the pinned head, so with no blur the head has to be opaque, and the
+   three parts are one pane, so they stay one colour (see --dc-sheet-solid).
+   md+ is untouched: there the bar wears the wallpaper's own ground. */
+@media (max-width: 767px) {
   #browse-screen .browse-pane-head,
   #browse-screen .browse-pane-body,
-  #browse-screen .browse-pane-note { background-color: var(--dc-sheet); }
+  #browse-screen .browse-pane-note { background-color: var(--dc-sheet-solid); }
 }
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) #browse-screen .browse-pane-head,
-:where(html.un-ios.in-native-webview) #browse-screen .browse-pane-body,
-:where(html.un-ios.in-native-webview) #browse-screen .browse-pane-note { background-color: var(--dc-sheet); }
 
 /* ── App-card "…" actions menu ─────────────────────────────
    Popover built by Home.openCardMenu (appended to <body>, fixed-
@@ -5531,7 +5561,13 @@ body:has(#platform-header.hidden) #app-frame-host {
 
 /* ── Dev chat messages ─────────────────────────────────── */
 
-.dc-messages-container { scroll-behavior: smooth; }
+/* NO `scroll-behavior: smooth` on .dc-messages-container. It made every
+   programmatic write to the pane's scrollTop an animation, and the pane
+   follows its newest message by writing scrollTop as tokens stream in: each
+   write restarted the smooth scroll from wherever the last one had got to,
+   so the pane crept after the text instead of staying with it. The jumps
+   that are meant to glide ask for it themselves (scrollTo with
+   `behavior: 'smooth'`). */
 
 /* #1942: a new session's empty state, centred in the message pane. */
 .dc-empty-state {
@@ -8637,8 +8673,6 @@ span.gc-vote-btn-icon { cursor: default; }
   font-size: 13px; line-height: 1.4; color: var(--text-secondary);
   text-decoration: none;
 }
-/* iOS app: opaque, as the no-backdrop-filter blocks do (#787, "THE PANE GLASS GOES TOO"). */
-:where(html.un-ios.in-native-webview) .gc-event-box { background-color: var(--dc-sheet); }
 a.gc-event-box { cursor: pointer; }
 
 /* #2884: the folded rest of a run of cards — "… 4 more" under the first
@@ -10038,22 +10072,15 @@ html.un-kb #settings-content-col > .settings-sheet {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-/* NO BLUR, NO GLASS. Without backdrop-filter the same alphas leave the star
-   and the three washes sitting UNBLURRED behind body text, which is worse
-   than the flat surface this replaced — the effect depends on the blur, not
-   on the transparency. So where the filter is unsupported both planes fall
-   back to the opaque values they had, and the ladder reads exactly as it did
-   before this change. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dc-lift-strip { background-color: var(--dc-strip); }
-  .dc-lift-session { background-color: var(--dc-sheet); }
-  #dc-session-header.un-scrolled { background-color: var(--dc-strip); }
-}
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) .dc-lift-strip { background-color: var(--dc-strip); }
-:where(html.un-ios.in-native-webview) .dc-lift-session { background-color: var(--dc-sheet); }
-:where(html.un-ios.in-native-webview) #dc-session-header.un-scrolled { background-color: var(--dc-strip); }
+/* NO BLUR, SAME FILL. The planes used to fall back to the opaque --dc-strip /
+   --dc-sheet wherever the filter was off (unsupported browsers, then the iOS
+   app), on the argument that the fill alone shows the star and the washes
+   unblurred behind body text. It made two colour schemes: neutral grey and
+   white on those, warm glass everywhere else. The washes are soft shapes
+   either way, and measured against the glass the fill alone lands within a
+   few points of it, so every platform now draws the fill and nothing else
+   (see --dc-frost). That includes the scrolled session header: it sits in
+   flow above #dc-messages, so the transcript never passes behind it. */
 
 /* Mounted panes retain their DOM and state, but stop painting after exit.
    The separate overlay-scrim paint layer cuts out the rounded surface. It is
@@ -10091,12 +10118,8 @@ html.un-kb #settings-content-col > .settings-sheet {
 /* NO BLUR, NO GLASS — the same fallback the two planes above take, and for
    the same reason: without the filter the alphas leave the page sitting
    unblurred behind body text. The separate scrim is unaffected; only the pane goes opaque. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dc-lift-panel { background-color: var(--dc-sheet); }
-}
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) .dc-lift-panel { background-color: var(--dc-sheet); }
+/* It floats over the page, so it is solid (see --dc-sheet-solid). */
+.dc-lift-panel { background-color: var(--dc-sheet-solid); }
 
 /* Shell-only frosted kit surfaces. PlatformUI attaches the same cutout
    paint layer used by the legacy panes. Kit opacity/presence and teardown
@@ -10106,6 +10129,21 @@ html.un-kb #settings-content-col > .settings-sheet {
 .un-backdrop:has(+ .un-sheet),
 .un-backdrop:has(+ .un-panel) {
   background: transparent;
+}
+/* …UNLESS THE SURFACE IS OPAQUE. With no backdrop filter on the surface (every
+   kit sheet, panel and dialog, on every platform) there is no glass to keep
+   undimmed, so lib/overlay-scrim.js skips the cutout layer and its per-frame
+   work and marks the backdrop instead. The backdrop then paints the scrim's
+   colour itself; its opacity is the kit's, which rides a sheet's or panel's
+   position 1:1 and fades with a dialog's card. It takes the scrim's reach as
+   well, a viewport above and below (see `.overlay-scrim`): with the keyboard
+   up iOS pans the visual viewport inside the layout one, and a dim that stops
+   at the fixed box leaves the band on screen undimmed. The reach is off
+   screen, so it changes nothing about what a tap on the dim lands on. `html`
+   puts it above the transparent rule whatever the order. */
+html .un-backdrop.platform-backdrop-dim {
+  inset: -100vh 0;
+  background: var(--pane-scrim);
 }
 .un-modal {
   background-color: var(--dc-float-fill);
@@ -10155,23 +10193,22 @@ html.un-kb #settings-content-col > .settings-sheet {
 }
 /* NO BLUR, NO GLASS: the kit's opaque surface comes back, in the shell's
    own sheet colour. The scrim is a shadow, not a filter, so it survives. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .un-modal, .un-sheet, .un-sheet::after, .un-panel, .un-panel::after,
-  #apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),
-  .un-sheet:has(#apps-switcher-sheet)::after {
-    background-color: var(--dc-sheet);
-  }
+/* SOLID ON EVERY PLATFORM. These float over other UI, so with no blur a
+   see-through fill would show the page's own text behind theirs. The dialog
+   was a 95% fill, so it takes the opaque sheet; sheets and panels take the
+   plane colour they showed over the wallpaper (--dc-sheet-solid). Being
+   opaque is also what lets lib/overlay-scrim.js drop the per-frame cutout
+   and dim with the kit's own backdrop. */
+.un-modal { background-color: var(--dc-sheet); }
+/* Send Feedback wears the plane colour the sheets do, not the neutral white:
+   it is the dialog people open from the same menus as those sheets, and it
+   read as a different material beside them. */
+.un-modal:has(#feedback-form) { background-color: var(--dc-sheet-solid); }
+.un-sheet, .un-sheet::after, .un-panel, .un-panel::after,
+#apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),
+.un-sheet:has(#apps-switcher-sheet)::after {
+  background-color: var(--dc-sheet-solid);
 }
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) .un-modal,
-:where(html.un-ios.in-native-webview) .un-sheet,
-:where(html.un-ios.in-native-webview) .un-sheet::after,
-:where(html.un-ios.in-native-webview) .un-panel,
-:where(html.un-ios.in-native-webview) .un-panel::after,
-:where(html.un-ios.in-native-webview) #apps-switcher-sheet,
-:where(html.un-ios.in-native-webview) .un-sheet:has(#apps-switcher-sheet),
-:where(html.un-ios.in-native-webview) .un-sheet:has(#apps-switcher-sheet)::after { background-color: var(--dc-sheet); }
 
 /* A DIALOG STAYS ON THE PART OF THE SCREEN THE KEYBOARD LEAVES (#2765).
 
@@ -11990,14 +12027,11 @@ a.drawer-ver--fork:hover {
   --un-modal-max-height: var(--create-modal-height);
   --un-modal-padding: var(--create-modal-padding);
   --un-modal-radius: var(--create-modal-radius);
-  background-color: var(--create-modal-fill, var(--dc-strip-fill));
+  /* Centred, it floats over the dimmed page, and with no blur on any
+     platform a 38% fill would let that page read through: the strip's
+     colour, solid. Full screen sets its own ground below. */
+  background-color: var(--create-modal-fill, var(--dc-strip-solid));
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .un-modal:has(> #create-card) { background-color: var(--dc-strip); }
-}
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) .un-modal:has(> #create-card) { background-color: var(--dc-strip); }
 
 /* Create / import fills mobile screens, including wide touch browsers and
    the native webview. These optional layout tokens affect only this dialog;
@@ -12012,8 +12046,8 @@ a.drawer-ver--fork:hover {
    dialog's own title, and even #2887's 95% for floating surfaces still
    ghosted the strip's logo there. A screen that IS the page has nothing
    worth showing through it, so `--create-modal-fill` is the opaque grey
-   ground itself, `--dc-strip`: the same colour the no-backdrop-filter
-   fallback below already paints, so the white cards keep their contrast.
+   ground itself, `--dc-strip`, on every platform alike, so the white
+   cards keep their contrast.
    Being opaque and above the strip (z-45) is also why the top padding does
    not add `--install-strip-h`: the strip is covered, not overlapped, which
    is what that strip's own rule asks of a surface the person opened. */
@@ -13348,12 +13382,6 @@ body.is-offline [data-offline-disabled] {
   padding: 10px 10px 12px;
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :is(#dev-workshop, #dev-kanban) .dev-feed-entry { background-color: var(--dc-sheet); }
-}
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) :is(#dev-workshop, #dev-kanban) .dev-feed-entry { background-color: var(--dc-sheet); }
 :is(#dev-workshop, #dev-kanban) .dev-feed-entry + .dev-feed-entry {
   margin-top: 4px;
 }
@@ -14211,12 +14239,6 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   padding: 12px 14px 14px;
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dev-topic-sheet { background-color: var(--dc-sheet); }
-}
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) .dev-topic-sheet { background-color: var(--dc-sheet); }
 .dev-topic-sheet.dev-topic-card { padding: 6px; }
 .dev-topic-sheet:empty { display: none; }
 .dev-topic-h {
@@ -14945,12 +14967,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   flex-direction: column;
   gap: 8px;
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  #dev-topic-thread #gc-thread-messages { background-color: var(--dc-sheet); }
-}
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) #dev-topic-thread #gc-thread-messages { background-color: var(--dc-sheet); }
 #dev-topic-thread #gc-thread-messages::before {
   content: "Discussion";
   display: block;
@@ -15111,12 +15127,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
   display: flex; flex-direction: column; gap: 8px;
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dev-ws-strip { background-color: var(--dc-sheet); }
-}
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) .dev-ws-strip { background-color: var(--dc-sheet); }
 /* CENTRE, not baseline. Baseline was right while the only thing beside the
    eyebrow was a 22px pill; with a 30px ring in the line the eyebrow's
    baseline aligned to the bottom of the ring and the two read as two rows. */
@@ -15594,12 +15604,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dev-ws-tabs { background-color: var(--dc-sheet); }
-}
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) .dev-ws-tabs { background-color: var(--dc-sheet); }
 /* A GLYPH BESIDE ITS LABEL, 40px tall. It was a glyph OVER its label, 58px,
    while this was a thumb bar at the foot of the window; at the head of the
    page it is a segmented control — the shape the wide layout already draws —
@@ -16050,12 +16054,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   box-shadow: 0 1px 2px rgba(0, 0, 0, .05);
   backdrop-filter: var(--dc-frost); -webkit-backdrop-filter: var(--dc-frost);
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dev-ws-rail-ic { background-color: var(--dc-sheet); }
-}
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) .dev-ws-rail-ic { background-color: var(--dc-sheet); }
 .dev-ws-rail-ic > svg { width: 24px; height: 24px; }
 .dev-ws-rail-lab { font-size: 11px; font-weight: 600; line-height: 1; color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .dev-ws-rail-key { display: none; }
@@ -17062,14 +17060,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    with rows sliding CRISPLY under the pinned head is the rendering fault the
    frost prevents — not a slightly flatter bar. Both halves go opaque together,
    because they must stay the same colour as each other above all. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dev-ws-pane-head, .dev-ws-pane-body, .dev-ws-ear { background-color: var(--dc-sheet); }
-}
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) .dev-ws-pane-head,
-:where(html.un-ios.in-native-webview) .dev-ws-pane-body,
-:where(html.un-ios.in-native-webview) .dev-ws-ear { background-color: var(--dc-sheet); }
+/* SOLID, ALL THREE TOGETHER, on every platform. The body scrolls under the
+   sticky head, so with no blur the head has to be opaque; and the head, the
+   body and the ear read as one pane, so staying the same colour as each
+   other matters more than the body's translucency. */
+.dev-ws-pane-head, .dev-ws-pane-body, .dev-ws-ear { background-color: var(--dc-sheet-solid); }
 /* Inside the pane the toolbar is a plain row: the frame's own `px-3 pt-2`
    placed it against the scroller's edge, and here the pane supplies both. */
 .dev-ws-pane .dev-ws-pane-head #dev-actions { padding: 0; }
@@ -17337,6 +17332,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 @media (hover: none) {
   .tc-se-card[role="button"]:active,
   .home-challenge-card[role="button"]:active {
+    transition: transform 0s linear 120ms, filter 0s linear 120ms;
+  }
+}
+/* Home's app tiles are role="button" too (features/home/app-grid.tsx), in the
+   grid a phone scrolls most, so a flick down Home pressed whichever tile the
+   finger started on. Same hold-back; the tile has no pressed fill of its own
+   (its hover fill is `(hover: hover)` only, #2892), so it is the kit's scale
+   and dim that wait. A held tile still presses before its long-press menu. */
+@media (hover: none) {
+  .app-card[role="button"]:active {
     transition: transform 0s linear 120ms, filter 0s linear 120ms;
   }
 }
@@ -17702,12 +17707,78 @@ html.un-kb #platform-tabs {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .platform-tabs { background-color: var(--dc-sheet); }
+/* FAKED GLASS: THE TAB BAR (and the header, "…AND THE HEADER" above). The
+   two places the glass carries the look, so they keep it, without a filter.
+   The wallpaper is fixed, so what the glass showed over it never changed:
+   the tint over the washes behind the bar (a 24px blur erases the grain and
+   the star, and the washes are soft already). So the bar paints exactly
+   that, once: a viewport-sized fixed layer of the same `--home-washes` the
+   wallpaper draws, so it lines up with the body's pixel for pixel, under the
+   glass tint, and clipped to the bar by `clip-path`, which, unlike
+   `overflow`, also clips a fixed descendant (the usual stand-in for
+   `background-attachment: fixed`, which iOS ignores). Nothing is sampled per
+   frame, so scrolling costs nothing. The one thing it gives up is page
+   content showing through as it passes under: that is the part that cost a
+   filter pass on every frame. Nothing between the bar and the viewport has a
+   transform or a filter (see `.platform-tabs` above), so `fixed` is the
+   screen. */
+.platform-tabs {
+  background-color: transparent;
+  clip-path: inset(0);
 }
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) .platform-tabs { background-color: var(--dc-sheet); }
+/* THE ONE FAKED LAYER, for every surface that fakes its glass: the tab bar,
+   the parked strip, the header and the signed-out landing header. Each sets
+   the transparent background and the clip on itself; `--fake-glass-tint` is
+   its glass fill (the pane fill unless it says otherwise). Resolved here, on
+   the surface, so it reads the route's --home-washes (set on <body>); a
+   route with no wallpaper gets the solid plane colour. */
+.platform-tabs::before,
+.platform-parked::before,
+body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
+             #settings-screen, #messages-screen, #workshop-screen,
+             #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header::before,
+body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header::before,
+html[data-browser-scroller] #landing-header::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--fake-glass-tint, var(--dc-sheet-fill)), var(--fake-glass-tint, var(--dc-sheet-fill))),
+    var(--home-washes, var(--dc-sheet-solid));
+}
+/* THE HAIRLINE GOES BACK ON TOP. The layer paints over its surface's own
+   border (a stacking context's negative layer comes after its background and
+   border), so a bar whose edge is a border redraws it above the layer. */
+@media (max-width: 767px) {
+  .platform-tabs::after,
+  .platform-parked::after {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--app-sheet-line);
+    pointer-events: none;
+  }
+}
+/* THE DOCKED DESKTOP RAIL NEEDS NO FAKE. The page is laid out beside it, not
+   under it, so only the fixed wallpaper is ever behind it and its own
+   translucent fill is exactly the glass without the blur; its edge borders
+   draw as they always did. (The peeked rail floats over the page, so it is
+   solid; see `.platform-tabs.platform-tabs-peek`.) The parked row sits in
+   the rail here and is transparent there, so it drops its layer too. */
+@media (min-width: 768px) {
+  .platform-tabs {
+    background-color: var(--dc-sheet-fill);
+    clip-path: none;
+  }
+  .platform-tabs::before,
+  .platform-parked::before { content: none; }
+  .platform-parked { clip-path: none; }
+}
 
 /* THE BAR SITS LOWER ON iOS (#2766). The inset under it there is the
    home-indicator strip, 34px on a Face ID iPhone, and the indicator is a 5px
@@ -17962,12 +18033,13 @@ html.un-ios {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .platform-parked { background-color: var(--dc-sheet); }
+/* Pages scroll under the strip, which sits on the tab bar: faked glass, the
+   same layer as the bar (see "THE ONE FAKED LAYER"), so the two read as one
+   material on every platform. */
+.platform-parked {
+  background-color: transparent;
+  clip-path: inset(0);
 }
-/* The iOS app draws the same no-glass fallback (#787, "Native iOS
-   performance baseline"); `:where()` keeps the specificity above. */
-:where(html.un-ios.in-native-webview) .platform-parked { background-color: var(--dc-sheet); }
 
 /* THE WHOLE STRIP IS THE TARGET. A shortcut whose tappable area is a 60px
    pill inside a full-width bar is a shortcut you miss; the pill is a LABEL
@@ -19044,9 +19116,9 @@ html.un-kb #platform-parked {
        `--dc-sheet`, so the rail came back over the page as a white panel
        rather than as the rail. `.platform-tabs` already carries the frost;
        restating the fill is what stops the solid one winning, and the
-       `@supports not` fallback above still gives a browser with no
-       backdrop-filter the solid sheet. */
-    background-color: var(--dc-sheet-fill);
+       peeked rail floats over the page, so with no blur it is solid in the
+       plane colour, and unclipped, so its shadow still falls. */
+    background-color: var(--dc-sheet-solid);
     backdrop-filter: var(--dc-frost);
     -webkit-backdrop-filter: var(--dc-frost);
     border-right: 1px solid var(--app-sheet-line);

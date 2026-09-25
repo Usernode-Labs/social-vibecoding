@@ -10,7 +10,11 @@
  *
  * Three sinks, each rendered by React with `dangerouslySetInnerHTML` from a
  * string the MODEL carries, because the markup is another renderer's and is
- * already sanitised where it is built:
+ * already sanitised where it is built. Each goes through ../../../lib/html's
+ * `Html`, which keeps the `{ __html }` object while the string is unchanged:
+ * this head is republished by the checks poll and by websocket events, and
+ * an inline wrapper rewrote every block's innerHTML each time, decoding the
+ * before/after tiles' images again.
  *
  * - an issue's body and a proposal's summary — `DevChat.renderMarkdown`,
  *   the same pipeline the dev chat and the group chat's transcript use.
@@ -28,6 +32,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react';
 
+import { Html } from '../../../lib/html';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
 import { ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
@@ -478,10 +483,7 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
       </summary>
       {/* DevChat.renderMarkdown's output — sanitised where it is built, and
           the same pipeline the issue body above uses. */}
-      <div
-        className="dev-issue-body dev-topic-details-body"
-        dangerouslySetInnerHTML={{ __html: b.html }}
-      />
+      <Html className="dev-issue-body dev-topic-details-body" html={b.html} />
     </details>
   );
 }
@@ -914,7 +916,7 @@ function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
       <div className="dev-topic-visuals" data-visuals-scope="1">
         {/* AppView.visualsTilesHtml's markup — four other surfaces still
             call it, so it stays a string builder. */}
-        <div className="usn-visuals-body" dangerouslySetInnerHTML={{ __html: tiles.tilesHtml }} />
+        <Html className="usn-visuals-body" html={tiles.tilesHtml} />
       </div>
     );
   }
@@ -1004,7 +1006,7 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
         <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} lead={vote} dense={false} />
       </div>
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
-      <div className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" dangerouslySetInnerHTML={{ __html: body.summaryHtml || '' }} />
+      <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
       {hasIssues ? (
         <IssueAssociations
           proposalId={Number(id)}
@@ -1116,7 +1118,7 @@ function DetailsSheet({ id, html }: { id: number; html: string }): ReactNode {
           </button>
         </div>
         {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
-        <div className="dev-issue-body dev-topic-details-body" dangerouslySetInnerHTML={{ __html: html }} />
+        <Html className="dev-issue-body dev-topic-details-body" html={html} />
       </div>
     </div>,
     document.body,
@@ -1315,7 +1317,7 @@ function IssueBody(
           </div>
         </form>
       ) : html ? (
-        <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: html }} />
+        <Html className="dev-topic-about-body" html={html} />
       ) : editor.canEdit ? (
         <p className="dev-topic-note">No description yet.</p>
       ) : null}
@@ -1368,22 +1370,22 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
           {summaryHtml ? (
             <>
               <h5 className="dev-topic-sub">What changes for you</h5>
-              <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: summaryHtml }} />
+              <Html className="dev-topic-about-body" html={summaryHtml} />
             </>
           ) : null}
           {issueEditor ? <IssueBody key={issueEditor.issue} html={issueHtml || ''} editor={issueEditor} />
-            : issueHtml ? <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: issueHtml }} /> : null}
+            : issueHtml ? <Html className="dev-topic-about-body" html={issueHtml} /> : null}
           {tiles ? (
             <div className="dev-topic-visuals" data-visuals-scope="1">
               {/* AppView.visualsTilesHtml's markup — four other surfaces
                   still call it, so it stays a string builder. */}
-              <div className="usn-visuals-body" dangerouslySetInnerHTML={{ __html: tiles.tilesHtml }} />
+              <Html className="usn-visuals-body" html={tiles.tilesHtml} />
             </div>
           ) : null}
           {body.proposalBody ? <ProposalBody b={body.proposalBody} /> : null}
           {body.testing ? <details className="dev-topic-details">
             <summary className="dev-topic-details-summary">Testing instructions</summary>
-            {body.testing.html ? <div className="dev-issue-body dev-topic-details-body" dangerouslySetInnerHTML={{ __html: body.testing.html }} />
+            {body.testing.html ? <Html className="dev-issue-body dev-topic-details-body" html={body.testing.html} />
               : <p className="dev-topic-note">{body.testing.path ? `Testing instructions are recorded in ${body.testing.path}.` : 'No testing instructions have been added yet.'}</p>}
           </details> : null}
           {body.note ? <div className="dev-topic-note">{body.note}</div> : null}

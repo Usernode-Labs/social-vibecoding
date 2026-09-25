@@ -120,8 +120,9 @@ test('beside from 1024px up, decided after mount; the list steps aside; the divi
   const panel = read('frontend/src/features/agent-session/index.tsx');
   const specLayout = read('frontend/src/features/agent-session/spec-layout.ts');
   assert.match(specLayout, /const \[wide, setWide\] = useState\(false\);/, 'false in the prerender and the hydrating render');
-  assert.match(specLayout, /return wide && snapshot\.open && snapshot\.host === host && !!\(snapshot\.specSheet \|\| snapshot\.preview\);/,
+  assert.match(specLayout, /useAgentSessionSelector\(\(s\) => s\.open && s\.host === host && !!\(s\.specSheet \|\| s\.preview\)\);/,
     'the side pane holds the spec, a preview, or both');
+  assert.match(specLayout, /return wide && open;/, 'and only once the window is wide enough');
   assert.match(panel, /const beside = useSidePaneBeside\(embedded \? 'messages' : 'screen'\);/);
   assert.match(panel, /\{beside \? \(\s*<SidePane sheet=\{snapshot\.specSheet\} preview=\{snapshot\.preview\} tab=\{snapshot\.paneTab\} containerRef=\{root\} \/>\s*\) : snapshot\.specSheet \? <SpecSheet sheet=\{snapshot\.specSheet\} \/> : null\}/,
     'beside when there is room, the sheet otherwise');

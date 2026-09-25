@@ -50,7 +50,7 @@ test('Global Chat ships as an experimental hash-routed sibling screen', () => {
   // now opens a new dev session on an app the viewer picks — so the compose
   // button `#messages-new-agent` that started a Global Chat is retired, and
   // an existing chat is resumed from its row.
-  assert.match(inbox, /parityReady\s*\n?\s*&& chat\.bootstrap\.profiles\.globalChat\.enabled === true/);
+  assert.match(inbox, /parityReady\s*\n?\s*&& chatBootstrap\.profiles\.globalChat\.enabled === true/);
   assert.doesNotMatch(inbox, /id="messages-new-agent"/);
   assert.match(inbox, /data-new-choice=\{item\.key\}/);
 });

@@ -70,9 +70,16 @@ export function createLogFollower(): LogFollower {
  * that fits comes up until its bottom edge is on screen, a card taller than
  * the pane aligns its head to the top so the toggle the reader just pressed
  * stays where they pressed it. A card already fully on screen moves nothing.
+ *
+ * Animated, and SAID so here: the reader asked for this movement, so it
+ * glides. It used to inherit that from `.dc-messages-container`'s
+ * `scroll-behavior: smooth`, which also animated every follow-to-bottom a
+ * streaming turn asked for — the rule that made those stutter. Following new
+ * content is instant now (`DevChat._jumpToBottom`), and the one deliberate
+ * jump keeps its animation by asking for it.
  */
 export function revealDisclosure(el: { scrollIntoView?: (opts: ScrollIntoViewOptions) => void } | null): void {
   if (el && typeof el.scrollIntoView === 'function') {
-    el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
   }
 }
