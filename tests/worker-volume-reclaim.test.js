@@ -232,7 +232,7 @@ test('the volume inventory names each change\'s state claim and whether a worker
 // ── Visual evidence on a closed change ─────────────────────────────────
 
 for (const status of ['merged', 'archived']) {
-  test(`no evidence run starts on a ${status} change`, async () => {
+  test(`no automatic evidence run starts on a ${status} change`, async () => {
     const created = [];
     const pool = {
       async query() {

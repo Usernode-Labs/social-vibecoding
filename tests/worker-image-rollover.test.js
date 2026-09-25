@@ -21,20 +21,22 @@ function runtimeName(sessionId) {
   return `sv-worker-s${sessionId}`;
 }
 
-function mockWarmWorker(t, { imageRef }) {
+function mockWarmWorker(t, { imageRef, storageMode = 'persistent' }) {
   const deleted = [];
   const bootstrapped = [];
   t.mock.method(kubernetes, 'getWorkerStatus', async () => 'running');
   t.mock.method(kubernetes, 'getWorkerRuntimeMetadata', async () => ({
     contractVersion,
     imageRef,
+    storageMode,
   }));
   t.mock.method(kubernetes, 'deleteWorker', async (_config, sessionId, options) => {
     deleted.push({ sessionId, options });
   });
-  t.mock.method(kubernetes, 'ensureWorker', async (config, { sessionId }) => {
-    bootstrapped.push({ sessionId, imageRef: config.kubernetes.workerImage });
-    return { runtimeName: runtimeName(sessionId), pvcName: `${runtimeName(sessionId)}-state` };
+  t.mock.method(kubernetes, 'ensureWorker', async (config, { sessionId, temporary }) => {
+    bootstrapped.push({ sessionId, imageRef: config.kubernetes.workerImage, temporary });
+    return { runtimeName: runtimeName(sessionId),
+      pvcName: temporary ? null : `${runtimeName(sessionId)}-state` };
   });
   t.mock.method(github, 'checkRepoPublic', async () => ({ ok: true, private: false }));
   t.mock.method(github, 'getCloneUrl', async () => 'https://github.com/owner/repo.git');
@@ -63,5 +65,29 @@ test('a warm Kubernetes worker on an old image is reconciled without deleting it
   assert.deepEqual(calls.bootstrapped, [{
     sessionId,
     imageRef: process.env.KUBERNETES_WORKER_IMAGE,
+    temporary: false,
   }]);
+});
+
+test('a temporary evidence worker reconciles a persistent warm worker without deleting its PVC first', async (t) => {
+  const sessionId = 9103;
+  const calls = mockWarmWorker(t, { imageRef: process.env.KUBERNETES_WORKER_IMAGE });
+  worker.adoptWarmWorker(sessionId, runtimeName(sessionId));
+
+  assert.equal(await worker.ensureWorker(sessionId, { ...ensureArgs, temporary: true }), runtimeName(sessionId));
+  assert.deepEqual(calls.deleted, []);
+  assert.deepEqual(calls.bootstrapped, [{
+    sessionId, imageRef: process.env.KUBERNETES_WORKER_IMAGE, temporary: true,
+  }]);
+});
+
+test('a temporary evidence worker is reused for a repair turn', async (t) => {
+  const sessionId = 9104;
+  const calls = mockWarmWorker(t, {
+    imageRef: process.env.KUBERNETES_WORKER_IMAGE, storageMode: 'temporary',
+  });
+  worker.adoptWarmWorker(sessionId, runtimeName(sessionId));
+
+  assert.equal(await worker.ensureWorker(sessionId, { ...ensureArgs, temporary: true }), runtimeName(sessionId));
+  assert.deepEqual(calls.bootstrapped, [], 'repair keeps the same model thread on pod storage');
 });

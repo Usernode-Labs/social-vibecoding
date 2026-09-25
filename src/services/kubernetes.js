@@ -1161,7 +1161,8 @@ const VOLUME_QUOTA_RETRIES = 10;
 // quota refuses this one and resolves how many it deleted. The quota's usage
 // drops only once the controller observes those deletions, so the claim is
 // retried for a short while rather than once.
-async function ensureWorker(config, { sessionId, env, onProgress, reclaimVolumes = null, retryDelayMs = VOLUME_QUOTA_RETRY_MS }) {
+async function ensureWorker(config, { sessionId, env, onProgress, temporary = false,
+  reclaimVolumes = null, retryDelayMs = VOLUME_QUOTA_RETRY_MS }) {
   const cfg = config.kubernetes;
   if (!cfg.workerImage?.includes('@sha256:')) throw new Error('KUBERNETES_WORKER_IMAGE must be an immutable digest');
   const namespace = cfg.workerNamespace;
@@ -1181,21 +1182,23 @@ async function ensureWorker(config, { sessionId, env, onProgress, reclaimVolumes
       await core.createNamespacedPersistentVolumeClaim({ namespace, body: pvc });
     } catch (err) { if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err; }
   };
-  try {
-    await claimVolume();
-  } catch (err) {
-    if (!isQuotaExceeded(err) || typeof reclaimVolumes !== 'function') throw err;
-    const freed = await reclaimVolumes({ sessionId }).catch(() => 0);
-    if (!(freed > 0)) throw err;
-    let last = err;
-    for (let attempt = 0; attempt < VOLUME_QUOTA_RETRIES; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-      try { await claimVolume(); last = null; break; } catch (retryErr) {
-        if (!isQuotaExceeded(retryErr)) throw retryErr;
-        last = retryErr;
+  if (!temporary) {
+    try {
+      await claimVolume();
+    } catch (err) {
+      if (!isQuotaExceeded(err) || typeof reclaimVolumes !== 'function') throw err;
+      const freed = await reclaimVolumes({ sessionId }).catch(() => 0);
+      if (!(freed > 0)) throw err;
+      let last = err;
+      for (let attempt = 0; attempt < VOLUME_QUOTA_RETRIES; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        try { await claimVolume(); last = null; break; } catch (retryErr) {
+          if (!isQuotaExceeded(retryErr)) throw retryErr;
+          last = retryErr;
+        }
       }
+      if (last) throw last;
     }
-    if (last) throw last;
   }
   await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, {
     apiVersion: 'v1', kind: 'Secret', metadata: { name: secretName, namespace, labels: resourceLabels }, type: 'Opaque',
@@ -1203,7 +1206,8 @@ async function ensureWorker(config, { sessionId, env, onProgress, reclaimVolumes
   });
   const deployed = await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
     apiVersion: 'apps/v1', kind: 'Deployment', metadata: {
-      name, namespace, labels: { ...resourceLabels, ...workerContractLabels },
+      name, namespace, labels: { ...resourceLabels, ...workerContractLabels,
+        'social.usernode.io/storage-mode': temporary ? 'temporary' : 'persistent' },
     },
     spec: {
       replicas: 1,
@@ -1228,7 +1232,9 @@ async function ensureWorker(config, { sessionId, env, onProgress, reclaimVolumes
             resources: { requests: { cpu: '250m', memory: '512Mi' }, limits: { cpu: config.workerCpus || '2', memory: (config.workerMemory || '2Gi').replace(/g$/i, 'Gi') } },
             securityContext: containerSecurityContext(),
           }],
-          volumes: [{ name: 'state', persistentVolumeClaim: { claimName: pvcName } }],
+          volumes: [{ name: 'state', ...(temporary
+            ? { emptyDir: {} }
+            : { persistentVolumeClaim: { claimName: pvcName } }) }],
         },
       },
     },
@@ -1236,7 +1242,7 @@ async function ensureWorker(config, { sessionId, env, onProgress, reclaimVolumes
   await waitForWorkerBootstrap(core, apps, { namespace, name, onProgress,
     imageRef: cfg.workerImage, environmentChecksum: envChecksum(env),
     generation: deployed?.metadata?.generation || 0 });
-  return { runtimeKind: 'kubernetes', runtimeName: name, pvcName };
+  return { runtimeKind: 'kubernetes', runtimeName: name, pvcName: temporary ? null : pvcName };
 }
 
 async function getWorkerStatus(config, runtimeName) {
@@ -1308,9 +1314,11 @@ async function getWorkerRuntimeMetadata(config, runtimeName) {
     return {
       contractVersion: deployment.metadata?.labels?.['social.usernode.io/worker-contract'] || null,
       imageRef: worker?.image || null,
+      storageMode: deployment.spec?.template?.spec?.volumes?.find((volume) => volume.name === 'state')?.emptyDir
+        ? 'temporary' : 'persistent',
     };
   } catch (err) {
-    if (isNotFound(err)) return { contractVersion: null, imageRef: null };
+    if (isNotFound(err)) return { contractVersion: null, imageRef: null, storageMode: null };
     throw err;
   }
 }

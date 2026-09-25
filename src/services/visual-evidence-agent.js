@@ -201,6 +201,13 @@ async function withDispatchTimeout(promise, { timeoutMs, onTimeout, suspendedMs 
   }
 }
 
+// Imported proposals have no hosted coding session to resume. A merged native
+// proposal is terminal too. Their evidence planner only needs its workspace
+// for the duration of this run, so it must not consume a retained worker PVC.
+function temporaryEvidenceWorker(session) {
+  return session?.source === 'imported' || session?.status === 'merged';
+}
+
 async function ensureEvidenceWorker(session, { onProgress = null, workerService = worker } = {}) {
   const { owner, repo } = repoParts(session.repo_url);
   return workerService.ensureWorker(session.id, {
@@ -208,6 +215,7 @@ async function ensureEvidenceWorker(session, { onProgress = null, workerService 
     repoName: repo,
     branchName: session.branch_name,
     onProgress,
+    temporary: temporaryEvidenceWorker(session),
   });
 }
 
@@ -443,6 +451,7 @@ module.exports = {
   failedResult,
   resultThreadId,
   ensureEvidenceWorker,
+  temporaryEvidenceWorker,
   withDispatchTimeout,
   dispatch,
 };

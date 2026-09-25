@@ -65,9 +65,22 @@ did not infer that every old failure still exists on the current deployment.
 
 ## What remains to verify
 
-- Deploy the branch and rerun #4937/#4935 to confirm the recovered-navigation
-  fix under a normal Homeroom run. A passing local test alone does not prove
-  the production browser behaves identically.
+- The first post-deploy #4937 rerun (`4d4e3721611aaecc3cf7aacebeb1bb07`)
+  failed at `worker_prepare_start`, before model exploration or browser replay.
+  Kubernetes refused a new `sv-worker-s4937-state` PVC: the worker namespace
+  had reached both limits, 120/120 claims and 600/600 GiB requested. This
+  result does not test the recovered-navigation fix. Evidence planners for
+  imported or already merged proposals now use temporary pod storage and
+  release the worker after the run, including failure. Active native coding
+  sessions retain their resumable PVCs. Concurrent PR #3118 can reclaim idle
+  volumes under quota pressure; this evidence fix does not rely on freeing
+  another session's storage. The exact owners of the 120 claims at failure
+  were not inspected, so their individual retention status remains unknown.
+  PR #3118 also blocked all evidence scheduling after merge; this follow-up
+  preserves its automatic stop while allowing an explicit manual rerun.
+- Once the temporary-worker change deploys, rerun #4937/#4935 to confirm the
+  recovered-navigation fix under a normal Homeroom run. A passing local test
+  alone does not prove the production browser behaves identically.
 - Rerun #4863/#4864 with **new, truthful UI intent** and a controlled failure
   plan after deployment; their old `impact: none` declarations cannot be
   repaired by replaying the same intent.

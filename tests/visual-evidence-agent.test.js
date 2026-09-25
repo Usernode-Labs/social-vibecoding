@@ -7,6 +7,17 @@ const worker = require('../src/services/worker');
 const fs = require('node:fs');
 const path = require('node:path');
 
+test('evidence uses temporary worker storage only when no coding session can resume', async () => {
+  const options = [];
+  const workerService = { ensureWorker: async (_id, config) => { options.push(config); return 'worker'; } };
+  const session = { id: 42, repo_url: 'https://github.com/acme/demo.git',
+    branch_name: 'proposal', status: 'promoted' };
+  await agent.ensureEvidenceWorker(session, { workerService });
+  await agent.ensureEvidenceWorker({ ...session, source: 'imported' }, { workerService });
+  await agent.ensureEvidenceWorker({ ...session, status: 'merged' }, { workerService });
+  assert.deepEqual(options.map((option) => option.temporary), [false, true, true]);
+});
+
 test('agent dispatch time is bounded and invokes worker cancellation', async () => {
   let stopped = 0;
   await assert.rejects(

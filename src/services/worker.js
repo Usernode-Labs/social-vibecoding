@@ -2267,7 +2267,7 @@ async function _harvestBootstrapLog(containerName) {
 // callers should use `ensureWorker` which handles the "already warm"
 // case and concurrency.
 async function _bootstrapWarmContainer(sessionId, {
-  repoOwner, repoName, branchName, onProgress,
+  repoOwner, repoName, branchName, onProgress, temporary = false,
 }) {
   let containerName = workerContainerName(sessionId);
 
@@ -2324,7 +2324,7 @@ async function _bootstrapWarmContainer(sessionId, {
   if (usesKubernetesWorkers()) {
     try {
       const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
-        sessionId, env: safeEnv, onProgress,
+        sessionId, env: safeEnv, onProgress, temporary,
         reclaimVolumes: async () => {
           const pool = _getPoolSafe();
           if (!pool) return 0;
@@ -2550,7 +2550,7 @@ async function _awaitWarmReady(containerName, { onProgress, timeoutMs = WARM_REA
 // the registry entry is cleared so the next caller retries from scratch.
 async function ensureWorker(sessionId, {
   repoOwner, repoName, branchName,
-  onProgress,
+  onProgress, temporary = false,
 } = {}) {
   await accountDeletionGuard(sessionId);
   const containerName = workerRuntimeName(sessionId);
@@ -2585,12 +2585,17 @@ async function ensureWorker(sessionId, {
     const staleReason = labels['usernode.proxy'] !== WORKER_BOOTSTRAP_ENV_VERSION
       ? 'runtime-contract'
       : (kubernetesWorkers && runtime.imageRef !== workerConfig.kubernetes.workerImage
-        ? 'worker-image' : null);
+        ? 'worker-image'
+        : (kubernetesWorkers && runtime.storageMode !== (temporary ? 'temporary' : 'persistent')
+          ? 'storage-mode' : null));
     if (staleReason) {
       // A recovered/in-flight turn owns this worker until it settles. Normal
       // dispatch serialization means this is defensive, but keep the image
       // rollout from ever becoming a reason to interrupt paid work.
       if (existing?.inFlight) {
+        if (staleReason === 'storage-mode') {
+          throw new Error('Cannot change worker storage while a turn is running');
+        }
         log.info('worker', 'Deferring stale warm worker replacement until turn completion', {
           containerName, staleReason,
         });
@@ -2628,7 +2633,7 @@ async function ensureWorker(sessionId, {
   const bootstrap = (async () => {
     try {
       const runtimeName = await _bootstrapWarmContainer(sessionId, {
-        repoOwner, repoName, branchName, onProgress,
+        repoOwner, repoName, branchName, onProgress, temporary,
       });
       await accountDeletionGuard(sessionId);
       _registryUpsert(sessionId, {
@@ -4126,6 +4131,7 @@ async function destroyCcVolume(sessionId) {
   } else {
     await docker.removeVolume(ccVolumeName(sessionId));
   }
+  _warmRegistry.delete(sessionId);
 }
 
 // Kubernetes worker state volumes, one per change (see
