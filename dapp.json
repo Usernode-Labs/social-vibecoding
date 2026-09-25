@@ -3214,9 +3214,14 @@
       "expectSelector": "#workshop-list a[data-workshop-app]:first-of-type [data-workshop-needs]:not([data-workshop-needs=\"0\"])"
     },
     {
-      "name": "The Workshop screen draws no empty-state line while it has rows, and no scope chip over its flat list of apps (#2759)",
+      "name": "The Workshop screen draws no empty-state line while it has rows, and leads with the All apps chip over its Current status and Needs you tabs (#3051, reverses #2759)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):not(:has(#workshop-scope)):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
+      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-scope[aria-controls=\"workshop-scope-picker\"] ~ div > #workshop-tab-status[aria-current=\"page\"] + #workshop-tab-needs):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
+    },
+    {
+      "name": "The Workshop's Needs you tab lists the votes waiting on you item by item, under each of your apps (#3051)",
+      "path": "/?demo=1&ws=needs#workshop",
+      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-tab-needs[aria-current=\"page\"]) [data-workshop-pane=\"needs\"] [data-workshop-group=\"staging-demo-your-app\"] a[data-workshop-item=\"governance\"][href^=\"#app/staging-demo-your-app/dev/\"]"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",

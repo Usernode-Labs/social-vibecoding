@@ -712,19 +712,22 @@ test('the app\'s own Workshop wears the same scope chip, read from the other end
   assert.match(ws, /iconUrl=\{app\.iconUrl\}/);
   assert.match(ws, /const app = useStoreState\(improveStore\);/);
 
-  // THE PANEL'S "All apps" ROW IS THE WAY BACK UP.
-  assert.match(chrome, /onClick=\{\(\) => \{ onClose\(\); goToAllApps\(\); \}\}/);
+  // THE PANEL'S "All apps" ROW IS THE WAY BACK UP — from an app's Workshop.
+  // On the all-apps screen itself (#3051, `scope === null`) it only closes.
+  assert.match(chrome, /onClose\(\);\n\s*if \(scope === null\) return;\n\s*goToAllApps\(\);/);
   assert.match(chrome, /function goToAllApps\(\): void \{[\s\S]{0,200}window\.location\.hash = '#workshop';/,
     'a hash assignment, so the rail\'s Workshop tab and this are one route');
   // The app you are already in closes the panel and goes nowhere: a row that
   // re-navigated to the current route would throw this screen's scroll
   // position and its open windows away to arrive where it started.
-  assert.match(chrome, /onClose\(\);\n\s*if \(scope\.slug === app\.slug\) return;/);
+  assert.match(chrome, /onClose\(\);\n\s*if \(scope\?\.slug === app\.slug\) return;/);
 
   // ITS OPEN STATE IS A STORE OF ITS OWN (#2768): two controls open this
   // panel — the chip above 700px, the header's tile and name below it — so
   // the flag cannot be the chip's `useState`. And it is still not
-  // workshopStore: that was the all-apps screen's, which wears no chip now.
+  // workshopStore: the all-apps screen's chip (#3051) keeps its flag there,
+  // and a flag shared between two screens is a panel left open on one
+  // greeting the other.
   const island = chrome.slice(chrome.indexOf('export function AppWorkshopScope('));
   assert.match(island, /const \{ open \} = useStoreState\(appScopeStore\)/);
   assert.ok(!island.includes('workshopStore'), 'the two screens share no flag');
@@ -733,4 +736,170 @@ test('the app\'s own Workshop wears the same scope chip, read from the other end
   // The list loads in an effect and never during render.
   assert.match(island, /useEffect\(\(\) => \{[\s\S]{0,600}fetch\(`\/api\/apps\$\{demoQuery\(\)\}`\)/);
   assert.match(island, /catch \{/, 'and offline leaves the chip working');
+});
+
+// ── 4. The rows behind the counts (#3051) ──────────────────────────────
+//
+// The all-apps screen's two tabs list, item by item, what its two numbers
+// count. The failure this section exists for is the one section 1 guards
+// against for the counts: a SECOND spelling of the populations that drifts,
+// so a row says "3 votes waiting" over a tab that lists two.
+
+test('#3051: the items query reads the counts\' own five predicates, once each', () => {
+  const src = read('src/routes/workshop-overview.js');
+  // One definition per population, interpolated into both queries.
+  for (const name of ['MY_SESSIONS_WHERE', 'MY_PROPOSALS_WHERE', 'MY_GOVERNANCE_WHERE',
+    'OWED_PROPOSALS_WHERE', 'OWED_GOVERNANCE_WHERE']) {
+    assert.equal((src.match(new RegExp(`const ${name} = `, 'g')) || []).length, 1, `${name} is defined once`);
+    assert.equal((src.match(new RegExp(`\\$\\{${name}\\}`, 'g')) || []).length, 2,
+      `${name} is read by COUNTS_SQL and ITEMS_SQL alike`);
+  }
+  assert.equal((src.match(/\$\{VISIBLE_APP_WHERE\}/g) || []).length, 2,
+    'and both apply GET /api/apps\'s visibility filter');
+  const items = route.ITEMS_SQL;
+  assert.ok(items.includes(require('../src/services/pr-vote-revision').currentVotePredicateSql('pv', 'cs')));
+  assert.equal((items.match(new RegExp(require('../src/services/governance-kinds')
+    .governanceKindsSql('i').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 2,
+  'both `issues` branches read governance proposals, never the request board');
+  // Five branches, in the order the sections are named.
+  const sections = [...items.matchAll(/SELECT '(working|needs)'/g)].map((m) => m[1]);
+  assert.deepEqual(sections, ['working', 'working', 'working', 'needs', 'needs']);
+});
+
+test('#3051: the items read is bounded per app and in all', () => {
+  const sql = route.ITEMS_SQL;
+  assert.match(sql, /PARTITION BY it\.app_id, it\.section/);
+  assert.match(sql, /WHERE r\.rn <= \$4/);
+  assert.match(sql, /LIMIT \$5/);
+  // Newest-first rank ahead of slug, so the overall cap trims every app's
+  // oldest rows before it drops any app's newest.
+  assert.match(sql, /ORDER BY r\.rn, a\.slug, r\.section/);
+  assert.ok(route.ITEMS_PER_APP > 0 && route.ITEMS_PER_APP <= 10);
+  assert.ok(route.ITEMS_TOTAL > 0 && route.ITEMS_TOTAL <= 500);
+});
+
+test('#3051: GET /api/workshop/items refuses an anonymous caller', async () => {
+  const router = route.workshopOverviewRoutes({ databaseUrl: 'postgres://stub/stub' });
+  const layer = router.stack.find((l) => l.route?.path === '/api/workshop/items');
+  assert.ok(layer, 'GET /api/workshop/items is registered');
+  assert.ok(layer.route.methods.get && Object.keys(layer.route.methods).length === 1, 'and it only reads');
+  let status = null;
+  let body = null;
+  await layer.route.stack[0].handle(
+    { user: null, query: {}, params: {} },
+    { status(code) { status = code; return this; }, json(payload) { body = payload; return this; } },
+    () => {},
+  );
+  assert.equal(status, 401);
+  assert.deepEqual(body, { error: 'Not authenticated' });
+});
+
+test('#3051: rows group by app and section, and the demo agrees with the demo counts', () => {
+  const at = new Date('2026-09-24T09:00:00Z');
+  const grouped = route.groupItems([
+    { slug: 'a', section: 'working', kind: 'session', id: '4', title: 'T', status: 'active', at },
+    { slug: 'a', section: 'needs', kind: 'governance', id: 5, title: null, status: 'rename', at: null },
+    { slug: 'b', section: 'needs', kind: 'proposal', id: 6, title: 'P', status: 'promoted', at },
+  ]);
+  assert.deepEqual(grouped.a.working, [{ kind: 'session', id: 4, title: 'T', status: 'active', at: at.toISOString() }]);
+  assert.deepEqual(grouped.a.needs.map((i) => [i.id, i.title, i.at]), [[5, '', null]]);
+  assert.deepEqual(grouped.b.working, []);
+  // The demo rows sit under the demo counts, so the preview's row and tab agree.
+  for (const [slug, slot] of Object.entries(route.DEMO_ITEMS)) {
+    assert.equal(slot.working.length, route.DEMO_COUNTS[slug].working, `${slug} working`);
+    assert.equal(slot.needs.length, route.DEMO_COUNTS[slug].needs, `${slug} needs`);
+  }
+  const real = { 'staging-demo-your-app': { working: [], needs: [] } };
+  assert.deepEqual(route.withDemoItems(real)['staging-demo-your-app'], { working: [], needs: [] },
+    'real rows win, as they do for the counts');
+});
+
+test('#3051: each tab lists its items under each of your apps, in the list\'s order', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const rows = [
+    { slug: 'owed', name: 'Owed', working: 0, needs: 7 },
+    { slug: 'mine', name: 'Mine', working: 1, needs: 0 },
+    { slug: 'quiet', name: 'Quiet', working: 0, needs: 0 },
+  ];
+  const item = (kind, id) => ({ kind, id, title: `#${id}`, status: 'promoted', at: null });
+  const items = {
+    owed: { working: [], needs: [item('proposal', 1), item('governance', 2)] },
+    mine: { working: [item('session', 3)], needs: [] },
+    // An app that is NOT one of yours: the endpoint answers for every app the
+    // viewer can see, and the screen keeps to the rows /api/apps called yours.
+    stranger: { working: [item('session', 9)], needs: [item('proposal', 9)] },
+  };
+  const needs = mod.groupItems(rows, items, 'needs');
+  assert.deepEqual(needs.map((g) => [g.app.slug, g.items.length, g.more]), [['owed', 2, 5]],
+    'the bounded read left five of seven out, and the tab says so');
+  const status = mod.groupItems(rows, items, 'status');
+  assert.deepEqual(status.map((g) => [g.app.slug, g.items.length, g.more]), [['mine', 1, 0]]);
+
+  assert.equal(mod.itemHref('my app', item('proposal', 1)), '#app/my%20app/dev/proposals/1');
+  assert.equal(mod.itemHref('x', item('governance', 2)), '#app/x/dev/governance/2');
+  assert.equal(mod.itemHref('x', item('session', 3)), '#app/x/dev/sessions/3');
+  assert.equal(mod.itemCaption(item('governance', 2), 'needs'), 'Group decision waiting on your vote');
+  assert.equal(mod.itemCaption({ ...item('session', 3), status: 'paused' }, 'status'), 'Your change, paused');
+  assert.doesNotMatch(read('frontend/src/features/workshop/index.tsx'), /—'|'[^'\n]*—[^'\n]*'/,
+    'no em dash in the screen\'s copy');
+
+  assert.equal(mod.tabFromQuery('?demo=1&ws=needs'), 'needs');
+  assert.equal(mod.tabFromQuery('?ws=all'), null, 'All items is an app\'s own tab, not this screen\'s');
+  assert.equal(mod.tabFromQuery(''), null);
+});
+
+test('#3051: the Needs you pane draws its items, and a quiet line when there are none', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
+  mod.workshopStore.set({
+    open: true, error: false, tab: 'needs', scopeOpen: false, itemsError: false,
+    rows: [{ slug: 'staging-demo-your-app', name: 'Your app', working: 0, needs: 1 }],
+    items: { 'staging-demo-your-app': { working: [], needs: [
+      { kind: 'proposal', id: 8, title: 'Sort by rating', status: 'promoted', at: null },
+    ] } },
+  });
+  let out = html();
+  const pane = out.slice(out.indexOf('data-workshop-pane="needs"'));
+  assert.match(pane, /<section data-workshop-group="staging-demo-your-app">/);
+  assert.match(pane, /<a[^>]*href="#app\/staging-demo-your-app\/dev\/proposals\/8"[^>]*data-workshop-item="proposal"/);
+  assert.match(pane, /Sort by rating/);
+
+  mod.workshopStore.set({ items: {} });
+  out = html();
+  assert.match(out.slice(out.indexOf('data-workshop-pane="needs"')), /data-workshop-items-empty=""/);
+  mod.workshopStore.set({ items: null, itemsError: true });
+  out = html();
+  assert.match(out.slice(out.indexOf('data-workshop-pane="needs"')), /data-workshop-items-error=""/);
+  mod.workshopStore.set({ open: false, tab: 'status', rows: null, items: null, itemsError: false });
+});
+
+test('#3051: the controller reads the items alongside, and survives losing them', async () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const { workshopController, workshopStore } = mod;
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  global.window = { Home: { partitionApps: (list) => ({ yours: list, rest: [] }) } };
+  try {
+    const answers = new Map([
+      ['/api/apps', { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A' }] }) }],
+      ['/api/workshop/counts', { ok: true, json: async () => ({ counts: { a: { working: 0, needs: 1 } } }) }],
+      ['/api/workshop/items', { ok: true, json: async () => ({ items: { a: { working: [], needs: [{ kind: 'proposal', id: 1 }] } } }) }],
+    ]);
+    const asked = [];
+    global.fetch = async (url) => { asked.push(url); return answers.get(url) || { ok: false, json: async () => ({}) }; };
+    await workshopController.open();
+    assert.ok(asked.includes('/api/workshop/items'), 'the items are read with the other two');
+    assert.equal(workshopStore.get().itemsError, false);
+    assert.equal(workshopStore.get().items.a.needs.length, 1);
+
+    answers.set('/api/workshop/items', { ok: false, json: async () => ({}) });
+    await workshopController.reload();
+    assert.equal(workshopStore.get().error, false, 'losing the items is not the error card');
+    assert.equal(workshopStore.get().itemsError, true, 'the tabs say so instead');
+    assert.deepEqual(workshopStore.get().rows.map((r) => r.slug), ['a']);
+    workshopController.close();
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    global.fetch = priorFetch;
+  }
 });

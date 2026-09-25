@@ -200,7 +200,7 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // the tab bar's five glyphs are in the document on every route, the app
     // menu draws a chat bubble and an info circle, and the parked strip draws
     // an ✕. (The Workshop's scope chip drew the grid until #2759 took it off
-    // the all-apps screen; the grid is listed below again.)
+    // the all-apps screen, and draws it again since #3051 brought it back.)
     //
     // INTO IT, and every one is a row of the app chip's menu that is not
     // there any more. The platform's destinations left that menu for the tab
@@ -262,12 +262,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M4 5a8 3 0 1 0 16 0 8 3 0 1 0-16 0',
     'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6',
     'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
-    // THE GRID, back behind state (#2759). The all-apps Workshop screen's
-    // scope chip drew it unconditionally as its "All apps" tile; that chip is
-    // gone — the screen is itself the list of apps — and the grid is left
-    // only in the app Workshop's "Which workshop?" panel, which renders once
-    // somebody taps.
-    'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
+    // THE GRID left this list again with #3051. #2759 had put it behind state
+    // when the all-apps Workshop's scope chip went; the owner brought that
+    // chip back as "All apps", and it draws the grid unconditionally.
     'M4 6h16M4 12h16M4 18h16',
     'M4 9.5h16',
     'M4.5 12.75l6 6 9-13.5',
