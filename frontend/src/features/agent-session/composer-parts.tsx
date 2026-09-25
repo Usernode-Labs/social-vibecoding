@@ -117,8 +117,10 @@ export function CreditRing({ credit, children }: { credit: CreditView | null; ch
 
 // ── The model pill and its sheet ────────────────────────────────────────
 
-export function ModelPill({ label, disabled, open, onOpen, pillRef }: {
+export function ModelPill({ label, effort = '', disabled, open, onOpen, pillRef }: {
   label: string;
+  /** The thinking level, small and muted after the name (#3079); '' shows none. */
+  effort?: string;
   disabled: boolean;
   open: boolean;
   onOpen: () => void;
@@ -131,12 +133,13 @@ export function ModelPill({ label, disabled, open, onOpen, pillRef }: {
       className="inline-flex h-10 min-w-0 max-w-[12rem] items-center rounded-full bg-zinc-100 px-4 text-[15px] font-medium text-zinc-900 hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
       aria-haspopup="dialog"
       aria-expanded={open}
-      aria-label={`Model: ${label}`}
+      aria-label={effort ? `Model: ${label}, thinking level ${effort}` : `Model: ${label}`}
       disabled={disabled}
       data-agent-session-model
       onClick={onOpen}
     >
       <span className="truncate">{label}</span>
+      {effort ? <span className="ml-1.5 shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400" data-agent-session-model-effort>{effort}</span> : null}
     </button>
   );
 }

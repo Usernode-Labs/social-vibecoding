@@ -39,6 +39,7 @@ import {
   choiceFromValue,
   choiceValue,
   effectiveChoice,
+  effortLabel,
   effortOptions,
   effortValue,
   offersReasoning,
@@ -1120,6 +1121,7 @@ function useModelChoice() {
   return {
     ready: !!(options.length && current),
     label: selected ? selected.label : 'Model',
+    effortLabel: effortLabel(current, catalog),
     groups: modelGroups(options),
     value,
     effort,
@@ -1447,6 +1449,7 @@ function Composer({ id }: { id: string }) {
         {model.ready ? (
           <ModelPill
             label={model.label}
+            effort={model.effortLabel}
             disabled={archived || model.busy}
             open={sheetOpen}
             onOpen={() => setSheetOpen(true)}

@@ -469,6 +469,12 @@ test('the picker offers the platform\'s models, keeps the conversation\'s own, a
   assert.equal(choice.effortValue({ ...onKimi, reasoningEffort: 'medium' }, catalog), '', 'naming the default is following it');
   assert.equal(choice.effortValue(onKimi, catalog), 'high');
   assert.equal(choice.effortValue({ ...onKimi, reasoningEffort: null }, catalog), '');
+  // #3079: the closed pill names the thinking level; nothing where none applies.
+  assert.equal(choice.effortLabel(onKimi, catalog), 'High');
+  assert.equal(choice.effortLabel({ ...onKimi, reasoningEffort: null }, catalog), 'Medium', 'following the default names it');
+  assert.equal(choice.effortLabel({ ...onKimi, reasoningEffort: null }, { ...catalog, defaultReasoningEffort: null }), '', 'no level known, no placeholder');
+  assert.equal(choice.effortLabel({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null }, catalog), '', 'a model without thinking levels');
+  assert.equal(choice.effortLabel({ backend: 'codex_openrouter', model: 'plain/model', reasoningEffort: 'high' }, catalog), '', 'nor one that does not reason');
   assert.deepEqual(choice.pickerOptions(catalog, null).filter((o) => o.isDefault).map((o) => o.value), ['anthropic:claude-opus-5-5'],
     'the model a conversation with no choice runs on is the one marked default');
 });
@@ -480,6 +486,11 @@ test('the model pill names the model; the sheet groups the models, marks the def
   assert.match(pill, /aria-label="Model: Opus 5\.5"/, 'a screen reader hears what the pill is for');
   assert.match(pill, /aria-haspopup="dialog"[^>]*aria-expanded="false"/);
   assert.match(pill, /<span class="truncate">Opus 5\.5<\/span>/, 'closed: the model alone, no "(default)"');
+  assert.doesNotMatch(pill, /data-agent-session-model-effort/, 'no thinking level, nothing after the name');
+  const withEffort = renderToHtml(createElement(parts.ModelPill, { label: 'Kimi K3', effort: 'High', disabled: false, open: false, onOpen() {}, pillRef: { current: null } }));
+  assert.match(withEffort, /<span class="truncate">Kimi K3<\/span><span class="[^"]*text-xs[^"]*text-zinc-500[^"]*" data-agent-session-model-effort="true">High<\/span>/,
+    '#3079: the thinking level, small and muted, right after the model');
+  assert.match(withEffort, /aria-label="Model: Kimi K3, thinking level High"/);
 
   const options = [
     { value: 'anthropic:claude-sonnet-5', label: 'Sonnet 5', detail: 'about $6.20 for a typical change' },
