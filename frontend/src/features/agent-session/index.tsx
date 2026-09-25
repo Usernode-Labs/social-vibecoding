@@ -47,7 +47,6 @@ import {
 import { badgeFor, formatSize, pastedName } from './attachments';
 import {
   CreditPill,
-  CreditRing,
   ModelPill,
   ModelSheet,
   ModelSheetBody,
@@ -1453,44 +1452,43 @@ function Composer({ id }: { id: string }) {
             pillRef={pill}
           />
         ) : null}
-        <div className="min-w-0 flex-1" />
-        {credit ? <CreditPill credit={credit} onOpen={() => setSheetOpen(true)} /> : null}
-        <CreditRing credit={credit}>
-          {kind === 'save' ? (
-            <Button
-              key="save"
-              type="submit"
-              data-agent-session-send="save"
-              variant="unstyled"
-              size="icon"
-              ink="solid"
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 hover:bg-emerald-700"
-              aria-label="Save as draft"
-              title={SAVE_TITLE}
-            >
-              <SaveDraftIcon width={20} height={20} aria-hidden="true" />
-            </Button>
-          ) : (
-            <Button
-              key="send"
-              type={running ? 'button' : 'submit'}
-              data-agent-session-send={kind}
-              variant={running ? 'pillDanger' : 'pillAccent'}
-              disabledStyle="dim"
-              size="icon"
-              ink={running ? 'dangerTint' : 'solid'}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center"
-              disabled={running ? (snapshot.turn.stopping || snapshot.turn.phase === 'mayor2') : (!sendable || uploading)}
-              aria-label={running ? 'Stop' : uploading ? 'Send (waiting for files to upload)' : 'Send'}
-              title={running
-                ? (snapshot.turn.phase === 'mayor2' ? 'The wrap-up cannot be stopped' : 'Stop')
-                : uploading ? 'Waiting for your files to upload' : 'Send'}
-              onClick={running ? () => void stopAgentTurn() : undefined}
-            >
-              {running ? <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" /> : <ArrowUpIcon className="h-5 w-5" aria-hidden="true" />}
-            </Button>
-          )}
-        </CreditRing>
+        {/* The credits pill doubles as the row's spacer: it takes the free
+            space and decides from it how much to say. */}
+        {credit ? <CreditPill credit={credit} onOpen={() => setSheetOpen(true)} /> : <div className="min-w-0 flex-1" />}
+        {kind === 'save' ? (
+          <Button
+            key="save"
+            type="submit"
+            data-agent-session-send="save"
+            variant="unstyled"
+            size="icon"
+            ink="solid"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 hover:bg-emerald-700"
+            aria-label="Save as draft"
+            title={SAVE_TITLE}
+          >
+            <SaveDraftIcon width={20} height={20} aria-hidden="true" />
+          </Button>
+        ) : (
+          <Button
+            key="send"
+            type={running ? 'button' : 'submit'}
+            data-agent-session-send={kind}
+            variant={running ? 'pillDanger' : 'pillAccent'}
+            disabledStyle="dim"
+            size="icon"
+            ink={running ? 'dangerTint' : 'solid'}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center"
+            disabled={running ? (snapshot.turn.stopping || snapshot.turn.phase === 'mayor2') : (!sendable || uploading)}
+            aria-label={running ? 'Stop' : uploading ? 'Send (waiting for files to upload)' : 'Send'}
+            title={running
+              ? (snapshot.turn.phase === 'mayor2' ? 'The wrap-up cannot be stopped' : 'Stop')
+              : uploading ? 'Waiting for your files to upload' : 'Send'}
+            onClick={running ? () => void stopAgentTurn() : undefined}
+          >
+            {running ? <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" /> : <ArrowUpIcon className="h-5 w-5" aria-hidden="true" />}
+          </Button>
+        )}
       </div>
       {sheetOpen && model.ready ? (
         <ModelSheet anchor={pill} onClose={closeSheet}>

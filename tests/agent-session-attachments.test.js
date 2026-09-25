@@ -260,6 +260,9 @@ test('the limit is green above 40% left, yellow down to 15%, red below; nothing 
   assert.equal(parts.creditView(figures(4934)).label, '$49 left', 'whole dollars from $10');
   assert.equal(parts.creditView(figures(410)).label, '$4.10 left', 'cents below $10');
   assert.equal(parts.creditView(figures(0)).label, 'None left');
+  assert.equal(parts.creditView(figures(3840)).wideLabel, '$38 left / $50', 'with room: what is left over the allowance');
+  assert.equal(parts.creditView(figures(410)).wideLabel, '$4.10 left / $50');
+  assert.equal(parts.creditView(figures(0)).wideLabel, 'None left / $50');
   assert.equal(parts.creditView(figures(-30)).fraction, 0, 'overspent reads empty, not negative');
   assert.equal(parts.creditView(figures(4934)).description, '$49.34 of this week’s $50.00 left');
   assert.equal(parts.creditView(figures(100, { weekly: false })).description, '$1.00 of today’s $50.00 left');
@@ -269,31 +272,38 @@ test('the limit is green above 40% left, yellow down to 15%, red below; nothing 
   assert.equal(parts.creditView(figures(100, { level: 'unavailable' })), null);
 });
 
-test('the pill is gray in every state and only its ink changes; the ring empties clockwise from the top', () => {
+test('the pill is gray in every state and only its ink changes; a bar along its bottom drains from the right', () => {
   const view = (remainingCents) => parts.creditView({ limitCents: 5000, remainingCents, spentCents: 0, byokCents: 0, weekly: true, level: 'ok' });
   const pill = (credit) => renderToHtml(createElement(parts.CreditPill, { credit, onOpen() {} }));
   const inks = { green: 'text-zinc-900 dark:text-white', yellow: 'text-amber-700 dark:text-amber-400', red: 'text-red-600 dark:text-red-400' };
+  const bars = { green: 'text-emerald-500 dark:text-emerald-400', yellow: 'text-amber-500 dark:text-amber-400', red: 'text-red-500 dark:text-red-400' };
   for (const [cents, tone] of [[4000, 'green'], [1500, 'yellow'], [300, 'red']]) {
     const html = pill(view(cents));
     assert.match(html, /bg-zinc-100 [^"]*dark:bg-zinc-700/, `${tone}: the same gray pill`);
     assert.ok(html.includes(inks[tone]), `${tone}: its own ink`);
     assert.match(html, new RegExp(`data-agent-session-credits="${tone}"`));
+    assert.match(html, new RegExp(`class="block h-full bg-current ${bars[tone]}"`), `${tone}: the bar in the tone's colour`);
   }
-  assert.match(pill(view(4934)), /aria-label="Credits: \$49\.34 of this week’s \$50\.00 left"[^>]*>\$49 left</);
 
-  const ring = (credit) => renderToHtml(createElement(parts.CreditRing, { credit }, createElement('button', null, 'Send')));
-  const half = ring(view(2500));
-  assert.match(half, /<svg class="pointer-events-none -scale-x-100 absolute inset-0"/, 'mirrored: it empties clockwise');
-  assert.match(half, /transform="rotate\(-90 24 24\)"/, 'from twelve o\'clock');
-  const circumference = 2 * Math.PI * 22;
-  assert.equal(circumference.toFixed(2), '138.23', 'the primitive\'s written-out circumference agrees with its radius');
-  assert.ok(half.includes(`stroke-dasharray="${(circumference / 2).toFixed(1)} 138.23"`), 'the arc is what is left');
-  assert.match(half, /class="stroke-emerald-500 dark:stroke-emerald-400"/, 'in the tone\'s colour');
-  assert.match(read('frontend/src/features/agent-session/composer-parts.tsx'), /import \{ ProgressHalo \} from '@\/components\/ui\/progress-ring';/,
-    'drawn by the shell primitive: a raw <svg> in a feature file is refused (tests/shell-icon-set.test.js)');
-  assert.match(half, /<button>Send<\/button><\/span>$/, 'Send sits inside it');
-  assert.doesNotMatch(ring(view(0)), /stroke-dasharray/, 'nothing left: the track alone');
-  assert.equal(ring(null), '<button>Send</button>', 'no allowance: a bare Send');
+  const html = pill(view(3840));
+  assert.match(html, /aria-label="Credits: \$38\.40 of this week’s \$50\.00 left"/);
+  // The wrapper is the row's spacer and the query container; the labels swap on its width.
+  assert.match(html, /^<div class="flex min-w-0 flex-1 justify-end \[container-type:inline-size\]"/, 'the pill measures the room it has, not itself');
+  assert.match(html, /<span class="\[@container\(min-width:10rem\)\]:hidden"[^>]*>\$38 left<\/span>/, 'narrow: the short label');
+  assert.match(html, /<span class="hidden \[@container\(min-width:10rem\)\]:inline"[^>]*>\$38 left \/ \$50<\/span>/, 'with room: "$38 left / $50"');
+  // The bar hugs the pill's bottom edge, clipped by its radius, anchored left.
+  assert.match(html, /<button[^>]*class="relative [^"]*overflow-hidden rounded-full/, 'the pill clips the bar to its rounding');
+  assert.match(html, /<span class="pointer-events-none absolute inset-x-0 bottom-0 h-\[3px\]" aria-hidden="true">/, 'along the bottom, full width');
+  assert.match(html, /style="width:76\.8%"/, 'its width is what is left of the allowance');
+  assert.doesNotMatch(html, /right-0|origin-right|-scale-x/, 'anchored left: it shrinks from the right');
+  assert.match(pill(view(0)), /style="width:0%"/, 'nothing left: an empty bar');
+  assert.match(pill(view(5000)), /style="width:100%"/);
+
+  const source = read('frontend/src/features/agent-session/composer-parts.tsx');
+  assert.equal(parts.CreditRing, undefined, 'no ring around Send any more');
+  assert.doesNotMatch(source, /ProgressHalo|credit-ring/, 'the halo is gone');
+  assert.doesNotMatch(read('frontend/src/features/agent-session/index.tsx'), /CreditRing/, 'Send is not wrapped');
+  assert.doesNotMatch(read('frontend/@/components/ui/progress-ring.tsx'), /ProgressHalo/, 'its only caller is gone, so is the primitive\'s halo');
 });
 
 test('the sheet spells out the credits the pill abbreviates', () => {

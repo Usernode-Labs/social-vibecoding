@@ -1,7 +1,7 @@
 /**
  * The pieces of the agent-session composer's bottom row (#2779 follow-up,
  * the "composer, reworked" design): the model pill and the sheet it opens,
- * the credits pill and the ring it draws around Send, and the files sent
+ * the credits pill and the bar along its bottom, and the files sent
  * with a message as the transcript shows them.
  *
  * None of this is in the prerendered shell: the composer mounts with a
@@ -12,7 +12,6 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefO
 import { createPortal } from 'react-dom';
 
 import { CheckIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
-import { ProgressHalo } from '@/components/ui/progress-ring';
 
 import type { AiBudgetFigures } from '../header/ai-budget';
 import { attachmentUrl, type AgentAttachment } from './api';
@@ -31,6 +30,8 @@ export interface CreditView {
   tone: CreditTone;
   /** "$38 left", "$4.10 left", "None left". */
   label: string;
+  /** The label with the allowance after it, for a pill with room: "$38 left / $50". */
+  wideLabel: string;
   /** For a screen reader and the tooltip: "$38.40 of this week's $50.00 left". */
   description: string;
   weekly: boolean;
@@ -43,10 +44,10 @@ function dollars(cents: number, exact = false): string {
 }
 
 /**
- * What the pill and the ring say, from the header's own figures
+ * What the pill and its bar say, from the header's own figures
  * (../header/ai-credit.js). Green while more than 40% of the allowance is
  * left, yellow down to 15%, red below. Nothing for an account with no
- * allowance to spend (locked, unavailable, or no figures yet): the ring would
+ * allowance to spend (locked, unavailable, or no figures yet): the bar would
  * only ever read empty there.
  */
 export function creditView(figures: AiBudgetFigures | null | undefined): CreditView | null {
@@ -56,12 +57,14 @@ export function creditView(figures: AiBudgetFigures | null | undefined): CreditV
   const fraction = remainingCents / figures.limitCents;
   const tone: CreditTone = fraction > 0.4 ? 'green' : fraction > 0.15 ? 'yellow' : 'red';
   const window = figures.weekly ? 'this week’s' : 'today’s';
+  const label = remainingCents > 0 ? `${dollars(remainingCents)} left` : 'None left';
   return {
     remainingCents,
     limitCents: figures.limitCents,
     fraction,
     tone,
-    label: remainingCents > 0 ? `${dollars(remainingCents)} left` : 'None left',
+    label,
+    wideLabel: `${label} / ${dollars(figures.limitCents)}`,
     description: `${dollars(remainingCents, true)} of ${window} ${dollars(figures.limitCents, true)} left`,
     weekly: !!figures.weekly,
     byokCents: Number(figures.byokCents) || 0,
@@ -74,44 +77,48 @@ const PILL_INK: Record<CreditTone, string> = {
   yellow: 'text-amber-700 dark:text-amber-400',
   red: 'text-red-600 dark:text-red-400',
 };
-const RING_INK: Record<CreditTone, string> = {
+const BAR_INK: Record<CreditTone, string> = {
   green: 'text-emerald-500 dark:text-emerald-400',
   yellow: 'text-amber-500 dark:text-amber-400',
   red: 'text-red-500 dark:text-red-400',
 };
-const RING_STROKE: Record<CreditTone, string> = {
-  green: 'stroke-emerald-500 dark:stroke-emerald-400',
-  yellow: 'stroke-amber-500 dark:stroke-amber-400',
-  red: 'stroke-red-500 dark:stroke-red-400',
-};
-
-/** "$38 left" in a gray pill beside Send; it opens the model sheet, which spells it out. */
+/**
+ * "$38 left" in a gray pill beside Send; it opens the model sheet, which
+ * spells it out. When the row leaves it room it says "$38 left / $50".
+ *
+ * "Room" is a container query, not a measured width: the pill's wrapper takes
+ * the row's free space (it is the row's spacer) and is the query container,
+ * so the wide label shows once that space is 10rem or more and the pill never
+ * reflows the row it measures. Both labels are rendered and CSS picks one;
+ * the button's aria-label says the full figures either way.
+ *
+ * Along the pill's bottom edge runs what is left, as a bar clipped by the
+ * pill's own rounding: anchored left, so as credits are spent it drains from
+ * the right. It is decoration beside the words, so it is hidden from a
+ * screen reader.
+ */
 export function CreditPill({ credit, onOpen }: { credit: CreditView; onOpen: () => void }) {
   return (
-    <button
-      type="button"
-      className={`inline-flex h-8 shrink-0 items-center rounded-full bg-zinc-100 px-3 text-sm font-semibold tabular-nums dark:bg-zinc-700 ${PILL_INK[credit.tone]}`}
-      aria-label={`Credits: ${credit.description}`}
-      title={credit.description}
-      data-agent-session-credits={credit.tone}
-      onClick={onOpen}
-    >
-      {credit.label}
-    </button>
-  );
-}
-
-/**
- * Send, Stop or Save inside a ring of what is left, which empties clockwise
- * from twelve o'clock (@/components/ui/progress-ring.tsx ProgressHalo).
- */
-export function CreditRing({ credit, children }: { credit: CreditView | null; children: ReactNode }) {
-  if (!credit) return <>{children}</>;
-  return (
-    <span className="relative inline-flex h-12 w-12 shrink-0 items-center justify-center" data-agent-session-credit-ring={credit.tone}>
-      <ProgressHalo fraction={credit.fraction} arcClassName={RING_STROKE[credit.tone]} className="absolute inset-0" />
-      {children}
-    </span>
+    <div className="flex min-w-0 flex-1 justify-end [container-type:inline-size]" data-agent-session-credits-room>
+      <button
+        type="button"
+        className={`relative inline-flex h-8 shrink-0 items-center overflow-hidden rounded-full bg-zinc-100 px-3 text-sm font-semibold tabular-nums dark:bg-zinc-700 ${PILL_INK[credit.tone]}`}
+        aria-label={`Credits: ${credit.description}`}
+        title={credit.description}
+        data-agent-session-credits={credit.tone}
+        onClick={onOpen}
+      >
+        <span className="[@container(min-width:10rem)]:hidden" data-agent-session-credits-label="compact">{credit.label}</span>
+        <span className="hidden [@container(min-width:10rem)]:inline" data-agent-session-credits-label="wide">{credit.wideLabel}</span>
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px]" aria-hidden="true">
+          <span
+            className={`block h-full bg-current ${BAR_INK[credit.tone]}`}
+            style={{ width: `${Math.round(credit.fraction * 1000) / 10}%` }}
+            data-agent-session-credits-bar
+          />
+        </span>
+      </button>
+    </div>
   );
 }
 
@@ -263,7 +270,7 @@ export function ModelSheetBody({ groups, value, onPick, effort, credit, onClose,
             aria-valuenow={credit.remainingCents / 100}
             className="h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700"
           >
-            <div className={`h-full rounded-full bg-current ${RING_INK[credit.tone]}`} style={{ width: `${Math.round(credit.fraction * 100)}%` }} />
+            <div className={`h-full rounded-full bg-current ${BAR_INK[credit.tone]}`} style={{ width: `${Math.round(credit.fraction * 100)}%` }} />
           </div>
           <p className="flex flex-wrap gap-x-3 text-[13px] text-zinc-600 dark:text-zinc-300">
             <span className="flex-1">{credit.description}</span>
