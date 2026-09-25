@@ -244,7 +244,9 @@ test('blocking and access-revocation purge an active direct thread locally', () 
 
 test('message Markdown delegates only to the established DOMPurify allowlist', () => {
   assert.match(markdown, /window\.DevChat\.renderMarkdown\(content, \{ breaks: true \}\)/);
-  assert.match(devChat, /return DOMPurify\.sanitize\(html, \{/);
+  // `out`, because the sanitized html is cached before it is returned
+  // (tests/dev-chat-smoothness.test.js pins that it is byte-identical).
+  assert.match(devChat, /const out = DOMPurify\.sanitize\(html, \{/);
   assert.match(devChat, /ALLOW_DATA_ATTR: false/);
   assert.match(devChat, /ALLOWED_TAGS:/);
 });
