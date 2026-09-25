@@ -106,7 +106,17 @@ interface LastPass {
   processed: number;
   paused: string | null;
   detail?: string | null;
+  // How long the bot waits before trying again after a platform fault (#3122).
+  retryInMs?: number | null;
   refusals?: Refusal[];
+}
+
+/** When a paused pass will try again, from the pass time and its backoff. */
+function retryAt(loop: LastPass): string {
+  if (!loop.retryInMs) return '';
+  const at = Date.parse(loop.at);
+  if (Number.isNaN(at)) return '';
+  return when(new Date(at + loop.retryInMs).toISOString());
 }
 
 interface Payload {
@@ -468,7 +478,8 @@ function HomeroomBotSection() {
           {payload?.loop
             ? `Last pass ${when(payload.loop.at)}: ${payload.loop.processed} triaged${payload.loop.refreshed ? ', queue refreshed' : ''}${
               payload.loop.paused === 'budget' ? '; paused on the weekly cap'
-                : payload.loop.paused === 'infra' ? `; paused on a platform fault (${payload.loop.detail || 'see the logs'})`
+                : payload.loop.paused === 'infra' ? `; paused on a platform fault (${payload.loop.detail || 'see the logs'})${
+                  retryAt(payload.loop) ? `, trying again at ${retryAt(payload.loop)}` : ''}`
                   : payload.loop.paused === 'mode_off' ? '; stopped because the mode was switched off'
                     : payload.loop.busy ? '; another instance held the loop' : ''}.`
             : 'No pass has run since the platform started.'}

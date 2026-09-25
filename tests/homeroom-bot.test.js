@@ -769,6 +769,123 @@ test('runOnce: an app inside its backoff window is skipped like a paused one', a
   bot._resetForTests();
 });
 
+// ── Storage and platform faults (#3122) ──────────────────────────────────
+
+const QUOTA_ERROR = 'worker: HTTP-Code: 403\nMessage: Unknown API Status Code!\nBody: "{\\"kind\\":\\"Status\\",\\"status\\":\\"Failure\\",\\"message\\":\\"persistentvolumeclaims \\\\\\"sv-worker-s4670-state\\\\\\" is forbidden: exceeded quota: social-vibecoding, requested: persistentvolumeclaims=1,requests.storage=5Gi, used: persistentvolumeclaims=120,requests.storage=600Gi, limited: persistentvolumeclaims=120,requests.storage=600Gi\\",\\"reason\\":\\"Forbidden\\",\\"code\\":403}"';
+
+test('the bot starts its worker on temporary storage, never a volume', async () => {
+  // Every issue starts a fresh thread (#3036), so nothing on the worker has
+  // to outlive the turn; a 5Gi volume per app is what filled the quota.
+  const { pool, deps, calls } = triageHarness({ verdictText: 'x', sessionId: 910 });
+  await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  assert.equal(calls.ensured[0].opts.temporary, true);
+});
+
+test('summarizeFault says which quota is full instead of printing the Kubernetes body', () => {
+  assert.equal(bot.summarizeFault(QUOTA_ERROR), 'the worker storage quota is full');
+  assert.equal(bot.summarizeFault('worker: pods "x" is forbidden: exceeded quota: ns, requested: pods=1'), 'a worker quota is full');
+  assert.equal(bot.summarizeFault('credential_required'), 'credential_required');
+  assert.equal(bot.summarizeFault('a\n  b'), 'a b', 'whitespace collapses');
+  assert.ok(bot.summarizeFault('x'.repeat(500)).length <= 161, 'and anything else is clipped');
+});
+
+test('a platform fault backs off the whole bot, doubling to an hour, until a turn runs', () => {
+  bot._resetForTests();
+  const t0 = 1_000_000;
+  assert.equal(bot.faultBackoff(t0), null);
+  const delays = [];
+  for (let i = 0; i < 7; i += 1) delays.push(bot.noteFault(QUOTA_ERROR, t0).delayMs);
+  assert.deepEqual(delays, [2, 4, 8, 16, 32, 60, 60].map((m) => m * 60 * 1000));
+  const live = bot.faultBackoff(t0 + 1000);
+  assert.equal(live.error, 'the worker storage quota is full');
+  assert.equal(live.remainingMs, 60 * 60 * 1000 - 1000);
+  bot.clearFault();
+  assert.equal(bot.faultBackoff(t0 + 1000), null);
+  bot._resetForTests();
+});
+
+test('a retry that hits the same fault is logged but writes no second row', async () => {
+  // 60 rows in 70 minutes while the quota was full: one per retry, every 30s.
+  bot._resetForTests();
+  bot.noteFault(QUOTA_ERROR);
+  const { pool, deps, calls } = triageHarness({ verdictText: 'x', sessionId: 911 });
+  deps.worker.ensureWorker = async () => { throw new Error(QUOTA_ERROR.replace(/^worker: /, '')); };
+  const out = await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  assert.equal(out.reason, 'infra');
+  assert.ok(!calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'no second row for the same fault');
+  assert.ok(calls.queries.some((q) => /SET started_at = NULL WHERE id = \$1/.test(q.s)), 'the issue is still handed back');
+
+  // A DIFFERENT fault in the same streak is news, and gets its row.
+  const other = triageHarness({ verdictText: 'x', sessionId: 912 });
+  other.deps.worker.ensureWorker = async () => { throw new Error('image pull failed'); };
+  await bot.runTriage(other.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: other.deps });
+  assert.ok(other.calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)));
+  bot._resetForTests();
+});
+
+test('runOnce: inside a fault backoff it refreshes but dispatches nothing, and says when it retries', async () => {
+  // A wake pulls the next pass forward to zero; without this gate it would
+  // restart the storm the backoff exists to stop.
+  bot._resetForTests();
+  bot.noteFault(QUOTA_ERROR);
+  const { pool } = mockPool({ settings: [{ key: bot.KEY_MODE, value: 'shadow' }] });
+  let batched = false;
+  const realQuery = pool.query.bind(pool);
+  pool.query = async (sql, params) => {
+    if (/FROM homeroom_bot_queue q JOIN apps/.test(String(sql))) batched = true;
+    return realQuery(sql, params);
+  };
+  const out = await bot.runOnce(pool, {}, {
+    github: { async fetchPublicIssues() { return { issues: [] }; } }, forceRefresh: true,
+    worker: { async listWorkerVolumes() { return []; } },
+  });
+  assert.equal(out.refreshed, true, 'the queue still refreshes');
+  assert.equal(batched, false, 'no batch is taken');
+  assert.equal(out.paused, 'infra');
+  assert.equal(out.detail, 'the worker storage quota is full');
+  assert.ok(out.retryInMs > 0 && out.retryInMs <= 2 * 60 * 1000);
+  bot._resetForTests();
+});
+
+test('the loop waits out a fault backoff instead of the 30-second idle', () => {
+  assert.match(SRC, /if \(out\.paused === 'infra' && out\.retryInMs > 0\) delay = Math\.max\(IDLE_PASS_DELAY_MS, out\.retryInMs\);/);
+  assert.match(SRC, /if \(r\.ran\) \{ processed \+= 1; clearFault\(\); \}/, 'a turn that ran ends the streak');
+});
+
+test('releaseBotVolumes frees only the bot\'s own volumes whose worker is gone', async () => {
+  const destroyed = [];
+  const volumes = [
+    { sessionId: 4670, attached: false, terminating: false }, // bot, idle: freed
+    { sessionId: 4685, attached: true, terminating: false }, // bot, warm worker: kept
+    { sessionId: 4961, attached: false, terminating: true }, // bot, already going
+    { sessionId: 5000, attached: false, terminating: false }, // a person's: never
+    { sessionId: 4700, attached: false, terminating: false }, // bot, delete fails: logged
+  ];
+  const asked = [];
+  const pool = {
+    async query(sql, params) {
+      asked.push(params);
+      return { rows: params[1].filter((id) => [4670, 4685, 4961, 4700].includes(id)).map((id) => ({ id })) };
+    },
+  };
+  const worker = {
+    async listWorkerVolumes() { return volumes; },
+    async destroyCcVolume(id) { if (id === 4700) throw new Error('boom'); destroyed.push(id); },
+  };
+  const freed = await bot.releaseBotVolumes(pool, BOT, { worker });
+  assert.deepEqual(freed, [4670]);
+  assert.deepEqual(destroyed, [4670]);
+  assert.equal(asked[0][0], 77, 'scoped to the bot user');
+  assert.deepEqual(asked[0][1].sort(), [4670, 4700, 5000], 'only detached, settled volumes are even considered');
+  assert.deepEqual(await bot.releaseBotVolumes(pool, BOT, { worker: {} }), [], 'a Docker host has nothing to free');
+});
+
+test('the dashboard says when the bot will try again after a fault', () => {
+  const ui = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(ui, /, trying again at \$\{retryAt\(payload\.loop\)\}/);
+  assert.match(ui, /retryInMs\?: number \| null;/);
+});
+
 // ── A turn record nothing owns (#2737) ───────────────────────────────────
 
 test('clearStaleTurn: clears an old record with no container, and never a live one', async () => {
