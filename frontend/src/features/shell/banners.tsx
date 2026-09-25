@@ -16,19 +16,15 @@ import { useVisibility } from '../../lib/visibility-store';
  * CSS on a body class and owns an interactive control. Both are wholly
  * React-owned subtrees: nothing in public/js/** writes into either any more.
  *
- * The rendered DOM is byte-identical to the hand-written markup — same
- * attribute order, same class-string order, not merely the same class set —
- * which is what makes the before/after screenshots a real test of the wiring
- * rather than an assertion about it. In `public/index.html` the only change
- * either banner produces is the removal of the `/js/offline.js` script tag.
+ * Visibility and classes retain the legacy shell's ownership contract.
  */
 
 /**
- * `#offline-banner` — "You're offline — showing saved content" (#487).
+ * `#offline-banner` — Homeroom connectivity status (#487).
  *
  * Shown while the /health connectivity probe fails; everything on screen is
- * the last version that loaded successfully. Hidden the moment the probe
- * succeeds.
+ * the last version that loaded successfully. This says nothing about access
+ * to the rest of the internet. Hidden the moment the probe succeeds.
  *
  * Visibility comes from the store rather than props because the publisher is
  * `lib/offline.ts`, which runs at module scope — before this component's
@@ -51,7 +47,7 @@ export function OfflineBanner() {
 
   return (
     <Alert ref={ref} id={OFFLINE_BANNER_ID} variant="banner" startHidden>
-      You&apos;re offline. Showing saved content
+      Reconnecting to Homeroom. Showing saved content
     </Alert>
   );
 }

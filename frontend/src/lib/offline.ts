@@ -14,7 +14,7 @@
  * The banner element is now a React island (features/shell/banners.tsx), so
  * the one line that used to do `banner.classList.toggle('hidden', !offline)`
  * publishes into the visibility store instead and the island renders the
- * class. EVERYTHING ELSE IS UNCHANGED, on purpose:
+ * class. The legacy integration points remain:
  *
  *   - `window.Offline` keeps its exact API. Six call sites across app.js,
  *     app-view.js, home.js and auth-screens.js use `Offline.isOffline()` /
@@ -57,6 +57,7 @@ export interface OfflineApi {
 let offline = false;
 let probing: Promise<void> | null = null;
 let recheckTimer: ReturnType<typeof setInterval> | null = null;
+const PROBE_TIMEOUT_MS = 5000;
 // Set by forceOffline() for the ?shot= deep links: the state is pinned and
 // probing is disabled, so a screenshot of the offline UI can be taken on a
 // perfectly good connection.
@@ -110,10 +111,26 @@ function set(next: boolean): void {
 export function probe(): Promise<void> {
   if (forced) return Promise.resolve();
   if (probing) return probing;
-  probing = fetch('/health', { cache: 'no-store' })
-    .then((res) => set(!res.ok))
-    .catch(() => set(true))
-    .finally(() => { probing = null; });
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout>;
+  // A network request can remain pending across a reconnect. Bound the probe
+  // itself as well as aborting the fetch, so every retry cannot get stuck
+  // joining the same request. Only the race winner may publish a result.
+  const deadline = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(false);
+      controller.abort();
+    }, PROBE_TIMEOUT_MS);
+  });
+  const health = Promise.resolve()
+    .then(() => fetch('/health', { cache: 'no-store', signal: controller.signal }))
+    .then((res) => res.ok, () => false);
+  probing = Promise.race([health, deadline])
+    .then((reachable) => set(!reachable))
+    .finally(() => {
+      clearTimeout(timer);
+      probing = null;
+    });
   return probing;
 }
 
@@ -155,6 +172,13 @@ export function initOffline(): OfflineApi {
 
   window.addEventListener('online', () => { void probe(); });
   window.addEventListener('offline', () => { void probe(); });
+  // Background tabs can have their retry timers throttled. Check immediately
+  // when the user returns, without adding probes to healthy tab switches.
+  const recheckVisible = () => {
+    if (offline && document.visibilityState === 'visible') void probe();
+  };
+  document.addEventListener('visibilitychange', recheckVisible);
+  window.addEventListener('focus', recheckVisible);
   // "Try again" inside any .offline-only block. Delegated from the document so
   // screens don't each need wiring, and so it works on markup that was hidden
   // when its own module ran.
