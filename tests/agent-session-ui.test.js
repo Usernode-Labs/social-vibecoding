@@ -469,6 +469,12 @@ test('the picker offers the platform\'s models, keeps the conversation\'s own, a
   assert.equal(choice.effortValue({ ...onKimi, reasoningEffort: 'medium' }, catalog), '', 'naming the default is following it');
   assert.equal(choice.effortValue(onKimi, catalog), 'high');
   assert.equal(choice.effortValue({ ...onKimi, reasoningEffort: null }, catalog), '');
+  // #3079: the closed pill names the thinking level; nothing where none applies.
+  assert.equal(choice.effortLabel(onKimi, catalog), 'High');
+  assert.equal(choice.effortLabel({ ...onKimi, reasoningEffort: null }, catalog), 'Medium', 'following the default names it');
+  assert.equal(choice.effortLabel({ ...onKimi, reasoningEffort: null }, { ...catalog, defaultReasoningEffort: null }), '', 'no level known, no placeholder');
+  assert.equal(choice.effortLabel({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null }, catalog), '', 'a model without thinking levels');
+  assert.equal(choice.effortLabel({ backend: 'codex_openrouter', model: 'plain/model', reasoningEffort: 'high' }, catalog), '', 'nor one that does not reason');
   assert.deepEqual(choice.pickerOptions(catalog, null).filter((o) => o.isDefault).map((o) => o.value), ['anthropic:claude-opus-5-5'],
     'the model a conversation with no choice runs on is the one marked default');
 });
