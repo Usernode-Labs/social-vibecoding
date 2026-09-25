@@ -176,10 +176,10 @@ test('a live submit files exactly the body it filed before this change', async (
   try {
     await post(server, { description: 'Filed right now' });
     // No queuedAt at all: no line, and no stray blank line where it would go.
-    assert.equal(ghCreates[0].body, '**Source:** usernode user (tester)\n\nFiled right now');
+    assert.equal(ghCreates[0].body, '**Source:** Homeroom user (tester)\n\nFiled right now');
 
     await post(server, { description: 'Also right now', queuedAt: new Date().toISOString() });
-    assert.equal(ghCreates[1].body, '**Source:** usernode user (tester)\n\nAlso right now');
+    assert.equal(ghCreates[1].body, '**Source:** Homeroom user (tester)\n\nAlso right now');
   } finally {
     server.close();
   }

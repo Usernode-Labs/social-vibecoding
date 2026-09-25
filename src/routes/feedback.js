@@ -472,9 +472,11 @@ function feedbackRoutes(config) {
 
     // #140: include the admin's actual username so the issues panel can show
     // who filed it instead of a bare "admin" (mirrors the user form).
+    // #3132: the product is Homeroom; issues filed before that read
+    // "usernode user (name)", which creatorFromSourceLine still accepts.
     const source = req.user?.isAdmin
-      ? `usernode admin (${req.user?.username || 'unknown'})`
-      : `usernode user (${req.user?.username || 'unknown'})`;
+      ? `Homeroom admin (${req.user?.username || 'unknown'})`
+      : `Homeroom user (${req.user?.username || 'unknown'})`;
 
     try {
       // Title via the shared Haiku helper (services/llm.js) — unless the

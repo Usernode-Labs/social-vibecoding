@@ -218,7 +218,7 @@ test('omitted screenshotId leaves the issue body byte-identical to today', async
     const res = await postFeedback(server, { description: 'Something is broken', title: 'My title' });
     assert.equal(res.status, 200);
     assert.equal(ghCreates.length, 1);
-    assert.equal(ghCreates[0].body, '**Source:** usernode user (tester)\n\nSomething is broken');
+    assert.equal(ghCreates[0].body, '**Source:** Homeroom user (tester)\n\nSomething is broken');
     assert.equal(poolQueries.some((q) => q.sql.includes('issue_screenshots')), false);
   } finally {
     server.close();
