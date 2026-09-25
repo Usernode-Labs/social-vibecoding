@@ -136,7 +136,7 @@ import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
 import { continueRows } from './continue-model';
-import { AgentActivityMark, AgentWorkingIcon } from '../agent-session/activity-mark';
+import { AgentActivityIcon } from '../agent-session/activity-mark';
 import { ACTIVITY_LABEL } from '../agent-session/activity';
 import { loadAgentSessions, useAgentSessionState } from '../agent-session/store';
 import { setFilter as setMessagesFilter } from '../messages/store';
@@ -198,6 +198,42 @@ function RowBody({ icon, label, lead, trailing }: {
   );
 }
 
+/**
+ * A row's plain activation: WRITE THE ADDRESS, THEN CLOSE THE MENU (#3071).
+ *
+ * The menu holds a record in the browser's history while it is open, so the
+ * device's Back closes it (../../lib/sheet-controller.js). Closing hands that
+ * record back as a NAVIGATING release, which spends it one task later if the
+ * page is still standing on it (../../lib/back-stack.ts). Left to the
+ * anchor's default action, the navigation was written AFTER this handler
+ * returned, and nothing ties it to the release's task: wherever the link's
+ * own navigation arrives later than that task, the release saw the page still
+ * on its record and queued a Back, the conversation opened, and the Back
+ * took it away again. That is "the screen flickers and the session never
+ * opens", from every screen that follows the link (Home, Messages, an app's
+ * Workshop). Inside a running app the side panel takes the same link in its
+ * capture-phase click handler and nothing is navigated, which is why the rows
+ * worked there.
+ *
+ * So the row writes the address itself, synchronously, before the menu
+ * closes: by the time the release looks, the page is on the new entry and
+ * the record stays under it, which lib/back-stack.ts passes through on the
+ * way back. A click something else already took (the side panel,
+ * `defaultPrevented`) only closes the menu, and a modified click never gets
+ * here as a navigation of ours: the browser opens its tab.
+ */
+function followThenDismiss(e: React.MouseEvent, href: string): void {
+  if (e.defaultPrevented || e.nativeEvent.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey
+    || !href.startsWith('#') || href === '#') {
+    AppContext.dismissForNav();
+    return;
+  }
+  e.preventDefault();
+  // The same address again is nothing to navigate: the menu just closes.
+  if (window.location.hash !== href) window.location.hash = href;
+  AppContext.dismissForNav();
+}
+
 function MenuRow({
   id, href, icon, label, lead, trailing, onClick, elRef, shipsHidden, dataContextRow,
 }: {
@@ -225,7 +261,7 @@ function MenuRow({
       className={shipsHidden ? `hidden ${ROW}` : ROW}
       onClick={(e) => {
         if (onClick) { onClick(e); return; }
-        AppContext.dismissForNav();
+        followThenDismiss(e, href);
       }}
     >
       <RowBody icon={icon} label={label} lead={lead} trailing={trailing} />
@@ -683,14 +719,17 @@ export function AppsSwitcherSheet(): ReactNode {
                   id={`app-menu-continue-${index}`}
                   dataContextRow="continue-agent"
                   href={row.href}
-                  // Working, the spinner takes the icon's place (#3028); the
-                  // icon slot is aria-hidden, so "Working" rides in the lead
-                  // as words. Finished, the dot leads the name (#3013).
-                  icon={row.activity === 'working' ? <AgentWorkingIcon /> : <SparklesIcon />}
+                  // Working, the spinner takes the icon's place (#3028);
+                  // finished unseen, the green dot does (#3076). The icon
+                  // slot is aria-hidden, so the state rides in the lead as
+                  // words.
+                  icon={row.activity
+                    ? <AgentActivityIcon activity={row.activity} className="h-5 w-5" />
+                    : <SparklesIcon />}
                   label={row.title}
-                  lead={row.activity === 'working'
-                    ? <span className="sr-only">{ACTIVITY_LABEL.working}</span>
-                    : <AgentActivityMark activity={row.activity} />}
+                  lead={row.activity
+                    ? <span className="sr-only">{ACTIVITY_LABEL[row.activity]}</span>
+                    : null}
                   trailing={(
                     <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{row.detail}</span>
                   )}
@@ -702,9 +741,9 @@ export function AppsSwitcherSheet(): ReactNode {
                   href="#messages"
                   icon={<ChatIcon />}
                   label="Show more"
-                  onClick={() => {
+                  onClick={(e) => {
                     setMessagesFilter('agents');
-                    AppContext.dismissForNav();
+                    followThenDismiss(e, '#messages');
                   }}
                 />
               ) : null}

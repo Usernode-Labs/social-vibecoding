@@ -58,23 +58,25 @@ test('#3015: the mark says what its green dot means on hover, and keeps its name
   assert.match(mark, /aria-label="Homeroom menu"/, 'the name the empty board\'s note uses is unchanged');
 });
 
-test('#3015: the menu says it in words, after mount only', () => {
+test('#3075: the menu no longer says it in words; the mark\'s own spinner stays', () => {
   const actions = loadTsx('frontend/src/features/improve/actions.tsx');
-  assert.equal(actions.WORKING_NOTE, 'One of your changes is building right now. The Homeroom mark shows it until it finishes.');
+  assert.equal(actions.WORKING_NOTE, undefined, 'the note is gone');
   const src = read('frontend/src/features/improve/actions.tsx');
-  assert.match(src, /if \(mounted && working\) \{/, 'the lowest priority of the four states, and never in the prerender');
-  assert.match(src, /data-improve-working-note/);
+  assert.doesNotMatch(src, /building right now|data-improve-working-note|The Homeroom mark shows it/);
+  assert.match(read('frontend/src/features/header/platform-mark.tsx'), /id="improve-working-dot"/,
+    'the corner spinner on the Homeroom mark is kept');
 
-  // The prerender, and the hydrating render that must match it, print
-  // nothing here even when a turn is already running. The store is handed in
-  // so the component reads the very instance the test sets.
+  // A change of the viewer's working prints nothing here, before mount or
+  // after; the build lines are unchanged. The store is handed in so the
+  // component reads the very instance the test sets.
   const store = loadTsx('frontend/src/features/improve/improve-store.js');
   const wired = loadTsx('frontend/src/features/improve/actions.tsx', { stubs: { './improve-store.js': store } });
   store.improveStore.set({ ...store.improveStore.get(), working: true });
-  assert.equal(store.improveStore.get().working, true);
   assert.equal(renderToHtml(createElement(wired.UpdateStatus)), '');
-  // The same render with a build under way does print, so the empty string
-  // above is the mounted gate and not a store the component never read.
   store.improveStore.set({ ...store.improveStore.get(), deploying: true });
   assert.match(renderToHtml(createElement(wired.UpdateStatus)), /A new version of this app is being built\./);
+  store.improveStore.set({ ...store.improveStore.get(), deploying: false, versionState: 'downloading' });
+  assert.match(renderToHtml(createElement(wired.UpdateStatus)), /A new version of the platform is downloading\./);
+  store.improveStore.set({ ...store.improveStore.get(), versionState: 'ready' });
+  assert.match(renderToHtml(createElement(wired.UpdateStatus)), /There is a new version available\./);
 });

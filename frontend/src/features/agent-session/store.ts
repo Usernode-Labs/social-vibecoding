@@ -1453,6 +1453,12 @@ export function agentSessionListChanged() {
  * landing or a 403 in the waiting room, and loads on `sv:authed` instead.
  */
 let sessionsDeferred = false;
+// Which read of the list is the newest (#3073). Opening the Homeroom menu
+// reads it, and so does every push that a turn started or ended, so two reads
+// are often in flight at once; an older answer landing last used to put back
+// the marks from before the turn started, and the lists stopped spinning
+// while the session worked. Only the newest read's answer is published.
+let listRead = 0;
 export async function loadAgentSessions() {
   if (!hasPlatformViewer()) {
     if (!sessionsDeferred) {
@@ -1461,10 +1467,13 @@ export async function loadAgentSessions() {
     }
     return;
   }
+  const read = ++listRead;
   try {
     const sessions = await api.listSessions();
+    if (read !== listRead) return;
     publish({ sessions, sessionsLoaded: true });
   } catch {
+    if (read !== listRead) return;
     publish({ sessionsLoaded: true });
   }
 }
