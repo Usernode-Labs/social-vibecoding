@@ -120,7 +120,9 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // own reconnect budget instead of retrying a refused request five times
 // (#2676).
 // v14 installs the OpenRouter request adapter so output limits reach the wire.
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v14';
+// v15 refreshes warm workers so the Codex model catalog compacts a thread at
+// 200k tokens instead of 90% of a long model window.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v15';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the

@@ -23,6 +23,16 @@ const SAFE_MAX_OUTPUT_TOKENS = 32_000;
 // The floor a clamped retry may not go below. A ceiling under this is not
 // worth spending an attempt on.
 const MIN_MAX_OUTPUT_TOKENS = 4_096;
+// Codex compacts the conversation once its whole active context reaches
+// min(this, 90% of the context window), and before a turn's first request
+// when a resumed thread is already past it (Codex 0.146.0, model_info.rs and
+// session/context_window.rs). With no limit it was 90% of the window: about
+// 1.18M tokens for GLM 5.3 Flash's 1,310,720, which a change's thread never
+// reaches. A two-line change on a long-lived change then resent 1.5 to 2.3 MB
+// of history on each of its 140 requests and lost track of its own finished
+// work for 22 minutes (agent session 9, change 4971). A window under ~222k is
+// unaffected: 90% of it is already lower.
+const AUTO_COMPACT_TOKEN_LIMIT = 200_000;
 const NEUTRAL_IDENTITY_INSTRUCTION = "You are Homeroom's repository coding agent.";
 const DEFAULT_BASE_INSTRUCTIONS = [
   NEUTRAL_IDENTITY_INSTRUCTION,
@@ -226,7 +236,7 @@ function buildCodexModelCatalog({
       // adapter reads it and enforces it in the actual /responses body on
       // every call, including compaction and the host's smaller retry.
       max_output_tokens: resolvedMaxOutputTokens,
-      auto_compact_token_limit: null,
+      auto_compact_token_limit: AUTO_COMPACT_TOKEN_LIMIT,
       comp_hash: null,
       effective_context_window_percent: 95,
       experimental_supported_tools: [],
@@ -265,6 +275,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  AUTO_COMPACT_TOKEN_LIMIT,
   DEFAULT_BASE_INSTRUCTIONS,
   DEFAULT_CONTEXT_WINDOW,
   MIN_MAX_OUTPUT_TOKENS,
