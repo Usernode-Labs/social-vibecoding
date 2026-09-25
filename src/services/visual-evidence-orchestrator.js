@@ -1515,6 +1515,16 @@ function inFlightSnapshot() {
   return [...inFlight.keys()];
 }
 
+// The running evidence run on a change, whatever its head, or null. Settles
+// (never rejects) when the run ends.
+function inFlightRunFor(sessionId) {
+  const prefix = `${Number(sessionId)}:`;
+  for (const [key, promise] of inFlight) {
+    if (key.startsWith(prefix)) return promise.then(() => {}, () => {});
+  }
+  return null;
+}
+
 module.exports = {
   VisualEvidenceOrchestrationError,
   exactSha,
@@ -1541,4 +1551,5 @@ module.exports = {
   noteNotStarted,
   NOT_STARTED_REASONS,
   inFlightSnapshot,
+  inFlightRunFor,
 };

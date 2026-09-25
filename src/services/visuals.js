@@ -1873,8 +1873,14 @@ async function publishCaptureError(pool, sessionId, revision, err, send) {
 // revision-scoped evidence independently. The orchestrator reloads the row,
 // deduplicates by session+head, and owns its own paired application state, so
 // no stale in-memory session metadata or mutable public preview is reused.
-function scheduleVisualEvidence(config, pool, sessionId, commitHash, trigger = 'preview-ready') {
+function scheduleVisualEvidence(config, callerPool, sessionId, commitHash, trigger = 'preview-ready') {
   const orchestrator = require('./visual-evidence-orchestrator');
+  const lifecycle = require('./preview-lifecycle');
+  // Called from a checks run's `finally`: the run's guarded pool refuses
+  // every query once the run settles, and the evidence run outlives it.
+  const pool = callerPool && callerPool === lifecycle.current()?.pool
+    ? lifecycle.detach(() => getPool(config))
+    : callerPool;
   // #2601/#2558: the `execute` guard used to live here as well, so a
   // deployment with execution switched off never reached the orchestrator
   // and the reason was never written anywhere. scheduleForSession owns that
@@ -1885,12 +1891,12 @@ function scheduleVisualEvidence(config, pool, sessionId, commitHash, trigger = '
       .catch(() => { /* best-effort: nothing else to do on a bad commit */ });
     return;
   }
-  Promise.resolve().then(() => orchestrator.scheduleForSession(config, {
+  lifecycle.detach(() => Promise.resolve().then(() => orchestrator.scheduleForSession(config, {
     pool,
     sessionId: Number(sessionId),
     headSha: String(commitHash).toLowerCase(),
     trigger,
-  })).catch((err) => {
+  }))).catch((err) => {
     log.warn('visuals', 'Visual evidence scheduling failed', {
       sessionId: Number(sessionId), headSha: commitHash, err: err.message,
     });
