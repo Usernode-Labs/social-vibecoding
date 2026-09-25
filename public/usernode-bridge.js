@@ -5091,6 +5091,13 @@
     );
   };
 
+  // Request only notification consent through the operating system.
+  window.usernode.requestNotificationPermission = function () {
+    return callNativeChromeAction(
+      "requestNotificationPermission", {}, _PERMISSION_REQUEST_TIMEOUT_MS
+    );
+  };
+
   // openBatterySettings() → true. Android: opens the system battery
   // optimization settings for the app.
   window.usernode.openBatterySettings = function () {

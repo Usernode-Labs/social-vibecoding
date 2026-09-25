@@ -717,6 +717,26 @@ test('notification permission and navigation actions require the top-frame capab
     }
   });
 
+test('public notification permission method reaches the native prompt', async () => {
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'requestNotificationPermission'],
+    responseMethods: { requestNotificationPermission: { granted: true } },
+  });
+
+  assert.deepEqual(
+    await loaded.sandbox.usernode.requestNotificationPermission(),
+    { granted: true },
+  );
+  assert.deepEqual(loaded.nativePosts.map((post) => post.method), [
+    'getBridgeInfo',
+    'getPrivilegedBridgeCapability',
+    'requestNotificationPermission',
+  ]);
+  assert.equal(loaded.nativePosts[2].privilegedCapability,
+    'navigation-capability');
+  assert.deepEqual(loaded.nativePosts[2].args, {});
+});
+
 test('native screenshot capture is a top-frame privileged action', async () => {
   const loaded = loadBridge({
     capabilities: ['privilegedBridgeCapability', 'captureScreenshot'],
