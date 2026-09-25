@@ -1083,6 +1083,19 @@ export async function stopAgentTurn() {
   }
 }
 
+/** Stop the active change's visual change preview; the conversation re-reads to drop it. */
+export async function stopPreviewCapture() {
+  const id = state.id;
+  const change = state.session?.activeChange;
+  if (!id || !change || !change.appSlug || !change.previewCapture) return;
+  try {
+    await api.stopPreviewCapture(change.appSlug, change.id);
+  } catch (error) {
+    if (state.id === id) publish({ error: errorText(error, 'Could not stop capturing previews.') });
+  }
+  if (state.id === id) await refreshSession(id).catch(() => {});
+}
+
 export async function decideCard(actionId: string, decision: 'confirm' | 'dismiss') {
   const id = state.id;
   if (!id || state.deciding) return;
@@ -1641,7 +1654,17 @@ export async function chooseAgent(choice: AgentChoice) {
 // another tab (the server's `agent_session_changed`, routed by app.js). The
 // lists redraw their marks from a fresh read; a burst of events is one read.
 let listTimer: ReturnType<typeof setTimeout> | null = null;
-export function agentSessionListChanged() {
+let openTimer: ReturnType<typeof setTimeout> | null = null;
+export function agentSessionListChanged(event?: { agentSessionId?: unknown } | null) {
+  // The conversation on screen changed outside a turn (its change's preview
+  // started capturing, or settled): it re-reads itself too.
+  const openId = state.id;
+  if (openId && event && Number(event.agentSessionId) === openId && !state.turn.running && !openTimer) {
+    openTimer = setTimeout(() => {
+      openTimer = null;
+      if (state.id === openId && !state.turn.running) void refreshSession(openId).catch(() => {});
+    }, 250);
+  }
   if (listTimer) return;
   listTimer = setTimeout(() => {
     listTimer = null;

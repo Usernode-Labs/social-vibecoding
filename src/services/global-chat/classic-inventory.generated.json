@@ -12284,6 +12284,8 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/dev/proposals/:sessionId",
       "clientReferences": [
+        "frontend/src/features/agent-session/api.ts",
+        "public/js/app-view.js",
         "public/js/app-view.js"
       ]
     },
@@ -12319,6 +12321,25 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/dev/proposals/:sessionId",
       "clientReferences": [
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/visual-evidence.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/proposals/:sessionId/evidence/stop",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "governance.post.apps.item.proposals.item.evidence.stop.6d65aed7",
+      "domain": "governance",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "proposal",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/dev/proposals/:sessionId",
+      "clientReferences": [
+        "frontend/src/features/agent-session/api.ts",
         "public/js/app-view.js"
       ]
     },

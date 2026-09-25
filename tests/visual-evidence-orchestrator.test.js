@@ -1341,3 +1341,40 @@ test('an unknown refusal logs but writes nothing, so no proposal carries an empt
   });
   assert.equal(recorded, 0);
 });
+
+function stopHarness({ runState = 'exploring', turnMode = 'evidence', currentRunId = RUN_ID } = {}) {
+  const calls = { transitions: [], stops: [] };
+  const pool = { query: async () => ({ rows: [{ id: 42, app_id: 7, app_slug: 'demo', visual_evidence_run_id: currentRunId }] }) };
+  const stateService = {
+    getRun: async (_pool, runId) => ({ id: runId, current_run_id: currentRunId, state: runState, head_sha: HEAD }),
+    transitionRun: async (_pool, runId, next, patch) => { calls.transitions.push({ runId, next, patch }); },
+  };
+  const workerApi = {
+    getActiveTurnMode: () => turnMode,
+    stopTurn: async (sessionId) => { calls.stops.push(sessionId); },
+  };
+  return { calls, pool, injected: { state: stateService, worker: workerApi } };
+}
+
+test('Stop fails the running preview as stopped and kills only an evidence turn', async () => {
+  const running = stopHarness();
+  assert.deepEqual(await orchestrator.stopForSession(running.pool, 42, running.injected), { stopped: true, runId: RUN_ID });
+  assert.equal(running.calls.transitions.length, 1);
+  assert.equal(running.calls.transitions[0].next, 'failed');
+  assert.equal(running.calls.transitions[0].patch.failureCode, 'evidence_stopped');
+  assert.equal(running.calls.transitions[0].patch.failureReason, orchestrator.EVIDENCE_STOPPED_REASON);
+  assert.deepEqual(running.calls.stops, [42]);
+
+  const replaying = stopHarness({ runState: 'replaying', turnMode: 'build' });
+  assert.equal((await orchestrator.stopForSession(replaying.pool, 42, replaying.injected)).stopped, true);
+  assert.deepEqual(replaying.calls.stops, [], 'a coding turn on the change is never killed');
+});
+
+test('Stop does nothing once the preview settled or was superseded', async () => {
+  for (const options of [{ runState: 'verified' }, { runState: 'failed' }, { currentRunId: null }]) {
+    const settled = stopHarness(options);
+    assert.deepEqual(await orchestrator.stopForSession(settled.pool, 42, settled.injected), { stopped: false, reason: 'not_running' });
+    assert.deepEqual(settled.calls.transitions, []);
+    assert.deepEqual(settled.calls.stops, []);
+  }
+});

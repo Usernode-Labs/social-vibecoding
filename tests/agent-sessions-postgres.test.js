@@ -68,7 +68,13 @@ async function connect(t, { beforeMigration = null } = {}) {
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id), user_id INTEGER REFERENCES users(id),
       status VARCHAR(32) NOT NULL DEFAULT 'active', source TEXT,
       pr_number INTEGER, pr_title VARCHAR(256), session_title TEXT,
-      staging_url TEXT, check_state VARCHAR(32), test_results JSONB NOT NULL DEFAULT '[]');
+      staging_url TEXT, check_state VARCHAR(32), test_results JSONB NOT NULL DEFAULT '[]',
+      visual_evidence_state VARCHAR(24), visual_evidence_run_id VARCHAR(32));
+    -- The active change's running preview (activeChange.previewCapture).
+    CREATE TABLE visual_evidence_runs (
+      id VARCHAR(32) PRIMARY KEY,
+      session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+      started_at TIMESTAMPTZ);
     CREATE TABLE chat_session_messages (
       id SERIAL PRIMARY KEY,
       session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE,

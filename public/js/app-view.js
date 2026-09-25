@@ -17884,7 +17884,9 @@ const AppView = {
       exploring: ['Finding the relevant UI state', 'The preview agent is working through the declared user flow on both revisions.'],
       replaying: ['Replaying the flow', 'Platform code is running the bounded interaction twice from fresh state.'],
       reviewing: ['Saving captures', 'The replay passed its technical checks and the media is being stored.'],
-      failed: ['Visual change preview failed', e.failureReason || 'The declared UI state could not be captured reliably.'],
+      failed: e.failureCode === 'evidence_stopped'
+        ? ['Visual change preview stopped', e.failureReason || 'Stopped before it finished. Nothing was captured for this commit.']
+        : ['Visual change preview failed', e.failureReason || 'The declared UI state could not be captured reliably.'],
       stale: ['Visual change preview is stale', e.failureReason || 'A newer proposal revision superseded these artifacts.'],
       cancelled: ['Visual change preview cancelled', e.failureReason || 'This run was superseded before it finished.'],
       not_required: ['No visual change preview required', e.rationale || 'The author declared that this change has no user-visible effect.'],
@@ -17942,7 +17944,7 @@ const AppView = {
     const stateCopy = AppView._evidenceStateCopy(evidence);
     const badge = state === 'verified'
       ? '<span class="dev-badge bg-violet-500/10 text-violet-700 dark:text-violet-400">Captured</span>'
-      : `<span class="dev-badge ${state === 'failed' ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Preview pending'])[0])}</span>`;
+      : `<span class="dev-badge ${state === 'failed' && evidence.failureCode !== 'evidence_stopped' ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Preview pending'])[0])}</span>`;
     const provenance = `<span>base <code>${esc(shortSha(evidence.baseSha))}</code></span><span aria-hidden="true">→</span><span>head <code>${esc(shortSha(evidence.headSha))}</code></span>`;
 
     if (state !== 'verified') {
@@ -17952,10 +17954,16 @@ const AppView = {
       // never started. The rerun route already accepts a 'planned' run (it
       // reruns the same head), and a stuck run is precisely the case where
       // a reader needs a way to kick it.
-      const retryable = (state === 'failed' && evidence.repairAvailable === true)
+      const retryable = (state === 'failed'
+          && (evidence.repairAvailable === true || evidence.failureCode === 'evidence_stopped'))
         || AppView._evidenceNotStarted(evidence);
       const retry = retryable && Number.isInteger(sessionId) && sessionId > 0
         ? `<button type="button" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunVisualEvidence(${sessionId}, this)">Retry visual change preview</button>`
+        : '';
+      const stoppable = ['provisioning', 'exploring', 'replaying', 'reviewing'].includes(state)
+        && Number.isInteger(sessionId) && sessionId > 0;
+      const stop = stoppable
+        ? `<button type="button" data-evidence-stop="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.stopVisualEvidence(${sessionId}, this)">Stop</button>`
         : '';
       const override = state === 'overridden' && evidence.overriddenAt
         ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">Overridden ${esc(new Date(evidence.overriddenAt).toLocaleString())}</div>`
@@ -17964,7 +17972,7 @@ const AppView = {
         <div class="flex items-center justify-between gap-3"><strong class="text-sm">${esc(copy[0])}</strong>${badge}</div>
         <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(copy[1])}</p>
         ${declared ? `<ul class="mt-2 list-disc pl-4 text-xs text-zinc-700 dark:text-zinc-300">${declared}</ul>` : ''}
-        <div class="mt-2 flex flex-wrap items-center gap-2 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${provenance}${retry}</div>${override}
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${provenance}${retry}${stop}</div>${override}
       </section>`;
     }
 
@@ -18079,6 +18087,28 @@ const AppView = {
       AppView.refreshDevData('evidence');
     } catch (error) {
       PlatformUI.toast(`Could not retry the visual change preview: ${error.message}`);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  },
+
+  async stopVisualEvidence(sessionId, button) {
+    const id = Number(sessionId);
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!Number.isInteger(id) || id <= 0 || !slug) return;
+    if (button) button.disabled = true;
+    try {
+      const response = await fetch(`/api/apps/${encodeURIComponent(slug)}/proposals/${id}/evidence/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || result.error || `HTTP ${response.status}`);
+      PlatformUI.toast(result.stopped ? 'Stopped the visual change preview.' : 'The visual change preview had already finished.');
+      AppView.refreshDevData('evidence');
+    } catch (error) {
+      PlatformUI.toast(`Could not stop the visual change preview: ${error.message}`);
     } finally {
       if (button) button.disabled = false;
     }
