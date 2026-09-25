@@ -734,7 +734,7 @@ export function CreateAppDialog() {
               <code className="font-mono text-xs">
                 usernode-bot
               </code>
-              {' as a collaborator with Write access.'}
+              {' as a collaborator (Write access on an organization repo).'}
             </p>
             {/*
                 Inline status row: spinner while checking, green check on
