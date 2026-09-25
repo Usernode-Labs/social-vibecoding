@@ -1174,12 +1174,14 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     if (looked?.githubCreatedAt) postedAt.push(looked.githubCreatedAt);
   }
   const seedReadAt = new Date().toISOString();
-  const [{ comments = [] } = {}, thread] = await Promise.all([
+  const [{ comments = [] } = {}, thread, botUsername] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
     threadContext.loadIssueThread(pool, app.id, issueNumber),
+    // Resolved, never the Promise: see live.botUsernameOf.
+    live.botUsernameOf(github),
   ]);
   const seed = sessions.buildHeadlessSeed(
-    issueNumber, issue, comments, github.getBotUsername(), thread?.messages || [],
+    issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
   const prompt = `${seed}\n\n${triagePrompt()}`;
 

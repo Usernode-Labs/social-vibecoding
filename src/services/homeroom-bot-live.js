@@ -159,6 +159,23 @@ async function post({
 }
 
 /**
+ * The GitHub account the bot comments as, or null when it cannot be read.
+ * `github.getBotUsername()` is async. Used unawaited, the Promise reached
+ * the triage seed, where tagging a GitHub comment called .toLowerCase() on
+ * it and threw; live mode posts its "looking" comment before triaging, so
+ * every live run failed there (rss-reader #24, 2026-09-25). Here it also
+ * read as "[object promise]", which no comment author matches.
+ */
+async function botUsernameOf(github) {
+  try {
+    const login = await github.getBotUsername?.();
+    return typeof login === 'string' && login ? login : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Record what the bot has now seen of this issue, so its own GitHub comment
  * does not read as a change on the next refresh — unless somebody else
  * posted while it worked, in which case the issue is left to be looked at
@@ -168,11 +185,12 @@ async function advanceSeen({ pool, github, threadContext, app, repo, issueNumber
   const times = (postedAt || []).filter(Boolean).map((t) => Date.parse(t)).filter(Number.isFinite);
   if (!runId || !times.length) return { advanced: false, reason: 'nothing_posted' };
   const sinceMs = Date.parse(since);
-  const botLogin = String(github.getBotUsername?.() || '').toLowerCase();
-  const [{ comments = [] } = {}, thread] = await Promise.all([
+  const [{ comments = [] } = {}, thread, login] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
     threadContext.loadIssueThread(pool, app.id, issueNumber),
+    botUsernameOf(github),
   ]);
+  const botLogin = String(login || '').toLowerCase();
   const newer = (at) => Number.isFinite(Date.parse(at)) && Date.parse(at) > sinceMs;
   const someoneElse = comments.some((c) => String(c.author || '').toLowerCase() !== botLogin && newer(c.createdAt))
     || (thread?.messages || []).some((m) => newer(m.createdAt));
@@ -422,6 +440,7 @@ module.exports = {
   proposalLink,
   post,
   advanceSeen,
+  botUsernameOf,
   openBotProposal,
   promoteAsBot,
   buildPrompt,

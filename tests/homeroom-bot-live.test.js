@@ -34,7 +34,7 @@ test('its own GitHub comment does not re-queue the issue it answered', async () 
   const updates = [];
   const pool = { async query(sql, params) { updates.push({ sql: String(sql), params }); return { rows: [] }; } };
   const github = {
-    getBotUsername: () => 'usernode-bot',
+    getBotUsername: async () => 'usernode-bot',
     async fetchIssueComments() {
       return { comments: [
         { author: 'alice', createdAt: '2026-09-25T16:59:00Z' }, // before the run: already read
@@ -70,7 +70,7 @@ test('a person who replied while it worked still gets looked at again', async ()
   for (const { comments, messages } of cases) {
     const out = await live.advanceSeen({
       pool,
-      github: { getBotUsername: () => 'usernode-bot', async fetchIssueComments() { return { comments }; } },
+      github: { getBotUsername: async () => 'usernode-bot', async fetchIssueComments() { return { comments }; } },
       threadContext: { async loadIssueThread() { return { messages }; } },
       app: APP, repo: REPO, issueNumber: 12, runId: 900, since, postedAt: ['2026-09-25T17:00:05Z'],
     });
@@ -329,7 +329,7 @@ function actHarness() {
   const queries = [];
   const pool = { async query(sql, params) { queries.push({ sql: String(sql), params }); return { rows: [] }; } };
   const deps = {
-    github: { getBotUsername: () => 'usernode-bot', async fetchIssueComments() { return { comments: [] }; } },
+    github: { getBotUsername: async () => 'usernode-bot', async fetchIssueComments() { return { comments: [] }; } },
     ws: {},
     threadContext: { async loadIssueThread() { return { messages: [] }; } },
     limits: { spend: [], async recordSpend(_p, id, cents) { this.spend.push(cents); } },

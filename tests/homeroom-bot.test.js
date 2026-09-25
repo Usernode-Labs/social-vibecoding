@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const bot = require('../src/services/homeroom-bot');
+const live = require('../src/services/homeroom-bot-live');
 
 const root = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
@@ -1068,7 +1069,7 @@ function triageHarness({ verdictText, routed = null, budgetError = null, session
   const deps = {
     github: {
       isEnabled: () => true,
-      getBotUsername: () => 'usernode-bot',
+      getBotUsername: async () => 'usernode-bot',
       async fetchPublicIssue() { return { issue: { number: 12, title: 'Pins drift', body: 'They drift on zoom.', state: 'open' } }; },
       async fetchIssueComments() { return { comments: [] }; },
     },
@@ -1130,6 +1131,39 @@ test('runTriage: one scout turn, a fresh thread, a recorded verdict, a debited c
   const statuses = calls.queries.filter((q) => /UPDATE chat_sessions SET status/.test(q.s)).map((q) => q.s.match(/status = '(\w+)'/)[1]);
   assert.deepEqual(statuses, ['active', 'paused'], 'active only while the turn runs');
   assert.equal(deps.activeWorkers.size, 0, 'released after the turn');
+});
+
+test('runTriage: an issue carrying the bot\'s own GitHub comment triages instead of throwing', async () => {
+  // github.getBotUsername() is async. Passed unawaited, the Promise reached
+  // the real seed, and tagging a GitHub comment threw "botUsername.toLowerCase
+  // is not a function". A live run posts its "looking" comment on GitHub
+  // before it triages, so every live run died there (rss-reader #24).
+  const { pool, deps, calls } = triageHarness({
+    verdictText: '```json\n{"verdict":"question","determined":false,"missing_fact":"which colour","question":"Which dark colour?","default":"The platform background"}\n```',
+  });
+  deps.sessions.buildHeadlessSeed = require('../src/routes/sessions').buildHeadlessSeed;
+  deps.github.getBotUsername = async () => 'usernode-bot';
+  deps.github.fetchIssueComments = async () => ({ comments: [
+    { author: 'usernode-bot', body: 'Homeroom bot is looking at this request.', createdAt: '2026-09-25T19:53:03Z' },
+    { author: 'alice', body: 'Darker, like the platform.', createdAt: '2026-09-25T19:54:00Z' },
+  ] });
+  const out = await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  assert.deepEqual({ ran: out.ran, verdict: out.verdict }, { ran: true, verdict: 'question' });
+  const prompt = calls.exec[0].opts.prompt;
+  assert.match(prompt, /\[bot — earlier proposal questions, 2026-09-25, github\] Homeroom bot is looking at this request\./,
+    'its own comment is recognised as the bot\'s');
+  assert.match(prompt, /\[alice, 2026-09-25, github\] Darker, like the platform\./, 'a person\'s comment is not');
+});
+
+test('the bot\'s GitHub login resolves to a string, or to null when it cannot be read', async () => {
+  assert.equal(await live.botUsernameOf({ getBotUsername: async () => 'usernode-bot' }), 'usernode-bot');
+  assert.equal(await live.botUsernameOf({ getBotUsername: () => 'usernode-bot' }), 'usernode-bot');
+  assert.equal(await live.botUsernameOf({ getBotUsername: async () => { throw new Error('no installation'); } }), null);
+  assert.equal(await live.botUsernameOf({ getBotUsername: () => { throw new Error('no installation'); } }), null);
+  assert.equal(await live.botUsernameOf({}), null);
+  assert.doesNotMatch(read('src/services/homeroom-bot.js'), /github\.getBotUsername\(\)/,
+    'every read goes through botUsernameOf, which awaits it');
+  assert.doesNotMatch(read('src/services/homeroom-bot-live.js'), /String\(github\.getBotUsername/);
 });
 
 test('runTriage: an unusable reply is a failed run that consumes the row; the weekly cap stops the pass', async () => {
