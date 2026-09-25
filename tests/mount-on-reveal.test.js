@@ -170,8 +170,14 @@ test('the prerendered document is a fraction of what it was', () => {
   // The number this change exists for. 1,485 elements shipped before; the
   // bound is generous so an ordinary chassis edit does not trip it, and
   // tight enough that a screen quietly going back to prerendering does.
+  //
+  // 1000 → 1075 with communities, stage 3: the create dialog asks who a
+  // project is for and, for a group or a community, who approves, and that
+  // dialog has always prerendered every step (its ids are the declared
+  // checks' anchors). About 55 elements. Still far under the 681 the two
+  // mount-on-reveal interiors alone were, which is what this guards.
   const html = read('public/index.html');
   const elements = (html.match(/<[a-zA-Z]/g) || []).length;
-  assert.ok(elements < 1000,
+  assert.ok(elements < 1075,
     `public/index.html carries ${elements} elements; the two mount-on-reveal interiors alone were 681`);
 });

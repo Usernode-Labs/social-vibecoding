@@ -1,16 +1,18 @@
-// #1911: the create-app dialog is three steps that UNFOLD in one card, not
-// one page of every choice.
+// The create dialog is steps that UNFOLD in one card (#1911), not one page of
+// every choice. Since communities, stage 3, it asks who a project is FOR
+// before anything else:
 //
-//   start    from scratch, or from a GitHub repo (the old mode pills, as rows);
-//            a choice collapses this to the chosen row and unfolds the next
+//   who      Just me (preselected), A group, A community; a group's invitees
+//   start    what you are making (an App; Document and Video "Soon"), then
+//            from scratch or from a GitHub repo (the old mode pills, as rows)
 //   details  the name; for an import, the repo URL and its check first
-//   access   who can build it, who can see it, then Create / Import
+//   approve  who approves changes — a group or a community made new only
 //
 // `data-step` is the furthest step reached; every section ships on every
-// step and app.css folds and unfolds them off #create-card[data-step]; the
-// ids the declared checks and public/js select on are unchanged. This pins the component's wiring, the CSS, the shot
-// links and the checks at source level, and renders the dialog to prove
-// the prerendered document starts on the start step with every id present.
+// step and app.css folds and unfolds them off #create-card[data-step] and
+// [data-final]. This pins the component's wiring, the wire body, the CSS,
+// the shot links and the checks at source level, and renders the dialog to
+// prove the prerendered document starts on the first step with every id.
 //
 // Run with: node --test tests/create-app-steps.test.js
 
@@ -27,159 +29,223 @@ const SRC = read('frontend/src/features/dialogs/create-app.tsx');
 const CSS = read('public/css/app.css');
 const DAPP = JSON.parse(read('dapp.json'));
 const { shellMarkup } = require('./lib/shell-markup');
+const { loadTsx } = require('./lib/render-tsx');
 
-test('the dialog has three steps and starts on the first', () => {
-  assert.match(SRC, /type Step = 'start' \| 'details' \| 'access';/);
-  assert.match(SRC, /const STEPS: readonly Step\[\] = \['start', 'details', 'access'\];/);
-  assert.match(SRC, /useState<Step>\('start'\)/, 'the initial state is the prerendered one');
-  // Both the root and the card carry the step, like data-mode: the kit lifts
-  // the card out of the root while presented.
-  assert.equal((SRC.match(/data-step=\{step\}/g) || []).length, 2, 'data-step on the root and on the card');
-  // Close puts the next open back on the start step.
-  assert.match(SRC, /formRef\.current\?\.reset\(\);[\s\S]*?setStep\('start'\);/);
+test('the steps a set of answers walks: three for Just me or an import, four otherwise', () => {
+  const { stepsFor } = loadTsx('frontend/src/features/dialogs/create-app.tsx');
+  assert.deepEqual([...stepsFor('solo', 'new')], ['who', 'start', 'details']);
+  assert.deepEqual([...stepsFor('invited', 'new')], ['who', 'start', 'details', 'approve']);
+  assert.deepEqual([...stepsFor('open', 'new')], ['who', 'start', 'details', 'approve']);
+  assert.deepEqual([...stepsFor('open', 'import')], ['who', 'start', 'details'],
+    'an imported repo\'s own dapp.json decides who approves');
+  assert.match(SRC, /useState<Audience>\('solo'\)/, 'Just me is preselected');
+  assert.match(SRC, /useState<Step>\('who'\)/, 'the initial state is the prerendered one');
+  // Every answer rides on the root AND the card: the kit lifts the card out
+  // of the root while presented.
+  assert.match(SRC, /id="create-modal"\s+ref=\{dialog\.rootRef\}\s+\{\.\.\.answers\}/);
+  assert.match(SRC, /id="create-card"\s+\{\.\.\.answers\}/);
+  for (const attr of ['data-mode', 'data-import-state', 'data-step', 'data-audience', 'data-approvers', 'data-approvals', 'data-final']) {
+    assert.match(SRC, new RegExp(`'${attr}': `), attr);
+  }
+  // Close puts every answer back.
+  assert.match(SRC, /formRef\.current\?\.reset\(\);[\s\S]*?setAudience\('solo'\);\s*setStep\('who'\);\s*setApprovers\('anyone'\);\s*setApprovals\('majority'\);/);
 });
 
-test('the start step\'s choices are the mode pills, and a choice advances', () => {
+test('the wire body says who it is for, whom to invite and who approves', () => {
+  const { createBody } = loadTsx('frontend/src/features/dialogs/create-app.tsx');
+  const base = { name: 'Book club', mode: 'new', approvers: 'anyone', approvals: 'majority' };
+  assert.deepEqual(createBody({ ...base, audience: 'solo', invitees: '@ada' }),
+    { name: 'Book club', audience: 'solo' }, 'Just me sends no invitees, whatever the hidden field holds');
+  assert.deepEqual(createBody({ ...base, audience: 'invited', invitees: ' @ada, grace  @lin,' }),
+    { name: 'Book club', audience: 'invited', invitees: ['ada', 'grace', 'lin'] });
+  assert.deepEqual(createBody({ ...base, audience: 'open', approvers: 'invited' }),
+    { name: 'Book club', audience: 'open', governance: { approvers: 'invited', approvals: 'default' } });
+  assert.deepEqual(createBody({ ...base, audience: 'open', approvers: 'invited', approvals: 'atLeast', approvalsN: 3 }).governance,
+    { approvers: 'invited', approvals: { atLeast: 3 } }, 'at least N is a follow-up under People I pick');
+  assert.equal(createBody({ ...base, audience: 'open', approvals: 'atLeast', approvalsN: 3 }).governance, undefined,
+    'members vote is the default rule, which sends nothing');
+  assert.equal(createBody({ ...base, audience: 'solo', approvers: 'invited' }).governance, undefined,
+    'Just me has no approval step');
+  assert.deepEqual(createBody({ ...base, mode: 'import', repoUrl: 'https://github.com/o/r', audience: 'open', approvers: 'invited' }),
+    { name: 'Book club', audience: 'open', repoUrl: 'https://github.com/o/r' }, 'an import sends no rule');
+  assert.equal(createBody({ ...base, audience: 'open', approvers: 'invited', approvals: 'atLeast', approvalsN: 99 }).governance.approvals,
+    'default', 'an out-of-range number falls back rather than being refused by the server');
+  const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  const stepIndex'));
+  assert.match(submit, /const body = createBody\(\{/);
+  assert.match(submit, /body: JSON\.stringify\(body\)/);
+});
+
+test('the first step is who it is for, in the Workshop\'s words, and a choice advances', () => {
+  const who = SRC.slice(SRC.indexOf('data-create-step="who"'), SRC.indexOf('data-create-step="start"'));
+  assert.match(who, /1\. Who is it for\?/);
+  assert.match(SRC, /\{ key: 'solo', title: 'Just me',/);
+  assert.match(SRC, /\{ key: 'invited', title: 'A group',/);
+  assert.match(SRC, /\{ key: 'open', title: 'A community',/);
+  assert.match(who, /data-audience-pill=\{choice\.key\}/);
+  assert.match(who, /onClick=\{\(\) => chooseAudience\(choice\.key\)\}/);
+  assert.match(SRC, /function chooseAudience\(next: Audience\) \{\s*if \(step !== 'who'\) \{\s*setError\(''\);\s*setStep\('who'\);\s*return;\s*\}\s*setAudience\(next\);\s*setError\(''\);\s*setStep\('start'\);/);
+  // A group names its people under its collapsed row.
+  assert.match(who, /id="create-invite-block"/);
+  assert.match(who, /id="create-invitees"/);
+  assert.match(who, /Invite people/);
+});
+
+test('the second step is what you are making, then how to begin', () => {
   const start = SRC.slice(SRC.indexOf('data-create-step="start"'), SRC.indexOf('data-create-step="details"'));
+  assert.match(start, /2\. What are you making\?/);
+  assert.match(start, /data-kind-pill="app"/);
+  assert.match(start, /data-kind-pill="doc" aria-disabled="true"/);
+  assert.match(start, /data-kind-pill="video" aria-disabled="true"/);
+  assert.equal((start.match(/>Soon</g) || []).length, 2, 'the two coming kinds say so');
   assert.match(start, /data-mode-pill="new"/);
   assert.match(start, /data-mode-pill="import"/);
   assert.equal((start.match(/className=\{CHOICE\}/g) || []).length, 2);
-  assert.match(SRC, /const CHOICE = 'create-mode-pill w-full text-left ' \+ CARD/, 'the same class the mode pills carried');
-  assert.match(start, /onClick=\{\(\) => choose\('new'\)\}/);
-  assert.match(start, /onClick=\{\(\) => choose\('import'\)\}/);
+  assert.match(SRC, /const CHOICE = 'create-mode-pill ' \+ CHOICE_BASE;/, 'the same class the mode pills carried');
   assert.match(SRC, /function choose\(next: Mode\) \{[\s\S]*?applyMode\(next\);\s*setStep\('details'\);/);
-  // Once collapsed, pressing the chosen row reopens the choice.
-  assert.match(SRC, /if \(step !== 'start'\) \{\s*setError\(''\);\s*setStep\('start'\);\s*return;\s*\}/);
-  assert.equal((start.match(/className=\{CHOICE_CHANGE\}/g) || []).length, 2, 'each row carries a Change affordance');
-  assert.doesNotMatch(start, /id="create-next"/, 'Next belongs to the shared footer, outside the choices');
   assert.match(start, /Start from scratch/);
   assert.match(start, /Import a GitHub repo/);
 });
 
-test('Next on the start step advances the selected mode without validating hidden details', () => {
-  const source = SRC.slice(SRC.indexOf('function next() {'), SRC.indexOf('/** Verbatim from App.setCreateMode'));
-  for (const mode of ['new', 'import']) {
-    const choices = [];
-    const hiddenName = { get current() { throw new Error('The name field is still hidden'); } };
-    const next = new Function('step', 'mode', 'choose', 'nameRef', `${source}; return next;`)(
-      'start', mode, (selected) => choices.push(selected), hiddenName,
+test('Next on a choice step advances the selected answer without validating hidden details', () => {
+  const source = SRC.slice(SRC.indexOf('function next() {'), SRC.indexOf('/** One entry point keeps every mirror of the mode in sync. */'));
+  const hiddenName = { get current() { throw new Error('The name field is still hidden'); } };
+  for (const [stepName, arg] of [['who', 'open'], ['start', 'import']]) {
+    const calls = [];
+    const next = new Function('step', 'audience', 'mode', 'chooseAudience', 'choose', 'nameRef', `${source}; return next;`)(
+      stepName, 'open', 'import', (a) => calls.push(['who', a]), (m) => calls.push(['start', m]), hiddenName,
     );
     next();
-    assert.deepEqual(choices, [mode], 'Next must use the same transition as the selected choice');
+    assert.deepEqual(calls, [[stepName, arg]], 'Next uses the same transition as the selected choice');
   }
 });
 
-test('the details step keeps the import block and the name card, in that order', () => {
-  const details = SRC.slice(SRC.indexOf('data-create-step="details"'), SRC.indexOf('data-create-step="access"'));
+test('the details step keeps the import block and the name card, and runs the guards one step early', () => {
+  const details = SRC.slice(SRC.indexOf('data-create-step="details"'), SRC.indexOf('data-create-step="approve"'));
   assert.ok(details.indexOf('id="create-import-block"') < details.indexOf('id="create-name-block"'));
   assert.match(details, /id="import-url"/);
   assert.match(details, /id="import-check"/);
   assert.match(details, /id="app-name"/);
-});
-
-test('Next runs the old submit guards one step early, and Enter on the details step advances', () => {
-  const next = SRC.slice(SRC.indexOf('function next() {'), SRC.indexOf('/** Verbatim from App.setCreateMode'));
+  assert.match(details, /Project name/);
+  assert.match(details, /create-import-rule-note/, 'an import says why there is no approval step');
+  const next = SRC.slice(SRC.indexOf('function next() {'), SRC.indexOf('/** One entry point'));
   assert.match(next, /Paste a GitHub repo URL first\./);
   assert.match(next, /Click "Check" to verify bot access first\./);
-  assert.match(next, /Give your app a name\./);
-  assert.match(next, /setStep\('access'\)/);
-  assert.match(next, /accessRef\.current\?\.scrollIntoView/, 'the unfolded step is brought into view');
-  assert.match(SRC, /if \(step !== 'access'\) \{\s*if \(step === 'details'\) next\(\);\s*return;\s*\}/,
-    'submit on any step but the last never POSTs');
+  assert.match(next, /Give your project a name\./);
+  assert.match(next, /if \(!isLast\) \{\s*setStep\('approve'\);\s*reveal\(\);\s*\}/);
+  assert.match(SRC, /if \(!isLast\) \{\s*next\(\);\s*return;\s*\}/, 'submit before the last step never POSTs');
   assert.doesNotMatch(SRC, /id="create-back"/, 'no Back: the earlier steps stay on screen');
 });
 
-test('the access step holds the visibility rails, and the footer carries every button', () => {
-  const access = SRC.slice(SRC.indexOf('data-create-step="access"'), SRC.indexOf('id="create-error"'));
-  assert.match(access, /id="create-visibility-block"/);
-  assert.match(access, /data-collab-vis="public"/);
-  assert.match(access, /data-view-vis="private"/);
-  assert.match(access, /id="create-vis-hint"/);
+test('the last step for a group or a community is who approves, with at least N under People I pick', () => {
+  const approve = SRC.slice(SRC.indexOf('data-create-step="approve"'), SRC.indexOf('id="create-error"'));
+  assert.match(approve, /4\. Who approves changes\?/);
+  assert.match(approve, /id="create-approve-block"/);
+  assert.ok(approve.indexOf('data-approver-pill="anyone"') < approve.indexOf('data-approver-pill="invited"'));
+  assert.match(approve, /Members vote/);
+  assert.match(approve, /People I pick/);
+  assert.match(approve, /Starts with just you\./);
+  assert.match(approve, /data-approvals-pill="majority"/);
+  assert.match(approve, /data-approvals-pill="atLeast"/);
+  assert.match(approve, /id="create-approvals-n"[\s\S]*?min=\{1\}[\s\S]*?max=\{50\}[\s\S]*?defaultValue="1"/);
   for (const id of ['create-cancel', 'create-next', 'create-submit']) {
     assert.match(SRC, new RegExp(`id="${id}"`), `${id} ships`);
   }
 });
 
-test('app.css unfolds the steps in place and shapes the footer', () => {
-  // Only the steps PAST the furthest one are folded: the earlier ones stay.
-  assert.match(CSS, /#create-card\[data-step="start"\]\s+\[data-create-step="details"\],\n#create-card\[data-step="start"\]\s+\[data-create-step="access"\],\n#create-card\[data-step="details"\] \[data-create-step="access"\] \{\n  display: none;\n\}/);
+test('app.css unfolds the steps in place, keeps the approval step to a group or a community, and shapes the footer', () => {
+  const folds = [
+    '#create-card[data-step="who"]     [data-create-step="start"]',
+    '#create-card[data-step="who"]     [data-create-step="details"]',
+    '#create-card[data-step="who"]     [data-create-step="approve"]',
+    '#create-card[data-step="start"]   [data-create-step="details"]',
+    '#create-card[data-step="start"]   [data-create-step="approve"]',
+    '#create-card[data-step="details"] [data-create-step="approve"]',
+    '#create-card[data-audience="solo"] [data-create-step="approve"]',
+    '#create-card[data-mode="import"]   [data-create-step="approve"]',
+  ];
+  const at = CSS.indexOf(folds[0]);
+  assert.ok(at > 0);
+  const block = CSS.slice(at, CSS.indexOf('}', at));
+  for (const f of folds) assert.ok(block.includes(f), f);
+  assert.match(block, /display: none;/);
   assert.doesNotMatch(CSS, /#create-card \[data-create-step\] \{ display: none; \}/, 'no step is hidden by default');
-  // QA 2026-09-24 Q6: Create is folded on the details step as well as the
-  // start step. Showing it beside Next put two equal accent buttons on step
-  // 2, and pressing it skipped "Who can use it".
-  assert.match(CSS, /#create-card\[data-step="start"\]   #create-submit,\n#create-card\[data-step="details"\] #create-submit,\n#create-card\[data-step="access"\]  #create-next \{\n  display: none;\n\}/);
+  // QA 2026-09-24 Q6: never two accent buttons at once.
+  assert.match(CSS, /#create-card\[data-final="false"\] #create-submit,\n#create-card\[data-final="true"\]  #create-next \{\n  display: none;\n\}/);
+  assert.match(SRC, /'data-final': isLast \? 'true' : 'false'/);
   assert.doesNotMatch(CSS, /#create-cancel \{ display: none; \}/, 'Cancel is always there');
-  // The collapsed start step: the other row, the captions and the chevron
-  // fold away; "Change" shows in their place.
-  assert.match(CSS, /#create-card\[data-step="start"\] \.create-choice-change \{ display: none; \}/);
-  assert.match(CSS, /#create-card:not\(\[data-step="start"\]\) \.create-choice-chevron,\n#create-card:not\(\[data-step="start"\]\) \.create-choice-caption,\n#create-card:not\(\[data-step="start"\]\)\[data-mode="new"\]\s+\.create-mode-pill\[data-mode-pill="import"\],\n#create-card:not\(\[data-step="start"\]\)\[data-mode="import"\] \.create-mode-pill\[data-mode-pill="new"\] \{\n  display: none;\n\}/);
-  // The old import-mode rule on the submit button went: the step gates it now.
-  assert.doesNotMatch(CSS, /#create-card\[data-mode="import"\] #create-submit/);
+  // The invite field is a group's alone; the number is a follow-up.
+  assert.match(CSS, /#create-card\[data-audience="invited"\]:not\(\[data-step="who"\]\) \.create-invite-block \{ display: block; \}/);
+  assert.match(CSS, /#create-card\[data-approvers="invited"\] \.create-approvals-block \{ display: block; \}/);
+  assert.match(CSS, /#create-card\[data-approvers="invited"\]\[data-approvals="atLeast"\] \.create-approvals-n-block \{ display: block; \}/);
   // The name card's import gating stays.
   assert.match(CSS, /#create-card\[data-mode="import"\]\[data-import-state="ok"\] #create-name-block \{ display: block; \}/);
 });
 
-// #2566: the selected choice was the language's solid inversion — a
-// near-black fill — and read as "black" rather than as "chosen". It wears
-// the shell's accent now: violet-600 with white ink, the same fill this
-// dialog's own Create/Import button carries. Both of the dialog's selected
-// states move together; nothing else in the shell does.
-test('the selected choice wears the shell accent, not the solid inversion', () => {
-  assert.match(CSS, /#create-card\[data-mode="new"\]\s+\.create-mode-pill\[data-mode-pill="new"\],\n#create-card\[data-mode="import"\] \.create-mode-pill\[data-mode-pill="import"\] \{\n  background: #7c3aed; \/\* violet-600 \*\/\n  color: #ffffff;\n  cursor: default;\n\}/);
-  // The access step's visibility pills are the same dialog and the same
-  // selected state, so they carry the same fill.
-  assert.match(CSS, /\.create-vis-pill\.active \{\n  background: #7c3aed; \/\* violet-600 \*\/\n  color: #ffffff;\n\}/);
-  // The caption on the selected row needs the extra step on the accent:
-  // white at 0.8 measures 4.18:1 against violet-600, below AA at 12px.
-  assert.match(CSS, /\.create-mode-pill\[data-mode-pill="import"\] \.create-choice-caption \{\n  color: inherit;\n  opacity: 0\.9;\n\}/);
-  // The fill is a literal in both themes: violet-600 clears AA against
-  // white in each, and the dialog's own accent button carries no `dark:`
-  // step either. A .dark override for these would be the regression.
-  const invert = /background: var\(--text-primary\);\n  color: var\(--bg-primary\);/g;
-  const createBlock = CSS.slice(CSS.indexOf('#create-card .create-mode-pill {'), CSS.indexOf('.members-vis-pill {'));
-  assert.doesNotMatch(createBlock, invert, 'no selected state in the create dialog is still the inversion');
-  // Only this dialog moved: the language states the inversion elsewhere
-  // and those statements are untouched.
-  const CHIP = read('frontend/@/components/ui/chip.tsx');
-  assert.match(CHIP, /selected: \{\n        true: 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900',/);
+// #2566, and the design pass: the selected choice wears the accent the
+// dialog's own Create button carries — Tailwind's violet-600, which
+// tailwind.config.js compiles to the platform blue #0a6ee0. It was the
+// literal #7c3aed, the pre-reskin violet: a purple row beside a blue button.
+test('every selected choice wears the Create button\'s accent', () => {
+  const tw = read('tailwind.config.js');
+  assert.match(tw, /600:'#0a6ee0'/, 'violet-600 is the platform blue');
+  const at = CSS.indexOf('#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"],');
+  assert.ok(at > 0);
+  const rule = CSS.slice(at, CSS.indexOf('}', at));
+  for (const sel of ['data-audience-pill="invited"', 'data-mode-pill="new"', 'data-mode-pill="import"',
+    'data-approver-pill="anyone"', 'data-approver-pill="invited"', 'data-approvals-pill="majority"', 'data-approvals-pill="atLeast"']) {
+    assert.ok(rule.includes(sel), sel);
+  }
+  assert.match(rule, /background: #0a6ee0; \/\* violet-600, as tailwind\.config\.js compiles it \*\/\n  color: #ffffff;/);
+  const createBlock = CSS.slice(CSS.indexOf("/* ── The create dialog's choices"), CSS.indexOf('.members-vis-pill {'))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(createBlock, /#7c3aed/, 'the pre-reskin violet is gone from the dialog');
+  assert.doesNotMatch(createBlock, /background: var\(--text-primary\);\n  color: var\(--bg-primary\);/,
+    'no selected state in the create dialog is the solid inversion');
 });
 
-test('the shot links land on the step they name', () => {
-  assert.match(SRC, /if \(shot === 'create-import' \|\| shot === 'create-details'\) return 'details';/);
-  assert.match(SRC, /if \(shot === 'create-access'\) return 'access';/);
-  assert.match(SRC, /const initial = shotStep\(\);\s*setStep\(initial\);/);
+test('the shot links land on the state they name, and each has a check', () => {
+  assert.match(SRC, /if \(shot === 'create-import'\) return \{ \.\.\.open, mode: 'import', step: 'details' \};/);
+  assert.match(SRC, /if \(shot === 'create-details'\) return \{ \.\.\.open, step: 'details' \};/);
+  assert.match(SRC, /if \(shot === 'create-group'\) return \{ \.\.\.open, step: 'start', audience: 'invited' \};/);
+  assert.match(SRC, /if \(shot === 'create-approve' \|\| shot === 'create-access'\) return \{ \.\.\.open, step: 'approve', audience: 'open' \};/);
   const byPath = new Map(DAPP.tests.map((t) => [t.path, t]));
-  const start = DAPP.tests.find((t) => t.path === '/#create' && /Step 1 of 3/.test(t.expectText || ''));
-  assert.ok(start, 'a check reads the step count on a cold open');
-  assert.match(start.expectSelector, /\[data-step="start"\]/);
+  const first = DAPP.tests.find((t) => t.path === '/#create' && /Step 1 of 3/.test(t.expectText || ''));
+  assert.ok(first, 'a check reads the step count on a cold open');
+  assert.match(first.expectSelector, /\[data-step="who"\]\[data-audience="solo"\]/);
   const details = byPath.get('/?shot=create-details#create');
-  assert.ok(details, 'the name card is checked on the details step');
   assert.match(details.expectSelector, /\[data-step="details"\] #create-name-block/);
-  const access = byPath.get('/?shot=create-access#create');
-  assert.ok(access, 'the access step has its own check');
-  assert.match(access.expectSelector, /\[data-step="access"\][\s\S]*#create-visibility-block/);
-  assert.equal(access.expectText, 'Who can build it');
+  assert.equal(details.expectText, 'Project name');
+  const approve = byPath.get('/?shot=create-approve#create');
+  assert.ok(approve, 'the approval step has its own check');
+  assert.match(approve.expectSelector, /\[data-step="approve"\]\[data-audience="open"\]\[data-final="true"\] #create-approve-block/);
+  assert.equal(approve.expectText, 'Who approves changes?');
+  const group = byPath.get('/?shot=create-group#create');
+  assert.ok(group && /#create-invite-block #create-invitees/.test(group.expectSelector), 'the invite field has a check');
   const imp = byPath.get('/?shot=create-import#create');
   assert.ok(imp && /data-mode="import"/.test(imp.expectSelector), 'the import shot still lands on the import view');
-  // Nothing on /#create expects text that only a later step shows.
+  assert.equal(byPath.get('/?shot=create-access#create'), undefined, 'the retired step has no check left');
   for (const t of DAPP.tests.filter((t) => t.path === '/#create')) {
-    assert.doesNotMatch(t.expectText || '', /Who can build it|App name/, t.name);
+    assert.doesNotMatch(t.expectText || '', /Who approves|Project name|Invite people/, t.name);
   }
 });
 
-test('the prerendered document starts on the start step with every id in place', () => {
+test('the prerendered document starts on the first step with every id in place', () => {
   const html = shellMarkup();
   const card = html.slice(html.indexOf('id="create-card"'), html.indexOf('id="rename-modal"'));
-  assert.match(card, /data-step="start"/);
-  assert.match(card, /data-create-step="start"/);
-  assert.match(card, /data-create-step="details"/);
-  assert.match(card, /data-create-step="access"/);
+  assert.match(card, /data-step="who"/);
+  assert.match(card, /data-audience="solo"/);
+  assert.match(card, /data-final="false"/);
+  for (const step of ['who', 'start', 'details', 'approve']) {
+    assert.match(card, new RegExp(`data-create-step="${step}"`), step);
+  }
   assert.match(card, /Step 1 of 3/);
-  for (const id of ['create-step-indicator', 'create-import-block', 'create-name-block', 'create-visibility-block',
-    'create-cancel', 'create-next', 'create-submit', 'import-url', 'app-name']) {
+  for (const id of ['create-step-indicator', 'create-invite-block', 'create-invitees', 'create-import-block',
+    'create-name-block', 'create-approve-block', 'create-approvals-n', 'create-cancel', 'create-next',
+    'create-submit', 'import-url', 'app-name']) {
     assert.match(card, new RegExp(`id="${id}"`), id);
   }
-  assert.match(card, /Create a new app/);
+  assert.doesNotMatch(card, /id="create-visibility-block"|id="create-vis-hint"/, 'the visibility rails are retired');
+  assert.match(card, />New project</);
 });
 
 // QA 2026-09-24 Q5: a double-click on Create sent two POSTs and made two apps,

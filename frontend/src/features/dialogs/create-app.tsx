@@ -1,11 +1,35 @@
 /**
- * Create-app dialog (#create-modal).
+ * Create-project dialog (#create-modal).
  *
- * `data-mode` controls "new" vs "import"; `data-import-state` controls the
- * import sub-states (idle / checking / ok / error). CSS in app.css keys off
- * both attributes to show and hide the URL block, the name field and the
- * submit button, so this component only has to flip attributes — it never
- * juggles per-element classes.
+ * ── Four questions, in the order a person answers them (stage 3) ──────
+ *
+ * Communities, stage 3: the dialog asks who a project is FOR before anything
+ * else, because that answer decides the rest.
+ *
+ *   who      Just me (preselected), A group, or A community — the audiences
+ *            services/communities.js derives (`solo`, `invited`, `open`), in
+ *            the words the Workshop tab heads its sections with. A group
+ *            names its people here, in #create-invitees, and they are invited
+ *            when it is created. A community is open to see and to build;
+ *            "public to use, invite-only building" is not asked for, and stays
+ *            in the project's settings for later.
+ *   start    what you are making (an App; Document and Video say "Soon"),
+ *            then how to begin: from scratch, or from a GitHub repo.
+ *   details  the name, and for an import the repo URL and its check first.
+ *   approve  who approves changes: members vote, or people you pick (starting
+ *            with you), with "at least N yes votes" as a follow-up under the
+ *            second. Asked only of a group or a community, and not of an
+ *            import, whose own dapp.json decides.
+ *
+ * `POST /api/apps` takes `audience`, `invitees` and `governance`
+ * (services/create-options.js); the rule is written to the new repository's
+ * dapp.json, so it is votable later like any other line of it.
+ *
+ * `data-mode` controls "new" vs "import"; `data-import-state` the import
+ * sub-states (idle / checking / ok / error); `data-audience`, `data-step`,
+ * `data-approvers` and `data-approvals` the rest. CSS in app.css keys off
+ * all of them to show and hide sections, so this component only flips
+ * attributes and never juggles per-element classes.
  *
  * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
  * moved the behaviour in and made it stateful. #1910 restyled it in the
@@ -45,29 +69,30 @@
  * screen's empty-state and "+" buttons (frontend/src/features/home/home.js)
  * and the deep-link handler both call it by name.
  *
- * ── What is applied through refs, and why ─────────────────────────────
+ * ── The first render is the prerendered one ──────────────────────────
  *
- * `bindEvents` used to end with `App.setCreateVisibility('collab', 'public')`,
- * which puts the page in a state the SHELL MARKUP DOES NOT DESCRIBE: `.active`
- * on the two "Everyone" pills, `disabled` on both view pills, and the
- * `hidden` class off #create-vis-hint. Rendering those from the initial
- * component state would diverge from the prerendered document and
- * `console.error` a hydration mismatch — which fails proposal checks. So the
- * defaults render exactly as the shell shipped them and the derived state is
- * written by layout effects, the same arrangement `useHiddenClass` exists for.
+ * Every choice starts at a constant — Just me, from scratch, idle, the first
+ * step, members vote, majority — and renders that, so the first client render
+ * matches public/index.html exactly (a mismatch `console.error`s, which fails
+ * proposal checks). What a choice changes is written as data attributes on
+ * the card and the root, which app.css reads; `.active`-style classes are not
+ * rendered from state at all.
  *
- * Both inputs stay UNCONTROLLED (refs, not `value`) for the matching reason:
- * a controlled input renders a `value` attribute in the prerender pass.
+ * The three text inputs stay UNCONTROLLED (refs, not `value`) for the
+ * matching reason: a controlled input renders a `value` attribute in the
+ * prerender pass.
  */
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
-import { ChevronRightIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import {
+  ChevronRightIcon, LockIcon, SpinnerArcIcon, UserGroupIcon, UserIcon,
+} from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 
-import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppAllowance, useAppAllowance } from './app-allowance';
 import { invalidateAppAllowance } from './app-allowance-store.js';
@@ -85,29 +110,70 @@ import { useDialog } from './use-dialog';
 
 type Mode = 'new' | 'import';
 type ImportState = 'idle' | 'checking' | 'ok' | 'error';
-type Vis = 'public' | 'private';
+/** Who it is for: services/communities.js's audiences, by their internal names. */
+type Audience = 'solo' | 'invited' | 'open';
+type Approvers = 'anyone' | 'invited';
+type Approvals = 'majority' | 'atLeast';
 /**
- * #1911: the dialog is three steps that UNFOLD in one card, rather than
- * one page of every choice.
+ * The steps UNFOLD in one card (#1911), rather than one page of every
+ * choice. `step` is the FURTHEST step reached; everything up to it is
+ * showing. Every section stays in the document on every step (the declared
+ * checks and public/js select on the same ids); app.css folds and unfolds
+ * them off `#create-card[data-step]`.
  *
- *   start    how to begin: from scratch, or from a GitHub repo. The two
- *            choices ARE the old mode pills (same `create-mode-pill` class,
- *            same `data-mode-pill`, same #create-card[data-mode] styling),
- *            drawn as two rows. Picking one collapses this step to the
- *            chosen row (with a "Change" affordance) and unfolds the next.
- *   details  the name — and, for an import, the repo URL and its access
- *            check first (the name card reveals on a passed check, as
- *            before). Stays on screen, editable, once the last step opens.
- *   access   who can build it and who can see it, then Create / Import.
- *
- * `step` is the FURTHEST step reached; everything up to it is showing.
- * Every section stays in the document on every step (the declared checks
- * and public/js select on the same ids as before); app.css folds and
- * unfolds them off `#create-card[data-step]`, the same attribute-driven
- * mechanism `data-mode` and `data-import-state` already use.
+ *   who      Just me / A group / A community; a group's invitees
+ *   start    what you are making, and how to begin
+ *   details  the name (and, for an import, the repo and its check)
+ *   approve  who approves changes, for a group or a community made new
  */
-type Step = 'start' | 'details' | 'access';
-const STEPS: readonly Step[] = ['start', 'details', 'access'];
+type Step = 'who' | 'start' | 'details' | 'approve';
+
+/**
+ * The steps a given pair of answers walks. Just me has nobody else to
+ * approve anything, and an import's own dapp.json decides who approves, so
+ * both end on the details step. Exported and pure: the indicator's "of N"
+ * and the footer's Next-or-Create both read it.
+ */
+export function stepsFor(audience: Audience, mode: Mode): readonly Step[] {
+  return audience !== 'solo' && mode === 'new'
+    ? ['who', 'start', 'details', 'approve']
+    : ['who', 'start', 'details'];
+}
+
+/**
+ * The `POST /api/apps` body for a set of answers. Exported and pure so the
+ * wire shape is pinned without a browser (tests/create-app-steps.test.js).
+ * `invitees` is the raw text of #create-invitees: usernames separated by
+ * commas or spaces, with or without an @.
+ */
+export function createBody(answers: {
+  name: string;
+  mode: Mode;
+  repoUrl?: string;
+  audience: Audience;
+  invitees?: string;
+  approvers: Approvers;
+  approvals: Approvals;
+  approvalsN?: number;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = { name: answers.name, audience: answers.audience };
+  if (answers.mode === 'import' && answers.repoUrl) body.repoUrl = answers.repoUrl;
+  if (answers.audience === 'invited') {
+    const people = (answers.invitees || '')
+      .split(/[\s,]+/)
+      .map((u) => u.trim().replace(/^@/, ''))
+      .filter(Boolean);
+    if (people.length) body.invitees = people;
+  }
+  if (answers.audience !== 'solo' && answers.mode === 'new' && answers.approvers === 'invited') {
+    const n = Math.round(Number(answers.approvalsN));
+    body.governance = {
+      approvers: 'invited',
+      approvals: answers.approvals === 'atLeast' && n >= 1 && n <= 50 ? { atLeast: n } : 'default',
+    };
+  }
+  return body;
+}
 
 /** The inline row under the repo URL: spinner, green tick, or red error. */
 interface ImportStatus {
@@ -119,33 +185,28 @@ interface ImportStatus {
 const IDLE_STATUS: ImportStatus = { tone: 'none', text: '' };
 
 /**
- * `?shot=create-import` lands the dialog on the import view, so a URL can
- * reach that state for the declared check and for screenshots. Same
- * arrangement as app-allowance.tsx's `?shot=create-quota`: display only,
- * read once on open, and never on the prerender pass (no `location`).
+ * The state a `?shot=` link opens on, so a URL can reach each step for the
+ * declared checks and for screenshots. Display only, read once on open, and
+ * never on the prerender pass (no `location` there).
+ *
+ *   create-import   the details step, importing
+ *   create-details  the details step, from scratch
+ *   create-group    A group chosen, its invite field showing
+ *   create-approve  A community, on the approval step
+ *
+ * `create-access`, the old last step's link, lands on `create-approve`.
  */
-function shotMode(): Mode {
-  try {
-    return new URLSearchParams(location.search).get('shot') === 'create-import' ? 'import' : 'new';
-  } catch {
-    return 'new';
-  }
-}
-
-/**
- * #1911: which step a `?shot=` lands on. `create-import` and
- * `create-details` open on the details step (import and new respectively);
- * `create-access` opens on the last step. Everything else, including a
- * real open, starts at the start.
- */
-function shotStep(): Step {
+function shotState(): { mode: Mode; step: Step; audience: Audience } {
+  const open = { mode: 'new' as Mode, step: 'who' as Step, audience: 'solo' as Audience };
   try {
     const shot = new URLSearchParams(location.search).get('shot');
-    if (shot === 'create-import' || shot === 'create-details') return 'details';
-    if (shot === 'create-access') return 'access';
-    return 'start';
+    if (shot === 'create-import') return { ...open, mode: 'import', step: 'details' };
+    if (shot === 'create-details') return { ...open, step: 'details' };
+    if (shot === 'create-group') return { ...open, step: 'start', audience: 'invited' };
+    if (shot === 'create-approve' || shot === 'create-access') return { ...open, step: 'approve', audience: 'open' };
+    return open;
   } catch {
-    return 'start';
+    return open;
   }
 }
 
@@ -166,43 +227,20 @@ function statusClass(status: ImportStatus): string {
 /*
  * ── The pane recipe (#1910) ───────────────────────────────────────────
  *
- * The dialog is drawn in the widget language the shell's panes wear — the
- * notifications sheet, the Improve rail, the app chip's menu and the auth
- * screens — rather than the bordered-inset look the other dialogs still
- * have. The language separates by FIGURE/GROUND, not by rules: a grey pane
- * ground, white cards floating on it with no border, and one high-contrast
- * state for "selected".
+ * The dialog is drawn in the widget language the shell's panes wear: a grey
+ * pane ground, white cards floating on it with no border, and one
+ * high-contrast state for "selected" — the accent, the fill the dialog's own
+ * Create button wears (#2566). The selection colours live in app.css, keyed
+ * off the card's data attributes.
  *
- * #2566: in THIS dialog that state is the shell's accent — a violet-600
- * fill with white ink, the same fill its own Create/Import button wears —
- * and no longer the language's solid inversion, which read as a black
- * slab rather than as a choice. The rules are in app.css beside the ones
- * that key off #create-card[data-mode]; the language's inversion is
- * untouched everywhere else it is stated.
- *
- *   PANE     the card's own ground, for the web presentation. Inside the
- *            kit's modal shell the card is neutralised (`.un-modal
- *            .platform-modal-card` in app.css) and the same ground comes
- *            from the shell instead, through the `--un-sheet-bg` override
- *            keyed on `.un-modal:has(> #create-card)`. Tailwind arbitrary
- *            values, so the classes stay complete literals for the
- *            extractor; the token is `--dc-strip`, the dev session's strip
- *            and the ground every `.dc-lift` sheet sits on.
- *   CARD/ROW the auth screens' field card: rounded-2xl, white, hairline
- *            rows. `dark:bg-zinc-800` rather than the language's zinc-900
- *            because the pane ground is darker than the page ground in
- *            dark mode, and zinc-900 on `--dc-strip` (#131316) did not
- *            separate.
- *   FIELD    the borderless 17px input that sits in such a row.
- *   RAIL/SEGMENT  the segmented control: a raised white track (the
- *            language's controls float on the ground; a recessed grey
- *            track vanishes into a grey pane) and full-width segments.
- *            Their colours stay in app.css, keyed off #create-card's
- *            data-mode and the `.active` class, so the mechanism the
- *            legacy controller and the dapp.json checks rely on is
- *            untouched — only the look changed.
- *   PILL_SECONDARY  the white pill the auth screens use for a secondary
- *            action; the primary is <Button variant="pillAccent">.
+ *   PANE     the card's own ground (`--dc-strip`); inside the kit's modal
+ *            shell the same ground comes from the shell instead.
+ *   CARD/ROW the auth screens' field card: rounded-2xl, white, one row.
+ *   FIELD    the borderless input that sits in such a row.
+ *   RAIL/SEGMENT  a segmented control: a raised white track and
+ *            full-width segments.
+ *   PILL_SECONDARY  the white pill for a secondary action; the primary is
+ *            <Button variant="pillAccent">.
  */
 const PANE = 'bg-[color:var(--dc-strip)] dark:bg-[color:var(--dc-strip)] rounded-3xl';
 const CARD = 'rounded-2xl bg-white dark:bg-zinc-800 overflow-hidden';
@@ -215,13 +253,14 @@ const SEGMENT = 'flex-1 min-h-8 rounded-full px-3 py-1 leading-tight transition-
 const PILL_SECONDARY = 'flex-1 h-11 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm '
   + 'hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors';
 /*
- * #1911: the start step's two choices, one white card each, full width,
- * with a title and a one-line caption and a chevron at the trailing edge.
- * The selection colours (the accent fill when this is the mode the dialog
- * is in — #2566) stay in app.css on `.create-mode-pill`, keyed off
- * #create-card[data-mode] exactly as the old segmented pills were.
+ * A choice row: one white card each, full width, a title and a one-line
+ * caption, and a chevron at the trailing edge. The selection colours stay in
+ * app.css, keyed off the card's data attribute for that question.
  */
-const CHOICE = 'create-mode-pill w-full text-left ' + CARD + ' px-4 py-3 flex items-center gap-3 transition-colors';
+const CHOICE_BASE = 'w-full text-left ' + CARD + ' px-4 py-3 flex items-center gap-3 transition-colors';
+const CHOICE = 'create-mode-pill ' + CHOICE_BASE;
+const WHO_CHOICE = 'create-who-pill ' + CHOICE_BASE;
+const APPROVER_CHOICE = 'create-approver-pill ' + CHOICE_BASE;
 const CHOICE_TITLE = 'block text-[15px] font-semibold';
 const CHOICE_CAPTION = 'create-choice-caption block text-xs mt-0.5';
 // Shown in place of the chevron once the step has collapsed to the chosen
@@ -229,25 +268,39 @@ const CHOICE_CAPTION = 'create-choice-caption block text-xs mt-0.5';
 const CHOICE_CHANGE = 'create-choice-change text-xs font-medium shrink-0';
 /* The small numbered heading each unfolded step opens with. */
 const STEP_HEADING = 'text-[13px] font-semibold text-zinc-700 dark:text-zinc-300 mb-2';
+/* The "What are you making?" chips: App, then the two that are coming. */
+const KIND = 'create-kind-pill inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold';
+
+/** The three audiences, in the order and the words the screen uses. */
+const WHO: ReadonlyArray<{ key: Audience; title: string; caption: string }> = [
+  { key: 'solo', title: 'Just me', caption: 'Only you can see it. Invite people or open it up later, from its page.' },
+  { key: 'invited', title: 'A group', caption: 'Private to you and the people you invite.' },
+  { key: 'open', title: 'A community', caption: 'Anyone can find it, join and build.' },
+];
+
+function WhoGlyph({ audience }: { audience: Audience }) {
+  const cls = 'w-5 h-5 shrink-0 opacity-80';
+  if (audience === 'solo') return <UserIcon className={cls} aria-hidden="true" />;
+  if (audience === 'invited') return <LockIcon className={cls} aria-hidden="true" />;
+  return <UserGroupIcon className={cls} aria-hidden="true" />;
+}
 
 export function CreateAppDialog() {
   const formRef = useRef<HTMLFormElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const urlRef = useRef<HTMLInputElement>(null);
+  const inviteesRef = useRef<HTMLInputElement>(null);
+  const approvalsNRef = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
-  const hintRef = useRef<HTMLParagraphElement>(null);
-  const collabPublicRef = useRef<HTMLButtonElement>(null);
-  const collabPrivateRef = useRef<HTMLButtonElement>(null);
-  const viewPublicRef = useRef<HTMLButtonElement>(null);
-  const viewPrivateRef = useRef<HTMLButtonElement>(null);
-  const accessRef = useRef<HTMLDivElement>(null);
+  const lastStepRef = useRef<HTMLDivElement>(null);
 
+  const [audience, setAudience] = useState<Audience>('solo');
   const [mode, setMode] = useState<Mode>('new');
-  const [step, setStep] = useState<Step>('start');
+  const [step, setStep] = useState<Step>('who');
+  const [approvers, setApprovers] = useState<Approvers>('anyone');
+  const [approvals, setApprovals] = useState<Approvals>('majority');
   const [importState, setImportState] = useState<ImportState>('idle');
   const [status, setStatus] = useState<ImportStatus>(IDLE_STATUS);
-  const [collabVis, setCollabVis] = useState<Vis>('public');
-  const [viewVis, setViewVis] = useState<Vis>('public');
   const [error, setError] = useState('');
   // QA 2026-09-24 Q5: a double-click on Create sent two POSTs and made two
   // apps, each taking a slot. `submitting` drives the button's disabled and
@@ -264,27 +317,33 @@ export function CreateAppDialog() {
   const [created, setCreated] = useState<{ slug: string; name: string } | null>(null);
   const progress = useStoreState(creationProgressStore);
 
+  const steps = stepsFor(audience, mode);
+  const last = steps[steps.length - 1];
+  const isLast = step === last;
+
   const dialog = useDialog('create', {
     onOpen: () => {
-      applyMode(shotMode());
-      // #1911: a real open starts on the first step; the shot links land
-      // on the one they name. Focus follows: nothing on the start step
-      // wants the keyboard, the details step's first field does.
-      const initial = shotStep();
-      setStep(initial);
+      // A real open starts on the first step; the shot links land on the
+      // state they name. Focus follows: nothing on the first step wants the
+      // keyboard, the details step's first field does.
+      const initial = shotState();
+      applyMode(initial.mode);
+      setAudience(initial.audience);
+      setStep(initial.step);
       void invalidateAppAllowance();
-      if (initial === 'details') setTimeout(() => focusDetails(shotMode()), 0);
+      if (initial.step === 'details') setTimeout(() => focusDetails(initial.mode), 0);
     },
-    // Verbatim from App.hideCreateModal: reset the form, clear the error, and
-    // put mode, import state and visibility back to their defaults so the
-    // next open never inherits the last one's half-finished import.
+    // Reset the form, clear the error, and put every answer back to its
+    // default so the next open never inherits the last one's half-finished
+    // import or group.
     onClose: () => {
       formRef.current?.reset();
       setError('');
       applyMode('new');
-      setStep('start');
-      setCollabVis('public');
-      setViewVis('public');
+      setAudience('solo');
+      setStep('who');
+      setApprovers('anyone');
+      setApprovals('majority');
       // Drop the progress view too, so the next open lands on the form.
       // The build carries on server-side either way — closing this is
       // dismissing a report, not cancelling anything.
@@ -294,19 +353,6 @@ export function CreateAppDialog() {
   });
 
   useHiddenClass(errorRef, !error);
-  // collab=public forces view=public and disables the view pills — the one
-  // invalid combination (publicly buildable but privately viewable) can never
-  // be selected, and the hint says why.
-  const collabPublic = collabVis === 'public';
-  useHiddenClass(hintRef, !collabPublic);
-  useClassToggle(collabPublicRef, 'active', collabVis === 'public');
-  useClassToggle(collabPrivateRef, 'active', collabVis === 'private');
-  useClassToggle(viewPublicRef, 'active', viewVis === 'public');
-  useClassToggle(viewPrivateRef, 'active', viewVis === 'private');
-  useIsomorphicLayoutEffect(() => {
-    if (viewPublicRef.current) viewPublicRef.current.disabled = collabPublic;
-    if (viewPrivateRef.current) viewPrivateRef.current.disabled = collabPublic;
-  }, [collabPublic]);
   // The name field is required only in "new" mode. In "import" the
   // server-side pre-flight gates submission — the field is not even visible
   // until the check passes.
@@ -340,16 +386,38 @@ export function CreateAppDialog() {
     };
   }, [creatingSlug]);
 
-  /** #1911: the field the details step opens on, for the mode it is in. */
+  /** The field the details step opens on, for the mode it is in. */
   function focusDetails(forMode: Mode) {
     (forMode === 'import' ? urlRef.current : nameRef.current)?.focus();
   }
 
+  /** Bring the step that just unfolded into view, with the footer under it. */
+  function reveal() {
+    setTimeout(() => lastStepRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 0);
+  }
+
   /**
-   * #1911: the start step's choice — set the mode and unfold the details.
-   * Once the step has collapsed to the chosen row, pressing that row folds
-   * the later steps back up so the choice can be changed; what was typed
-   * below stays in the document for when they unfold again.
+   * The first question. A choice collapses the step to the chosen row and
+   * unfolds the next; once collapsed, pressing that row reopens the choice
+   * (what was typed below stays for when the later steps unfold again).
+   * A group's invite field shows under the collapsed row.
+   */
+  function chooseAudience(next: Audience) {
+    if (step !== 'who') {
+      setError('');
+      setStep('who');
+      return;
+    }
+    setAudience(next);
+    setError('');
+    setStep('start');
+    if (next === 'invited') setTimeout(() => inviteesRef.current?.focus(), 0);
+  }
+
+  /**
+   * The start step's choice — set the mode and unfold the details. Once the
+   * step has collapsed to the chosen row, pressing that row folds the later
+   * steps back up so the choice can be changed.
    */
   function choose(next: Mode) {
     if (step !== 'start') {
@@ -363,34 +431,39 @@ export function CreateAppDialog() {
   }
 
   /**
-   * Continue with the selected start option, or leave the details step.
-   * The same two guards the old single page
-   * applied at submit, applied one step earlier so the access step is never
-   * reached with nothing to create; the error line names what is missing.
+   * Continue with the selected answer, or leave the details step. The
+   * details step runs the guards submit would, one step earlier, so a later
+   * step is never reached with nothing to create; the error line names what
+   * is missing.
    */
   function next() {
+    if (step === 'who') {
+      chooseAudience(audience);
+      return;
+    }
     if (step === 'start') {
       choose(mode);
       return;
     }
+    if (step !== 'details') return;
     const name = (nameRef.current?.value || '').trim();
     if (mode === 'import') {
       if (!normalizeRepositoryUrlInput()) return setError('Paste a GitHub repo URL first.');
       if (importState !== 'ok') return setError('Click "Check" to verify bot access first.');
     }
     if (!name) {
-      setError('Give your app a name.');
+      setError('Give your project a name.');
       nameRef.current?.focus();
       return;
     }
     setError('');
-    setStep('access');
-    // The card can be taller than a phone's dialog: bring the step that
-    // just unfolded into view, and its footer with it.
-    setTimeout(() => accessRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 0);
+    if (!isLast) {
+      setStep('approve');
+      reveal();
+    }
   }
 
-  /** Verbatim from App.setCreateMode: one entry point keeps every mirror in sync. */
+  /** One entry point keeps every mirror of the mode in sync. */
   function applyMode(next: Mode) {
     setMode(next);
     setError('');
@@ -400,22 +473,10 @@ export function CreateAppDialog() {
     setStatus(IDLE_STATUS);
   }
 
-  /** Verbatim from App.setCreateVisibility. */
-  function applyVisibility(kind: 'collab' | 'view', value: Vis) {
-    if (kind === 'collab') {
-      setCollabVis(value);
-      if (value === 'public') setViewVis('public');
-    } else if (collabVis === 'private') {
-      setViewVis(value);
-    } else {
-      setViewVis('public');
-    }
-  }
-
-  // Verbatim from App.handleImportCheck.
+  // The import check.
   //
   //   idle ─┬─ Check click ─→ checking ─┬─ ok    (name field reveals,
-  //         │                           │        prefilled, Import enables)
+  //         │                           │        prefilled, Next enables)
   //         │                           └─ error (inline message, retry)
   //         └─ user edits URL after a successful check → back to idle
   //
@@ -473,31 +534,38 @@ export function CreateAppDialog() {
     nameEl?.focus();
   }
 
-  // Verbatim from App.handleCreateApp.
   async function submit(event: FormEvent) {
     event.preventDefault();
-    // #1911: Enter on the details step advances; only the last step creates.
-    if (step !== 'access') {
-      if (step === 'details') next();
+    // Enter before the last step advances; only the last step creates.
+    if (!isLast) {
+      next();
       return;
     }
     const name = (nameRef.current?.value || '').trim();
     const repoUrl = mode === 'import' ? normalizeRepositoryUrlInput() : '';
     setError('');
-    if (!name) return;
+    if (!name) {
+      setError('Give your project a name.');
+      return;
+    }
 
-    // Guard: in import mode, submit is gated behind a successful check. CSS
-    // hides the submit button when the state isn't 'ok', but a determined user
-    // could still submit by hitting Enter, so belt-and-braces here. The server
-    // runs the pre-flight again on POST anyway.
+    // Guard: in import mode, submit is gated behind a successful check. The
+    // server runs the pre-flight again on POST anyway.
     if (mode === 'import') {
       if (!repoUrl) return;
       if (importState !== 'ok') return setError('Click "Check" to verify bot access first.');
     }
 
-    const body: Record<string, string> = mode === 'import' ? { name, repoUrl } : { name };
-    body.collabVisibility = collabVis;
-    body.viewVisibility = viewVis;
+    const body = createBody({
+      name,
+      mode,
+      repoUrl,
+      audience,
+      invitees: inviteesRef.current?.value || '',
+      approvers,
+      approvals,
+      approvalsN: Number(approvalsNRef.current?.value || 0),
+    });
 
     // One request at a time (QA 2026-09-24 Q5). Claimed synchronously, before
     // the first await, so a second click in the same frame finds it taken.
@@ -514,16 +582,12 @@ export function CreateAppDialog() {
       void invalidateAppAllowance();
       if (!res.ok) return setError(data.error || 'Failed to create app');
       // The POST returns 201 with the row still in 'creating' — the build
-      // runs async server-side. #1418 covered that with a one-line toast
-      // over a closed dialog, because the tile's small "Spinning up…" was
-      // easy to miss; the dialog now STAYS OPEN and reports the phases
-      // app-creator broadcasts, so the toast would only say the same
-      // thing twice, less well.
+      // runs async server-side. The dialog STAYS OPEN and reports the phases
+      // app-creator broadcasts.
       const slug = data.app?.slug;
       if (!slug) {
         // A 201 we cannot follow. Nothing to report progress on, so fall
-        // back to exactly the old behaviour rather than opening an empty
-        // progress view.
+        // back to closing with a toast rather than an empty progress view.
         dialog.close();
         window.PlatformUI?.toast?.(
           mode === 'import'
@@ -546,27 +610,31 @@ export function CreateAppDialog() {
     }
   }
 
+  const stepIndex = Math.max(0, steps.indexOf(step)) + 1;
+  // The card and the root carry every answer, like data-mode always has:
+  // the kit lifts the card out of the root while presented, so CSS keyed on
+  // the root alone would stop matching.
+  const answers = {
+    'data-mode': mode,
+    'data-import-state': importState,
+    'data-step': step,
+    'data-audience': audience,
+    'data-approvers': approvers,
+    'data-approvals': approvals,
+    'data-final': isLast ? 'true' : 'false',
+  };
+
   return (
     <DialogRoot
       id="create-modal"
       ref={dialog.rootRef}
-      data-mode={mode}
-      data-import-state={importState}
-      data-step={step}
+      {...answers}
       {...dialog.backdropProps}
     >
-      {/*
-          The mode/import-state attributes are mirrored onto this card
-          because the native-kit modal adoption lifts it out of
-          #create-modal while presented — CSS keyed off the root would stop
-          matching (the bug that left the modal stuck in import mode).
-      */}
       <DialogCard
         size="sm"
         id="create-card"
-        data-mode={mode}
-        data-import-state={importState}
-        data-step={step}
+        {...answers}
         className={PANE}
       >
         {created ? (
@@ -575,10 +643,14 @@ export function CreateAppDialog() {
             mode={mode}
             surface="pane"
             progress={progress}
+            openLabel="Open project"
             onOpenApp={() => {
+              // Stage 3: the new project's own page (its Workshop, which
+              // opens on who it is for), not the running app. That is where
+              // the first change is started.
               const slug = created.slug;
               dialog.close();
-              (window.App?.openAppTab as ((s: string, t: string) => void) | undefined)?.(slug, 'app');
+              (window.App?.navigateToApp as ((s: string, v: string) => void) | undefined)?.(slug, 'dev');
             }}
             onSetSecrets={() => {
               const slug = created.slug;
@@ -609,31 +681,89 @@ export function CreateAppDialog() {
         ) : (
         <>
         <h2 id="create-title" className="text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-          {mode === 'import' && step !== 'start' ? 'Import existing app' : 'Create a new app'}
+          {mode === 'import' && (step === 'details' || step === 'approve') ? 'Import a project' : 'New project'}
         </h2>
         {/*
-            #1911: how far the flow has unfolded. Text, not dots, because
-            the dialog is narrow and three words say it; the index is also
-            on the attribute for the declared checks.
+            How far the flow has unfolded, and how far it goes for the
+            answers so far: Just me and an import take three steps, a group
+            or a community made new takes four. The index is also on the
+            attribute for the declared checks.
         */}
         <p
           id="create-step-indicator"
-          data-step-index={String(STEPS.indexOf(step) + 1)}
+          data-step-index={String(stepIndex)}
           className="text-xs text-zinc-500 dark:text-zinc-400 mb-3"
         >
-          {`Step ${STEPS.indexOf(step) + 1} of ${STEPS.length}`}
+          {`Step ${stepIndex} of ${steps.length}`}
         </p>
         <AppAllowance id="create-app-quota" surface="pane" />
         <form id="create-form" ref={formRef} className="space-y-4" onSubmit={submit}>
           {/*
-              STEP 1 (#1911): how to begin. The two rows are the old mode
-              pills — same class, same data-mode-pill, same
-              #create-card[data-mode] selection colours in app.css — so
-              coming back to this step shows which way the dialog is set.
-              A choice advances; the footer's Next uses the selected choice.
+              STEP 1: who it is for. The rows are the Workshop's three
+              sections, in its words; a choice advances. A group names its
+              people right under its row, once the row has collapsed to it.
+          */}
+          <div data-create-step="who" className="space-y-2">
+            <p className={STEP_HEADING}>1. Who is it for?</p>
+            {WHO.map((choice) => (
+              <button
+                key={choice.key}
+                type="button"
+                data-audience-pill={choice.key}
+                className={WHO_CHOICE}
+                onClick={() => chooseAudience(choice.key)}
+              >
+                <WhoGlyph audience={choice.key} />
+                <span className="min-w-0 flex-1">
+                  <span className={CHOICE_TITLE}>{choice.title}</span>
+                  <span className={CHOICE_CAPTION}>{choice.caption}</span>
+                </span>
+                <ChevronRightIcon className="create-choice-chevron w-5 h-5 shrink-0 opacity-60" aria-hidden="true" />
+                <span className={CHOICE_CHANGE}>Change</span>
+              </button>
+            ))}
+            <div id="create-invite-block" className="create-invite-block">
+              <div className={CARD}>
+                <div className={ROW}>
+                  <label htmlFor="create-invitees" className={LABEL}>
+                    Invite people
+                  </label>
+                  <Input
+                    id="create-invitees"
+                    ref={inviteesRef}
+                    name="invitees"
+                    type="text"
+                    autoComplete="off"
+                    spellCheck="false"
+                    {...FIELD}
+                    placeholder="@ada, @grace"
+                  />
+                </div>
+              </div>
+              <p className={CAPTION + ' mt-1.5'}>
+                Usernames, separated by commas. They get an invite when it’s created, and you can add more from its page.
+              </p>
+            </div>
+          </div>
+          {/*
+              STEP 2: what it is, and how to begin. An App is the one kind
+              there is today; the other two say so rather than being left
+              out, because the question is the one the screen will keep
+              asking. The two rows are the old mode pills — same class, same
+              data-mode-pill, same #create-card[data-mode] colours.
           */}
           <div data-create-step="start" className="space-y-2">
-            <p className={STEP_HEADING}>1. How do you want to start?</p>
+            <p className={STEP_HEADING}>2. What are you making?</p>
+            <div className="create-kinds flex flex-wrap gap-2 pb-1">
+              <span className={KIND + ' create-kind-on'} data-kind-pill="app">App</span>
+              <span className={KIND + ' create-kind-soon'} data-kind-pill="doc" aria-disabled="true">
+                Document <span className="text-[11px] font-medium opacity-70">Soon</span>
+              </span>
+              <span className={KIND + ' create-kind-soon'} data-kind-pill="video" aria-disabled="true">
+                Video <span className="text-[11px] font-medium opacity-70">Soon</span>
+              </span>
+            </div>
+            <p className={LABEL + ' create-start-label pt-1'}>How do you want to start?</p>
             <button
               type="button"
               data-mode-pill="new"
@@ -662,13 +792,13 @@ export function CreateAppDialog() {
             </button>
           </div>
           {/*
-              STEP 2 (#1911): the details. Import-only: GitHub repo URL +
-              Check button. The Check button runs the bot-access pre-flight;
-              on success the #app-name field below appears, prefilled with
-              the repo name. CSS hides the URL block in "new" mode.
+              STEP 3: the details. Import-only: GitHub repo URL + Check
+              button. The Check button runs the bot-access pre-flight; on
+              success the #app-name field below appears, prefilled with the
+              repo name. CSS hides the URL block in "new" mode.
           */}
-          <div data-create-step="details" className="space-y-4">
-          <p className={STEP_HEADING}>{mode === 'import' ? '2. Which repo, and what to call it' : '2. What to call it'}</p>
+          <div data-create-step="details" className="space-y-4" ref={step === 'details' ? lastStepRef : undefined}>
+          <p className={STEP_HEADING}>{mode === 'import' ? '3. Which repo, and what to call it' : '3. What to call it'}</p>
           <div id="create-import-block" className="create-import-block">
             <div className={CARD}>
               <div className={ROW}>
@@ -710,9 +840,7 @@ export function CreateAppDialog() {
                     layout="shrink"
                     disabledStyle="block"
                     // The pill sits INSIDE a white card, so its neutral fill
-                    // has to be one step off the card in both themes: zinc-100
-                    // on white, and zinc-700 on the card's zinc-800 (the
-                    // variant's zinc-800 vanished into it).
+                    // has to be one step off the card in both themes.
                     className="whitespace-nowrap dark:bg-zinc-700 dark:hover:bg-zinc-600"
                     disabled={importState === 'checking'}
                     onClick={check}
@@ -744,6 +872,11 @@ export function CreateAppDialog() {
               {status.spinner ? <span className="import-spinner"></span> : null}
               {status.text}
             </div>
+            {/* A group or a community imported: no approval step, and this
+                says why (app.css shows it only then). */}
+            <p className={CAPTION + ' mt-1.5 create-import-rule-note'}>
+              The repo’s own dapp.json decides who approves changes. You can change it later from Members &amp; approvals.
+            </p>
           </div>
           {/*
               Name field. Always visible in "new" mode; gated behind a
@@ -753,7 +886,7 @@ export function CreateAppDialog() {
           <div id="create-name-block" className={CARD}>
             <div className={ROW}>
               <label htmlFor="app-name" className={LABEL}>
-                App name
+                Project name
               </label>
               <Input
                 id="app-name"
@@ -768,83 +901,93 @@ export function CreateAppDialog() {
           </div>
           </div>
           {/*
-              STEP 3 (#1911): visibility, two segmented controls.
-              Collab=Everyone forces View=Everyone (a publicly-buildable app
-              can't be privately viewed) — applyVisibility enforces it.
+              STEP 4: who approves changes — a group or a community made
+              new. Members vote is the platform's default rule; People I
+              pick starts with just the creator as approver, and under it
+              "at least N yes votes" is the follow-up. Written into the new
+              repository's dapp.json, so it can be voted on later like any
+              other rule there.
           */}
-          <div data-create-step="access" ref={accessRef}>
-          <p className={STEP_HEADING}>3. Who can use it</p>
-          <div id="create-visibility-block" className="space-y-3">
-            <div>
-              <p className={LABEL + ' mb-1.5'}>
-                Who can build it
-              </p>
-              <div className={RAIL}>
-                <button
-                  type="button"
-                  ref={collabPublicRef}
-                  data-collab-vis="public"
-                  className={'create-vis-pill ' + SEGMENT}
-                  onClick={() => applyVisibility('collab', 'public')}
-                >
-                  Everyone
-                </button>
-                <button
-                  type="button"
-                  ref={collabPrivateRef}
-                  data-collab-vis="private"
-                  className={'create-vis-pill ' + SEGMENT}
-                  onClick={() => applyVisibility('collab', 'private')}
-                >
-                  Invite-only
-                </button>
-              </div>
-            </div>
-            <div>
-              <p className={LABEL + ' mb-1.5'}>
-                Who can see &amp; use it
-              </p>
-              <div className={RAIL}>
-                <button
-                  type="button"
-                  ref={viewPublicRef}
-                  data-view-vis="public"
-                  className={'create-vis-pill ' + SEGMENT}
-                  onClick={() => applyVisibility('view', 'public')}
-                >
-                  Everyone
-                </button>
-                <button
-                  type="button"
-                  ref={viewPrivateRef}
-                  data-view-vis="private"
-                  className={'create-vis-pill ' + SEGMENT}
-                  onClick={() => applyVisibility('view', 'private')}
-                >
-                  Collaborators only
-                </button>
-              </div>
-              <p
-                id="create-vis-hint"
-                ref={hintRef}
-                className={CAPTION + ' mt-1.5 hidden'}
+          <div data-create-step="approve" className="space-y-2" ref={step === 'approve' ? lastStepRef : undefined}>
+            <p className={STEP_HEADING}>4. Who approves changes?</p>
+            <div id="create-approve-block" className="space-y-2">
+              <button
+                type="button"
+                data-approver-pill="anyone"
+                className={APPROVER_CHOICE}
+                onClick={() => setApprovers('anyone')}
               >
-                Apps everyone can build are always public to view.
-              </p>
+                <span className="min-w-0 flex-1">
+                  <span className={CHOICE_TITLE}>Members vote</span>
+                  <span className={CHOICE_CAPTION}>A change merges when most active members say yes, or when nobody objects after a wait.</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                data-approver-pill="invited"
+                className={APPROVER_CHOICE}
+                onClick={() => setApprovers('invited')}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className={CHOICE_TITLE}>People I pick</span>
+                  <span className={CHOICE_CAPTION}>Starts with just you. Add approvers later from Members &amp; approvals.</span>
+                </span>
+              </button>
+              <div className="create-approvals-block space-y-2 pt-1">
+                <p className={LABEL}>How many of them must say yes?</p>
+                <div className={RAIL}>
+                  <button
+                    type="button"
+                    data-approvals-pill="majority"
+                    className={'create-approvals-pill ' + SEGMENT}
+                    onClick={() => setApprovals('majority')}
+                  >
+                    Most of them
+                  </button>
+                  <button
+                    type="button"
+                    data-approvals-pill="atLeast"
+                    className={'create-approvals-pill ' + SEGMENT}
+                    onClick={() => {
+                      setApprovals('atLeast');
+                      setTimeout(() => approvalsNRef.current?.focus(), 0);
+                    }}
+                  >
+                    At least a number
+                  </button>
+                </div>
+                <div className={CARD + ' create-approvals-n-block'}>
+                  <div className={ROW + ' flex items-center gap-3'}>
+                    <label htmlFor="create-approvals-n" className={LABEL + ' flex-1'}>
+                      Yes votes needed
+                    </label>
+                    <Input
+                      id="create-approvals-n"
+                      ref={approvalsNRef}
+                      name="approvalsN"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={50}
+                      defaultValue="1"
+                      {...FIELD}
+                      className="w-16 text-right"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
           </div>
           <div id="create-error" ref={errorRef} className="px-1 text-red-700 dark:text-red-400 text-sm hidden">
             {error}
           </div>
           {/*
-              #1911: the footer follows how far the card has unfolded,
-              through CSS on #create-card[data-step] rather than by
-              mounting and unmounting (every id ships on every step).
-              Cancel is always there; Next until the last step has
-              unfolded, then Create / Import. No Back: the earlier steps
-              are still on screen and editable, and the start row's
-              "Change" reopens the first choice.
+              The footer follows how far the card has unfolded, through CSS
+              on #create-card[data-final] rather than by mounting and
+              unmounting (every id ships on every step). Cancel is always
+              there; Next until the last step for these answers, then Create
+              / Import. No Back: the earlier steps are still on screen, and
+              each collapsed row's "Change" reopens its choice.
           */}
           <div className="flex gap-2 pt-1">
             <button

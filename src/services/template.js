@@ -302,8 +302,16 @@ connector registered under some other name.
 // repoUrl is the app's canonical GitHub repository; with it the scaffold
 // includes the pointer file the freshness check reads. A local build with no
 // GitHub has none, and gets no pointer.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null) {
+//
+// `governance` is the approval rule chosen on the create screen
+// ({ approverPolicy, approvalsRequired }, the apps row's two columns). A
+// non-default rule is written into dapp.json's `governance` block, the
+// rule's source of truth, so the repository says what the row says from its
+// first commit. The default rule writes nothing: dapp.json stays
+// `{ "secrets": [] }`.
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
+  const governanceBlock = require('./create-options').governanceBlock(governance);
   return [
     {
       path: 'CLAUDE.md',
@@ -611,7 +619,11 @@ value = "build"
       // USERNODE_MISSING_SECRETS) are managed by the platform and
       // can't appear in this list.
       path: 'dapp.json',
-      content: JSON.stringify({ secrets: [] }, null, 2),
+      content: JSON.stringify(
+        governanceBlock ? { secrets: [], governance: governanceBlock } : { secrets: [] },
+        null,
+        2,
+      ),
     },
     // The `.claude/` entries come from the shared helper above, which an
     // import and a fork also call — see its note. The canonical-repo pointer

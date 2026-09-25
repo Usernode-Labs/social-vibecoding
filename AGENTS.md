@@ -224,6 +224,14 @@ remaining live-proposal boundary.
   should render a separate "community" layer for it. The table is bare on
   purpose; a name and an audience move onto it when a community can own
   more than one project.
+- **A project is created FOR someone.** The create dialog asks who it is for
+  first (Just me, A group, A community) and `POST /api/apps` takes
+  `audience`, a group's `invitees` and the approval rule as dapp.json's own
+  `governance` block (`src/services/create-options.js`). The rule is written
+  into the new repository's dapp.json by the template, so it is votable later
+  like any other line there; an import's own dapp.json decides instead. Every
+  project uses an app slot whatever its audience: each one is a real
+  container and database.
 - **Membership gates taking part, not reading.** Starting a change,
   proposing, filing a request, voting (on proposals and requests) and posting
   in an app's chat answer 403 `join_required` to a non-member

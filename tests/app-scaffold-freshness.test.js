@@ -163,7 +163,7 @@ test('a create names its own new repository', () => {
   'a local build with no GitHub gets no pointer');
 
   const creator = read('src/services/app-creator.js');
-  assert.match(creator, /repoUrl = repo\.html_url;[\s\S]{0,300}getTemplateFiles\(name, slug, dbUrl, repoUrl\)/,
+  assert.match(creator, /repoUrl = repo\.html_url;[\s\S]{0,300}getTemplateFiles\(name, slug, dbUrl, repoUrl[,)]/,
     'the GitHub create passes the repository it just made');
 });
 

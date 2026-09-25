@@ -45,6 +45,12 @@ function endPhases(slug) {
   }
 }
 
+// The approval rule a new app's row carries (POST /api/apps writes the
+// create screen's choice there), for the template's dapp.json.
+function governanceOf(row) {
+  return { approverPolicy: row?.approver_policy || 'anyone', approvalsRequired: row?.approvals_required ?? null };
+}
+
 async function createApp(config, appRow) {
   const pool = getPool(config);
   const { id: appId, name, slug } = appRow;
@@ -116,7 +122,7 @@ async function createApp(config, appRow) {
 
         // repoUrl makes the template name this repo as the app's canonical
         // one (.claude/homeroom-canonical-repo, read by the freshness check).
-        const files = getTemplateFiles(name, slug, dbUrl, repoUrl);
+        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow) });
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });
@@ -223,7 +229,7 @@ async function createApp(config, appRow) {
       fs.mkdirSync(tempDir, { recursive: true });
       fs.mkdirSync(path.join(tempDir, 'public'), { recursive: true });
 
-      const files = getTemplateFiles(name, slug, dbUrl);
+      const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow) });
       for (const f of files) {
         const filePath = path.join(tempDir, f.path);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });

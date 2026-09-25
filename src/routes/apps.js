@@ -27,25 +27,19 @@ const discoveryCuration = require('../services/discovery-curation');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
 const activeUsers = require('../services/active-users');
+const createOptions = require('../services/create-options');
+const collabInvites = require('../services/collab-invites');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
 const MAX_INITIAL_APPROVERS = 20;
 
-const VISIBILITY_VALUES = new Set(['public', 'private']);
-
 // Validate a (collabVisibility, viewVisibility) pair against the
 // invariants (see schema.sql): both must be public|private, and
 // collab-public implies view-public. Returns an error string or null.
-function validateVisibilityCombo(collabVisibility, viewVisibility) {
-  if (!VISIBILITY_VALUES.has(collabVisibility) || !VISIBILITY_VALUES.has(viewVisibility)) {
-    return 'Visibility must be "public" or "private"';
-  }
-  if (collabVisibility === 'public' && viewVisibility === 'private') {
-    return 'An app that everyone can build cannot be private to view';
-  }
-  return null;
-}
+// The rule lives in services/create-options.js, which the create route's
+// audience parsing shares.
+const validateVisibilityCombo = createOptions.visibilityComboError;
 
 // A source must have finished the durable parts of provisioning before a
 // fork can take a database/repository snapshot. `awaiting_secrets` is safe:
@@ -1105,13 +1099,14 @@ function appRoutes(config) {
       return res.status(400).json({ error: 'App name is required' });
     }
 
-    // Creation-time visibility (defaults preserve today's behavior).
-    const collabVisibility = req.body.collabVisibility || 'public';
-    const viewVisibility = req.body.viewVisibility || 'public';
-    const visibilityError = validateVisibilityCombo(collabVisibility, viewVisibility);
-    if (visibilityError) {
-      return res.status(400).json({ error: visibilityError });
+    // Who it is for, who is invited and who approves (communities, stage
+    // 3; services/create-options.js). A body with none of them is an older
+    // client and keeps today's visibility fields and defaults.
+    const options = createOptions.parseCreateOptions(req.body, { imported: !!repoUrl });
+    if (options.error) {
+      return res.status(400).json({ error: options.error });
     }
+    const { collabVisibility, viewVisibility, invitees, governance: rule } = options;
 
     // Import-existing pre-flight: parse URL, accept any pending invite
     // for this exact repo, then verify Write access. Anything other
@@ -1153,6 +1148,29 @@ function appRoutes(config) {
         if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
 
+      // A Group's invitees resolve BEFORE anything is created: a typo in a
+      // username is a 400 with the name in it, not a project that exists
+      // with half its people missing.
+      let inviteTargets = [];
+      if (invitees.length) {
+        const { rows: found } = await pool.query(
+          `SELECT id, username FROM users WHERE LOWER(username) = ANY($1::text[])`,
+          [invitees.map((u) => u.toLowerCase())]
+        );
+        const byName = new Map(found.map((u) => [u.username.toLowerCase(), u]));
+        const missing = invitees.filter((u) => !byName.has(u.toLowerCase()));
+        if (missing.length) {
+          return res.status(400).json({
+            error: missing.length === 1
+              ? `There is no Homeroom user named @${missing[0]}.`
+              : `There are no Homeroom users named ${missing.map((u) => '@' + u).join(', ')}.`,
+          });
+        }
+        inviteTargets = invitees
+          .map((u) => byName.get(u.toLowerCase()))
+          .filter((u) => u.id !== req.user.id);
+      }
+
       // Enforce global app cap (full admins bypass; view-only admins
       // don't — issue #311). Errored apps don't count
       // toward the limit — they hold ~no resources and can be deleted to
@@ -1191,7 +1209,47 @@ function appRoutes(config) {
         [name.trim(), slug, repoUrlNormalized, req.user.id, collabVisibility, viewVisibility]
       );
 
-      const appRow = rows[0];
+      let appRow = rows[0];
+
+      // WHO APPROVES, chosen on the create screen. Written to the row now so
+      // the rule holds from the first proposal, and passed to the template
+      // (appRow → app-creator → template.js) so the new repository's
+      // dapp.json says the same thing: that file is the rule's source of
+      // truth, and the first deploy's reconcile then finds nothing to change.
+      // "People I pick" starts with the creator as its one approver, the
+      // same seed applyGovernanceChange plants when a manifest switches a
+      // live app to invited approvers.
+      if (rule) {
+        const { rows: governed } = await pool.query(
+          `UPDATE apps SET approver_policy = $1, approvals_required = $2
+            WHERE id = $3 RETURNING *`,
+          [rule.approverPolicy, rule.approvalsRequired, appRow.id]
+        );
+        appRow = governed[0] || appRow;
+        if (rule.approverPolicy === 'invited') {
+          await pool.query(
+            `INSERT INTO app_approvers (app_id, user_id, status, accepted_at)
+             VALUES ($1, $2, 'member', NOW())
+             ON CONFLICT (app_id, user_id) DO NOTHING`,
+            [appRow.id, req.user.id]
+          );
+        }
+      }
+
+      // A Group's invites go out now, each the same invite (and the same
+      // notification) Members & approvals sends. Best-effort per person: the
+      // project exists either way, and anyone missed can be invited from
+      // its page.
+      let invited = 0;
+      for (const target of inviteTargets) {
+        try {
+          const sent = await collabInvites.sendInvite(pool, { app: appRow, target, inviterId: req.user.id });
+          if (sent.ok) invited += 1;
+        } catch (err) {
+          log.warn('apps', 'Create-time invite failed', { appId: appRow.id, invitee: target.username, err: err.message });
+        }
+      }
+
       log.info('apps', repoUrlNormalized ? 'App imported (pending)' : 'App created (pending)', {
         appId: appRow.id,
         slug,
@@ -1201,7 +1259,14 @@ function appRoutes(config) {
         type: events.EVENT_TYPES.APP_CREATED,
         userId: req.user.id,
         appId: appRow.id,
-        metadata: { imported: !!repoUrlNormalized, collabVisibility, viewVisibility },
+        metadata: {
+          imported: !!repoUrlNormalized,
+          collabVisibility,
+          viewVisibility,
+          ...(options.audience ? { audience: options.audience } : {}),
+          ...(invited ? { invited } : {}),
+          ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
+        },
       });
 
       // Kick off async creation — don't await. If it throws, flip to error.
@@ -1219,7 +1284,7 @@ function appRoutes(config) {
       // watchdog will unstick the row after CREATION_TIMEOUT_MS.
       scheduleCreationWatchdog(pool, appRow.id);
 
-      res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
+      res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited });
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });

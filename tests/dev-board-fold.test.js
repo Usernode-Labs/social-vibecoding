@@ -1298,14 +1298,21 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // because what they pinned is gone by design, not deleted: "An app with a
   // decision waiting leads the Workshop list" became the three-section order
   // (the Workshop orders by recency within Communities / Groups / Just you),
-  // and #2967's "Show N more" over app channels became "Messages lists
-  // #general but no row per app" (app channels live on the community card).
-  // 817 leaves 23 slots against MAX_DECLARED_TESTS (840), clear of the
+  // (#2967's "Show N more" over app channels was rewritten too, and then
+  // restored as it was when the channels stayed in Messages.)
+  //
+  // 817 → 818: +1 (communities, stage 3): the create dialog asks who a
+  // project is for, and a group names its people in it, reached with
+  // ?shot=create-group. Three create checks were REWRITTEN in place: the
+  // cold open reads the first step (who it is for) instead of the start
+  // step, the details card reads "Project name", and the retired access
+  // step's check pins the approval step (?shot=create-approve) instead.
+  // 818 leaves 22 slots against MAX_DECLARED_TESTS (840), clear of the
   // 20-slot floor.
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 817);
+  checkCap.assertPinned(DAPP.tests.length, 818);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
