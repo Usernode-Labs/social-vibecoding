@@ -91,15 +91,17 @@ function sameSha(a, b) {
 // whole reason.
 function firstFailingTest(failureReason) {
   for (const part of String(failureReason || '').split(' | ')) {
-    const grouped = part.trim().match(/^\S.*? \(\d+\): (.+)$/);
-    if (grouped) {
-      const name = grouped[1].split('; ')[0].replace(/…$/, '').trim();
+    // The old form first: its prefix is unambiguous, and a test name in it
+    // may itself contain `(2): `.
+    const m = part.trim().match(/^not ok\s+\d+\s*-?\s*(.+)$/);
+    if (m) {
+      const name = m[1].replace(/\s+#\s*(SKIP|TODO).*$/i, '').trim();
       if (name) return name.slice(0, 200);
       continue;
     }
-    const m = part.trim().match(/^not ok\s+\d+\s*-?\s*(.+)$/);
-    if (!m) continue;
-    const name = m[1].replace(/\s+#\s*(SKIP|TODO).*$/i, '').trim();
+    const grouped = part.trim().match(/^\S.*? \(\d+\): (.+)$/);
+    if (!grouped) continue;
+    const name = grouped[1].split('; ')[0].replace(/…$/, '').trim();
     if (name) return name.slice(0, 200);
   }
   return null;

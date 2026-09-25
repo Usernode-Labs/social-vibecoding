@@ -166,6 +166,8 @@ test('firstFailingTest: the first `not ok` line, without its number or a SKIP/TO
   assert.equal(mainWatch.firstFailingTest('tests/a.test.js (40) | tests/b.test.js (1): named | # fail 41'), 'named',
     'a file whose names did not fit is skipped, not misread');
   assert.equal(mainWatch.firstFailingTest('tests/a.test.js (40) | (+3 more files, 9 failing tests) | # fail 49'), null);
+  assert.equal(mainWatch.firstFailingTest('not ok 7 - retries (2): then gives up | # fail 1'), 'retries (2): then gives up',
+    'a stored old-form reason is not misread as a file group');
 });
 
 test('classify: only a verdict ABOUT the code can pause merges', () => {
