@@ -2765,3 +2765,19 @@ test('a Home challenge card opens that challenge’s page on the Challenges tab,
   assert.match(panels, /eventId: Number\.isSafeInteger\(eventId\) && eventId > 0 \? eventId : null,/,
     'the row view carries the event id from the payload');
 });
+
+// #2989 (#1918): the between-seasons line opens the Challenges tab, so it is
+// a real <button>: focusable and Enter/Space-activatable natively. Its name
+// starts with the visible text and then says where it goes.
+test('#2989: the empty-state line is a keyboard-reachable button', () => {
+  const { html } = renderWith({
+    registry: [], hidden: [],
+    panels: [panel({ total: 0, done: 0, challenges: [] })],
+  });
+  assert.match(html, /<button type="button" class="home-panel-rows home-panel-row [^"]*w-full[^"]*text-left[^"]*"[^>]*>No challenges are running right now<\/button>/);
+  assert.match(html, /aria-label="No challenges are running right now\. Go to the Challenges tab on the Leaderboard screen"/);
+  assert.doesNotMatch(html, /<p[^>]*home-panel-row/, 'no click-only paragraph left');
+  const [, src] = PANEL_SOURCES.find(([n]) => n.endsWith('challenges.tsx'));
+  assert.match(src, /<button\s+type="button"[\s\S]{0,900}?goToChallenges\?\.\(\)/,
+    'and it is wired to the Challenges tab');
+});
