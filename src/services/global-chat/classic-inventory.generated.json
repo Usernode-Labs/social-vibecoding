@@ -2,16 +2,6 @@
   "schemaVersion": 1,
   "inventoryReviewed": true,
   "parityReady": true,
-  "summary": {
-    "totalRoutes": 719,
-    "mappedRoutes": 563,
-    "exemptRoutes": 156,
-    "reviewRequiredRoutes": 0,
-    "clientApiReferences": 416,
-    "unmatchedClientApiReferences": 0,
-    "settingsSections": 22,
-    "navigationSurfaces": 10
-  },
   "navigation": [
     {
       "id": "navigation.home",
