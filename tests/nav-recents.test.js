@@ -22,7 +22,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const {
-  buildRecents, groupRecents, recentDayLabel, RECENTS_LIMIT, RECENT_DAYS, RECENTS_MIN_SHOWN,
+  buildActive, buildRecents, groupRecents, recentDayLabel, RECENTS_LIMIT, RECENT_DAYS, RECENTS_MIN_SHOWN,
 } = loadTsx('frontend/src/features/nav/recents.ts');
 
 function conversation(id, kind, at, extra = {}) {
@@ -360,7 +360,7 @@ test('the rail renders Recents between Workshop and Me, empty until mounted', ()
   // Hydration: rows only after mount, the root's class a constant.
   assert.match(list, /const items = mounted && viewer\s*\n\s*\? buildRecents\(/);
   assert.match(list, /className="platform-recents hidden"/);
-  assert.match(list, /useHiddenClass\(ref, items\.length === 0\);/);
+  assert.match(list, /useHiddenClass\(ref, items\.length === 0 && active\.length === 0\);/);
   // A distinct glyph per kind.
   assert.match(list, /app: AppWindowIcon,\s*direct: UserIcon,\s*group: UserGroupIcon,\s*channel: HashIcon,\s*agent: SparklesIcon,/);
   // Resuming an app goes through the router, as the Resume strip did.
@@ -444,4 +444,112 @@ test('#2798: no resting disc on the toggle or the bell; a blue hover on them and
     /@media \(hover: hover\) \{\s*\.platform-tab:not\(\[aria-current="page"\]\):hover,\s*\.platform-recent:hover \{\s*background: color-mix\(in srgb, var\(--brand-tint\) 55%, transparent\);/,
     'the hovered tab is a lighter blue than the current one');
   assert.match(css, /\.platform-tab\[aria-current="page"\] \{\s*background: var\(--brand-tint\);/);
+});
+
+// ── #3074: the running apps, in an Active section above Recents ───────
+
+function recentApp(slug, at, extra = {}) {
+  return { slug, name: slug[0].toUpperCase() + slug.slice(1), iconUrl: null, iconEmoji: null, at, ...extra };
+}
+
+test('#3074: Active lists the live apps, the one you are in first and marked', () => {
+  const apps = [
+    recentApp('notes', '2026-09-20T10:00:00Z', { iconEmoji: '📝' }),
+    recentApp('chess', '2026-09-20T09:00:00Z', { iconUrl: '/icons/chess.png' }),
+    recentApp('todo', '2026-09-20T08:00:00Z'),
+  ];
+  const active = buildActive({ live: ['chess', 'notes'], current: 'notes', apps });
+  assert.deepEqual(active.map((i) => [i.label, i.current]), [['Notes', true], ['Chess', false]]);
+  assert.deepEqual(active.map((i) => i.key), ['app:notes', 'app:chess'], 'the keys Recents gives them');
+  assert.equal(active[0].href, '/app/notes');
+  assert.deepEqual(active[1].app, { slug: 'chess', name: 'Chess', iconUrl: '/icons/chess.png', iconEmoji: null },
+    'the name and icon Recents has for it');
+
+  // On Home: nothing is current, the kept ones keep the frame store's order.
+  assert.deepEqual(buildActive({ live: ['chess', 'notes'], current: null, apps })
+    .map((i) => [i.label, i.current]), [['Chess', false], ['Notes', false]]);
+  assert.deepEqual(buildActive({ live: [], current: null, apps }), [], 'nothing running, no section');
+});
+
+test('#3074: an app never left yet is named by what the caller knows, else its slug', () => {
+  const known = [{ slug: 'poll', name: 'Poll', iconUrl: null, iconEmoji: '🗳️' }];
+  const [row] = buildActive({ live: ['poll'], current: 'poll', apps: [], known });
+  assert.equal(row.label, 'Poll');
+  assert.equal(row.app.iconEmoji, '🗳️');
+  const [bare] = buildActive({ live: ['poll'], current: 'poll', apps: [], known: [{ slug: 'poll', name: '' }] });
+  assert.equal(bare.label, 'poll');
+  assert.deepEqual(bare.app, { slug: 'poll', name: 'poll', iconUrl: null, iconEmoji: null });
+});
+
+test('#3074: an active app is not also in Recents, and returns when its frame goes', () => {
+  const apps = [
+    recentApp('notes', '2026-09-20T10:00:00Z'),
+    recentApp('chess', '2026-09-20T09:00:00Z'),
+  ];
+  const input = {
+    apps,
+    conversations: [conversation(1, 'group', '2026-09-20T09:30:00Z', { title: 'Team' })],
+    discussions: [],
+    agents: [],
+  };
+  const live = ['notes'];
+  const active = buildActive({ live, current: null, apps });
+  const recents = buildRecents({ ...input, active: active.map((i) => i.app.slug) });
+  assert.deepEqual(active.map((i) => i.label), ['Notes']);
+  assert.deepEqual(recents.map((i) => i.label), ['Team', 'Chess'], 'listed once, under Active');
+
+  // Evicted, rebuilt or signed out: back in Recents at the time it was left.
+  assert.deepEqual(buildActive({ live: [], current: null, apps }), []);
+  assert.deepEqual(buildRecents({ ...input, active: [] }).map((i) => i.label), ['Notes', 'Team', 'Chess']);
+});
+
+test('#3074: an active app costs Recents no row at the cut', () => {
+  const conversations = Array.from({ length: RECENTS_LIMIT + 2 }, (_, i) => conversation(
+    i + 1, 'group', new Date(Date.UTC(2026, 8, 1) + i * 3600e3).toISOString(),
+  ));
+  const apps = [recentApp('notes', '2026-09-30T10:00:00Z')];
+  const items = buildRecents({ apps, conversations, discussions: [], agents: [], active: ['notes'] });
+  assert.equal(items.length, RECENTS_LIMIT);
+  assert.ok(!items.some((i) => i.kind === 'app'));
+});
+
+test('#3074: the Active rows are Recents\' rows, the current one lit, and nothing before mount', () => {
+  const { ActiveApps } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  assert.equal(renderToHtml(createElement(ActiveApps, { items: [] })), '', 'no section while nothing runs');
+  const items = buildActive({
+    live: ['notes', 'chess'],
+    current: 'notes',
+    apps: [recentApp('notes', '2026-09-20T10:00:00Z', { iconEmoji: '📝' }), recentApp('chess', '2026-09-20T09:00:00Z')],
+  });
+  const html = renderToHtml(createElement(ActiveApps, { items }));
+  assert.match(html, /^<div class="platform-active" role="group" aria-labelledby="platform-active-head"><h2 id="platform-active-head" class="platform-recents-head">Active<\/h2>/);
+  const rows = html.match(/<a class="platform-recent"[^>]*>/g);
+  assert.equal(rows.length, 2);
+  assert.match(rows[0], /data-recent-key="app:notes"/);
+  assert.match(rows[0], /aria-label="App: Notes, still open"/);
+  assert.match(rows[0], /data-live="true"/);
+  assert.match(rows[0], /aria-current="true"/);
+  assert.match(rows[0], /data-current="true"/);
+  assert.doesNotMatch(rows[1], /aria-current/);
+  assert.match(html, /class="app-live-dot platform-recent-live"/, 'the green dot it carries everywhere');
+  assert.match(html, /platform-recent-tile/, 'the app\'s own icon');
+
+  const list = read('frontend/src/features/nav/recents-list.tsx');
+  // Hydration: rows only after mount, the section inside the root and first.
+  assert.match(list, /const active = mounted && viewer\s*\n\s*\? buildActive\(/);
+  assert.match(list, /aria-labelledby="platform-recents-head"\s*\n\s*>\s*\n\s*<ActiveApps items=\{active\} \/>\s*\n\s*<h2 id="platform-recents-head"/);
+  assert.match(list, /active: active\.map\(\(item\) => item\.app!\.slug\),/);
+  assert.doesNotMatch(list, /data-close|aria-label="Close/, 'no close button');
+  const live = read('frontend/src/features/app-frame/live-apps.tsx');
+  assert.match(live, /export function useCurrentAppSlug\(\): string \| null \{\s*return useStoreState\(appFrameStore\)\.slug \|\| null;/);
+});
+
+test('#3074: Active is drawn in the desktop block only, the app you are in lit like a tab', () => {
+  const css = read('public/css/app.css');
+  const desktop = css.indexOf('THE SAME FIVE TABS, STANDING UP');
+  const at = css.indexOf('.platform-active {');
+  assert.ok(desktop > 0 && at > desktop, 'inside the desktop block; the phone bar never draws #platform-recents');
+  assert.match(css.slice(at), /^\.platform-active \{[^}]*display: flex;[^}]*flex: none;/);
+  assert.match(css, /\.platform-recent\[aria-current="true"\] \{\s*background: var\(--brand-tint\);\s*color: var\(--brand-ink\);\s*\}/);
+  assert.match(css, /\.platform-recents-head:last-child \{\s*display: none;\s*\}/, 'no Recents heading over nothing');
 });
