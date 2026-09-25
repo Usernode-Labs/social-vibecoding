@@ -199,8 +199,14 @@ function AttachmentImage({ att }: { att: Attachment }) {
 function AttachmentChip({ att }: { att: Attachment }) {
   const size = <span className="dc-attach-size">{att.size}</span>;
   const download = (
-    <a className="gc-att-action" href={att.url} download={att.name} title={`Download ${att.name}`}>
-      ↓
+    <a
+      className="gc-att-action"
+      href={att.url}
+      download={att.name}
+      title={`Download ${att.name}`}
+      aria-label={`Download ${att.name}`}
+    >
+      <span aria-hidden="true">↓</span>
     </a>
   );
   if (att.kind === 'markdown') {
