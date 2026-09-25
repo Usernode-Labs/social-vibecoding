@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const nodeAppPackage = require('../templates/node-app/package.json');
 const nodeAppLock = require('../templates/node-app/package-lock.json');
 
@@ -103,6 +105,53 @@ const CONNECTOR_SPELLING_LIST = CONNECTOR_NAME_SPELLINGS
   .map((name) => `\`${name}\``)
   .join(', ');
 
+// The checkout freshness check every scaffolded repo runs at Claude Code
+// session start: the app-side counterpart of the platform repository's
+// .agents/hooks/upstream-drift.js (#3102). POSIX sh rather than Node, because
+// an imported app need not be a Node app; it lives as a real file so it can be
+// run and tested as itself rather than as a string with its `$`s escaped.
+const FRESHNESS_HOOK_PATH = '.claude/hooks/homeroom-freshness.sh';
+const FRESHNESS_HOOK_SCRIPT = fs.readFileSync(
+  path.join(__dirname, '..', 'templates', 'app-scaffold', 'homeroom-freshness.sh'),
+  'utf8'
+);
+
+// The one-line file naming the app's canonical repository, which the hook
+// above compares HEAD against. Platform-written rather than part of the
+// shared scaffold: a create and an import write the app's own URL, and a fork
+// ALWAYS rewrites it, since the copy it inherits names the parent.
+const CANONICAL_REPO_PATH = '.claude/homeroom-canonical-repo';
+
+// https://github.com/<owner>/<repo>, or null for anything else (no GitHub,
+// a local build). The hook reads this file as data, so only this one shape
+// is ever written.
+function canonicalRepoUrl(repoUrl) {
+  const match = String(repoUrl || '').trim()
+    .match(/^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/);
+  return match ? `https://github.com/${match[1]}/${match[2]}` : null;
+}
+
+function getCanonicalRepoFile(repoUrl) {
+  const url = canonicalRepoUrl(repoUrl);
+  return url ? { path: CANONICAL_REPO_PATH, content: `${url}\n` } : null;
+}
+
+// Project settings the scaffold commits. Read-only connector grants, plus the
+// one advisory hook above; nothing that acts. JSON has no comments, so the
+// reasoning for both lives in .claude/README.md.
+const SCAFFOLD_SETTINGS = {
+  permissions: { allow: CONNECTOR_ALLOW_RULES },
+  hooks: {
+    SessionStart: [{
+      hooks: [{
+        type: 'command',
+        command: `sh "$CLAUDE_PROJECT_DIR/${FRESHNESS_HOOK_PATH}"`,
+        timeout: 10,
+      }],
+    }],
+  },
+};
+
 // The `.claude/` scaffold, on its own so every path that creates a repo can
 // place it — not just the one that writes the whole template.
 //
@@ -138,8 +187,17 @@ function getConnectorScaffoldFiles() {
       //
       // JSON has no comments, so the reasoning lives in .claude/README.md
       // next to it.
+      //
+      // The one hook it carries is the freshness check (SCAFFOLD_SETTINGS).
+      // That was a deliberate exception to "grants capability and nothing
+      // more": the script only reads git state and prints, and the trust
+      // dialog lists it for review like the rules above.
       path: '.claude/settings.json',
-      content: `${JSON.stringify({ permissions: { allow: CONNECTOR_ALLOW_RULES } }, null, 2)}\n`,
+      content: `${JSON.stringify(SCAFFOLD_SETTINGS, null, 2)}\n`,
+    },
+    {
+      path: FRESHNESS_HOOK_PATH,
+      content: FRESHNESS_HOOK_SCRIPT,
     },
     {
       path: '.claude/README.md',
@@ -203,6 +261,28 @@ tool names you actually see are either \`mcp__<server>__whoami\` or
 \`<server>\` segment you see and edit the rules to match, or reconnect
 the connector naming it \`${CONNECTOR_SERVER_NAME}\` exactly.
 
+## The session-start freshness check
+
+\`settings.json\` also runs one hook when a Claude Code session starts:
+\`${FRESHNESS_HOOK_PATH}\`. Coding agents are often opened on a fork of this
+app whose \`main\` is behind the app's canonical repository, and nothing in
+the checkout says so, so an agent can answer questions or build changes from
+old code. The script asks the canonical repository, which Homeroom names in
+\`${CANONICAL_REPO_PATH}\`, where \`main\` is. When \`HEAD\` does not contain
+that commit, it prints a short notice for the agent; otherwise it prints
+nothing.
+
+It only reads: \`git rev-parse\`, \`git ls-remote\` and \`git merge-base\`. It is
+silent offline, always exits 0, and never blocks a session. The workspace
+trust dialog lists it alongside the rules above. To turn it off on your
+machine, set \`SOCIAL_VIBECODING_DRIFT_CHECK=off\` in your environment
+(Homeroom's hosted workers do, because the platform fixes their base commit),
+or delete the \`hooks\` entry from \`settings.json\`.
+
+Homeroom writes \`${CANONICAL_REPO_PATH}\` when it creates or imports the app,
+and rewrites it when the app is forked, so a fork points at itself rather
+than at its parent. Leave it as Homeroom wrote it.
+
 ## Adding your own rules
 
 This file is yours — add project rules alongside the connector ones. Just
@@ -219,7 +299,11 @@ connector registered under some other name.
   ];
 }
 
-function getTemplateFiles(appName, slug, dbUrl) {
+// repoUrl is the app's canonical GitHub repository; with it the scaffold
+// includes the pointer file the freshness check reads. A local build with no
+// GitHub has none, and gets no pointer.
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null) {
+  const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   return [
     {
       path: 'CLAUDE.md',
@@ -254,6 +338,34 @@ workspace trust dialog, which lists them for review. See \`.claude/README.md\`
 for the whole story, including what to do if you are still being prompted
 (usually: your connector is registered under a different name than the rules
 assume).
+
+## Check that this checkout is current
+
+You may be working in a fork of this app whose \`main\` is behind the app's
+canonical repository, and nothing in the checkout says so: \`git fetch origin\`
+compares the fork with itself. This matters before you **read** code to answer
+a question about how the app behaves now, not only before you edit it.
+
+The canonical repository is named in \`${CANONICAL_REPO_PATH}\`. Check against
+it, not against \`origin\`:
+
+\`\`\`sh
+git fetch "$(cat ${CANONICAL_REPO_PATH})" main
+git merge-base --is-ancestor FETCH_HEAD HEAD && echo current || echo behind
+\`\`\`
+
+\`behind\` means this checkout does not contain the canonical \`main\`. To answer
+a question, read the canonical code instead (\`git show FETCH_HEAD:<path>\`,
+\`git grep <pattern> FETCH_HEAD\`). To change code, start from the exact base
+commit your Homeroom work order gives, and never merge or rebase onto the
+canonical \`main\` yourself: which commit a change is diffed against decides
+what the group votes on. With the Homeroom connector, \`get_checkout_status\`
+answers the same question.
+
+A session-start hook (\`${FRESHNESS_HOOK_PATH}\`, see \`.claude/README.md\`) runs
+this check for you and tells you when you are behind. It is silent offline, so
+its silence is not proof the checkout is current. Inside Homeroom's dev-chat
+the platform fixes the base commit, and none of this applies.
 
 ## Starter template
 
@@ -501,9 +613,11 @@ value = "build"
       path: 'dapp.json',
       content: JSON.stringify({ secrets: [] }, null, 2),
     },
-    // The two `.claude/` entries come from the shared helper above, which an
-    // import and a fork also call — see its note.
+    // The `.claude/` entries come from the shared helper above, which an
+    // import and a fork also call — see its note. The canonical-repo pointer
+    // is per app, so it is added beside them rather than inside them.
     ...getConnectorScaffoldFiles(),
+    ...(canonicalRepoFile ? [canonicalRepoFile] : []),
     {
       path: 'server.js',
       content: `const express = require('express');
@@ -845,4 +959,11 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-module.exports = { getTemplateFiles, getConnectorScaffoldFiles };
+module.exports = {
+  getTemplateFiles,
+  getConnectorScaffoldFiles,
+  getCanonicalRepoFile,
+  canonicalRepoUrl,
+  CANONICAL_REPO_PATH,
+  FRESHNESS_HOOK_PATH,
+};
