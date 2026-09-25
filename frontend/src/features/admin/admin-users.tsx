@@ -74,6 +74,8 @@ interface User {
   app_quota?: number | null;
   app_quota_requested_at?: string | null;
   apps_created?: number | null;
+  // All-time programme points, the same total the global leaderboard shows.
+  total_points?: number | null;
   daily_limit_cents?: number | null;
   weekly_limit_cents?: number | null;
   usernode_pubkey?: string | null;
@@ -322,7 +324,7 @@ function AppSlotRequest({ user, canWrite, onReload }: { user: User; canWrite: bo
 
 // Fixed columns from md up, so the same value sits in the same place on
 // every row; stacked below md.
-const ROW_GRID = 'p-4 flex flex-col gap-3 md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_auto] md:items-start md:gap-4';
+const ROW_GRID = 'p-4 flex flex-col gap-3 md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:items-start md:gap-4';
 const CELL_LABEL = 'md:hidden text-xs text-zinc-500 dark:text-zinc-400';
 
 function UserListRow({ user, canWrite, menuOpen, onMenu, onReload, onMore }: {
@@ -367,6 +369,12 @@ function UserListRow({ user, canWrite, menuOpen, onMenu, onReload, onMore }: {
         <div className={CELL_LABEL}>Apps</div>
         <span className="text-zinc-700 dark:text-zinc-300 whitespace-nowrap">
           {`${user.apps_created || 0} of ${user.app_quota == null ? 0 : user.app_quota} used`}
+        </span>
+      </div>
+      <div className="text-sm">
+        <div className={CELL_LABEL}>Total points</div>
+        <span className="text-zinc-700 dark:text-zinc-300 tabular-nums" data-user-points={user.id}>
+          {Number(user.total_points || 0).toLocaleString('en-US')}
         </span>
       </div>
       <div className="flex items-center gap-1 md:justify-end">
@@ -1085,8 +1093,8 @@ function UsersSection() {
             onChange={(e) => setFilter(e.target.value)}
           />
         </div>
-        <div className="hidden md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_auto] md:gap-4 px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-          <span>User</span><span>Spend</span><span>Tier</span><span>Apps</span><span className="w-24" />
+        <div className="hidden md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:gap-4 px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+          <span>User</span><span>Spend</span><span>Tier</span><span>Apps</span><span id="admin-users-points-header">Total points</span><span className="w-24" />
         </div>
         <div id="admin-user-list" className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {denied ? <p className="p-4 text-sm text-zinc-500 dark:text-zinc-400">Admin access required.</p> : null}

@@ -1270,7 +1270,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // 811 → 812: +1, the admin Support view's points card over staging user
   // 900302 (#admin/support/900302), leaving 28 slots.
-  assert.equal(DAPP.tests.length, 812);
+  //
+  // 811 → 814: +3, independently on main: the Settings Node row refreshing
+  // without a tap, and the wallet's Block production card order/style in the
+  // producing and delegated states (the style assertions fold into the order
+  // check).
+  //
+  // 812 → 815, 814 → 815: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took
+  // 811 → 812 alone, with the admin Support view check above; main
+  // independently took the same 811 to 814, with the Settings/wallet trio
+  // above. Neither set overlaps the other, so the merged manifest holds
+  // every one of them: 811 + 1 + 3 = 815.
+  assert.equal(DAPP.tests.length, 815);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
