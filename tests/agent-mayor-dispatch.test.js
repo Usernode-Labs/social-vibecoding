@@ -408,7 +408,7 @@ test('a follow-up turn records no user message and carries on from the card', as
 });
 
 test('the turn keeps its lease fresh while it runs', async () => {
-  assert.equal(agentTurn.LEASE_RENEW_MS, 60000);
+  assert.equal(agentTurn.LEASE_RENEW_MS, 30000);
   assert.ok(agentTurn.LEASE_RENEW_MS < require('../src/services/agent-sessions').TURN_LEASE_STALE_MINUTES * 60000 / 5,
     'renewed many times inside the stale window');
 });
@@ -492,7 +492,10 @@ test('a long conversation is compacted after the turn, and replays only what fol
 
 function dispatchDeps({
   change = CHANGE_ROW, busy = false, tool = null, cleared = true, choice = null, switched = { ok: true },
+  // What holds a busy change: a turn, or only a visual-evidence run.
+  evidenceRun = null, evidenceWaitMs = undefined,
 } = {}) {
+  const isBusy = typeof busy === 'function' ? busy : () => busy;
   const log = [];
   const registry = new Map();
   const deps = {
@@ -511,9 +514,13 @@ function dispatchDeps({
       finishTurn: async (id, opts) => { log.push(['finishTurn', id, opts]); return cleared; },
     },
     activeWorkers: {
-      isSessionBusy: () => busy,
+      isSessionBusy: () => isBusy(),
+      hasSessionOperation: () => isBusy() && !evidenceRun,
+      activeWorkers: new Map(),
       beginSessionOperation: (id) => { log.push(['begin', id]); return () => log.push(['release', id]); },
     },
+    evidenceRunFor: () => evidenceRun,
+    evidenceWaitMs,
     stopRegistry: {
       createHandle: ({ sessionId, phase, send }) => ({ sessionId, phase, send, stopped: false, stoppedBy: null, abort: new AbortController() }),
       set: (id, handle) => registry.set(id, handle),
@@ -659,6 +666,31 @@ test('a dispatch is refused when there is nothing to build on', async () => {
   assert.match(busy.outcome.toolResultText, /^busy/);
   assert.ok(!busy.log.some((e) => e[0] === 'begin'), 'a busy change is not claimed');
   assert.equal(dispatch.canDispatch(null), false);
+});
+
+test('a change held only by a visual-evidence run waits it out, then builds', async () => {
+  let running = true;
+  let finish;
+  const evidenceRun = new Promise((resolve) => { finish = resolve; });
+  const { deps } = dispatchDeps({ busy: () => running, evidenceRun });
+  assert.equal(dispatch.canDispatch(CHANGE_ROW, deps), true, 'the tools stay on offer while evidence records');
+  setTimeout(() => { running = false; finish(); }, 5);
+  const { outcome, log, agentEvents } = await dispatchWith({ busy: () => running, evidenceRun });
+  assert.equal(outcome.toolResultText, 'built');
+  assert.match(agentEvents[0].text, /^Visual evidence is being recorded/);
+  assert.equal(agentEvents[0].changeId, 50);
+  assert.deepEqual(log[0], ['begin', 50], 'claimed only after the run ended');
+});
+
+test('an evidence run that outlasts the wait is refused as what it is, not as the coding agent', async () => {
+  const { outcome, log } = await dispatchWith({ busy: true, evidenceRun: new Promise(() => {}), evidenceWaitMs: 5 });
+  assert.match(outcome.toolResultText, /^busy_visual_evidence: /);
+  assert.match(outcome.toolResultText, /not the coding agent/);
+  assert.match(outcome.toolResultText, /nothing will retry it automatically/);
+  assert.ok(!log.some((e) => e[0] === 'begin'));
+
+  const turn = dispatchDeps({ busy: true });
+  assert.equal(dispatch.canDispatch(CHANGE_ROW, turn.deps), false, 'a turn holding the change still hides the tools');
 });
 
 test('a stopped or crashed dispatch leaves the change\'s turn to its recovery', async () => {

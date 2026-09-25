@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # bookworm's frozen PostgreSQL 15. The PostgreSQL project's apt repository
 # supplies 17 (+contrib, for common app extensions like pgcrypto/uuid-ossp).
 # We pre-initialize a node-owned
-# data dir at image-build time; run-cc.sh starts the server lazily on
+# data dir at image-build time; both coding runners start it lazily on
 # build turns and recreates the `inloop` database fresh each turn, so
 # scout/sync-only sessions pay zero runtime cost.
 #
@@ -45,7 +45,7 @@ RUN mkdir -p /etc/postgresql-common/createcluster.conf.d \
   && rm -rf /var/lib/apt/lists/*
 
 # Debian keeps the server binaries (pg_ctl/initdb/postgres) off PATH —
-# only client tools get pg_wrapper shims. Surface them for run-cc.sh and
+# only client tools get pg_wrapper shims. Surface them for both runners and
 # for the agent itself (`pg_ctl status`, direct `psql`).
 ENV PATH=/usr/lib/postgresql/17/bin:$PATH
 
@@ -142,6 +142,7 @@ RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
 COPY run-codex-agent.sh /usr/local/bin/run-codex-agent.sh
+COPY start-inloop-db.sh /usr/local/bin/start-inloop-db.sh
 COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
 COPY evidence-mcp.js /usr/local/bin/evidence-mcp.js
 COPY build-evidence-mcp.js /usr/local/bin/build-evidence-mcp.js
@@ -187,14 +188,12 @@ COPY usernode-attachments /usr/local/bin/usernode-attachments
 # Platform-side dedup + rate limit bound the spam. See
 # src/routes/internal.js + src/routes/sessions.js (confirm route).
 COPY usernode-report-platform-issue /usr/local/bin/usernode-report-platform-issue
-# usernode-run-checks runs the app's declared dapp.json checks against the
-# in-loop app (build turns boot it on $INLOOP_PORT) with the SAME
-# semantics as the capture container — navigate, console errors,
-# wait-based selector/text assertions — so the agent sees its proposal
-# checks fail BEFORE committing instead of after the turn ends. Purely
-# local: drives the image's pinned Playwright chromium against loopback,
-# needs no JWT, writes nothing back.
+# usernode-run-checks runs declared dapp.json assertions against the in-loop
+# app before commit. A manifest can configure a loopback-only fixture login
+# for protected routes. It drives the pinned Chromium and writes nothing
+# back; staging still supplies its own platform-issued capture identity.
 COPY usernode-run-checks /usr/local/bin/usernode-run-checks
+COPY usernode-run-inloop /usr/local/bin/usernode-run-inloop
 # usernode-debug (#616) is read-only production debugging for ADMIN
 # sessions on the self-edit app. It calls the platform's prod-debug
 # internal API (deny-listed read-only SQL role, allowlisted container
@@ -210,6 +209,7 @@ COPY usernode-debug /usr/local/bin/usernode-debug
 RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/run-cc.sh \
               /usr/local/bin/run-codex-agent.sh \
+              /usr/local/bin/start-inloop-db.sh \
               /usr/local/bin/evidence-mcp.js \
               /usr/local/bin/build-evidence-mcp.js \
               /usr/local/bin/evidence-origin-proxy.js \
@@ -222,6 +222,7 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/usernode-attachments \
               /usr/local/bin/usernode-report-platform-issue \
               /usr/local/bin/usernode-run-checks \
+              /usr/local/bin/usernode-run-inloop \
               /usr/local/bin/usernode-debug \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node

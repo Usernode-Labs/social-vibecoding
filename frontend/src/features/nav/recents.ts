@@ -45,6 +45,8 @@ export interface RecentItem {
   activity?: AgentActivity;
   /** Only for `app`: what the tile draws and what resuming opens. */
   app?: { slug: string; name: string; iconUrl: string | null; iconEmoji: string | null };
+  /** Only for an Active row (#3074): the app the viewer is in right now. */
+  current?: boolean;
 }
 
 /** The part of a conversation summary the merge reads. */
@@ -58,6 +60,9 @@ export interface RecentConversation {
   channelKey?: string | null;
   peer?: { id: number; username: string } | null;
   members?: Array<{ id: number; username: string }>;
+  /** An unanswered request's sender — its only name before it is accepted. */
+  membershipStatus?: string;
+  requester?: { id: number; username: string } | null;
 }
 
 /** An agent session (#2779): a conversation with the Mayor, by its own clock. */
@@ -85,8 +90,12 @@ function stamp(value: string | null | undefined): number {
 }
 
 function directLabel(item: RecentConversation, viewerId: number | null): string {
+  // QA 2026-09-24 Q33a: a request the viewer has not answered carries no
+  // peer and no roster, but it does carry who sent it — name them, as the
+  // Messages list does, rather than "Direct message".
   const peer = item.peer
     || (item.members || []).find((member) => Number(member.id) !== viewerId)
+    || (item.membershipStatus === 'invited' ? item.requester : null)
     || null;
   return peer?.username ? `@${peer.username}` : item.title;
 }
@@ -100,10 +109,15 @@ export function buildRecents(input: {
   agentSessions?: RecentAgentSession[];
   viewerId?: number | null;
   limit?: number;
+  /** #3074: the apps listed under Active, which Recents leaves out. Dropped
+   *  BEFORE the cut, so an active app never costs Recents a row. */
+  active?: string[];
 }): RecentItem[] {
   const viewerId = input.viewerId ?? null;
+  const active = input.active || [];
   const items: RecentItem[] = [];
   for (const app of input.apps) {
+    if (active.includes(app.slug)) continue;
     items.push({
       key: `app:${app.slug}`,
       kind: 'app',
@@ -172,6 +186,61 @@ export function buildRecents(input: {
   return pick(items, input.limit);
 }
 
+/* ── ACTIVE (#3074) ────────────────────────────────────────────────────
+ *
+ * The apps running right now: the ones with a live frame, which already carry
+ * the green "still open" dot (../app-frame/live-apps.tsx). The rail lists them
+ * in a section of their own ABOVE Recents, and Recents leaves them out
+ * (buildRecents' `active`), so nothing is listed twice. When a frame goes
+ * (evicted, rebuilt, sign-out) its app drops out of `live` and so back into
+ * Recents, at the time it was left.
+ *
+ * In the frame store's order: the app the viewer is in first (`current`,
+ * which the row highlights), then the kept ones, most recently used first.
+ *
+ * The name and icon are Recents' own (./recent-apps-store.js), so an active
+ * row is the row the app had in Recents. The app the viewer is in may never
+ * have been left, and so not be there yet: `known` is what else the caller
+ * has for it (the open app's header record), and the slug is the last resort,
+ * which is what the Resume strip falls back to as well. */
+
+export interface ActiveAppInfo {
+  slug: string;
+  name?: string | null;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
+}
+
+export function buildActive(input: {
+  /** Slugs with a live frame, in liveAppSlugs' order. */
+  live: string[];
+  /** The slug of the app on screen, or null when the viewer is in none. */
+  current: string | null;
+  apps: RecentApp[];
+  known?: ActiveAppInfo[];
+}): RecentItem[] {
+  const items: RecentItem[] = [];
+  for (const slug of input.live) {
+    if (!slug || items.some((item) => item.app?.slug === slug)) continue;
+    const found: ActiveAppInfo = input.apps.find((app) => app.slug === slug)
+      || (input.known || []).find((app) => app.slug === slug && app.name)
+      || { slug };
+    const name = found.name || slug;
+    items.push({
+      key: `app:${slug}`,
+      kind: 'app',
+      label: name,
+      href: `/app/${encodeURIComponent(slug)}`,
+      at: null,
+      unread: false,
+      app: { slug, name, iconUrl: found.iconUrl || null, iconEmoji: found.iconEmoji || null },
+      current: slug === input.current,
+    });
+  }
+  // The app the viewer is in leads, whatever order the caller passed.
+  return items.sort((a, b) => Number(!!b.current) - Number(!!a.current));
+}
+
 /** Newest first, a row with no clock last, stable within a timestamp. */
 function pick(items: RecentItem[], limit = RECENTS_LIMIT): RecentItem[] {
   return items
@@ -203,6 +272,13 @@ function pick(items: RecentItem[], limit = RECENTS_LIMIT): RecentItem[] {
 /** Today and the five days before it each get a label; older is folded. */
 export const RECENT_DAYS = 6;
 
+/** QA 2026-09-24 Q31: the fewest rows the list shows while folded. A viewer
+ *  whose whole history is older than the labelled days used to see only
+ *  "RECENTS" over "Show N older", which reads as an empty list. So when the
+ *  labelled days hold fewer than this, the newest older rows top them up
+ *  under an "Earlier" label and only the rest fold. */
+export const RECENTS_MIN_SHOWN = 3;
+
 export interface RecentDay {
   /** 0 is today, 1 yesterday, and so on, in the viewer's calendar. */
   daysAgo: number;
@@ -213,7 +289,12 @@ export interface RecentDay {
 export interface RecentGroups {
   /** Only the days that have a row, newest first. */
   days: RecentDay[];
-  /** Before the labelled days, or with no clock: behind "Show N older". */
+  /** Before the labelled days but shown anyway, under "Earlier", so the
+   *  folded list is never shorter than RECENTS_MIN_SHOWN rows while it has
+   *  that many (QA 2026-09-24 Q31). Empty when the days already fill it. */
+  earlier: RecentItem[];
+  /** The rest of the rows before the labelled days, or with no clock:
+   *  behind "Show N older". */
   older: RecentItem[];
 }
 
@@ -253,5 +334,10 @@ export function groupRecents(items: RecentItem[], now: number = Date.now()): Rec
     day.items.push(item);
   }
   days.sort((a, b) => a.daysAgo - b.daysAgo);
-  return { days, older };
+  // Top up from the front of the older rows, which are the newest of them:
+  // reading days, then earlier, then older is still buildRecents' order.
+  const shown = days.reduce((sum, day) => sum + day.items.length, 0);
+  const topUp = Math.max(0, RECENTS_MIN_SHOWN - shown);
+  const earlier = older.splice(0, topUp);
+  return { days, earlier, older };
 }

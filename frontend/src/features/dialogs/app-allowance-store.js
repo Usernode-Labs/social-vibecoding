@@ -1,6 +1,6 @@
 import { createStore } from '../../lib/plain-store.js';
 
-export const appAllowanceStore = createStore({ quota: null, requestedAt: null, loading: false, error: '' });
+export const appAllowanceStore = createStore({ quota: null, server: null, requestedAt: null, loading: false, error: '' });
 let pending = null;
 let revision = 0;
 
@@ -11,11 +11,24 @@ function normalizeQuota(raw) {
   return { used: raw.used, limit: raw.limit, remaining: raw.remaining };
 }
 
+/**
+ * The server-wide MAX_APPS cap as the viewer meets it (QA 2026-09-24 Q33b),
+ * or null when it does not apply or the payload is malformed: an unreadable
+ * cap is shown as no cap, never as a full server.
+ */
+export function normalizeServer(raw) {
+  if (!raw) return null;
+  const count = (value) => Number.isInteger(value) && value >= 0;
+  if (!count(raw.used) || !count(raw.limit) || raw.limit === 0 || !count(raw.remaining)) return null;
+  return { used: raw.used, limit: raw.limit, remaining: raw.remaining, full: raw.used >= raw.limit };
+}
+
 export function seedAppAllowance(user) {
   revision++;
   pending = null;
   appAllowanceStore.set({
     quota: normalizeQuota(user?.appCreationQuota),
+    server: normalizeServer(user?.appServerCapacity),
     requestedAt: user?.appQuotaRequestedAt || null,
     loading: false,
     error: '',
@@ -25,7 +38,7 @@ export function seedAppAllowance(user) {
 function publish(data) {
   const quota = normalizeQuota(data?.quota);
   if (!quota) throw new Error('Could not load your app allowance.');
-  appAllowanceStore.set({ quota, requestedAt: data.requestedAt || null, error: '' });
+  appAllowanceStore.set({ quota, server: normalizeServer(data?.server), requestedAt: data.requestedAt || null, error: '' });
   if (typeof window !== 'undefined' && window.App?.user) {
     Object.assign(window.App.user, {
       appCreationQuota: quota,

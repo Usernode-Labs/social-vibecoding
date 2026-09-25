@@ -36,6 +36,7 @@ const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
+const unitSuiteRow = require('../services/unit-suite-row');
 const {
   getAppConventions,
   getSelfHostedRefuseList,
@@ -914,10 +915,23 @@ async function loadSessionCheckContext(pool, sessionId) {
 // So the board renders these same rows now, and both callers derive from one
 // function — an agent and a human reading different answers about the same
 // run is the failure this shape prevents.
+//
+// Both caps bend for the repo unit suite's row. It is ONE row standing for
+// every failing unit test, and its reason is the only place the fix turn
+// learns which test files to run. The row is appended after the browser
+// checks, so behind twelve failing ones the row cap dropped it, and 300
+// characters of its reason held a few test names and no file — a fix turn
+// then re-ran the whole suite to find the rest. So it leads, where the row
+// cap cannot reach it, and keeps the whole reason unit-suite.js already
+// bounded.
 function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MAX) {
   if (checkState !== 'failing') return { total: 0, blocking: 0, rows: [] };
-  const failing = (Array.isArray(testResults) ? testResults : [])
+  const all = (Array.isArray(testResults) ? testResults : [])
     .filter((r) => r && r.status !== 'pass');
+  const failing = [
+    ...all.filter(unitSuiteRow.isUnitSuiteRow),
+    ...all.filter((r) => !unitSuiteRow.isUnitSuiteRow(r)),
+  ];
   return {
     total: failing.length,
     // Advisory rows report but do not block, so a reviewer counting them as
@@ -927,7 +941,8 @@ function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MA
     rows: failing.slice(0, max).map((r) => ({
       name: String(r.name || 'unnamed check').slice(0, 160),
       path: String(r.path || '').slice(0, 160) || null,
-      reason: String(r.failureReason || 'failed').slice(0, 300),
+      reason: String(r.failureReason || 'failed')
+        .slice(0, unitSuiteRow.isUnitSuiteRow(r) ? unitSuiteRow.FAILURE_DETAIL_MAX : 300),
       advisory: !!r.advisory,
       consoleError: Array.isArray(r.consoleErrors) && r.consoleErrors[0]
         ? String(r.consoleErrors[0].message || '').slice(0, 200)
@@ -948,6 +963,15 @@ function buildFailingChecksBlock(checkState, testResults) {
   });
   const more = failing.length > FAILING_CHECKS_MAX
     ? `\n(+${failing.length - FAILING_CHECKS_MAX} more failing)` : '';
+  // The unit suite's reason is a per-file list, and the point of it is that
+  // the agent re-runs those files instead of the whole suite (minutes).
+  const unitRow = summary.rows.some((r) => unitSuiteRow.isUnitSuiteRow({ name: r.name, path: r.path }));
+  const unitNote = unitRow ? `
+
+The "${unitSuiteRow.UNIT_CHECK_NAME}" row is the repo's own \`npm test\`.
+Its reason names every failing test FILE with how many of its tests failed,
+then as many of their names as fit. Re-run just those files, with the runner
+and flags the repo's \`test\` script uses, rather than the whole suite.` : '';
 
   return `
 
@@ -968,7 +992,7 @@ Treat fixing these as part of this turn's task unless the user's request
 explicitly says otherwise. Reproduce them locally first: boot the app
 (see the in-loop browser instructions) and run \`usernode-run-checks\`
 against the exact \`path:\` routes above, then fix the app (or the check,
-if the check itself is wrong) and commit the fix with your other work.
+if the check itself is wrong) and commit the fix with your other work.${unitNote}
 
 ==== END PROPOSAL CHECKS ====`;
 }
@@ -1237,8 +1261,12 @@ function agentSelectionErrorBody(err) {
 
 function automaticOpenRouterSetupError(err) {
   if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
+    // QA 2026-09-24: no environment variable in the toast. The caller has
+    // already logged err.message, which names USERNODE_OPENROUTER_MANAGEMENT_API_KEY
+    // for whoever reads the server log; the person who pressed "Start work"
+    // is told what it means for them.
     const message = err.code === 'not_configured'
-      ? 'OpenRouter could not be set up automatically because managed key provisioning is not configured. Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY.'
+      ? managedOpenRouter.NOT_CONFIGURED_USER_MESSAGE
       : `OpenRouter could not be set up automatically. ${err.message}`;
     return new AgentSelectionError(err.statusCode, message, err.code);
   }
@@ -2421,6 +2449,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         byId.set(row.id, {
           id: payload.sessionId,
           appSlug: payload.appSlug,
+          // Whose session it is, so the Homeroom mark's working indicator
+          // can count the viewer's own work only (SessionState.anyActiveFor).
+          userId: payload.userId,
           busy: payload.busy,
           phase: payload.phase,
           stopping: payload.stopping,
@@ -2441,7 +2472,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         sessions.push(
           {
-            id: 990102, appSlug: config.selfAppSlug, busy: true, phase: 'cc',
+            // The viewer's own mock busy session, so the demo's Homeroom
+            // mark shows its working indicator (SessionState.anyActiveFor).
+            id: 990102, appSlug: config.selfAppSlug, userId: req.user.id, busy: true, phase: 'cc',
             stopping: false, status: 'active', headless: null,
           },
           {
@@ -2697,7 +2730,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       // #2779: an optional name, as the user would call the change. The
       // agent-session Mayor's start_change sends one; the browser buttons
-      // do not, and their sessions are named from the first message.
+      // do not, and their sessions are named from the first message. It is
+      // the change's display name, not a title a person chose: it does NOT
+      // go in proposed_pr_title, which outranks every generated title and
+      // would pin the proposal to the Mayor's first guess. pr-metadata reads
+      // it back (from the change_started event) as the change's request, so
+      // the title and description are written from the change itself.
+      // PATCH /api/sessions/:id/title is how a person pins one.
       let initialTitle = null;
       if (req.body && req.body.title != null) {
         initialTitle = typeof req.body.title === 'string'
@@ -2854,8 +2893,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number,
             linked_issues, issue_link_seeded,
             agent_backend, agent_provider, agent_model, agent_reasoning_effort,
-            session_title, proposed_pr_title)
-         VALUES ($1, $2, NULL, 'active', $3, $4, $5, $6, $7, $8, $9, $10::text, $10::text)
+            session_title)
+         VALUES ($1, $2, NULL, 'active', $3, $4, $5, $6, $7, $8, $9, $10::text)
          RETURNING *`,
         [app.id, req.user.id, issueNumber,
          issueNumber ? [issueNumber] : [], !!issueNumber,

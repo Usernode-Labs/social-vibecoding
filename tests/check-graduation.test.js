@@ -205,4 +205,9 @@ test('the reason says how many runs disagreed, before it says what broke', () =>
   assert.equal(AppView._checkReason({ runs: 1, fails: 1, failureReason: 'Selector not found' }),
     'Selector not found', 'one run says nothing about determinism');
   assert.equal(AppView._checkReason({ runs: 3, fails: 0 }), null);
+  // The unit suite's reason lists every failing test FILE and is bounded at
+  // 1,600 characters by the suite itself; the card shows all of it (at 500
+  // it stopped mid-name, before the files after the first).
+  const unitReason = `tests/a.test.js (8): ${'n'.repeat(1400)} | tests/z.test.js (1): last`;
+  assert.equal(AppView._checkReason({ failureReason: unitReason }), unitReason);
 });

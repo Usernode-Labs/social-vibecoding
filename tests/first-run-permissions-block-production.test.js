@@ -243,7 +243,7 @@ test('Settings re-runs the first-run trigger after a successful block-production
   const end = settingsJs.indexOf('\n    },', start);
   const body = settingsJs.slice(start, end);
   const requested = body.indexOf('bp_requested: true');
-  const offer = body.indexOf('NativeChrome.maybeShowFirstRunPermissions()');
+  const offer = body.indexOf('NativeChrome.maybeShowFirstRunPermissions({ force: true })');
   assert.ok(requested !== -1 && offer > requested,
     'the offer follows the recorded request, inside the success path');
   const catchAt = body.indexOf('} catch (e)');

@@ -70,9 +70,15 @@ export type CardRow = Extract<ListRow, { t: 'card' }>;
  */
 export type DetailPlacement = 'actions' | false;
 
-export function callAppView(fn: string, ...args: unknown[]): void {
+/**
+ * Call an AppView method by name. Returns whatever it returned (undefined
+ * when there is no such method), so a caller that needs the outcome, such as
+ * the Needs-you deck waiting on `castVote`, can have it.
+ */
+export function callAppView(fn: string, ...args: unknown[]): unknown {
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
-  if (av && typeof av[fn] === 'function') av[fn](...args);
+  if (av && typeof av[fn] === 'function') return av[fn](...args);
+  return undefined;
 }
 
 /**
@@ -118,6 +124,10 @@ export function openHref(slug: string, card: DevCardModel): string | null {
 export function sessionHref(slug: string, card: DevCardModel): string | null {
   const a = card.attrs || {};
   if (!slug || !a['data-session-chip']) return null;
+  // #3081: a change an agent session started is worked on in THAT
+  // conversation (#2779); its dev chat takes no new messages, so the link
+  // leads to the agent session, as the change page's door already does.
+  if (a['data-session-agent']) return `#messages/agent/${a['data-session-agent']}`;
   return `#app/${slug}/dev/sessions/${a['data-session-chip']}`;
 }
 
@@ -201,7 +211,7 @@ export function FoldMark({ open, onClick }: { open: boolean; onClick?: () => voi
   const glyph = <FoldMarkIcon aria-hidden="true" />;
   if (!open) return <span className="dev-fold-mark" aria-hidden="true">{glyph}</span>;
   return (
-    <button type="button" className="dev-fold-mark" data-open="1" aria-expanded="true" aria-label="Fold the card" onClick={onClick}>
+    <button type="button" className="dev-fold-mark un-touch-target" data-open="1" aria-expanded="true" aria-label="Fold the card" onClick={onClick}>
       {glyph}
     </button>
   );

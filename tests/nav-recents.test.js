@@ -22,7 +22,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const {
-  buildRecents, groupRecents, recentDayLabel, RECENTS_LIMIT, RECENT_DAYS,
+  buildActive, buildRecents, groupRecents, recentDayLabel, RECENTS_LIMIT, RECENT_DAYS, RECENTS_MIN_SHOWN,
 } = loadTsx('frontend/src/features/nav/recents.ts');
 
 function conversation(id, kind, at, extra = {}) {
@@ -105,7 +105,8 @@ test('#2878: an app row draws the app\'s own icon, the glyph only when it has no
   assert.match(list, /import \{ AppIconContent, appIconKind \} from '\.\.\/apps\/app-card-view';/,
     'the launcher\'s own icon renderer');
   assert.match(list, /const app = item\.app && \(item\.app\.iconUrl \|\| item\.app\.iconEmoji\) \? item\.app : null;/);
-  assert.match(list, /\{app \? <AppTile app=\{app\} \/> : <Glyph className="platform-recent-glyph" aria-hidden="true" \/>\}/);
+  // #3028: a working agent session's spinner takes the icon's place first.
+  assert.match(list, /: app \? <AppTile app=\{app\} \/> : <Glyph className="platform-recent-glyph" aria-hidden="true" \/>\}/);
   assert.match(list, /className="app-icon-tile platform-recent-tile"/);
 
   const { AppIconContent } = loadTsx('frontend/src/features/apps/app-card-view.tsx');
@@ -197,9 +198,12 @@ test('#2919: a daylight-saving day is still one day', () => {
       discussions: [],
       agents: [],
     });
-    const { days, older } = groupRecents(items, now);
+    const { days, earlier, older } = groupRecents(items, now);
     assert.deepEqual(days.map((d) => [d.label, d.items.length]), [['Yesterday', 1]]);
-    assert.equal(older.length, 1, 'six calendar days back across the change is older');
+    // QA 2026-09-24 Q31: with only two rows in the list, the one past the
+    // labelled days is shown under "Earlier" rather than folded; either way
+    // it is not given a day label.
+    assert.equal(earlier.length + older.length, 1, 'six calendar days back across the change is past the labelled days');
   } finally {
     if (zone === undefined) delete process.env.TZ;
     else process.env.TZ = zone;
@@ -246,6 +250,66 @@ test('#2919: small labels before each day, and "Show N older" folded until press
   assert.match(list, /const \[showOlder, setShowOlder\] = useState\(false\);/);
   assert.match(list, /onToggleOlder=\{\(\) => setShowOlder\(\(open\) => !open\)\}/);
   assert.doesNotMatch(list, /showOlder[^\n]*(localStorage|sessionStorage)/);
+});
+
+// QA 2026-09-24 Q31: a history that is all older than the labelled days used
+// to fold completely, leaving "RECENTS" over "Show N older" and nothing else.
+// The newest older rows now top the folded list up to RECENTS_MIN_SHOWN,
+// under "Earlier", and only the rest fold.
+test('QA 2026-09-24 Q31: nothing recent still shows the newest three, under Earlier', () => {
+  assert.equal(RECENTS_MIN_SHOWN, 3);
+  const at = (daysBack) => new Date(NOW - daysBack * 86400e3).toISOString();
+  const items = buildRecents({
+    apps: [],
+    conversations: [8, 9, 11, 14, 20].map((d, i) => conversation(i + 1, 'group', at(d))),
+    discussions: [],
+    agents: [],
+  });
+  const grouped = groupRecents(items, NOW);
+  assert.deepEqual(grouped.days, []);
+  assert.deepEqual(grouped.earlier.map((i) => i.key), ['conversation:1', 'conversation:2', 'conversation:3'],
+    'the three newest, in the list\'s order');
+  assert.deepEqual(grouped.older.map((i) => i.key), ['conversation:4', 'conversation:5']);
+  assert.deepEqual([...grouped.earlier, ...grouped.older], items, 'grouping only: no row moves or drops');
+
+  // One row in the labelled days: two older rows top it up.
+  const mixed = buildRecents({
+    apps: [],
+    conversations: [0, 8, 9, 11].map((d, i) => conversation(i + 1, 'group', at(d))),
+    discussions: [],
+    agents: [],
+  });
+  const mixedGroups = groupRecents(mixed, NOW);
+  assert.deepEqual(mixedGroups.days.map((d) => [d.label, d.items.length]), [['Today', 1]]);
+  assert.deepEqual(mixedGroups.earlier.map((i) => i.key), ['conversation:2', 'conversation:3']);
+  assert.deepEqual(mixedGroups.older.map((i) => i.key), ['conversation:4']);
+
+  // Days that already hold three rows take nothing from the older ones.
+  const full = groupRecents(byDayFixture(), NOW);
+  assert.deepEqual(full.earlier, []);
+  assert.equal(full.older.length, 2);
+
+  const { RecentsByDay } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const render = (showOlder) => renderToHtml(createElement(RecentsByDay, {
+    items, live: [], showOlder, onToggleOlder: () => {}, now: NOW,
+  }));
+  const labels = (html) => [...html.matchAll(/<div class="platform-recents-day">([^<]*)<\/div>/g)].map((m) => m[1]);
+  const keys = (html) => [...html.matchAll(/data-recent-key="([^"]*)"/g)].map((m) => m[1]);
+  const closed = render(false);
+  assert.deepEqual(labels(closed), ['Earlier']);
+  assert.deepEqual(keys(closed), ['conversation:1', 'conversation:2', 'conversation:3']);
+  assert.match(closed, /<span>Show 2 older<\/span><\/button>$/, 'the fold stays the last child and counts only the rest');
+  const open = render(true);
+  assert.deepEqual(labels(open), ['Earlier'], 'the rest follow on under Earlier, with no second label');
+  assert.deepEqual(keys(open), items.map((i) => i.key));
+  assert.match(open, /<span>Show less<\/span><\/button>$/);
+
+  // Three or fewer rows, all old: every one shows and there is nothing to fold.
+  const few = renderToHtml(createElement(RecentsByDay, {
+    items: items.slice(0, 3), live: [], showOlder: false, onToggleOlder: () => {}, now: NOW,
+  }));
+  assert.deepEqual(labels(few), ['Earlier']);
+  assert.doesNotMatch(few, /<button/);
 });
 
 test('#2919: the day labels and the fold are drawn in the desktop block only', () => {
@@ -296,7 +360,7 @@ test('the rail renders Recents between Workshop and Me, empty until mounted', ()
   // Hydration: rows only after mount, the root's class a constant.
   assert.match(list, /const items = mounted && viewer\s*\n\s*\? buildRecents\(/);
   assert.match(list, /className="platform-recents hidden"/);
-  assert.match(list, /useHiddenClass\(ref, items\.length === 0\);/);
+  assert.match(list, /useHiddenClass\(ref, items\.length === 0 && active\.length === 0\);/);
   // A distinct glyph per kind.
   assert.match(list, /app: AppWindowIcon,\s*direct: UserIcon,\s*group: UserGroupIcon,\s*channel: HashIcon,\s*agent: SparklesIcon,/);
   // Resuming an app goes through the router, as the Resume strip did.
@@ -380,4 +444,112 @@ test('#2798: no resting disc on the toggle or the bell; a blue hover on them and
     /@media \(hover: hover\) \{\s*\.platform-tab:not\(\[aria-current="page"\]\):hover,\s*\.platform-recent:hover \{\s*background: color-mix\(in srgb, var\(--brand-tint\) 55%, transparent\);/,
     'the hovered tab is a lighter blue than the current one');
   assert.match(css, /\.platform-tab\[aria-current="page"\] \{\s*background: var\(--brand-tint\);/);
+});
+
+// ── #3074: the running apps, in an Active section above Recents ───────
+
+function recentApp(slug, at, extra = {}) {
+  return { slug, name: slug[0].toUpperCase() + slug.slice(1), iconUrl: null, iconEmoji: null, at, ...extra };
+}
+
+test('#3074: Active lists the live apps, the one you are in first and marked', () => {
+  const apps = [
+    recentApp('notes', '2026-09-20T10:00:00Z', { iconEmoji: '📝' }),
+    recentApp('chess', '2026-09-20T09:00:00Z', { iconUrl: '/icons/chess.png' }),
+    recentApp('todo', '2026-09-20T08:00:00Z'),
+  ];
+  const active = buildActive({ live: ['chess', 'notes'], current: 'notes', apps });
+  assert.deepEqual(active.map((i) => [i.label, i.current]), [['Notes', true], ['Chess', false]]);
+  assert.deepEqual(active.map((i) => i.key), ['app:notes', 'app:chess'], 'the keys Recents gives them');
+  assert.equal(active[0].href, '/app/notes');
+  assert.deepEqual(active[1].app, { slug: 'chess', name: 'Chess', iconUrl: '/icons/chess.png', iconEmoji: null },
+    'the name and icon Recents has for it');
+
+  // On Home: nothing is current, the kept ones keep the frame store's order.
+  assert.deepEqual(buildActive({ live: ['chess', 'notes'], current: null, apps })
+    .map((i) => [i.label, i.current]), [['Chess', false], ['Notes', false]]);
+  assert.deepEqual(buildActive({ live: [], current: null, apps }), [], 'nothing running, no section');
+});
+
+test('#3074: an app never left yet is named by what the caller knows, else its slug', () => {
+  const known = [{ slug: 'poll', name: 'Poll', iconUrl: null, iconEmoji: '🗳️' }];
+  const [row] = buildActive({ live: ['poll'], current: 'poll', apps: [], known });
+  assert.equal(row.label, 'Poll');
+  assert.equal(row.app.iconEmoji, '🗳️');
+  const [bare] = buildActive({ live: ['poll'], current: 'poll', apps: [], known: [{ slug: 'poll', name: '' }] });
+  assert.equal(bare.label, 'poll');
+  assert.deepEqual(bare.app, { slug: 'poll', name: 'poll', iconUrl: null, iconEmoji: null });
+});
+
+test('#3074: an active app is not also in Recents, and returns when its frame goes', () => {
+  const apps = [
+    recentApp('notes', '2026-09-20T10:00:00Z'),
+    recentApp('chess', '2026-09-20T09:00:00Z'),
+  ];
+  const input = {
+    apps,
+    conversations: [conversation(1, 'group', '2026-09-20T09:30:00Z', { title: 'Team' })],
+    discussions: [],
+    agents: [],
+  };
+  const live = ['notes'];
+  const active = buildActive({ live, current: null, apps });
+  const recents = buildRecents({ ...input, active: active.map((i) => i.app.slug) });
+  assert.deepEqual(active.map((i) => i.label), ['Notes']);
+  assert.deepEqual(recents.map((i) => i.label), ['Team', 'Chess'], 'listed once, under Active');
+
+  // Evicted, rebuilt or signed out: back in Recents at the time it was left.
+  assert.deepEqual(buildActive({ live: [], current: null, apps }), []);
+  assert.deepEqual(buildRecents({ ...input, active: [] }).map((i) => i.label), ['Notes', 'Team', 'Chess']);
+});
+
+test('#3074: an active app costs Recents no row at the cut', () => {
+  const conversations = Array.from({ length: RECENTS_LIMIT + 2 }, (_, i) => conversation(
+    i + 1, 'group', new Date(Date.UTC(2026, 8, 1) + i * 3600e3).toISOString(),
+  ));
+  const apps = [recentApp('notes', '2026-09-30T10:00:00Z')];
+  const items = buildRecents({ apps, conversations, discussions: [], agents: [], active: ['notes'] });
+  assert.equal(items.length, RECENTS_LIMIT);
+  assert.ok(!items.some((i) => i.kind === 'app'));
+});
+
+test('#3074: the Active rows are Recents\' rows, the current one lit, and nothing before mount', () => {
+  const { ActiveApps } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  assert.equal(renderToHtml(createElement(ActiveApps, { items: [] })), '', 'no section while nothing runs');
+  const items = buildActive({
+    live: ['notes', 'chess'],
+    current: 'notes',
+    apps: [recentApp('notes', '2026-09-20T10:00:00Z', { iconEmoji: '📝' }), recentApp('chess', '2026-09-20T09:00:00Z')],
+  });
+  const html = renderToHtml(createElement(ActiveApps, { items }));
+  assert.match(html, /^<div class="platform-active" role="group" aria-labelledby="platform-active-head"><h2 id="platform-active-head" class="platform-recents-head">Active<\/h2>/);
+  const rows = html.match(/<a class="platform-recent"[^>]*>/g);
+  assert.equal(rows.length, 2);
+  assert.match(rows[0], /data-recent-key="app:notes"/);
+  assert.match(rows[0], /aria-label="App: Notes, still open"/);
+  assert.match(rows[0], /data-live="true"/);
+  assert.match(rows[0], /aria-current="true"/);
+  assert.match(rows[0], /data-current="true"/);
+  assert.doesNotMatch(rows[1], /aria-current/);
+  assert.match(html, /class="app-live-dot platform-recent-live"/, 'the green dot it carries everywhere');
+  assert.match(html, /platform-recent-tile/, 'the app\'s own icon');
+
+  const list = read('frontend/src/features/nav/recents-list.tsx');
+  // Hydration: rows only after mount, the section inside the root and first.
+  assert.match(list, /const active = mounted && viewer\s*\n\s*\? buildActive\(/);
+  assert.match(list, /aria-labelledby="platform-recents-head"\s*\n\s*>\s*\n\s*<ActiveApps items=\{active\} \/>\s*\n\s*<h2 id="platform-recents-head"/);
+  assert.match(list, /active: active\.map\(\(item\) => item\.app!\.slug\),/);
+  assert.doesNotMatch(list, /data-close|aria-label="Close/, 'no close button');
+  const live = read('frontend/src/features/app-frame/live-apps.tsx');
+  assert.match(live, /export function useCurrentAppSlug\(\): string \| null \{\s*return useStoreState\(appFrameStore\)\.slug \|\| null;/);
+});
+
+test('#3074: Active is drawn in the desktop block only, the app you are in lit like a tab', () => {
+  const css = read('public/css/app.css');
+  const desktop = css.indexOf('THE SAME FIVE TABS, STANDING UP');
+  const at = css.indexOf('.platform-active {');
+  assert.ok(desktop > 0 && at > desktop, 'inside the desktop block; the phone bar never draws #platform-recents');
+  assert.match(css.slice(at), /^\.platform-active \{[^}]*display: flex;[^}]*flex: none;/);
+  assert.match(css, /\.platform-recent\[aria-current="true"\] \{\s*background: var\(--brand-tint\);\s*color: var\(--brand-ink\);\s*\}/);
+  assert.match(css, /\.platform-recents-head:last-child \{\s*display: none;\s*\}/, 'no Recents heading over nothing');
 });

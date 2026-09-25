@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -14,65 +15,118 @@ import {
   ArrowUpIcon,
   CheckIcon,
   ChevronDownIcon,
+  DraftEditIcon,
+  DraftSendIcon,
+  DraftTrashIcon,
+  EllipsisHorizontalIcon,
+  PaperclipIcon,
+  SaveDraftIcon,
   SparklesIcon,
   SpinnerArcIcon,
   XIcon,
+  AppWindowIcon,
 } from '@/components/ui/icons';
 
+import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import type { AiBudgetState } from '../header/ai-budget';
+import { aiBudgetStore } from '../header/ai-budget-store.js';
 import { Attached } from '../dev-chat/transcript';
+import { PendingStrip } from '../attachments/pending-strip';
 import { nowStore, type TranscriptRow } from '../dev-chat/transcript-store';
-import type { AgentChange, AgentSession } from './api';
+import type { AgentChange, AgentSession, SavedDraft } from './api';
 import {
   choiceFromValue,
   choiceValue,
   effectiveChoice,
+  effortLabel,
   effortOptions,
   effortValue,
   offersReasoning,
   pickerOptions,
-  type PickerOption,
 } from './model-choice';
+import { badgeFor, formatSize, pastedName } from './attachments';
+import {
+  CreditPill,
+  BuildSheetBody,
+  ModelPill,
+  ModelSheet,
+  ModelSheetBody,
+  type BuildTab,
+  SentAttachments,
+  creditView,
+  modelList,
+  type CreditView,
+} from './composer-parts';
 import {
   buildTranscript,
+  checksSummary,
   cardView,
   changeStatusLabel,
   durationLabel,
   latestReplies,
   runHeading,
   type CardView,
+  type PreviewItem,
   type RunItem,
   type TranscriptItem,
 } from './transcript';
 import {
+  addAttachments,
   chooseAgent,
+  clearComposerFill,
   clearReturnedText,
+  closeHandoff,
   closeSpec,
   composerId,
+  archiveCurrentSession,
   decideCard,
+  deleteSavedDraft,
+  editSavedDraft,
   loadModelCatalog,
   openAgentSession,
   openSpec,
+  fillComposer,
   sendAgentMessage,
   setDrawerOpen,
   setSpecTab,
+  setPaneTab,
+  dockPreview,
+  openPreview,
+  recheckChange,
+  removeAttachment,
+  renameCurrentSession,
+  retryStaging,
+  unarchiveCurrentSession,
+  PREVIEW_SLOT_ID,
+  saveComposerDraft,
+  sendSavedDraft,
   stopAgentTurn,
   switchActiveChange,
   useAgentSessionState,
+  type PaneTab,
+  type PreviewPaneState,
   type SpecSheetState,
   type SpecTab,
 } from './store';
 import {
+  PREVIEW_MIN_WIDTH,
   SPEC_DEFAULT_WIDTH,
   SPEC_MIN_WIDTH,
   SPEC_WIDTH_STEP,
   clampSpecWidth,
   readSpecWidth,
   splitSpec,
-  useSpecBeside,
+  useSidePaneBeside,
+  useWideEnoughForSpec,
   writeSpecWidth,
   type SpecSplit,
 } from './spec-layout';
+import { openFocusedApp } from './open-app';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { ProposeButton } from './propose-confirm';
+import { readUnsent, writeUnsent } from './unsent';
+import { CreditsCard, HandoffPanel } from './handoff';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -105,11 +159,73 @@ function appInitial(name: string | null | undefined) {
   return (name || '?').trim().charAt(0).toUpperCase() || '?';
 }
 
-function AppMark({ name }: { name: string | null | undefined }) {
+function AppMark({ name, iconUrl, iconEmoji }: {
+  name: string | null | undefined;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
+}) {
+  // The app's own artwork, the way the launcher and the inbox rows draw it,
+  // when the payload carries one; the violet letter mark otherwise, which is
+  // what this bar has always drawn and what the first render ships.
+  if (iconUrl || iconEmoji) {
+    const record = { name: name || '?', icon_url: iconUrl, icon_emoji: iconEmoji };
+    return (
+      <span
+        aria-hidden="true"
+        data-icon={appIconKind(record as never)}
+        className="app-icon-tile h-5 w-5 shrink-0 overflow-hidden rounded-md text-[11px]"
+      >
+        <AppIconContent app={record as never} />
+      </span>
+    );
+  }
   return (
     <span aria-hidden="true" className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-violet-600 text-[11px] font-semibold text-white">
       {appInitial(name)}
     </span>
+  );
+}
+
+/**
+ * The app a conversation is about, as "Open app" opens it: the active
+ * change's app first, then the session's (or the unsent draft's) focus.
+ * Null when there is none to open, or when the target is Homeroom itself,
+ * whose "app" surface is the platform the viewer is already in.
+ */
+export function openAppTarget(active: AgentChange | null, about: About): { slug: string; name: string | null } | null {
+  const slug = active?.appSlug || about?.focusApp?.slug || null;
+  if (!slug) return null;
+  const name = active?.appName || about?.focusApp?.name || null;
+  const selfHosted = !!active?.appSelfHosted || !!about?.focusApp?.selfHosted;
+  return selfHosted ? null : { slug, name };
+}
+
+/**
+ * "Open app" — the app this conversation is about, full-view, with the
+ * conversation docked beside it in the side panel (./open-app.ts). Hidden
+ * when there is no app to open, when the app is Homeroom itself, or below
+ * the side panel's desktop breakpoint (lg = 1024px, the same width the
+ * panel itself appears at; the class string is a whole literal so Tailwind
+ * compiles it).
+ */
+export function OpenAppButton({ target }: { target: { slug: string; name: string | null } | null }) {
+  const open = useCallback(() => {
+    if (!target) return;
+    void openFocusedApp({ slug: target.slug, name: target.name });
+  }, [target]);
+  if (!target) return null;
+  return (
+    <button
+      type="button"
+      data-agent-session-open-app
+      data-open-app={target.slug}
+      className="hidden lg:inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+      title={`Open ${target.name || target.slug} with this chat docked beside it`}
+      onClick={open}
+    >
+      <AppWindowIcon className="h-3.5 w-3.5" aria-hidden="true" />
+      <span className="truncate">Open app</span>
+    </button>
   );
 }
 
@@ -145,8 +261,15 @@ function SessionBar({ session, about, embedded, action }: {
   const active = session?.activeChange || null;
   const building = snapshot.turn.running && snapshot.turn.phase === 'cc';
   const count = session?.changes?.length || 0;
+  const target = openAppTarget(active, about);
+  // It wraps on both surfaces (#3016). On a phone its five controls are wider
+  // than the screen, and a bar that cannot wrap made the whole conversation
+  // that wide: the right edge of every message and the Send button were off
+  // screen. Changes and the ⋯ sit at the end of whichever row they land on;
+  // from `sm` up everything fits on one, as before. (The Build picker that
+  // started the second row is the composer's "Build with" now, #3078.)
   return (
-    <div className={`flex items-center gap-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800 ${embedded ? 'flex-wrap' : ''}`} data-agent-session-bar>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
       {embedded ? (
         <div className="mr-auto min-w-0 basis-full sm:basis-auto">
           <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">{session?.title || 'New session'}</h2>
@@ -160,27 +283,80 @@ function SessionBar({ session, about, embedded, action }: {
         className="inline-flex min-w-0 max-w-[10rem] items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
         title="The app this conversation is about when a request does not name one. The Mayor moves it when you ask."
       >
-        {about?.focusApp ? <AppMark name={about.focusApp.name} /> : null}
+        {about?.focusApp ? (
+          <AppMark
+            name={about.focusApp.name}
+            iconUrl={about.focusApp.iconUrl}
+            iconEmoji={about.focusApp.iconEmoji}
+          />
+        ) : null}
         <span className="truncate">{about?.focusApp?.name || 'Any app'}</span>
       </span>
       <span
         data-agent-session-change-pill
-        className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
+        className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
       >
         {active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : 'No change yet'}
       </span>
+      {/* Siblings of the pills, not a group of their own: a declared check
+          reads the bar as focus ~ change pill ~ Changes. Where the work is
+          built is the composer's "Build with" now (#3078), not a pill here. */}
       <button
         type="button"
         data-agent-session-changes-button
-        className={`${embedded ? '' : 'ml-auto '}inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800`}
+        className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
         onClick={() => setDrawerOpen(true)}
         disabled={!session}
         aria-haspopup="dialog"
       >
         Changes · {count}
       </button>
+      <OpenAppButton target={target} />
       {action}
+      <SessionMenu session={session} />
     </div>
+  );
+}
+
+/**
+ * The session's own actions, the dev chat's ⋯: Rename, and Archive or
+ * Unarchive. Nothing to act on while the conversation is unsent.
+ */
+function SessionMenu({ session }: { session: AgentSession | null }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <button
+      type="button"
+      data-agent-session-menu
+      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-zinc-700 hover:bg-zinc-200 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+      aria-label="Session actions"
+      title="Session actions"
+      aria-haspopup="menu"
+      aria-expanded={open}
+      disabled={!session}
+      onClick={(event) => {
+        const menu = window.PlatformUI?.menu;
+        if (!session || open || typeof menu !== 'function') return;
+        const archived = session.status === 'archived';
+        setOpen(true);
+        void menu.call(window.PlatformUI, {
+          anchorEl: event.currentTarget,
+          items: [
+            { label: 'Rename…', handler: () => { void renameCurrentSession(); } },
+            archived
+              ? { label: 'Unarchive', title: 'Bring this session back to your lists', handler: () => { void unarchiveCurrentSession(); } }
+              : {
+                label: 'Archive',
+                title: 'Hide this session from your lists and pause its change',
+                destructive: true,
+                handler: () => { void archiveCurrentSession(); },
+              },
+          ],
+        }).finally(() => setOpen(false));
+      }}
+    >
+      <EllipsisHorizontalIcon className="h-4 w-4" aria-hidden="true" />
+    </button>
   );
 }
 
@@ -253,18 +429,26 @@ function Card({ card, live = false }: { card: CardView; live?: boolean }) {
   );
 }
 
-function Item({ item }: { item: TranscriptItem }) {
+function Item({ item, sessionId = null }: { item: TranscriptItem; sessionId?: number | null }) {
   switch (item.kind) {
     case 'user':
       return (
-        <div className="flex justify-end" data-agent-session-user>
-          <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">{item.text}</p>
+        <div className="flex flex-col items-end gap-1.5" data-agent-session-user>
+          <SentAttachments sessionId={sessionId} attachments={item.attachments} />
+          {item.text ? (
+            <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">{item.text}</p>
+          ) : null}
         </div>
       );
     case 'mayor':
       return (
         <article data-agent-session-mayor>
-          <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Mayor</p>
+          <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+            Mayor
+            {item.cost ? (
+              <span className="font-normal text-zinc-500 dark:text-zinc-400" data-agent-session-reply-cost>{` · ${item.cost}`}</span>
+            ) : null}
+          </p>
           {item.text ? <MayorText text={item.text} /> : null}
           {item.cards.map((card) => <Card key={card.id} card={card} />)}
         </article>
@@ -291,19 +475,7 @@ function Item({ item }: { item: TranscriptItem }) {
     case 'spec':
       return <SpecCard item={item} />;
     case 'preview':
-      return (
-        <section className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900" data-agent-session-preview>
-          <p className="text-sm text-zinc-600 dark:text-zinc-300">{item.text}</p>
-          <a
-            className="mt-2 inline-flex rounded-full border border-violet-300 px-3 py-1 text-sm font-semibold text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-950/40"
-            href={item.url}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Open preview{item.prNumber ? ` · PR #${item.prNumber}` : ''}
-          </a>
-        </section>
-      );
+      return <PreviewCard item={item} />;
     default:
       return null;
   }
@@ -343,6 +515,154 @@ export function RunCard({ run }: { run: RunItem }) {
     <div data-agent-session-run={run.status} data-agent-session-run-mode={run.mode}>
       <Attached r={row} />
     </div>
+  );
+}
+
+const CARD_BUTTON = 'inline-flex rounded-full border border-violet-300 px-3 py-1 text-sm font-semibold text-violet-700 '
+  + 'hover:bg-violet-50 disabled:opacity-60 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-950/40';
+const CARD_PRIMARY = 'inline-flex rounded-full bg-violet-600 px-3 py-1 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-60';
+const CHECK_TONE: Record<string, string> = {
+  passing: 'text-green-700 dark:text-green-400',
+  failing: 'text-red-700 dark:text-red-300',
+  running: 'text-zinc-500 dark:text-zinc-400',
+  error: 'text-amber-700 dark:text-amber-300',
+};
+
+function findChange(session: AgentSession | null, changeId: number | null): AgentChange | null {
+  if (!session || changeId == null) return null;
+  return [session.activeChange, ...(session.changes || [])].find((change) => change && change.id === changeId) || null;
+}
+
+/**
+ * A change's staging build, as a card (#2779 follow-up). The newest one of a
+ * change is live:
+ *   - deployed: Open preview (in the side pane on a wide screen, a new tab
+ *     otherwise), View change (its card), and Propose to group while it has
+ *     not been proposed; then "In vote" with the proposal.
+ *   - failed: why, and Retry (a rebuild; its result writes the next card).
+ * It says where the change's checks stand, because they gate merge. An older
+ * card is "Superseded by a newer preview" and offers nothing: its build is
+ * gone or stale.
+ */
+export function PreviewCard({ item }: { item: PreviewItem }) {
+  const snapshot = useAgentSessionState();
+  const wide = useWideEnoughForSpec();
+  const action = snapshot.changeAction && snapshot.changeAction.changeId === item.changeId ? snapshot.changeAction.kind : null;
+  return (
+    <PreviewCardView
+      item={item}
+      change={findChange(snapshot.session, item.changeId)}
+      wide={wide}
+      action={action}
+      busy={!!snapshot.changeAction}
+    />
+  );
+}
+
+/** The card itself, from plain props (a test renders it without a store). */
+export function PreviewCardView({ item, change, wide, action, busy }: {
+  item: PreviewItem;
+  change: AgentChange | null;
+  wide: boolean;
+  action: 'propose' | 'retry' | 'recheck' | null;
+  busy: boolean;
+}) {
+  const prNumber = item.prNumber || change?.prNumber || null;
+  const heading = `${item.failed ? 'Staging build failed' : 'Staging deployed'}${prNumber ? ` · PR #${prNumber}` : ''}`;
+  if (item.superseded) {
+    return (
+      <section className="rounded-2xl border border-zinc-200 px-3 py-2 dark:border-zinc-800" data-agent-session-preview="superseded">
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">{heading} · Superseded by a newer preview</p>
+      </section>
+    );
+  }
+  const checks = checksSummary(change?.checkState, change?.checkFailing);
+  const changeHref = change && change.appSlug && item.changeId != null
+    ? `#app/${encodeURIComponent(change.appSlug)}/dev/proposals/${item.changeId}`
+    : null;
+  const inVote = change && (change.status === 'promoted' || change.status === 'merging');
+  const merged = change && change.status === 'merged';
+  const proposable = change && (change.status === 'active' || change.status === 'paused');
+  return (
+    <section
+      className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900"
+      data-agent-session-preview={item.failed ? 'failed' : 'deployed'}
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <p className={`text-sm font-medium ${item.failed ? 'text-red-700 dark:text-red-300' : 'text-zinc-800 dark:text-zinc-100'}`}>{heading}</p>
+        {inVote || merged ? (
+          <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300" data-agent-session-preview-status>
+            {merged ? 'Merged' : 'In vote'}
+          </span>
+        ) : null}
+        {checks ? (
+          <button
+            type="button"
+            className={`ml-auto inline-flex items-center gap-1 rounded text-xs hover:underline ${CHECK_TONE[checks.key]}`}
+            data-agent-session-checks={checks.key}
+            title="See each check and its result"
+            onClick={() => { if (item.changeId != null) window.AppView?.openSessionChecks?.(item.changeId); }}
+          >
+            {checks.key === 'running'
+              ? <SpinnerArcIcon className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              : checks.key === 'passing' ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+            {checks.text}
+          </button>
+        ) : null}
+      </div>
+      {item.failed && item.error ? <p className="mt-1 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">{item.error}</p> : null}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {item.failed ? (
+          item.changeId != null ? (
+            <button type="button" className={CARD_BUTTON} disabled={busy} onClick={() => void retryStaging(item.changeId as number)} data-agent-session-preview-retry>
+              {action === 'retry' ? 'Retrying…' : 'Retry'}
+            </button>
+          ) : null
+        ) : item.url ? (
+          wide && item.changeId != null ? (
+            <button
+              type="button"
+              className={CARD_BUTTON}
+              onClick={() => openPreview({ changeId: item.changeId as number, url: item.url as string, prNumber })}
+              data-agent-session-preview-open
+            >
+              Open preview
+            </button>
+          ) : (
+            <a className={CARD_BUTTON} href={item.url} target="_blank" rel="noopener noreferrer" data-agent-session-preview-open>
+              Open preview
+            </a>
+          )
+        ) : null}
+        {changeHref ? (
+          <a className={CARD_BUTTON} href={changeHref} data-agent-session-preview-change>
+            {inVote ? 'View proposal' : 'View change'}
+          </a>
+        ) : null}
+        {proposable && item.changeId != null ? (
+          <ProposeButton
+            changeId={item.changeId}
+            title={change?.title}
+            prNumber={prNumber}
+            className={CARD_PRIMARY}
+            busy={busy}
+            proposing={action === 'propose'}
+          />
+        ) : null}
+        {checks && (checks.key === 'failing' || checks.key === 'error') && item.changeId != null && !merged ? (
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            disabled={busy}
+            title="Rebuild the preview if needed and run the automated checks again, on the same commit"
+            onClick={() => void recheckChange(item.changeId as number)}
+            data-agent-session-preview-recheck
+          >
+            {action === 'recheck' ? 'Re-running…' : 'Re-run checks'}
+          </button>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -502,23 +822,73 @@ function SpecSheet({ sheet }: { sheet: SpecSheetState }) {
   );
 }
 
+/** Spec | Preview, when the side pane holds both. */
+function PaneTabs({ tab }: { tab: PaneTab }) {
+  const button = (key: PaneTab, label: string) => (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={tab === key}
+      data-agent-session-pane-tab={key}
+      className={tab === key
+        ? 'border-b-2 border-violet-600 px-3 py-2 text-sm font-semibold text-zinc-900 dark:border-violet-400 dark:text-zinc-100'
+        : 'border-b-2 border-transparent px-3 py-2 text-sm font-medium text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200'}
+      onClick={() => setPaneTab(key)}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div role="tablist" aria-label="Side pane" className="flex shrink-0 gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
+      {button('spec', 'Spec')}
+      {button('preview', 'Preview')}
+    </div>
+  );
+}
+
 /**
- * From 1024px up: the spec beside the conversation, behind a divider that
- * drags (and moves with the arrow keys). The width is the dev chat viewer's
- * remembered one, clamped so the chat keeps 320px beside the 4px divider;
- * `max-w` holds the same ceiling when the window narrows after the drag.
+ * From 1024px up: the side pane beside the conversation, behind a divider
+ * that drags (and moves with the arrow keys). It holds the spec, a change's
+ * staging preview, or both as tabs.
+ *
+ * THE WIDTH is the dev chat viewer's remembered one, clamped so the chat keeps
+ * 320px beside the 4px divider; `max-w` holds the same ceiling when the window
+ * narrows after the drag. A preview renders a real app's screen, so while one
+ * is open the floor is the dev chat staging panel's 320px, not the spec's 280.
+ *
+ * THE PREVIEW is the platform's own (AppView.ensureStaging): its fixed
+ * overlay is pinned over this pane's slot, the way it is pinned beside the
+ * dev chat, so sign-in, Full screen and the dev console are the same ones. The
+ * slot stays mounted while the Spec tab shows (hidden, so the overlay shrinks
+ * to nothing and the preview keeps its state).
  */
-function SpecBesidePane({ sheet, containerRef }: {
-  sheet: SpecSheetState;
+function SidePane({ sheet, preview, tab, containerRef }: {
+  sheet: SpecSheetState | null;
+  preview: PreviewPaneState | null;
+  tab: PaneTab;
   containerRef: { current: HTMLDivElement | null };
 }) {
+  const floor = preview ? PREVIEW_MIN_WIDTH : SPEC_MIN_WIDTH;
   const [width, setWidth] = useState(SPEC_DEFAULT_WIDTH);
   const paneRef = useRef<HTMLElement | null>(null);
   const containerWidth = () => containerRef.current?.getBoundingClientRect().width ?? null;
-  useEffect(() => { setWidth(clampSpecWidth(readSpecWidth(), containerWidth())); }, []);
+  useEffect(() => { setWidth(clampSpecWidth(readSpecWidth(), containerWidth(), floor)); }, [floor]);
+  const showing: PaneTab = sheet && preview ? tab : (preview ? 'preview' : 'spec');
+
+  // The platform's preview opens over the slot once the slot is on screen,
+  // and again only for another preview.
+  const previewKey = preview ? `${preview.changeId}:${preview.url}` : null;
+  useEffect(() => {
+    if (preview) dockPreview(preview);
+  }, [previewKey]);
+  // The overlay follows the slot's size on its own; a move without a resize
+  // (the tab strip appearing, the list stepping aside) needs a nudge.
+  useEffect(() => {
+    if (preview) window.AppView?._syncStagingDockGeometry?.();
+  }, [width, showing, !!sheet, previewKey]);
 
   const commit = (next: number) => {
-    const clamped = clampSpecWidth(next, containerWidth());
+    const clamped = clampSpecWidth(next, containerWidth(), floor);
     setWidth(clamped);
     return clamped;
   };
@@ -532,7 +902,10 @@ function SpecBesidePane({ sheet, containerRef }: {
     try { handle.setPointerCapture(event.pointerId); } catch { /* moves still arrive on the handle */ }
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'col-resize';
-    // Dragging right narrows the spec: its left edge is the divider.
+    // An iframe swallows pointer moves: the preview's, while the drag runs.
+    const frame = document.getElementById('staging-iframe');
+    if (frame) frame.style.pointerEvents = 'none';
+    // Dragging right narrows the pane: its left edge is the divider.
     const onMove = (move: PointerEvent) => { latest = commit(startWidth - (move.clientX - startX)); };
     const onUp = () => {
       handle.removeEventListener('pointermove', onMove);
@@ -541,6 +914,7 @@ function SpecBesidePane({ sheet, containerRef }: {
       try { handle.releasePointerCapture(event.pointerId); } catch { /* already released */ }
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
+      if (frame) frame.style.pointerEvents = '';
       writeSpecWidth(latest);
     };
     handle.addEventListener('pointermove', onMove);
@@ -559,9 +933,9 @@ function SpecBesidePane({ sheet, containerRef }: {
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize the spec"
+        aria-label={showing === 'preview' ? 'Resize the preview' : 'Resize the spec'}
         aria-valuenow={width}
-        aria-valuemin={SPEC_MIN_WIDTH}
+        aria-valuemin={floor}
         tabIndex={0}
         className="w-1 shrink-0 cursor-col-resize touch-none bg-zinc-200 transition-colors hover:bg-violet-500 focus-visible:bg-violet-500 focus-visible:outline-none dark:bg-zinc-800"
         data-agent-session-spec-resizer
@@ -570,15 +944,48 @@ function SpecBesidePane({ sheet, containerRef }: {
       />
       <aside
         ref={paneRef}
-        aria-label="Spec"
-        className="flex min-h-0 min-w-[280px] max-w-[calc(100%-324px)] shrink-0 flex-col bg-white dark:bg-zinc-900"
+        aria-label={showing === 'preview' ? 'Preview' : 'Spec'}
+        className={`flex min-h-0 ${preview ? 'min-w-[320px]' : 'min-w-[280px]'} max-w-[calc(100%-324px)] shrink-0 flex-col bg-white dark:bg-zinc-900`}
         style={{ width }}
-        data-agent-session-spec-sheet={sheet.changeId}
-        data-agent-session-spec-beside=""
+        data-agent-session-side-pane={showing}
       >
-        <SpecContent sheet={sheet} />
+        {sheet && preview ? <PaneTabs tab={showing} /> : null}
+        {sheet && showing === 'spec' ? (
+          <div
+            className="flex min-h-0 flex-1 flex-col"
+            data-agent-session-spec-sheet={sheet.changeId}
+            data-agent-session-spec-beside=""
+          >
+            <SpecContent sheet={sheet} />
+          </div>
+        ) : null}
+        {preview ? (
+          <div
+            id={PREVIEW_SLOT_ID}
+            className={showing === 'preview' ? 'min-h-0 flex-1' : 'hidden'}
+            data-agent-session-preview-slot={preview.changeId}
+          />
+        ) : null}
       </aside>
     </>
+  );
+}
+
+/**
+ * The Mayor at work, as a conversation shows someone typing (#2779
+ * follow-up): its name and three dots where its reply will appear, and what
+ * it is doing beside them when that is known ("Reading the app", "Wrapping
+ * up", the coding agent's progress with its clock). Once it has said
+ * something the dots follow the words. Not a box across the pane: the old
+ * full-width bubble read as a message of its own.
+ */
+function TypingDots() {
+  return (
+    <span className="inline-flex h-5 shrink-0 items-center gap-1" aria-hidden="true" data-agent-session-typing>
+      <span className="agent-session-typing-dot block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-500" />
+      <span className="agent-session-typing-dot block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-500" />
+      <span className="agent-session-typing-dot block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-500" />
+    </span>
   );
 }
 
@@ -594,6 +1001,14 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
   if (!turn.running && !turn.pendingUserText) return null;
   const actions = new Map(snapshot.actions.map((action) => [action.id, action]));
   const seconds = turn.startedAt ? Math.max(0, Math.round((clock - turn.startedAt) / 1000)) : 0;
+  // A running build draws its own card with the progress and the clock.
+  const working = turn.running && !(runShown && turn.phase === 'cc');
+  const said = !!(turn.streamText || turn.cards.length);
+  const status = turn.stopping
+    ? 'Stopping…'
+    : turn.phase === 'cc'
+      ? (turn.progress || turn.activity || 'The coding agent is working')
+      : (turn.activity || (turn.phase === 'mayor2' ? 'Wrapping up' : ''));
   return (
     <>
       {turn.pendingUserText ? (
@@ -601,25 +1016,23 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
           <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">{turn.pendingUserText}</p>
         </div>
       ) : null}
-      {turn.streamText || turn.cards.length ? (
-        <article>
+      {said || working ? (
+        <article data-agent-session-live>
           <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Mayor</p>
           {turn.streamText ? <MayorText text={turn.streamText} /> : null}
           {turn.cards.map((card) => <Card key={card.id} card={cardView(card, actions)} live />)}
+          {working ? (
+            <div
+              className={`flex min-w-0 items-center gap-2 text-[13px] text-zinc-500 dark:text-zinc-400 ${said ? 'mt-2' : ''}`}
+              data-agent-session-activity={turn.phase || 'mayor'}
+              aria-live="polite"
+            >
+              <TypingDots />
+              {status ? <span className="min-w-0 truncate">{status}</span> : <span className="sr-only">The Mayor is thinking</span>}
+              {turn.phase === 'cc' ? <span className="shrink-0 tabular-nums text-xs">{Math.floor(seconds / 60)}m {seconds % 60}s</span> : null}
+            </div>
+          ) : null}
         </article>
-      ) : null}
-      {turn.running && !(runShown && turn.phase === 'cc') ? (
-        <div
-          className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
-          data-agent-session-activity={turn.phase || 'mayor'}
-          aria-live="polite"
-        >
-          <SpinnerArcIcon className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate">
-            {turn.stopping ? 'Stopping…' : (turn.phase === 'cc' ? (turn.progress || turn.activity || 'The coding agent is working') : (turn.activity || (turn.phase === 'mayor2' ? 'Wrapping up' : 'Thinking')))}
-          </span>
-          {turn.phase === 'cc' ? <span className="shrink-0 tabular-nums text-xs text-zinc-500">{Math.floor(seconds / 60)}m {seconds % 60}s</span> : null}
-        </div>
       ) : null}
     </>
   );
@@ -659,6 +1072,11 @@ function starters(about: About) {
   ].slice(0, 3);
 }
 
+/**
+ * The suggested replies over the box. A tap puts one IN the box, to be
+ * edited or sent (#3033), as the dev chat's pills do; it no longer sends on
+ * its own.
+ */
 function Replies({ replies }: { replies: string[] }) {
   const snapshot = useAgentSessionState();
   if (!replies.length || snapshot.turn.running) return null;
@@ -669,7 +1087,8 @@ function Replies({ replies }: { replies: string[] }) {
           key={reply}
           type="button"
           className="shrink-0 rounded-full border border-violet-200 bg-white px-3 py-1.5 text-sm text-violet-700 hover:bg-violet-50 dark:border-violet-800 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
-          onClick={() => void sendAgentMessage(reply)}
+          data-agent-session-reply
+          onClick={() => fillComposer(reply)}
         >
           {reply}
         </button>
@@ -679,140 +1098,337 @@ function Replies({ replies }: { replies: string[] }) {
 }
 
 /**
- * A picker control that reads "Label: Item" while closed and lists the items
- * with "(default)" after the default one while open. A native select shows
- * the chosen option's own text when closed, so that text is drawn beside it
- * instead: the select lies transparent over the shown line and keeps the
- * focus, the keyboard and the platform's own list. The shown line is the dev
- * chat picker's (`dc-model-select`).
+ * The composer's model and credits (#2779 follow-up): one pill that names the
+ * model and opens the sheet (./composer-parts.tsx), and what is left of the
+ * week's credits in a pill beside Send, with a ring round Send that empties
+ * as they go. Both read what the old picker and meter read: the conversation's
+ * choice (./model-choice.ts) and the header's own budget figures, kept live by
+ * `budget_updated` (../header/ai-credit.js).
  */
-export function LabeledSelect({ label, ariaLabel, value, options, disabled, muted = false, onChange, dataKey }: {
-  label: string;
-  ariaLabel: string;
-  value: string;
-  options: PickerOption[];
-  disabled: boolean;
-  muted?: boolean;
-  onChange: (value: string) => void;
-  dataKey: string;
-}) {
-  const selected = options.find((option) => option.value === value) || null;
-  const tone = muted ? 'text-zinc-600 dark:text-zinc-300' : 'text-zinc-900 dark:text-zinc-100';
-  return (
-    <span className="dc-venue-detail-inline rounded focus-within:ring-2 focus-within:ring-violet-500" data-agent-session-picker={dataKey}>
-      <span className={`dc-model-select text-[13px] ${tone}`} aria-hidden="true" data-agent-session-picker-shown>
-        {`${label}: ${selected ? selected.label : ''}`}
-      </span>
-      <ChevronDownIcon className="dc-model-caret" width={14} height={14} aria-hidden="true" />
-      <select
-        className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default"
-        aria-label={ariaLabel}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(event.currentTarget.value)}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value} title={option.title || undefined}>
-            {option.isDefault ? `${option.label} (default)` : option.label}
-          </option>
-        ))}
-      </select>
-    </span>
-  );
-}
-
-/**
- * The conversation's model (./model-choice.ts): Claude Code on an Anthropic
- * model, or Codex on an OpenRouter model with its thinking level where the
- * model offers one. Usable at any time: what is running finishes on the model
- * it started with, and the next message runs on the new one.
- */
-function ModelPicker() {
+function useModelChoice() {
   const snapshot = useAgentSessionState();
   useEffect(() => { void loadModelCatalog(); }, []);
   const catalog = snapshot.catalog;
   const explicit = snapshot.session ? (snapshot.session.agent || null) : (snapshot.draft?.agent || null);
   const current = effectiveChoice(explicit, catalog);
   const options = pickerOptions(catalog, current);
-  if (!options.length || !current) return null;
-  const archived = snapshot.session?.status === 'archived';
-  const disabled = archived || snapshot.choosing || snapshot.phase === 'loading';
-  const reasoning = offersReasoning(current, catalog);
+  const value = choiceValue(current);
+  const selected = options.find((option) => option.value === value) || null;
+  const effort = current && offersReasoning(current, catalog)
+    ? {
+      value: effortValue(current, catalog),
+      options: effortOptions(catalog),
+      onPick: (picked: string) => void chooseAgent({ ...current, reasoningEffort: picked || null }),
+    }
+    : null;
+  return {
+    ready: !!(options.length && current),
+    label: selected ? selected.label : 'Model',
+    // #3079: the pill names the thinking level after the model, for a model
+    // that takes one: its own level, or the default it follows. Nothing when
+    // none is known, never a "Default" placeholder (model-choice.ts).
+    effortLabel: effortLabel(current, catalog),
+    options: modelList(options),
+    value,
+    effort,
+    pick: (picked: string) => {
+      const next = choiceFromValue(picked, catalog, current);
+      if (next) void chooseAgent(next);
+    },
+    busy: snapshot.choosing || snapshot.phase === 'loading',
+  };
+}
+
+function useCredit(): CreditView | null {
+  const { figures } = useStoreState<AiBudgetState>(aiBudgetStore);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  return mounted ? creditView(figures) : null;
+}
+
+const BUSY_PLACEHOLDER = 'The Mayor is working. Type your next message and save it for later.';
+const SAVE_TITLE = 'Save this as a draft (Enter). It stays here until you send it';
+
+/**
+ * The saved drafts above the composer (the dev chat's #798 list, per account):
+ * each can be sent once the Mayor is free, put back in the box to reword, or
+ * deleted. Sending is always a tap here, never automatic.
+ */
+export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
+  drafts: SavedDraft[];
+  busy: boolean;
+  onSend: (draft: SavedDraft) => void;
+  onEdit: (draft: SavedDraft) => void;
+}) {
+  if (!drafts.length) return null;
+  const button = 'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-zinc-500 transition-colors '
+    + 'hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent '
+    + 'dark:text-zinc-400 dark:hover:bg-zinc-800';
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-1" data-agent-session-model>
-      <LabeledSelect
-        label="Model"
-        ariaLabel="Model"
-        dataKey="model"
-        value={choiceValue(current)}
-        options={options}
-        disabled={disabled}
-        onChange={(value) => {
-          const next = choiceFromValue(value, catalog, current);
-          if (next) void chooseAgent(next);
-        }}
-      />
-      {reasoning ? (
-        <LabeledSelect
-          label="Thinking Level"
-          ariaLabel="Thinking level"
-          dataKey="thinking"
-          muted
-          value={effortValue(current, catalog)}
-          options={effortOptions(catalog)}
-          disabled={disabled}
-          onChange={(value) => void chooseAgent({ ...current, reasoningEffort: value || null })}
-        />
-      ) : null}
-    </div>
+    <section
+      aria-label="Saved drafts"
+      className="mb-2 max-h-40 overflow-y-auto rounded-2xl bg-zinc-100 p-1.5 dark:bg-zinc-800/70"
+      data-agent-session-drafts={drafts.length}
+    >
+      <p className="flex flex-wrap items-baseline gap-x-1.5 px-2 pb-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+        <span className="font-semibold uppercase tracking-wide">{`Saved drafts (${drafts.length})`}</span>
+        <span>· on all your devices</span>
+        {busy ? <span className="ml-auto">sending unlocks when the Mayor finishes</span> : null}
+      </p>
+      <ul className="flex flex-col gap-1">
+        {drafts.map((draft) => (
+          <li
+            key={draft.id}
+            className="flex items-center gap-0.5 rounded-xl bg-white py-0.5 pl-3 pr-0.5 dark:bg-zinc-900"
+            data-agent-session-draft={draft.id}
+          >
+            <span className="min-w-0 flex-1 truncate text-sm text-zinc-700 dark:text-zinc-200" title={draft.text}>{draft.text}</span>
+            <button
+              type="button"
+              className={`${button} hover:text-emerald-700 dark:hover:text-emerald-400`}
+              aria-label="Send this draft"
+              title={busy ? 'The Mayor is still working. You can send this when it finishes' : 'Send this draft now'}
+              disabled={busy}
+              data-agent-session-draft-send
+              onClick={() => onSend(draft)}
+            >
+              <DraftSendIcon width={16} height={16} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={`${button} hover:text-violet-700 dark:hover:text-violet-300`}
+              aria-label="Edit this draft"
+              title="Put this draft back in the box to edit"
+              data-agent-session-draft-edit
+              onClick={() => onEdit(draft)}
+            >
+              <DraftEditIcon width={16} height={16} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={`${button} hover:text-red-700 dark:hover:text-red-300`}
+              aria-label="Delete this draft"
+              title="Delete this draft"
+              data-agent-session-draft-delete
+              onClick={() => deleteSavedDraft(draft.id)}
+            >
+              <DraftTrashIcon width={16} height={16} aria-hidden="true" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
+/**
+ * The message box. Its ONE button follows the dev chat's (#798, #810):
+ * Send while the Mayor is free; while it works, Stop with nothing typed and
+ * a green Save with something typed, which parks the text as a saved draft
+ * (Enter does the same) so nothing typed mid-turn can leak into the running
+ * turn. What is typed and not sent is kept for the conversation (./unsent.ts).
+ *
+ * THE OUTLINE IS THE CARD'S, as on Messages' composer (#1954, #2882, #2387):
+ * `.agent-session-composer:focus-within` rings the whole card, and the field
+ * inside draws no edge of its own in any engine (public/css/app.css).
+ */
 function Composer({ id }: { id: string }) {
   const snapshot = useAgentSessionState();
   const [value, setValue] = useState('');
+  const input = useRef<HTMLTextAreaElement | null>(null);
   const running = snapshot.turn.running;
   const archived = snapshot.session?.status === 'archived';
   const returned = snapshot.returnedText;
+  const target = snapshot.id ?? (snapshot.draft ? 'new' : null);
+  // Save needs something typed, and a turn not already stopping: Stop hands
+  // the message back to the box, and the button must stay Stop under the
+  // same click rather than become a Save that the click then submits.
+  const saving = running && !snapshot.turn.stopping && !!value.trim();
+  const model = useModelChoice();
+  const credit = useCredit();
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [buildTab, setBuildTab] = useState<BuildTab>('homeroom');
+  const pill = useRef<HTMLButtonElement | null>(null);
+  const attach = useRef<HTMLButtonElement | null>(null);
+  const picker = useRef<HTMLInputElement | null>(null);
+  const files = snapshot.attachments;
+  const uploading = files.some((item) => item.status === 'uploading');
+  const sendable = !!value.trim() || files.length > 0;
+  const closeSheet = useCallback(() => setSheetOpen(false), []);
+  const openSheet = (tab: BuildTab) => { setBuildTab(tab); setSheetOpen(true); };
 
-  // A message the server refused comes back here, unless something new has
-  // been typed since.
+  // The credits card's hand-off rows open "Build with" on that agent's tab:
+  // one hand-off, drawn in one place (#3078).
+  useEffect(() => {
+    if (!snapshot.handoff) return;
+    openSheet(snapshot.handoff);
+    closeHandoff();
+  }, [snapshot.handoff]);
+
+  const update = (next: string) => {
+    setValue(next);
+    if (target != null) writeUnsent(target, next);
+  };
+
+  // The conversation's unsent text, back after a reload or a switch.
+  useEffect(() => {
+    if (target != null) setValue(readUnsent(target));
+  }, [target]);
+
+  // A message the server refused, or a Stop, hands its text back, unless
+  // something new has been typed since.
   useEffect(() => {
     if (returned == null) return;
-    setValue((current) => current || returned);
+    if (!value.trim()) update(returned);
     clearReturnedText();
   }, [returned]);
+
+  // A tapped suggested reply (#3033) replaces what is in the box, as the dev
+  // chat's pills do, with the caret at its end. Focus only with a fine
+  // pointer: on a phone it would raise the keyboard over the reply just
+  // chosen (the dev chat's _isCoarsePointer rule).
+  const fill = snapshot.composerFill;
+  useEffect(() => {
+    if (!fill) return;
+    update(fill.text);
+    clearComposerFill();
+    const field = input.current;
+    let coarse = false;
+    try { coarse = window.matchMedia('(pointer: coarse)').matches; } catch { /* no media queries: treat as fine */ }
+    if (field && !coarse) {
+      field.focus();
+      try { field.setSelectionRange(fill.text.length, fill.text.length); } catch { /* not a text field yet */ }
+    }
+  }, [fill]);
+
+  const placeholder = archived
+    ? 'This session is archived.'
+    : running ? BUSY_PLACEHOLDER : 'Describe a change to any app in plain English. No coding needed.';
+
+  // The field grows with what it holds, typed or put back. Empty, it is as
+  // tall as its hint, which wraps on a phone and was cut off mid-line under
+  // a one-line box (#3016): the hint is measured as the value for a moment
+  // and taken straight back out, which fires no input event.
+  const fitField = useCallback(() => {
+    const field = input.current;
+    if (!field) return;
+    field.style.height = 'auto';
+    let height = field.scrollHeight;
+    if (!field.value && field.placeholder) {
+      field.value = field.placeholder;
+      height = field.scrollHeight;
+      field.value = '';
+    }
+    field.style.height = `${Math.min(height, 144)}px`;
+  }, []);
+  useEffect(() => { fitField(); }, [value, placeholder, fitField]);
+  // And again whenever its width changes. The composer mounts with its
+  // screen, often while that screen is still hidden, where every measure is
+  // 0: the box then kept a one-line height and clipped the hint's second
+  // line until something was typed. Width only, so the height this sets
+  // cannot call it again.
+  useEffect(() => {
+    const field = input.current;
+    if (!field || typeof ResizeObserver === 'undefined') return undefined;
+    let width = field.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (field.clientWidth === width) return;
+      width = field.clientWidth;
+      fitField();
+    });
+    observer.observe(field);
+    return () => observer.disconnect();
+  }, [fitField]);
 
   function submit(event?: FormEvent) {
     event?.preventDefault();
     const text = value.trim();
-    if (!text || running) return;
-    setValue('');
+    if (running) {
+      if (saveComposerDraft(text)) update('');
+      return;
+    }
+    if (!text && !files.length) return;
+    // Files still uploading hold the send: the button says so, and Enter waits too.
+    if (uploading) return;
+    update('');
     void sendAgentMessage(text);
   }
 
+  // Pasted or dropped files join the tray (a pasted screenshot gets a name).
+  const takeFiles = (list: FileList | null | undefined) => {
+    const picked = Array.from(list || []);
+    if (!picked.length) return false;
+    addAttachments(picked.map((file, index) => (
+      file.name && file.name !== 'image.png' ? file : new File([file], pastedName(file, index), { type: file.type })
+    )));
+    return true;
+  };
+
+  const onSendDraft = (draft: SavedDraft) => {
+    if (running) return;
+    const typed = value;
+    update('');
+    void sendSavedDraft(draft.id, typed);
+  };
+  const onEditDraft = (draft: SavedDraft) => {
+    const text = editSavedDraft(draft.id, value);
+    if (text == null) return;
+    update(text);
+    input.current?.focus();
+  };
+
+  const kind = saving ? 'save' : running ? 'stop' : 'send';
   return (
     // `platform-safe-bar` on the outer box: its padding clears the tab bar
     // (a phone keeps it up on this screen) and the home-indicator strip, so
     // the bordered field above it never sits under either.
     <div className="platform-safe-bar shrink-0 px-3 pt-1">
+    {archived ? (
+      <p className="mb-2 flex flex-wrap items-center gap-2 rounded-2xl bg-zinc-100 px-3 py-2 text-sm text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200" data-agent-session-archived>
+        <span className="min-w-0 flex-1">This session is archived. Unarchive it to keep going.</span>
+        <button type="button" className={CARD_BUTTON} onClick={() => void unarchiveCurrentSession()}>Unarchive</button>
+      </p>
+    ) : null}
+    <SavedDrafts drafts={snapshot.drafts} busy={running} onSend={onSendDraft} onEdit={onEditDraft} />
     <form
-      className="agent-session-composer flex flex-col gap-1 rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
+      className="agent-session-composer flex flex-col gap-2 rounded-[1.75rem] border border-zinc-200 bg-white px-3 pb-2.5 pt-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
       onSubmit={submit}
+      onDragOver={(event) => { if (event.dataTransfer?.types?.includes('Files')) event.preventDefault(); }}
+      onDrop={(event) => {
+        if (archived || !event.dataTransfer?.files?.length) return;
+        event.preventDefault();
+        takeFiles(event.dataTransfer.files);
+      }}
     >
+      {files.length ? (
+        <PendingStrip
+          id={`${id}-attachments`}
+          items={files.map((item) => ({
+            key: item.key,
+            name: item.name,
+            kind: item.kind,
+            badge: badgeFor(item.kind, item.name),
+            size: formatSize(item.size),
+            thumbUrl: item.thumbUrl,
+            uploading: item.status === 'uploading',
+          }))}
+          onRemove={removeAttachment}
+        />
+      ) : null}
       <textarea
+        ref={input}
         id={id}
         rows={1}
         maxLength={20_000}
         value={value}
         disabled={archived || snapshot.phase === 'loading'}
-        placeholder={archived ? 'This session is archived.' : 'Describe a change to any app in plain English. No coding needed.'}
+        placeholder={placeholder}
         aria-label="Message the Mayor"
-        className="max-h-36 min-h-[2.5rem] w-full resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
-        onChange={(event) => {
-          setValue(event.target.value);
-          event.currentTarget.style.height = 'auto';
-          event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 144)}px`;
+        className="agent-session-composer-input max-h-36 min-h-[2.5rem] w-full resize-none bg-transparent px-2 py-1.5 text-base text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-400"
+        onChange={(event) => update(event.target.value)}
+        onPaste={(event) => {
+          if (archived || !event.clipboardData?.files?.length) return;
+          if (takeFiles(event.clipboardData.files)) event.preventDefault();
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -822,23 +1438,99 @@ function Composer({ id }: { id: string }) {
         }}
       />
       <div className="flex items-center gap-2">
-      <div className="min-w-0 flex-1"><ModelPicker /></div>
-      <Button
-        type={running ? 'button' : 'submit'}
-        data-agent-session-send={running ? 'stop' : 'send'}
-        variant={running ? 'pillDanger' : 'pillAccent'}
-        disabledStyle="dim"
-        size="icon"
-        ink={running ? 'dangerTint' : 'solid'}
-        className="inline-flex h-10 w-10 shrink-0 items-center justify-center"
-        disabled={running ? (snapshot.turn.stopping || snapshot.turn.phase === 'mayor2') : !value.trim()}
-        aria-label={running ? 'Stop' : 'Send'}
-        title={running ? (snapshot.turn.phase === 'mayor2' ? 'The wrap-up cannot be stopped' : 'Stop') : 'Send'}
-        onClick={running ? () => void stopAgentTurn() : undefined}
-      >
-        {running ? <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" /> : <ArrowUpIcon className="h-5 w-5" aria-hidden="true" />}
-      </Button>
+        {/* One picker, no menu of our own: a phone's own file picker already
+            offers the photo library, the camera and files. */}
+        <button
+          ref={attach}
+          type="button"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-800 hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+          aria-label="Attach photos or files"
+          title="Attach photos or files"
+          disabled={archived || snapshot.phase === 'loading'}
+          data-agent-session-attach
+          onClick={() => picker.current?.click()}
+        >
+          <PaperclipIcon className="h-5 w-5" aria-hidden="true" />
+        </button>
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          className="hidden"
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={(event) => {
+            takeFiles(event.currentTarget.files);
+            event.currentTarget.value = '';
+          }}
+        />
+        {model.ready ? (
+          <ModelPill
+            label={model.label}
+            effort={model.effortLabel}
+            disabled={archived || model.busy}
+            open={sheetOpen}
+            onOpen={() => openSheet('homeroom')}
+            pillRef={pill}
+          />
+        ) : null}
+        {/* The credits pill doubles as the row's spacer: it takes the free
+            space and decides from it how much to say. */}
+        {credit ? <CreditPill credit={credit} onOpen={() => openSheet('homeroom')} /> : <div className="min-w-0 flex-1" />}
+        {kind === 'save' ? (
+          <Button
+            key="save"
+            type="submit"
+            data-agent-session-send="save"
+            variant="unstyled"
+            size="icon"
+            ink="solid"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 hover:bg-emerald-700"
+            aria-label="Save as draft"
+            title={SAVE_TITLE}
+          >
+            <SaveDraftIcon width={20} height={20} aria-hidden="true" />
+          </Button>
+        ) : (
+          <Button
+            key="send"
+            type={running ? 'button' : 'submit'}
+            data-agent-session-send={kind}
+            variant={running ? 'pillDanger' : 'pillAccent'}
+            disabledStyle="dim"
+            size="icon"
+            ink={running ? 'dangerTint' : 'solid'}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center"
+            disabled={running ? (snapshot.turn.stopping || snapshot.turn.phase === 'mayor2') : (!sendable || uploading)}
+            aria-label={running ? 'Stop' : uploading ? 'Send (waiting for files to upload)' : 'Send'}
+            title={running
+              ? (snapshot.turn.phase === 'mayor2' ? 'The wrap-up cannot be stopped' : 'Stop')
+              : uploading ? 'Waiting for your files to upload' : 'Send'}
+            onClick={running ? () => void stopAgentTurn() : undefined}
+          >
+            {running ? <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" /> : <ArrowUpIcon className="h-5 w-5" aria-hidden="true" />}
+          </Button>
+        )}
       </div>
+      {sheetOpen ? (
+        <ModelSheet anchor={model.ready ? pill : attach} onClose={closeSheet}>
+          <BuildSheetBody
+            tab={buildTab}
+            onTab={setBuildTab}
+            onClose={closeSheet}
+            homeroom={(
+              <ModelSheetBody
+                options={model.ready ? model.options : []}
+                value={model.value}
+                onPick={(picked) => { model.pick(picked); closeSheet(); }}
+                effort={model.effort}
+                credit={credit}
+              />
+            )}
+            handoff={buildTab === 'homeroom' ? null : <HandoffPanel agent={buildTab} onClose={closeSheet} />}
+          />
+        </ModelSheet>
+      ) : null}
     </form>
     </div>
   );
@@ -942,9 +1634,10 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
   const snapshot = useAgentSessionState();
   const scroll = useRef<HTMLDivElement | null>(null);
   const root = useRef<HTMLDivElement | null>(null);
-  // The spec beside the chat, or over it (./spec-layout.ts). False until
-  // mounted, so the first render is the one the prerender printed.
-  const beside = useSpecBeside(embedded ? 'messages' : 'screen');
+  // The side pane beside the chat (the spec, a preview, or both), or the
+  // spec over it (./spec-layout.ts). False until mounted, so the first
+  // render is the one the prerender printed.
+  const beside = useSidePaneBeside(embedded ? 'messages' : 'screen');
   const liveRun = snapshot.turn.running && snapshot.turn.phase === 'cc';
   const items = useMemo(
     () => buildTranscript(snapshot.messages, snapshot.actions, Date.now(), { liveRun }),
@@ -966,22 +1659,44 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
   const empty = snapshot.phase === 'ready' && !items.length && !snapshot.turn.running && !snapshot.turn.pendingUserText;
   const about: About = snapshot.session || snapshot.draft;
 
+  // Follow new output only while the reader is at the bottom (the dev chat's
+  // rule): scrolling up to read is not undone by the next token. Opening a
+  // conversation, or sending in it, goes back to the bottom.
+  const stick = useRef(true);
+  const onScroll = () => {
+    const el = scroll.current;
+    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
+  useEffect(() => { stick.current = true; }, [snapshot.id]);
+  useEffect(() => { if (snapshot.turn.pendingUserText) stick.current = true; }, [snapshot.turn.pendingUserText]);
   useEffect(() => {
-    if (!scroll.current) return;
+    if (!scroll.current || !stick.current) return;
     scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [items.length, snapshot.turn.streamText, snapshot.turn.running, snapshot.turn.cards.length]);
+  }, [snapshot.id, items.length, snapshot.turn.streamText, snapshot.turn.running, snapshot.turn.cards.length, snapshot.turn.pendingUserText]);
+  // The transcript shrinks when something grows under it (the saved drafts,
+  // a taller message box): a reader at the bottom stays there.
+  useEffect(() => {
+    const el = scroll.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <div ref={root} className={`relative flex min-h-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
+    <div ref={root} className={`relative flex min-h-0 min-w-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
         <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
-        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite">
+        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite" onScroll={onScroll}>
           {snapshot.phase === 'loading' ? (
             <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
           ) : null}
           {empty ? <EmptyState about={about} /> : null}
-          {items.map((item) => <Item key={item.key} item={item} />)}
+          {items.map((item) => <Item key={item.key} item={item} sessionId={snapshot.id} />)}
           <LiveTurn runShown={runShown} />
+          {snapshot.credits ? <CreditsCard refusal={snapshot.credits} /> : null}
           {snapshot.error ? (
             <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>
           ) : null}
@@ -990,11 +1705,9 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
         <Composer id={composerId(embedded ? 'messages' : 'screen')} />
         {snapshot.drawerOpen && snapshot.session ? <ChangesDrawer session={snapshot.session} /> : null}
       </div>
-      {snapshot.specSheet
-        ? (beside
-          ? <SpecBesidePane sheet={snapshot.specSheet} containerRef={root} />
-          : <SpecSheet sheet={snapshot.specSheet} />)
-        : null}
+      {beside ? (
+        <SidePane sheet={snapshot.specSheet} preview={snapshot.preview} tab={snapshot.paneTab} containerRef={root} />
+      ) : snapshot.specSheet ? <SpecSheet sheet={snapshot.specSheet} /> : null}
     </div>
   );
 }

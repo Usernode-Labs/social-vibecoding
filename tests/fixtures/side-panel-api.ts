@@ -16,6 +16,8 @@ export {
   drop,
   back,
   expand,
+  pend,
+  clearPending,
   appPresence,
   onClickCapture,
   onNavigate,

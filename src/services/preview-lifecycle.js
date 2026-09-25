@@ -20,6 +20,10 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
   }
   function isCancelled(err) { return err?.code === CANCELLED; }
   function current() { return context.getStore(); }
+  // Work launched from inside a run that must outlive it (timers, follow-up
+  // pipelines): outside the context, getPool() is the base pool, not the
+  // run's guarded pool, which throws once the run settles.
+  function detach(fn) { return context.exit(fn); }
 
   // Notify before waiting for ownership: the owner must be able to terminate
   // its Jobs while the successor waits for the same cross-Pod resource lock.
@@ -299,7 +303,7 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
     return rowCount > 0;
   }
 
-  return { enabled, run, request, current, guardedPool, cancelled, isCancelled, teardown, adopt, settleAdopted };
+  return { enabled, run, request, current, detach, guardedPool, cancelled, isCancelled, teardown, adopt, settleAdopted };
 }
 
 module.exports = { ...createLifecycle(), createLifecycle };

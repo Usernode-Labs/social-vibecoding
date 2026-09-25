@@ -11,6 +11,10 @@ export interface AgentChange {
   prNumber: number | null;
   stagingUrl?: string | null;
   checkState?: string | null;
+  /** Checks that failed on the last run. */
+  checkFailing?: number;
+  /** The change is to the platform's own (self-hosted) app. */
+  appSelfHosted?: boolean;
 }
 
 /**
@@ -28,7 +32,16 @@ export interface AgentSession {
   id: number;
   title: string | null;
   status: 'open' | 'archived';
-  focusApp: { id: number; slug: string | null; name: string | null } | null;
+  focusApp: {
+    id: number;
+    slug: string | null;
+    name: string | null;
+    /** True for the platform's own row: its app surface is the platform. */
+    selfHosted?: boolean;
+    /** The app's own tile artwork, as the launcher draws it. */
+    iconUrl?: string | null;
+    iconEmoji?: string | null;
+  } | null;
   focusContext: Record<string, unknown>;
   agent?: AgentChoice | null;
   activeChange: AgentChange | null;
@@ -44,6 +57,8 @@ export interface AgentTurnState {
   phase: 'mayor' | 'cc' | 'mayor2';
   stopping: boolean;
   changeId: number | null;
+  /** Epoch ms the running work started: the build once dispatched, else the turn. */
+  startedAt?: number | null;
 }
 
 export interface AgentMessage {
@@ -51,8 +66,34 @@ export interface AgentMessage {
   changeId: number | null;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  /** The model that wrote an assistant row, as recorded. */
+  model?: string | null;
+  /** What the row cost, in (fractional) cents; null or 0 for none recorded. */
+  costCents?: number | null;
   metadata: Record<string, unknown>;
   createdAt: string | null;
+}
+
+/**
+ * A file sent with a message (#2779 follow-up): the dev chat's attachment
+ * shape, as routes/agent-sessions.js answers an upload and as a user row's
+ * `metadata.attachments` carries it.
+ */
+export interface AgentAttachment {
+  id: string;
+  /** 'image' | 'text' | 'zip' | 'binary', decided by the server. */
+  kind: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  meta?: Record<string, unknown> | null;
+}
+
+/** One saved draft (#798's list, per account): the server's wire shape. */
+export interface SavedDraft {
+  id: string;
+  text: string;
+  savedAt: string | null;
 }
 
 export interface AgentCard {
@@ -71,6 +112,8 @@ export interface AgentAction {
   title: string;
   status: AgentActionStatus;
   result: { ok?: boolean; text?: string; structured?: Record<string, unknown> | null } | null;
+  /** What happened, in plain words: the card's "Confirmed · …" line. */
+  outcome?: string | null;
   expiresAt: string;
 }
 
@@ -111,6 +154,9 @@ export interface AnthropicModel {
 export interface OpenRouterModel {
   id: string;
   name?: string;
+  /** The catalog's published prices, for the cost of a typical change. */
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
   supportsReasoning?: boolean;
   isRecommended?: boolean;
   isDefaultFavorite?: boolean;
@@ -128,6 +174,18 @@ export interface ModelCatalog {
   codexAvailable: boolean;
   openrouter: OpenRouterModel[];
   recommendedOpenRouterId: string | null;
+  /** What a typical change costs on each model (GET /api/model-notes). */
+  notes: ModelNotes | null;
+}
+
+/**
+ * The platform's per-model notes and estimates (#2570): an estimate for each
+ * curated model, and the token profile of a typical change, which prices any
+ * other model from its catalog prices.
+ */
+export interface ModelNotes {
+  typicalChange: { inputTokens: number; outputTokens: number } | null;
+  models: Record<string, { note?: string | null; estimateCents?: number | null }>;
 }
 
 async function json<T>(response: Response, fallback: string): Promise<T> {
@@ -199,10 +257,12 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
     codexAvailable: false,
     openrouter: [],
     recommendedOpenRouterId: null,
+    notes: null,
   };
-  const [models, prefs] = await Promise.all([
+  const [models, prefs, notes] = await Promise.all([
     request('/api/models').then((r) => (r.ok ? r.json() : null)).catch(() => null),
     request('/api/me/coding-agent').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    request('/api/model-notes').then((r) => (r.ok ? r.json() : null)).catch(() => null),
   ]) as [
     { models?: Array<{ id?: unknown; label?: unknown }>; default?: unknown } | null,
     {
@@ -211,7 +271,17 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
       codexAvailable?: unknown;
       defaultReasoningEffort?: unknown;
     } | null,
+    { typicalChange?: { inputTokens?: unknown; outputTokens?: unknown } | null; models?: unknown } | null,
   ];
+  if (notes && notes.models && typeof notes.models === 'object') {
+    const profile = notes.typicalChange;
+    const input = Number(profile?.inputTokens);
+    const output = Number(profile?.outputTokens);
+    catalog.notes = {
+      typicalChange: Number.isFinite(input) && Number.isFinite(output) ? { inputTokens: input, outputTokens: output } : null,
+      models: notes.models as ModelNotes['models'],
+    };
+  }
   if (models && Array.isArray(models.models)) {
     catalog.anthropic = models.models
       .filter((m) => m && typeof m.id === 'string')
@@ -240,6 +310,88 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
     }
   }
   return catalog;
+}
+
+export async function listDrafts(id: number): Promise<SavedDraft[]> {
+  const body = await json<{ drafts: SavedDraft[] }>(await request(`/api/agent-sessions/${id}/drafts`), 'Could not load your saved drafts.');
+  return body.drafts || [];
+}
+
+export async function saveDraft(id: number, draft: SavedDraft): Promise<SavedDraft[]> {
+  const body = await json<{ drafts: SavedDraft[] }>(
+    await request(`/api/agent-sessions/${id}/drafts`, { method: 'POST', body: JSON.stringify(draft) }),
+    'Could not save that draft.',
+  );
+  return body.drafts || [];
+}
+
+export async function deleteDraft(id: number, draftId: string): Promise<SavedDraft[]> {
+  const body = await json<{ drafts: SavedDraft[] }>(
+    await request(`/api/agent-sessions/${id}/drafts/${encodeURIComponent(draftId)}`, { method: 'DELETE' }),
+    'Could not delete that draft.',
+  );
+  return body.drafts || [];
+}
+
+export async function renameSession(id: number, title: string): Promise<AgentSession> {
+  const body = await json<{ session: AgentSession }>(
+    await request(`/api/agent-sessions/${id}/title`, { method: 'PATCH', body: JSON.stringify({ title }) }),
+    'Could not rename this session.',
+  );
+  return body.session;
+}
+
+export async function archiveSession(id: number): Promise<AgentSession> {
+  const body = await json<{ session: AgentSession }>(
+    await request(`/api/agent-sessions/${id}/archive`, { method: 'POST' }),
+    'Could not archive this session.',
+  );
+  return body.session;
+}
+
+export async function unarchiveSession(id: number): Promise<AgentSession> {
+  const body = await json<{ session: AgentSession }>(
+    await request(`/api/agent-sessions/${id}/unarchive`, { method: 'POST' }),
+    'Could not unarchive this session.',
+  );
+  return body.session;
+}
+
+/**
+ * Where a hand-off to Claude Code or Codex on the web stands for this
+ * person and app (GET /api/apps/:slug/dev-flow/status, the dev chat's own
+ * walkthrough): GitHub linked, the fork, the connector, and the instructions
+ * to paste. `change` names the change the hand-off continues, whose spec
+ * the instructions then carry.
+ */
+export interface HandoffStatus {
+  available?: boolean;
+  reason?: string | null;
+  github?: { linked?: boolean; login?: string | null };
+  connectors?: { count?: number };
+  fork?: { state?: string; owner?: string; repo?: string; url?: string; pageUrl?: string } | null;
+  targetKind?: 'session' | 'proposal' | null;
+  instructions?: string;
+  /** Whether `instructions` carry the change's spec (asked for with `specFrom`). */
+  specCarried?: boolean;
+  [key: string]: unknown;
+}
+
+export async function handoffStatus(slug: string, change: { id: number; kind: 'session' | 'proposal' } | null): Promise<HandoffStatus> {
+  const query = new URLSearchParams();
+  if (change) {
+    query.set('sessionId', String(change.id));
+    query.set('proposalId', String(change.id));
+    query.set('targetKind', change.kind);
+    // #3078: the instructions carry this change's spec. Only a claim: the
+    // server reads it only when the change is the viewer's own.
+    query.set('specFrom', String(change.id));
+  }
+  const suffix = query.toString() ? `?${query}` : '';
+  return json(
+    await request(`/api/apps/${encodeURIComponent(slug)}/dev-flow/status${suffix}`),
+    'Could not check where the hand-off stands.',
+  );
 }
 
 export async function listSessions(): Promise<AgentSession[]> {
@@ -313,6 +465,23 @@ export async function getSpec(changeId: number): Promise<{ spec: string; version
   return { spec: typeof body.spec === 'string' ? body.spec : '', versions: Array.isArray(body.versions) ? body.versions : [] };
 }
 
+/**
+ * Put a change up for the group's vote: the owner's propose route, the same
+ * one the dev chat's Propose button and an imported PR's use.
+ */
+export async function promoteChange(changeId: number): Promise<void> {
+  await json(await request(`/api/sessions/${changeId}/promote`, { method: 'POST' }), 'Could not put this change up for the vote.');
+}
+
+/**
+ * Rebuild a change's preview when it is not running (the staging card's
+ * Retry): the owner's ensure route. `rebuilding` means a build started and
+ * its staging_ready or staging_failed reaches the conversation.
+ */
+export async function ensureChangeStaging(changeId: number): Promise<{ status: string; url?: string | null; reason?: string | null }> {
+  return json(await request(`/api/sessions/${changeId}/ensure-staging`, { method: 'POST' }), 'Could not rebuild the preview.');
+}
+
 export async function getSpecVersion(changeId: number, version: number): Promise<string> {
   const body = await json<{ spec?: { content?: string } }>(
     await request(`/api/sessions/${changeId}/specs/${version}`),
@@ -375,14 +544,19 @@ export async function readEventStream(
 export async function sendTurn(
   id: number,
   message: string,
-  { signal, onEvent }: { signal?: AbortSignal; onEvent: (event: AgentTurnEvent) => void },
+  { signal, onEvent, attachmentIds = [] }: {
+    signal?: AbortSignal;
+    onEvent: (event: AgentTurnEvent) => void;
+    /** Uploads to this conversation (uploadAttachment), sent with the message. */
+    attachmentIds?: string[];
+  },
 ): Promise<void> {
   const response = await fetch(`/api/agent-sessions/${id}/turns`, {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(attachmentIds.length ? { message, attachmentIds } : { message }),
     signal,
   });
   if (!response.ok) {
@@ -390,4 +564,27 @@ export async function sendTurn(
     return;
   }
   await readEventStream(response, onEvent);
+}
+
+/**
+ * One file's bytes, uploaded to the conversation before the message that
+ * sends it (the dev chat's two-step, #450): the server decides its kind from
+ * the name and the bytes, never from what the browser says it is.
+ */
+export async function uploadAttachment(id: number, file: Blob, filename: string): Promise<AgentAttachment> {
+  return json<AgentAttachment>(
+    await fetch(`/api/agent-sessions/${id}/attachments?filename=${encodeURIComponent(filename)}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/octet-stream', Accept: 'application/json' },
+      body: file,
+    }),
+    `Could not attach ${filename}.`,
+  );
+}
+
+/** Where a sent file is served, to the conversation's owner only. */
+export function attachmentUrl(id: number, attachmentId: string): string {
+  return `/api/agent-sessions/${id}/attachments/${encodeURIComponent(attachmentId)}`;
 }

@@ -74,6 +74,22 @@ async function readVisualEvidenceGate(config, pool, session) {
   return visualEvidenceGateForSession(config, { ...session, ...(rows[0] || {}) });
 }
 
+// A pending verdict nothing will settle: no capture running or queued for
+// the change and no turn or operation holding it (a turn's tail runs its own
+// capture; a visual-evidence run holding the worker never settles checks).
+// A restart between setChecksPending and the capture leaves exactly this,
+// and the promote kick is the last thing that looks before voters wait.
+function strandedPendingChecks(session, {
+  visuals = require('../services/visuals'),
+  activeWorkers = require('../services/active-workers'),
+} = {}) {
+  if (session?.check_state !== 'pending' || session.check_phase === 'deferred') return false;
+  const id = Number(session.id);
+  return !visuals.hasInFlightCapture(id)
+    && !activeWorkers.hasSessionOperation(id)
+    && !activeWorkers.activeWorkers.has(id);
+}
+
 // #687: pick the GitHub client the imported-PR flow talks to. Staging
 // previews use the in-memory mock (no GitHub credentials there — see
 // usesMockGithubForImports in config.js); production always uses the real
@@ -2235,10 +2251,19 @@ function voteRoutes(config) {
       // promotion without a generated title, and a NULL pr_title would
       // otherwise render as "Change by <user>" forever. Backfilling it
       // here updates both GitHub and pr_title/session_title.
-      if (!session.pr_number || !session.pr_title) {
+      //
+      // And for a change an agent session started (#2779), always: this is
+      // the moment the group starts reading it, so its title and description
+      // are written again from the change as it now stands (its name, spec
+      // and every build's summary; pr-metadata's gatherSessionContext), not
+      // left as the first build described it. A title a person set is kept.
+      // Best-effort like the backfill: it never blocks the promotion.
+      const refreshAtSubmission = session.agent_session_id != null && !!session.pr_number;
+      if (!session.pr_number || !session.pr_title || refreshAtSubmission) {
         // Distinguish creating a PR (no pr_number → a failure must block
         // promotion) from merely backfilling a missing title on an
-        // existing PR (best-effort — never block promotion on it).
+        // existing PR, or refreshing one (best-effort — never block
+        // promotion on it).
         const isBackfill = !!session.pr_number;
         const { rows: msgRows } = await pool.query(
           `SELECT content FROM chat_session_messages
@@ -2657,7 +2682,7 @@ function voteRoutes(config) {
         // re-runs against the live container (or rebuilds a dead one) and
         // captureForSession is _inFlight-guarded.
         (async () => {
-          let needsKick = !session.check_state;
+          let needsKick = !session.check_state || strandedPendingChecks(session);
           if (!needsKick && github.isEnabled() && repoOwner && repoName) {
             try {
               const octokit = await github.getInstallationOctokit(repoOwner);
@@ -7054,6 +7079,7 @@ module.exports = {
   prImportFailureBody,
   visualEvidenceGateForSession,
   readVisualEvidenceGate,
+  strandedPendingChecks,
   // The request an imported pull request implements (#1217), likewise.
   parseImportLinkedIssues,
   MAX_IMPORT_LINKED_ISSUES,

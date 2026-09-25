@@ -114,6 +114,24 @@ test('waits, action counts, pointer ratios and scroll distances are bounded', ()
   assert.equal(evidence.safeParseReplayPlan(tooMany).ok, false);
 });
 
+test('target waits can wait for hidden state but other waits cannot claim a state', () => {
+  const candidate = plan();
+  candidate.stories[0].replay.after.actions.push({
+    id: 'wait-until-settled', stage: 'settled', type: 'waitFor',
+    target: { by: 'css', value: '.is-animating' }, state: 'hidden', timeoutMs: 3000,
+  });
+  const parsed = evidence.parseReplayPlan(candidate);
+  assert.equal(parsed.stories[0].replay.after.actions.at(-1).state, 'hidden');
+
+  candidate.stories[0].replay.after.actions.at(-1).state = 'gone';
+  assert.equal(evidence.safeParseReplayPlan(candidate).ok, false);
+  candidate.stories[0].replay.after.actions[candidate.stories[0].replay.after.actions.length - 1] = {
+    id: 'wait-until-settled', stage: 'settled', type: 'waitFor',
+    text: 'Ready', state: 'hidden',
+  };
+  assert.equal(evidence.safeParseReplayPlan(candidate).ok, false);
+});
+
 test('wait-only checkpoints cannot request a steps video', () => {
   const staticPlan = plan();
   const wait = { id: 'wait-ready', stage: 'ready', type: 'waitFor',

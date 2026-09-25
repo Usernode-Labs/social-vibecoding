@@ -185,3 +185,37 @@ test('#2879: the Messages pane keeps its own contract (no refetch, no error card
   assert.equal(h.appRequests.length, 0, 'the pane loads its own app; this does not');
   assert.doesNotMatch(h.container.innerHTML, /dc-app-unavailable/);
 });
+
+// QA 2026-09-24 Q30b: a session link the viewer cannot open fell back to the
+// Workshop with nothing on screen about it; the 404 was only in the console.
+// The fallback stays, and now says why it happened.
+async function openInaccessibleSession({ embedded = false } = {}) {
+  const h = makeHarness([]);
+  const toasts = [];
+  const switched = [];
+  h.sandbox.PlatformUI = { toast: (message, opts) => toasts.push([message, opts]) };
+  h.sandbox.App.switchTab = (tab) => switched.push(tab);
+  h.AppView.appData = { slug: 'homeroom-self', name: 'Homeroom', can_collaborate: true };
+  h.AppView._findItem = () => null;
+  h.AppView._renderSessionTranscriptPage = async () => false;
+  // GET /api/sessions/<id> answered 404: nothing was opened.
+  h.sandbox.DevChat.openSession = async () => false;
+  const result = await h.AppView.renderDevChatTab(990403, { embedded });
+  return { result, toasts, switched };
+}
+
+test('QA Q30b: a private or missing session link says so as it falls back to the Workshop', async () => {
+  const { result, toasts, switched } = await openInaccessibleSession();
+  assert.deepEqual(switched, ['dev'], 'the Workshop is still where it lands');
+  assert.equal(result, undefined);
+  assert.equal(toasts.length, 1, 'with one note about the link');
+  assert.equal(toasts[0][0], 'That session is private or no longer exists.');
+  assert.ok(toasts[0][1].duration > 2200, 'up long enough to be read as the page arrives');
+});
+
+test('QA Q30b: the Messages pane keeps its own "could not be opened" state, no toast', async () => {
+  const { result, toasts, switched } = await openInaccessibleSession({ embedded: true });
+  assert.equal(result, 'unavailable');
+  assert.deepEqual(switched, []);
+  assert.deepEqual(toasts, []);
+});

@@ -6608,6 +6608,15 @@ WHERE t.session_id = s.id
   AND t.status = 'open'
   AND s.status NOT IN ('active', 'paused');
 
+-- Every request a work order implements. issue_number holds one, and a job
+-- asked to implement several used to keep none of them: prepare_work took a
+-- single requestNumber, so three requests built together went in as free
+-- text, and their proposal merged with no `Closes #N` line and no link, and
+-- left all three open. This holds the whole set, issue_number included, and
+-- is what the submission links and closes. The empty array on an older row
+-- means "just issue_number", exactly what it always meant.
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS linked_issues INTEGER[] NOT NULL DEFAULT '{}';
+
 -- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
 -- chat_sessions today pins Claude continuity via cc_session_id. To add a
 -- second coding-agent backend (codex_openrouter) without breaking the
@@ -9316,3 +9325,110 @@ CREATE TABLE IF NOT EXISTS agent_session_actions (
 CREATE INDEX IF NOT EXISTS agent_session_actions_session
   ON agent_session_actions (agent_session_id, created_at DESC);
 COMMENT ON TABLE agent_session_actions IS 'staging:private';
+
+-- An agent session's saved drafts (#2779 follow-up, the dev chat's #798/#940
+-- carried over): while the Mayor works, what the owner types next can be
+-- parked here instead of held in their head, and sent — always by a tap,
+-- never on its own — once the turn is over. Per ACCOUNT, like the dev chat's
+-- list, so a second device shows the same drafts. The same shape and caps
+-- as chat_session_drafts (routes/chat-drafts.js): client-generated ids, 20
+-- per conversation, 10,000 characters each.
+--
+-- Retention follows the conversation (ON DELETE CASCADE).
+CREATE TABLE IF NOT EXISTS agent_session_drafts (
+  agent_session_id INTEGER     NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+  -- Always the conversation's owner, stored so a per-user query is one
+  -- predicate on this table.
+  user_id          INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  draft_id         VARCHAR(32) NOT NULL,
+  content          TEXT        NOT NULL CHECK (length(content) BETWEEN 1 AND 10000),
+  saved_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (agent_session_id, draft_id)
+);
+CREATE INDEX IF NOT EXISTS agent_session_drafts_session
+  ON agent_session_drafts (agent_session_id, saved_at, draft_id);
+CREATE INDEX IF NOT EXISTS agent_session_drafts_user
+  ON agent_session_drafts (user_id);
+-- Private like its conversation: unsent words, and a foreign key to the
+-- private agent_sessions.
+COMMENT ON TABLE agent_session_drafts IS 'staging:private';
+
+-- Files attached to an agent-session message (#2779 follow-up): the dev
+-- chat's own table, so the validation, the caps, the 24h orphan sweep, the
+-- account-deletion purge and the coding agent's download path
+-- (routes/internal.js) all apply unchanged. A conversation's message need
+-- not have a change, so such a row names the conversation instead of a
+-- session: agent_session_id set, session_id NULL. Every row names one or the
+-- other. The table stays staging:private (above).
+ALTER TABLE chat_session_attachments
+  ADD COLUMN IF NOT EXISTS agent_session_id INTEGER REFERENCES agent_sessions(id) ON DELETE CASCADE;
+ALTER TABLE chat_session_attachments ALTER COLUMN session_id DROP NOT NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'chat_session_attachments_owner_chk'
+  ) THEN
+    ALTER TABLE chat_session_attachments
+      ADD CONSTRAINT chat_session_attachments_owner_chk
+      CHECK (session_id IS NOT NULL OR agent_session_id IS NOT NULL);
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_agent_session
+  ON chat_session_attachments(agent_session_id) WHERE agent_session_id IS NOT NULL;
+
+-- Admin Support (#admin/support): one row per thing staff did to or looked
+-- at on a participant's account. `view` rows are the access audit (one per
+-- admin, user and hour); `points_adjustment` / `points_reversal` rows carry
+-- the reason and inputs behind the user_activities row they created (its id
+-- lands in payload.activity_id). Private: reasons and ticket references
+-- describe individual users' support cases.
+CREATE TABLE IF NOT EXISTS support_actions (
+  id              BIGSERIAL PRIMARY KEY,
+  actor_user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  target_user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  action          VARCHAR(32) NOT NULL,
+  reason          TEXT,
+  payload         JSONB NOT NULL DEFAULT '{}',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_support_actions_target_created
+  ON support_actions (target_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_support_actions_actor_target_created
+  ON support_actions (actor_user_id, target_user_id, created_at);
+COMMENT ON TABLE support_actions IS 'staging:private';
+-- A support adjustment can be reversed once: the reversal row names the
+-- activity it cancels in metadata.reverses.
+CREATE UNIQUE INDEX IF NOT EXISTS user_activities_support_reversal_unique
+  ON user_activities ((metadata->>'reverses'))
+  WHERE source = 'support_adjustment' AND metadata ? 'reverses';
+
+-- Admin "Deduplicate user" (#admin/users/<id>, src/services/user-merge.js):
+-- one row per merge of two accounts that belonged to the same person. The
+-- kept account received every row that referenced the merged one; the
+-- merged row was anonymised in place so historical ids stay valid. `moved`,
+-- `dropped` and `retained` are per-table row counts ("table.column": n):
+-- rows re-pointed at the kept account, the merged account's rows removed
+-- because the kept account already had the same record (kept wins), and
+-- conflicting rows left on the anonymised account because removing them
+-- would destroy something (a wallet, a live key, a proposal). No email or
+-- username is stored here. Private: it links two identities of one person.
+--
+-- merged_user_id is unique: an account is merged away at most once, and
+-- the index is what makes a double submit fail instead of merging twice.
+-- The user columns are SET NULL on delete so a later account deletion
+-- keeps the audit row.
+CREATE TABLE IF NOT EXISTS user_merges (
+  id               BIGSERIAL PRIMARY KEY,
+  kept_user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  merged_user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  email_kept_from  VARCHAR(8) NOT NULL CHECK (email_kept_from IN ('kept', 'merged')),
+  moved            JSONB NOT NULL DEFAULT '{}',
+  dropped          JSONB NOT NULL DEFAULT '{}',
+  retained         JSONB NOT NULL DEFAULT '{}',
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_merges_merged_unique ON user_merges (merged_user_id);
+CREATE INDEX IF NOT EXISTS idx_user_merges_kept ON user_merges (kept_user_id, created_at DESC);
+COMMENT ON TABLE user_merges IS 'staging:private';

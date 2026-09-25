@@ -706,7 +706,7 @@ export function PlatformHeader() {
                  value is never patched back out.
               */
               data-session-done="0"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
+              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[0.65rem] font-bold flex items-center justify-center"
               aria-label="Unread notifications"
             >
             </span>

@@ -562,6 +562,13 @@
       "description": "Public HTTPS observability origin for the admitted native chain, without /ui/nodes or /v1/observability. The device reads this service directly; its read-only epoch endpoints must allow browser CORS requests from Homeroom and previews. Changes apply on the next platform deployment and are inherited by rebuilt previews."
     }
   ],
+  "inLoopCheckAuth": {
+    "path": "/api/auth/login",
+    "body": {
+      "username": "staging-code-signin@usernode.test",
+      "password": "staging-code-password"
+    }
+  },
   "tests": [
     {
       "name": "Account email and recovery is discoverable in Settings (#1841)",
@@ -1335,6 +1342,12 @@
       "expectText": "All apps"
     },
     {
+      "name": "Browse rows carry a compact Add pill that still names Your apps as its destination (QA 2026-09-24 Q10)",
+      "path": "/#apps",
+      "expectSelector": "#browse-list .browse-row .browse-add-btn[data-added=\"false\"][aria-label=\"Add to Your apps\"][title=\"Add to Your apps\"]",
+      "expectText": "All apps"
+    },
+    {
       "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
       "path": "/?shot=home-search",
       "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
@@ -2002,9 +2015,10 @@
       "expectText": "Top users"
     },
     {
-      "name": "Admin Users list renders",
+      "name": "Admin Users list renders, with its Total points column",
       "path": "/#admin/users",
-      "expectText": "Users"
+      "expectSelector": "#admin-users-points-header",
+      "expectText": "Total points"
     },
     {
       "name": "Admin App storage section renders",
@@ -2845,6 +2859,34 @@
       "expectSelector": "#settings-footer #settings-account-rows #account-row-node"
     },
     {
+      "name": "Settings' Node row refreshes on its own while Settings is visible, no tap needed",
+      "path": "/?shot=node-status#settings",
+      "expectSelector": "#settings-screen:not(.hidden) #settings-account-rows #account-row-node:not(.hidden) #account-node-status[data-node-status=\"synced\"]",
+      "expectText": "Synced"
+    },
+    {
+      "id": "wallet-block-production-order",
+      "name": "Wallet Block production: status card, then laptop card (normal cards), then the background service soft warning",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/header/wallet-sheet-body.tsx"
+      ],
+      "path": "/?shot=wallet-sheet#settings",
+      "expectSelector": "#wallet-sheet-body [data-block-production-card=\"status\"][class*=\"zinc-200\"]:not([class*=\"bg-\"])+[data-block-production-card=\"self-hosted\"][class*=\"zinc-200\"]+[data-background-service=\"active\"][class*=\"amber-500/40\"]+button",
+      "expectText": "Producing blocks on this phone"
+    },
+    {
+      "id": "wallet-block-production-delegated",
+      "name": "Wallet Block production: delegated state is a normal card with the disclosure inside it",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/header/wallet-sheet-body.tsx"
+      ],
+      "path": "/?shot=wallet-sheet-delegated#settings",
+      "expectSelector": "#wallet-sheet-body [data-block-production-card=\"status\"][class*=\"border-zinc-200\"]:not([class*=\"violet\"]) + [data-block-production-card=\"self-hosted\"] + [data-background-service=\"inactive\"]",
+      "expectText": "When delegated, you receive half the points"
+    },
+    {
       "name": "The completed-task badge sits on the bell, not the Improve pill (#1610)",
       "path": "/",
       "expectSelector": "#notifications-btn #notifications-badge[data-session-done]"
@@ -2999,6 +3041,11 @@
       "expectSelector": "#messages-screen:not(.hidden) #messages-filters > .messages-filter-track + button#messages-new[aria-haspopup=\"menu\"][aria-label=\"New message\"]"
     },
     {
+      "name": "QA 2026-09-24 Q18: a Skip to navigation link is the first thing Tab reaches, ahead of the header, and the rail it skips to is there",
+      "path": "/?demo=1",
+      "expectSelector": "body > a[href=\"#platform-tabs\"]:first-of-type:not([hidden]) + header#platform-header ~ nav#platform-tabs a#platform-tab-home"
+    },
+    {
       "name": "The global chat composer wears the safe-bar contract, so on a phone it sits above the tab bar (bug e)",
       "path": "/?demo=1",
       "expectSelector": "#global-chat-screen .global-chat-shell > .global-chat-transcript:not(.platform-safe-scroll) + form.global-chat-composer.platform-safe-bar > textarea#global-chat-composer[placeholder]"
@@ -3026,10 +3073,10 @@
       "expectSelector": "#messages-message-9100403 .messages-markdown span.gc-ref.gc-ref-issue[data-ref-number=\"488\"]"
     },
     {
-      "name": "#2884: four shared cards in a row in #general draw as the first card and a \u201c\u2026 3 more\u201d row, the rest folded",
+      "name": "#2884: four shared cards in a row in #general draw as the first card and a “… 3 more” row, the rest folded",
       "path": "/?demo=1#messages/910004",
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel:not(:has(#messages-message-9100407)) #messages-message-9100406:has(.messages-object-card) + .messages-card-run > button.messages-card-run-more[data-card-run-more=\"3\"][aria-expanded=\"false\"]",
-      "expectText": "\u2026 3 more"
+      "expectText": "… 3 more"
     },
     {
       "name": "#2884: a plain message before the run is not folded into it",
@@ -3037,10 +3084,10 @@
       "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100405 + #messages-message-9100406 + .messages-card-run"
     },
     {
-      "name": "#2884: an app's channel in Messages folds its run of proposal cards into the first and \u201c\u2026 N more\u201d",
+      "name": "#2884: an app's channel in Messages folds its run of proposal cards into the first and “… N more”",
       "path": "/?demo=1#messages/app/staging-demo-quiet",
       "expectSelector": "#messages-screen:not(.hidden) #gc-messages:not(:has(.gc-event[data-msg-id=\"900117\"])) > .gc-event[data-msg-id=\"900111\"] + .gc-card-run > button.gc-card-run-more[data-card-run-more=\"4\"]",
-      "expectText": "\u2026 4 more"
+      "expectText": "… 4 more"
     },
     {
       "name": "A group conversation renders an attached screenshot with a macOS-style name (#2113)",
@@ -3271,7 +3318,7 @@
     {
       "name": "A deep link into Advanced opens the group it lives in (#1554)",
       "path": "/?demo=cli-empty#settings/cli",
-      "expectSelector": "#settings-nav-desktop #settings-nav-group-advanced:not(.hidden) [data-settings-nav=\"cli\"][aria-selected=\"true\"]"
+      "expectSelector": "#settings-nav-desktop #settings-nav-group-advanced:not(.hidden) [data-settings-nav=\"cli\"][aria-current=\"page\"]"
     },
     {
       "name": "The Anthropic API key section renders at its deep link",
@@ -3902,9 +3949,15 @@
       "expectText": "this week"
     },
     {
-      "name": "A user row can be given its own weekly cap (#1788)",
-      "path": "/?demo=1#admin/users",
-      "expectSelector": ".admin-user-weekly-limit-input"
+      "name": "A user's details view shows their own weekly cap (#1788)",
+      "path": "/#admin/users/900301",
+      "expectSelector": "#admin-user-details .admin-user-weekly-limit-value",
+      "expectText": "Programme profile"
+    },
+    {
+      "name": "Admin support view shows a user's points",
+      "path": "/#admin/support/900302",
+      "expectSelector": "#admin-support-points"
     },
     {
       "name": "Analytics states the week's platform-key LLM spend (#1788)",
@@ -4610,6 +4663,19 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "The sign-in Back disc moves with its screen, so the phone install strip cannot cover it (QA Q8)",
+      "path": "/?shot=anon#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) > a[data-auth-back].absolute[aria-label=\"Back\"]",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "The register form states the username rule under the username field (QA Q11)",
+      "path": "/?shot=anon#register",
+      "expectSelector": "#auth-register-screen:not(.hidden) #reg-username[autocapitalize=\"none\"][aria-describedby=\"reg-username-hint\"] + #reg-username-hint",
+      "expectText": "Letters, numbers and underscores, 3 to 32 characters.",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "#1808: an issue's GitHub comments carry a day and a time, and the year once it is not this one",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
       "expectSelector": "#dev-issue-comments .dev-issue-comment.dev-feed-msg .dev-feed-msg-head time.dev-feed-msg-time[title]",
@@ -5080,7 +5146,19 @@
       ]
     },
     {
-      "name": "#2387: every message carries one hover bar (recent reactions, the picker, reply, save, \u22ef), and a threaded one its reply count",
+      "name": "#2779: an agent session's staging builds are cards: an older build is superseded, the newest offers Open preview and View change",
+      "path": "/#messages/agent/990801",
+      "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-preview=\"superseded\"] ~ [data-agent-session-preview=\"deployed\"] [data-agent-session-preview-open] + [data-agent-session-preview-change]",
+      "expectText": "Superseded by a newer preview"
+    },
+    {
+      "name": "#2779: an agent session's saved drafts sit above the message box, a Mayor reply says what it cost, and its bar has Changes and ⋯ (where it is built moved to the composer's Build with, #3078)",
+      "path": "/#messages/agent/990801",
+      "expectSelector": "[data-agent-session-thread=\"990801\"]:has([data-agent-session-reply-cost]):has([data-agent-session-changes-button] ~ [data-agent-session-menu]) [data-agent-session-drafts=\"1\"] [data-agent-session-draft=\"dstagingfixture1\"]",
+      "expectText": "Also keep the choice when I switch devices."
+    },
+    {
+      "name": "#2387: every message carries one hover bar (recent reactions, the picker, reply, save, ⋯), and a threaded one its reply count",
       "path": "/?demo=1#messages/910004",
       "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100404:has(.msgx-thread-chip) > .msgx-bar:has([aria-label^=\"React with\"]) > [aria-label=\"Add reaction\"] ~ [aria-label=\"Reply\"] ~ [aria-label=\"Save message\"] ~ .messages-action-more[aria-haspopup=\"menu\"]",
       "expectText": "3 replies"
@@ -5132,10 +5210,34 @@
       "expectText": "3 replies in thread"
     },
     {
-      "name": "#2967: the channels you are not in fold under \u201cShow N more\u201d",
+      "name": "#2967: the channels you are not in fold under “Show N more”",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll button#messages-more-channels.messages-more-channels[aria-expanded=\"false\"]",
       "expectText": "more"
+    },
+    {
+      "name": "#2779 follow-up: \"Open app\" is offered on an ordinary app's chat and never on the platform's own",
+      "path": "/#messages/agent/990803",
+      "expectSelector": "#messages-screen:not(.hidden):has([data-agent-session-thread=\"990803\"] [data-agent-session-open-app][data-open-app=\"staging-demo-app\"]):not(:has([data-agent-session-thread=\"990801\"] [data-agent-session-open-app]))",
+      "expectText": "Open app",
+      "visual": true,
+      "id": "agent-session.open-app",
+      "impact": [
+        "frontend/src/features/agent-session/**",
+        "src/services/agent-sessions.js"
+      ]
+    },
+    {
+      "name": "QA 2026-09-24 Q29: a change waiting on you says \"Needs you\" in its Messages row, short enough to leave the title room",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"] > span.inline-flex.rounded-full",
+      "expectText": "Needs you"
+    },
+    {
+      "name": "QA 2026-09-24 Q14: a group invitation's header reads \"Invitation pending\", not a member count the invitee is not shown",
+      "path": "/?demo=1#messages/910003",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-thread-header .messages-thread-sub",
+      "expectText": "Invitation pending"
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779)",

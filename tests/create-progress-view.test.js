@@ -102,6 +102,29 @@ test('a failure shows the reason and offers a retry', () => {
   assert.match(t, /Retry/);
 });
 
+// QA 2026-09-24 Q32b: the reason is the server's own line, e.g. "Build failed:
+// ERROR: failed to connect to the docker API at unix:///var/run/docker.sock…".
+// The status line says what happened in plain words; the reason is kept, one
+// press away, in a Details disclosure.
+test('a failure leads with a plain summary and keeps the raw reason under Details', () => {
+  const reason = 'Build failed: ERROR: failed to connect to the docker API at unix:///var/run/docker.sock';
+  const out = html({ status: 'error', phase: 'build', errorReason: reason });
+  const status = out.match(/<p id="create-progress-status"[^>]*>([\s\S]*?)<\/p>/)[1].replace(/<[^>]*>/g, '');
+  assert.equal(status, 'The build didn’t finish. Try again, or ask an admin.');
+  assert.doesNotMatch(status, /docker|ERROR/);
+  const details = out.match(/<details id="create-progress-details"[^>]*>([\s\S]*?)<\/details>/);
+  assert.ok(details, 'the reason sits in a disclosure');
+  assert.match(details[1], /<summary[^>]*>Details<\/summary>/);
+  assert.ok(details[1].includes(reason));
+  assert.doesNotMatch(out, /<details[^>]* open/, 'closed until asked for');
+  // A step other than the build says setup rather than build.
+  const db = html({ status: 'error', phase: 'database', errorReason: 'role "x" does not exist' });
+  assert.match(db, /Setup didn’t finish\. Try again, or ask an admin\./);
+  // No reason, no disclosure: there is nothing to put in it.
+  assert.doesNotMatch(html({ status: 'error', phase: null }), /create-progress-details/);
+  assert.doesNotMatch(html({ phase: 'build' }), /create-progress-details/);
+});
+
 test('a failure with no reason still says something useful', () => {
   const t = text({ status: 'error', phase: null });
   assert.match(t, /Retry/);

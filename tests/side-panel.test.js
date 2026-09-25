@@ -1285,3 +1285,54 @@ test('the divider drags, takes the keys, resets on a double-click, and lets the 
   assert.match(block, /touch-action: none;/);
   assert.match(block, /html\.side-panel-resizing iframe \{\s*pointer-events: none;/);
 });
+
+test('pend plants ?side= for a page the app is about to open beside, and drop takes it back', () => {
+  api._resetForTests();
+  globalThis.window = {
+    location: { search: '', pathname: '/', hash: '', origin: 'https://homeroom.test', href: 'https://homeroom.test/' },
+    history: { state: null, replaceState: (_s, _u, url) => {
+      const next = new URL(url, 'https://homeroom.test');
+      globalThis.window.location.href = next.href;
+      globalThis.window.location.search = next.search;
+      globalThis.window.location.pathname = next.pathname;
+      globalThis.window.location.hash = next.hash;
+    } },
+    matchMedia: () => ({ matches: true }),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  globalThis.document = { documentElement: { classList: { contains: () => false } } };
+  try {
+    // A panel page the app the viewer is heading to can stand beside.
+    assert.equal(api.SidePanel.pend('agent/7'), true);
+    const search = new URL(globalThis.window.location.href, 'https://homeroom.test').search;
+    assert.equal(api.sideRouteFrom(search), 'agent/7', 'the route is in ?side=');
+    // In place: no history entry (replaceState is the only call a fake
+    // history that only carries replaceState can answer).
+    assert.equal(api.SidePanel.pend('messages/4242'), true, 'another page overwrites, not appends');
+    const again = new URL(globalThis.window.location.href, 'https://homeroom.test').search;
+    assert.equal(api.sideRouteFrom(again), 'messages/4242');
+    assert.ok(!again.includes('agent%2F7'), 'the earlier page did not survive as a second value');
+
+    // Not a panel page: refused, nothing written.
+    api._resetForTests();
+    globalThis.window.location.href = 'https://homeroom.test/';
+    assert.equal(api.SidePanel.pend('profile/dana'), false);
+    assert.equal(api.sideRouteFrom(new URL(globalThis.window.location.href, 'https://homeroom.test').search), null);
+
+    // A navigation that never landed clears the parameter with the caller's
+    // clearPending — drop() itself stays untouched for the boot-past-no-app
+    // path, which keeps the note until the give-up in restoreFromAddress.
+    api._resetForTests();
+    globalThis.window.location.href = 'https://homeroom.test/';
+    api.SidePanel.pend('agent/7');
+    assert.equal(api.sideRouteFrom(new URL(globalThis.window.location.href, 'https://homeroom.test').search), 'agent/7');
+    api.SidePanel.clearPending();
+    assert.equal(api.sideRouteFrom(new URL(globalThis.window.location.href, 'https://homeroom.test').search), null,
+      'the address is clean for the app to open on');
+  } finally {
+    delete globalThis.window;
+    delete globalThis.document;
+    api._resetForTests();
+  }
+});

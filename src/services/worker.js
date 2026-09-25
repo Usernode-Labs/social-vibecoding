@@ -391,12 +391,14 @@ function usageToken(value) {
  * A budget built on it was silently inert on that agent for its whole first
  * day in production.
  *
- * Note what this does and does not buy, because the two paths differ. Claude
- * emits `result` usage more than once in a turn, so a caller can act on it.
- * `codex-openrouter` emits usage exactly once, at `turn.completed`: there
- * the hook is terminal by construction, and a caller can REPORT that a turn
- * breached its token budget but cannot stop one. Giving that agent a
- * mid-turn signal is an upstream change, not something this seam can fake.
+ * Note what this does NOT buy (#3035). Both paths are terminal: Claude's
+ * usage arrives on its `result` event and `codex-openrouter`'s on
+ * `turn.completed`, each the last thing a turn emits. A caller can REPORT
+ * that a finished turn breached a token budget; it cannot stop a turn with
+ * this, and must never treat a breach seen here as a reason to discard a
+ * finished result — the Homeroom bot did exactly that for a day. On Codex
+ * the figure is also the THREAD's running total, not the turn's. Giving an
+ * agent a mid-turn signal is an upstream change this seam cannot fake.
  *
  * Optional and best-effort by construction: a throwing hook must never take
  * down the parse of a provider event.
@@ -901,8 +903,117 @@ function applyStreamEvent(event, onProgress, state) {
   }
 }
 
+// Keep OpenRouter calls visible in the owner's coding transcript. The adapter
+// emits only timing/counts, but still accept an explicit allowlist here:
+// runner output is untrusted and must never echo a prompt, key, URL, or
+// provider body into progress.
+const CODING_PROVIDER_STAGES = new Set(['await_headers', 'await_first_byte', 'streaming']);
+const CODING_PROVIDER_OUTCOMES = new Set(['ok', 'http_error', 'cancelled', 'network_error', 'stream_error']);
+function codingProviderCount(value, maximum) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null;
+}
+function observeCodingProviderTiming(event, onProgress, state) {
+  if (event?.kind === 'codex_output_idle') {
+    const durationMs = event.durationMs;
+    if (!Number.isSafeInteger(durationMs) || durationMs > 86_400_000) return;
+    if (durationMs < 60_000 || !Number.isSafeInteger(event.activeRequests)
+        || event.activeRequests < 0 || event.activeRequests > 1000) return;
+    const seconds = Math.round(durationMs / 1000);
+    // Codex prints nothing while a command or tool runs, so a quiet stretch
+    // is only suspicious when nothing is open. A slow model request already
+    // reports itself on its own lines.
+    const open = [...(state.codexOpenTools?.values() || [])];
+    if (open.length) {
+      const latest = open[open.length - 1];
+      const more = open.length > 1 ? ` (and ${open.length - 1} more)` : '';
+      onProgress(latest.kind === 'command'
+        ? `Waiting on a command for ${seconds}s${latest.label ? `: ${latest.label}` : ''}${more}`
+        : `Waiting on ${latest.label} for ${seconds}s${more}`);
+    } else if (event.activeRequests === 0) {
+      onProgress(`Codex has been silent for ${seconds}s with no command or model request open`);
+    }
+    return;
+  }
+  const ordinal = event?.requestOrdinal;
+  if (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 1_000_000) return;
+  const requests = state.codingProviderRequests || (state.codingProviderRequests = new Map());
+  if (event.kind === 'provider_request_start') {
+    const request = { lastReportedMs: null, lastReportedStage: null, contextReported: false };
+    requests.set(ordinal, request);
+    const payloadBytes = codingProviderCount(event.payloadBytes, 64 * 1024 * 1024);
+    const inputBytes = codingProviderCount(event.inputBytes, 64 * 1024 * 1024);
+    const instructionBytes = codingProviderCount(event.instructionBytes, 64 * 1024 * 1024);
+    const inputItems = codingProviderCount(event.inputItems, 1_000_000);
+    const maxOutputTokens = codingProviderCount(event.maxOutputTokens, 10_000_000);
+    const linked = event.previousResponseLinked;
+    if (payloadBytes != null && inputBytes != null && instructionBytes != null && maxOutputTokens != null
+        && typeof linked === 'boolean') {
+      const itemCount = inputItems == null ? '' : ` in ${inputItems} items`;
+      onProgress(`OpenRouter request #${ordinal}: payload ${payloadBytes} bytes, context ${inputBytes} bytes${itemCount}, `
+        + `instructions ${instructionBytes} bytes, previous response ${linked ? 'linked' : 'absent'}, `
+        + `reply limit ${maxOutputTokens} tokens`);
+      request.contextReported = true;
+    }
+    return;
+  }
+  const durationMs = event.durationMs;
+  if (!Number.isSafeInteger(durationMs) || durationMs < 0 || durationMs > 86_400_000) return;
+  const prior = requests.get(ordinal);
+  if (event.kind === 'provider_request_pending') {
+    if (!CODING_PROVIDER_STAGES.has(event.stage) || durationMs < 30_000) return;
+    const request = prior || { lastReportedMs: null, lastReportedStage: null };
+    if (request.lastReportedStage === event.stage
+        && durationMs - request.lastReportedMs < 60_000) return;
+    request.lastReportedMs = durationMs;
+    request.lastReportedStage = event.stage;
+    requests.set(ordinal, request);
+    const seconds = Math.round(durationMs / 1000);
+    const stage = {
+      await_headers: 'no response headers',
+      await_first_byte: 'headers received, no response bytes',
+      streaming: 'still responding',
+    }[event.stage];
+    const bytes = Number.isSafeInteger(event.responseBytes) && event.responseBytes >= 0
+      && event.responseBytes <= 10_000_000 ? event.responseBytes : null;
+    const transfer = event.stage === 'streaming' && bytes != null ? `, ${bytes} bytes so far` : '';
+    onProgress(`OpenRouter request #${ordinal}: ${stage} after ${seconds}s${transfer}`);
+    return;
+  }
+  if (event.kind === 'provider_response_headers' || event.kind === 'provider_response_first_byte') {
+    if (!prior || prior.lastReportedMs == null) return;
+    if (event.kind === 'provider_response_headers') {
+      const status = event.httpStatus;
+      if (!Number.isSafeInteger(status) || status < 100 || status > 599) return;
+      onProgress(`OpenRouter request #${ordinal}: HTTP ${status} headers after ${Math.round(durationMs / 1000)}s`);
+    } else {
+      onProgress(`OpenRouter request #${ordinal}: first response byte after ${Math.round(durationMs / 1000)}s`);
+    }
+    return;
+  }
+  if (event.kind === 'provider_request_end') {
+    requests.delete(ordinal);
+    if (!prior || (!prior.contextReported && prior.lastReportedMs == null)
+        || !CODING_PROVIDER_OUTCOMES.has(event.outcome)) return;
+    const status = Number.isSafeInteger(event.httpStatus) && event.httpStatus >= 100 && event.httpStatus <= 599
+      ? `, HTTP ${event.httpStatus}` : '';
+    const responseBytes = codingProviderCount(event.responseBytes, 10_000_000);
+    const chunkCount = codingProviderCount(event.chunkCount, 1000);
+    const transfer = prior.contextReported && responseBytes != null && chunkCount != null
+      ? `, ${responseBytes} response bytes in ${chunkCount} chunks` : '';
+    onProgress(`OpenRouter request #${ordinal}: ${event.outcome} after ${Math.round(durationMs / 1000)}s${status}${transfer}`);
+  }
+}
+
 function parseLine(line, onProgress, state) {
   if (!line || !line.trim()) return;
+  if (line.startsWith('__USERNODE_CODING_PROVIDER__ ')) {
+    try {
+      if (state.agentBackend === 'codex_openrouter' && !state.evidenceDiagnosticObserver) {
+        observeCodingProviderTiming(JSON.parse(line.slice('__USERNODE_CODING_PROVIDER__ '.length)), onProgress, state);
+      }
+    } catch { /* Malformed diagnostics must not change the agent turn. */ }
+    return;
+  }
   if (line.startsWith('__USERNODE_EVIDENCE_PROVIDER__ ')) {
     try {
       const event = JSON.parse(line.slice('__USERNODE_EVIDENCE_PROVIDER__ '.length));
@@ -1042,6 +1153,13 @@ function parseLine(line, onProgress, state) {
               || ['failed', 'error', 'cancelled'].includes(String(ev.status || '').toLowerCase()),
           });
         }
+        if (ev.itemId && (ev.kind === 'command_started' || ev.kind === 'mcp_started')) {
+          const open = state.codexOpenTools || (state.codexOpenTools = new Map());
+          open.set(ev.itemId, ev.kind === 'command_started'
+            ? { kind: 'command', label: ev.text && ev.text.startsWith('$ ') ? ev.text.slice(2) : null }
+            : { kind: 'mcp', label: ev.toolName });
+        }
+        if (ev.itemId && isToolCompletion) state.codexOpenTools?.delete(ev.itemId);
         if (ev.kind === 'error') {
           emitEvidenceDiagnostic(state, { kind: 'provider_notice' });
         }
@@ -1156,6 +1274,10 @@ function newWatchState() {
     // Last HTTP request observed by the worker-local OpenRouter adapter.
     // Only content-free fields are accepted by the Codex normalizer.
     providerRequest: null,
+    // #3038: the per-turn sum of each model request's usage as the adapter
+    // saw it finish. Survives a stop, unlike the agent's own totals, which
+    // arrive only at turn.completed. A floor: an in-flight request is missing.
+    relayUsage: null,
     // The output-token budget OpenRouter said the key could afford, when it
     // said so. Drives the one clamped retry in the sessions attempt loop.
     affordableOutputTokens: null,

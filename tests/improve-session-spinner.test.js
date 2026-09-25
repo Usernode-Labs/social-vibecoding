@@ -40,7 +40,7 @@ const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 const DEV_CHAT_LIST = read('frontend/src/features/dev-chat/session-list.tsx');
 const APP_CSS = read('public/css/app.css');
 const MANIFEST = JSON.parse(read('dapp.json'));
-const appManifest = require('../src/services/app-manifest');
+const checkCap = require('./lib/check-cap');
 
 /** The `stateOf` table on its own — three branches, one per state. */
 function stateOfBody() {
@@ -184,9 +184,10 @@ test('the busy-row check selects the arc, and no check was added', () => {
   // crossing that floor is what makes the reader drop checks silently. That
   // is stable against other people's work, and tests/checks-budget.test.js
   // asserts the consequence (ceilingDropped === 0) from the other side.
-  const ceiling = appManifest.MAX_DECLARED_TESTS;
-  assert.ok(MANIFEST.tests.length <= ceiling - 20,
-    `declared checks are at ${MANIFEST.tests.length} of ${ceiling}; the `
-    + 'manifest keeps 20 slots clear, and raising the cap is a coupled '
-    + 'change with TESTS_DEADLINE_MS — see services/app-manifest.js');
+  //
+  // What to do at the floor is stated once, for this guard and the other two
+  // (tests/lib/check-cap.js): fold first, then raise the cap in the same
+  // proposal. This one used to call the raise a coupled change while its
+  // twin said to make it, and the exact pin said nothing.
+  checkCap.assertFloor(MANIFEST.tests.length);
 });

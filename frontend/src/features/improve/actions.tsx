@@ -109,6 +109,13 @@ export function ImproveQuickActions(): ReactNode {
  *   - IDLE. Nothing. A row saying "up to date" is a row that is right almost
  *     always and therefore never read.
  *
+ * NO NOTE FOR THE VIEWER'S OWN WORK (#3075). One of your changes being
+ * mid-turn had a fourth line here (#3015), saying what the corner spinner on
+ * the Homeroom mark meant. The spinner stays (../header/platform-mark.tsx,
+ * with its hover title); the sentence under it went, because the menu that
+ * carried it lists the working session itself under Continue, spinner and
+ * all, which says the same thing where it can be acted on.
+ *
  * `versionState` is the platform's, published from
  * App.renderPlatformVersionPill; `deploying` is this app's own. They are
  * separate facts with one presentation here, because "something is being

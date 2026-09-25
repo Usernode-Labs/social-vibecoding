@@ -232,3 +232,46 @@ test('modal, alert and backdrop share the same fade token, including reduced mot
   const reduced = CSS.slice(CSS.indexOf('@media (prefers-reduced-motion: reduce)'));
   assert.match(reduced, /\.un-modal,\s*\.un-alert\s*\{\s*transition: opacity var\(--un-dialog-fade-duration\) ease;/);
 });
+
+// QA 2026-09-24 Q14: the group rename is the kit alert's one text field, and
+// a one-field form submits on Enter. Opt-in (`submitOnEnter`), with an
+// optional `maxLength`, so a caller that passes neither — any app on the kit —
+// gets exactly the field it always got.
+function fieldAlert(h, field) {
+  const settled = [];
+  h.alert({
+    title: 'Rename group',
+    field,
+    buttons: [{ label: 'Cancel', style: 'cancel' }, { label: 'Save', style: 'default' }],
+  }).then((res) => settled.push(res));
+  const card = h.document.body.children[1];
+  const input = card.children.find((el) => el.className === 'un-alert-field');
+  // The shim's elements have no click(); a real button's dispatches 'click'.
+  for (const button of card.children.at(-1).children) button.click = () => button.emit('click');
+  return { card, input, settled };
+}
+
+test('alert field: submitOnEnter presses the confirming button, not Cancel', async () => {
+  const h = harness();
+  const { card, input, settled } = fieldAlert(h, { value: 'Launch crew', submitOnEnter: true, maxLength: 80 });
+  assert.equal(input.maxLength, 80, 'the cap reaches the field');
+  h.frame();
+  let prevented = false;
+  input.emit('keydown', { key: 'Enter', isComposing: false, preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(card.style.pointerEvents, 'none', 'Enter started the dismissal');
+  h.timeout();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].button.label, 'Save');
+  assert.equal(settled[0].value, 'Launch crew');
+});
+
+test('alert field: without submitOnEnter, Enter does nothing and no cap is set', () => {
+  const h = harness();
+  const { card, input } = fieldAlert(h, { value: 'x' });
+  assert.equal(input.maxLength, undefined);
+  h.frame();
+  input.emit('keydown', { key: 'Enter', isComposing: false, preventDefault() {} });
+  assert.notEqual(card.style.pointerEvents, 'none', 'the alert is still open');
+});

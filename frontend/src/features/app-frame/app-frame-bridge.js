@@ -59,6 +59,7 @@ const keptRecord = (s) => ({
   sandboxReady: s.sandboxReady,
   allow: s.allow,
   navigatedAt: s.navigatedAt,
+  title: s.title,
 });
 
 /**
@@ -88,15 +89,19 @@ export const appFrameBridge = {
    * flush is `flushSync` (see ./mount.ts), so the ref is registered by the time
    * this returns.
    */
-  mount({ slug, cover = null, faded = true } = {}) {
+  mount({ slug, cover = null, faded = true, title = '' } = {}) {
     if (!slug) return false;
     const current = appFrameStore.get();
     const sameFrame = current.slug === slug;
+    // The frame's accessible name (QA 2026-09-24 Q20): the caller's app name,
+    // else the launch cover's, else whatever this app's frame already had.
+    const named = title || (cover && cover.name) || '';
     if (sameFrame) {
       appFrameStore.set({
         active: true,
         faded: !!faded,
         cover: cover ? { ...COVER_DEFAULTS, ...cover } : null,
+        title: named || current.title,
       });
       return !!appFrameRefs.iframe;
     }
@@ -125,6 +130,7 @@ export const appFrameBridge = {
       sandboxReady: restored ? restored.sandboxReady : false,
       allow: restored ? restored.allow : BASE_ALLOW,
       navigatedAt: restored ? restored.navigatedAt : 0,
+      title: named || (restored && restored.title) || '',
       cover: cover ? { ...COVER_DEFAULTS, ...cover } : null,
       kept,
     });
@@ -217,7 +223,7 @@ export const appFrameBridge = {
     resumedSlug = '';
     appFrameStore.set({
       slug: '', active: false, faded: true, background: '', sandboxReady: false,
-      allow: BASE_ALLOW, cover: null, seq: 0, navigatedAt: 0,
+      allow: BASE_ALLOW, cover: null, seq: 0, navigatedAt: 0, title: '',
     });
   },
 
@@ -239,7 +245,7 @@ export const appFrameBridge = {
     resumedSlug = '';
     appFrameStore.set({
       slug: '', active: false, faded: true, background: '', sandboxReady: false,
-      allow: BASE_ALLOW, cover: null, seq: 0, navigatedAt: 0, kept,
+      allow: BASE_ALLOW, cover: null, seq: 0, navigatedAt: 0, title: '', kept,
     });
     announce(el, false);
     return true;
@@ -275,7 +281,7 @@ export const appFrameBridge = {
     const kept = [
       ...fresh.map((slug) => ({
         slug, seq: (frames += 1), background: '', sandboxReady: false,
-        allow: BASE_ALLOW, navigatedAt: Date.now(),
+        allow: BASE_ALLOW, navigatedAt: Date.now(), title: '',
       })),
       ...current.kept,
     ].slice(0, keepAliveLimit());

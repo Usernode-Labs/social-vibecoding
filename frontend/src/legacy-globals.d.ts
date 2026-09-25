@@ -129,6 +129,17 @@ declare global {
       panel?(opts: KitSurfaceOpts & { side?: 'left' | 'right' }): KitHandle | null;
       pullToRefresh(el: Element, fn: () => Promise<unknown> | void): void;
       toast?(message: string): void;
+      /** A native-style confirm card; resolves true on the confirm button. */
+      confirm?(opts: { title?: string; message?: string; confirmLabel?: string; cancelLabel?: string; danger?: boolean }): Promise<boolean>;
+      /** A one-field prompt; resolves the text, or null when cancelled. */
+      prompt?(opts: { title?: string; message?: string; value?: string; placeholder?: string; confirmLabel?: string; cancelLabel?: string }): Promise<string | null>;
+      /** The adaptive menu: a sheet on touch, an anchored popover on desktop. */
+      menu?(opts: {
+        anchorEl?: HTMLElement;
+        title?: string;
+        items: Array<{ label: string; title?: string; destructive?: boolean; handler: () => void }>;
+      }): Promise<unknown>;
+      copyText?(text: string): Promise<boolean>;
       [key: string]: unknown;
     };
     /** features/header/node-pill.js */
@@ -185,6 +196,31 @@ declare global {
        * called by the per-card ledger's button and the board banner alike.
        */
       resumeMainMerges?(slug: string, btn?: HTMLButtonElement | null): Promise<boolean | undefined>;
+      /** The "Proposal checks" dialog for one change: its checks, Refresh and Re-run. */
+      openSessionChecks?(sessionId: number): void;
+      /** POST /api/sessions/:id/recheck, with the platform's own toasts; true once it started. */
+      castRecheck?(sessionId: number): Promise<boolean | undefined>;
+      /**
+       * The staging preview (#439, #771), shared with an agent session's side
+       * pane (#2779): ensure-then-open a change's preview, docked beside the
+       * chat when a dock host's slot is mounted, for an explicit app.
+       */
+      ensureStaging?(
+        sessionId: number,
+        fallbackUrl: string | null,
+        testing: { md?: string | null; path?: string | null } | null,
+        opts?: { dock?: boolean; app?: { slug: string; self_hosted?: boolean }; readOnly?: boolean; jump?: boolean },
+      ): Promise<void>;
+      closeStagingOverlay?(): void;
+      setStagingDockHost?(host: {
+        slotId: string;
+        live(): boolean;
+        collapse(): void;
+        redock(): void;
+        closed: (() => void) | null;
+      } | null): void;
+      onStagingRebuildResult?(sessionId: number, result: { url?: string | null; failed?: boolean; error?: string | null }): void;
+      _syncStagingDockGeometry?(): void;
       [key: string]: unknown;
     };
     /** features/home/home.js — refreshed after app creation. */
@@ -271,6 +307,8 @@ declare global {
       renderMarkdown(text: string, opts?: { breaks?: boolean; images?: boolean }): string;
       dismissReturnHint(): void;
       _importOwnToolsPr(): void;
+      /** An agent session's turn is running on screen: the tab's "⏳ Thinking…". */
+      setAgentSessionThinking?(on: boolean): void;
       [key: string]: unknown;
     };
     /** The inline head-blocking theme module in src/head.html. */

@@ -180,7 +180,49 @@ test('evidence context includes a relevant check beyond the first 80 manifest en
     const selected = orchestrator.declaredCheckSummary(checkout, intent);
     assert.equal(selected.length, 80);
     assert.equal(selected[0].path, '/workshop');
+    assert.equal(selected[0].testedAs, 'read_only_admin');
     assert.equal(orchestrator.declaredCheckSummary(checkout)[0].path, '/screen-0');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+test('recorded testing route guides a vague intent to the exact declared screen', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-testing-route-'));
+  const route = '/?demo=1&ws=status#app/demo/workshop';
+  try {
+    const tests = Array.from({ length: 100 }, (_, index) => ({
+      name: `Generic screen ${index}`, path: `/screen-${index}`,
+    }));
+    tests.push({ name: 'View strip', path: route, expectSelector: '.dev-ws-plus' });
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests }));
+    const context = orchestrator.evidenceContext({
+      run: { id: RUN_ID },
+      session: {
+        pr_title: 'Small spacing change', testing_path: route,
+        testing_paths: [{ path: route, viewport: 'desktop' },
+          { path: '/?token=secret.jwt#app/demo/workshop', viewport: 'phone' }],
+        testing_md: 'Open the Workshop and inspect the view strip.',
+      },
+      revision: { baseSha: BASE, headSha: HEAD, files: [], filesComplete: true },
+      pair: { fixtureFingerprint: 'fixture-1', sides: {
+        base: { imageDigest: 'sha256:base' },
+        head: { imageDigest: 'sha256:head', checkout },
+      } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' },
+        availableFixtures: [{ id: 'member-session', persona: 'member', path: '/#messages/agent/9' }] },
+      intent: { stories: [{ claim: 'The control has a small gap.', intent: {
+        startPath: '/', steps: ['Open the changed page'], checkpoint: 'A gap is visible', focus: 'The control',
+      } }] },
+    });
+    assert.deepEqual(context.changeContext.testingPaths, [route]);
+    assert.equal(context.changeContext.testingSteps, 'Open the Workshop and inspect the view strip.');
+    assert.equal(context.declaredChecks[0].path, route);
+    assert.equal(context.declaredChecks[0].testedAs, 'read_only_admin');
+    assert.deepEqual(context.availableFixtures, [{ id: 'member-session', persona: 'member',
+      path: '/#messages/agent/9' }]);
+    assert.equal(context.acceptedIntent.stories[0].intent.startPath, '/',
+      'a testing hint must not rewrite the accepted claim');
   } finally {
     fs.rmSync(checkout, { recursive: true, force: true });
   }
@@ -379,10 +421,69 @@ test('a wrong locator gets one explicit agent correction and two clean replays',
   assert.equal(fixture.transitions.at(-1).patch.repairAttempt, 1);
   assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 1);
   assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTrigger, {
-    code: 'ambiguous_locator', side: 'base', actionId: 'open-members',
+    kind: 'locator', code: 'ambiguous_locator', side: 'base', actionId: 'open-members',
   });
   assert.deepEqual(fixture.transitions.map((entry) => entry.next),
     ['provisioning', 'exploring', 'replaying', 'replaying', 'reviewing', 'verified']);
+});
+
+test('a member-only API 404 with matching browser resource errors can be repaired', async () => {
+  const rejected = fixtures.plan();
+  const corrected = fixtures.plan();
+  corrected.stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  const location = { sameOrigin: true, pathname: '/api/agent-sessions/990801' };
+  const missing = Object.assign(new Error('base emitted browser errors.'), {
+    code: 'browser_diagnostics',
+    detail: {
+      storyId: 'invite-suggestions', viewport: 'desktop', side: 'base', phase: 'browser_diagnostics',
+      browserDiagnostics: {
+        httpErrors: [{ status: 404, location }],
+        consoleErrors: [{ source: location,
+          message: 'Failed to load resource: the server responded with a status of 404 (Not Found)' }],
+        pageErrors: [], failedRequests: [], blockedRequests: [],
+      },
+    },
+  });
+  const fixture = setup({ dispatch: async (options, attempt) => {
+    const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+    if (attempt === 1) await assert.rejects(control.runPlan(rejected), { code: 'browser_diagnostics' });
+    else {
+      assert.equal(control.getContext().repair.failure.kind, 'route_data');
+      await control.runPlan(corrected);
+    }
+    return { backend: 'claude_code', threadId: 'evidence-thread' };
+  } });
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) { failed = true; throw missing; }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairTrigger.kind, 'route_data');
+});
+
+test('unrelated browser errors never become a route-data repair', async () => {
+  const fixture = setup();
+  const location = { sameOrigin: true, pathname: '/api/agent-sessions/990801' };
+  fixture.dependencies.replay.runPass = async () => {
+    throw Object.assign(new Error('base emitted browser errors.'), {
+      code: 'browser_diagnostics',
+      detail: { side: 'base', phase: 'browser_diagnostics', browserDiagnostics: {
+        httpErrors: [{ status: 404, location }],
+        consoleErrors: [{ source: { sameOrigin: true, pathname: '/app.js' },
+          message: 'Uncaught TypeError: failure' }],
+        pageErrors: [], failedRequests: [], blockedRequests: [],
+      } },
+    });
+  };
+  await assert.rejects(execute(fixture), { code: 'browser_diagnostics' });
+  assert.equal(fixture.calls.dispatches, 1);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 0);
 });
 
 test('a missing readiness locator gets one correction turn and fresh replay passes', async () => {
@@ -427,7 +528,7 @@ test('a missing readiness locator gets one correction turn and fresh replay pass
   assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
   assert.equal(fixture.calls.stored, 1);
   assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTrigger, {
-    code: 'locator_not_found', side: 'base', actionId: 'wait-ready',
+    kind: 'locator', code: 'locator_not_found', side: 'base', actionId: 'wait-ready',
   });
 });
 
@@ -485,6 +586,75 @@ test('a visible element with the wrong asserted state fails without planner repa
     code: 'assertion_failed', detail: {
       side: 'head', phase: 'assertion', assertionIndex: 0, count: 1,
       assertion: { type: 'checked', target: { by: 'testId', value: 'opt-in' } },
+    },
+  });
+  const fixture = setup();
+  fixture.dependencies.replay.runPass = async () => { throw wrongState; };
+  await assert.rejects(execute(fixture), { code: 'assertion_failed' });
+  assert.equal(fixture.calls.dispatches, 1);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 0);
+});
+
+test('a still-visible motion marker gets one correction that retains its assertion', async () => {
+  const rejected = fixtures.plan();
+  rejected.impact = 'motion';
+  rejected.stories[0].intent.animation = 'motion';
+  rejected.stories[0].replay.checkpoint.animation = 'motion';
+  rejected.stories[0].replay.checkpoint.assertions.after = [{
+    type: 'hidden', target: { by: 'css', value: '.is-animating' },
+  }];
+  const corrected = structuredClone(rejected);
+  corrected.stories[0].replay.after.actions.push({
+    id: 'wait-settled', stage: 'settled', type: 'waitFor',
+    target: { by: 'css', value: '.is-animating' }, state: 'hidden', timeoutMs: 3000,
+  });
+  const early = Object.assign(new Error('hidden assertion failed'), {
+    code: 'assertion_failed', detail: {
+      storyId: 'invite-suggestions', side: 'head', phase: 'assertion', assertionIndex: 0,
+      count: 1, actual: true,
+      assertion: rejected.stories[0].replay.checkpoint.assertions.after[0],
+    },
+  });
+  const fixture = setup({
+    dispatch: async (options, dispatchCount) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      if (dispatchCount === 1) {
+        await assert.rejects(control.runPlan(rejected), { code: 'assertion_failed' });
+      } else {
+        assert.equal(control.getContext().repair.failure.kind, 'motion_timing');
+        assert.deepEqual(control.getContext().repair.rejectedPlan.stories[0]
+          .replay.checkpoint.assertions.after, rejected.stories[0].replay.checkpoint.assertions.after);
+        await control.runPlan(corrected);
+      }
+      return { backend: 'claude_code', threadId: 'evidence-thread' };
+    },
+  });
+  fixture.run.intent = contract.semanticIntentFromPlan(rejected);
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      fixture.calls.passes.push(args[2].pass);
+      throw early;
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
+  assert.equal(fixture.calls.stored, 1);
+  assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTrigger, {
+    kind: 'motion_timing', code: 'assertion_failed', side: 'head', assertionIndex: 0,
+  });
+});
+
+test('a wrong-state assertion in a static flow remains a hard failure', async () => {
+  const wrongState = Object.assign(new Error('hidden assertion failed'), {
+    code: 'assertion_failed', detail: {
+      storyId: 'invite-suggestions', side: 'base', phase: 'assertion', assertionIndex: 0,
+      count: 1, actual: true,
+      assertion: fixtures.plan().stories[0].replay.checkpoint.assertions.before[0],
     },
   });
   const fixture = setup();

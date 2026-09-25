@@ -19,7 +19,7 @@
 // draws as the dev chat's run card, captioned with the agent that actually
 // ran (its `agentBackend`). A drafted spec is its own item after it.
 
-import type { AgentAction, AgentActionStatus, AgentCard, AgentMessage } from './api';
+import type { AgentAction, AgentActionStatus, AgentAttachment, AgentCard, AgentMessage } from './api';
 
 export interface CardView {
   id: string;
@@ -31,10 +31,28 @@ export interface CardView {
 }
 
 export type TranscriptItem =
-  | { kind: 'user'; key: string; text: string }
-  | { kind: 'mayor'; key: string; text: string; cards: CardView[]; quickReplies: string[]; wrapUp: boolean }
+  | { kind: 'user'; key: string; text: string; attachments: AgentAttachment[] }
+  | {
+    kind: 'mayor';
+    key: string;
+    text: string;
+    cards: CardView[];
+    quickReplies: string[];
+    wrapUp: boolean;
+    /** The turn was stopped or failed after this much was said. */
+    ended: 'stopped' | 'failed' | null;
+    /** What this reply cost, "reply $0.012", or '' when nothing was recorded. */
+    cost: string;
+  }
   | { kind: 'divider'; key: string; text: string; event: string }
-  | { kind: 'note'; key: string; text: string; tone: 'ok' | 'error' | 'muted' }
+  | {
+    kind: 'note';
+    key: string;
+    text: string;
+    tone: 'ok' | 'error' | 'muted';
+    /** A turn that did not finish: the reply suggestions offer to try again. */
+    turnFailed?: boolean;
+  }
   | RunItem
   | {
     kind: 'spec';
@@ -45,7 +63,24 @@ export type TranscriptItem =
     preview: string;
     text: string;
   }
-  | { kind: 'preview'; key: string; text: string; url: string; prNumber: number | null; changeId: number | null };
+  | PreviewItem;
+
+/**
+ * A change's staging build, as a card (#2779 follow-up): deployed (with its
+ * preview's address) or failed (with why). Only the newest card of a change
+ * is live; the ones before it are `superseded` and lose their actions.
+ */
+export interface PreviewItem {
+  kind: 'preview';
+  key: string;
+  text: string;
+  url: string | null;
+  prNumber: number | null;
+  changeId: number | null;
+  failed: boolean;
+  error: string | null;
+  superseded: boolean;
+}
 
 export type RunMode = 'scout' | 'build' | 'sync';
 export type RunStatus = 'running' | 'done' | 'no_changes' | 'failed' | 'stopped' | 'ended';
@@ -114,12 +149,17 @@ export function cardRows(input: Record<string, unknown>): Array<[string, string]
   return rows;
 }
 
-function actionOutcome(action: AgentAction | undefined): string | null {
+// The server's plain outcome line first (#3017), then the platform's own
+// nextStep or message. A result that is only JSON is never printed: a card
+// that said "Confirmed · {"number":3006,…" was showing the tool's raw answer.
+export function actionOutcome(action: AgentAction | undefined): string | null {
   if (!action || !action.result) return null;
+  if (typeof action.outcome === 'string' && action.outcome.trim()) return clip(action.outcome, 240);
   const structured = action.result.structured || null;
   const said = structured && (structured.nextStep || structured.message);
   if (typeof said === 'string' && said) return clip(said, 240);
-  return action.result.text ? clip(action.result.text, 240) : null;
+  const text = action.result.text ? clip(action.result.text, 240) : '';
+  return text && !/^[[{]/.test(text) ? text : null;
 }
 
 export function cardView(card: AgentCard, actions: Map<string, AgentAction>, now = Date.now()): CardView {
@@ -134,6 +174,21 @@ export function cardView(card: AgentCard, actions: Map<string, AgentAction>, now
     status,
     outcome: actionOutcome(action),
   };
+}
+
+// The server's stand-in for a message that was only files (attachments.js
+// ATTACHMENTS_ONLY_TEXT): the files say it, so the bubble shows no text.
+const ATTACHMENTS_ONLY_TEXT = '(attached files)';
+
+/** A user row's words and the files sent with it (routes/agent-sessions.js). */
+export function userMessage(content: string, listed: unknown): { text: string; attachments: AgentAttachment[] } {
+  const attachments = (Array.isArray(listed) ? listed : []).filter((att): att is AgentAttachment => (
+    !!att && typeof att === 'object'
+    && typeof (att as AgentAttachment).id === 'string' && /^[a-f0-9]{32}$/.test((att as AgentAttachment).id)
+    && typeof (att as AgentAttachment).filename === 'string'
+  ));
+  const text = attachments.length && content.trim() === ATTACHMENTS_ONLY_TEXT ? '' : content;
+  return { text, attachments };
 }
 
 function stringList(value: unknown): string[] {
@@ -227,7 +282,7 @@ export function buildTranscript(
     const meta = (row.metadata || {}) as Record<string, unknown>;
     const key = `m${row.id}`;
     if (row.role === 'user') {
-      items.push({ kind: 'user', key, text: row.content });
+      items.push({ kind: 'user', key, ...userMessage(row.content, meta.attachments) });
       continue;
     }
     if (row.role === 'assistant') {
@@ -241,6 +296,8 @@ export function buildTranscript(
         cards,
         quickReplies: stringList(meta.quickReplies),
         wrapUp: meta.wrapUp === true,
+        ended: meta.stopped === true ? 'stopped' : meta.failed === true ? 'failed' : null,
+        cost: replyCostLabel(row),
       });
       continue;
     }
@@ -259,7 +316,7 @@ export function buildTranscript(
       continue;
     }
     if (event === 'turn_failed') {
-      items.push({ kind: 'note', key, text: row.content, tone: 'error' });
+      items.push({ kind: 'note', key, text: row.content, tone: 'error', turnFailed: true });
       continue;
     }
     if (event) {
@@ -327,7 +384,7 @@ export function buildTranscript(
       // The end of the run; the sentence itself is still said below it.
       run.status = meta.turnError ? 'failed' : 'stopped';
       run.durationMs = duration;
-    } else if (run && text && !(typeof meta.stagingUrl === 'string')) {
+    } else if (run && text && !(typeof meta.stagingUrl === 'string') && !meta.stagingFailed) {
       // A step the run took on its way (a retry, the PR, the preview build).
       run.steps.push(text);
       continue;
@@ -340,12 +397,39 @@ export function buildTranscript(
         url: meta.stagingUrl,
         prNumber: typeof meta.prNumber === 'number' ? meta.prNumber : null,
         changeId: row.changeId,
+        failed: false,
+        error: null,
+        superseded: false,
+      });
+      continue;
+    }
+    if (meta.stagingFailed) {
+      items.push({
+        kind: 'preview',
+        key,
+        text: row.content,
+        url: null,
+        prNumber: typeof meta.prNumber === 'number' ? meta.prNumber : null,
+        changeId: row.changeId,
+        failed: true,
+        error: typeof meta.error === 'string' && meta.error.trim() ? meta.error.trim() : null,
+        superseded: false,
       });
       continue;
     }
     if (row.content && row.content.trim()) {
-      items.push({ kind: 'note', key, text: row.content, tone: meta.turnError ? 'error' : 'muted' });
+      items.push({
+        kind: 'note', key, text: row.content, tone: meta.turnError ? 'error' : 'muted',
+        ...(meta.turnError ? { turnFailed: true } : {}),
+      });
     }
+  }
+  // Only a change's newest staging card is live: an older build's preview is
+  // gone or stale, and proposing from it would propose something else.
+  const newestPreview = new Map<number | null, PreviewItem>();
+  for (const item of items) if (item.kind === 'preview') newestPreview.set(item.changeId, item);
+  for (const item of items) {
+    if (item.kind === 'preview' && newestPreview.get(item.changeId) !== item) item.superseded = true;
   }
   // Only the newest unfinished run can be the one running now.
   const unfinished = items.filter((item): item is RunItem => item.kind === 'run' && item.status === 'running');
@@ -353,6 +437,22 @@ export function buildTranscript(
     if (!liveRun || index !== unfinished.length - 1) run.status = 'ended';
   });
   return items;
+}
+
+/**
+ * A change's checks, as its staging card says them (#2779 follow-up). They
+ * gate merge, so the card says where they stand before you propose.
+ */
+export function checksSummary(checkState: string | null | undefined, checkFailing: number | null | undefined):
+  { key: 'passing' | 'failing' | 'running' | 'error'; text: string } | null {
+  if (!checkState) return null;
+  if (checkState === 'passing' || checkState === 'skipped') return { key: 'passing', text: 'Checks passing' };
+  if (checkState === 'failing') {
+    const n = Number(checkFailing) || 0;
+    return { key: 'failing', text: n > 0 ? `${n} check${n === 1 ? '' : 's'} failing` : 'Checks failing' };
+  }
+  if (checkState === 'pending' || checkState === 'running') return { key: 'running', text: 'Checks running' };
+  return { key: 'error', text: 'Checks couldn\u2019t run' };
 }
 
 /** A run's heading, in words. */
@@ -378,10 +478,34 @@ export function durationLabel(ms: number | null): string {
   return `${minutes}m ${seconds % 60}s`;
 }
 
-/** Reply suggestions belong to the last thing said, and only while it is last. */
+/**
+ * What a turn that did not finish offers, the dev chat's own pair for a failed
+ * or stopped turn (services/recovery-pills.js `turn_failed`).
+ */
+export const TURN_FAILED_REPLIES = ['Try that again', 'What went wrong?'];
+
+/**
+ * Reply suggestions belong to the last thing said, and only while it is last.
+ * A turn that failed or was stopped, and said nothing to suggest, offers to
+ * try again, as the dev chat's does.
+ */
 export function latestReplies(items: TranscriptItem[]): string[] {
   const last = items[items.length - 1];
-  return last && last.kind === 'mayor' ? last.quickReplies : [];
+  if (!last) return [];
+  if (last.kind === 'mayor') return last.quickReplies.length ? last.quickReplies : (last.ended ? TURN_FAILED_REPLIES : []);
+  if (last.kind === 'note' && last.turnFailed) return TURN_FAILED_REPLIES;
+  return [];
+}
+
+/**
+ * What one Mayor reply cost, as the dev chat labels it (#2118): "reply
+ * $0.012", with "~" before a list-price estimate. Empty with no cost recorded.
+ */
+export function replyCostLabel(row: Pick<AgentMessage, 'costCents' | 'metadata'>): string {
+  const cents = Number(row.costCents);
+  if (row.costCents == null || !Number.isFinite(cents) || cents <= 0) return '';
+  const approx = row.metadata && row.metadata.costEstimated === true ? '~' : '';
+  return `reply ${approx}$${(cents / 100).toFixed(3)}`;
 }
 
 const TOOL_ACTIVITY: Record<string, string> = {

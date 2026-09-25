@@ -1150,7 +1150,9 @@ test('the since heading is styled: each class it emits has a rule, and the count
   assert.deepEqual(classes, ['dev-ws-since-label', 'dev-ws-since-n'], 'the label, then the count, as two elements');
   // #2183: Clear rides the far end of the same row, after the count, and
   // there is still nothing between the label and the count but the gap.
-  assert.match(head[1], /<\/span><span class="dev-ws-since-n">3<\/span><button type="button" class="dev-ws-since-clear" data-ws-since-clear="">Clear<\/button>$/,
+  // `un-touch-target` (QA 2026-09-24 Q19): Clear, Show older and Show past
+  // week wear the kit's hit-slop, so a phone gets a 44px target for a 22px word.
+  assert.match(head[1], /<\/span><span class="dev-ws-since-n">3<\/span><button type="button" class="dev-ws-since-clear un-touch-target" data-ws-since-clear="">Clear<\/button>$/,
     'label, count, Clear');
   // Comments stripped: a selector named in prose is not a selector.
   const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
@@ -2196,6 +2198,42 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   assert.ok(!dapp.tests.some((t) => /Busy own session card renders/.test(t.name)), 'retargeted, not duplicated');
   assert.match(APP_VIEW_SRC, /if \(shot === 'mine-session'\) \{\s*AppView\._workshopShot = 'mine-session';\s*\}/,
     'the shot is read where the other Workshop shots are');
+});
+
+test('#3081: an agent session\'s change card opens the AGENT SESSION, not its old dev chat', () => {
+  // A change started from an agent session is revised in that conversation;
+  // its dev chat at /dev/sessions/<id> only shows a strip leading there. The
+  // open card's "Open session ›" went to the dev chat all the same — the old
+  // screen, and not one the owner could type into. It goes where the change
+  // page's door (`_buildDoorView`) already sends the owner.
+  const mine = { id: 52, session_title: 'Agent-built change', status: 'active', pr_number: null, linked_issues: [],
+    agent_session_id: 7301, created_at: at(1), last_activity_at: at(0) };
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._mySessions = [{ ...mine }];
+  AppView._workshopShot = 'mine-session';
+  const row = AppView._workshopView().mine.rows
+    .find((r) => r.t === 'card' && r.card.attrs['data-session-chip'] === '52');
+  assert.ok(row, 'the change is on the lander with its usual hook');
+  assert.equal(row.card.attrs['data-session-agent'], '7301', 'the card names the conversation it was started from');
+
+  const open = workshopHtml(AppView);
+  assert.match(open, /<div class="dev-ws-sheet-actions"><a href="#messages\/agent\/7301" class="dev-ws-link" data-ws-open-session="mine:my-session:52">Open session ›<\/a><\/div>/,
+    'the link under the open card is the agent session');
+  assert.ok(!open.includes('/dev/sessions/52'), 'and nothing on the card leads to the old dev chat');
+  assert.match(open, /href="#app\/demo-app\/dev\/proposals\/52" data-ws-open-card="mine:my-session:52">Open card<\/a>/,
+    'the change page is still the pill');
+
+  const { sessionHref } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
+  assert.equal(sessionHref('demo-app', row.card), '#messages/agent/7301');
+  // A session with no agent conversation keeps its dev chat.
+  assert.equal(sessionHref('demo-app', { attrs: { 'data-session-chip': '52' } }), '#app/demo-app/dev/sessions/52');
+
+  // Only the viewer's own, non-imported session carries the mark.
+  const imported = AppView._mySessionCardModel({ ...mine, source: 'imported' });
+  assert.equal(imported.attrs['data-session-agent'], undefined);
+  const plainSession = AppView._mySessionCardModel({ ...mine, agent_session_id: null });
+  assert.equal(plainSession.attrs['data-session-agent'], undefined);
 });
 
 test('the band is Open card\u2019s one seat: the facts-line seat and its inline-actions path are gone', () => {
@@ -3869,6 +3907,11 @@ test('#2767/#2769: the phone rail sits at the HEAD of the page, in flow, and lea
   assert.ok(area, 'the floor exists');
   assert.match(area[1], /var\(--ws-gap\)/);
   assert.match(area[1], /max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom, 0px\)\)/);
+  // QA 2026-09-24 Q8: and the fixed strips above the header ("Get the app",
+  // offline), which body padding reserves at the head of the page. Without
+  // this a phone browser with the install strip up pushed the foot of every
+  // Needs you card under the tab bar.
+  assert.match(area[1], /100dvh - var\(--browser-banner-h, 0px\)/);
   // The fitted box is the same length, since nothing floats over its foot.
   assert.match(CSS, /--ws-fit: var\(--ws-area\);/);
   // And the wide block no longer needs its own floor: the base one is the
@@ -4122,7 +4165,7 @@ test('since-your-last-visit shows three and reveals the rest, like the week walk
   // The week walk's own control: centred under a stack of full-width rows,
   // caret DOWN at what it is about to show. Not `.dev-ws-reveal-start`, whose
   // lane indent belongs to a left-aligned column of type.
-  assert.match(html, /class="dev-ws-reveal dev-ws-since-more" data-ws-since-more=""/);
+  assert.match(html, /class="dev-ws-reveal dev-ws-since-more un-touch-target" data-ws-since-more=""/);
   assert.ok(html.includes('Show older'));
   assert.ok(!html.includes('dev-ws-reveal-start'), 'centred, as the week walk is');
   // No "show fewer" — this is one pane with a way to ask for more, not a
@@ -4189,7 +4232,7 @@ test('Clear moves the baseline to now, persists it, and the rows move under Show
   const before = AppView._workshopView();
   assert.equal(before.since.rows.length, 3);
   const html = workshopHtml(AppView);
-  assert.match(html, /<button type="button" class="dev-ws-since-clear" data-ws-since-clear="">Clear<\/button>/,
+  assert.match(html, /<button type="button" class="dev-ws-since-clear un-touch-target" data-ws-since-clear="">Clear<\/button>/,
     'live, because there is something to clear');
 
   AppView._workshopClearSince('demo-app', before.since.through);
@@ -4211,7 +4254,7 @@ test('Clear moves the baseline to now, persists it, and the rows move under Show
   assert.equal(AppView._workshopSince['demo-app'], after.since.baseline);
   const cleared = workshopHtml(AppView);
   assert.match(cleared, /data-ws-since-none=""/);
-  assert.match(cleared, /<button type="button" class="dev-ws-since-clear" data-ws-since-clear="" disabled="">Clear<\/button>/,
+  assert.match(cleared, /<button type="button" class="dev-ws-since-clear un-touch-target" data-ws-since-clear="" disabled="">Clear<\/button>/,
     'disabled rather than absent, so the row does not reflow');
   assert.match(cleared, /data-ws-since-more=""(?! disabled)/, 'and the way back to what was cleared is live');
 
@@ -4246,7 +4289,7 @@ test('Show older is always drawn: it walks the new rows, then the seen ones, and
   assert.equal(v.since.rows.length, 0);
   assert.equal(v.since.seen.rows.length, 0);
   const html = workshopHtml(bare);
-  assert.match(html, /class="dev-ws-reveal dev-ws-since-more" data-ws-since-more="" disabled=""/,
+  assert.match(html, /class="dev-ws-reveal dev-ws-since-more un-touch-target" data-ws-since-more="" disabled=""/,
     'drawn, and disabled: a control that is sometimes there is one nobody learns to reach for');
   assert.match(html, /data-ws-since-clear="" disabled=""/);
 
@@ -4477,6 +4520,28 @@ test('the lander fills its scroller without a percentage in the floor', () => {
   // content: measured 760 -> 640 on By category and 1432 -> 310 on By stage.
   assert.match(CSS, /#dev-workshop:has\(> \.dev-ws\) \{[^}]*width: 100%/);
   assert.match(CSS, /#dev-workshop > \.dev-ws \{ flex: 1 1 auto; width: 100%; \}/);
+});
+
+test('the growing tabs keep the tab-bar clearance at the foot of the scroller (#3053)', () => {
+  // "Unable to scroll down to see last issue on mobile." In the NATIVE layout
+  // the chain's `min-height: 0` let #dev-body and #dev-workshop shrink to the
+  // scroller while `.dev-ws` (Current status, All items) overflowed them — and
+  // a scroller's block-end padding follows its in-flow children, not an
+  // overflowing descendant, so `.platform-safe-scroll` reserved nothing and
+  // the last item's foot ended under the fixed tab bar. Measured with the real
+  // app.css at 390x844: the last card 13px past the bar's top edge before,
+  // 51px clear of it after.
+  const rule = /#dev-body:has\(> #dev-workshop > \.dev-ws:not\(\[data-ws-tab="needs"\]\)\),\s*#dev-workshop:has\(> \.dev-ws:not\(\[data-ws-tab="needs"\]\)\) \{ flex-shrink: 0; \}/;
+  assert.match(CSS, rule, 'the two links above a growing tab do not shrink');
+  // It lands AFTER the chain it overrides, so equal-or-higher specificity and
+  // source order both favour it.
+  assert.ok(CSS.search(rule) > CSS.indexOf('#dev-body:has(> #dev-workshop) {\n  flex: 1 1 auto; min-height: 0;'),
+    'declared after the flex chain');
+  // Needs you is left bounded — it is the tab the chain exists for.
+  assert.doesNotMatch(CSS, /#dev-body:has\(> #dev-workshop\) \{[^}]*flex-shrink: 0/);
+  // And the scroller still carries the clearance this relies on.
+  const frame = read('frontend/src/features/dev-board/board-frame.tsx');
+  assert.match(frame, /id="dev-forum-scroll"\s+className="[^"]*\bplatform-safe-scroll\b/);
 });
 
 test('the ask box is a sheet on a phone and a panel on a wide window', () => {
@@ -5260,6 +5325,72 @@ test('the tab strip, the ear and the head pin as one band (#2339 follow-up)', ()
   // the assertion that would have caught it.
   assert.ok(!/#dev-workshop \.dev-ws-pane-head \{[^}]*position: relative/.test(decls),
     'the head is never un-stuck here');
+});
+
+test('the pinned strip stays above the list, on a solid band (QA 2026-09-24 Q7)', () => {
+  // THE BUG. Scrolled on All items, the strip went UNDER the cards: it was
+  // sticky with no z-index, so the pane (positioned from 768px, for the ear)
+  // and its cards, later in the tree, painted over it and took its clicks.
+  // And the air around the pill had nothing behind it, so the cards scrolled
+  // past between the controls.
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(wide, 'the wide-screen block exists');
+  const decls = wide[1].replace(/\/\*[\s\S]*?\*\//g, '');
+  const rail = /\n  \.dev-ws-tabs \{([\s\S]*?)\n  \}/.exec(decls);
+  assert.ok(rail, 'the strip is restyled for width');
+  assert.match(rail[1], /z-index: 30;/, 'the strip has a stacking level of its own');
+  const headZ = Number(/#dev-workshop \.dev-ws-pane-head \{[^}]*z-index: (\d+)/.exec(decls)[1]);
+  assert.ok(headZ > 30, 'and stays under the head, whose ear hangs into its band');
+  // The band: behind the strip's content, only while pinned, down to where
+  // the head rests and across the pane (measured), stopping at the ear.
+  const band = /\.dev-ws-tabs::before \{([^}]*)\}/.exec(decls);
+  assert.ok(band, 'the strip carries a band');
+  assert.match(band[1], /z-index: -1;/);
+  assert.match(band[1], /height: var\(--dev-ws-head-top, calc\(100% \+ 10px\)\);/);
+  assert.match(band[1], /left: var\(--dev-ws-band-left, 0px\);/);
+  assert.match(band[1], /right: var\(--dev-ws-band-right, 0px\);/);
+  assert.match(band[1], /background-color: var\(--dc-sheet\);/, 'solid: a nested frost cannot blur here');
+  assert.match(band[1], /visibility: hidden;/, 'and not at rest, where it would swallow the ear');
+  assert.match(decls, /\.dev-ws\[data-ws-pinned\] > \.dev-ws-tabs::before \{ visibility: visible; \}/);
+  assert.match(decls, /\.dev-ws:has\(\.dev-ws-ear\) > \.dev-ws-tabs::before \{ right: auto; width: var\(--dev-ws-ear-left, 100%\); \}/,
+    'the band stops at the ear, so the open "+" menu (which lifts the strip) cannot cover it');
+  assert.match(decls, /\.dev-ws\[data-ws-pinned\] \.dev-ws-ear \{[^}]*background-color: var\(--dc-sheet\);/);
+  assert.match(decls, /\.dev-ws\[data-ws-pinned\] \.dev-ws-pane-head \{[^}]*background-color: var\(--dc-sheet\);/);
+  // The measurement and the flag.
+  assert.match(WORKSHOP, /const BAND_PROPS = \['--dev-ws-band-left', '--dev-ws-band-right'\];/);
+  assert.match(WORKSHOP, /setProperty\('--dev-ws-band-left', `\$\{Math\.round\(p\.left - n\.left\)\}px`\)/);
+  assert.match(WORKSHOP, /setProperty\('--dev-ws-band-right', `\$\{Math\.round\(n\.right - p\.right\)\}px`\)/);
+  const hook = WORKSHOP.slice(WORKSHOP.indexOf('function usePinnedStrip('));
+  const body = hook.slice(0, hook.indexOf('\n}\n'));
+  assert.match(body, /document\.addEventListener\('scroll', schedule, \{ capture: true, passive: true \}\)/,
+    'hears the dev frame\'s scroller and the document alike');
+  assert.match(body, /host\.toggleAttribute\('data-ws-pinned', pinned\)/, 'written on the host, not as state');
+  assert.match(body, /host\.removeAttribute\('data-ws-pinned'\)/, 'and taken off again on teardown');
+  assert.match(WORKSHOP, /usePinnedStrip\(bar, hostRef, stripSticks, tab\);/);
+  assert.match(WORKSHOP, /const stripSticks = useMediaFlag\(WIDE_QUERY\);/, 'only where the strip is sticky at all');
+});
+
+test('the Needs-you card is marked voted only once the server has the vote (QA 2026-09-24 Q3)', () => {
+  // THE BUG. `answer` set the confirmation before castVote ran, and castVote
+  // asks a No for its line first: cancelling that prompt sent nothing and
+  // still left "Voted no · press ↓ for the next" on the card.
+  const fn = WORKSHOP.slice(WORKSHOP.indexOf('  const answer = (which'));
+  const body = fn.slice(0, fn.indexOf('\n  };\n'));
+  const then = body.indexOf('.then((ok) => {');
+  assert.ok(then > 0, 'the answer waits on castVote\'s outcome');
+  const marks = body.indexOf('setAnswered(');
+  assert.ok(marks > then, 'and the card is marked only inside it');
+  assert.match(body.slice(then), /if \(ok === true\) \{\s*setAnswered\(/, 'only on a vote that landed');
+  assert.match(body, /pinsRef\.current\.delete\(key\)/, 'a cancelled or failed vote drops the pin this press added');
+  assert.match(body, /\{ onSend \}/, 'the rail says "Sending…" from the moment the vote is committed');
+  assert.match(body, /if \(sendingRef\.current\.has\(key\)\) return;/, 'one vote per card in flight');
+  assert.match(WORKSHOP, /sending\[row\.key\] \? 'Sending…' : 'Vote'/);
+  // castVote's side of the contract.
+  const view = read('public/js/app-view.js');
+  const cast = view.slice(view.indexOf('  async castVote(sessionId, vote'));
+  const castBody = cast.slice(0, cast.indexOf('\n  },\n'));
+  assert.match(castBody, /if \(reason === false\) \{\s*AppView\._voteInFlight\.delete\(key\);\s*return false;/);
+  assert.match(castBody, /return true;/);
 });
 
 test('the ear re-measures on every render, or a grouping switch leaves it stale', () => {

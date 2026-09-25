@@ -257,7 +257,17 @@ test('card layout: centered launcher tile, no visible border, capped title width
 test('card: Retry remains available on errored cards', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ status: 'error', created_by: ME }));
-  assert.match(html, /retry-btn[^"]*absolute top-2 right-2/, 'Retry corner-pinned');
+  // QA 2026-09-24 Q9: no longer corner-pinned. The icon covered a
+  // `top-2 right-2` Retry on phones and it sat ~90px from the icon on
+  // desktop. It is a pill in the caption lane, beside "Error", and the tile
+  // greys only its icon so the control does not look disabled.
+  assert.doesNotMatch(html, /retry-btn[^"]* absolute /, 'Retry is not corner-pinned');
+  assert.doesNotMatch(html, /retry-btn[^"]*top-2 right-2/);
+  assert.match(html, /class="app-card-retry[^"]*"><p class="app-card-status[^"]*"[^>]*>Error<\/p><button type="button" class="retry-btn /,
+    'Retry follows "Error" in the caption lane');
+  assert.match(html, /aria-label="Retry [^"]+">Retry<\/button>/);
+  assert.match(html, /class="relative w-14 h-14 shrink-0 grayscale-\[0\.75\]"/, 'the icon is greyed');
+  assert.doesNotMatch(html.match(/class="(app-card [^"]*)"/)[1], /grayscale/, 'the card is not');
   assert.doesNotMatch(html, /card-menu-btn/, 'launcher badge removed');
   // No Retry on a running card.
   assert.doesNotMatch(Home.renderAppCard(baseApp({ created_by: ME })), /retry-btn/);
@@ -2337,4 +2347,35 @@ test('App settings opens the named app without making a deletion request (#2158)
   Home.menuItemsFor(app).find((item) => item.key === 'app-settings').run();
   assert.equal(opened, app.slug);
   assert.ok(!Home.menuItemsFor(app).some((item) => item.key === 'delete'));
+});
+
+// QA 2026-09-24 Q9, on the React tile the launcher actually renders
+// (frontend/src/features/home/app-grid.tsx): the same caption-lane Retry as
+// renderAppCard above, the icon greyed and the card not.
+test('grid tile: Retry sits beside "Error" and the card is not greyed', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const { INITIAL_GRID } = require('./helpers/home-grid-store');
+  const app = {
+    slug: 'broken', name: 'Broken App', status: 'error', icon: { kind: 'letter', letter: 'B' },
+    locked: false, demo: false, statusLabel: 'Error', isAwaiting: false, isError: true,
+    clickable: false, failureReason: 'Build failed: x', showRetry: true, forkName: null,
+  };
+  const render = (a) => {
+    const state = { ...INITIAL_GRID, ready: true, items: [{ kind: 'card', placement: { col: 0, row: 0, w: 1, h: 1 }, app: a }] };
+    const gridStore = { get: () => state, subscribe: () => () => {} };
+    const { AppGrid } = loadTsx('frontend/src/features/home/app-grid.tsx', { stubs: { './grid-store': { gridStore } } });
+    return renderToHtml(createElement(AppGrid, {}));
+  };
+  const html = render(app);
+  const card = html.match(/<div[^>]*class="(app-card [^"]*)"[^>]*data-slug="broken"/)[1];
+  assert.doesNotMatch(card, /grayscale/);
+  assert.match(card, /cursor-not-allowed/);
+  assert.match(html, /<div class="relative w-14 h-14 shrink-0 grayscale-\[0\.75\]">/);
+  assert.match(html, /<div class="app-card-retry flex items-center justify-center gap-1"><p class="app-card-status text-\[color:var\(--state-blocked\)\]" title="Build failed: x">Error<\/p><button type="button" class="retry-btn relative inline-flex/);
+  assert.match(html, /aria-label="Retry Broken App">Retry<\/button>/);
+  assert.doesNotMatch(html, /top-2 right-2/);
+  // Without Retry (someone else's errored app) the tile is greyed whole, as before.
+  const other = render({ ...app, showRetry: false });
+  assert.match(other.match(/class="(app-card [^"]*)"/)[1], /cursor-not-allowed grayscale-\[0\.75\]/);
+  assert.doesNotMatch(other, /retry-btn/);
 });

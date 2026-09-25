@@ -162,7 +162,7 @@ async function insertEmailUser(client, email, passwordHash) {
            (username, password, email, email_confirmed, email_confirmed_at,
             password_set, is_admin, needs_username_choice)
          VALUES ($1, $2, $3, TRUE, NOW(), FALSE, FALSE, TRUE)
-         RETURNING id, is_admin, password_set`,
+         RETURNING id, username, is_admin, password_set, needs_username_choice`,
         [candidate, passwordHash, email]
       );
       await client.query('RELEASE SAVEPOINT email_signup_username');
@@ -219,7 +219,8 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
     );
 
     const { rows: existingRows } = await client.query(
-      `SELECT id, username, is_admin, admin_readonly, password_set, email_confirmed
+      `SELECT id, username, is_admin, admin_readonly, password_set, email_confirmed,
+              needs_username_choice
          FROM users
         WHERE lower(email) = lower($1)
         FOR UPDATE`,
@@ -289,6 +290,14 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
       );
     }
 
+    // QA 2026-09-24 Q12: the handle the account still owes a choice of, so
+    // the password step can ask for it (prefilled) instead of the person
+    // meeting a name they never chose in the waiting room. Null when the
+    // account has already chosen.
+    const suggestedUsername = user.needs_username_choice
+      ? await firstRunSuggestion(client, user, email)
+      : null;
+
     const signupToken = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + SIGNUP_TTL_MS);
     await client.query(
@@ -300,7 +309,15 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
              created_at = NOW()`,
       [tokenHash(signupToken), user.id, expiresAt]
     );
-    return { next: 'set-password', signupToken, expiresAt, userId: user.id, created };
+    return {
+      next: 'set-password',
+      signupToken,
+      expiresAt,
+      userId: user.id,
+      created,
+      needsUsernameChoice: user.needs_username_choice === true,
+      suggestedUsername,
+    };
   });
 
   if (result.invalid) {
@@ -315,52 +332,141 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
   if (result.created) {
     await waitlist.linkUserByEmail(pool, { userId: result.userId, email });
   }
+  if (result.next === 'set-password') {
+    result.waitlisted = await isWaitlisted(pool, result.userId);
+  }
   return result;
 }
 
-async function completePassword(pool, { signupToken, password, createSession }) {
+/**
+ * What the set-password step prefills for an account that has never chosen
+ * a handle. The rule GET /api/me/username/suggestion uses for the first-run
+ * gate (routes/profile.js): the handle the row already holds when it is a
+ * real suggestion, else one derived from the address. Never the address,
+ * and (unlike that route) never an opaque `member_…` placeholder either.
+ */
+async function firstRunSuggestion(client, user, email) {
+  const current = String(user.username || '');
+  const isAddress = current.toLowerCase() === String(email).toLowerCase();
+  if (!isAddress && !usernames.isPlaceholderUsername(current)) {
+    const check = usernames.validateUsername(current);
+    if (check.ok) return check.value;
+  }
+  return usernames.suggestAvailableUsernameFromEmail(client, email, user.id);
+}
+
+/**
+ * Will this account land in the waiting room? Read AFTER linkUserByEmail,
+ * which grants access on the spot to an address the waitlist already
+ * released. Best effort: a failed read answers null ("cannot tell"), and the
+ * client then says nothing either way rather than something untrue.
+ */
+async function isWaitlisted(pool, userId) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT has_platform_access, is_admin FROM users WHERE id = $1',
+      [userId]
+    );
+    if (!rows.length) return null;
+    return !(rows[0].has_platform_access || rows[0].is_admin);
+  } catch (error) {
+    log.warn('email-signup', 'Waitlist state read failed', { message: error.message });
+    return null;
+  }
+}
+
+/**
+ * Set the password, and optionally the first handle, then sign in.
+ *
+ * `username` is OPTIONAL and additive (QA 2026-09-24 Q12). The set-password
+ * step now asks a brand-new account for its handle, prefilled with the
+ * suggestion, so nobody meets a name they never chose in the waiting room;
+ * before, it was asked only at release, by the first-run gate. A caller
+ * that sends no `username` gets exactly the old behaviour and the gate asks
+ * later. It takes the same path POST /api/me/username/choose does
+ * (validateUsername, checkAvailability, chooseFirstUsername's
+ * `needs_username_choice` guard), and it is ignored for an account that has
+ * already chosen.
+ *
+ * A username refusal is thrown BEFORE the signup session is spent, so the
+ * person fixes the field and submits again with the same cookie.
+ */
+async function completePassword(pool, { signupToken, password, username = null, createSession }) {
   if (typeof signupToken !== 'string' || !/^[a-f0-9]{64}$/.test(signupToken)) {
     throw new EmailSignupError('invalid_signup_session', 'Your signup session expired. Request a new code.');
+  }
+  let chosen = null;
+  if (username != null && username !== '') {
+    const check = usernames.validateUsername(username);
+    if (!check.ok) throw new EmailSignupError('invalid_username', check.error);
+    chosen = check.value;
   }
   if (typeof password !== 'string' || password.length < 8) {
     throw new EmailSignupError('invalid_password', 'Password must be at least 8 characters.');
   }
   const passwordHash = await bcrypt.hash(password, 12);
 
-  const result = await withTransaction(pool, async (client) => {
-    const { rows } = await client.query(
-      `SELECT w.user_id, w.expires_at, u.username, u.is_admin,
-              u.admin_readonly, u.password_set
-         FROM web_signup_sessions w
-         JOIN users u ON u.id = w.user_id
-        WHERE w.token_hash = $1
-        FOR UPDATE OF w, u`,
-      [tokenHash(signupToken)]
-    );
-    const signup = rows[0];
-    if (!signup || new Date(signup.expires_at) < new Date()) {
-      return { invalid: true };
+  let result;
+  try {
+    result = await withTransaction(pool, async (client) => {
+      const { rows } = await client.query(
+        `SELECT w.user_id, w.expires_at, u.username, u.is_admin,
+                u.admin_readonly, u.password_set, u.needs_username_choice
+           FROM web_signup_sessions w
+           JOIN users u ON u.id = w.user_id
+          WHERE w.token_hash = $1
+          FOR UPDATE OF w, u`,
+        [tokenHash(signupToken)]
+      );
+      const signup = rows[0];
+      if (!signup || new Date(signup.expires_at) < new Date()) {
+        return { invalid: true };
+      }
+
+      const choosing = chosen && signup.needs_username_choice === true;
+      if (choosing) {
+        const free = await usernames.checkAvailability(client, chosen, signup.user_id);
+        // Returned, not thrown: nothing has been written, so COMMIT is a
+        // no-op and the signup session survives for the corrected submit.
+        if (!free.available) return { usernameTaken: free.error };
+      }
+
+      await client.query('DELETE FROM web_signup_sessions WHERE token_hash = $1', [tokenHash(signupToken)]);
+      if (signup.is_admin || signup.password_set) return { invalid: true };
+
+      await client.query(
+        'UPDATE users SET password = $1, password_set = TRUE WHERE id = $2',
+        [passwordHash, signup.user_id]
+      );
+      let handle = signup.username;
+      if (choosing) {
+        const taken = await usernames.chooseFirstUsername(client, signup.user_id, chosen);
+        if (taken) handle = taken.username;
+      }
+      const session = await createSession(client, signup.user_id);
+      return {
+        session,
+        user: {
+          id: signup.user_id,
+          username: handle,
+          isAdmin: !!signup.is_admin,
+          adminReadonly: !!signup.admin_readonly,
+        },
+      };
+    });
+  } catch (error) {
+    // The unique index and the two BEFORE triggers (case-variant, retired)
+    // are the backstop behind checkAvailability: somebody took the name in
+    // the gap. The whole transaction rolled back, signup session included.
+    if (chosen && error && error.code === '23505') {
+      throw new EmailSignupError('username_taken', 'That username is taken.');
     }
+    throw error;
+  }
 
-    await client.query('DELETE FROM web_signup_sessions WHERE token_hash = $1', [tokenHash(signupToken)]);
-    if (signup.is_admin || signup.password_set) return { invalid: true };
-
-    await client.query(
-      'UPDATE users SET password = $1, password_set = TRUE WHERE id = $2',
-      [passwordHash, signup.user_id]
-    );
-    const session = await createSession(client, signup.user_id);
-    return {
-      session,
-      user: {
-        id: signup.user_id,
-        username: signup.username,
-        isAdmin: !!signup.is_admin,
-        adminReadonly: !!signup.admin_readonly,
-      },
-    };
-  });
-
+  if (result.usernameTaken) {
+    throw new EmailSignupError('username_taken', result.usernameTaken);
+  }
   if (result.invalid) {
     throw new EmailSignupError('invalid_signup_session', 'Your signup session expired. Request a new code.');
   }

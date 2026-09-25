@@ -132,6 +132,12 @@ export interface ConversationSummary {
   latestSummary?: string;
   lastActivityAt: string;
   unreadCount: number;
+  /**
+   * QA 2026-09-24 Q2: the viewer asked for this direct conversation and the
+   * other person has not accepted yet. One opening message is allowed; after
+   * it `canSend` turns false and the thread says who it is waiting for.
+   */
+  awaitingAcceptance?: boolean;
   canSend: boolean;
   canInvite: boolean;
   canManage: boolean;
@@ -240,6 +246,13 @@ export interface MessagesSnapshot {
   listLoaded: boolean;
   error: string | null;
   threadError: string | null;
+  /**
+   * Why the open conversation cannot be shown when trying again cannot change
+   * it (QA 2026-09-24 Q16): `left`, the viewer left it in this tab (Back
+   * after Leave group lands here); `missing`, the server says it is not theirs
+   * to read. Null otherwise. Optional so a fixture without it reads as null.
+   */
+  threadGone?: 'left' | 'missing' | null;
   nextBefore: number | null;
   online: boolean;
   demo: boolean;

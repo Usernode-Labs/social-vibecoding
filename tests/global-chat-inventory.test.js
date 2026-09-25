@@ -1,3 +1,4 @@
+// test:changed: always (every route and client API path, for the Classic inventory; scripts/test-changed.js)
 'use strict';
 
 const assert = require('node:assert/strict');
@@ -35,7 +36,7 @@ test('every mapped route has one stable mobile-capable capability contract', () 
   const ids = mapped.map((route) => route.capabilityId);
   assert.equal(new Set(ids).size, ids.length, 'capability ids must be unique');
   for (const route of mapped) {
-    assert.ok(route.path, `${route.source}:${route.line} must have a resolved path`);
+    assert.ok(route.path, `${route.source} ${route.method} ${route.expression || ''} must have a resolved path`);
     assert.match(route.capabilityId, /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/);
     assert.ok(['read', 'reversible_write', 'external_write', 'destructive'].includes(route.risk));
     assert.ok(['server_loopback', 'client_action', 'native_client'].includes(route.transport));
@@ -141,4 +142,17 @@ test('reviewed route exemptions are keyed on registration shape, never on a line
     /\.line\b/,
     'exemption matchers must not depend on a route line number',
   );
+});
+
+test('the committed inventory carries no line numbers, so moving a route is not a change', () => {
+  // Every edit above a route used to move its `line`, and the file went stale
+  // on nearly every change to a routes file (and on the merge of two changes
+  // that had each regenerated it). The generator keeps the line internal, for
+  // declaration order and shadowed registrations only.
+  assert.ok(inventory.routes.every((route) => !Object.hasOwn(route, 'line')), 'no route records its line');
+  const source = fs.readFileSync(path.join(ROOT, 'scripts/generate-global-chat-inventory.js'), 'utf8');
+  assert.match(source, /\[REGISTRATION\]: \{ line, pathCount: discovered\.length, shadowsLaterRoute: false \}/,
+    'the line rides on the Symbol key JSON.stringify skips');
+  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'src/services/global-chat/classic-capabilities.js'), 'utf8'), /route\.line\b/,
+    'and nothing that reads the inventory expects one');
 });

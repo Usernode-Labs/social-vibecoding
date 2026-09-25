@@ -24,6 +24,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { kanbanHtml } = require('./lib/dev-card-html');
+const checkCap = require('./lib/check-cap');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -317,7 +318,9 @@ test('the fold mark: the same two chevrons at both sizes, stretched open on the 
   const open = makeAppView({ search: '?cards=open&demo=1' });
   const n = cardRowsOf(open._kanbanView());
   const openHtml = kanbanHtml(open);
-  assert.equal(count(openHtml, new RegExp(esc('<button type="button" class="dev-fold-mark" data-open="1" aria-expanded="true" aria-label="Fold the card">' + GLYPH + '</button></div><div class="dev-card-meta">'), 'g')), n,
+  // `un-touch-target` (QA 2026-09-24 Q19): the 16px mark takes the kit's 44px
+  // hit-slop, so folding the card is not a 16px aim on a phone.
+  assert.equal(count(openHtml, new RegExp(esc('<button type="button" class="dev-fold-mark un-touch-target" data-open="1" aria-expanded="true" aria-label="Fold the card">' + GLYPH + '</button></div><div class="dev-card-meta">'), 'g')), n,
     'one open mark per card, closing the head');
   assert.ok(!openHtml.includes('<span class="dev-fold-mark"'), 'and no closed mark beside it');
   // The button folds through the fold's own toggle: the wrapper's
@@ -1235,7 +1238,56 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // a dev session's bar carries it after Open full view. The conversation
   // header's place (just before ⋯) rides on the deleted-message check that
   // already found the toggle. 28 slots left under 830.
-  assert.equal(DAPP.tests.length, 802);
+  //
+  // 802 → 803: +1 (#2779): an agent session's staging builds are cards: an
+  // older build superseded and the newest offering Open preview and View
+  // change, one selector over the staging conversation 990801's two build
+  // rows. 27 slots left under 830.
+  //
+  // 803 → 804: +1 (#2779): an agent session's saved draft above the message
+  // box, in a conversation whose Mayor reply shows what it cost: one
+  // selector over the staging conversation 990801's seeded draft. 26 slots
+  // left under 830.
+  //
+  // 804 → 810: +6 (QA 2026-09-24): the sweep's user-visible fixes.
+  // Discover's compact "Add" pill (Q10), the Skip to navigation link (Q18),
+  // sign-in's Back disc and the username rule under the register field (Q8,
+  // Q11), "Needs you" in a Messages row (Q29) and a group invitation's
+  // "Invitation pending" header (Q14). Seven more were drafted and left to
+  // unit tests (the conversation ⋯ as a menu button among them, pinned in
+  // tests/qa-menus-keyboard.test.js) to keep the 20 free slots the proposal
+  // suites require. 20 slots left under 830, the floor those suites allow.
+  //
+  // 810, unchanged (#2779): an agent session's "Build: Homeroom" and ⋯ ride
+  // on the saved-draft check over conversation 990801 as a :has(), since
+  // the floor above leaves no slot for a check of their own. (#3078 moved
+  // Build into the composer's "Build with"; the :has() reads Changes ~ ⋯.)
+  //
+  // 810 → 811: +1 (#4868): "Open app" lands as ONE check — its two halves
+  // (the button offered on an ordinary app's chat, absent on the platform's
+  // own) fold into a single :has()/:not(:has()) selector over the two
+  // staging conversations 990803 and 990801, the way #2779 folded its four.
+  // Main stood at 810 exactly, the 20-slot floor, so the ceiling moved to
+  // 840 with it (services/app-manifest.js), leaving 29 slots.
+  //
+  // 811 → 812: +1, the admin Support view's points card over staging user
+  // 900302 (#admin/support/900302), leaving 28 slots.
+  //
+  // 811 → 814: +3, independently on main: the Settings Node row refreshing
+  // without a tap, and the wallet's Block production card order/style in the
+  // producing and delegated states (the style assertions fold into the order
+  // check).
+  //
+  // 812 → 815, 814 → 815: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took
+  // 811 → 812 alone, with the admin Support view check above; main
+  // independently took the same 811 to 814, with the Settings/wallet trio
+  // above. Neither set overlaps the other, so the merged manifest holds
+  // every one of them: 811 + 1 + 3 = 815.
+  //
+  // A mismatch says what the count is, what it is pinned at, and what to do
+  // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
+  checkCap.assertPinned(DAPP.tests.length, 815);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1353,7 +1405,9 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
   assert.ok(at > 0, 'the band pill rule exists');
   const pill = CSS.slice(at, CSS.indexOf('\n}', at));
   assert.match(pill, /background: var\(--accent-tint\);/);
-  assert.match(pill, /color: var\(--accent\);/);
+  // The ink is the accent one step darker in light (QA 2026-09-24 Q20): the
+  // accent itself is 4.34:1 on its own tint, under AA for these 12px labels.
+  assert.match(pill, /color: var\(--accent-tint-ink\);/);
   assert.match(pill, /border-color: transparent;/);
   assert.match(CSS, /\.dev-vote-btn-yes[^{]*\{ background: var\(--accent-tint\); color: var\(--accent\); \}/, 'the pair the Yes state uses');
   // The ⋯ was a well in the card's top-right rail. The menu is where the

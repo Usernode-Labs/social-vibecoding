@@ -335,25 +335,32 @@ function Progress({ p }: { p: LedgerProgress }): ReactNode {
 function Roster({ r }: { r: RosterView }): ReactNode {
   if (r.phase === 'hidden') return null;
   if (r.phase === 'loading') return <span className="dev-ledger-roster">Loading votes…</span>;
-  const noNames = r.no && r.no.names && r.no.names !== '—' ? r.no.names : '';
+  // QA 2026-09-24: a side nobody has taken is left out, rather than drawn as
+  // "No (0): —". The loaders send an empty string for it; the bare dash is
+  // what they sent before, and is still read as empty.
+  const names = (side?: { names: string }) => (side && side.names && side.names !== '—' ? side.names : '');
+  const yesNames = names(r.yes);
+  const noNames = names(r.no);
   return (
     <span className="dev-ledger-roster" data-approved={r.approved ? '1' : undefined}>
       {r.approved ? (
         <>
           <span className="dev-ledger-lead dev-ledger-lead-ok">Approved</span>
-          {` by ${r.yes!.names}`}
+          {yesNames ? ` by ${yesNames}` : null}
           {noNames ? <span className="dev-ledger-needs">{` · No: ${noNames}`}</span> : null}
         </>
       ) : (
         <>
           {/* The space rides inside the lead: a bare whitespace expression
               between two text runs is the hydration mismatch
-              tests/shell-build.test.js guards against. */}
-          <span className="dev-ledger-lead dev-ledger-lead-vote">{'Waiting for votes. '}</span>
-          <span className="dev-ledger-yes">{`${r.yes!.label}:`}</span>
-          {` ${r.yes!.names} `}
-          <span className="dev-ledger-no">{`${r.no!.label}:`}</span>
-          {` ${r.no!.names}`}
+              tests/shell-build.test.js guards against. With nobody on
+              either side the lead is the whole line: the tally beside it
+              already says the count. */}
+          <span className="dev-ledger-lead dev-ledger-lead-vote">{yesNames || noNames ? 'Waiting for votes. ' : 'Waiting for votes.'}</span>
+          {yesNames ? <span className="dev-ledger-yes">{`${r.yes!.label}:`}</span> : null}
+          {yesNames ? ` ${yesNames}${noNames ? ' · ' : ''}` : null}
+          {noNames ? <span className="dev-ledger-no">{`${r.no!.label}:`}</span> : null}
+          {noNames ? ` ${noNames}` : null}
         </>
       )}
       {/* #1688: each voter's line under the names, in their own words. */}
@@ -371,11 +378,11 @@ function Roster({ r }: { r: RosterView }): ReactNode {
 function HelpLinks({ question }: { question: boolean }): ReactNode {
   return (
     <span className="dev-ledger-help voting-help-hint">
-      <button type="button" className="voting-help-link" data-voting-help="">How voting works</button>
+      <button type="button" className="voting-help-link un-touch-target" data-voting-help="">How voting works</button>
       {question ? (
         <button
           type="button"
-          className="voting-help-btn"
+          className="voting-help-btn un-touch-target"
           data-voting-help=""
           aria-label="How voting and merges work"
           title="How voting and merges work"

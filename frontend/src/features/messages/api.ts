@@ -246,6 +246,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     latestSummary: text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || '',
     lastActivityAt: dateText(pick(row, 'lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at')),
     unreadCount: Number(pick(row, 'unreadCount', 'unread_count')) || 0,
+    awaitingAcceptance: kind === 'direct' && pick(row, 'awaitingAcceptance', 'awaiting_acceptance') === true,
     canSend: typeof canSendValue === 'boolean' ? canSendValue : membershipStatus !== 'invited',
     canInvite: bool(pick(row, 'canInvite', 'can_invite'), kind === 'group' && membershipStatus !== 'invited'),
     canManage: bool(pick(row, 'canManage', 'can_manage'), text(pick(row, 'myRole', 'my_role', 'role')) === 'owner'),

@@ -335,64 +335,229 @@ test('runTriage: the wall clock stops a turn that never finishes, and the row sa
   assert.ok(!calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'not dropped on the first stop');
 }, { timeout: 20000 });
 
-test('runTriage: the token tripwire stops a turn that burns tokens without burning the clock', async () => {
+// ── Only the clock stops a turn; a fresh thread per issue (#3035) ───────
+
+const QUESTION_REPLY = 'Read the map code.\n```json\n{"verdict":"question","determined":false,"missing_fact":"which screen","question":"Which screen?","default":"Route map"}\n```';
+
+// Drive the wall clock without waiting twenty minutes for it: the dispatch
+// hangs until the bot stops it, and mocked timers fire the budget at once.
+// `kill` is what stopTurn returns, so a test can hold the kill in flight.
+async function runToWallClock(t, harness, opts = {}, {
+  kill = null, onStopped = null, ctx = {}, result = { lastResultText: '' },
+} = {}) {
   const stopped = [];
-  const { pool, deps, calls } = triageHarness({ verdictText: 'x' });
+  let release;
+  const hung = new Promise((resolve) => { release = resolve; });
+  harness.deps.worker.stopTurn = (id) => { stopped.push(id); release(); return kill || Promise.resolve(); };
+  harness.deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce }) => {
+    await dispatchOnce({ openrouterApiKey: 'k', ...ctx });
+    await hung;
+    // A stopped attempt never reaches turn.completed, so the ledger has no
+    // cost for it: `estimatedCostUsd` is absent, as it is in production.
+    return { result, error: null };
+  };
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const running = bot.runTriage(harness.pool, {}, {
+    bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: harness.deps,
+    settings: { turnSeconds: 1200, turnInputTokens: 10_000_000 }, ...opts,
+  });
+  for (let i = 0; i < 500 && !stopped.length; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(1200 * 1000);
+  }
+  if (onStopped) await onStopped(running);
+  return { out: await running, stopped };
+}
+
+test('runTriage: a turn over its token limit keeps its verdict, and nothing is stopped', async () => {
+  // Between #2870 and #3035 the token check was wired to the stop. Usage
+  // only arrives when a turn is over, so it fired on FINISHED turns — every
+  // one, since the figure was a conversation's running total — threw the
+  // verdict away, and killed the next issue. 13 of 13 turns, zero verdicts.
+  const stopped = [];
+  const { pool, deps, calls } = triageHarness({
+    sessionId: 834,
+    result: { lastResultText: QUESTION_REPLY, inputTokens: 2_711_069_602, outputTokens: 262_128 },
+  });
   deps.worker.stopTurn = async (id) => { stopped.push(id); };
-  deps.worker.execInWorker = async (id, opts) => {
-    calls.exec.push({ id, opts });
-    // Three usage reports: under, under, over.
-    opts.onUsage({ inputTokens: 1_000_000 });
-    assert.deepEqual(stopped, [], 'a turn inside its limit is left alone');
-    opts.onUsage({ inputTokens: 9_999_999 });
-    assert.deepEqual(stopped, [], 'and the limit is a ceiling, not a target');
-    opts.onUsage({ inputTokens: 10_000_001 });
-    return { lastResultText: '', inputTokens: 10_000_001, outputTokens: 5 };
-  };
   const out = await bot.runTriage(pool, {}, {
     bot: BOT, app: APP, item: ITEM, mode: 'shadow',
     settings: { turnSeconds: 3600, turnInputTokens: 10_000_000 }, deps,
   });
-  assert.deepEqual(stopped, [501]);
-  assert.equal(out.budget, 'input tokens');
+  assert.equal(calls.exec[0].opts.onUsage, undefined, 'no usage hook reaches the stop');
+  assert.ok(!/onUsage:/.test(SRC), 'the bot passes no usage hook at all');
+  assert.deepEqual(stopped, [], 'a finished turn is never killed');
+  assert.equal(out.verdict, 'question', 'the verdict the turn reached is kept');
   const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.ok(insert.params.includes('budget: input tokens'));
+  assert.equal(insert.params[4], 'question');
+  assert.equal(insert.params[19], null, 'and it is not recorded as a budget stop');
+  assert.ok(!calls.queries.some((q) => /budget_retry/.test(q.s)), 'nor requeued');
 });
 
-test('runTriage: a second budget stop on the same issue drops it instead of looping', async () => {
-  const { pool, deps, calls } = triageHarness({ verdictText: 'x' });
-  deps.worker.stopTurn = async () => {};
-  deps.worker.execInWorker = async (id, opts) => {
-    opts.onUsage({ inputTokens: 99_000_000 });
-    return { lastResultText: '', inputTokens: 99_000_000, outputTokens: 1 };
-  };
-  const out = await bot.runTriage(pool, {}, {
-    bot: BOT, app: APP, mode: 'shadow',
-    item: { ...ITEM, reason: 'budget_retry' },
-    settings: { turnSeconds: 3600, turnInputTokens: 10_000_000 }, deps,
-  });
-  assert.equal(out.budget, 'input tokens');
-  assert.ok(calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)),
+test('runTriage: a second budget stop on the same issue drops it instead of looping', async (t) => {
+  const harness = triageHarness({ verdictText: 'x', sessionId: 845 });
+  const { out } = await runToWallClock(t, harness, { item: { ...ITEM, reason: 'budget_retry' } });
+  assert.equal(out.budget, 'wall clock');
+  assert.ok(harness.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)),
     'the one retry is spent, so the issue is let go rather than retried forever');
-  assert.ok(!calls.queries.some((q) => /reason = 'budget_retry'/.test(q.s)));
+  assert.ok(!harness.calls.queries.some((q) => /reason = 'budget_retry'/.test(q.s)));
 });
 
-test('a budget stop records WHICH limit tripped, in a column of its own', async () => {
-  const { pool, deps, calls } = triageHarness({ verdictText: 'x' });
-  deps.worker.stopTurn = async () => {};
-  deps.worker.execInWorker = async (id, opts) => {
-    opts.onUsage({ inputTokens: 20_000_000 });
-    return { lastResultText: '', inputTokens: 20_000_000, outputTokens: 1 };
-  };
-  await bot.runTriage(pool, {}, {
-    bot: BOT, app: APP, item: ITEM, mode: 'shadow',
-    settings: { turnSeconds: 3600, turnInputTokens: 10_000_000 }, deps,
-  });
-  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+test('a budget stop records WHICH limit tripped, in a column of its own', async (t) => {
+  const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
+  await runToWallClock(t, harness);
+  const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
   assert.match(insert.s, /budget_stop\)/, 'the insert names the column');
-  assert.ok(insert.params.includes('input tokens'),
+  assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
-  assert.ok(insert.params.includes('budget: input tokens'), 'and the error line still reads the same');
+  assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
+});
+
+test('the next issue never starts while a kill is still landing', async (t) => {
+  // The stop used to be fire-and-forget. The attempt loop resolves as soon
+  // as the turn ends, the next issue starts in the same container, and the
+  // kill — still landing — took it down one to three seconds in: all 12
+  // "collateral" rows in the export sit directly after a stop.
+  const harness = triageHarness({ verdictText: '', sessionId: 867 });
+  let landKill;
+  const kill = new Promise((resolve) => { landKill = resolve; });
+  let settled = false;
+  const { out } = await runToWallClock(t, harness, {}, {
+    kill,
+    onStopped: async (running) => {
+      running.then(() => { settled = true; });
+      for (let i = 0; i < 25; i += 1) await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(settled, false, 'the turn is over, but runTriage waits for the kill to land');
+      landKill();
+    },
+  });
+  assert.equal(settled, true);
+  assert.equal(out.budget, 'wall clock');
+});
+
+test('every issue starts a fresh model thread, through the platform\'s own reading of null', async () => {
+  // The bot always passed a null thread, and the old test pinned exactly
+  // that argument. But the platform reads null as "carry on the saved
+  // thread" in two places, and saves the thread back after every turn, so
+  // each app's bot session was ONE conversation: the Homeroom app's usage
+  // climbed monotonically across every run for three days to 2.7 billion.
+  // This harness imitates both of those readings, with a thread already
+  // saved on the session, and checks what the dispatch actually resumes.
+  const { pool, deps, calls } = triageHarness({ verdictText: QUESTION_REPLY, sessionId: 878 });
+  const select = pool.query;
+  pool.query = async (sql, params) => {
+    const res = await select(sql, params);
+    if (/SELECT \* FROM chat_sessions/.test(String(sql))) res.rows[0].agent_thread_id = 'thread-from-the-last-issue';
+    return res;
+  };
+  deps.agentTurn.resolveCodexRuntimeContext = async ({ session, resumeThreadId }) => ({
+    openrouterApiKey: 'k',
+    resumeThreadId: resumeThreadId || session.agent_thread_id || null,
+  });
+  deps.sessions.runCodexAttemptLoop = async ({ resumeThreadId, resolveRuntime, dispatchOnce }) => {
+    const runtimeContext = await resolveRuntime();
+    const thread = resumeThreadId ?? runtimeContext.resumeThreadId ?? null;
+    const result = await dispatchOnce({ ...runtimeContext, resumeThreadId: thread, resumeSessionId: thread });
+    return { result, error: null, estimatedCostUsd: 0.01 };
+  };
+  const out = await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  assert.equal(out.verdict, 'question');
+  assert.equal(calls.exec[0].opts.resumeSessionId, null, 'the dispatch resumes nothing');
+  assert.equal(calls.exec[0].opts.resumeThreadId, null);
+  const start = calls.queries.find((q) => /SET status = 'active'/.test(q.s));
+  assert.match(start.s, /agent_thread_id = NULL/, 'and the saved thread is cleared in the row, for every later reader');
+
+  // The imitation is only worth something while it matches the platform.
+  assert.match(read('src/services/agent-turn.js'), /resumeThreadId: resumeThreadId \|\| session\.agent_thread_id \|\| null/,
+    'if this changes, re-check how a null thread is read before trusting the test above');
+  assert.match(read('src/routes/sessions.js'), /resumeThreadId \?\? runtimeContext\.resumeThreadId \?\? null/);
+});
+
+test('issues dropped by those spurious stops come back on the next refresh', () => {
+  // The issue-level "unchanged since its last run" check counted a
+  // collateral kill and a discarded token-stop as a judgement of the issue,
+  // so an issue whose last row was one of those was never queued again.
+  const q = SRC.slice(SRC.indexOf('async function lastRunsByIssue'), SRC.indexOf('async function refreshApp'));
+  assert.match(q, /AND budget_stop IS DISTINCT FROM 'input tokens'/);
+  assert.match(q, /AND \(error IS NULL OR error NOT LIKE 'collateral:%'\)/);
+  assert.ok(!/spendBudget\('input tokens'\)/.test(SRC), 'and no new token stops are written, so the filter is a one-off recovery');
+});
+
+// ── A stopped turn is priced from what its finished requests used (#3038) ──
+
+const PRICING = { available: true, inputPricePerMillion: 0.075, outputPricePerMillion: 0.3 };
+const realEstimator = require('../src/services/agent-turn').estimateRequestedModelCost;
+
+test('a turn stopped by the clock is priced from the requests that finished before the stop', async (t) => {
+  // The one genuine wall-clock stop in the 2026-09-24 export (#3027, 20.3
+  // minutes) recorded $0.00: the agent reports usage only at turn.completed,
+  // which a stopped turn never reaches. The relay's per-request lines do
+  // survive the kill, and they are priced here exactly as the ledger prices
+  // a finished turn.
+  const harness = triageHarness({ verdictText: 'x', sessionId: 901 });
+  harness.deps.agentTurn.estimateRequestedModelCost = realEstimator;
+  const { out } = await runToWallClock(t, harness, {}, {
+    ctx: { pricingSnapshot: PRICING },
+    result: {
+      lastResultText: '',
+      relayUsage: { requests: 7, inputTokens: 40_000_000, cachedInputTokens: 36_000_000, outputTokens: 5_000, reasoningOutputTokens: 900 },
+    },
+  });
+  assert.equal(out.budget, 'wall clock');
+  const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(insert.params[14], 3.0015, 'cost: 40M input at $0.075/M plus 5k output at $0.30/M');
+  assert.equal(insert.params[15], 40_000_000, 'and the tokens the relay counted');
+  assert.equal(insert.params[16], 5_000);
+  assert.ok(insert.params.includes('wall clock'), 'still recorded as the stop it was');
+  assert.deepEqual(harness.calls.spend, [{ userId: 77, cents: 300.15, opts: { byok: false } }],
+    'and it reaches the weekly cap like any other spend');
+});
+
+test('the ledger figure wins whenever the agent reported one', async () => {
+  // A finished turn has the platform's own figure; the relay's sum is only
+  // for the turn that has none, so the two never add up to a double count.
+  const { pool, deps, calls } = triageHarness({
+    sessionId: 902,
+    result: {
+      lastResultText: 'Read the map code.\n```json\n{"verdict":"question","determined":false,"missing_fact":"which screen","question":"Which screen?","default":"Route map"}\n```',
+      inputTokens: 1000, outputTokens: 50,
+      relayUsage: { requests: 3, inputTokens: 999_999, cachedInputTokens: 0, outputTokens: 999, reasoningOutputTokens: 0 },
+    },
+  });
+  deps.agentTurn.estimateRequestedModelCost = realEstimator;
+  await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(insert.params[14], 0.0123, "the harness's ledger cost, not the relay's");
+  assert.equal(insert.params[15], 1000, "and the agent's own tokens");
+  assert.deepEqual(calls.spend, [{ userId: 77, cents: 1.23, opts: { byok: false } }], 'debited once');
+});
+
+test('with no price to apply, a stopped turn records its tokens and invents no cost', async (t) => {
+  const harness = triageHarness({ verdictText: 'x', sessionId: 903 });
+  harness.deps.agentTurn.estimateRequestedModelCost = realEstimator;
+  await runToWallClock(t, harness, {}, {
+    ctx: {},
+    result: { lastResultText: '', relayUsage: { requests: 2, inputTokens: 120_000, cachedInputTokens: 0, outputTokens: 800, reasoningOutputTokens: 0 } },
+  });
+  const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(insert.params[14], null, 'unknown, not zero');
+  assert.equal(insert.params[15], 120_000);
+  assert.deepEqual(harness.calls.spend, [], 'nothing to debit');
+});
+
+test('relaySpend: no finished request means no figure at all', () => {
+  assert.equal(bot.relaySpend(null, PRICING, { estimateRequestedModelCost: realEstimator }), null);
+  assert.equal(bot.relaySpend({ requests: 0, inputTokens: 0, outputTokens: 0 }, PRICING, { estimateRequestedModelCost: realEstimator }), null);
+  assert.deepEqual(
+    bot.relaySpend({ requests: 1, inputTokens: 1_000_000, outputTokens: 0 }, PRICING, { estimateRequestedModelCost: realEstimator }),
+    { requests: 1, inputTokens: 1_000_000, outputTokens: 0, costUsd: 0.075 },
+  );
+});
+
+test('the stopped-run detail says its cost is a floor', () => {
+  const ui = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(ui, /Its cost counts the model requests that finished before the stop\./);
+  assert.match(ui, /so the real cost is a little higher/);
 });
 
 test('the totals count a budget stop separately and stop calling it a failure', () => {
@@ -551,8 +716,10 @@ test('a turn that finishes over its token budget says so', () => {
 test('the dashboard says where the token limit actually binds', () => {
   const ui = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(ui, /id="admin-homeroom-bot-turn-tokens-note"/);
-  assert.match(ui, /reports once, at the end/,
+  assert.match(ui, /A warning, not a stop\./,
     'a setting that cannot stop a turn should not look like one that can');
+  assert.match(ui, /keeps its verdict and the overrun is\s+logged/);
+  assert.ok(!/stops an issue after/.test(ui), 'the save message stopped promising a stop too');
 });
 // ── Refusals and backoff (#2737) ─────────────────────────────────────────
 
@@ -827,7 +994,8 @@ test('runTriage: one scout turn, a fresh thread, a recorded verdict, a debited c
   const out = await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
   assert.deepEqual({ ran: out.ran, verdict: out.verdict, runId: out.runId }, { ran: true, verdict: 'question', runId: 900 });
   assert.equal(calls.loop.mode, 'scout');
-  assert.equal(calls.loop.resumeThreadId, null, 'every issue starts a fresh model thread');
+  assert.equal(calls.loop.resumeThreadId, null,
+    'the argument only: whether the thread is fresh is tested through the platform\'s reading of null (#3035)');
   assert.equal(calls.loop.telemetryComponent, 'homeroom_bot_triage');
   assert.equal(calls.exec.length, 1);
   assert.equal(calls.exec[0].opts.mode, 'scout');

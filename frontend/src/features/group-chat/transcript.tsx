@@ -61,6 +61,7 @@ import {
 } from '@/components/ui/icons';
 
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
+import { confirmAction } from '../../lib/confirm';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
@@ -198,8 +199,14 @@ function AttachmentImage({ att }: { att: Attachment }) {
 function AttachmentChip({ att }: { att: Attachment }) {
   const size = <span className="dc-attach-size">{att.size}</span>;
   const download = (
-    <a className="gc-att-action" href={att.url} download={att.name} title={`Download ${att.name}`}>
-      ↓
+    <a
+      className="gc-att-action"
+      href={att.url}
+      download={att.name}
+      title={`Download ${att.name}`}
+      aria-label={`Download ${att.name}`}
+    >
+      <span aria-hidden="true">↓</span>
     </a>
   );
   if (att.kind === 'markdown') {
@@ -618,9 +625,17 @@ export function messageMenuItems(
   if (msg.mine && msg.kind === 'message') {
     items.push({
       key: 'delete', label: 'Delete message', icon: DraftTrashIcon, danger: true, separated: true,
+      // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
       onSelect: () => {
-        if (!window.confirm('Delete this message? Everyone will see “Message deleted” in its place. This can’t be undone.')) return;
-        Promise.resolve(chat?.deleteMessage?.(id)).catch(() => toast('Couldn’t delete this message.'));
+        void confirmAction({
+          title: 'Delete this message?',
+          message: 'Everyone will see “Message deleted” in its place. This can’t be undone.',
+          confirmLabel: 'Delete',
+          danger: true,
+        }).then((ok) => {
+          if (!ok) return;
+          Promise.resolve(chat?.deleteMessage?.(id)).catch(() => toast('Couldn’t delete this message.'));
+        });
       },
     });
   } else if (!msg.mine && msg.senderId && msg.kind === 'message') {
@@ -629,8 +644,17 @@ export function messageMenuItems(
     items.push({
       key: 'block', label: `Block @${msg.username}`, icon: NoSymbolIcon, danger: true,
       onSelect: () => {
-        if (!msg.senderId || !window.confirm(`Block @${msg.username}? Their messages in Messages and app discussions will be hidden.`)) return;
-        setUserBlocked(msg.senderId, true).catch((error) => window.alert(error instanceof Error ? error.message : 'Couldn’t block this person.'));
+        const senderId = msg.senderId;
+        if (!senderId) return;
+        void confirmAction({
+          title: `Block @${msg.username}?`,
+          message: 'Their messages in Messages and app discussions will be hidden.',
+          confirmLabel: 'Block',
+          danger: true,
+        }).then((ok) => {
+          if (!ok) return;
+          setUserBlocked(senderId, true).catch((error) => window.alert(error instanceof Error ? error.message : 'Couldn’t block this person.'));
+        });
       },
     });
   }

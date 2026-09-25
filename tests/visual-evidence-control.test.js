@@ -191,3 +191,56 @@ test('two bounded repairs each require a changed complete plan', async () => {
   assert.throws(() => control.allowRepair('No more attempts.', { code: 'locator_not_found' }),
     { code: 'evidence_repair_unavailable' });
 });
+
+test('motion timing repair can add a wait but cannot weaken assertions or change interactions', async () => {
+  const rejected = fixtures.plan();
+  rejected.impact = 'motion';
+  rejected.stories[0].intent.animation = 'motion';
+  rejected.stories[0].replay.checkpoint.animation = 'motion';
+  rejected.stories[0].replay.checkpoint.assertions.after = [{
+    type: 'hidden', target: { by: 'css', value: '.is-animating' },
+  }];
+  const corrected = structuredClone(rejected);
+  corrected.stories[0].replay.after.actions.push({
+    id: 'wait-settled', stage: 'settled', type: 'waitFor',
+    target: { by: 'css', value: '.is-animating' }, state: 'hidden', timeoutMs: 3000,
+  });
+  const failure = Object.assign(new Error('hidden assertion failed'), { code: 'assertion_failed' });
+  let replays = 0;
+  const control = new RunControl({
+    runId: 'f'.repeat(32), sessionId: 42,
+    intent: contract.semanticIntentFromPlan(rejected), context: {},
+    expiresAt: Date.now() + 10_000,
+    runPlan: async (candidate) => {
+      replays += 1;
+      if (replays === 1) throw failure;
+      return { hardVerdict: { passed: true }, planHash: contract.planHash(candidate) };
+    },
+  });
+  await assert.rejects(control.runPlan(rejected), { code: 'assertion_failed' });
+  control.allowRepair('The motion marker was still visible.', {
+    kind: 'motion_timing', code: 'assertion_failed',
+    detail: { storyId: 'invite-suggestions', side: 'head', assertionIndex: 0 },
+  });
+
+  const unrelatedWait = structuredClone(corrected);
+  unrelatedWait.stories[0].replay.after.actions.at(-1).target = { by: 'css', value: '.unrelated' };
+  await assert.rejects(control.runPlan(unrelatedWait), { code: 'evidence_timing_repair_changed_flow' });
+
+  const weakened = structuredClone(corrected);
+  weakened.stories[0].replay.checkpoint.assertions.after[0] = {
+    type: 'visible', target: { by: 'css', value: '.is-animating' },
+  };
+  await assert.rejects(control.runPlan(weakened), { code: 'evidence_timing_repair_changed_flow' });
+
+  const changedInteraction = structuredClone(corrected);
+  changedInteraction.stories[0].replay.after.actions[0].target = {
+    by: 'role', role: 'button', name: 'Another control', exact: true,
+  };
+  await assert.rejects(control.runPlan(changedInteraction), { code: 'evidence_timing_repair_changed_flow' });
+  assert.equal(replays, 1, 'invalid corrections never spend a replay');
+
+  await control.runPlan(corrected);
+  assert.equal(replays, 2);
+  assert.equal(control.latestHard.passed, true);
+});

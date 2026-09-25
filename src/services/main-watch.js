@@ -80,16 +80,28 @@ function sameSha(a, b) {
   return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
 }
 
-// The first failing test's name out of a unit-suite failureReason —
-// `not ok 6972 - shared-sessions returns linked_issues per row | # tests …`
-// (services/unit-suite.js failureDetail joins its parts with ` | `). Null
-// when the reason names no test (a setup failure, a killed run), so callers
-// fall back to the whole reason.
+// The first failing test's name out of a unit-suite failureReason
+// (services/unit-suite.js failureDetail joins its parts with ` | `). The
+// reason groups failures by file —
+// `tests/sessions.test.js (2): shared-sessions returns linked_issues per row; … | # tests …`
+// — and a reason stored before that change lists raw TAP lines —
+// `not ok 6972 - shared-sessions returns linked_issues per row | # tests …`;
+// both are read. Null when the reason names no test (a setup failure, a
+// killed run, a file whose names did not fit), so callers fall back to the
+// whole reason.
 function firstFailingTest(failureReason) {
   for (const part of String(failureReason || '').split(' | ')) {
+    // The old form first: its prefix is unambiguous, and a test name in it
+    // may itself contain `(2): `.
     const m = part.trim().match(/^not ok\s+\d+\s*-?\s*(.+)$/);
-    if (!m) continue;
-    const name = m[1].replace(/\s+#\s*(SKIP|TODO).*$/i, '').trim();
+    if (m) {
+      const name = m[1].replace(/\s+#\s*(SKIP|TODO).*$/i, '').trim();
+      if (name) return name.slice(0, 200);
+      continue;
+    }
+    const grouped = part.trim().match(/^\S.*? \(\d+\): (.+)$/);
+    if (!grouped) continue;
+    const name = grouped[1].split('; ')[0].replace(/…$/, '').trim();
     if (name) return name.slice(0, 200);
   }
   return null;

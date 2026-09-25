@@ -11,6 +11,8 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { Pool } = require('pg');
 const contract = require('../../src/services/visual-evidence-plan');
+const dbManager = require('../../src/services/db-manager');
+const evidenceFixtures = require('../../src/services/visual-evidence-fixtures');
 const lab = require('./run');
 
 const execFileAsync = promisify(execFile);
@@ -199,6 +201,16 @@ function failureLocation(error) {
       ...(state.roleHints ? { roleHints: state.roleHints } : {}),
     }));
   }
+  if (detail.pageState && typeof detail.pageState === 'object') {
+    location.pageState = {
+      pathname: detail.pageState.pathname,
+      hash: detail.pageState.hash,
+      visibleIds: Array.isArray(detail.pageState.visibleIds)
+        ? detail.pageState.visibleIds.slice(0, 30) : [],
+      visibleLandmarkIds: Array.isArray(detail.pageState.visibleLandmarkIds)
+        ? detail.pageState.visibleLandmarkIds.slice(0, 10) : [],
+    };
+  }
   if (detail.execution?.lastEvent) location.lastEvent = detail.execution.lastEvent;
   return Object.keys(location).length ? location : null;
 }
@@ -231,8 +243,9 @@ async function verifyLocalPlan(options) {
   const checkouts = {};
   const names = { base: `usernode-pre-pr-${runId.slice(0, 8)}-base`,
     head: `usernode-pre-pr-${runId.slice(0, 8)}-head` };
-  const databases = { base: `evidence_pre_pr_${runId.slice(0, 12)}_base`,
-    head: `evidence_pre_pr_${runId.slice(0, 12)}_head` };
+  const selfAppSlug = 'usernode-2d5619';
+  const databases = { base: dbManager.evidenceDbName(selfAppSlug, runId, 'base'),
+    head: dbManager.evidenceDbName(selfAppSlug, runId, 'head') };
   const dump = `/tmp/evidence-pre-pr-${runId}.dump`;
   const stop = async () => lab.stopFixtures(Object.values(names));
   let pool;
@@ -251,6 +264,8 @@ async function verifyLocalPlan(options) {
       baseSha: options.baseSha, headSha: options.headSha, fixtureFingerprint: fingerprint,
       baseImageDigest: images.base.digest, headImageDigest: images.head.digest,
     };
+    let fixtureProfileSet = false;
+    let fixtureProfile = null;
     require('dotenv').config({ path: options.envFile, quiet: true });
     pool = new Pool({ connectionString: 'postgres://usernode:localdev@127.0.0.1:5440/usernode' });
     const { rows: users } = await pool.query(
@@ -258,6 +273,10 @@ async function verifyLocalPlan(options) {
     );
     if (users[0]?.has_platform_access !== true) {
       throw new Error('Local capture member lacks platform access. Restart local Homeroom to apply its fixture seed.');
+    }
+    const { rows: apps } = await pool.query('SELECT slug FROM apps WHERE id = 1');
+    if (apps[0]?.slug !== selfAppSlug) {
+      throw new Error('Local platform app identity differs from the evidence fixture profile.');
     }
     process.env.DOCKER_NETWORK = NETWORK;
     const authTokens = await require('../../src/services/visual-evidence-identities')
@@ -274,14 +293,32 @@ async function verifyLocalPlan(options) {
       }
     };
     const startPair = async () => {
-      const restored = await Promise.allSettled(['base', 'head'].map((side) =>
-        restoreDatabase(databases[side], dump)));
-      const restoreFailure = restored.find((result) => result.status === 'rejected');
-      if (restoreFailure) throw restoreFailure.reason;
+      for (const side of ['base', 'head']) await restoreDatabase(databases[side], dump);
       const started = await Promise.allSettled(['base', 'head'].map((side) =>
         startApp(names[side], databases[side], images[side].tag, options.envFile)));
       const failed = started.find((result) => result.status === 'rejected');
       if (failed) throw failed.reason;
+      const fixtureInputs = Object.fromEntries(['base', 'head'].map((side) => [side, {
+        databaseUrl: `postgres://usernode:localdev@127.0.0.1:5440/${databases[side]}`,
+        slug: selfAppSlug, runId, side,
+      }]));
+      const ready = await Promise.all(['base', 'head'].map((side) =>
+        evidenceFixtures.canCopyMemberAgentSession(fixtureInputs[side])));
+      const currentProfile = ready.every(Boolean) ? evidenceFixtures.PROFILE : null;
+      if (fixtureProfileSet && fixtureProfile !== currentProfile) {
+        throw new Error('The local paired reset changed its evidence fixture profile.');
+      }
+      fixtureProfileSet = true;
+      fixtureProfile = currentProfile;
+      if (currentProfile) {
+        await Promise.all(['base', 'head'].map((side) =>
+          evidenceFixtures.copyMemberAgentSession({
+            ...fixtureInputs[side], selfAppSlug,
+          })));
+      }
+      provenance.fixtureFingerprint = currentProfile
+        ? crypto.createHash('sha256').update(`${fingerprint}\n${currentProfile}`).digest('hex')
+        : fingerprint;
     };
     const prepareCase = async () => {
       await stop();
