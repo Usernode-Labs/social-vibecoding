@@ -52,8 +52,9 @@
  * ── Active above Recents (#3074) ─────────────────────────────────────
  *
  * The apps running right now, the ones with the green "still open" dot, get
- * a section of their own at the top, with the app you are in highlighted
- * (`aria-current`). ./recents.ts's buildActive says which and in what order,
+ * a section of their own at the top, with the app on screen highlighted
+ * (`aria-current`) — on screen, not merely mounted (#3096): the router's
+ * screen says so, since the frame stays mounted behind every other screen. ./recents.ts's buildActive says which and in what order,
  * and buildRecents leaves them out of Recents, so no app is listed twice; an
  * app whose frame goes returns to Recents. They are the same rows, drawn by
  * RecentRow. The section sits INSIDE #platform-recents, before its heading,
@@ -84,7 +85,7 @@ import { useMessagesSnapshot } from '../messages/store';
 import { navStore } from './nav-store.js';
 import { readRecentApps, recentAppsStore } from './recent-apps-store.js';
 import {
-  buildActive, buildRecents, groupRecents, type RecentItem, type RecentKind,
+  buildActive, buildRecents, currentAppOnScreen, groupRecents, type RecentItem, type RecentKind,
 } from './recents';
 
 const GLYPHS: Record<RecentKind, typeof UserIcon> = {
@@ -261,13 +262,16 @@ export function RecentsList() {
   const snap = useMessagesSnapshot();
   const chat = useGlobalChatState();
   const live = useLiveAppSlugs();
-  const current = useCurrentAppSlug();
+  const frameSlug = useCurrentAppSlug();
   const improve = useStoreState(improveStore);
 
   // POST-MOUNT, for hydration (see the header). The stored apps are read by
   // ./mount.ts when the router names the viewer, since the list is theirs;
   // this covers a viewer named before the island hydrated.
-  const { viewer } = useStoreState(navStore);
+  const { viewer, screen, tab } = useStoreState(navStore);
+  // #3096: lit only while the app is ON SCREEN, not merely mounted — the
+  // frame outlives every way of leaving but Home (see currentAppOnScreen).
+  const current = currentAppOnScreen({ frameSlug, screen, tab });
   useEffect(() => {
     setMounted(true);
     const current = navStore.get().viewer;

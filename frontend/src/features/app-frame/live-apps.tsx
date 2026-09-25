@@ -23,9 +23,12 @@ export function useLiveAppSlugs(): string[] {
 }
 
 /**
- * The app the viewer is in right now, or null (#3074): the mounted frame, on
- * screen or parked behind its Workshop. Leaving for Home retires it into the
- * kept frames and clears this. Starts null, as the prerender did.
+ * The app whose frame is MOUNTED, or null (#3074): on screen, parked behind
+ * its Workshop, or hidden behind any other screen the viewer went to without
+ * backing out to Home. Only leaving for Home retires it into the kept frames
+ * and clears this, so it is NOT "the app on screen" — the rail asks the
+ * router for that (../nav/recents.ts currentAppOnScreen, #3096). Starts null,
+ * as the prerender did.
  */
 export function useCurrentAppSlug(): string | null {
   return useStoreState(appFrameStore).slug || null;
