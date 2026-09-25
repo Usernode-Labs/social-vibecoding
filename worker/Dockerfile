@@ -230,6 +230,12 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
 USER node
 WORKDIR /home/node/workspace
 
+# The platform repository's session-start freshness check
+# (.agents/hooks/upstream-drift.js) is for agents that pick their own base.
+# The harness fixes a hosted turn's base commit, so the notice would only be
+# noise here, and the ls-remote a delay on every turn.
+ENV SOCIAL_VIBECODING_DRIFT_CHECK=off
+
 # Build-time smoke test: launch the MCP's bundled Chromium headless (as
 # node, same channel + sandbox setting + SwiftShader flags worker-run.sh seeds) and close
 # it. A future MCP pin bump that reintroduces a channel/revision mismatch
