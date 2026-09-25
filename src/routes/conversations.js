@@ -64,6 +64,17 @@ function pushAudience(memberIds, payload, options) {
   return sent;
 }
 
+// #3050: a membership change or a retracted reaction can drop someone's
+// unread total without touching the notification feed's own read paths.
+// Announcing it as `notifications_changed` refreshes their bell and, through
+// ws.pushToUser, re-badges their iPhone to the same count.
+function pushNotificationsChanged(userIds) {
+  const ws = require('../services/ws');
+  for (const userId of new Set(userIds || [])) {
+    ws.pushToUser(userId, { type: 'notifications_changed' });
+  }
+}
+
 async function pushNotifications(pool, rows) {
   if (!rows?.length) return;
   const notificationSvc = require('../services/notifications');
@@ -477,6 +488,9 @@ function conversationRoutes(config) {
       const result = await conversations.respond(pool, req.user, id, req.body?.action);
       if (!result) return sendNotFound(res);
       pushAudience(result.memberIds, { type: 'conversation_membership_changed', conversationId: id });
+      // The invite row is now read, and a declined direct request archives
+      // the conversation, which hides its rows from the inviter's count too.
+      pushNotificationsChanged([req.user.id, ...(result.memberIds || [])]);
       return res.json({ conversation: result.conversation, status: req.body.action === 'accept' ? 'member' : 'declined' });
     } catch (err) {
       log.error('conversations', 'respond failed', { id, err: err.message });
@@ -507,6 +521,9 @@ function conversationRoutes(config) {
       const result = await conversations.removeMember(pool, req.user, id, targetId);
       if (!result) return sendNotFound(res);
       pushAudience(result.memberIds, { type: 'conversation_membership_changed', conversationId: id });
+      // The removed member's rows for this conversation were deleted.
+      // (Removing yourself is a leave, whose audience includes you.)
+      pushNotificationsChanged(targetId === req.user.id ? result.memberIds : [targetId]);
       return res.json({ ok: true });
     } catch (err) {
       log.error('conversations', 'remove member failed', { id, targetId, err: err.message });
@@ -521,6 +538,10 @@ function conversationRoutes(config) {
       const result = await conversations.leave(pool, req.user, id);
       if (!result) return sendNotFound(res);
       pushAudience(result.memberIds, { type: 'conversation_membership_changed', conversationId: id });
+      // The leaver's rows were deleted; a direct conversation (or a group
+      // whose last member left) is archived, which hides the rest of the
+      // audience's rows for it, and pending invites to it are deleted.
+      pushNotificationsChanged(result.memberIds);
       return res.json({ ok: true });
     } catch (err) {
       log.error('conversations', 'leave failed', { id, err: err.message });
@@ -686,6 +707,7 @@ function conversationRoutes(config) {
           type: 'conversation_reaction_updated', conversationId: id, messageId,
         });
       });
+      pushNotificationsChanged(result.clearedUserIds);
       return res.json({ reactions: result.reactions });
     } catch (err) {
       log.error('conversations', 'reaction failed', { id, messageId, err: err.message });
