@@ -124,6 +124,10 @@ export function openHref(slug: string, card: DevCardModel): string | null {
 export function sessionHref(slug: string, card: DevCardModel): string | null {
   const a = card.attrs || {};
   if (!slug || !a['data-session-chip']) return null;
+  // #3081: a change an agent session started is worked on in THAT
+  // conversation (#2779); its dev chat takes no new messages, so the link
+  // leads to the agent session, as the change page's door already does.
+  if (a['data-session-agent']) return `#messages/agent/${a['data-session-agent']}`;
   return `#app/${slug}/dev/sessions/${a['data-session-chip']}`;
 }
 
