@@ -7,6 +7,7 @@
 const { execFile, execFileSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { promisify } = require('node:util');
@@ -14,7 +15,7 @@ const { verifyBrowser } = require('./verify-evidence-browser-mcp');
 
 const execFileAsync = promisify(execFile);
 
-function fixtureServer(side) {
+function fixtureServer(side, hostedOrigin) {
   const server = http.createServer((request, response) => {
     const url = new URL(request.url, 'http://fixture.invalid');
     const persona = url.searchParams.get('token') === 'member.jwt' ? 'member'
@@ -28,13 +29,49 @@ function fixtureServer(side) {
     const stored = /(?:^|;\s*)session=([^;]+)/.exec(request.headers.cookie || '')?.[1];
     const matched = stored === `${side}-member` ? 'member'
       : stored === `${side}-admin` ? 'admin' : null;
+    if (url.pathname === '/api/apps') {
+      response.statusCode = matched === 'member' ? 200 : 401;
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ apps: matched === 'member' ? [{
+        slug: 'frame-test', status: 'running', view_visibility: 'public',
+        self_hosted: false, url: hostedOrigin(),
+        repo_url: 'https://github.com/Usernode-Labs/frame-test', main_sha: 'a'.repeat(40),
+      }] : [] }));
+      return;
+    }
     response.statusCode = matched ? 200 : 401;
     response.setHeader('Content-Type', 'text/html');
-    response.end(`<!doctype html><h1>${matched ? `Signed in as ${matched} on ${side}` : 'Sign in'}</h1>`);
+    response.end(`<!doctype html><h1>${matched ? `Signed in as ${matched} on ${side}` : 'Sign in'}</h1>${matched && url.pathname === '/status' ? `<iframe id="app-iframe" title="Public app" src="${hostedOrigin()}/frame"></iframe>` : ''}`);
   });
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '0.0.0.0', () => resolve(server));
+  });
+}
+
+function proxyRequest(port, url) {
+  return new Promise((resolve, reject) => {
+    http.get({ hostname: '127.0.0.1', port, path: url }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => resolve({ status: response.statusCode, body: Buffer.concat(chunks).toString() }));
+    }).on('error', reject);
+  });
+}
+
+function proxyConnect(port, authority) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, '127.0.0.1');
+    let response = '';
+    socket.setTimeout(5000, () => { socket.destroy(); reject(new Error('CONNECT timed out')); });
+    socket.on('connect', () => socket.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`));
+    socket.on('data', (chunk) => {
+      response += chunk.toString();
+      if (!response.includes('\r\n\r\n')) return;
+      socket.destroy();
+      resolve(response.split('\r\n', 1)[0]);
+    });
+    socket.on('error', reject);
   });
 }
 
@@ -55,14 +92,27 @@ async function main() {
   const servers = [];
   let proxy = null;
   try {
-    servers.push(await fixtureServer('base'), await fixtureServer('head'));
+    const hosted = http.createServer((_request, response) => {
+      response.setHeader('Content-Type', 'text/html');
+      response.end('<!doctype html><h2>Deployed child frame loaded</h2>');
+    });
+    await new Promise((resolve, reject) => {
+      hosted.once('error', reject);
+      hosted.listen(0, '0.0.0.0', resolve);
+    });
+    servers.push(hosted);
+    const hostedOrigin = `http://${address}:${hosted.address().port}`;
+    servers.push(await fixtureServer('base', () => hostedOrigin), await fixtureServer('head', () => hostedOrigin));
     const origins = [
-      `http://${os.hostname()}:${servers[0].address().port}`,
-      `http://${address}:${servers[1].address().port}`,
+      `http://${os.hostname()}:${servers[1].address().port}`,
+      `http://${address}:${servers[2].address().port}`,
     ];
     const ready = path.join(dir, 'proxy.ready');
+    const stateDir = path.join(dir, 'state');
+    const hostedFile = path.join(stateDir, 'hosted-origins.json');
     proxy = spawn(process.execPath, [path.join(__dirname, 'evidence-origin-proxy.js')], {
       env: { ...process.env, EVIDENCE_ALLOWED_ORIGINS: JSON.stringify(origins),
+        EVIDENCE_HOSTED_ORIGINS_FILE: hostedFile,
         EVIDENCE_PROXY_PORT: '17891', EVIDENCE_PROXY_READY: ready },
       stdio: ['ignore', 'ignore', 'pipe'],
     });
@@ -74,12 +124,23 @@ async function main() {
       EVIDENCE_ALLOWED_ORIGINS: JSON.stringify(origins),
       EVIDENCE_BASE_ORIGIN: origins[0], EVIDENCE_HEAD_ORIGIN: origins[1],
       EVIDENCE_PROXY_SERVER: `http://127.0.0.1:${fs.readFileSync(ready, 'utf8').trim()}`,
-      EVIDENCE_BROWSER_STATE_DIR: path.join(dir, 'state'),
+      EVIDENCE_BROWSER_STATE_DIR: stateDir,
+      EVIDENCE_HOSTED_ORIGINS_FILE: hostedFile,
       EVIDENCE_MEMBER_TOKEN: 'member.jwt', EVIDENCE_ADMIN_TOKEN: 'admin.jwt',
     };
-    await execFileAsync(process.execPath, [path.join(__dirname, 'evidence-browser-bootstrap.js')], {
+    const bootstrap = await execFileAsync(process.execPath, [path.join(__dirname, 'evidence-browser-bootstrap.js')], {
       env, timeout: 90_000,
     });
+    if (!bootstrap.stdout.includes('"kind":"hosted_app_allowlist","count":1')) {
+      throw new Error(`Evidence bootstrap omitted the public deployed app: ${bootstrap.stdout.slice(-1000)}`);
+    }
+    const proxyPort = Number(fs.readFileSync(ready, 'utf8').trim());
+    if ((await proxyRequest(proxyPort, `${hostedOrigin}/frame`)).status !== 200
+        || (await proxyRequest(proxyPort, 'http://not-approved.invalid/frame')).status !== 403
+        || !(await proxyConnect(proxyPort, new URL(hostedOrigin).host)).includes('200')
+        || !(await proxyConnect(proxyPort, 'not-approved.invalid:443')).includes('403')) {
+      throw new Error('Evidence proxy did not enforce the paired hosted-app catalog.');
+    }
     const configPath = path.join(dir, 'mcp.json');
     execFileSync(process.execPath, [path.join(__dirname, 'write-evidence-mcp-config.js'), configPath], { env });
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -89,13 +150,14 @@ async function main() {
       const checks = origins.map((origin, index) => ({
         url: `${origin}/status`,
         expectedText: `Signed in as ${persona} on ${index === 0 ? 'base' : 'head'}`,
+        iframeText: 'Deployed child frame loaded',
       }));
       try { await verifyBrowser(config.mcpServers[serverName], checks); }
       catch (error) {
         throw new Error(`${persona} browser failed (${error.message}); proxy exit=${proxy.exitCode}; ${proxyError}`);
       }
     }
-    process.stdout.write('Both planner personas retained authenticated sessions on both private HTTP revisions.\n');
+    process.stdout.write('Both planner personas retained authenticated sessions and loaded an approved child frame on both private revisions.\n');
   } finally {
     if (proxy && proxy.exitCode === null) {
       proxy.kill('SIGTERM');

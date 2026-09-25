@@ -23,6 +23,7 @@ let planContract;
 try { planContract = require('../src/services/visual-evidence-plan'); }
 catch (_) { planContract = require('./visual-evidence-plan'); }
 const sessionBootstrap = require('../worker/session-bootstrap');
+const hostedApps = require('../worker/evidence-hosted-origins');
 
 const ARTIFACT_PREFIX = '__USERNODE_EVIDENCE_ARTIFACT__ ';
 const EVENT_PREFIX = '__USERNODE_EVIDENCE__ ';
@@ -936,37 +937,7 @@ async function encodeWebm(frames, { fps, targetBytes, maxBytes }) {
   } finally { await fsp.rm(dir, { recursive: true, force: true }); }
 }
 
-function trustedHostedAppOrigins(apps, platformOrigin) {
-  const origins = new Map();
-  for (const app of Array.isArray(apps) ? apps.slice(0, 1000) : []) {
-    if (app?.status !== 'running' || app?.view_visibility !== 'public'
-        || app?.self_hosted === true || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(String(app?.slug || ''))) continue;
-    let url;
-    try { url = new URL(app.url); } catch { continue; }
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
-        || url.pathname !== '/' || url.search || url.hash || url.origin === platformOrigin) continue;
-    const versionedRuntime = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(String(app.repo_url || ''))
-      && /^[0-9a-f]{40}$/.test(String(app.main_sha || ''));
-    const localRuntime = url.protocol === 'http:' && url.hostname === 'localhost'
-      && String(app.container_id || '') === `usernode-app-${app.slug}`;
-    if (!versionedRuntime && !localRuntime) continue;
-    origins.set(url.origin, app.slug);
-  }
-  return origins;
-}
-
-async function loadTrustedHostedAppOrigins(context, platformOrigin) {
-  let response;
-  try {
-    response = await context.request.get(`${platformOrigin}/api/apps`, {
-      failOnStatusCode: false, maxRedirects: 0, timeout: 10_000,
-    });
-    if (response.status() !== 200) return new Map();
-    const body = await response.json();
-    return trustedHostedAppOrigins(body?.apps, platformOrigin);
-  } catch { return new Map(); }
-  finally { await response?.dispose?.().catch(() => {}); }
-}
+const { trustedHostedAppOrigins, loadTrustedHostedAppOrigins } = hostedApps;
 
 async function installOriginFence(context, allowedOrigins, diagnostics, controlledFailure = null,
   { loadHostedOrigins = null, hostedOrigins = new Set() } = {}) {

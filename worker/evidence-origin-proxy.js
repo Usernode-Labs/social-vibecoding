@@ -3,8 +3,9 @@
 
 // Mandatory egress boundary for evidence-browser MCP servers. Playwright's
 // allowed-origins option is useful filtering but explicitly is not a security
-// boundary; this proxy independently rejects every HTTP request and CONNECT
-// tunnel whose exact origin is not one of the paired internal app origins.
+// boundary; this proxy independently rejects HTTP requests and CONNECT
+// tunnels outside the paired internal origins and their authenticated,
+// public deployed-app catalog. The catalog arrives after browser bootstrap.
 
 const fs = require('node:fs');
 const http = require('node:http');
@@ -12,6 +13,7 @@ const https = require('node:https');
 const net = require('node:net');
 const crypto = require('node:crypto');
 const { performance } = require('node:perf_hooks');
+const { parseHostedOriginsFile } = require('./evidence-hosted-origins');
 
 const DIAGNOSTIC_MARKER = '__USERNODE_EVIDENCE_BROWSER__ ';
 
@@ -32,6 +34,45 @@ const authorities = new Set([...origins].map((origin) => {
 const port = Number(process.env.EVIDENCE_PROXY_PORT || 17891);
 const readyFile = process.env.EVIDENCE_PROXY_READY || '';
 const originList = [...origins];
+const hostedFile = process.env.EVIDENCE_HOSTED_ORIGINS_FILE || '';
+let hostedOrigins = new Set();
+let hostedAuthorities = new Set();
+let hostedLoaded = !hostedFile;
+let hostedFailureReported = false;
+
+function loadHostedOrigins() {
+  if (hostedLoaded) return;
+  try {
+    const approved = parseHostedOriginsFile(hostedFile, originList[0], originList[1]);
+    hostedOrigins = new Set(approved);
+    hostedAuthorities = new Set(approved.map((origin) => {
+      const url = new URL(origin);
+      return `${url.hostname}:${url.port || (url.protocol === 'https:' ? '443' : '80')}`;
+    }));
+    hostedLoaded = true;
+    diagnostic({ kind: 'hosted_app_allowlist', outcome: 'loaded', count: approved.length });
+  } catch (error) {
+    // Bootstrap creates this file after the proxy starts. Any other read or
+    // validation failure keeps the external origin boundary closed.
+    if (error?.code === 'ENOENT') return;
+    if (!hostedFailureReported) {
+      diagnostic({ kind: 'hosted_app_allowlist', outcome: 'invalid' });
+      hostedFailureReported = true;
+    }
+  }
+}
+
+function permittedOrigin(origin) {
+  if (origins.has(origin)) return true;
+  loadHostedOrigins();
+  return hostedOrigins.has(origin);
+}
+
+function permittedAuthority(authority) {
+  if (authorities.has(authority)) return true;
+  loadHostedOrigins();
+  return hostedAuthorities.has(authority);
+}
 let documentOrdinal = 0;
 const controlToken = String(process.env.EVIDENCE_PROXY_CONTROL_TOKEN || '');
 const controlPath = '/__usernode_evidence_control/request-failure';
@@ -100,8 +141,9 @@ const server = http.createServer((req, res) => {
     try { target = new URL(req.url || '/', `http://${req.headers.host}`); }
     catch { return reject(res, 400); }
   }
-  if (!origins.has(target.origin)) return reject(res);
-  if (req.method === 'GET' && controlledFailures.has(`${target.pathname}${target.search}`)) {
+  if (!permittedOrigin(target.origin)) return reject(res);
+  if (origins.has(target.origin) && req.method === 'GET'
+      && controlledFailures.has(`${target.pathname}${target.search}`)) {
     controlledFailureHits += 1;
     diagnostic({ kind: 'controlled_failure_hit',
       side: target.origin === originList[0] ? 'base' : 'head', hitOrdinal: controlledFailureHits });
@@ -110,7 +152,8 @@ const server = http.createServer((req, res) => {
   const isDocument = req.headers['sec-fetch-dest'] === 'document';
   const ordinal = isDocument ? ++documentOrdinal : null;
   const startedAt = performance.now();
-  const side = target.origin === originList[0] ? 'base' : 'head';
+  const side = target.origin === originList[0] ? 'base'
+    : target.origin === originList[1] ? 'head' : 'hosted';
   if (isDocument) diagnostic({ kind: 'document_request', documentOrdinal: ordinal, side });
   const headers = { ...req.headers, host: target.host };
   delete headers['proxy-authorization'];
@@ -140,7 +183,7 @@ const server = http.createServer((req, res) => {
 
 server.on('connect', (req, client, head) => {
   const authority = String(req.url || '').toLowerCase();
-  if (!authorities.has(authority)) return reject(client);
+  if (!permittedAuthority(authority)) return reject(client);
   const split = authority.lastIndexOf(':');
   const host = authority.slice(0, split);
   const targetPort = Number(authority.slice(split + 1));

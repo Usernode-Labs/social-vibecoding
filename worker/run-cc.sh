@@ -348,6 +348,7 @@ if [ "$MODE" = "evidence" ]; then
     || die "could not create evidence browser state"
   chmod 700 "$EVIDENCE_TMP"
   export EVIDENCE_BROWSER_STATE_DIR="$EVIDENCE_TMP/state"
+  export EVIDENCE_HOSTED_ORIGINS_FILE="$EVIDENCE_BROWSER_STATE_DIR/hosted-origins.json"
   export EVIDENCE_BROWSER_DIAGNOSTIC_FILE="$EVIDENCE_TMP/browser-diagnostics.log"
   : > "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE"
   tail -n +1 -s 0.2 -f "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE" &

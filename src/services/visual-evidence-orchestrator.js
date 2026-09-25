@@ -170,7 +170,8 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
     onAgentDiagnostic(activity, kind) {
       if (stopped || !activity || typeof activity !== 'object') return;
       agentActivity = activity;
-      if (['auth_bootstrap', 'tool_start', 'tool_end', 'browser_call_start', 'browser_call_pending',
+      if (['auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist',
+        'tool_start', 'tool_end', 'browser_call_start', 'browser_call_pending',
         'browser_call_end', 'browser_server_exit', 'document_request', 'document_response',
         'controlled_failure_set', 'controlled_failure_hit',
         'provider_request_start', 'provider_request_pending', 'provider_response_headers',
@@ -676,7 +677,7 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'runner_phase', 'runner_result', 'runner_exit', 'resume_retry',
   'tool_start', 'tool_end', 'agent_deadline',
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
-  'auth_bootstrap',
+  'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist',
   'document_request', 'document_response', 'controlled_failure_set', 'controlled_failure_hit',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',
   'provider_response_first_byte', 'provider_request_end',
@@ -709,13 +710,15 @@ function recordAgentDiagnostic(metrics, raw) {
   }
   if (AGENT_DIAGNOSTIC_PHASES.has(raw.phase)) event.phase = raw.phase;
   if (['ok', 'error', 'tool_error', 'rpc_error', 'unparsed', 'server_exit',
+    'loaded', 'invalid', 'request_error', 'invalid_catalog',
     'http_error', 'network_error', 'stream_error', 'cancelled'].includes(raw.outcome)) {
     event.outcome = raw.outcome;
   }
   for (const key of ['mcpServerCount', 'toolDefinitionCount', 'browserMemberToolCount',
     'browserAdminToolCount', 'storyCount', 'callOrdinal', 'headingCount',
     'buttonCount', 'linkCount', 'imageBlocks', 'exitCode', 'checkRank',
-    'documentOrdinal', 'httpStatus', 'requestOrdinal', 'chunkCount', 'hitOrdinal']) {
+    'documentOrdinal', 'httpStatus', 'requestOrdinal', 'chunkCount', 'hitOrdinal',
+    'count', 'catalogCount']) {
     if (Number.isSafeInteger(raw[key]) && raw[key] >= 0 && raw[key] <= 1000) {
       event[key] = raw[key];
     }
@@ -737,7 +740,7 @@ function recordAgentDiagnostic(metrics, raw) {
     event.errorClass = raw.errorClass;
   }
   if (raw.signal === 'SIGTERM' || raw.signal === 'SIGINT') event.signal = raw.signal;
-  if (['base', 'head', 'outside'].includes(raw.side)) event.side = raw.side;
+  if (['base', 'head', 'hosted', 'outside'].includes(raw.side)) event.side = raw.side;
   if (raw.persona === 'member' || raw.persona === 'admin') event.persona = raw.persona;
   if (['intent_start', 'declared_check', 'other'].includes(raw.routeHint)) {
     event.routeHint = raw.routeHint;

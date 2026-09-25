@@ -78,7 +78,8 @@ function verifyBrowser(server, navigationChecks = []) {
         } else if (message.id >= 4 && message.id < 4 + navigationChecks.length) {
           const index = message.id - 4;
           const response = (message.result?.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
-          if (message.error || message.result?.isError || !response.includes(navigationChecks[index].expectedText)) {
+          if (message.error || message.result?.isError || !response.includes(navigationChecks[index].expectedText)
+              || (navigationChecks[index].iframeText && !response.includes(navigationChecks[index].iframeText))) {
             return finish(new Error(`Browser MCP ${phase} did not load its authenticated state: ${response.slice(0, 500)}`));
           }
           const next = navigationChecks[index + 1];
@@ -109,6 +110,11 @@ async function main() {
       fs.writeFileSync(path.join(stateDir, `${persona}.json`), '{"cookies":[],"origins":[]}');
     }
     const output = path.join(dir, 'mcp.json');
+    const hostedFile = path.join(stateDir, 'hosted-origins.json');
+    fs.writeFileSync(hostedFile, JSON.stringify({
+      version: 1, baseOrigin: 'http://base.example.invalid',
+      headOrigin: 'http://head.example.invalid', origins: [],
+    }));
     const diagnosticFile = path.join(dir, 'browser-diagnostics.log');
     fs.writeFileSync(diagnosticFile, '');
     execFileSync(process.execPath, [path.join(__dirname, 'write-evidence-mcp-config.js'), output], {
@@ -119,6 +125,7 @@ async function main() {
         EVIDENCE_PROXY_SERVER: 'http://127.0.0.1:17891',
         EVIDENCE_BASE_ORIGIN: 'http://base.example.invalid',
         EVIDENCE_HEAD_ORIGIN: 'http://head.example.invalid',
+        EVIDENCE_HOSTED_ORIGINS_FILE: hostedFile,
       },
     });
     const config = JSON.parse(fs.readFileSync(output, 'utf8'));
