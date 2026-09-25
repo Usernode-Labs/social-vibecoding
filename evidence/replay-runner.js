@@ -455,15 +455,19 @@ function pageRouteIdentity(value) {
 }
 
 // A GET/HEAD fetch or XHR cancelled while the page navigates away belongs to
-// the old screen. Keep same-route aborts, documents, assets, mutations, and
-// every other network failure visible. UI assertions have already completed.
-function discardCancelledReads(diagnostics, failures, consoleEvents) {
+// the old screen. React cleanup can abort its fetch before the browser updates
+// the route, so compare both the route at failure and the asserted checkpoint.
+// Keep aborts on the checkpoint route, documents, assets, mutations, and every
+// other network failure visible. UI assertions have already completed.
+function discardCancelledReads(diagnostics, failures, consoleEvents, checkpointRoute = null) {
   const cancelled = new Set(failures.filter((failure) =>
     diagnostics.failedRequests.includes(failure.entry)
       && /\bnet::ERR_ABORTED\b/i.test(failure.error)
       && ['GET', 'HEAD'].includes(String(failure.method || '').toUpperCase())
       && ['fetch', 'xhr'].includes(failure.resourceType)
-      && failure.startRoute && failure.endRoute && failure.startRoute !== failure.endRoute
+      && failure.startRoute && failure.endRoute
+      && (failure.startRoute !== failure.endRoute
+        || (checkpointRoute && failure.startRoute !== checkpointRoute))
   ).map((failure) => failure.entry));
   diagnostics.failedRequests = diagnostics.failedRequests.filter((entry) => !cancelled.has(entry));
   const cancelledKeys = new Set(failures.filter((failure) => cancelled.has(failure.entry))
@@ -1216,7 +1220,9 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     const recoveredNetwork = discardRecoveredNetworkChanges(
       diagnostics, networkFailures, successfulRequests, consoleEvents
     );
-    const cancelledReads = discardCancelledReads(diagnostics, networkFailures, consoleEvents);
+    const cancelledReads = discardCancelledReads(
+      diagnostics, networkFailures, consoleEvents, pageRouteIdentity(page.url())
+    );
     if (diagnostics.consoleErrors.length || diagnostics.pageErrors.length
         || diagnostics.failedRequests.length || diagnostics.blockedRequests.length) {
       throw new ReplayFailure(
