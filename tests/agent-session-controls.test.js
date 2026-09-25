@@ -10,9 +10,11 @@
 //   3. THE CREDITS METER is the header's own figure, beside the model.
 //   4. OUT OF CREDITS, a refused message is a card with ways to keep
 //      building, credit-options.js's copy and rows, the web hand-offs first.
-//   5. "BUILD: HOMEROOM" is always in the bar; its web rows open the dev
-//      chat's hand-off walkthrough (dev-flow-select.js's steps over the
-//      server's status) for the conversation's change.
+//   5. "BUILD WITH" (#3078): the composer's model pill opens Homeroom |
+//      Claude Code | Codex. The web tabs ARE the hand-off, compact checks
+//      from the dev chat's walkthrough (dev-flow-select.js's steps over the
+//      server's status), then one Copy-and-open button; the instructions
+//      carry this chat's spec. Nothing about it is in the session bar.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -39,7 +41,9 @@ test('a hand-off works on the conversation\'s change while it can be revised, el
   assert.deepEqual(api.handoffTarget({ activeChange: null, focusApp: { id: 3, slug: 'recipes', name: 'Recipes' } }),
     { slug: 'recipes', appName: 'Recipes', change: null });
   assert.equal(api.handoffTarget({ activeChange: null, focusApp: null }), null, 'no app: nothing to hand over yet');
-  assert.deepEqual(api.VENUE_ROWS.map((r) => r.id), ['homeroom', 'claude-code', 'codex']);
+  const parts = loadTsx('frontend/src/features/agent-session/composer-parts.tsx');
+  assert.deepEqual(parts.BUILD_TABS.map((t) => [t.id, t.label]),
+    [['homeroom', 'Homeroom'], ['claude-code', 'Claude Code'], ['codex', 'Codex']]);
 });
 
 test('the walkthrough is the dev chat\'s: its steps over the server\'s status', () => {
@@ -58,6 +62,33 @@ test('the walkthrough is the dev chat\'s: its steps over the server\'s status', 
     assert.deepEqual(ready[2].actions.map((a) => a.action), ['copy', 'open-agent']);
     assert.match(ready[2].detail, /lands as an update to it/);
     assert.deepEqual(api.handoffSteps({ available: false, reason: 'no_repository' }, 'codex'), [], 'unavailable: its note, not steps');
+
+    // The tab's compact checks are those steps, and "Homeroom connected" is
+    // the status the last step reads (that step itself never reports done).
+    const checks = api.handoffChecks({ available: true, github: { linked: false }, connectors: { count: 0 }, fork: null }, 'claude-code');
+    assert.deepEqual(checks.map((c) => [c.key, c.label, c.done, c.current]), [
+      ['github', 'GitHub linked', false, true],
+      ['fork', 'Fork ready', false, false],
+      ['connector', 'Homeroom connected in Claude', false, false],
+    ]);
+    assert.deepEqual(checks[0].actions.map((a) => a.action), ['link-github'], 'each undone check keeps its own action');
+    const forking = api.handoffChecks({
+      available: true, github: { linked: true, login: 'ada' }, connectors: { count: 0 },
+      fork: { state: 'missing', owner: 'ada', repo: 'notes', pageUrl: 'https://github.com/o/notes/fork' },
+    }, 'codex');
+    assert.deepEqual(forking[1].actions.map((a) => a.action), ['open-fork', 'refresh'], 'Fork on GitHub, Check again');
+    assert.equal(forking[2].label, 'Homeroom connected in ChatGPT');
+    const connecting = api.handoffChecks({
+      available: true, github: { linked: true, login: 'ada' }, connectors: { count: 0 }, fork: { state: 'ready', owner: 'ada', repo: 'notes' },
+    }, 'claude-code');
+    assert.equal(connecting[2].current, true);
+    assert.deepEqual(connecting[2].actions.map((a) => a.action), ['link-connector', 'refresh'], 'Connect Homeroom, Check again');
+    const done = api.handoffChecks({
+      available: true, github: { linked: true, login: 'ada' }, connectors: { count: 1 }, fork: { state: 'ready', owner: 'ada', repo: 'notes' },
+    }, 'claude-code');
+    assert.ok(done.every((c) => c.done), 'all three done: the Copy-and-open button');
+    assert.deepEqual(done[2].actions, []);
+    assert.deepEqual(api.handoffChecks({ available: false, reason: 'no_repository' }, 'codex'), []);
   } finally {
     delete globalThis.window;
   }
@@ -65,6 +96,18 @@ test('the walkthrough is the dev chat\'s: its steps over the server\'s status', 
   assert.match(dialog, /api\.handoffStatus\(target\.slug, target\.change \? \{ id: target\.change\.id, kind: target\.change\.kind \} : null\)/);
   assert.match(read('frontend/src/features/agent-session/api.ts'), /\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/dev-flow\/status/);
   assert.match(dialog, /<ClaudeSetupSteps \/>/, 'Connect Homeroom shows the connector steps in place');
+  assert.match(read('frontend/src/features/agent-session/api.ts'), /query\.set\('specFrom', String\(change\.id\)\);/,
+    'the instructions are asked to carry this change\'s spec (the server checks it is the viewer\'s)');
+  // One button: copy inside the click, then the agent opens in a new tab.
+  assert.match(dialog, /href=\{AGENT_URL\[agent\]\}\s+target="_blank"\s+rel="noopener noreferrer"\s+data-agent-session-handoff-action="copy-open"\s+onClick=\{copyAndOpen\}/);
+  assert.match(dialog, /\{`Copy instructions and open \$\{label\}`\}/);
+  assert.match(dialog, />Paste into the new session\. It starts building straight away\.</);
+  assert.match(dialog, /Handed over with the instructions/);
+  assert.match(dialog, /`This chat's spec: "\$\{active\.title\}"`/);
+  // The copy fallback: the instructions, open, for copying by hand.
+  assert.match(dialog, /<details [^>]*open=\{manual\}>/);
+  assert.match(dialog, /Could not copy\. Copy the instructions below by hand/);
+  assert.doesNotMatch(dialog, /export function (HandoffDialog|VenuePicker)|<dialog/, 'no second dialog');
 });
 
 test('out of credits: a card with credit-options.js\'s copy, the web hand-offs first, no developer routes', () => {
@@ -144,7 +187,7 @@ test('the ⋯ renames, archives and unarchives; Build opens the hand-off; checks
     assert.ok(requests.some(([m, u]) => m === 'POST' && u === '/api/agent-sessions/7/unarchive'));
 
     api.openHandoff('codex');
-    assert.equal(api.getAgentSessionState().handoff, 'codex');
+    assert.equal(api.getAgentSessionState().handoff, 'codex', 'a request the composer turns into Build with, on Codex');
     api.closeHandoff();
     assert.equal(api.getAgentSessionState().handoff, null);
 
@@ -188,7 +231,7 @@ test('a refused message becomes the credits card and goes back to the box', asyn
   }
 });
 
-test('the card\'s checks open the dialog and a failing run offers Re-run; the bar carries Build and ⋯', () => {
+test('the card\'s checks open the dialog and a failing run offers Re-run; the bar carries Changes and ⋯, Build is in the composer', () => {
   const api = loadTsx('tests/fixtures/agent-session-api.ts');
   const item = { kind: 'preview', key: 'k', text: 'Staging deployed!', url: 'https://s.example', prNumber: 14, changeId: 50, failed: false, error: null, superseded: false };
   const failing = renderToHtml(createElement(api.PreviewCardView, {
@@ -207,19 +250,18 @@ test('the card\'s checks open the dialog and a failing run offers Re-run; the ba
   }));
   assert.match(running, />Re-running…</);
 
-  const picker = renderToHtml(createElement(api.VenuePicker, { disabled: false }));
-  assert.match(picker, /data-agent-session-venue="true"/);
-  assert.match(picker, /Build:<\/span>Homeroom/);
-
   const panel = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(panel, /<VenuePicker disabled=\{snapshot\.phase === 'loading'\} className=\{embedded \? '' : 'sm:ml-auto'\} \/>/);
+  assert.doesNotMatch(panel, /VenuePicker|data-agent-session-venue|HandoffDialog/, '#3078: Build left the bar');
   // The pills and Changes stay siblings: #2779's declared drawer check reads
   // the bar as focus ~ change pill ~ Changes.
-  assert.match(panel, /data-agent-session-change-pill[\s\S]*?<\/span>\s*\{\/\*[\s\S]*?\*\/\}\s*<VenuePicker[\s\S]*?\/>\s*<button\s+type="button"\s+data-agent-session-changes-button/);
+  assert.match(panel, /data-agent-session-change-pill[\s\S]*?<\/span>\s*\{\/\*[\s\S]*?\*\/\}\s*<button\s+type="button"\s+data-agent-session-changes-button/);
+  // The composer's sheet is Build with; the credits card's rows open it on their tab.
+  assert.match(panel, /<BuildSheetBody\s+tab=\{buildTab\}/);
+  assert.match(panel, /handoff=\{buildTab === 'homeroom' \? null : <HandoffPanel agent=\{buildTab\} onClose=\{closeSheet\} \/>\}/);
+  assert.match(panel, /if \(!snapshot\.handoff\) return;\s*openSheet\(snapshot\.handoff\);\s*closeHandoff\(\);/);
   assert.match(panel, /\{ label: 'Rename…'/);
   assert.match(panel, /label: 'Archive',[\s\S]*?destructive: true/);
   assert.match(panel, /\{ label: 'Unarchive'/);
-  assert.match(panel, /\{snapshot\.handoff \? <HandoffDialog \/> : null\}/);
   assert.match(panel, /\{snapshot\.credits \? <CreditsCard refusal=\{snapshot\.credits\} \/> : null\}/);
   assert.match(panel, /useStoreState<AiBudgetState>\(aiBudgetStore\)/, 'the header\'s own meter, kept live by budget_updated');
   assert.match(panel, /This session is archived\. Unarchive it to keep going\./);

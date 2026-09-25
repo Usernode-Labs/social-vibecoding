@@ -16,7 +16,14 @@
 //   - a conversation nothing was said in yet (no title, since the first
 //     message titles it, and no change) is not work in progress;
 //   - newest first, each with the mark the other lists draw (./activity):
-//     a spinner while it works, a green dot once it finished unseen.
+//     a spinner while it works, a green dot once it finished unseen;
+//   - A SESSION THAT IS WORKING IS ALWAYS LISTED (#3073), however many newer
+//     ones there are. Recents keeps thirty rows on the same clock, so a
+//     session could spin there while five newer ones pushed it out of these
+//     rows: the two lists disagreed about the very thing the spinner is for.
+//     The working ones take their places first and the newest others fill
+//     what is left of the five; the rows stay newest first. More than five
+//     working at once are all listed, since each is something in progress.
 
 import { agentActivity, type AgentActivity } from '../agent-session/activity';
 
@@ -68,9 +75,11 @@ export function continueRows(
   const current = agentSessions
     .filter((session) => session.status === 'open' && (session.title || session.activeChange))
     .sort((a, b) => (time(b.lastActivityAt) || time(b.createdAt)) - (time(a.lastActivityAt) || time(a.createdAt)));
-  const shown = Math.max(0, max);
-  const rows = current
-    .slice(0, shown)
+  const working = current.filter((session) => agentActivity(session) === 'working');
+  const room = Math.max(0, max - working.length);
+  const others = new Set(current.filter((session) => agentActivity(session) !== 'working').slice(0, room));
+  const shown = current.filter((session) => others.has(session) || agentActivity(session) === 'working');
+  const rows = shown
     .map((session): ContinueRow => ({
       key: `agent:${session.id}`,
       href: `#messages/agent/${session.id}`,
@@ -78,5 +87,5 @@ export function continueRows(
       detail: agentDetail(session),
       activity: agentActivity(session),
     }));
-  return { rows, more: current.length > shown };
+  return { rows, more: current.length > shown.length };
 }

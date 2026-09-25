@@ -39,8 +39,8 @@ export {
 export {
   handoffTarget,
   handoffSteps,
+  handoffChecks,
   creditsView,
   CreditsCardView,
-  VenuePicker,
-  VENUE_ROWS,
+  HandoffPanel,
 } from '../../frontend/src/features/agent-session/handoff';

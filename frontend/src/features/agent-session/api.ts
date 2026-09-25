@@ -361,7 +361,8 @@ export async function unarchiveSession(id: number): Promise<AgentSession> {
  * Where a hand-off to Claude Code or Codex on the web stands for this
  * person and app (GET /api/apps/:slug/dev-flow/status, the dev chat's own
  * walkthrough): GitHub linked, the fork, the connector, and the instructions
- * to paste. `changeId` names the change the hand-off continues.
+ * to paste. `change` names the change the hand-off continues, whose spec
+ * the instructions then carry.
  */
 export interface HandoffStatus {
   available?: boolean;
@@ -371,6 +372,8 @@ export interface HandoffStatus {
   fork?: { state?: string; owner?: string; repo?: string; url?: string; pageUrl?: string } | null;
   targetKind?: 'session' | 'proposal' | null;
   instructions?: string;
+  /** Whether `instructions` carry the change's spec (asked for with `specFrom`). */
+  specCarried?: boolean;
   [key: string]: unknown;
 }
 
@@ -380,6 +383,9 @@ export async function handoffStatus(slug: string, change: { id: number; kind: 's
     query.set('sessionId', String(change.id));
     query.set('proposalId', String(change.id));
     query.set('targetKind', change.kind);
+    // #3078: the instructions carry this change's spec. Only a claim: the
+    // server reads it only when the change is the viewer's own.
+    query.set('specFrom', String(change.id));
   }
   const suffix = query.toString() ? `?${query}` : '';
   return json(

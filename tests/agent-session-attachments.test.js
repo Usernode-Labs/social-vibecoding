@@ -308,7 +308,7 @@ test('the pill is gray in every state and only its ink changes; a bar along its 
 
 test('the sheet spells out the credits the pill abbreviates', () => {
   const credit = parts.creditView({ limitCents: 5000, remainingCents: 1200, spentCents: 3800, byokCents: 60, weekly: true, level: 'ok' });
-  const html = renderToHtml(createElement(parts.ModelSheetBody, { groups: [], value: '', onPick() {}, onClose() {}, effort: null, credit }));
+  const html = renderToHtml(createElement(parts.ModelSheetBody, { options: [], value: '', onPick() {}, effort: null, credit }));
   assert.match(html, /data-agent-session-sheet-credits/);
   assert.match(html, />This week’s credits</);
   assert.match(html, /role="meter" aria-label="Credits left" aria-valuemin="0" aria-valuemax="50" aria-valuenow="12"/);
@@ -404,4 +404,15 @@ test('the message box re-fits its hint when it gets its width, not only when its
   assert.match(panel, /new ResizeObserver\(\(\) => \{\s*if \(field\.clientWidth === width\) return;\s*width = field\.clientWidth;\s*fitField\(\);/,
     'on a width change only, so the height it sets cannot loop');
   assert.match(panel, /return \(\) => observer\.disconnect\(\);/);
+});
+
+test('the attach button draws a paperclip and says it attaches files (#3080)', () => {
+  // It only ever opened the file picker, so a "+" promised more than it did.
+  const panel = read('frontend/src/features/agent-session/index.tsx');
+  const button = panel.match(/<button[^>]*?data-agent-session-attach[\s\S]*?<\/button>/);
+  assert.ok(button, 'the attach button is still marked data-agent-session-attach');
+  assert.match(button[0], /aria-label="Attach photos or files"/);
+  assert.match(button[0], /title="Attach photos or files"/);
+  assert.match(button[0], /<PaperclipIcon className="h-5 w-5" aria-hidden="true" \/>/);
+  assert.doesNotMatch(button[0], /PlusIcon/);
 });

@@ -235,6 +235,18 @@ export function effortValue(choice: AgentChoice | null, catalog: ModelCatalog | 
   return effort && effort === catalog?.defaultReasoningEffort ? '' : effort;
 }
 
+/**
+ * The thinking level the closed pill names after the model (#3079): the
+ * choice's own effort, or the deployment's default it follows. '' when no
+ * level applies (a model without reasoning) or none is known, never a
+ * placeholder "Default".
+ */
+export function effortLabel(choice: AgentChoice | null, catalog: ModelCatalog | null): string {
+  if (!offersReasoning(choice, catalog)) return '';
+  const effort = (choice && choice.reasoningEffort) || catalog?.defaultReasoningEffort || '';
+  return EFFORT_LABELS[effort] || '';
+}
+
 /** Two choices that run the same way. */
 export function sameChoice(a: AgentChoice | null, b: AgentChoice | null): boolean {
   if (!a || !b) return a === b;

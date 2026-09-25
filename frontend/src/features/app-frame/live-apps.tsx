@@ -22,6 +22,15 @@ export function useLiveAppSlugs(): string[] {
   return liveAppSlugs(useStoreState(appFrameStore));
 }
 
+/**
+ * The app the viewer is in right now, or null (#3074): the mounted frame, on
+ * screen or parked behind its Workshop. Leaving for Home retires it into the
+ * kept frames and clears this. Starts null, as the prerender did.
+ */
+export function useCurrentAppSlug(): string | null {
+  return useStoreState(appFrameStore).slug || null;
+}
+
 /** What the dot means, for a row's or a tile's accessible name. */
 export const LIVE_APP_LABEL = 'still open';
 

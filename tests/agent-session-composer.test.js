@@ -356,7 +356,7 @@ test('each model says what a typical change costs on it, never as a bare amount'
 
   const parts = loadTsx('frontend/src/features/agent-session/composer-parts.tsx');
   const sheet = renderToHtml(createElement(parts.ModelSheetBody, {
-    groups: parts.modelGroups([{ ...sonnet, isDefault: true }]), value: sonnet.value, onPick() {}, onClose() {}, effort: null, credit: null,
+    options: parts.modelList([{ ...sonnet, isDefault: true }]), value: sonnet.value, onPick() {}, effort: null, credit: null,
   }));
   assert.match(sheet, />Sonnet 5<span[^>]*>default<\/span><\/span><span[^>]*>general coding work · about \$1\.55 for a typical change<\/span>/,
     'open: the cost under the name');

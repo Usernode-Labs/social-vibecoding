@@ -58,8 +58,8 @@ import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
 import { useSidePaneBeside } from '../agent-session/spec-layout';
-import { agentActivity } from '../agent-session/activity';
-import { AgentActivityMark } from '../agent-session/activity-mark';
+import { ACTIVITY_LABEL, agentActivity } from '../agent-session/activity';
+import { AgentActivityIcon } from '../agent-session/activity-mark';
 import {
   agentSessionsEnabled,
   deactivateAgentSession,
@@ -1348,6 +1348,7 @@ function MayorSessionRow({ session, active }: { session: MayorSession; active: b
   const thread: MessagesAgentThread = { kind: 'agent', id: session.id };
   const href = agentThreadAddress(thread);
   const change = session.activeChange;
+  const mark = agentActivity(session);
   const status = change
     ? `${change.title || (change.prNumber ? `PR #${change.prNumber}` : `Change ${change.id}`)} · ${
       change.status === 'promoted' ? 'In vote' : change.status === 'merged' ? 'Merged' : 'In progress'}`
@@ -1363,12 +1364,18 @@ function MayorSessionRow({ session, active }: { session: MayorSession; active: b
         if (window.location.hash === href) { event.preventDefault(); openAgentThread(thread); }
       }}
     >
+      {/* #3076: working, the spinner takes the sparkle's place in the tile;
+          finished unseen, the green dot does. The tile is aria-hidden, so
+          the state is said in words beside the name. */}
       <span className="messages-inbox-tile messages-inbox-agent-tile" aria-hidden="true">
-        <SparklesIcon className="w-5 h-5" />
+        {mark
+          ? <AgentActivityIcon activity={mark} className="w-5 h-5" />
+          : <SparklesIcon className="w-5 h-5" />}
       </span>
       <div className="min-w-0 flex-1">
         <div className="messages-row-line">
           <span className="messages-row-name">{session.title || 'New session'}</span>
+          {mark ? <span className="sr-only">{`, ${ACTIVITY_LABEL[mark].toLowerCase()}`}</span> : null}
           {activity
             ? <time className="messages-row-time" dateTime={at || undefined} title={activity.title}>{activity.text}</time>
             : null}
@@ -1377,9 +1384,6 @@ function MayorSessionRow({ session, active }: { session: MayorSession; active: b
           <span className="messages-row-preview">
             {session.busy ? 'Working…' : `${session.focusApp?.name ? `${session.focusApp.name} · ` : ''}${status}`}
           </span>
-          {/* #2779: where a conversation's unread count goes, the lists' mark:
-              a spinner while it works, a green dot once it finished unseen. */}
-          <AgentActivityMark activity={agentActivity(session)} />
         </div>
       </div>
     </a>

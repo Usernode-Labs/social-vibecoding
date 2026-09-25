@@ -327,6 +327,26 @@ async function waitForAnyVisible(page, spec, description, timeoutMs) {
   }
 }
 
+// A hidden wait succeeds only once no matching element is visible. Filter
+// before selecting the first match so a hidden duplicate cannot conceal a
+// still-visible one. An absent match is also hidden, matching assertions.
+async function waitForNotVisible(page, spec, description, timeoutMs) {
+  const visible = locatorFor(page, spec, { includeHidden: true }).filter({ visible: true });
+  try {
+    await visible.first().waitFor({ state: 'hidden', timeout: timeoutMs });
+  } catch (error) {
+    if (await visible.count().catch(() => null) === 0) return;
+    const snapshot = await locatorSnapshot(page, spec, { includeCandidates: true });
+    if (!Number.isInteger(snapshot.attachedCount)
+        && !Number.isInteger(snapshot.matchedCount)) throw error;
+    throw new ReplayFailure(
+      'locator_still_visible',
+      `${description} remained visible after ${timeoutMs} ms.`,
+      { ...snapshot, waitState: 'hidden', timeoutMs }
+    );
+  }
+}
+
 async function waitForVisibleText(page, text, description, timeoutMs) {
   return waitForAnyVisible(page, { by: 'text', value: text, exact: false }, description, timeoutMs);
 }
@@ -565,7 +585,10 @@ async function executeAction(page, action, origin, network, authToken = '') {
       await page.evaluate(({ x, y }) => window.scrollBy({ left: x, top: y, behavior: 'instant' }), { x: action.x, y: action.y });
       break;
     case 'waitFor':
-      if (action.target) await waitForAnyVisible(page, action.target, action.id, action.timeoutMs);
+      if (action.target) {
+        if (action.state === 'hidden') await waitForNotVisible(page, action.target, action.id, action.timeoutMs);
+        else await waitForAnyVisible(page, action.target, action.id, action.timeoutMs);
+      }
       else if (action.text) await waitForVisibleText(page, action.text, action.id, action.timeoutMs);
       else if (action.path) await page.waitForURL((url) => url.origin === origin && publicRelativePath(url) === action.path, { timeout: action.timeoutMs });
       else await network.quiet(action.timeoutMs);
@@ -591,7 +614,10 @@ async function evaluateAssertion(page, assertion, origin) {
   let actual = null;
   switch (assertion.type) {
     case 'visible': passed = count === 1 && await first.isVisible(); break;
-    case 'hidden': passed = count === 0 || (count === 1 && !await first.isVisible()); break;
+    case 'hidden':
+      if (count === 1) actual = await first.isVisible();
+      passed = count === 0 || (count === 1 && actual === false);
+      break;
     case 'attached': passed = count === 1; break;
     case 'detached': passed = count === 0; break;
     case 'text':
@@ -1282,6 +1308,7 @@ module.exports = {
   locatorSnapshot,
   resolveOne,
   waitForAnyVisible,
+  waitForNotVisible,
   waitForVisibleText,
   authorizedUrl,
   navigateStart,

@@ -109,19 +109,22 @@ test('Codex evidence receives the planning contract as developer context in a fr
 test('the evidence prompt asks for a replay plan and leaves visual judgement to people', () => {
   assert.match(agent.SYSTEM_PROMPT, /platform code—not you—will reset both sides and\s+replay it twice/i);
   assert.match(agent.SYSTEM_PROMPT, /promptly acknowledges a\s+validated submission; it does not wait for replay or return a verdict/i);
-  assert.match(agent.SYSTEM_PROMPT, /platform waits for replay, starts a separate\s+correction turn if a locator fails/i);
+  assert.match(agent.SYSTEM_PROMPT, /platform waits for replay, starts a separate\s+correction turn for a repairable replay failure/i);
   assert.match(agent.SYSTEM_PROMPT, /passing media available to human\s+reviewers/i);
   assert.match(agent.SYSTEM_PROMPT, /do not need image understanding or a relevance verdict/i);
   assert.doesNotMatch(agent.SYSTEM_PROMPT, /evidence_finish/);
   assert.match(agent.SYSTEM_PROMPT, /page[\s\S]*untrusted data/i);
   assert.doesNotMatch(agent.promptFor(), /review was rejected|corrected plan/i);
   assert.match(agent.promptFor({ repair: true }), /rejected plan and the exact replay failure/i);
-  assert.match(agent.promptFor({ repair: true }), /BOTH exact revisions/i);
+  assert.match(agent.promptFor({ repair: true }), /BOTH exact\s+revisions/i);
   assert.match(agent.replayPlanGuide(), /No arbitrary JavaScript/);
   assert.match(agent.replayPlanGuide(), /exactly one\s+entry for every accepted story id/i);
   assert.match(agent.replayPlanGuide(), /Do not copy those fields yourself/);
   assert.match(agent.replayPlanGuide(), /Every interaction target and each checkpoint focus must\s+identify exactly one visible element/);
-  assert.match(agent.replayPlanGuide(), /waitFor target only needs one or more\s+visible matches/);
+  assert.match(agent.replayPlanGuide(), /state:"visible" or state:"hidden"/);
+  assert.match(agent.replayPlanGuide(), /waitFor target only needs one or more\s+visible matches when state is visible/);
+  assert.match(agent.replayPlanGuide(), /wait for its observed marker to appear,\s+then wait for it to become hidden/i);
+  assert.match(agent.promptFor({ repair: true }), /retaining the original checkpoint assertions unchanged/i);
   assert.match(agent.replayPlanGuide(), /waitFor text matches a visible substring/);
 });
 

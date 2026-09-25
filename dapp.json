@@ -5152,9 +5152,9 @@
       "expectText": "Superseded by a newer preview"
     },
     {
-      "name": "#2779: an agent session's saved drafts sit above the message box, a Mayor reply says what it cost, and its bar has Build: Homeroom and ⋯",
+      "name": "#2779: an agent session's saved drafts sit above the message box, a Mayor reply says what it cost, and its bar has Changes and ⋯ (where it is built moved to the composer's Build with, #3078)",
       "path": "/#messages/agent/990801",
-      "expectSelector": "[data-agent-session-thread=\"990801\"]:has([data-agent-session-reply-cost]):has([data-agent-session-venue] ~ [data-agent-session-menu]) [data-agent-session-drafts=\"1\"] [data-agent-session-draft=\"dstagingfixture1\"]",
+      "expectSelector": "[data-agent-session-thread=\"990801\"]:has([data-agent-session-reply-cost]):has([data-agent-session-changes-button] ~ [data-agent-session-menu]) [data-agent-session-drafts=\"1\"] [data-agent-session-draft=\"dstagingfixture1\"]",
       "expectText": "Also keep the choice when I switch devices."
     },
     {

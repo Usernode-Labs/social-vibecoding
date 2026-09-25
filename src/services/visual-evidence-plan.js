@@ -223,12 +223,15 @@ const actionSchema = z.union([
     ...actionBase,
     type: z.literal('waitFor'),
     target: locatorSchema.optional(),
+    state: z.enum(['visible', 'hidden']).optional(),
     text: textField(MAX_LOCATOR_VALUE).optional(),
     path: relativePathSchema.optional(),
     quietNetwork: z.boolean().optional(),
     timeoutMs: z.number().int().min(100).max(MAX_WAIT_MS).default(MAX_WAIT_MS),
   }).strict().refine((value) => [value.target, value.text, value.path, value.quietNetwork === true].filter(Boolean).length === 1,
-    'waitFor requires exactly one of target, text, path, or quietNetwork'),
+    'waitFor requires exactly one of target, text, path, or quietNetwork')
+    .refine((value) => value.state == null || value.target != null,
+      'waitFor state is only supported with a target'),
 ]);
 
 const assertionSchema = z.discriminatedUnion('type', [
