@@ -83,7 +83,7 @@ export interface PanelHint {
    * request or the proposal New change was pressed on. The session is
    * created with it on the first message, in the panel's own document.
    */
-  agentHint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null;
+  agentHint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string; issueTitle?: string } | null;
 }
 
 interface AppLike {

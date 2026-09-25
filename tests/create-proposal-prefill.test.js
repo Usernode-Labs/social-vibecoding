@@ -178,3 +178,29 @@ test('createPrForIssue: issue missing from cache still drafts (empty title/body)
   assert.match(seed, /Closes #7/, 'Closes line present');
   assert.equal(calls.sendMessage.length, 0, 'still nothing sent');
 });
+
+// #2779: with agent sessions on, Start work opens an unsent conversation with
+// the Mayor instead of a dev chat. The hint carries the request's title as
+// well as its number, so that conversation names the request and offers its
+// first message in the box (frontend/src/features/agent-session/
+// request-seed.ts) rather than opening blank. No dev chat is made.
+test('createPrForIssue: with agent sessions on, the hint carries the request and its title', async () => {
+  const { AppView, calls, sandbox } = makeHarness();
+  const started = [];
+  sandbox.App.user = { id: 42, agentSessionsEnabled: true };
+  // The hint is made in the vm's realm: compare it as plain data.
+  sandbox.UsernodeReact = { agentSession: { start: (hint) => { started.push(JSON.parse(JSON.stringify(hint))); } } };
+  AppView._ghIssues = [{ ...ISSUE }];
+
+  await AppView.createPrForIssue(5);
+
+  assert.deepEqual(started, [{ slug: 'test-app', issueNumber: 5, entry: 'issue', issueTitle: 'Fix the thing' }]);
+  assert.equal(calls.createSession.length, 0, 'no dev chat is made');
+  assert.equal(calls.setDraft.length, 0);
+
+  // A request the board has not loaded still starts, by number alone.
+  started.length = 0;
+  AppView._ghIssues = [];
+  await AppView.createPrForIssue(7);
+  assert.deepEqual(started, [{ slug: 'test-app', issueNumber: 7, entry: 'issue' }]);
+});

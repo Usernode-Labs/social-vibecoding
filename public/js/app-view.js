@@ -16475,11 +16475,15 @@ const AppView = {
   async createPrForIssue(issueNumber) {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug || typeof DevChat === 'undefined') return;
+    const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
     // #2779: with agent sessions on, the work starts in a conversation with
     // the Mayor focused on this request; it links and claims the request
-    // when it starts the change (the user confirms that on a card).
-    if (AppView._startAgentSession({ slug, issueNumber, entry: 'issue' })) return;
-    const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
+    // when it starts the change (the user confirms that on a card). The
+    // title is for the screen: the unsent conversation names the request and
+    // offers its first message in the box, as the seed below does here.
+    const hint = { slug, issueNumber, entry: 'issue' };
+    if (issue && issue.title) hint.issueTitle = String(issue.title);
+    if (AppView._startAgentSession(hint)) return;
 
     // #287: pass the issue number so the session is persistently linked
     // (created_from_issue_number) and the row keeps the has-session state.

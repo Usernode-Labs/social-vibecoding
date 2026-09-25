@@ -393,6 +393,144 @@ test('the first message creates the session with the hint and the model picked m
   }
 });
 
+// Start work on a request card used to open a conversation that said nothing
+// about the request, with an empty box. The card's hint now carries the
+// title; the screen names the request and offers its first message, and the
+// server is sent exactly the hint it resolves, no title.
+test('a conversation started from a request names it and offers its first message', () => {
+  const seed = loadTsx('frontend/src/features/agent-session/request-seed.ts');
+  assert.deepEqual(
+    seed.draftRequest({ slug: 'notes-ab12', issueNumber: 12, entry: 'issue', issueTitle: '  Dark\n mode   toggle ' }),
+    { number: 12, title: 'Dark mode toggle' },
+  );
+  assert.equal(
+    seed.requestSeed({ slug: 'notes-ab12', issueNumber: 12, issueTitle: 'Dark mode toggle' }),
+    'Work on request #12: "Dark mode toggle"',
+  );
+  // The number alone still names it, when the board had not loaded the title.
+  assert.deepEqual(seed.draftRequest({ slug: 'notes-ab12', issueNumber: 12 }), { number: 12, title: null });
+  assert.equal(seed.requestSeed({ slug: 'notes-ab12', issueNumber: 12, issueTitle: '   ' }), 'Work on request #12');
+  // A title is one line of a message, not the whole box.
+  const long = seed.draftRequest({ issueNumber: 3, issueTitle: 'x'.repeat(500) }).title;
+  assert.equal(long.length, 200);
+  assert.ok(long.endsWith('…'));
+  // Anything else starts blank, as New change always has.
+  for (const hint of [null, undefined, {}, { slug: 'notes-ab12', entry: 'improve' }, { issueNumber: 0 }, { issueNumber: 'x' }, { proposalId: 4, slug: 'a' }]) {
+    assert.equal(seed.draftRequest(hint), null);
+    assert.equal(seed.requestSeed(hint), '');
+  }
+
+  const api = loadTsx('frontend/src/features/agent-session/api.ts');
+  assert.deepEqual(
+    api.serverHint({ slug: 'notes-ab12', issueNumber: 12, entry: 'issue', issueTitle: 'Dark mode toggle' }),
+    { slug: 'notes-ab12', issueNumber: 12, entry: 'issue' },
+    'the title is the screen\'s: the server takes only what it resolves',
+  );
+  assert.equal(api.serverHint(null), null);
+
+  const screen = read('frontend/src/features/agent-session/index.tsx');
+  assert.match(screen, /data-agent-session-request=\{request\.number\}/, 'the unsent conversation says which request it is for');
+  assert.match(screen, /setValue\(saved \|\| seed\)/, 'the box offers the seed only when nothing was typed');
+  assert.match(screen, /if \(request\) return \[\];/, 'no starter pill replaces the request\'s first message');
+});
+
+test('Start work: the title never reaches the server, and the box drops what an earlier unsent conversation left', async () => {
+  const stored = new Map([['usernode:agent-session-unsent:new', 'left over from another New change']]);
+  const win = {
+    location: { hash: '#messages/agent/new' },
+    history: { state: null, replaceState: (_state, _unused, url) => { win.location.hash = url; } },
+    App: { restoreFromHash: () => {}, setHeaderTitle: () => {} },
+    UsernodeReact: {},
+    PlatformUI: { toast: () => {} },
+    localStorage: {
+      getItem: (key) => (stored.has(key) ? stored.get(key) : null),
+      setItem: (key, value) => { stored.set(key, String(value)); },
+      removeItem: (key) => { stored.delete(key); },
+    },
+  };
+  const focusApp = { id: 3, slug: 'notes-ab12', name: 'Notes' };
+  const session = {
+    id: 9, title: null, status: 'open', focusApp, focusContext: { entry: 'issue', issueNumber: 12 },
+    agent: null, activeChange: null, busy: false, lastActivityAt: null, createdAt: null,
+  };
+  const requests = [];
+  globalThis.window = win;
+  globalThis.EventSource = class { close() {} };
+  globalThis.fetch = async (url, init = {}) => {
+    requests.push([url, init.method || 'GET', init.body ? JSON.parse(init.body) : null]);
+    const body = url.startsWith('/api/agent-sessions/draft')
+      ? { draft: { focusApp, focusContext: { entry: 'issue', issueNumber: 12 } } }
+      : url === '/api/agent-sessions' ? { session }
+        : /\/messages\?/.test(url) ? { messages: [], nextAfter: null }
+          : /\/actions$/.test(url) ? { actions: [] }
+            : { session, turn: null };
+    return { ok: true, status: 200, body: null, json: async () => body };
+  };
+  try {
+    const store = loadTsx('frontend/src/features/agent-session/store.ts');
+    const hint = { slug: 'notes-ab12', issueNumber: 12, entry: 'issue', issueTitle: 'Dark mode toggle' };
+    store.prepareAgentDraft(hint);
+    await store.openAgentSession({ id: 'new', host: 'messages' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(stored.has('usernode:agent-session-unsent:new'), false, 'the request\'s first message wins over stale unsent text');
+    const state = store.getAgentSessionState();
+    assert.equal(state.draft.hint.issueTitle, 'Dark mode toggle', 'the screen keeps the title to name the request');
+    assert.deepEqual(state.draft.focusApp, focusApp);
+    assert.deepEqual(requests.map(([url]) => url), ['/api/agent-sessions/draft?slug=notes-ab12&issueNumber=12&entry=issue']);
+
+    await store.sendAgentMessage('Work on request #12: "Dark mode toggle"');
+    const create = requests.find(([url, method]) => url === '/api/agent-sessions' && method === 'POST');
+    assert.deepEqual(create[2], { hint: { slug: 'notes-ab12', issueNumber: 12, entry: 'issue' } },
+      'created with the request in its focus, so the Mayor reads, links and claims it');
+
+    // A plain New change afterwards leaves unsent text alone.
+    stored.set('usernode:agent-session-unsent:new', 'typed in a plain New change');
+    store.startAgentSession({ entry: 'messages' });
+    await store.openAgentSession({ id: 'new', host: 'messages' });
+    assert.equal(stored.get('usernode:agent-session-unsent:new'), 'typed in a plain New change');
+  } finally {
+    delete globalThis.window;
+    delete globalThis.fetch;
+    delete globalThis.EventSource;
+  }
+});
+
+test('an unsent conversation routed twice still takes its preview (the phone showed "Any app")', async () => {
+  // A phone routes Start work to Messages and then to the full screen. The
+  // second pass keeps the draft; it used to claim the load too, so the
+  // preview the first pass asked for was dropped and the bar said "Any app".
+  const focusApp = { id: 3, slug: 'notes-ab12', name: 'Notes' };
+  let answer;
+  const pending = new Promise((resolve) => { answer = resolve; });
+  globalThis.window = { location: { hash: '#messages/agent/new' }, App: { setHeaderTitle: () => {} }, UsernodeReact: {}, PlatformUI: { toast: () => {} } };
+  globalThis.EventSource = class { close() {} };
+  globalThis.fetch = async (url) => {
+    if (url.startsWith('/api/agent-sessions/draft')) {
+      await pending;
+      return { ok: true, status: 200, json: async () => ({ draft: { focusApp, focusContext: { entry: 'issue', issueNumber: 12 } } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  try {
+    const store = loadTsx('frontend/src/features/agent-session/store.ts');
+    store.prepareAgentDraft({ slug: 'notes-ab12', issueNumber: 12, entry: 'issue', issueTitle: 'Dark mode toggle' });
+    await store.openAgentSession({ id: 'new', host: 'messages' });
+    const draft = store.getAgentSessionState().draft;
+    await store.openAgentSession({ id: 'new', host: 'screen' });
+    assert.equal(store.getAgentSessionState().draft, draft, 'the same draft, kept');
+    assert.equal(store.getAgentSessionState().host, 'screen');
+    answer();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(store.getAgentSessionState().draft.focusApp, focusApp, 'the preview lands after the second pass');
+    assert.equal(store.getAgentSessionState().draft.hint.issueTitle, 'Dark mode toggle');
+  } finally {
+    delete globalThis.window;
+    delete globalThis.fetch;
+    delete globalThis.EventSource;
+  }
+});
+
 test('a message the server refuses goes back to the composer instead of vanishing', async () => {
   const session = { id: 7, title: null, status: 'open', focusApp: null, focusContext: {}, agent: null, activeChange: null, busy: false, lastActivityAt: null, createdAt: null };
   globalThis.window = { location: { hash: '#agent/7' }, App: {}, UsernodeReact: {}, PlatformUI: { toast: () => {} } };

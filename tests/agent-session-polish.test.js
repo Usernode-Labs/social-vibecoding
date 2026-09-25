@@ -47,8 +47,10 @@ test('#3033: a tapped reply is put in the box, not sent', () => {
   const composer = panel.slice(panel.indexOf('function Composer('));
   assert.match(composer, /const fill = snapshot\.composerFill;\s*useEffect\(\(\) => \{\s*if \(!fill\) return;\s*update\(fill\.text\);\s*clearComposerFill\(\);/,
     'the box takes it, replacing what was there, as the dev chat does');
+  // The focus rule is shared with a request's first message (request-seed.ts).
+  assert.match(composer, /clearComposerFill\(\);\s*focusAtEnd\(fill\.text\);/);
   assert.match(composer, /window\.matchMedia\('\(pointer: coarse\)'\)\.matches/);
-  assert.match(composer, /if \(field && !coarse\) \{\s*field\.focus\(\);\s*try \{ field\.setSelectionRange\(fill\.text\.length, fill\.text\.length\); \}/,
+  assert.match(composer, /if \(field && !coarse\) \{\s*field\.focus\(\);\s*try \{ field\.setSelectionRange\(text\.length, text\.length\); \}/,
     'focus and the caret at the end, but no keyboard raised on a phone');
 });
 
