@@ -126,6 +126,7 @@ if [ "$MODE" = "evidence" ]; then
     || die "could not create evidence browser state"
   chmod 700 "$EVIDENCE_TMP"
   export EVIDENCE_BROWSER_STATE_DIR="$EVIDENCE_TMP/state"
+  export EVIDENCE_HOSTED_ORIGINS_FILE="$EVIDENCE_BROWSER_STATE_DIR/hosted-origins.json"
   export EVIDENCE_BROWSER_DIAGNOSTIC_FILE="$EVIDENCE_TMP/browser-diagnostics.log"
   : > "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE"
   tail -n +1 -s 0.2 -f "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE" &
@@ -283,8 +284,10 @@ startup_timeout_sec = 15
 tool_timeout_sec = 30
 TOML
   elif [ "$MODE" = "evidence" ]; then
-    ESCAPED_BASE_ORIGIN=$(toml_escape "$EVIDENCE_BASE_ORIGIN")
-    ESCAPED_HEAD_ORIGIN=$(toml_escape "$EVIDENCE_HEAD_ORIGIN")
+    BROWSER_ALLOWED_ORIGINS=$(node /usr/local/bin/evidence-hosted-origins.js \
+      "$EVIDENCE_BASE_ORIGIN" "$EVIDENCE_HEAD_ORIGIN" "$EVIDENCE_HOSTED_ORIGINS_FILE") \
+      || die "could not load evidence hosted-app catalog"
+    ESCAPED_BROWSER_ALLOWED_ORIGINS=$(toml_escape "$BROWSER_ALLOWED_ORIGINS")
     ESCAPED_PROXY=$(toml_escape "$EVIDENCE_PROXY_SERVER")
     ESCAPED_MEMBER_STATE=$(toml_escape "$EVIDENCE_BROWSER_STATE_DIR/member.json")
     ESCAPED_ADMIN_STATE=$(toml_escape "$EVIDENCE_BROWSER_STATE_DIR/read_only_admin.json")
@@ -301,7 +304,7 @@ tool_timeout_sec = 720
 [mcp_servers.browser_member]
 command = "node"
 TOML
-    printf 'args = ["/usr/local/bin/evidence-browser-observer.js", "member", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_MEMBER_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
+    printf 'args = ["/usr/local/bin/evidence-browser-observer.js", "member", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--storage-state", "%s", "--allowed-origins", "%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_MEMBER_STATE" "$ESCAPED_BROWSER_ALLOWED_ORIGINS" "$ESCAPED_PROXY"
     cat <<'TOML'
 env_vars = ["EVIDENCE_ALLOWED_ORIGINS", "EVIDENCE_BROWSER_DIAGNOSTIC_FILE", "EVIDENCE_NAVIGATION_HINTS"]
 enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
@@ -311,7 +314,7 @@ tool_timeout_sec = 60
 [mcp_servers.browser_admin]
 command = "node"
 TOML
-    printf 'args = ["/usr/local/bin/evidence-browser-observer.js", "admin", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_ADMIN_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
+    printf 'args = ["/usr/local/bin/evidence-browser-observer.js", "admin", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--storage-state", "%s", "--allowed-origins", "%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_ADMIN_STATE" "$ESCAPED_BROWSER_ALLOWED_ORIGINS" "$ESCAPED_PROXY"
     cat <<'TOML'
 env_vars = ["EVIDENCE_ALLOWED_ORIGINS", "EVIDENCE_BROWSER_DIAGNOSTIC_FILE", "EVIDENCE_NAVIGATION_HINTS"]
 enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]

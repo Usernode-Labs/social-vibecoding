@@ -3,15 +3,18 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { browserAllowedOrigins } = require('./evidence-hosted-origins');
 
 const output = process.argv[2];
 const stateDir = process.env.EVIDENCE_BROWSER_STATE_DIR;
 const proxy = process.env.EVIDENCE_PROXY_SERVER;
-const origins = [process.env.EVIDENCE_BASE_ORIGIN, process.env.EVIDENCE_HEAD_ORIGIN]
-  .map((value) => new URL(value).origin);
-if (!output || !stateDir || !proxy || new Set(origins).size !== 2) {
+const hostedFile = process.env.EVIDENCE_HOSTED_ORIGINS_FILE;
+if (!output || !stateDir || !proxy || !hostedFile) {
   throw new Error('Evidence MCP config inputs are incomplete.');
 }
+const baseOrigin = new URL(process.env.EVIDENCE_BASE_ORIGIN).origin;
+const headOrigin = new URL(process.env.EVIDENCE_HEAD_ORIGIN).origin;
+const origins = browserAllowedOrigins(baseOrigin, headOrigin, hostedFile);
 const browserArgs = (persona) => [
   '/usr/local/bin/evidence-browser-observer.js', persona === 'read_only_admin' ? 'admin' : 'member',
   '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox',
@@ -22,7 +25,7 @@ const browserArgs = (persona) => [
   '--timeout-action', '10000', '--timeout-navigation', '30000',
 ];
 const browserEnv = {
-  EVIDENCE_ALLOWED_ORIGINS: JSON.stringify(origins),
+  EVIDENCE_ALLOWED_ORIGINS: JSON.stringify([baseOrigin, headOrigin]),
   EVIDENCE_BROWSER_DIAGNOSTIC_FILE: process.env.EVIDENCE_BROWSER_DIAGNOSTIC_FILE || '',
   EVIDENCE_NAVIGATION_HINTS: process.env.EVIDENCE_NAVIGATION_HINTS || '{}',
 };

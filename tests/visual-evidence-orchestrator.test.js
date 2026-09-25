@@ -876,6 +876,33 @@ test('planner authentication records both personas and sides without retaining c
   assert.doesNotMatch(JSON.stringify(events), /private|credential|token|\.invalid/i);
 });
 
+test('planner records public-app catalog and frame loading without storing app URLs', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      options.onEvidenceDiagnostic({ kind: 'hosted_app_catalog', side: 'base',
+        outcome: 'ok', httpStatus: 200, count: 1, catalogCount: 2,
+        url: 'https://private.example.invalid/secret' });
+      options.onEvidenceDiagnostic({ kind: 'hosted_app_catalog', side: 'head',
+        outcome: 'ok', httpStatus: 200, count: 1 });
+      options.onEvidenceDiagnostic({ kind: 'hosted_app_allowlist', count: 1 });
+      options.onEvidenceDiagnostic({ kind: 'hosted_app_allowlist', outcome: 'loaded', count: 1 });
+      options.onEvidenceDiagnostic({ kind: 'document_response', side: 'hosted',
+        documentOrdinal: 3, outcome: 'ok', httpStatus: 200, durationMs: 128 });
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'missing_evidence_replay' });
+  const events = fixture.transitions.at(-1).patch.traceSummary.agentActivity.events;
+  assert.deepEqual(events.map((event) => event.kind), [
+    'hosted_app_catalog', 'hosted_app_catalog', 'hosted_app_allowlist',
+    'hosted_app_allowlist', 'document_response',
+  ]);
+  assert.equal(events[3].outcome, 'loaded');
+  assert.equal(events[0].catalogCount, 2);
+  assert.equal(events[4].side, 'hosted');
+  assert.doesNotMatch(JSON.stringify(events), /private|secret|url/i);
+});
+
 test('a timeout retains browser-boundary timing and document outcome without raw page data', async () => {
   const fixture = setup({
     dispatch: async (options) => {

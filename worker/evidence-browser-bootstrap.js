@@ -11,6 +11,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { chromium } = require('/usr/local/lib/node_modules/@playwright/mcp/node_modules/playwright');
 const { SessionBootstrapError, bootstrapInternalSession } = require('./session-bootstrap');
+const { loadTrustedHostedAppOrigins } = require('./evidence-hosted-origins');
 
 function reportAuth(persona, side, bootstrap, sessionCookiePresent) {
   // Only fixed booleans and status cross the worker boundary. The token,
@@ -36,7 +37,13 @@ async function main() {
   if (origins.length !== 2 || !outputDir || !proxy || Object.values(personas).some((value) => !value)) {
     throw new Error('Evidence browser bootstrap configuration is incomplete.');
   }
+  const hostedFile = path.resolve(outputDir, 'hosted-origins.json');
+  if (!process.env.EVIDENCE_HOSTED_ORIGINS_FILE
+      || path.resolve(process.env.EVIDENCE_HOSTED_ORIGINS_FILE) !== hostedFile) {
+    throw new Error('Evidence hosted-app catalog path does not match the private browser state directory.');
+  }
   await fs.mkdir(outputDir, { recursive: true, mode: 0o700 });
+  const memberCatalogs = [];
   const browser = await chromium.launch({
     channel: 'chromium', headless: true, proxy: { server: proxy },
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
@@ -64,12 +71,31 @@ async function main() {
           if (bootstrap.sessionCookieInstalled && !sessionCookiePresent) {
             throw new SessionBootstrapError('session_bootstrap_failed', 'The evidence browser did not retain its private session cookie.');
           }
+          if (persona === 'member') {
+            const side = index === 0 ? 'base' : 'head';
+            memberCatalogs.push(await loadTrustedHostedAppOrigins(context, origin, (result) => {
+              process.stdout.write(`__USERNODE_EVIDENCE_BROWSER__ ${JSON.stringify({
+                kind: 'hosted_app_catalog', side, ...result,
+              })}\n`);
+            }));
+          }
         }
         const target = path.join(outputDir, `${persona}.json`);
         await context.storageState({ path: target });
         await fs.chmod(target, 0o600);
       } finally { await context.close(); }
     }
+    const hostedOrigins = [...(memberCatalogs[0] || new Map())]
+      .filter(([origin, slug]) => memberCatalogs[1]?.get(origin) === slug)
+      .map(([origin]) => origin).sort();
+    const stagedHostedFile = `${hostedFile}.${process.pid}.tmp`;
+    await fs.writeFile(stagedHostedFile, `${JSON.stringify({
+      version: 1, baseOrigin: origins[0], headOrigin: origins[1], origins: hostedOrigins,
+    })}\n`, { mode: 0o600, flag: 'wx' });
+    await fs.rename(stagedHostedFile, hostedFile);
+    process.stdout.write(`__USERNODE_EVIDENCE_BROWSER__ ${JSON.stringify({
+      kind: 'hosted_app_allowlist', count: hostedOrigins.length,
+    })}\n`);
   } finally { await browser.close(); }
 }
 

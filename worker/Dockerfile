@@ -147,6 +147,7 @@ COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
 COPY evidence-mcp.js /usr/local/bin/evidence-mcp.js
 COPY build-evidence-mcp.js /usr/local/bin/build-evidence-mcp.js
 COPY evidence-origin-proxy.js /usr/local/bin/evidence-origin-proxy.js
+COPY evidence-hosted-origins.js /usr/local/bin/evidence-hosted-origins.js
 COPY evidence-browser-observer.js /usr/local/bin/evidence-browser-observer.js
 COPY evidence-browser-bootstrap.js /usr/local/bin/evidence-browser-bootstrap.js
 COPY session-bootstrap.js /usr/local/bin/session-bootstrap.js
