@@ -46,7 +46,7 @@ const provenance = {
 
 function setup({ dispatch, storeArtifacts } = {}) {
   const transitions = [];
-  const calls = { resets: 0, passes: [], stored: 0, cleaned: 0, dispatches: 0, stopClears: 0 };
+  const calls = { resets: 0, passes: [], stored: 0, cleaned: 0, dispatches: 0, stopClears: 0, workerReleased: 0 };
   let currentState = 'planned';
   const pool = {
     query: async (sql) => {
@@ -124,6 +124,7 @@ function setup({ dispatch, storeArtifacts } = {}) {
     worker: {
       isInFlight: () => false,
       clearPendingStop: () => { calls.stopClears += 1; },
+      destroyCcVolume: async () => { calls.workerReleased += 1; },
     },
   };
   dependencies.replay.runPassCases = async (config, sessionId, input, options) => {
@@ -176,6 +177,31 @@ test('a successful agent plan publishes captured media without a model verdict',
   assert.deepEqual(fixture.transitions.map((entry) => entry.next),
     ['provisioning', 'exploring', 'replaying', 'reviewing', 'verified']);
   assert.equal(Object.hasOwn(fixture.transitions.at(-1).patch, 'semanticVerdict'), false);
+  assert.equal(fixture.calls.workerReleased, 0, 'an active native coding session retains its memory');
+});
+
+test('imported evidence releases its temporary worker after a passing run', async () => {
+  const fixture = setup();
+  fixture.session.source = 'imported';
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.workerReleased, 1);
+});
+
+test('imported evidence releases its temporary worker after planner failure', async () => {
+  const fixture = setup({ dispatch: async () => { throw new Error('planner failed'); } });
+  fixture.session.source = 'imported';
+  await assert.rejects(execute(fixture), /planner failed/);
+  assert.equal(fixture.calls.workerReleased, 1);
+});
+
+test('an author plan does not tear down an imported proposal worker it never used', async () => {
+  const fixture = setup();
+  fixture.session.source = 'imported';
+  const result = await execute(fixture, { authorPlan: fixtures.plan() });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 0);
+  assert.equal(fixture.calls.workerReleased, 0);
 });
 
 test('first hosted evidence turn does not resume the proposal coding thread', async () => {
@@ -1088,6 +1114,40 @@ test('competing schedulers claim a planned run only once before launching paired
   await results.find((result) => result.scheduled).promise;
   assert.deepEqual(fixture.calls.passes, [1, 2]);
   assert.equal(fixture.transitions.filter((entry) => entry.next === 'provisioning').length, 1);
+});
+
+test('a merged proposal permits a deliberate rerun but no automatic worker revival', async (t) => {
+  const fixture = setup();
+  fixture.session.status = 'merged';
+  fixture.session.source = 'imported';
+  fixture.session.handoff_base_sha = BASE;
+  fixture.session.imported_pr_head_sha = HEAD;
+  fixture.session.visual_evidence_detail = { intent: fixtures.intent() };
+  fixture.pool.query = async (sql) => {
+    if (/FROM chat_sessions cs/.test(String(sql))) return { rows: [{ ...fixture.session, app_name: 'Demo' }] };
+    if (/SELECT active_turn/.test(String(sql))) return { rows: [{ active_turn: false }] };
+    throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
+  };
+  fixture.dependencies.github = { compareRefs: async () => ({ files: [], filesComplete: true }) };
+  fixture.dependencies.state.createRun = async () => ({ created: true, run: fixture.run });
+  fixture.dependencies.state.clearNotStarted = async () => ({ cleared: true });
+  const metadata = require('../src/services/pr-metadata');
+  const sync = metadata.syncEvidencePrBlock;
+  metadata.syncEvidencePrBlock = async () => {};
+  t.after(() => { metadata.syncEvidencePrBlock = sync; });
+  controlPlane._clearForTests();
+  const config = { visualEvidence: { execute: true, maxRunMs: 60_000, maxAgentMs: 10_000 } };
+  const options = { pool: fixture.pool, sessionId: 42, headSha: HEAD };
+  const automatic = await orchestrator.scheduleForSession(config, options, fixture.dependencies);
+  assert.deepEqual(automatic, { scheduled: false, reason: 'closed' });
+  assert.equal(fixture.calls.dispatches, 0);
+
+  const manual = await orchestrator.scheduleForSession(config,
+    { ...options, trigger: 'manual-rerun' }, fixture.dependencies);
+  assert.equal(manual.scheduled, true);
+  const result = await manual.promise;
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.workerReleased, 1);
 });
 
 test('an agent opinion cannot veto replay-checked captures meant for human review', async () => {

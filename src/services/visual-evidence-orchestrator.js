@@ -885,6 +885,7 @@ async function executeRun(config, options, injected = {}) {
   let latestPlanHash = null;
   let latestHardVerdict = null;
   let failurePhase = 'load_run';
+  let temporaryWorkerAttempted = false;
   // The first planning turn must not inherit the proposal's coding history.
   // Subsequent locator-repair turns resume only this run's evidence thread.
   let agentThreadId = null;
@@ -1173,6 +1174,7 @@ async function executeRun(config, options, injected = {}) {
             'The preview agent used its bounded exploration time.'
           );
         }
+        if (evidenceAgent.temporaryEvidenceWorker(session)) temporaryWorkerAttempted = true;
         const dispatched = await deps.evidenceAgent.dispatch(config, {
           pool,
           session,
@@ -1400,16 +1402,36 @@ async function executeRun(config, options, injected = {}) {
     throw error;
   } finally {
     registration?.unregister();
-    if (pair) {
-      const cleanupStartedAt = Date.now();
-      try { await deps.environment.cleanupPair(config, pair); }
-      finally {
-        addTiming(metrics, 'cleanup', cleanupStartedAt);
-        log.info('visual-evidence', 'Visual evidence environment cleanup finished', {
-          sessionId: session?.id || null,
-          runId: run?.id || options.runId || null,
-          cleanupMs: metrics.timingsMs.cleanup,
-        });
+    try {
+      if (pair) {
+        const cleanupStartedAt = Date.now();
+        try { await deps.environment.cleanupPair(config, pair); }
+        finally {
+          addTiming(metrics, 'cleanup', cleanupStartedAt);
+          log.info('visual-evidence', 'Visual evidence environment cleanup finished', {
+            sessionId: session?.id || null,
+            runId: run?.id || options.runId || null,
+            cleanupMs: metrics.timingsMs.cleanup,
+          });
+        }
+      }
+    } finally {
+      // Repair attempts resume the same evidence thread, so keep the worker
+      // through the entire run and release it only after the last attempt.
+      if (temporaryWorkerAttempted) {
+        try {
+          await deps.worker.destroyCcVolume(session.id);
+          log.info('visual-evidence', 'Temporary evidence worker released', {
+            sessionId: session.id, runId: run?.id || options.runId || null,
+          });
+        } catch (error) {
+          // Cleanup must not replace the replay verdict. The Kubernetes
+          // error is still logged so operators can investigate a leak.
+          log.warn('visual-evidence', 'Temporary evidence worker cleanup failed', {
+            sessionId: session.id, runId: run?.id || options.runId || null,
+            error: error.message,
+          });
+        }
       }
     }
   }
@@ -1450,9 +1472,13 @@ async function scheduleForSession(config, options, injected = {}) {
     return { scheduled: false, reason: 'disabled' };
   }
   const session = await loadSession(pool, sessionId);
-  // A merged or archived change takes no more evidence. The run would only
-  // start the change's worker again, and with it the volume its close freed.
-  if (CLOSED_STATUSES.has(session.status)) return { scheduled: false, reason: 'closed' };
+  // Closed changes do not start automatic evidence runs. A proposal owner or
+  // manager may still deliberately rerun a merged change to diagnose an old
+  // failure; its temporary evidence worker does not recreate a retained PVC.
+  if (CLOSED_STATUSES.has(session.status)
+      && !(session.status === 'merged' && trigger === 'manual-rerun')) {
+    return { scheduled: false, reason: 'closed' };
+  }
   const intent = intentForSession(session);
   if (!intent) {
     await noteNotStarted(pool, sessionId, 'missing_intent', injected);
