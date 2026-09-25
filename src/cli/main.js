@@ -45,6 +45,20 @@ const PINNED_HOOK_RUNNER = [
   'process.exit(2);',
   '}',
 ].join('');
+// The same integrity pin for the advisory checkout freshness check
+// (.agents/hooks/upstream-drift.js), but it fails OPEN: a changed or broken
+// file skips the notice and never blocks the prompt.
+const PINNED_ADVISORY_HOOK_RUNNER = [
+  "const fs=require('fs'),crypto=require('crypto'),p=process.argv[1],expected=process.argv[2];",
+  'try {',
+  "if (!/^[0-9a-f]{64}$/.test(expected)) throw new Error('missing generated integrity pin');",
+  "const actual=crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');",
+  "if (actual!==expected) throw new Error('hook file changed; rerun social-vibecoding codex setup');",
+  'require(p).main();',
+  '} catch (error) {',
+  "process.stderr.write('Checkout freshness check skipped: '+error.message+'\\n');",
+  '}',
+].join('');
 
 // Options that take no value. Anything not listed here consumes the next
 // argument, so a new boolean flag that forgets to register lands as
@@ -956,15 +970,22 @@ function windowsCommandArg(value) {
 }
 
 function setupToml({
-  nodePath, scriptPath, checkoutRoot, profile, forwardEnv, hookSha256,
+  nodePath, scriptPath, checkoutRoot, profile, forwardEnv, hookSha256, driftHookSha256,
 }) {
   if (!/^[0-9a-f]{64}$/.test(hookSha256)) {
     throw new Error('Promotion hook SHA-256 is required');
+  }
+  if (!/^[0-9a-f]{64}$/.test(driftHookSha256)) {
+    throw new Error('Freshness check hook SHA-256 is required');
   }
   const hookPath = path.join(checkoutRoot, '.codex', 'hooks', 'promotion-approval.js');
   const hookArgs = [nodePath, '-e', PINNED_HOOK_RUNNER, hookPath, hookSha256];
   const hookCommand = hookArgs.map(posixShellArg).join(' ');
   const hookCommandWindows = hookArgs.map(windowsCommandArg).join(' ');
+  const driftHookPath = path.join(checkoutRoot, '.agents', 'hooks', 'upstream-drift.js');
+  const driftArgs = [nodePath, '-e', PINNED_ADVISORY_HOOK_RUNNER, driftHookPath, driftHookSha256];
+  const driftCommand = driftArgs.map(posixShellArg).join(' ');
+  const driftCommandWindows = driftArgs.map(windowsCommandArg).join(' ');
   const lines = [
     GENERATED_HEADER,
     '',
@@ -1012,6 +1033,15 @@ function setupToml({
     `command_windows = ${tomlString(hookCommandWindows)}`,
     'timeout = 5',
     'additionalContextLimit = 256',
+    '',
+    '# Advisory: tells the agent when HEAD does not contain the canonical',
+    '# main. Runs its check on the first prompt of a session only.',
+    '[[hooks.UserPromptSubmit.hooks]]',
+    'type = "command"',
+    `command = ${tomlString(driftCommand)}`,
+    `command_windows = ${tomlString(driftCommandWindows)}`,
+    'timeout = 10',
+    'additionalContextLimit = 1200',
     '',
     '[[hooks.PreToolUse]]',
     'matcher = "(^Bash$|api_write$)"',
@@ -1095,6 +1125,15 @@ async function codexSetup(args, io, launcherPath) {
   const hookSha256 = crypto.createHash('sha256')
     .update(await fsp.readFile(hookPath))
     .digest('hex');
+  const driftHookPath = path.join(checkoutRoot, '.agents', 'hooks', 'upstream-drift.js');
+  const driftHookStat = await fsp.lstat(driftHookPath);
+  if (!driftHookStat.isFile() || driftHookStat.isSymbolicLink()
+      || await fsp.realpath(driftHookPath) !== driftHookPath) {
+    throw new Error('Checkout freshness hook must be a real file in this checkout');
+  }
+  const driftHookSha256 = crypto.createHash('sha256')
+    .update(await fsp.readFile(driftHookPath))
+    .digest('hex');
   const tracked = spawnSync('git', ['ls-files', '--error-unmatch', '.codex/config.toml'], {
     cwd: checkoutRoot,
     stdio: 'ignore',
@@ -1128,6 +1167,7 @@ async function codexSetup(args, io, launcherPath) {
           profile: options.profile || 'production',
           forwardEnv: !!options.forward_env_token,
           hookSha256,
+          driftHookSha256,
         }));
         throw new Error('Existing .codex/config.toml is not generated; merge the table printed above manually');
       }
@@ -1146,6 +1186,7 @@ async function codexSetup(args, io, launcherPath) {
       profile: profile.name,
       forwardEnv: !!options.forward_env_token,
       hookSha256,
+      driftHookSha256,
     });
     if (existing !== document) {
       const temp = path.join(codexDirectory, `.config.toml.tmp-${process.pid}-${crypto.randomBytes(8).toString('hex')}`);

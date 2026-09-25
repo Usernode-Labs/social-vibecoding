@@ -16,34 +16,48 @@ Make sure the agent has loaded the other repository's own guidance; if it
 cannot refresh repository context in place, start a fresh task rooted there
 before editing it.
 
-## Shared task workflows
+## Check that this checkout is current before you read or write code
 
-This repository keeps conditional procedures as portable Agent Skills instead
-of loading them for every task. The canonical copies live in
-`.agents/skills/`; `.claude/skills/` links to that directory for Claude
-Code discovery. OpenCode discovers `.agents/skills/` directly, so it does not
-need a duplicate skill tree; its project plugin entry point under
-`.opencode/plugins/` links back to the canonical adapter in `.agents/hooks/`.
-Use the matching skill whenever its description fits:
+- **The code in front of you may not be the code that runs.** Sessions are
+  often started on a user's fork, and a fork's `main` can sit hundreds of
+  merged pull requests behind `Usernode-Labs/social-vibecoding` main.
+  `git fetch origin` cannot tell you: it compares the fork with itself. This
+  applies before you *read* code to answer a question about how the platform
+  behaves now, not only before an edit. An answer read from a stale checkout
+  describes a version that may no longer exist.
+- **Check against the canonical repository, not against `origin`:**
 
-- `usernode-api` — inspect or change Homeroom app/platform state.
-- `usernode-proposal` — run a locally authored native proposal through
-  staging, checks, and optional promotion from an agent on the user's own
-  machine. This skill does not apply inside a Homeroom hosted dev-chat worker:
-  that worker commits on its assigned branch, records visual evidence intent
-  with its supplied tool, and leaves push, PR, and staging to the harness.
-- `react-shell-migration` — convert a legacy-owned shell region to React.
-- `mobile-push-testing` — verify push delivery through a real phone.
+  ```sh
+  git fetch https://github.com/Usernode-Labs/social-vibecoding main
+  git merge-base --is-ancestor FETCH_HEAD HEAD && echo current || echo behind
+  ```
 
-`CLAUDE.md` imports this file for the always-on repository rules below.
-Claude Code, Codex, and OpenCode load the full workflow bodies only when a task
-selects a skill.
+  `behind` means HEAD does not contain the canonical main. To answer a
+  question, read the canonical code instead: `git show FETCH_HEAD:<path>` or
+  `git grep <pattern> FETCH_HEAD`. To change code, follow the next section:
+  the base commit comes from the work order or `proposal_start`, never from
+  merging `FETCH_HEAD` yourself. With the Homeroom connector,
+  `get_checkout_status` answers the same question.
+- **A session-start check runs this for you.**
+  `.agents/hooks/upstream-drift.js` runs when a Claude Code session starts
+  (`.claude/settings.json`), on the first prompt of a Codex session once its
+  project config has been generated, and in OpenCode through
+  `.opencode/plugins/`. When HEAD is behind, it puts a notice in your
+  context; act on it. It is advisory: offline, or in a Homeroom hosted worker
+  (which sets `SOCIAL_VIBECODING_DRIFT_CHECK=off` because the harness fixes
+  its base), it stays silent. Silence is therefore not proof the checkout is current: when
+  the answer depends on current behavior and you have not seen a verdict,
+  run the two commands above.
+- **A fork gets the check only once it contains it.** A fork cut before the
+  check existed has neither the hook nor this section. Syncing that fork's
+  `main` with the canonical one once fixes it for every later session.
 
 ## Know your base commit and create its work branch before you write code
 
 - **This checkout can be a fork whose `main` is far behind the platform
-  repository, and nothing in it says so.** A session dispatched onto a
-  ready-made branch inherits whatever commit that branch was cut from. Once
+  repository, and nothing in it says so** (the section above shows how to
+  check). A session dispatched onto a ready-made branch inherits whatever
+  commit that branch was cut from. Once
   that was ~190 merged pull requests behind the commit the request itself
   described: the files it named had moved, `src/services/mcp-charter.js` did
   not exist yet, and the drift surfaced only because the request happened to
@@ -90,6 +104,29 @@ selects a skill.
   worktree or stop and ask before moving them. Which commit a proposal is
   diffed against decides what the group is voting on; a wrong base is caught
   only at submission, after the expensive work is already done.
+
+## Shared task workflows
+
+This repository keeps conditional procedures as portable Agent Skills instead
+of loading them for every task. The canonical copies live in
+`.agents/skills/`; `.claude/skills/` links to that directory for Claude
+Code discovery. OpenCode discovers `.agents/skills/` directly, so it does not
+need a duplicate skill tree; its project plugin entry points under
+`.opencode/plugins/` link back to the canonical adapters in `.agents/hooks/`.
+Use the matching skill whenever its description fits:
+
+- `usernode-api` — inspect or change Homeroom app/platform state.
+- `usernode-proposal` — run a locally authored native proposal through
+  staging, checks, and optional promotion from an agent on the user's own
+  machine. This skill does not apply inside a Homeroom hosted dev-chat worker:
+  that worker commits on its assigned branch, records visual evidence intent
+  with its supplied tool, and leaves push, PR, and staging to the harness.
+- `react-shell-migration` — convert a legacy-owned shell region to React.
+- `mobile-push-testing` — verify push delivery through a real phone.
+
+`CLAUDE.md` imports this file for the always-on repository rules below.
+Claude Code, Codex, and OpenCode load the full workflow bodies only when a task
+selects a skill.
 
 ## Run the suites that pin what you changed; leave the whole suite to Homeroom
 
