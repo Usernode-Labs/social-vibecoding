@@ -76,6 +76,28 @@ const FULL: Intl.DateTimeFormatOptions = {
   year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
 };
 
+/**
+ * One `Intl.DateTimeFormat` per option set, built once.
+ *
+ * `date.toLocaleTimeString(undefined, opts)` constructs a fresh formatter on
+ * every call, and constructing one (locale negotiation, pattern lookup) is
+ * most of the cost; `format()` on a built one is cheap. A transcript stamps
+ * every row two or three times per render, so on a phone the uncached calls
+ * were a measurable share of opening a long chat. Every option set here names
+ * its own date/time fields, so the `toLocale*String` defaults never apply and
+ * a cached formatter prints exactly what those calls printed. The locale is
+ * still the runtime default, read once — it does not change under a page.
+ */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+function formatDate(date: Date, key: string, options: Intl.DateTimeFormatOptions): string {
+  let formatter = formatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(undefined, options);
+    formatters.set(key, formatter);
+  }
+  return formatter.format(date);
+}
+
 function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear()
     && a.getMonth() === b.getMonth()
@@ -91,9 +113,9 @@ function sameDay(a: Date, b: Date): boolean {
  * screen.
  */
 function datePart(date: Date, now: Date): string {
-  return date.toLocaleDateString(undefined, date.getFullYear() === now.getFullYear()
-    ? { month: 'short', day: 'numeric' }
-    : { year: 'numeric', month: 'short', day: 'numeric' });
+  return date.getFullYear() === now.getFullYear()
+    ? formatDate(date, 'day', { month: 'short', day: 'numeric' })
+    : formatDate(date, 'day-year', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 /**
@@ -121,8 +143,9 @@ export function messageStamp(
   if (!date) return { text: '', title: '' };
 
   const now = opts.now ?? new Date(Date.now());
-  const time = date.toLocaleTimeString(undefined, { hour: opts.hour ?? '2-digit', minute: '2-digit' });
-  const title = date.toLocaleString(undefined, FULL);
+  const hour = opts.hour ?? '2-digit';
+  const time = formatDate(date, `time-${hour}`, { hour, minute: '2-digit' });
+  const title = formatDate(date, 'full', FULL);
   if (sameDay(date, now)) return { text: time, title };
   return { text: `${datePart(date, now)}, ${time}`, title };
 }
@@ -137,7 +160,9 @@ export function timeOfDay(
   opts: { hour?: 'numeric' | '2-digit' } = {},
 ): string {
   const date = parse(value);
-  return date ? date.toLocaleTimeString(undefined, { hour: opts.hour ?? 'numeric', minute: '2-digit' }) : '';
+  if (!date) return '';
+  const hour = opts.hour ?? 'numeric';
+  return formatDate(date, `time-${hour}`, { hour, minute: '2-digit' });
 }
 
 /** The floor under the relative form, in milliseconds. See the header. */
@@ -161,7 +186,7 @@ export function agoStamp(
   if (!date) return { text: '', title: '' };
 
   const now = opts.now ?? new Date(Date.now());
-  const title = date.toLocaleString(undefined, FULL);
+  const title = formatDate(date, 'full', FULL);
   const elapsed = now.getTime() - date.getTime();
   if (elapsed >= RELATIVE_FLOOR_MS) return { text: datePart(date, now), title };
 

@@ -1024,7 +1024,11 @@ export function setDraft(scope: ComposerScope, value: string): void {
     if (value) localStorage.setItem(`usernode:messages-draft:${scope}`, value);
     else localStorage.removeItem(`usernode:messages-draft:${scope}`);
   } catch { /* storage unavailable */ }
-  publish({});
+  // NOT published. Nothing reads a draft from the snapshot: the composer
+  // holds its own text and reads `draftFor` only when its scope changes. A
+  // publish here ran on every keystroke and re-rendered every subscriber —
+  // the open thread and all of its rows, the inbox, the nav recents — which
+  // on a phone made typing in a long chat visibly lag.
 }
 
 export function replyFor(scope: ComposerScope): ConversationMessage | null {

@@ -77,16 +77,31 @@ export function unmountTranscript(host: Element | null): void {
   unmountLegacyPortal(host);
 }
 
-/** The whole transcript, replacing whatever was there. */
+/**
+ * The whole transcript, replacing whatever was there.
+ *
+ * Batched by default. `flush` commits the rows before this returns, for a
+ * caller that measures the scroller on the next line — a history page lands
+ * above the reader, and the offset that keeps them in place is the height the
+ * new rows added. Measured against a batched publish that height was 0: the
+ * first page opened at its OLDEST message instead of the newest, and every
+ * "earlier" page threw the reader to the top of what had just loaded (iOS has
+ * no scroll anchoring to hide it). Only for callers outside React's own
+ * render and effects, where flushSync logs a console error — see
+ * `appendTranscriptMessage` below.
+ */
 export function publishTranscript(
   messages: TranscriptMessage[],
   key = 'main',
   lead: TranscriptLead = { earlier: false, placeholder: null },
+  opts: { flush?: boolean } = {},
 ): void {
-  transcriptStore.set((s: TranscriptState) => ({
+  const set = () => transcriptStore.set((s: TranscriptState) => ({
     ready: true,
     byKey: { ...s.byKey, [key]: { messages, lead } },
   }));
+  if (opts.flush) flushSync(set);
+  else set();
 }
 
 /**

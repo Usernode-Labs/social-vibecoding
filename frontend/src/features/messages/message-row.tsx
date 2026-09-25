@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 
 import {
   BookmarkIcon, BookmarkSolidIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
@@ -55,7 +55,15 @@ function Attachment({ attachment }: { attachment: ConversationMessage['attachmen
   );
 }
 
-export function MessageRow({
+/*
+ * MEMOIZED. The Messages store publishes one snapshot for everything, so any
+ * publish — the inbox reloading, someone else's typing ping — re-rendered the
+ * open transcript and every row in it. A row's inputs are its props: the
+ * message objects keep their identity across publishes that do not touch the
+ * transcript, and the channel set is shared (store.ts `handleSetFor`), so a
+ * row whose message did not change skips the render.
+ */
+export const MessageRow = memo(function MessageRow({
   message,
   conversationId,
   grouped = false,
@@ -328,4 +336,4 @@ export function MessageRow({
       />
     </article>
   );
-}
+});

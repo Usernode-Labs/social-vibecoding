@@ -3124,6 +3124,21 @@
     return function () { cancelAnimationFrame(raf); };
   }
 
+  // A surface on its way out stops taking input the moment it is dismissed,
+  // as a modal already does (animateDialog). The exit spring runs to rest
+  // well after the surface has left the screen, and until teardown the
+  // backdrop, faded to nothing by then, still covered the page: the first
+  // tap after closing a sheet (a tab, a row) landed on it and did nothing.
+  // Measured on a phone-sized viewport, taps 270-390ms after tapping a
+  // sheet's backdrop were swallowed. The surfaces themselves are released
+  // too; a dismissed surface has no more gestures to take.
+  function releaseInput() {
+    for (var i = 0; i < arguments.length; i++) {
+      var el = arguments[i];
+      if (el && el.style) el.style.pointerEvents = 'none';
+    }
+  }
+
   // Wire "click the backdrop to dismiss" WITHOUT eating the opening
   // gesture's ghost click — see decideBackdropDismiss above for why that
   // click exists and why it lands here. Every presented surface with a
@@ -3220,6 +3235,7 @@
     function dismiss(velocity) {
       if (closed) return;
       closed = true;
+      releaseInput(backdrop, sheet);
       springTo(height, velocity || 0, teardown);
     }
 
@@ -3598,6 +3614,7 @@
       closed = true;
       var i = modalStack.indexOf(entry);
       if (i >= 0) modalStack.splice(i, 1);
+      releaseInput(backdrop, panel);
       springTo(width, teardown);
     }
 
@@ -3796,6 +3813,7 @@
         if (settled) return;
         settled = true;
         settleAction = action || null;
+        releaseInput(backdrop, wrap);
         springTo(height, 0, finishSettle);
       }
 

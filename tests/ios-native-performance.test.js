@@ -115,3 +115,61 @@ test('the native-iOS scope is reachable from a URL so checks and screenshots can
     'a test must assert the scoping class actually landed on <html>',
   );
 });
+
+// The pane glass (`--dc-frost`) spread past the surfaces #787 listed: the tab
+// bar, the header, the Messages / Settings / Workshop planes and every kit
+// sheet, panel and dialog, all of which content scrolls behind or a spring
+// moves on every frame. The iOS app now draws them the way the stylesheet
+// already draws them with no backdrop-filter at all.
+const FALLBACK = '@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {';
+const SCOPE = ':where(html.un-ios.in-native-webview) ';
+
+function splitSelectors(list) {
+  const out = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of list) {
+    if (ch === '(') depth += 1;
+    if (ch === ')') depth -= 1;
+    if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+test('native iOS turns the pane frost off at its token, and only there', () => {
+  assert.match(performanceBlock(), /html\.un-ios\.in-native-webview \{\s*--dc-frost:\s*none;\s*\}/);
+  assert.equal((css.match(/--dc-frost\s*:/g) || []).length, 2,
+    'declared once for everyone and once for the iOS app: Safari, the PWA and Android keep the glass');
+});
+
+test('every no-backdrop-filter fallback has an iOS twin right after it, with the same rules', () => {
+  let at = css.indexOf(FALLBACK);
+  let blocks = 0;
+  while (at >= 0) {
+    const end = css.indexOf('\n}', at);
+    const body = css.slice(at + FALLBACK.length, end);
+    const after = css.slice(end + 2, end + 2 + 1600);
+    for (const [, selectors, decls] of body.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const twin = splitSelectors(selectors.split(/\s+/).join(' ')).map((s) => SCOPE + s).join(',\n')
+        + ` { ${decls.split(/\s+/).join(' ').trim()} }`;
+      assert.ok(after.includes(twin), `the iOS app mirrors: ${selectors.trim().slice(0, 60)}`);
+      assert.match(decls, /background-color:\s*var\(--dc-(sheet|strip)\)/, 'an opaque plane, as designed');
+    }
+    blocks += 1;
+    at = css.indexOf(FALLBACK, end);
+  }
+  assert.ok(blocks >= 14, `found ${blocks} fallback blocks`);
+});
+
+test('the frosted surfaces with no fallback block go opaque in the iOS app too', () => {
+  const glass = css.match(/body:has\(:is\(([^)]*)\):not\(\.hidden\)\) #platform-header \{\s*background-color: var\(--dc-sheet-fill\);/);
+  assert.ok(glass, 'the header glass rule');
+  const roots = glass[1].split(',').map((s) => s.trim());
+  const twin = css.match(/:where\(html\.un-ios\.in-native-webview\) body:has\(:is\(([^)]*)\):not\(\.hidden\)\) #platform-header,\s*:where\(html\.un-ios\.in-native-webview\) body:has\(#app-view:not\(\.hidden\)\[data-app-surface="platform"\]\) #platform-header \{\s*background-color: var\(--dc-sheet\);/);
+  assert.ok(twin, 'the header takes the tab bar\'s opaque fallback in the iOS app, on both of its glass routes');
+  assert.deepEqual(twin[1].split(',').map((s) => s.trim()), roots, 'on exactly the routes the glass rule covers');
+  for (const selector of ['.global-chat-composer', '.global-chat-result', '.gc-event-box']) {
+    assert.ok(css.includes(`${SCOPE}${selector} { background`), `${selector} is opaque in the iOS app`);
+  }
+});

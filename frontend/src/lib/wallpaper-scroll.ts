@@ -33,6 +33,21 @@ import { getVisibilityStore } from './visibility-store';
 
 export const STAR_Y_PROP = '--home-star-y';
 
+/**
+ * The star's height in px — the `97px 78px` in its layer in app.css
+ * (tests/wallpaper-scroll.test.js pins the two together).
+ *
+ * THE OFFSET STOPS AT MINUS THIS. The property is written on <html> and the
+ * wallpaper shorthand that reads it is inherited, so every write restyles the
+ * whole document and repaints the body's background: about 9ms of style work
+ * per frame, measured scrolling Settings in an emulated iPhone viewport, on
+ * every frame of every scroll of these screens. Once the star has slid fully
+ * above the top edge it is out of sight wherever it is, so the value clamps
+ * there and scrolling further writes nothing. The star looks exactly as it
+ * did; only the first ~80px of a scroll still pay.
+ */
+export const STAR_HEIGHT_PX = 78;
+
 /** Wallpaper roots → the element that scrolls for them. The landing shell
  *  is a fixed overlay above everything else, so it is checked first. */
 export const SCROLLER_OF: ReadonlyArray<readonly [root: string, scroller: string]> = [
@@ -78,7 +93,7 @@ export function starY(doc: DocLike): number {
   const scroller = doc.documentElement.dataset?.browserScroller === showing.scroller
     ? doc.scrollingElement : doc.getElementById(showing.scroller);
   if (!scroller) return 0;
-  return -Math.round(scroller.scrollTop - restTop(doc, showing.root));
+  return Math.max(-STAR_HEIGHT_PX, -Math.round(scroller.scrollTop - restTop(doc, showing.root)));
 }
 
 export function initWallpaperScroll(doc: DocLike, win: WinLike): () => void {
