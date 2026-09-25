@@ -44,7 +44,7 @@ function revoke(userId, sessionIds) {
 async function reconcile(pool) {
   const ids = [...new Set([...responses.keys(), ...require('./ws').connectedUserIds()])];
   if (!ids.length) return;
-  const { rows } = await pool.query('SELECT id FROM users WHERE id = ANY($1::int[])', [ids]);
+  const { rows } = await pool.query('SELECT id FROM users WHERE id = ANY($1::int[]) AND anonymised_at IS NULL', [ids]);
   const live = new Set(rows.map(r => Number(r.id)));
   for (const id of ids) if (!live.has(id)) await receive(pool, id);
 }

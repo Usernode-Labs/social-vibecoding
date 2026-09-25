@@ -7,7 +7,7 @@ export function DeleteAccountSection() {
   return (
     <div data-settings-section="delete-account" className="hidden">
       <SectionHeading title="Delete account">
-        Permanently remove your account and sign-in access. Shared messages and attachments remain as Deleted user.
+        Anonymise your account and remove your sign-in access. Shared messages and contributions stay under an anonymous “deleted-user” name.
       </SectionHeading>
       <DeleteAccount />
     </div>

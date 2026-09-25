@@ -7694,8 +7694,8 @@ COMMENT ON TABLE conversation_message_reports IS 'staging:private';
 -- moves deterministically to the oldest active member, empty groups and all
 -- direct conversations are archived, and linked attachment/report evidence
 -- keeps its content with nullable attribution.
-CREATE OR REPLACE FUNCTION prepare_conversations_for_user_delete()
-RETURNS TRIGGER
+CREATE OR REPLACE FUNCTION prepare_conversations_for_user_exit(p_user_id INTEGER)
+RETURNS VOID
 LANGUAGE plpgsql
 AS $$
 DECLARE
@@ -7706,27 +7706,27 @@ BEGIN
   -- immediately; linked bytes keep their row and lose only attribution via
   -- the nullable ON DELETE SET NULL foreign key below.
   DELETE FROM conversation_message_attachments
-   WHERE user_id = OLD.id AND message_id IS NULL;
+   WHERE user_id = p_user_id AND message_id IS NULL;
 
   FOR owned IN
     SELECT c.id
       FROM conversations c
       JOIN conversation_members cm ON cm.conversation_id = c.id
      WHERE c.kind = 'group' AND c.status = 'active'
-       AND cm.user_id = OLD.id AND cm.status = 'member' AND cm.role = 'owner'
+       AND cm.user_id = p_user_id AND cm.status = 'member' AND cm.role = 'owner'
      FOR UPDATE OF c, cm
   LOOP
     SELECT cm.user_id INTO successor_id
       FROM conversation_members cm
      WHERE cm.conversation_id = owned.id
-       AND cm.user_id <> OLD.id AND cm.status = 'member'
+       AND cm.user_id <> p_user_id AND cm.status = 'member'
      ORDER BY cm.joined_at NULLS LAST, cm.created_at, cm.user_id
      LIMIT 1
      FOR UPDATE;
 
     UPDATE conversation_members
        SET role = 'member', status = 'removed', left_at = NOW()
-     WHERE conversation_id = owned.id AND user_id = OLD.id;
+     WHERE conversation_id = owned.id AND user_id = p_user_id;
 
     IF successor_id IS NULL THEN
       UPDATE conversation_members
@@ -7748,12 +7748,23 @@ BEGIN
      AND EXISTS (
        SELECT 1 FROM conversation_direct_pairs p
         WHERE p.conversation_id = c.id
-          AND (p.user_low_id = OLD.id OR p.user_high_id = OLD.id)
+          AND (p.user_low_id = p_user_id OR p.user_high_id = p_user_id)
      );
   DELETE FROM notifications n
    USING conversation_direct_pairs p
    WHERE n.conversation_id = p.conversation_id
-     AND (p.user_low_id = OLD.id OR p.user_high_id = OLD.id);
+     AND (p.user_low_id = p_user_id OR p.user_high_id = p_user_id);
+END;
+$$;
+
+-- Account anonymisation (account-deletion.js) keeps the users row, so no
+-- DELETE fires; it calls prepare_conversations_for_user_exit directly.
+CREATE OR REPLACE FUNCTION prepare_conversations_for_user_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  PERFORM prepare_conversations_for_user_exit(OLD.id);
   RETURN OLD;
 END;
 $$;
@@ -9078,6 +9089,10 @@ CREATE TABLE IF NOT EXISTS account_deletions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   completed_at TIMESTAMPTZ
 );
+-- Account deletion anonymises the users row in place instead of deleting it,
+-- so contributions keep a (nameless) author. A non-NULL value marks an
+-- erased account: nothing may sign in as it or treat it as a live user.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS anonymised_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS account_deletion_tasks (
   id BIGSERIAL PRIMARY KEY,
   deletion_id VARCHAR(32) NOT NULL REFERENCES account_deletions(id) ON DELETE CASCADE,

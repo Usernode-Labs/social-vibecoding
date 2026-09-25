@@ -209,7 +209,7 @@ async function provision({ pool, userId, config }) {
   // verified-identity policy that used to lock identity proofs here too: a
   // key is part of creating an account now, not something an account earns.
   const reservation = await credentialStore.withTransaction(pool, async (client) => {
-    const owner = await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+    const owner = await client.query('SELECT id FROM users WHERE id = $1 AND anonymised_at IS NULL FOR UPDATE', [userId]);
     if (!owner.rows.length) throw new ManagedOpenRouterError(404, 'account_deleted', 'Account no longer exists.');
     const existingCredential = await credentialStore.readMetadata({
       pool: client, userId, ...OPENROUTER,

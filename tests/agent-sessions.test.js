@@ -338,7 +338,8 @@ test('the merge and archive paths tell the parent session', () => {
 test('deleting an account removes its conversation-only rows first', () => {
   const SRC = read('src/services/account-deletion.js');
   const rows = SRC.indexOf('DELETE FROM chat_session_messages WHERE session_id IS NULL');
-  assert.ok(rows > 0 && rows < SRC.indexOf("DELETE FROM users WHERE id = $1"));
+  // Deletion anonymises the row, whose purge empties agent_sessions.
+  assert.ok(rows > 0 && rows < SRC.indexOf('await anonymiseUser(db, userId'));
 });
 
 // ── The routes ─────────────────────────────────────────────────────────

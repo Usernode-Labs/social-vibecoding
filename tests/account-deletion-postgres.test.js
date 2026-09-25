@@ -52,6 +52,21 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
   }
   const owner = await user({ fullAdmin: true });
   const erase = target => deletion.deleteAccount(pool, { userId: target.id, actorId: owner.id, mode: 'admin', confirmation: 'DELETE' });
+  const row = async id => (await pool.query('SELECT * FROM users WHERE id = $1', [id])).rows[0];
+  // Deletion anonymises the row in place: it stays, nameless and unusable.
+  async function assertAnonymised(id) {
+    const u = await row(id);
+    assert.ok(u, 'the users row is kept');
+    assert.ok(u.anonymised_at, 'anonymised_at is stamped');
+    assert.match(u.username, /^deleted-user-\d+/);
+    assert.equal(u.email, `support+anonym+${id}@onhomeroom.com`);
+    assert.equal(u.email_confirmed, false);
+    assert.equal(u.password_set, false);
+    assert.equal(u.is_admin, false);
+    assert.equal(u.has_platform_access, false);
+    for (const col of ['display_name', 'bio', 'city', 'country', 'github_login', 'usernode_pubkey', 'waitlist_ip']) assert.equal(u[col], null, col);
+    return u;
+  }
   const count = async (table, column, id) => Number((await pool.query(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = $1`, [id])).rows[0].n);
   const app = (await pool.query(`INSERT INTO apps (name, slug, created_by) VALUES ('Synthetic app', 'deletion-fixture', $1) RETURNING *`, [owner.id])).rows[0];
 
@@ -104,8 +119,16 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
     const dm = (await pool.query(`INSERT INTO conversation_messages(conversation_id,sender_id,content) VALUES ($1,$2,'Keep this direct message') RETURNING id`, [direct,target.id])).rows[0].id;
     await pool.query(`INSERT INTO conversation_message_attachments(id,conversation_id,message_id,user_id,kind,filename,content_type,size_bytes,data)
       VALUES ($1,$2,$3,$4,'text','shared.txt','text/plain',6,$5)`, ['3'.repeat(32),direct,dm,target.id,Buffer.from('retain')]);
+    await pool.query(`INSERT INTO user_social_identities(user_id,provider,provider_subject,handle) VALUES ($1,'github','424242',$2)`, [target.id, 'fixture-handle']);
+    await pool.query(`INSERT INTO username_history(user_id,username) VALUES ($1,$2)`, [target.id, 'fixture_old_name']);
+    await pool.query(`INSERT INTO feedback_reports(user_id,target,app_id,description) VALUES ($1,'app',$2,'Keep this report')`, [target.id, app.id]);
     const result = await erase(target);
-    assert.equal(await count('users','id',target.id),0);
+    const anon = await assertAnonymised(target.id);
+    assert.equal(await count('user_social_identities','user_id',target.id),0,'no social sign-in survives');
+    assert.equal(await count('username_history','user_id',target.id),0,'old names do not lead to the anonymised row');
+    await assert.rejects(pool.query('INSERT INTO users(username,password) VALUES ($1,$2)',['fixture_old_name',hash]),{code:'23505'},'retired names stay reserved');
+    assert.equal(await count('feedback_reports','user_id',target.id),1,'contributions stay on the anonymised author');
+    assert.equal(await count('chat_messages','user_id',target.id),1,'shared messages keep their (nameless) author');
     await assert.rejects(pool.query('INSERT INTO users(username,password) VALUES ($1,$2)',[target.username.toUpperCase(),hash]),{code:'23505'},'old mentions/admin handles cannot be claimed');
     for (const table of ['sessions','mobile_auth_tokens','cli_access_tokens','mcp_tokens','credentials.user_ai_credentials','credentials.managed_openrouter_keys']) {
       assert.equal(await count(table,'user_id',target.id),0,table);
@@ -115,22 +138,22 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
     assert.equal(await count('chat_session_messages','session_id',privateSession),0);
     assert.equal(await count('chat_session_messages','session_id',session),1);
     assert.equal(await count('pr_votes','session_id',privateSession),0);
-    assert.equal((await pool.query('SELECT user_id FROM pr_votes WHERE session_id=$1',[session])).rows[0].user_id,null);
+    assert.equal((await pool.query('SELECT user_id FROM pr_votes WHERE session_id=$1',[session])).rows[0].user_id,target.id,'a vote on a decided proposal stays counted');
     assert.equal(Number((await pool.query('SELECT SUM(total_cost_cents) AS total FROM llm_usage')).rows[0].total),12.5);
     const turn = (await pool.query('SELECT * FROM agent_turns WHERE session_id=$1',[session])).rows[0];
-    assert.equal(turn.user_id,null); assert.equal(turn.credential_id,null); assert.equal(Number(turn.actual_cost_usd),0.42);
+    assert.equal(Number(turn.user_id),target.id); assert.equal(turn.credential_id,null); assert.equal(Number(turn.actual_cost_usd),0.42);
     const retained = (await pool.query('SELECT * FROM chat_message_attachments WHERE id=$1',[sent])).rows[0];
-    assert.equal(retained.user_id,null); assert.equal(retained.data.toString(),'retain');
+    assert.equal(retained.user_id,target.id); assert.equal(retained.data.toString(),'retain');
     assert.equal(await count('chat_message_attachments','id',unsent),0);
     const conversation = await conversations.getConversation(pool,{id:peer.id},direct);
-    assert.equal(conversation.title,'Deleted user'); assert.equal(conversation.canSend,false);
+    assert.equal(conversation.title,anon.username); assert.equal(conversation.canSend,false);
     const history = await conversations.listMessages(pool,{id:peer.id},direct);
-    assert.equal(history.messages[0].sender.username,'Deleted user');
+    assert.equal(history.messages[0].sender.username,anon.username);
     assert.equal(history.messages[0].content,'Keep this direct message');
     assert.equal(history.messages[0].attachments.length,1);
     assert.equal(await conversations.loadMembership(pool,direct,peer.id),null,'write membership stays closed');
     assert.equal(await conversations.getConversation(pool,{id:owner.id},direct),null,'outsider cannot read');
-    assert.equal((await pool.query('SELECT username,ip,error FROM db_exports WHERE user_id IS NULL')).rows[0].username,'Deleted user');
+    assert.equal((await pool.query('SELECT username,ip,error FROM db_exports WHERE user_id = $1',[target.id])).rows[0].username,'Deleted user');
     const receipt = (await cleanup.list(pool)).find(r=>r.id===result.deletionId);
     assert.equal(receipt.completed_at,null);
     assert.ok(receipt.tasks.some(r=>r.kind==='openrouter_key' && r.state==='pending'));
@@ -211,7 +234,7 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
     await erase(target);
     for (const table of ['native_session_credentials','native_session_attempts','native_session_web_incarnations','mobile_auth_tokens','sessions']) assert.equal(await count(table,'user_id',target.id),0,table);
     const retained=(await pool.query('SELECT user_id,secret_key,registration_code FROM onchain_accounts WHERE id=$1',[account])).rows[0];
-    assert.equal(retained.user_id,null); assert.equal(retained.secret_key,''); assert.notEqual(retained.registration_code,'synthetic-code');
+    assert.equal(Number(retained.user_id),target.id); assert.equal(retained.secret_key,''); assert.notEqual(retained.registration_code,'synthetic-code');
   });
 
   await t.test('provider failures retry durably and late provisioning is reconciled', async () => {
@@ -313,7 +336,7 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
         method: 'DELETE', headers: { ...headers, 'X-User-Id': String(victim.id) }, body: JSON.stringify(forged),
       });
       assert.equal(response.status, 200);
-      assert.equal(await count('users', 'id', attacker.id), 0);
+      await assertAnonymised(attacker.id);
       assert.equal(await count('users', 'id', victim.id), 1);
       assert.equal(await count('sessions', 'token', victim.token), 1);
       assert.equal(await count('account_deletions', 'user_id', victim.id), 0);
@@ -345,7 +368,7 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
         actor = { id: owner.id, isAdmin: true, canAdminWrite: true };
         const response = await fetch(base+prefix+target.id,opts);
         assert.equal(response.status,200,JSON.stringify(await response.json()));
-        assert.equal(await count('users','id',target.id),0);
+        await assertAnonymised(target.id);
         assert.equal(await count('sessions','user_id',target.id),0);
         assert.equal(await count('account_deletions','user_id',target.id),1);
       }

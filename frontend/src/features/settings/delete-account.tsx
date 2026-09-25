@@ -53,8 +53,8 @@ export function DeleteAccount() {
   return <form onSubmit={remove} className="mt-4 rounded-xl border border-red-200 dark:border-red-900 p-4 space-y-3" aria-label="Delete account">
     <p className="font-semibold">{deleted ? 'Account deleted' : 'Permanently delete your account?'}</p>
     {!deleted && <>
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">Your profile, sign-in access and private account data will be removed. You will be signed out on all devices. This cannot be undone.</p>
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">Messages, shared attachments and public contributions stay available to other participants under “Deleted user.” Their contents are kept, including any personal information you shared in them.</p>
+      <p className="text-sm text-zinc-600 dark:text-zinc-400">Your account is anonymised, not erased: your name, email, profile, sign-in access and private account data are removed, and you will be signed out on all devices. This cannot be undone.</p>
+      <p className="text-sm text-zinc-600 dark:text-zinc-400">Messages, votes, shared attachments and public contributions stay available to other participants under an anonymous “deleted-user” name. Their contents are kept, including any personal information you shared in them.</p>
       <p className="text-sm text-zinc-600 dark:text-zinc-400">Necessary financial and moderation records are retained without your account link. External cleanup may take longer. Copies in backups, other apps, GitHub or the blockchain follow their own retention rules.</p>
       {/* A failed check leaves passwordRequired null, so without this branch the
           loading line would sit beside the error forever with the submit

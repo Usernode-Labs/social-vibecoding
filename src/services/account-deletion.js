@@ -19,6 +19,120 @@ async function queueTask(db, deletionId, kind, target, state = 'pending') {
   );
 }
 
+// Account deletion anonymises the users row instead of deleting it (both the
+// self-service and the admin paths). Contributions — proposals, messages,
+// votes, reactions, accounting — keep a nameless author; the identity, its
+// sign-in material and its private data go exactly as a DELETE's cascades
+// took them. Rows of these ON DELETE CASCADE tables are the contributions
+// and STAY on the anonymised row. Every other cascading table is emptied for
+// the account. SET NULL tables keep pointing at the anonymised row.
+const KEEP_ON_ANONYMISE = Object.freeze(new Set([
+  'public.app_activity',
+  'public.conversation_direct_pairs',
+  'public.conversation_members',
+  'public.conversation_message_reactions',
+  'public.feedback_reports',
+  'public.leaderboard_snapshots',
+  'public.local_agent_turns',
+  'public.message_reactions',
+  'public.support_actions',
+  'public.topic_attribute_votes',
+  'public.user_activities',
+  'public.user_enrollments',
+]));
+
+const ANON_EMAIL_DOMAIN = 'onhomeroom.com';
+function anonymisedEmail(userId) {
+  return `support+anonym+${userId}@${ANON_EMAIL_DOMAIN}`;
+}
+
+async function cascadingUserColumns(db) {
+  const { rows } = await db.query(
+    `SELECT n.nspname AS schema_name, r.relname AS table_name, a.attname AS column_name
+       FROM pg_constraint c
+       JOIN pg_class r ON r.oid = c.conrelid
+       JOIN pg_namespace n ON n.oid = r.relnamespace
+       JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+      WHERE c.contype = 'f' AND c.confrelid = 'public.users'::regclass
+        AND c.confdeltype = 'c' AND cardinality(c.conkey) = 1
+      ORDER BY n.nspname, r.relname, a.attname`
+  );
+  return rows.filter(r => !KEEP_ON_ANONYMISE.has(`${r.schema_name}.${r.table_name}`));
+}
+
+const ident = name => `"${String(name).replace(/"/g, '""')}"`;
+
+// Separate statements, unlike one cascading DELETE, see foreign keys between
+// the purged tables one at a time. Each delete runs under a savepoint and a
+// blocked one (23503) is retried after the others, until nothing is left.
+async function purgeCascadingRows(db, userId) {
+  let pending = await cascadingUserColumns(db);
+  while (pending.length) {
+    const blocked = [];
+    for (const col of pending) {
+      await db.query('SAVEPOINT anonymise_purge');
+      try {
+        await db.query(`DELETE FROM ${ident(col.schema_name)}.${ident(col.table_name)} WHERE ${ident(col.column_name)} = $1`, [userId]);
+        await db.query('RELEASE SAVEPOINT anonymise_purge');
+      } catch (err) {
+        await db.query('ROLLBACK TO SAVEPOINT anonymise_purge');
+        if (err.code !== '23503') throw err;
+        blocked.push(col);
+      }
+    }
+    if (blocked.length === pending.length) throw new Error('Account anonymisation is blocked by a foreign key');
+    pending = blocked;
+  }
+}
+
+async function placeholderUsername(db, userId) {
+  for (let i = 0; i < 6; i++) {
+    const candidate = i === 0 ? `deleted-user-${userId}` : `deleted-user-${userId}-${crypto.randomBytes(3).toString('hex')}`;
+    const { rows } = await db.query(
+      `SELECT EXISTS (SELECT 1 FROM users WHERE LOWER(username) = LOWER($1)) OR
+              EXISTS (SELECT 1 FROM username_history WHERE LOWER(username) = LOWER($1)) OR
+              EXISTS (SELECT 1 FROM deleted_username_reservations
+                       WHERE fingerprint = encode(sha256(convert_to(LOWER($1), 'UTF8')), 'hex')) AS taken`,
+      [candidate]
+    );
+    if (!rows[0].taken) return candidate;
+  }
+  throw new Error('No free placeholder username for the anonymised account');
+}
+
+async function anonymiseUser(db, userId, unusablePassword) {
+  // What the users BEFORE DELETE trigger did: hand group ownership on,
+  // archive direct conversations. Then leave the remaining groups.
+  await db.query('SELECT prepare_conversations_for_user_exit($1)', [userId]);
+  await db.query(`UPDATE conversation_members cm SET status = 'removed', role = 'member', left_at = NOW()
+    FROM conversations c WHERE c.id = cm.conversation_id AND c.kind = 'group'
+      AND cm.user_id = $1 AND cm.status = 'member'`, [userId]);
+  await db.query(`UPDATE conversation_members cm SET status = 'declined', responded_at = NOW()
+    FROM conversations c WHERE c.id = cm.conversation_id AND c.kind = 'group'
+      AND cm.user_id = $1 AND cm.status = 'invited'`, [userId]);
+  await purgeCascadingRows(db, userId);
+  const username = await placeholderUsername(db, userId);
+  await db.query(
+    `UPDATE users SET username = $2, password = $3, password_set = FALSE,
+            password_reset_token_hash = NULL, password_reset_expires_at = NULL,
+            email = $4, email_confirmed = FALSE, email_confirmed_at = NULL,
+            email_confirmation_token = NULL, email_confirmation_sent_at = NULL,
+            display_name = NULL, telegram = NULL, discord = NULL, github = NULL, x = NULL,
+            country = NULL, city = NULL, bio = NULL, locale = NULL, referrer = NULL, referrer_handle = NULL,
+            device_info = NULL, waitlist_ip = NULL, waitlist_answers = NULL, waitlist_submitted_at = NULL,
+            is_in_waitlist = FALSE, profile_published = FALSE, profile_updated_at = NULL,
+            home_panel_positions = '{}'::jsonb, dev_flow_preference = NULL,
+            is_admin = FALSE, admin_readonly = FALSE, can_create_apps = FALSE, app_quota = 0,
+            app_quota_requested_at = NULL, has_platform_access = FALSE, exclude_podium = TRUE,
+            anthropic_key_enc = NULL, anthropic_key_last4 = NULL,
+            usernode_pubkey = NULL, wallet_link_token = NULL, wallet_link_expires_at = NULL,
+            github_login = NULL, github_oauth_token_enc = NULL, github_linked_at = NULL,
+            needs_username_choice = FALSE, anonymised_at = NOW(), updated_at = NOW()
+      WHERE id = $1`,
+    [userId, username, unusablePassword, anonymisedEmail(userId)]
+  );
+}
+
 // Every entry point uses this transaction, including both admin consoles.
 // No remote calls occur while locks are held. Their durable tasks commit with
 // the erasure so a crash or provider outage cannot lose the cleanup request.
@@ -27,6 +141,8 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
   if (mode !== 'self' && mode !== 'admin') reject(400, 'invalid_mode', 'Invalid deletion mode.');
   if (mode === 'self' && actorId !== userId) reject(403, 'forbidden', 'You can only delete your own account.');
   if (mode === 'admin' && actorId === userId) reject(400, 'self_delete', 'Use Settings → Account → Delete account to delete your own account.');
+  // Hashed before the transaction: bcrypt must not run while locks are held.
+  const unusablePassword = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
   const db = await pool.connect();
   let result;
   try {
@@ -39,13 +155,14 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
     }
     const { rows } = await db.query('SELECT * FROM users WHERE id = $1 FOR UPDATE', [userId]);
     const user = rows[0];
-    if (!user) {
-      if (mode === 'admin' && confirmation === 'DELETE') {
-        const prior = await db.query('SELECT id FROM account_deletions WHERE user_id = $1', [userId]);
-        if (prior.rows.length) {
-          await db.query('COMMIT');
-          return { ok: true, deletionId: prior.rows[0].id };
-        }
+    // A retry finds the anonymised row (or, for an account deleted before
+    // anonymisation, no row) and returns the first receipt.
+    const prior = user && !user.anonymised_at ? { rows: [] }
+      : await db.query('SELECT id FROM account_deletions WHERE user_id = $1', [userId]);
+    if (!user || user.anonymised_at) {
+      if (mode === 'admin' && confirmation === 'DELETE' && prior.rows.length) {
+        await db.query('COMMIT');
+        return { ok: true, deletionId: prior.rows[0].id };
       }
       reject(404, 'not_found', 'User not found.');
     }
@@ -177,7 +294,7 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
     // or removed with the change, as above.
     await db.query(`DELETE FROM chat_session_messages WHERE session_id IS NULL
       AND agent_session_id IN (SELECT id FROM agent_sessions WHERE user_id = $1)`, [userId]);
-    await db.query('DELETE FROM users WHERE id = $1', [userId]);
+    await anonymiseUser(db, userId, unusablePassword);
     await db.query(`UPDATE account_deletions SET completed_at = NOW() WHERE id = $1
       AND NOT EXISTS (SELECT 1 FROM account_deletion_tasks WHERE deletion_id = $1 AND state <> 'completed')`, [deletionId]);
     await db.query('COMMIT');
@@ -205,4 +322,4 @@ async function recordLateManagedKey(pool, userId, hash) {
   return true;
 }
 
-module.exports = { AccountDeletionError, deleteAccount, queueTask, recordLateManagedKey };
+module.exports = { AccountDeletionError, deleteAccount, queueTask, recordLateManagedKey, anonymisedEmail, KEEP_ON_ANONYMISE };
