@@ -11,12 +11,16 @@
  * Shaped by ./profile-store.js `friendsView`; the answers go through
  * `Profile.answerFriendRequest`, which moves the row at once and then re-reads
  * the lists. The rows reuse the grouped list the rest of Me is drawn with.
+ *
+ * A username search leads the section (../friends/friend-search.tsx, #3048),
+ * so a friend can be added without opening their page first.
  */
 
 import { type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { FriendSearch } from '../friends/friend-search';
 import { Profile } from './profile.js';
 
 type FriendRowView = {
@@ -73,6 +77,8 @@ export function FriendsSection({
   return (
     <section id="profile-friends" className="mt-2" aria-label="Friends, visible only to you">
       <SectionHeader>Friends</SectionHeader>
+      {/* #3048: find people by username and add them right here. */}
+      <FriendSearch lists={view} />
       {view.incoming.length ? (
         <GroupedList id="profile-friend-requests" className="mx-0 mb-3">
           {view.incoming.map((row) => (
@@ -139,7 +145,7 @@ export function FriendsSection({
           className="rounded-2xl bg-white dark:bg-zinc-900 p-4 text-center text-sm text-zinc-500 dark:text-zinc-400"
         >
           {view.loaded
-            ? 'No friends yet. Add someone from their profile page.'
+            ? 'No friends yet. Find someone by username above.'
             : 'Your friends could not be loaded. Check your connection and try again.'}
         </div>
       )}

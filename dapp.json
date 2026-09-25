@@ -646,10 +646,10 @@
       "expectSelector": "#profile-screen:not(.hidden) #public-profile-card:has([data-message-person=\"lin\"]) #public-profile-friend [data-friend-state=\"incoming\"] button[data-friend-action=\"accept\"] + button[data-friend-action=\"decline\"]"
     },
     {
-      "name": "Me: a private Friends section lists requests to answer, then your friends (#2386)",
+      "name": "Me: a private Friends section leads with a username search, then requests to answer, then your friends (#2386, #3048)",
       "path": "/?demo=1#profile",
       "expectText": "Only you can see your friends",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-more ~ #profile-friends:has([data-friend-request-accept=\"lin\"] + [data-friend-request-decline=\"lin\"]) #profile-friends-list a[data-friend=\"ada\"][href=\"#profile/ada\"]"
+      "expectSelector": "#profile-screen:not(.hidden) #profile-more ~ #profile-friends:has(#profile-friend-search-input):has([data-friend-request-accept=\"lin\"] + [data-friend-request-decline=\"lin\"]) #profile-friends-list a[data-friend=\"ada\"][href=\"#profile/ada\"]"
     },
     {
       "name": "Edit profile keeps social accounts proof-backed and sends management to Connectors (#982, #1939)",

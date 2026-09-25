@@ -229,3 +229,77 @@ test('a friend request row asks with Accept / Decline until it is answered', () 
     'the controller and the client raise the same event',
   );
 });
+
+// #3048: find friends by username from your own Friends section.
+const SEARCH = 'frontend/src/features/friends/friend-search.tsx';
+
+test('a search result starts in the state the section\'s own lists already say', () => {
+  const { friendStateFor } = loadTsx(SEARCH);
+  const lists = { friends: [{ id: 1 }], incoming: [{ id: 2 }], outgoing: [{ id: 3 }] };
+  assert.equal(friendStateFor(1, lists), 'friends');
+  assert.equal(friendStateFor(2, lists), 'incoming');
+  assert.equal(friendStateFor(3, lists), 'outgoing');
+  assert.equal(friendStateFor(4, lists), 'none');
+  assert.equal(friendStateFor(3, { friends: [], incoming: [] }), 'none', 'outgoing is optional');
+});
+
+test('each result draws the same friend button a person\'s page does, and links to their page', () => {
+  const { FriendSearchResults } = loadTsx(SEARCH);
+  const lists = { friends: [{ id: 1, username: 'ada' }], incoming: [], outgoing: [{ id: 3, username: 'grace' }] };
+  const html = renderToHtml(createElement(FriendSearchResults, {
+    query: 'a', loading: false, failed: false, lists,
+    users: [{ id: 1, username: 'ada', avatarUrl: null }, { id: 5, username: 'alan', avatarUrl: null }, { id: 3, username: 'grace', avatarUrl: null }],
+  }));
+  assert.match(html, /data-friend-search-result="ada"[\s\S]*?href="#profile\/ada"[\s\S]*?data-friend-state="friends"/);
+  assert.match(html, /data-friend-search-result="alan"[\s\S]*?data-friend-state="none"[\s\S]*?data-friend-action="request"[^>]*>.*Add friend/);
+  assert.match(html, /data-friend-search-result="grace"[\s\S]*?data-friend-state="outgoing"/);
+  assert.doesNotMatch(html, /@[^<"]*\.[a-z]{2,}/i, 'no email is ever drawn');
+  assert.doesNotMatch(html, /\b\d+ friends?\b/i, 'no count');
+});
+
+test('the search says when nothing matches, when it is still looking, and when it failed', () => {
+  const { FriendSearchResults } = loadTsx(SEARCH);
+  const base = { users: [], lists: { friends: [], incoming: [] } };
+  const html = (props) => renderToHtml(createElement(FriendSearchResults, { ...base, ...props }));
+  assert.equal(html({ query: '  ', loading: false, failed: false }), '', 'an empty box draws nothing');
+  assert.match(html({ query: 'zz', loading: false, failed: false }), /No one matches “zz”/);
+  assert.match(html({ query: 'zz', loading: true, failed: false }), /Searching…/);
+  assert.match(html({ query: 'zz', loading: false, failed: true }), /Search isn’t working right now/);
+});
+
+test('Me\'s Friends section leads with the search box, which fetches nothing until you type', () => {
+  const real = loadTsx(STORE);
+  const state = {
+    open: true,
+    data: { ranking: {}, summary: { merged: 0, kudos: 0, contributions: [] }, ownerPublicProfile: null,
+      friends: { friends: [], incoming: [], outgoing: [] } },
+    user: { username: 'evan', links: {} },
+    sheetOpen: false, publicStatus: '', publishing: false, previewOpen: false, friendsPending: null, friendsStatus: '',
+  };
+  // The bell's test above leaves `window` as a bare globalThis; load the
+  // profile controller the way the first Me test does, with no window at all.
+  const savedWindow = globalThis.window;
+  delete globalThis.window;
+  let html;
+  try {
+    html = renderToHtml(createElement(loadTsx('frontend/src/features/profile/profile-view.tsx', {
+      stubs: { './profile-store.js': { ...real, profileStore: { get: () => state, subscribe: () => () => {} } } },
+    }).ProfileRoot, {}));
+  } finally {
+    if (savedWindow !== undefined) globalThis.window = savedWindow;
+  }
+  const at = (needle) => html.indexOf(needle);
+  assert.ok(at('id="profile-friends"') < at('id="profile-friend-search"'), 'inside the Friends section');
+  assert.ok(at('id="profile-friend-search"') < at('id="profile-friends-empty"'), 'above the list');
+  assert.match(html, /id="profile-friend-search-input"[^>]*placeholder="Find friends by username"/);
+  assert.doesNotMatch(html, /profile-friend-search-results/, 'no results before anything is typed');
+  assert.match(html, /No friends yet\. Find someone by username above\./);
+
+  assert.match(read('frontend/src/features/profile/friends-section.tsx'), /<SectionHeader>Friends<\/SectionHeader>\s*\{\/\*[^*]*\*\/\}\s*<FriendSearch lists=\{view\} \/>/,
+    'the search sits right under the Friends header');
+  const src = read(SEARCH);
+  assert.match(src, /import \{ searchUsers \} from '\.\.\/messages\/api'/,
+    'reuses the messages-scoped people search, which leaves out you and anyone blocked either way');
+  assert.match(read('frontend/src/features/messages/api.ts'), /\/api\/users\/search\?q=\$\{[^}]+\}&scope=messages/);
+  assert.match(src, /useEffect\(\(\) => \{[\s\S]*?window\.setTimeout/, 'searches from an effect, debounced');
+});
