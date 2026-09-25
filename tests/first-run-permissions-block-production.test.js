@@ -8,8 +8,8 @@
 // (GET /challenges-api/bp/state) says it has requested, or been released
 // for, block production. Deferring must NOT write the one-shot marker, so
 // the sheet can still be offered later, and Settings' "Ask to produce
-// blocks" action re-runs the trigger at exactly that moment. iOS, whose
-// sheet is the notification prompt, is unchanged.
+// blocks" action re-runs the trigger at exactly that moment. iOS now asks
+// for notification permission through the operating system directly.
 //
 // Run with: node --test tests/first-run-permissions-block-production.test.js
 
@@ -58,6 +58,7 @@ function fakeNode(tag) {
 //         user, socialPushState }
 function boot(opts) {
   const sheets = [];
+  const nativeRequests = [];
   const stored = {};
   const fetches = [];
   let bp = opts.bp;
@@ -69,11 +70,16 @@ function boot(opts) {
     usernode: {
       isNative: true,
       async getBridgeInfo() {
-        return { version: 5, capabilities: ['getSettingsState', 'getSocialPushState'] };
+        return { version: 5, capabilities: ['getSettingsState', 'getSocialPushState',
+          'requestNotificationPermission'] };
       },
       async getSettingsState() { return { permissions: opts.permissions }; },
       async getSocialPushState() { return opts.socialPushState || null; },
       async requestPermissions() { return { granted: false, permissions: opts.permissions }; },
+      async requestNotificationPermission() {
+        nativeRequests.push('notification');
+        return { granted: true, permissions: opts.permissions };
+      },
       async openBatterySettings() { return true; },
     },
     PlatformUI: {
@@ -119,6 +125,7 @@ function boot(opts) {
   return {
     NativeChrome: sandbox.NativeChrome,
     sheets,
+    nativeRequests,
     fetches,
     marked: () => stored[MARKER] === '1',
     setBp(next) { bp = next; },
@@ -152,12 +159,6 @@ test('decideFirstRunSheet: nothing to ask is done on both platforms', () => {
     blockProduction: false }), 'done');
   assert.equal(decide({ isAndroid: false, needsAlarm: false, needsBattery: false }),
     'done');
-});
-
-test('decideFirstRunSheet: iOS never waits for block production', () => {
-  const h = boot({ permissions: IOS_UNGRANTED, kitPlatform: 'ios' });
-  assert.equal(h.NativeChrome.decideFirstRunSheet({ isAndroid: false,
-    needsAlarm: true, needsBattery: false, blockProduction: false }), 'present');
 });
 
 // ── The trigger ────────────────────────────────────────────────────────
@@ -226,12 +227,13 @@ test('Android: a deferred sheet is offered once block production is requested', 
     'the deferral left the shared run and the marker free for a later offer');
 });
 
-test('iOS is unchanged: notification sheet with no block-production read', async () => {
+test('iOS uses its native notification prompt with no block-production read', async () => {
   const h = boot({ permissions: IOS_UNGRANTED, kitPlatform: 'ios',
     bp: { bp_requested: false, bp_released: false },
     socialPushState: { permissionStatus: 'notDetermined' } });
   await h.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(h.sheets.length, 1, 'iOS still offers the notification prompt');
+  assert.equal(h.sheets.length, 0, 'iOS shows no web permission sheet');
+  assert.deepEqual(h.nativeRequests, ['notification']);
   assert.equal(h.fetches.length, 0, 'iOS never consults the producer queue');
 });
 

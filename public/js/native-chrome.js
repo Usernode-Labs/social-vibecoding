@@ -566,16 +566,12 @@
     // ── First-run permissions step (thin-shell onboarding) ───────────
     //
     // Replaces the native onboarding permission screens: after the first
-    // successful native-session establishment on a device, offer the exact-alarm /
-    // battery-optimization prompts (Android) or the notification prompt
-    // (iOS) the node needs. One-shot per device via a localStorage
-    // marker set on dismiss — except on iOS while the OS notification
-    // prompt has never been presented (permission still un-determined),
-    // where the marker is not final: the OS prompt itself is one-shot,
-    // so an un-asked device must keep its chance. The same rows live
-    // permanently in Settings → Homeroom app.
+    // successful native-session establishment on a device, ask for
+    // notification permission through the OS on both platforms. Android's
+    // separate sheet covers the exact-alarm and battery settings its node
+    // needs. The same controls remain in Settings.
     //
-    // Android waits for block production (#2960). Both of its rows (exact
+    // Android waits for block production (#2960). Both sheet rows (exact
     // alarms, unrestricted background / battery optimization) exist only so
     // the node can produce blocks, so asking before the account has asked
     // to produce is asking a stranger for a scary permission with no reason
@@ -584,6 +580,8 @@
     // sheet is deferred WITHOUT writing the marker, and the Settings
     // "Ask to produce blocks" action re-runs this trigger the moment the
     // request lands. See decideFirstRunSheet below.
+    // Retained for older WebViews and the Android setup completion signal.
+    // Notification consent uses the separate request marker below.
     _FIRST_RUN_KEY: 'sv:onboarding_permissions_done',
     _firstRunPromise: null,
     _firstRunSheetPresented: false,
@@ -604,13 +602,12 @@
       try { localStorage.setItem(NativeChrome._FIRST_RUN_KEY, '1'); } catch (_) {}
     },
 
-    // Android asks again while something is still missing, but at most once
-    // a day: the marker above used to end the asking for good, so a user
-    // who skipped once, or turned a permission off later, was never asked
-    // again. iOS keeps the marker's rule, because a determined iOS
-    // permission can only be changed in the OS settings app.
+    // Android asks about block production again while something is missing,
+    // but at most once a day. Notification permission is requested once per
+    // device on Android; iOS uses its determined status to stop asking.
     _ASKED_AT_KEY: 'sv:device_permissions_asked_at',
     _REASK_AFTER_MS: 24 * 60 * 60 * 1000,
+    _NOTIFICATION_ASKED_KEY: 'sv:notification_permission_requested',
 
     _markAsked() {
       try {
@@ -623,6 +620,58 @@
       try { at = Number(localStorage.getItem(NativeChrome._ASKED_AT_KEY)); } catch (_) {}
       return Number.isFinite(at) && at > 0 &&
         Date.now() - at < NativeChrome._REASK_AFTER_MS;
+    },
+
+    _notificationAsked() {
+      try {
+        return localStorage.getItem(NativeChrome._NOTIFICATION_ASKED_KEY) === '1';
+      } catch (_) { return false; }
+    },
+
+    _markNotificationAsked() {
+      try { localStorage.setItem(NativeChrome._NOTIFICATION_ASKED_KEY, '1'); } catch (_) {}
+    },
+
+    // A first-run notification request is a native OS prompt, not a web
+    // overlay. iOS status distinguishes an unanswered prompt from a denial;
+    // Android's settings snapshot cannot, so record an answered request and
+    // leave later changes to the permanent Settings control.
+    async _requestFirstRunNotificationPermission(isAndroid, perms, pushStatus) {
+      const bridge = window.usernode;
+      const needsNotification = isAndroid
+        ? perms.notificationsGranted === false
+        : pushStatus === 'undetermined' ||
+          (pushStatus == null && perms.exactAlarmGranted === false);
+      if (!needsNotification ||
+          (pushStatus !== 'undetermined' && NativeChrome._notificationAsked())) {
+        return false;
+      }
+      const granular = typeof bridge.requestNotificationPermission === 'function' &&
+        (await NativeChrome.supports('requestNotificationPermission')) !== false;
+      const legacyIos = !isAndroid &&
+        typeof bridge.requestPermissions === 'function' &&
+        (await NativeChrome.supports('requestPermissions')) !== false;
+      if (!granular && !legacyIos) return false;
+      try {
+        const result = await (granular
+          ? bridge.requestNotificationPermission()
+          : bridge.requestPermissions());
+        NativeChrome._markNotificationAsked();
+        if (isAndroid) {
+          if (result && result.granted === true &&
+              window.SocialPush && typeof SocialPush.getState === 'function') {
+            SocialPush.getState();
+          }
+        } else {
+          await NativeChrome.settleIosPushGrant(result && result.granted === true);
+        }
+        return true;
+      } catch (err) {
+        // A bridge failure did not present a prompt. Keep the next native
+        // entry eligible, and leave Settings available in this session.
+        console.warn('[native-chrome] notification permission request failed:', err);
+        return false;
+      }
     },
 
     // iOS: whether the app has ever presented the OS notification prompt.
@@ -656,7 +705,7 @@
     },
 
     // Public alias. Settings (frontend/src/features/settings/settings.js)
-    // must read the same truth this file's first-run sheet reads, and it
+    // must read the same truth this file's first-run request reads, and it
     // has no business reaching into an underscore-private.
     iosPushPermissionStatus() {
       return NativeChrome._iosPushPermissionStatus();
@@ -828,20 +877,16 @@
 
     // What the first-run trigger does once the permission snapshot is in.
     // Pure, for the same reason decideNotificationTap is. Returns:
-    //   "done"     nothing left to ask; record the one-shot marker
+    //   "done"     no block-production permissions left to ask
     //   "defer"    Android, block production not enabled: present nothing
     //              and record NOTHING, so the sheet can still be offered
     //              once the account asks to produce blocks (#2960)
     //   "present"  show the "Set up your device" sheet
-    // iOS never defers: its sheet is the notification prompt, which has
-    // nothing to do with block production (off on iOS since v4).
+    // iOS has no block-production sheet.
     decideFirstRunSheet(state) {
       const s = state || {};
-      if (!s.needsAlarm && !s.needsBattery && !s.needsNotifications) return 'done';
-      // The Android notification prompt has nothing to do with block
-      // production, so it never waits for the producer queue.
-      if (s.isAndroid === true && s.blockProduction !== true &&
-          !s.needsNotifications) return 'defer';
+      if (!s.needsAlarm && !s.needsBattery) return 'done';
+      if (s.isAndroid === true && s.blockProduction !== true) return 'defer';
       return 'present';
     },
 
@@ -897,28 +942,6 @@
       const force = !!(options && options.force);
       if (NativeChrome._firstRunSheetOpen) return;
       if (NativeChrome._firstRunSheetPresented && !force) return;
-      let marked = false;
-      try {
-        marked = localStorage.getItem(NativeChrome._FIRST_RUN_KEY) === '1';
-      } catch (_) {}
-      let pushStatus;
-      if (marked) {
-        // The OS notification prompt on iOS is system-one-shot, so the
-        // only unrecoverable state is "never asked". Old shell/app
-        // versions (and a dismissed sheet) wrote this marker without the
-        // prompt ever being presented — while iOS still reports the
-        // permission as un-prompted, the marker must not be final.
-        // Android is re-read instead: see _askedRecently.
-        const kit = window.unNative;
-        if (kit && kit.platform === 'ios') {
-          pushStatus = await NativeChrome._iosPushPermissionStatus();
-          if (pushStatus !== 'undetermined') return;
-        }
-      }
-      // Android already asked today: leave it until tomorrow, without a
-      // single bridge read. iOS never writes this key.
-      if (!force && NativeChrome._askedRecently()) return;
-      if (!window.PlatformUI || typeof PlatformUI.sheet !== 'function') return;
       if (!(await NativeChrome.has('getSettingsState'))) return;
 
       let state = null;
@@ -934,49 +957,38 @@
       }
       const perms = state.permissions || {};
       const isAndroid = perms.platform === 'android';
-      let needsAlarm = !perms.exactAlarmGranted;
-      // iOS: the notification permission is the real subject of this
-      // sheet, so when the build exposes the push permission status let
-      // it override the alarm boolean — there are no exact alarms on
-      // iOS, and a build reporting exactAlarmGranted: true must not
-      // swallow a never-shown notification prompt.
+      const pushStatus = isAndroid ? null
+        : await NativeChrome._iosPushPermissionStatus();
+      const notificationRequested = await NativeChrome._requestFirstRunNotificationPermission(
+        isAndroid, perms, pushStatus);
       if (!isAndroid) {
-        if (pushStatus === undefined) {
-          pushStatus = await NativeChrome._iosPushPermissionStatus();
-        }
-        if (pushStatus === 'undetermined') needsAlarm = true;
-        else if (pushStatus === 'granted') needsAlarm = false;
-      } else {
-        pushStatus = null;
+        if (notificationRequested || pushStatus === 'granted' ||
+            pushStatus === 'denied') NativeChrome._markFirstRunDone();
+        return;
       }
-      // Android notifications: asked of everyone, like the iOS prompt,
-      // whenever the build can ask for them on their own. An older build
-      // that does not report the permission is not asked.
-      const notificationsAskable = isAndroid &&
-        perms.notificationsGranted === false &&
-        typeof window.usernode.requestNotificationPermission === 'function' &&
-        (await NativeChrome.supports('requestNotificationPermission')) !== false;
+      // The daily limit applies to Android's block-production sheet, not
+      // to the native notification prompt above.
+      if (!force && NativeChrome._askedRecently()) return;
+      if (!window.PlatformUI || typeof PlatformUI.sheet !== 'function') return;
+      let needsAlarm = !perms.exactAlarmGranted;
 
       // Exact alarms and battery are only for people whose phone produces
       // blocks: a delegated account or a device with no wallet has no slots
       // to wake for. And they wait until the account has asked to produce
       // blocks (#2960), so nobody is asked for them without a reason.
-      let needsBattery = isAndroid && perms.batteryOptDisabled !== true;
+      let needsBattery = perms.batteryOptDisabled !== true;
       let blockProduction = false;
-      let productionDeferred = false;
-      if (isAndroid && (needsAlarm || needsBattery)) {
+      if (needsAlarm || needsBattery) {
         const producer = await NativeChrome._producerStatus();
         if (!NativeChrome.producerNeedsDevicePermissions(producer)) {
           needsAlarm = false;
           needsBattery = false;
         } else {
           blockProduction = await NativeChrome._blockProductionEnabled();
-          productionDeferred = !blockProduction;
         }
       }
       const decision = NativeChrome.decideFirstRunSheet({
         isAndroid, needsAlarm, needsBattery, blockProduction,
-        needsNotifications: notificationsAskable,
       });
       if (decision === 'done') {
         NativeChrome._markFirstRunDone();
@@ -988,25 +1000,19 @@
       const settledPromise = new Promise((resolve) => { settled = resolve; });
       const handle = NativeChrome.presentPermissionsSheet({
         perms,
-        isAndroid,
-        pushStatus,
-        blockProduction,
-        productionDeferred,
-        notificationsAskable,
         // A dismissal that arrives before the sheet could physically be
         // read, from a user who touched nothing on it, is not an answer —
         // it is the opening gesture's ghost click landing on the backdrop.
         // The kit guards its own backdrop against exactly that now
         // (decideBackdropDismiss in public/usernode-native/v1/native.js),
-        // but THIS marker is one-shot and silences the iOS notification
-        // prompt forever, so it does not ride on that guard alone: leave
-        // it unwritten and let a later launch offer the sheet again.
+        // so leave the Android reminder unwritten and let a later launch
+        // offer the sheet again.
         onDismiss: (info) => {
           NativeChrome._firstRunSheetOpen = false;
           if (info.interacted ||
               info.elapsedMs >= NativeChrome._FIRST_RUN_MIN_SEEN_MS) {
             NativeChrome._markFirstRunDone();
-            if (isAndroid) NativeChrome._markAsked();
+            NativeChrome._markAsked();
           }
           // Settlement fires on EVERY dismissal, ghost clicks included —
           // it reports "the sheet is gone", not "the marker was written".
@@ -1015,10 +1021,8 @@
           settled();
         },
       });
-      // Kit unavailable (degraded shell): present nothing and record
-      // nothing — burning the one-shot marker here silenced the iOS
-      // notification prompt forever. A later healthy launch retries;
-      // the permanent Settings rows remain the in-session fallback.
+      // Kit unavailable: leave the Android sheet eligible for a later
+      // healthy launch. Notification consent is requested independently.
       if (handle) {
         NativeChrome._firstRunSheetPresented = true;
         NativeChrome._firstRunSettledPromise = settledPromise;
@@ -1026,15 +1030,14 @@
       }
     },
 
-    // The "Set up your device" sheet itself, split out from the trigger
+    // The Android block-production sheet, split out from the trigger
     // above so it has exactly one definition: the first-run flow presents
-    // it, and so does the `?shot=notif-permissions` screenshot-state link
+    // it, and so does the existing `?shot=notif-permissions` test fixture
     // in public/js/app.js, which means the dapp.json check that asserts
     // the sheet survives its opening tap is exercising the real sheet
     // rather than a stand-in.
     //
-    // opts: { perms, isAndroid, pushStatus, blockProduction,
-    // productionDeferred, notificationsAskable, onDismiss }. onDismiss is
+    // opts: { perms, onDismiss }. onDismiss is
     // called with { interacted, elapsedMs } — `interacted` is true once
     // the user has pressed anything ON the sheet, which is what lets the
     // caller tell a real answer from a stray dismissal. Returns the kit's
@@ -1042,13 +1045,6 @@
     presentPermissionsSheet(options) {
       const opts = options || {};
       const perms = opts.perms || {};
-      const isAndroid = !!opts.isAndroid;
-      let pushStatus = opts.pushStatus == null ? null : opts.pushStatus;
-      // Android: which of the three asks this sheet carries. The producer
-      // rows default to on so a caller that predates them keeps its sheet.
-      const producerAsks = opts.blockProduction !== false;
-      const productionDeferred = opts.productionDeferred === true;
-      const notificationsAskable = opts.notificationsAskable === true;
       if (!window.PlatformUI || typeof PlatformUI.sheet !== 'function') return null;
 
       const el = (tag, cls, text) => {
@@ -1060,21 +1056,12 @@
 
       const panel = el('div', 'px-4 pb-5');
       panel.appendChild(el('div', 'text-lg font-bold py-3', 'Set up your device'));
-      // iOS: requestPermissions() maps to the notification prompt, and v4
-      // turned iOS block production off — so the block-production pitch is
-      // Android-only, and the iOS copy names what the OS will actually ask.
       panel.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
-        isAndroid && producerAsks
-          ? 'Your phone helps run Homeroom: your node can produce blocks ' +
-            'while the app is in the background. For that, Android needs ' +
-            'to wake it at exact slot times and leave it free of battery ' +
-            'optimization. These settings only schedule wake-ups. They ' +
-            'give Homeroom no access to your data.'
-          : isAndroid
-            ? 'Allow notifications so Homeroom can tell you about activity ' +
-              'on your apps and your node.'
-            : 'Allow notifications so Homeroom can alert you about node ' +
-            'and account activity.'));
+        'Your phone helps run Homeroom: your node can produce blocks ' +
+          'while the app is in the background. For that, Android needs ' +
+          'to wake it at exact slot times and leave it free of battery ' +
+          'optimization. These settings only schedule wake-ups. They ' +
+          'give Homeroom no access to your data.'));
 
       const statusRow = (label, ok) => {
         const row = el('div', 'flex items-center gap-2 mt-1 text-sm');
@@ -1095,81 +1082,7 @@
       let interacted = false;
       const render = (p) => {
         body.textContent = '';
-        if (isAndroid) {
-          renderAndroid(p);
-          return;
-        }
-        // iOS row truth: prefer the push permission status over the
-        // alarm boolean whenever the build reports one (see above).
-        const alarmOk = !isAndroid && pushStatus != null
-          ? pushStatus === 'granted'
-          : !!p.exactAlarmGranted;
-        const batteryOk = p.batteryOptDisabled === true;
-        body.appendChild(statusRow(
-          isAndroid ? 'Exact alarms' : 'Notifications', alarmOk));
-        if (isAndroid) body.appendChild(statusRow('Battery optimization', batteryOk));
-
-        const btns = el('div', 'mt-4 space-y-2');
-        if (!alarmOk) {
-          const b = el('button', 'w-full rounded-lg bg-violet-600 ' +
-            'hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white',
-          isAndroid ? 'Grant permissions' : 'Allow notifications');
-          b.addEventListener('click', async () => {
-            interacted = true;
-            b.disabled = true;
-            try {
-              const next = await window.usernode.requestPermissions();
-              const nextPerms = next && next.permissions
-                ? next.permissions
-                : p;
-              let granted = !!(next && next.granted === true);
-              if (isAndroid) {
-                granted = granted || !!nextPerms.exactAlarmGranted;
-              } else {
-                // The native permission caches can lag right after the
-                // OS dialog — and some builds resolve requestPermissions
-                // before the user answers it. Poll briefly for a
-                // determined status instead of trusting one stale read;
-                // a determined answer wins over the grant flag.
-                const settled = await NativeChrome.settleIosPushGrant(granted);
-                granted = settled.granted;
-                pushStatus = settled.status || pushStatus;
-              }
-              const batteryOk = !isAndroid ||
-                nextPerms.batteryOptDisabled === true;
-              if (granted && batteryOk) {
-                // Nothing left to ask — close (which records first-run
-                // done) instead of re-rendering a sheet with no job.
-                if (sheet && sheet.dismiss) sheet.dismiss();
-                return;
-              }
-              render(nextPerms);
-            } catch (e) {
-              console.warn('[native-chrome] requestPermissions failed:', e);
-            } finally { b.disabled = false; }
-          });
-          btns.appendChild(b);
-        }
-        if (isAndroid && !batteryOk) {
-          const b = el('button', 'w-full rounded-lg border border-zinc-300 ' +
-            'dark:border-zinc-700 px-4 py-2 text-sm font-medium ' +
-            'text-zinc-700 dark:text-zinc-200',
-          'Open battery settings');
-          b.addEventListener('click', () => {
-            interacted = true;
-            window.usernode.openBatterySettings().catch(() => {});
-          });
-          btns.appendChild(b);
-        }
-        const done = el('button', 'w-full px-4 py-2 text-sm ' +
-          'text-zinc-500 dark:text-zinc-400',
-        (alarmOk && (!isAndroid || batteryOk)) ? 'Done' : 'Skip for now');
-        done.addEventListener('click', () => {
-          interacted = true;
-          if (sheet && sheet.dismiss) sheet.dismiss();
-        });
-        btns.appendChild(done);
-        body.appendChild(btns);
+        renderAndroid(p);
       };
 
       const hint = (text) => el('p',
@@ -1182,69 +1095,19 @@
       // system surface, and the copy under its button says what that
       // surface will show BEFORE it shows it, so its battery warning reads
       // as expected rather than alarming.
-      // What is still missing on Android, given what this sheet asks for.
+      // What is still missing for block production.
       const androidMissing = (p) => ({
-        notifications: notificationsAskable && p.notificationsGranted === false,
-        alarm: producerAsks && !p.exactAlarmGranted,
-        battery: producerAsks && p.batteryOptDisabled !== true,
+        alarm: !p.exactAlarmGranted,
+        battery: p.batteryOptDisabled !== true,
       });
-      // After one "Allow notifications" that did not grant, Android shows no
-      // dialog again for a while, so the button becomes the settings page.
-      let notificationsAsked = false;
 
       const renderAndroid = (p) => {
         const missing = androidMissing(p);
-        if (notificationsAskable) {
-          body.appendChild(statusRow('Notifications', !missing.notifications));
-        }
-        if (producerAsks) {
-          body.appendChild(statusRow('Exact alarms', !missing.alarm));
-          body.appendChild(statusRow('Battery optimization', !missing.battery));
-        }
+        body.appendChild(statusRow('Exact alarms', !missing.alarm));
+        body.appendChild(statusRow('Battery optimization', !missing.battery));
 
         const btns = el('div', 'mt-4 space-y-2');
-        if (missing.notifications && !notificationsAsked) {
-          const b = primaryButton('Allow notifications');
-          b.addEventListener('click', async () => {
-            interacted = true;
-            b.disabled = true;
-            let next = null;
-            try {
-              next = await window.usernode.requestNotificationPermission();
-            } catch (e) {
-              console.warn('[native-chrome] requestNotificationPermission failed:', e);
-            } finally { b.disabled = false; }
-            notificationsAsked = true;
-            const nextPerms = next && next.permissions ? next.permissions : p;
-            if (next && next.granted === true) {
-              nextPerms.notificationsGranted = true;
-              // Register for pushes now rather than on the next resume.
-              if (window.SocialPush && typeof SocialPush.getState === 'function') {
-                SocialPush.getState();
-              }
-            }
-            const left = androidMissing(nextPerms);
-            if (!left.notifications && !left.alarm && !left.battery) {
-              if (sheet && sheet.dismiss) sheet.dismiss();
-              return;
-            }
-            body.textContent = '';
-            renderAndroid(nextPerms);
-          });
-          btns.appendChild(b);
-          btns.appendChild(hint('Android will ask whether Homeroom may send ' +
-            'you notifications. Tap Allow. You can turn them off any time ' +
-            'in Settings.'));
-        } else if (missing.notifications) {
-          const b = primaryButton('Open notification settings');
-          b.addEventListener('click', () => {
-            interacted = true;
-            window.usernode.openNotificationSettings().catch(() => {});
-          });
-          btns.appendChild(b);
-          btns.appendChild(hint('Notifications are off for Homeroom. Turn ' +
-            'them on in Android settings, then come back here.'));
-        } else if (missing.alarm) {
+        if (missing.alarm) {
           const b = primaryButton('Allow exact alarms');
           b.addEventListener('click', async () => {
             interacted = true;
@@ -1307,13 +1170,7 @@
           btns.appendChild(delegate);
         }
 
-        if (productionDeferred) {
-          btns.appendChild(hint('Block production settings (exact alarms ' +
-            'and battery) come later, when you ask to produce blocks in ' +
-            'Settings, Homeroom app.'));
-        }
-
-        const allDone = !missing.notifications && !missing.alarm && !missing.battery;
+        const allDone = !missing.alarm && !missing.battery;
         const done = el('button', 'w-full px-4 py-2 text-sm ' +
           'text-zinc-500 dark:text-zinc-400', allDone ? 'Done' : 'Skip for now');
         done.addEventListener('click', () => {
@@ -1336,20 +1193,9 @@
         try { state = await window.usernode.getSettingsState(); } catch (_) {}
         if (closed || !state || !state.permissions) return;
         const next = state.permissions;
-        if (!isAndroid) {
-          const status = await NativeChrome._iosPushPermissionStatus();
-          if (status != null) pushStatus = status;
-        }
         if (closed) return;
-        let nothingLeft;
-        if (isAndroid) {
-          const left = androidMissing(next);
-          nothingLeft = !left.notifications && !left.alarm && !left.battery;
-        } else {
-          nothingLeft = pushStatus != null
-            ? pushStatus === 'granted'
-            : !!next.exactAlarmGranted;
-        }
+        const left = androidMissing(next);
+        const nothingLeft = !left.alarm && !left.battery;
         if (nothingLeft) {
           NativeChrome._markFirstRunDone();
           if (sheet && sheet.dismiss) sheet.dismiss();
@@ -1384,7 +1230,7 @@
     },
 
     // Resolve what the iOS notification permission ACTUALLY ended up as
-    // after requestPermissions() resolved. Shared by the sheet above and
+    // after the native bridge request resolved. Shared by first-run and
     // Settings → Homeroom app (frontend/src/features/settings/settings.js)
     // so both screens read the grant the same way.
     //

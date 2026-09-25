@@ -3382,10 +3382,10 @@
       "expectText": "sent stale"
     },
     {
-      "name": "The Allow notifications sheet survives its own opening tap's ghost click",
+      "name": "The device setup sheet survives its own opening tap's ghost click",
       "path": "/?shot=notif-permissions#settings/usernode",
       "expectSelector": ".un-sheet[data-un-ghost-click=\"dispatched\"] .un-sheet-body button",
-      "expectText": "Allow notifications"
+      "expectText": "Allow exact alarms"
     },
     {
       "name": "First-run terms sheet presents with its title (issue #1297)",

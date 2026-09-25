@@ -1,7 +1,6 @@
-// The first-run "Set up your device" sheet is the ONLY place the app asks
-// for device permissions: the Android app no longer covers SV with a native
-// permission screen. So the sheet has to decide, from the user's status and
-// the phone, what to ask:
+// The first-run "Set up your device" sheet asks for Android block-production
+// permissions. Notification consent goes directly to the operating system.
+// The sheet decides, from the user's status and phone, what to ask:
 //
 //  - Android asks for exact alarms and battery only when the phone
 //    produces blocks. A delegated account, or a device with no wallet, has
@@ -230,85 +229,7 @@ test('Delegate instead keeps the sheet when the user backs out', async () => {
   assert.equal(h.dismissed.length, 0);
 });
 
-// ── Notifications on Android, and asking again ─────────────────────────
-
-const notificationsOff = {
-  platform: 'android', notificationsGranted: false,
-  exactAlarmGranted: true, batteryOptDisabled: true,
-};
-
-test('Android asks for notifications even before block production is requested', async () => {
-  const h = load({ permissions: { ...nothingGranted, notificationsGranted: false },
-    wallet: producing, bpRequested: false });
-  await h.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(h.sheets.length, 1);
-  const content = h.sheets[0].contentEl;
-  const text = allText(content);
-  assert.match(text, /Notifications/);
-  assert.doesNotMatch(text, /Exact alarms/, 'the producer rows still wait for the request');
-  assert.match(text, /come later, when you ask to produce blocks/,
-    'the sheet says why alarms and battery are not asked yet');
-  await findButton(content, 'Allow notifications').listeners.click();
-  assert.ok(h.calls.includes('requestNotificationPermission'));
-  assert.ok(!h.calls.includes('requestPermissions'), 'no alarm chain rides along');
-});
-
-test('a delegated Android account is still asked for notifications only', async () => {
-  const h = load({ permissions: { ...nothingGranted, notificationsGranted: false },
-    wallet: { address: 'ut1abc', staking: { delegate: 'ut1server' } } });
-  await h.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(h.sheets.length, 1);
-  const text = allText(h.sheets[0].contentEl);
-  assert.match(text, /Notifications/);
-  assert.doesNotMatch(text, /Exact alarms|Delegate instead|produce blocks in Settings/);
-});
-
-test('notifications come first, then exact alarms', async () => {
-  const h = load({ permissions: { ...nothingGranted, notificationsGranted: false },
-    wallet: producing, notificationResult: { granted: true } });
-  await h.NativeChrome.maybeShowFirstRunPermissions();
-  const content = h.sheets[0].contentEl;
-  assert.ok(findButton(content, 'Allow notifications'));
-  assert.ok(!findButton(content, 'Allow exact alarms'));
-  await findButton(content, 'Allow notifications').listeners.click();
-  assert.ok(findButton(content, 'Allow exact alarms'), 'the next step is up');
-});
-
-test('a declined notification prompt turns into the settings page', async () => {
-  const h = load({ permissions: notificationsOff, wallet: producing });
-  await h.NativeChrome.maybeShowFirstRunPermissions();
-  const content = h.sheets[0].contentEl;
-  await findButton(content, 'Allow notifications').listeners.click();
-  const open = findButton(content, 'Open notification settings');
-  assert.ok(open, 'Android shows no dialog again, so the button changes');
-  await open.listeners.click();
-  assert.ok(h.calls.includes('openNotificationSettings'));
-});
-
-test('an older build that does not report notifications is not asked for them', async () => {
-  const h = load({ permissions: { platform: 'android', exactAlarmGranted: true,
-    batteryOptDisabled: true }, wallet: producing });
-  await h.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(h.sheets.length, 0);
-});
-
-test('skipped today: not asked again until tomorrow', async () => {
-  const h = load({ permissions: notificationsOff, wallet: producing });
-  await h.NativeChrome.maybeShowFirstRunPermissions();
-  await findButton(h.sheets[0].contentEl, 'Skip for now').listeners.click();
-  assert.ok(h.stored['sv:device_permissions_asked_at'], 'the ask is timed');
-
-  const again = load({ permissions: notificationsOff, wallet: producing,
-    stored: { ...h.stored } });
-  await again.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(again.sheets.length, 0, 'same day: no sheet');
-
-  const tomorrow = load({ permissions: notificationsOff, wallet: producing,
-    stored: { ...h.stored,
-      'sv:device_permissions_asked_at': String(Date.now() - 25 * 60 * 60 * 1000) } });
-  await tomorrow.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(tomorrow.sheets.length, 1, 'still missing a day later: asked again');
-});
+// The block-production reminder can be reopened explicitly from Settings.
 
 test('Ask to produce blocks shows the sheet again the same day', async () => {
   const h = load({ permissions: nothingGranted, wallet: producing, bpRequested: true,

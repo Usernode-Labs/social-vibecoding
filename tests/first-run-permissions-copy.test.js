@@ -1,14 +1,10 @@
-// Platform-accurate permission copy (iOS wording fix) — the first-run
-// "Set up your device" sheet and the Settings → Homeroom app permission
-// rows must describe what each OS actually prompts for:
+// Platform-accurate permission copy — the Android block-production sheet
+// and Settings → Homeroom app rows describe what each OS prompts for:
 //
 //  - Android: the exact-alarm permission (plus battery optimization) so
 //    the node can produce blocks at exact slot times. Copy unchanged.
-//  - iOS: the native requestPermissions() maps to the NOTIFICATION
-//    permission, and v4 disabled iOS block production outright
-//    (NATIVE-BRIDGE.md). So the sheet must not promise background block
-//    production or label the row "Alarm permissions" — it asks for
-//    notifications and says so.
+//  - iOS: notification consent uses the OS prompt directly, with no web
+//    first-run sheet. Settings still labels its row Notifications.
 //
 // Run with: node --test tests/first-run-permissions-copy.test.js
 
@@ -107,24 +103,6 @@ async function showFirstRunSheet(permissions) {
   return allText(sheets[0].contentEl);
 }
 
-test('iOS first-run sheet asks for notifications, not alarms or blocks', async () => {
-  const text = await showFirstRunSheet({
-    platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null,
-  });
-  assert.match(text, /Notifications/,
-    'the iOS status row is labeled Notifications');
-  assert.doesNotMatch(text, /Alarm permissions/,
-    'the misleading "Alarm permissions" label is gone on iOS');
-  assert.doesNotMatch(text, /produce blocks|exact slot times/,
-    'iOS copy must not promise background block production (off since v4)');
-  assert.match(text, /notif/i,
-    'the iOS body copy explains the notification permission');
-  assert.match(text, /Allow notifications/,
-    'the iOS grant button says what the OS will actually ask');
-  assert.doesNotMatch(text, /Battery optimization/,
-    'iOS never shows the Android battery row');
-});
-
 test('Android first-run sheet keeps the exact-alarm + battery copy', async () => {
   const text = await showFirstRunSheet({
     platform: 'android', exactAlarmGranted: false, batteryOptDisabled: false,
@@ -134,6 +112,8 @@ test('Android first-run sheet keeps the exact-alarm + battery copy', async () =>
   assert.match(text, /produce blocks/,
     'Android copy still explains block production');
   assert.match(text, /exact slot times/);
+  assert.doesNotMatch(text, /Allow notifications/,
+    'notification consent is no longer part of this sheet');
 });
 
 test('settings device-permissions section is platform-accurate', () => {

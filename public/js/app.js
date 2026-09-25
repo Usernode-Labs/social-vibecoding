@@ -1294,15 +1294,14 @@ const App = {
     }, 50);
   },
 
-  // Screenshot-state deep link `?shot=notif-permissions`: present the real
-  // device-permissions sheet — the one whose primary button is literally
-  // "Allow notifications" — and then fire the trailing ghost click a touch
+  // Existing `?shot=notif-permissions` test fixture: present the real
+  // Android block-production sheet, then fire the trailing ghost click a touch
   // tap leaves behind on the backdrop a few hundred milliseconds later.
   //
   // Before the kit's backdrop guard (decideBackdropDismiss in
   // public/usernode-native/v1/native.js) that click dismissed the sheet the
   // same tap had just opened: it rose from the bottom for a fraction of a
-  // second and then there was nothing left to tap to grant. The defect
+  // second and then there was nothing left to tap. The defect
   // lived entirely inside those few hundred milliseconds, which no still
   // frame and no plain route can reach, so the dapp.json check asserts the
   // resulting state instead — the sheet still present, carrying the
@@ -1329,8 +1328,8 @@ const App = {
         return;
       }
       const sheet = NativeChrome.presentPermissionsSheet({
-        perms: { platform: 'ios', exactAlarmGranted: false },
-        isAndroid: false,
+        perms: { platform: 'android', exactAlarmGranted: false,
+          batteryOptDisabled: false },
       });
       // Present refused (the kit is there but not ready to show one yet):
       // also worth another go rather than ending the shot.
@@ -1364,7 +1363,7 @@ const App = {
   // Renders from a fixed snapshot, calls no bridge method and writes nothing
   // (the POST that stores a grant happens on Allow, which nothing here
   // presses), so it is pure UI state — ungated for the same reason as
-  // ?shot=notif-permissions above, and on the same retry budget, because
+  // ?shot=device-permissions above, and on the same retry budget, because
   // `AppView._reactDevBoard()` may not have wired up on the first tick.
   _applyAppPermissionShot() {
     let shot = null;
