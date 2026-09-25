@@ -14,6 +14,7 @@ const http = require('node:http');
 const { execFileSync, spawnSync, spawn } = require('child_process');
 const { classifyResumeJsonl } = require('../worker/classify-codex-resume');
 const {
+  AUTO_COMPACT_TOKEN_LIMIT,
   DEFAULT_BASE_INSTRUCTIONS,
   NEUTRAL_IDENTITY_INSTRUCTION,
   buildCatalogFromEnvironment,
@@ -467,6 +468,8 @@ exit 1
   assert.equal(catalog.models[0].slug, 'z-ai/glm-5.3-flash');
   assert.equal(catalog.models[0].display_name, 'GLM 5.3 Flash');
   assert.equal(catalog.models[0].context_window, 1_048_576);
+  assert.equal(catalog.models[0].auto_compact_token_limit, AUTO_COMPACT_TOKEN_LIMIT,
+    'the installed metadata turns auto-compaction on');
   assert.equal(catalog.models[0].default_reasoning_level, 'medium');
   // #2120: the installed metadata names the selected model in the neutral
   // identity sentence and keeps every instruction after it.
@@ -727,6 +730,33 @@ test('model catalog bounds the reply ceiling instead of inheriting the context w
     buildCodexModelCatalog({ ...base, contextWindow: 9_000 }).models[0].max_output_tokens,
     9_000,
   );
+});
+
+test('a long-window model compacts at 200k tokens instead of 90% of its window', () => {
+  // Codex 0.146.0 compacts once the whole active context reaches
+  // min(auto_compact_token_limit, 90% of the context window). With null that
+  // was ~1.18M tokens for GLM 5.3 Flash, which no change's thread reaches.
+  const codexThreshold = (model) => Math.min(
+    model.auto_compact_token_limit ?? Infinity,
+    Math.floor((model.context_window * 9) / 10),
+  );
+  assert.equal(AUTO_COMPACT_TOKEN_LIMIT, 200_000);
+  const glm = buildCodexModelCatalog({
+    modelId: 'z-ai/glm-5.3-flash',
+    displayName: 'Z.AI: GLM 5.3 Flash',
+    contextWindow: 1_310_720,
+    baseInstructions: 'Test coding instructions',
+  }).models[0];
+  assert.equal(glm.auto_compact_token_limit, 200_000);
+  assert.equal(codexThreshold(glm), 200_000, 'not 1,179,648');
+
+  // A window whose 90% is already lower keeps its own threshold.
+  for (const [contextWindow, threshold] of [[128_000, 115_200], [200_000, 180_000], [64_000, 57_600]]) {
+    const model = buildCodexModelCatalog({
+      modelId: 'vendor/model', contextWindow, baseInstructions: 'Test coding instructions',
+    }).models[0];
+    assert.equal(codexThreshold(model), threshold, `${contextWindow}-token window`);
+  }
 });
 
 test('the reply ceiling is taken from the environment the host already sets', () => {
