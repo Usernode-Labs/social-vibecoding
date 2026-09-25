@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 716,
-    "mappedRoutes": 560,
+    "totalRoutes": 718,
+    "mappedRoutes": 562,
     "exemptRoutes": 156,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 413,
+    "clientApiReferences": 415,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 22,
     "navigationSurfaces": 10
@@ -699,6 +699,44 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-support.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin-user-merge.js",
+      "method": "GET",
+      "path": "/api/admin/users/:id/merge-preview",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.users.item.merge.preview.3dae720a",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-user-merge.tsx",
+        "frontend/src/features/admin/admin-users.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin-user-merge.js",
+      "method": "POST",
+      "path": "/api/admin/users/:id/merge",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.users.item.merge.5a12d4c6",
+      "domain": "admin",
+      "risk": "destructive",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-user-merge.tsx",
+        "frontend/src/features/admin/admin-users.tsx"
       ]
     },
     {

@@ -512,6 +512,9 @@ function mappedClassification(route, clientRefs, matches, reason = null) {
     ? 'read'
     : ((route.method === 'DELETE' && route.path === '/api/auth/account')
       || /delete|remove|revoke|reset|close|archive|override/.test(route.path || '')
+      // Admin "Deduplicate user": anonymises one account and moves all of
+      // its rows onto another, irreversibly.
+      || (route.method === 'POST' && route.path === '/api/admin/users/:id/merge')
       ? 'destructive'
       : 'external_write');
   return {

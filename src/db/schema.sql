@@ -9402,3 +9402,33 @@ COMMENT ON TABLE support_actions IS 'staging:private';
 CREATE UNIQUE INDEX IF NOT EXISTS user_activities_support_reversal_unique
   ON user_activities ((metadata->>'reverses'))
   WHERE source = 'support_adjustment' AND metadata ? 'reverses';
+
+-- Admin "Deduplicate user" (#admin/users/<id>, src/services/user-merge.js):
+-- one row per merge of two accounts that belonged to the same person. The
+-- kept account received every row that referenced the merged one; the
+-- merged row was anonymised in place so historical ids stay valid. `moved`,
+-- `dropped` and `retained` are per-table row counts ("table.column": n):
+-- rows re-pointed at the kept account, the merged account's rows removed
+-- because the kept account already had the same record (kept wins), and
+-- conflicting rows left on the anonymised account because removing them
+-- would destroy something (a wallet, a live key, a proposal). No email or
+-- username is stored here. Private: it links two identities of one person.
+--
+-- merged_user_id is unique: an account is merged away at most once, and
+-- the index is what makes a double submit fail instead of merging twice.
+-- The user columns are SET NULL on delete so a later account deletion
+-- keeps the audit row.
+CREATE TABLE IF NOT EXISTS user_merges (
+  id               BIGSERIAL PRIMARY KEY,
+  kept_user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  merged_user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  email_kept_from  VARCHAR(8) NOT NULL CHECK (email_kept_from IN ('kept', 'merged')),
+  moved            JSONB NOT NULL DEFAULT '{}',
+  dropped          JSONB NOT NULL DEFAULT '{}',
+  retained         JSONB NOT NULL DEFAULT '{}',
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_merges_merged_unique ON user_merges (merged_user_id);
+CREATE INDEX IF NOT EXISTS idx_user_merges_kept ON user_merges (kept_user_id, created_at DESC);
+COMMENT ON TABLE user_merges IS 'staging:private';

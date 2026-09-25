@@ -60,6 +60,7 @@ async function migrate(config) {
   await seedStagingDemoUser(pool);
   await seedStagingAdminDetailsUser(pool);
   await seedStagingSupportUser(pool);
+  await seedStagingDuplicateUser(pool);
   await seedSelfApp(pool, config);
   finishPhase('coreSeedMs');
   await seedStagingNotifications(pool, config);
@@ -1308,6 +1309,42 @@ async function seedStagingSupportUser(pool) {
     log.info('db', 'Staging support user seeded', { id: 900302 });
   } catch (err) {
     log.warn('db', 'Staging support user seeding failed', { message: err.message });
+  }
+}
+
+// "Deduplicate user" (#admin/users/900301 -> Deduplicate user): a second,
+// fake account for the same fake person as 900301, so a full admin testing a
+// preview has an obvious pair to merge. A little activity so the side-by-side
+// counts and "rows that will move" are not all zero. Fixed id, ON CONFLICT /
+// existence guards, strictly a no-op outside staging. Nothing reads it.
+async function seedStagingDuplicateUser(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, is_admin, can_create_apps, email, display_name)
+       VALUES (900310, 'staging-demo-admin-details-dup', 'staging-demo-not-a-login', FALSE, FALSE,
+               'staging-demo-admin-details-dup@example.invalid', 'Staging demo details user')
+       ON CONFLICT DO NOTHING`
+    );
+    const owned = await pool.query(
+      `SELECT 1 FROM users WHERE id = 900310 AND username = 'staging-demo-admin-details-dup'`
+    );
+    if (!owned.rowCount) return;
+    const hasEvents = await pool.query(
+      `SELECT 1 FROM events WHERE user_id = 900310 AND metadata->>'staging_demo' = 'duplicate' LIMIT 1`
+    );
+    if (!hasEvents.rowCount) {
+      for (const [type, ago] of [['app_created', '20 days'], ['chat_message_sent', '6 days'], ['dapp_active_day', '2 days']]) {
+        await pool.query(
+          `INSERT INTO events (user_id, event_type, metadata, created_at)
+           VALUES (900310, $1, '{"staging_demo": "duplicate"}'::jsonb, NOW() - $2::interval)`,
+          [type, ago]
+        );
+      }
+    }
+    log.info('db', 'Staging duplicate user seeded', { id: 900310 });
+  } catch (err) {
+    log.warn('db', 'Staging duplicate user seeding failed', { message: err.message });
   }
 }
 

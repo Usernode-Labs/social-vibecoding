@@ -1228,6 +1228,55 @@
       "preview": "`UPDATE chat_sessions SET headless_status = $4, headless_outcome = COALESCE($5, headless_outcome), headless_step = NULL, headless_turn_id = NULL, last_activity_"
     },
     {
+      "source": "src/services/user-merge.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "00773acfc50e0d336f0f",
+      "count": 1,
+      "preview": "plan.update"
+    },
+    {
+      "source": "src/services/user-merge.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "4ec7c53222c8a758c722",
+      "count": 1,
+      "preview": "sql"
+    },
+    {
+      "source": "src/services/user-merge.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "576911c8e6feb5ac37ee",
+      "count": 1,
+      "preview": "cq.sql"
+    },
+    {
+      "source": "src/services/user-merge.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "652e3e200e56c4496db9",
+      "count": 1,
+      "preview": "plan.deleteRows"
+    },
+    {
+      "source": "src/services/user-merge.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "bc503c1138e4ce8e8f61",
+      "count": 1,
+      "preview": "plan.countPinned"
+    },
+    {
+      "source": "src/services/user-merge.js",
+      "kind": "runtime-expression",
+      "fingerprint": "6bb35ca70a33c7a96708",
+      "count": 1,
+      "preview": "arms.join('\\nUNION ALL\\n')"
+    },
+    {
+      "source": "src/services/user-merge.js",
+      "kind": "structural-template",
+      "fingerprint": "952e769794c8bbcad405",
+      "count": 1,
+      "preview": "`DELETE FROM ${t.sql} WHERE ${quoteIdent(c.name)} = $1::integer`"
+    },
+    {
       "source": "src/services/visual-evidence-state.js",
       "kind": "structural-template",
       "fingerprint": "1f4574f3e4b897aca423",
