@@ -15,6 +15,7 @@ const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
+const communities = require('../services/communities');
 const appAdmins = require('../services/app-admins');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const topicAttrs = require('../services/topic-attributes');
@@ -2139,6 +2140,13 @@ function voteRoutes(config) {
   // (promote / vote / votes / undo / admin-merge): collab-level access,
   // 404 on deny. Admins always pass inside the guard.
   router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
+  // Proposing and voting are for the community's members
+  // (services/communities.js). Mounted per route rather than beside the
+  // collab guard: the guard covers every session write, and building a
+  // change, archiving one or giving kudos stay open to anyone who may
+  // collaborate. A 403 `join_required` is what lets the client offer Join
+  // in place of the refusal.
+  const requireMembership = communities.requireSessionMembership(pool);
 
   // Promote a session's PR for voting
   // drainGuard (#767): promote/merge kick container work (staging build,
@@ -2146,7 +2154,7 @@ function voteRoutes(config) {
   // exiting — a half-run rebuild leaves the app down until the next heal
   // sweep. 503 here is honest and the client retries against the new
   // container. Read-only vote/undo paths stay ungated.
-  router.post('/api/sessions/:id/promote', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/promote', drainGuard, requireMembership, async (req, res) => {
     try {
       // #183: headless rows are excluded — auto sessions are never
       // promotable themselves; users clone them and propose the clone.
@@ -3243,7 +3251,7 @@ function voteRoutes(config) {
   // Cast a vote on a promoted PR
   // #2525: rate-limited because a CHANGED vote posts a system line into the
   // proposal's thread and notifies; flipping yes/no is the spam shape.
-  router.post('/api/sessions/:id/vote', governanceVoteLimiter, async (req, res) => {
+  router.post('/api/sessions/:id/vote', governanceVoteLimiter, requireMembership, async (req, res) => {
     const { vote } = req.body;
     if (!['yes', 'no'].includes(vote)) {
       return res.status(400).json({ error: 'Vote must be "yes" or "no"' });

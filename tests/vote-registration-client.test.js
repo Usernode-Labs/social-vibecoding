@@ -281,3 +281,58 @@ test('a second press while the first is in flight resolves false without a reque
   assert.equal(ok, false);
   assert.deepEqual(h.seen, []);
 });
+
+// ── Communities: a vote refused for membership offers Join, then lands ──
+//
+// POST /api/sessions/:id/vote answers 403 `join_required` for someone who is
+// not in the app's community (services/communities.js). castVote treats that
+// as a question: it puts the optimistic vote back, asks through offerJoin,
+// and on a yes casts the SAME vote again with the line already in hand.
+
+test('a join_required refusal offers Join, and a yes casts the same vote again', async () => {
+  const calls = [];
+  let answer = { ok: false, status: 403, json: async () => ({
+    error: 'Join Demo to propose and vote on its changes.', code: 'join_required',
+    app: { slug: 'demo-app', name: 'Demo' },
+  }) };
+  const AppView = makeAppView({
+    fetch: async (url, init) => {
+      calls.push({ url, body: init && init.body ? JSON.parse(init.body) : null });
+      const out = answer;
+      answer = { ok: true, status: 200, json: async () => ({ ok: true }) };
+      return out;
+    },
+  });
+  const pr = openRow();
+  AppView._proposals = [pr];
+  AppView._repaintDevBody = () => {};
+  AppView._renderTopicHead = () => {};
+  AppView.refreshDevData = async () => {};
+  const asked = [];
+  AppView.offerJoin = async (data) => { asked.push(data.app.slug); return true; };
+  const ok = await AppView.castVote(7, 'yes', 3, { reason: null });
+  assert.equal(ok, true, 'the retried vote is the answer the caller gets');
+  assert.deepEqual(asked, ['demo-app'], 'asked once, about the app the server named');
+  assert.equal(calls.length, 2, 'the refused vote, then the same vote again');
+  assert.deepEqual(calls.map((c) => c.body.vote), ['yes', 'yes']);
+  assert.equal(AppView._voteInFlight.size, 0, 'nothing is left holding the in-flight slot');
+});
+
+test('a No to the Join question leaves no vote and no second request', async () => {
+  let n = 0;
+  const AppView = makeAppView({
+    fetch: async () => {
+      n += 1;
+      return { ok: false, status: 403, json: async () => ({ code: 'join_required', app: { slug: 'demo-app', name: 'Demo' } }) };
+    },
+  });
+  const pr = openRow();
+  AppView._proposals = [pr];
+  AppView._repaintDevBody = () => {};
+  AppView._renderTopicHead = () => {};
+  AppView.refreshDevData = async () => {};
+  AppView.offerJoin = async () => false;
+  assert.equal(await AppView.castVote(7, 'yes', 3, { reason: null }), false);
+  assert.equal(n, 1);
+  assert.equal(pr.my_vote, null, 'the optimistic vote went back');
+});

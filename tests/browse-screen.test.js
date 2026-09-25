@@ -194,7 +194,7 @@ function makeBrowse(opts = {}) {
   return {
     Browse: sandbox.Browse, Home: sandbox.__Home, AppCard: sandbox.AppCard,
     state, nodes, fetchCalls, chrome, history, location: sandbox.location,
-    storage, renders, toasts,
+    storage, renders, toasts, win: sandbox,
   };
 }
 
@@ -576,7 +576,7 @@ test("the screen's <option> list is a faithful copy of Browse.SORTS", () => {
     'the <option> list and the comparators must name the same five orders');
 });
 
-// ── Filter chips: All / Featured / Your apps / New (the prototype's scrDiscover) ──
+// ── Filter chips: All / Featured / Joined / New (the prototype's scrDiscover) ──
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-09-23T12:00:00Z');
@@ -584,7 +584,7 @@ const ago = (days) => new Date(NOW - days * DAY).toISOString();
 
 test("the chip row is a faithful copy of Browse.FILTERS, in the prototype's order", () => {
   const { Browse } = makeBrowse();
-  assert.deepEqual(Array.from(Browse.FILTERS, (f) => f.label), ['All', 'Featured', 'Your apps', 'New']);
+  assert.deepEqual(Array.from(Browse.FILTERS, (f) => f.label), ['All', 'Featured', 'Joined', 'New']);
   // Same reason SORT_OPTIONS is a copy: window.Browse does not exist in the
   // SSG pass, so the chips carry their own labels.
   const src = read('frontend/src/features/apps/browse-screen.tsx');
@@ -609,9 +609,12 @@ test('filterApps: each chip admits the set its name promises', () => {
   const apps = [
     app({ slug: 'plain', created_at: ago(90) }),
     app({ slug: 'curated', featured: true, featured_order: 0, created_at: ago(60) }),
-    app({ slug: 'curated-mine', featured: true, is_favorited: true, created_at: ago(40) }),
-    app({ slug: 'member', is_collaborator: true, created_at: ago(30) }),
-    app({ slug: 'member-hidden', is_collaborator: true, your_apps_hidden: true, created_at: ago(20) }),
+    app({ slug: 'curated-mine', featured: true, is_favorited: true, is_member: true, created_at: ago(40) }),
+    app({ slug: 'member', is_collaborator: true, is_member: true, created_at: ago(30) }),
+    app({ slug: 'member-hidden', is_collaborator: true, your_apps_hidden: true, is_member: true, created_at: ago(20) }),
+    // Pinned to Home by an older client but not in the community: the pin
+    // is a shortcut, and the chip is membership.
+    app({ slug: 'pinned-only', is_favorited: true, created_at: ago(50) }),
     app({ slug: 'fresh', created_at: ago(3) }),
   ];
   const keys = (list) => Array.from(list, (a) => a.slug);
@@ -619,12 +622,13 @@ test('filterApps: each chip admits the set its name promises', () => {
   // Featured is the admin's `featured` flag — the one Home's featured lane
   // reads — and the directory shows the WHOLE set, apps you have included.
   assert.deepEqual(keys(Browse.filterApps(apps, 'featured', NOW)), ['curated', 'curated-mine']);
-  // Your apps is Home.isYours: added, or a member who has not taken it off
-  // Home — the same predicate as the rows' "Added" state.
-  assert.deepEqual(keys(Browse.filterApps(apps, 'yours', NOW)), ['curated-mine', 'member']);
+  // Joined is Home.isJoined: the communities you are in, the same predicate
+  // as the rows' Join / Joined pill. Taking an app off Home is not leaving,
+  // so the hidden member is still here, and a pin alone is not membership.
+  assert.deepEqual(keys(Browse.filterApps(apps, 'yours', NOW)), ['curated-mine', 'member', 'member-hidden']);
   assert.deepEqual(keys(Browse.filterApps(apps, 'new', NOW)), ['fresh'], 'created in the last 14 days');
   // Pure: the input is untouched and the default key is the current chip.
-  assert.equal(apps.length, 6);
+  assert.equal(apps.length, 7);
   Browse._filter = 'featured';
   assert.deepEqual(keys(Browse.filterApps(apps)), ['curated', 'curated-mine']);
 });
@@ -672,9 +676,9 @@ test('an empty chip says which set is empty', () => {
   Browse.setFilter('featured');
   assert.equal(state.empty, 'No featured apps yet.');
   Browse.setFilter('yours');
-  assert.equal(state.empty, 'Nothing in Your apps yet. Add apps from All.');
+  assert.equal(state.empty, 'You haven’t joined anything yet. Join apps from All.');
   Browse.setQuery('zzz', { immediate: true });
-  assert.equal(state.empty, 'None of your apps match “zzz”.');
+  assert.equal(state.empty, 'Nothing you’ve joined matches “zzz”.');
   Browse.setFilter('featured');
   assert.equal(state.empty, 'No featured apps match “zzz”.');
   Browse.setFilter('new');
@@ -714,7 +718,7 @@ test('the chips prerender with All pressed, from the store\'s initial value', ()
   const bar = INDEX.slice(INDEX.indexOf('id="browse-search-bar"'), INDEX.indexOf('id="browse-sort-bar"'));
   const chips = [...bar.matchAll(/<button[^>]*aria-pressed="(true|false)"[^>]*data-filter="([a-z]+)"[^>]*>([^<]+)</g)]
     .map((m) => `${m[2]}:${m[1]}:${m[3]}`);
-  assert.deepEqual(chips, ['all:true:All', 'featured:false:Featured', 'yours:false:Your apps', 'new:false:New']);
+  assert.deepEqual(chips, ['all:true:All', 'featured:false:Featured', 'yours:false:Joined', 'new:false:New']);
   assert.match(bar, /id="browse-filter-chips" role="group" aria-label="Filter apps"/);
   assert.match(INDEX, /id="browse-list"[^>]*data-filter="all"/);
   // The language's own filter chip, not a hand-rolled one.
@@ -756,11 +760,11 @@ test('visibleApps: the search narrows, the sort orders, and they compose', () =>
 
 // ── render ───────────────────────────────────────────────────────
 
-test('rowView: an app-store row — icon, name, meta, Add state', () => {
+test('rowView: an app-store row — icon, name, meta, Join state', () => {
   const { Browse, state } = makeBrowse();
   Browse._apps = [
     app({ slug: 'fresh', name: 'Fresh App', active_users: 3 }),
-    app({ slug: 'mine', name: 'My App', is_favorited: true }),
+    app({ slug: 'mine', name: 'My App', is_favorited: true, is_member: true }),
   ];
   Browse.render();
   assert.deepEqual(slugs(state), ['fresh', 'mine'], 'rows, not launcher tiles');
@@ -770,11 +774,13 @@ test('rowView: an app-store row — icon, name, meta, Add state', () => {
   // The whole app record rides the descriptor, because the icon tile and the
   // chip strip are shared decisions (app-card.js) the row does not re-make.
   assert.equal(fresh.app.slug, 'fresh');
-  // Added rows read "Added", fresh ones "Add to Your apps" (#1553) — the flag
-  // is the descriptor's, the two labels are browse-list.tsx's.
+  // Joined rows read "Joined", fresh ones "Join" (communities) — the flag
+  // is the descriptor's (`added`, the name the declared checks' data-added
+  // attribute keeps), the two labels are browse-list.tsx's.
   assert.equal(fresh.added, false);
+  assert.equal(fresh.addTitle, 'Join Fresh App');
   assert.equal(rowFor(state, 'mine').added, true);
-  assert.match(rowFor(state, 'mine').addTitle, /Tap to remove/);
+  assert.match(rowFor(state, 'mine').addTitle, /Tap to leave My App/);
   // The "…" menu is gone from this screen — the detail page absorbed it.
   assert.doesNotMatch(BROWSE_SRC, /card-menu-btn/);
   assert.doesNotMatch(BROWSE_SRC, /card-add-btn/, 'the corner badge is a real button now');
@@ -1507,6 +1513,77 @@ test('toggleAdded reverts the optimistic flip when the write fails', async () =>
   assert.ok(nodes);
 });
 
+// ── Join / Leave (Home.setMembership — Discover's pill, communities) ──
+
+test('the Discover pill joins: POST { joined: true }, and the row, the chip and Home agree at once', async () => {
+  const { Browse, Home, fetchCalls, toasts } = makeBrowse();
+  const fresh = app({ slug: 'fresh', name: 'Fresh App', member_count: 2 });
+  Home._apps = [fresh];
+  Browse._apps = [fresh];
+  Browse.toggleRowAdded(Browse.rowView(fresh));
+  assert.equal(fresh.is_member, true, 'optimistic: the pill reads Joined before the write lands');
+  assert.equal(fresh.is_favorited, true, 'and it is pinned, as Add pinned it');
+  assert.equal(fresh.member_count, 3);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(fetchCalls[0], {
+    url: '/api/apps/fresh/membership', method: 'POST', body: { joined: true },
+  });
+  assert.equal(Browse.filterApps([fresh], 'yours').length, 1, 'and the Joined chip holds it');
+  assert.deepEqual(toasts, ['Joined Fresh App']);
+});
+
+test('leaving asks first, and a No leaves everything as it was', async () => {
+  const { Home, fetchCalls, win } = makeBrowse();
+  const mine = app({ slug: 'mine', name: 'Mine', is_member: true, is_favorited: true });
+  Home._apps = [mine];
+  const asked = [];
+  win.ConfirmModal = { show: async (o) => { asked.push(o); return false; } };
+  assert.equal(await Home.setMembership('mine', false), false);
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].title, 'Leave Mine?');
+  assert.equal(asked[0].danger, true);
+  assert.match(asked[0].message, /propose or vote/);
+  assert.equal(mine.is_member, true);
+  assert.equal(fetchCalls.length, 0, 'nothing is sent');
+
+  win.ConfirmModal = { show: async () => true };
+  assert.equal(await Home.setMembership('mine', false), true);
+  assert.equal(mine.is_member, false);
+  assert.equal(mine.is_favorited, false, 'leaving takes it off Home too');
+  assert.deepEqual(fetchCalls[0].body, { joined: false });
+});
+
+test('leaving a private app says it costs access', async () => {
+  const { Home, win } = makeBrowse();
+  Home._apps = [app({ slug: 'priv', name: 'Priv', is_member: true, view_visibility: 'private' })];
+  let message = '';
+  win.ConfirmModal = { show: async (o) => { message = o.message; return false; } };
+  await Home.setMembership('priv', false);
+  assert.match(message, /lose access/);
+});
+
+test('with no confirm dialog there is no leaving', async () => {
+  const { Home, fetchCalls } = makeBrowse();
+  const mine = app({ slug: 'mine', is_member: true });
+  Home._apps = [mine];
+  assert.equal(await Home.setMembership('mine', false), false);
+  assert.equal(mine.is_member, true);
+  assert.equal(fetchCalls.length, 0);
+});
+
+test('a refused join puts the flags back and re-syncs', async () => {
+  const { Home, toasts } = makeBrowse({ fetchOk: false });
+  const fresh = app({ slug: 'fresh', name: 'Fresh' });
+  Home._apps = [fresh];
+  let reloaded = 0;
+  Home.load = async () => { reloaded += 1; };
+  assert.equal(await Home.setMembership('fresh', true), false);
+  assert.ok(!fresh.is_member, 'back to what the server last said');
+  assert.ok(!fresh.is_favorited);
+  assert.equal(reloaded, 1);
+  assert.match(toasts[0], /^Couldn’t join/);
+});
+
 test('toggleAdded ignores staging demo tiles (their slugs have no DB row)', async () => {
   const { Home, fetchCalls } = makeBrowse();
   Home._apps = [app({ slug: 'staging-demo-featured', demo: true })];
@@ -1575,21 +1652,20 @@ test('browse.js is a bundle module the #browse-screen island imports', () => {
     /from '\.\/app-card-view'/);
 });
 
-test('#1553: the row button names the destination, like every other surface', () => {
-  // "Add" alone did not say add to WHAT, and this row was the only place the
-  // platform left that a guess — the detail page's button, the app-chip menu
-  // and this button's own title attribute all spell out "Your apps".
+test('#1553: the row button names what it acts on, like every other surface', () => {
+  // "Add" alone did not say add to WHAT (#1553); the pill is Join now
+  // (communities), and "Join" alone would not say join WHAT for someone not
+  // reading the row. The accessible name and the title spell out the app.
   const listSrc = read('frontend/src/features/apps/browse-list.tsx');
-  // QA 2026-09-24 Q10: the 127px "Add to Your apps" pill squeezed the app's
-  // name to ten characters on desktop and to nothing at 1024. The visible
-  // label is a "+ Add" pill again; the destination #1553 asked for is still
-  // spelled out, as the button's accessible name and its title.
-  assert.match(listSrc, /'Added' : 'Add'/);
-  assert.match(listSrc, /aria-label=\{view\.added \? undefined : 'Add to Your apps'\}/);
+  // QA 2026-09-24 Q10: a long pill squeezed the app's name to ten characters
+  // on desktop and to nothing at 1024, so the visible label stays one short
+  // word and the rest rides the accessible name and the title.
+  assert.match(listSrc, /'Joined' : 'Join'/);
+  assert.match(listSrc, /aria-label=\{view\.added \? undefined : `Join \$\{view\.name\}`\}/);
   assert.match(listSrc, /title=\{view\.addTitle\}/);
   assert.match(listSrc, /<PlusIcon /);
   // The state label stays short: the row it sits on already says which app.
-  assert.match(listSrc, /view\.added \? 'Added'/);
+  assert.match(listSrc, /view\.added \? 'Joined'/);
 });
 
 // ── app.js routing ───────────────────────────────────────────────

@@ -223,6 +223,15 @@ const Home = {
     return !!(app && ((app.is_collaborator && !app.your_apps_hidden) || app.is_favorited));
   },
 
+  // In the community this app belongs to (the server's is_member; see
+  // services/communities.js). NOT the same set as isYours, and the
+  // difference is the point: "Your apps" is where the shortcuts sit on Home,
+  // and taking a tile off Home is not leaving. Joining is what lets you
+  // propose and vote, and it is what the Workshop lists.
+  isJoined(app) {
+    return !!(app && app.is_member);
+  },
+
   // Split the full list into { yours, rest }. Personal ordering
   // (issue #128) inside "Your apps": explicit favorite_order first
   // (ascending), NULLs after. Array.prototype.sort is stable, so
@@ -892,7 +901,9 @@ const Home = {
   // here — the "before" side of a capture is shot against production, so an
   // env-gated link would starve it forever. It writes only what the tap it
   // imitates writes, and it ends by undoing that write, so a preview it ran
-  // in is left as it was found.
+  // in is left as it was found — except for one row, as it would be for a
+  // finger: a pin joins the app's community (the app_favorites trigger in
+  // schema.sql), and taking the pin off Home is not leaving it.
   _discoverAddShotRan: false,
   async _maybeDiscoverAddShot() {
     if (Home._discoverAddShotRan) return;
@@ -2071,6 +2082,85 @@ const Home = {
       PlatformUI.toast(`Update failed: ${err.message}`);
       await Home.load();
       if (typeof onChange === 'function') onChange();
+    }
+  },
+
+  // Join or leave the community `slug` belongs to — Discover's Join pill,
+  // its detail page and the join-required prompt all come through here.
+  // POST /api/apps/:slug/membership (src/routes/apps.js).
+  //
+  // JOINING ALSO PINS, because the button it replaced was "Add to Your
+  // apps" and the server does both (communities.join): the cached flags flip
+  // together so Home's grid and Discover's pill agree in the same paint.
+  //
+  // LEAVING ASKS FIRST. It is the one membership change with a cost you
+  // might not expect — on a private app it is your access, and everywhere it
+  // is your vote — and a pill that left on one tap would be a pill people
+  // are afraid to touch. The creator is never offered it: the server refuses
+  // (409) and the confirm would be a dead end.
+  //
+  // Resolves true when the membership is now `desired`, false otherwise.
+  async setMembership(slug, desired, onChange) {
+    const known = (list) => (Array.isArray(list) ? list : []).find((a) => a && a.slug === slug);
+    const app = known(Home._apps)
+      || known(typeof window !== 'undefined' ? window.Browse?._apps : null)
+      || null;
+    if (app && app.demo) return false;
+    const name = (app && app.name) || slug;
+    if (!desired) {
+      const privateApp = !!app && app.view_visibility === 'private';
+      // No confirm dialog in this document means no leaving from it: a
+      // silent leave is the one outcome this step exists to prevent.
+      const confirmModal = typeof window !== 'undefined' ? window.ConfirmModal : null;
+      const ok = await confirmModal?.show?.({
+        title: `Leave ${name}?`,
+        message: privateApp
+          ? 'You will lose access to it until someone invites you back.'
+          : 'You won’t be able to propose or vote on its changes until you join again.',
+        confirmLabel: 'Leave',
+        danger: true,
+      });
+      if (!ok) return false;
+    }
+    const prev = app ? {
+      is_member: app.is_member,
+      is_favorited: app.is_favorited,
+      your_apps_hidden: app.your_apps_hidden,
+      is_collaborator: app.is_collaborator,
+      member_count: app.member_count,
+    } : null;
+    if (app) {
+      app.is_member = desired;
+      app.is_favorited = desired;
+      if (desired) app.your_apps_hidden = false;
+      else app.is_collaborator = false;
+      app.member_count = Math.max(0, (Number(app.member_count) || 0) + (desired ? 1 : -1));
+      if (desired) Home._revealSlug = slug;
+      Home.render();
+      if (typeof onChange === 'function') onChange();
+    }
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/membership`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ joined: desired }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (app && Number.isFinite(Number(data.member_count))) app.member_count = Number(data.member_count);
+      PlatformUI.toast(desired ? `Joined ${name}` : `Left ${name}`);
+      if (!app) {
+        await Home.load();
+        if (typeof onChange === 'function') onChange();
+      }
+      return true;
+    } catch (err) {
+      if (app && prev) Object.assign(app, prev);
+      Home._revealSlug = null;
+      PlatformUI.toast(`Couldn’t ${desired ? 'join' : 'leave'}: ${err.message}`);
+      await Home.load();
+      if (typeof onChange === 'function') onChange();
+      return false;
     }
   },
 

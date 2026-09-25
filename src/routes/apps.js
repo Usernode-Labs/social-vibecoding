@@ -24,6 +24,9 @@ const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
 const discoveryCuration = require('../services/discovery-curation');
+const communities = require('../services/communities');
+const governance = require('../services/governance');
+const activeUsers = require('../services/active-users');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -275,6 +278,14 @@ function demoIconApps(curation = false) {
     merged_prs_recent: 0,
     last_merged_at: null,
     open_issues: 0,
+    // Communities (services/communities.js). Outsiders by default, like the
+    // Your-apps flags above; the three rows below that set is_member are
+    // the Workshop's three sections, one each, so ?demo=1 shows every
+    // audience label whatever the clone's own memberships are.
+    is_member: false,
+    member_count: 0,
+    audience: 'open',
+    last_active_at: null,
     icon_emoji: null,
     icon_url: null,
     can_collaborate: false,
@@ -285,7 +296,12 @@ function demoIconApps(curation = false) {
     demo: true,
   };
   const apps = [
-    { ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮' },
+    // "Just you" in the Workshop: a private project nobody else is in.
+    {
+      ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮',
+      view_visibility: 'private', collab_visibility: 'private',
+      is_member: true, member_count: 1, audience: 'solo', last_active_at: demoAgo(26),
+    },
     {
       ...base,
       id: 900002,
@@ -319,6 +335,13 @@ function demoIconApps(curation = false) {
       slug: 'staging-demo-long-name',
       name: 'Staging demo photo album and journal',
       icon_emoji: '📔',
+      // A "Group" in the Workshop: private, and more than one person in it.
+      view_visibility: 'private',
+      collab_visibility: 'private',
+      is_member: true,
+      member_count: 4,
+      audience: 'invited',
+      last_active_at: demoAgo(3),
     },
     // #1838: the ONE demo row that lands in "Your apps". Every other row
     // here inherits is_favorited/is_collaborator false from `base`, so
@@ -340,6 +363,11 @@ function demoIconApps(curation = false) {
       icon_emoji: '🏠',
       is_favorited: true,
       favorite_order: 99,
+      // ...and a "Community" in the Workshop, the most recent one, so the
+      // declared checks that find it there do not depend on the clone.
+      is_member: true,
+      member_count: 12,
+      last_active_at: demoAgo(0.5),
     },
     // Four more featured rows so the Discover widget's curated lane is
     // reviewable AT ITS CAP (#949): the lane holds six tiles — one per
@@ -747,6 +775,17 @@ function appRoutes(config) {
           (fa.app_id IS NOT NULL) AS featured,
           fa.sort_order AS featured_order,
           (me.user_id IS NOT NULL) AS is_collaborator,
+          -- The community the app belongs to (services/communities.js):
+          -- whether you are in it, how many are, who it is for, and when
+          -- it last moved for you. The Workshop lists your communities by
+          -- audience and by that recency; Discover's Join button reads
+          -- is_member. last_active_at is the latest of your joining, your
+          -- own last visit and the last thing that happened in its changes,
+          -- so a community you have not opened but that has news rises.
+          (cm.user_id IS NOT NULL) AS is_member,
+          COALESCE(cmc.cnt, 0) AS member_count,
+          ${communities.audienceSql('a', 'cmc.cnt')} AS audience,
+          GREATEST(cm.joined_at, mine.last_visit::timestamptz, dev.last_activity_at) AS last_active_at,
           COALESCE(dev.open_prs, 0) AS open_prs,
           COALESCE(dev.active_sessions, 0) AS active_sessions,
           -- "How actively developed is this app?" (#1383). All three ride
@@ -787,8 +826,17 @@ function appRoutes(config) {
         LEFT JOIN featured_apps fa ON fa.app_id = a.id
         LEFT JOIN app_collaborators me
           ON me.app_id = a.id AND me.user_id = $2 AND me.status = 'member'
+        LEFT JOIN community_members cm
+          ON cm.community_id = a.community_id AND cm.user_id = $2
+        LEFT JOIN (
+          SELECT community_id, COUNT(*) AS cnt FROM community_members GROUP BY community_id
+        ) cmc ON cmc.community_id = a.community_id
+        LEFT JOIN (
+          SELECT app_id, MAX(date) AS last_visit FROM app_activity WHERE user_id = $2 GROUP BY app_id
+        ) mine ON mine.app_id = a.id
         LEFT JOIN (
           SELECT app_id,
+            MAX(last_activity_at) AS last_activity_at,
             COUNT(*) FILTER (WHERE status IN ('promoted', 'merging')) AS open_prs,
             COUNT(*) FILTER (WHERE status = 'active') AS active_sessions,
             -- A merged chat_session IS an accepted community proposal —
@@ -954,6 +1002,10 @@ function appRoutes(config) {
           merged_prs_recent: parseInt(a.merged_prs_recent, 10) || 0,
           last_merged_at: a.last_merged_at || null,
           open_issues: parseInt(a.open_issues, 10) || 0,
+          is_member: !!a.is_member,
+          member_count: parseInt(a.member_count, 10) || 0,
+          audience: a.audience || 'open',
+          last_active_at: a.last_active_at || null,
           ...accessFlags(a, req.user, a.is_collaborator, adminAppIds, contributorCount,
             config.selfAppSlug),
         };
@@ -3141,6 +3193,99 @@ function appRoutes(config) {
       res.json({ ok: true, is_favorited: favorited });
     } catch (err) {
       log.error('apps', 'Failed to toggle favorite', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The community an app belongs to, as its page's community card draws it
+  // (features/dev-board/workshop/community-card.tsx): who it is for, who is
+  // in it, whether you are, and the rule a change has to meet to merge.
+  // View-gated like the page itself — a private app's community is as
+  // invisible to an outsider as the app.
+  //
+  // THE APPROVAL RULE IS READ, NOT RESTATED. `required` is what the merge
+  // gate would ask of an unopposed proposal right now: the app's own
+  // `approvals_required` when dapp.json sets one, otherwise
+  // active-users.requiredVotes over the same electorate governance.js
+  // counts (approvers on an invited-policy app, active users otherwise).
+  // It is the headline number, not the whole gate — opposition raises it
+  // and the lazy-consensus window can merge below it — and the card says
+  // "to merge", not "exactly".
+  router.get('/api/apps/:slug/community', async (req, res) => {
+    try {
+      const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
+      const { rows: appRows } = await pool.query(
+        `SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
+        [req.params.slug, showSelfHosted]
+      );
+      const app = appRows[0];
+      if (!app || !(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      const membership = await communities.getMembership(pool, app, req.user?.id);
+      const members = await communities.listMembers(pool, app.id);
+      // The channel is the app's group chat, which is COLLAB-gated
+      // (app-access.js): a viewer who may see a view-public,
+      // collab-private app but not talk in it gets no row for it rather
+      // than a preview of a room they cannot enter.
+      const canChat = await appAccess.checkAppAccess(pool, app, req.user, 'collab');
+      const channel = canChat ? await communities.channelSummary(pool, app.id, req.user?.id) : null;
+      const gov = await governance.getGovernance(pool, app.id);
+      const electorate = await governance.getElectorate(pool, app.id, gov);
+      const required = gov.approvalsRequired != null
+        ? gov.approvalsRequired
+        : activeUsers.requiredVotes(electorate.active, 0);
+      res.json({
+        slug: app.slug,
+        name: app.name,
+        ...membership,
+        members,
+        channel,
+        approval: {
+          policy: gov.approverPolicy,
+          approvals_required: gov.approvalsRequired,
+          electorate: electorate.active,
+          required,
+        },
+      });
+    } catch (err) {
+      log.error('apps', 'Failed to load community', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Join or leave the community an app belongs to. `joined: true` needs only
+  // VIEW access: joining an open community is the point of the button, and a
+  // private app's community can only be seen by someone already in it.
+  // Joining also pins the app to Home (see communities.join) — the button
+  // this replaced was "Add to Your apps", and the directory's one tap keeps
+  // doing what it did. Leaving takes you out of the community, off the
+  // app's collaborators and off Home in one transaction (communities.leave).
+  router.post('/api/apps/:slug/membership', async (req, res) => {
+    const { joined } = req.body || {};
+    if (typeof joined !== 'boolean') {
+      return res.status(400).json({ error: 'joined must be a boolean' });
+    }
+    try {
+      const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
+      const { rows: appRows } = await pool.query(
+        `SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
+        [req.params.slug, showSelfHosted]
+      );
+      const app = appRows[0];
+      if (!app || !(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (joined) {
+        await communities.join(pool, app, req.user.id);
+      } else {
+        const result = await communities.leave(pool, app, req.user.id);
+        if (!result.ok) return res.status(result.status).json({ error: result.error });
+      }
+      const membership = await communities.getMembership(pool, app, req.user.id);
+      res.json({ ok: true, ...membership });
+    } catch (err) {
+      log.error('apps', 'Failed to change membership', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

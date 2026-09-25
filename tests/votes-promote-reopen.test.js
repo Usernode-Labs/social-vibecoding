@@ -227,7 +227,10 @@ test('paused promotion preserves ownership, headless, and terminal status exclus
       const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
       assert.equal(response.status, 404);
       assert.equal(ctx.getPRCalls.length, 0);
-      const lookup = ctx.pool.queries[0].sql;
+      // The promote route's own lookup, found by what it selects rather than
+      // by position: the community membership gate (services/communities.js)
+      // runs its read ahead of it on the same pool.
+      const lookup = ctx.pool.queries.find((q) => /SELECT cs\.\*/.test(q.sql)).sql;
       assert.match(lookup, /cs.user_id = \$2/);
       assert.match(lookup, /cs.is_headless = FALSE/);
     });

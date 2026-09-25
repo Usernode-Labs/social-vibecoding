@@ -206,6 +206,31 @@ representative fixture before the same gate can be claimed. See
 `docs/proposal-visuals/pre-pr-local-plan-verification.md` for setup and the
 remaining live-proposal boundary.
 
+## Communities own projects — name them the way the screen does
+
+- **Internally the container is a `community`; on screen it never is.** Every
+  app belongs to exactly one community (`apps.community_id`, the
+  "Communities" block at the end of `src/db/schema.sql`,
+  `src/services/communities.js`), and a community is what people join.
+  People see it by its audience — **Just you** (`solo`), **Group**
+  (`invited`) or **Community** (`open`) — and what it owns are **projects**.
+  Use "project" in user-facing copy where the app is the thing being built;
+  keep "app" where it is the thing being used (the App tab, Discover).
+- **Audience is derived, never stored.** `communities.audienceSql` reads it
+  off the app's `view_visibility` and its member/invite count. A second
+  stored copy is one the visibility reconcile would have to remember.
+- **Communities and apps are one-to-one today.** A community with a single
+  project is drawn as that project — its name, icon and page — and nothing
+  should render a separate "community" layer for it. The table is bare on
+  purpose; a name and an audience move onto it when a community can own
+  more than one project.
+- **Membership gates proposing and voting, not reading or building.**
+  `communities.requireSessionMembership` answers 403 `join_required` on
+  promote and vote; the collab guard in `app-access.js` still decides who
+  may be there at all. Collaborators, Home pins and platform access join by
+  trigger — write those rows, not `community_members`, unless the action is
+  literally Join or Leave. The vote threshold still counts active users.
+
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 
 - The shell's markup is React now. **Do not edit `public/index.html`** — it is

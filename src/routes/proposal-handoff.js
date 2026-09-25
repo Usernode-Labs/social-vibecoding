@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const express = require('express');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
+const communities = require('../services/communities');
 const github = require('../services/github');
 const staging = require('../services/staging');
 const stagingRecovery = require('../services/staging-recovery');
@@ -1877,7 +1878,10 @@ function proposalHandoffRoutes(config) {
   // optionally-open web page must still be on the exact currently checked
   // head with live staging and a terminal passing verdict. Local and web
   // turns retain the same source/session and can alternate.
-  router.post('/api/sessions/:id/promote', async (req, res, next) => {
+  // Membership first (services/communities.js): proposing is for the
+  // community's members whichever router ends up promoting, and this one
+  // runs ahead of voteRoutes' own copy of the same gate.
+  router.post('/api/sessions/:id/promote', communities.requireSessionMembership(pool), async (req, res, next) => {
     let releasePromotion = null;
     let releaseOnResponse = false;
     try {

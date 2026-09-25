@@ -1290,9 +1290,22 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // that pinned the ABSENCE of the scope chip now pins its return (the owner
   // reversed #2759), so that one changed in place rather than being added.
   //
+  // 816 → 817: +1 (communities, stages 0–2): the community card on a
+  // project's Workshop page. It could not fold into the lander's route check
+  // (#app/<slug>/workshop "is the card area grouped by theme"), which holds
+  // no `:has()` by the standing rule in tests/dev-workshop.test.js, so it
+  // takes a plain chain of its own. Two other checks were REWRITTEN in place
+  // because what they pinned is gone by design, not deleted: "An app with a
+  // decision waiting leads the Workshop list" became the three-section order
+  // (the Workshop orders by recency within Communities / Groups / Just you),
+  // and #2967's "Show N more" over app channels became "Messages lists
+  // #general but no row per app" (app channels live on the community card).
+  // 817 leaves 23 slots against MAX_DECLARED_TESTS (840), clear of the
+  // 20-slot floor.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 816);
+  checkCap.assertPinned(DAPP.tests.length, 817);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

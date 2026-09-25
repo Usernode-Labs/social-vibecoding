@@ -288,13 +288,14 @@ test('the empty state is a card that offers the directory, not a grey caption', 
 
   // A link, so cmd-click, middle-click and "open in new tab" work — the same
   // argument AppRow makes for being an anchor.
-  assert.match(inner, /^<a\b[^>]*\bhref="#apps"/,
-    'the card is an anchor, and it goes where Discover\'s own empty card '
-    + 'goes — the directory');
+  assert.match(inner, /^<div\b[^>]*>\s*<a\b[^>]*\bhref="#apps"/,
+    'the card (a GroupedList of its own) is an anchor, and it goes where '
+    + 'Discover\'s own empty card goes — the directory, where you join');
 
-  assert.match(inner, /font-bold[^"]*">You have no apps yet</,
-    'a title in the row\'s own subject weight');
-  assert.match(inner, /text-zinc-500[^"]*">Browse the directory to find one to join\.</,
+  assert.match(inner, /font-bold[^"]*">You haven’t joined anything yet</,
+    'a title in the row\'s own subject weight — the list is the communities '
+    + 'you are in, so the empty state says you are in none');
+  assert.match(inner, /text-zinc-500[^"]*">Browse the directory to find a project to join\.</,
     'a quieter second line under it');
   assert.match(inner, /<svg[^>]*>\s*<path[^>]*d="M9 5l7 7-7 7"/,
     'and ListRow\'s trailing disclosure chevron — the "tap through" mark the '
@@ -376,58 +377,48 @@ function listChildren(html) {
   return out;
 }
 
-test('an app row, never the empty card, is the first <a> in #workshop-list', () => {
-  // THE REGRESSION THIS FILE EXISTS FOR, SECOND TIME. dapp.json declares
-  //
-  //   #workshop-list a[data-workshop-app]:first-of-type
-  //     [data-workshop-needs]:not([data-workshop-needs="0"])
-  //
-  // to prove that an app with a decision waiting LEADS the list. That check
-  // does not name the empty state at all, which is exactly why #2445's first
-  // cut broke it and got all the way to the platform: the empty card became an
-  // `<a>` sitting among the rows, so the first app row stopped being the first
-  // `<a>` among its siblings and the compound matched nothing.
-  //
-  // `:first-of-type` counts siblings sharing a TAG NAME and is purely
-  // structural — `display: none` does not exempt an element from it, so
-  // `hidden` is no defence. The rule is therefore about the TREE, and it is
-  // asserted here on the tree rather than inferred from the JSX.
+test('#workshop-list holds the empty card, then one section per audience, in order', () => {
+  // THE LIST IS A WRAPPER NOW (communities). Its children are the empty
+  // card and up to three SECTIONS — Communities, Groups, Just you — each a
+  // SectionHeader over a GroupedList of its own. The declared checks select
+  // through it with DESCENDANT combinators (`#workshop-list
+  // a[data-workshop-app=…]`) and name the sections by attribute, so what this
+  // pins is the tree they resolve against.
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
 
   // The demo payload the declared check runs against (/?demo=1#workshop):
-  // route.DEMO_COUNTS' own numbers, so "leads the list" means what it means
-  // in the browser.
+  // src/routes/apps.js demoIconApps' three member rows, one per audience.
   mod.workshopStore.set({
     open: true,
     error: false,
     rows: [
-      { slug: 'staging-demo-image-icon', name: 'Image', working: 1, needs: 0 },
-      { slug: 'staging-demo-your-app', name: 'Your app', working: 2, needs: 3 },
+      { slug: 'staging-demo-emoji-icon', name: 'Emoji', audience: 'solo', last_active_at: '2026-09-24T10:00:00Z', working: 0, needs: 5 },
+      { slug: 'staging-demo-long-name', name: 'Long', audience: 'invited', member_count: 4, last_active_at: '2026-09-25T09:00:00Z', working: 4, needs: 1 },
+      { slug: 'staging-demo-your-app', name: 'Your app', audience: 'open', member_count: 12, last_active_at: '2026-09-25T11:30:00Z', working: 2, needs: 3 },
     ],
   });
 
   const kids = listChildren(html());
-  const anchors = kids.filter((k) => k.tag === 'a');
-  assert.ok(anchors.length > 0, 'the rows render as anchors');
-  assert.ok('data-workshop-app' in anchors[0].attrs,
-    'the FIRST <a> child of #workshop-list is an app row — anything else '
-    + 'here steals `a[data-workshop-app]:first-of-type` and silently kills a '
-    + 'merge-gating check');
-  assert.equal(anchors[0].attrs['data-workshop-app'], 'staging-demo-your-app',
-    'and it is the app with votes waiting, which is what that check asserts');
+  assert.equal(kids[0].attrs.id, 'workshop-empty',
+    'the empty card first, so it never sits between a header and its rows');
+  assert.notEqual(kids[0].tag, 'a', 'a wrapper, never an anchor among the rows');
+  assert.match(kids[0].attrs.class || '', /\bhidden\b/, 'and hidden while there are rows');
+  assert.deepEqual(kids.slice(1).map((k) => [k.tag, k.attrs['data-workshop-section']]),
+    [['section', 'open'], ['section', 'invited'], ['section', 'solo']],
+    'Communities, Groups, Just you — the order a person reaches for them');
 
-  // The empty card is still present, still first, and still out of the
-  // anchors' way — it is a wrapper, and its own link is one level down.
-  const empty = kids.find((k) => k.attrs.id === 'workshop-empty');
-  assert.ok(empty, '#workshop-empty is a direct child of the list');
-  assert.equal(kids[0], empty, 'and the FIRST child, so no row draws a '
-    + 'hairline under nothing');
-  assert.notEqual(empty.tag, 'a',
-    'but NOT an <a>: that is the whole regression. Keep the id on a wrapper '
-    + 'and put the ListRow anchor inside it.');
-  assert.match(empty.attrs.class || '', /\bhidden\b/,
-    'and with rows it is hidden, for #workshop-empty.hidden');
+  const out = html();
+  for (const [section, slug] of [['open', 'staging-demo-your-app'], ['invited', 'staging-demo-long-name'], ['solo', 'staging-demo-emoji-icon']]) {
+    const at = out.indexOf(`data-workshop-section="${section}"`);
+    const row = out.indexOf(`data-workshop-app="${slug}"`);
+    assert.ok(at >= 0 && row > at, `${slug} is drawn inside the ${section} section`);
+  }
+  for (const label of ['Communities', 'Groups', 'Just you']) {
+    assert.match(out, new RegExp(`<span>${label}</span>`), `the ${label} header is drawn`);
+  }
+  assert.match(out, /data-workshop-audience="invited"/, 'each row says its audience');
+  assert.match(out, />12 members</, 'and its second line says who is in it');
 });
 
 test('the screen is built from the grouped-list primitives, not a copy of them', () => {
@@ -470,33 +461,80 @@ test('a row goes to that app\'s own Workshop page, as an anchor', () => {
   assert.match(src, /App\?\.navigateToApp\?\.\(row\.slug, 'dev'\)/);
 });
 
-test('an app that wants a decision leads the list, and the rest keep their order', () => {
+test('rows go most recently active first; undated ones last, in the server\'s order', () => {
   const { orderRows } = loadTsx('frontend/src/features/workshop/index.tsx');
   const rows = orderRows([
-    { slug: 'quiet-a', working: 0, needs: 0 },
-    { slug: 'mine-a', working: 2, needs: 0 },
-    { slug: 'quiet-b', working: 0, needs: 0 },
-    { slug: 'owed-a', working: 0, needs: 1 },
-    { slug: 'owed-b', working: 3, needs: 4 },
+    { slug: 'undated-a', working: 0, needs: 0, last_active_at: null },
+    { slug: 'old', working: 0, needs: 4, last_active_at: '2026-09-01T00:00:00Z' },
+    { slug: 'undated-b', working: 0, needs: 0 },
+    { slug: 'new', working: 0, needs: 0, last_active_at: '2026-09-25T00:00:00Z' },
+    { slug: 'mid', working: 2, needs: 0, last_active_at: '2026-09-20T00:00:00Z' },
   ]);
-  assert.deepEqual(rows.map((r) => r.slug),
-    ['owed-a', 'owed-b', 'mine-a', 'quiet-a', 'quiet-b'],
-    'votes owed, then your own work, then the quiet ones — and inside each '
-    + 'band the platform\'s own "Your apps" order survives, because the sort '
-    + 'is stable and the comparator answers 0');
+  assert.deepEqual(rows.map((r) => r.slug), ['new', 'mid', 'old', 'undated-a', 'undated-b'],
+    'recency, not urgency: an ordering by "needs you" is how a quiet project '
+    + 'falls off the bottom, and the counts on each row already say which ones '
+    + 'are asking — and the sort is stable, so ties keep the server\'s order');
   assert.ok(orderRows([]).length === 0);
+});
+
+test('groupRows: three sections in order, empty ones left out, an unknown audience read as open', () => {
+  const { groupRows, SECTIONS, SECTION_LIMIT } = loadTsx('frontend/src/features/workshop/index.tsx');
+  assert.deepEqual(SECTIONS.map((s) => [s.key, s.label]),
+    [['open', 'Communities'], ['invited', 'Groups'], ['solo', 'Just you']]);
+  assert.equal(SECTION_LIMIT, 3, 'three most recent, then "Show N more"');
+  const out = groupRows([
+    { slug: 'a', audience: 'solo', last_active_at: '2026-09-02T00:00:00Z', working: 0, needs: 0 },
+    { slug: 'b', audience: 'open', last_active_at: '2026-09-01T00:00:00Z', working: 0, needs: 0 },
+    { slug: 'c', audience: 'mystery', last_active_at: '2026-09-03T00:00:00Z', working: 0, needs: 0 },
+    { slug: 'd', audience: 'solo', last_active_at: '2026-09-04T00:00:00Z', working: 0, needs: 0 },
+  ]);
+  assert.deepEqual(out.map((s) => [s.key, s.rows.map((r) => r.slug)]),
+    [['open', ['c', 'b']], ['solo', ['d', 'a']]],
+    'no Groups section when there are no groups, and a row is never dropped');
+});
+
+test('a section shows its three most recent and folds the rest under "Show N more"', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const rows = Array.from({ length: 5 }, (_, i) => ({
+    slug: `c${i}`, name: `C${i}`, audience: 'open', member_count: 3,
+    last_active_at: new Date(Date.UTC(2026, 8, 20 - i)).toISOString(), working: 0, needs: 0,
+  }));
+  mod.workshopStore.set({ open: true, error: false, rows });
+  const html = renderToHtml(createElement(mod.WorkshopScreen, {}));
+  assert.deepEqual([...html.matchAll(/data-workshop-app="([^"]+)"/g)].map((m) => m[1]), ['c0', 'c1', 'c2'],
+    'the three most recent');
+  assert.match(html, /<button[^>]*data-workshop-more="open"[^>]*aria-expanded="false"/,
+    'the fold is a button row of the same card, never an anchor');
+  assert.match(html, />Show 2 more</);
+  assert.match(html, /aria-label="5 in Communities"/, 'the header counts the whole section');
+});
+
+test('rowSubtitle: one short fact, members for a community or group, recency for "Just you"', () => {
+  const { rowSubtitle } = loadTsx('frontend/src/features/workshop/index.tsx');
+  const now = Date.parse('2026-09-25T12:00:00Z');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'open', member_count: 12, last_active_at: '2026-09-25T10:00:00Z', working: 0, needs: 0 }, now),
+    '12 members', 'the section\'s order already says which moved last');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'invited', member_count: 1, working: 0, needs: 0 }, now), '1 member');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', member_count: 1, last_active_at: '2026-09-25T11:55:00Z', working: 0, needs: 0 }, now),
+    '5m ago', 'just you: when it last moved, never "1 member"');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', last_active_at: '2026-09-22T12:00:00Z', working: 0, needs: 0 }, now), '3d ago');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'open', member_count: 0, working: 0, needs: 0 }, now), '');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', last_active_at: null, working: 0, needs: 0 }, now), '');
 });
 
 test('the controller loads both reads and survives losing the counts', async () => {
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const { workshopController, workshopStore } = mod;
+  // The list is MEMBERSHIP (Home.isJoined), not Home's "Your apps": a pin
+  // alone ('pinned') is a shortcut, and is not one of your communities.
   const apps = [
-    { slug: 'a', name: 'A', is_favorited: true },
-    { slug: 'b', name: 'B', is_favorited: true },
+    { slug: 'a', name: 'A', is_member: true },
+    { slug: 'b', name: 'B', is_member: true },
+    { slug: 'pinned', name: 'Pinned', is_favorited: true },
   ];
   const priorWindow = global.window;
   const priorFetch = global.fetch;
-  global.window = { Home: { partitionApps: (list) => ({ yours: list, rest: [] }) } };
+  global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
   try {
     const answers = new Map([
       ['/api/apps', { ok: true, json: async () => ({ apps }) }],
@@ -878,10 +916,10 @@ test('#3051: the controller reads the items alongside, and survives losing them'
   const { workshopController, workshopStore } = mod;
   const priorWindow = global.window;
   const priorFetch = global.fetch;
-  global.window = { Home: { partitionApps: (list) => ({ yours: list, rest: [] }) } };
+  global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
   try {
     const answers = new Map([
-      ['/api/apps', { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A' }] }) }],
+      ['/api/apps', { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A', is_member: true }] }) }],
       ['/api/workshop/counts', { ok: true, json: async () => ({ counts: { a: { working: 0, needs: 1 } } }) }],
       ['/api/workshop/items', { ok: true, json: async () => ({ items: { a: { working: [], needs: [{ kind: 'proposal', id: 1 }] } } }) }],
     ]);

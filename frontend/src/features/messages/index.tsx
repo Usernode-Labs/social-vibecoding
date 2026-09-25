@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 
 import { groupsWithPrevious } from '@/components/ui/chat';
 import {
-  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon,
   SearchIcon, SparklesIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
@@ -48,7 +48,6 @@ import {
   setUserBlocked,
   selectConversation,
   setListCollapsed,
-  setShowMoreChannels,
   syncChrome,
   setFilter,
   typingUsers,
@@ -769,7 +768,9 @@ function ConversationList() {
   // in the search box or per publish of a store this list does not draw.
   const inbox = useMemo(() => buildInbox({
     conversations: snap.conversations,
-    discussions: snap.discussions,
+    openApp: snap.route.appSlug
+      ? snap.discussions.find((item) => item.slug === snap.route.appSlug) || null
+      : null,
     agents,
     sessions,
     mayors,
@@ -812,28 +813,9 @@ function ConversationList() {
     const g = byAgent.get(entry.key.slice('agent:'.length));
     return !!g && inboxMatches(g.title, q);
   };
-  // #2967: the channels outside Your apps fold behind "Show N more" — except
-  // while searching (a query looks through everything), and except the one
-  // that is open, which stays in view wherever it lives.
-  const moreEntries = inbox.filter((entry) => entry.more);
-  const openSlug = snap.route.appSlug;
-  const shown = inbox.filter(matches).filter((entry) => !entry.more || !!q || snap.showMoreChannels
-    || (entry.kind === 'app' && entry.key === `app:${openSlug}`));
-  const moreToggle = moreEntries.length && !q ? (
-    <button
-      key="more-channels"
-      type="button"
-      id="messages-more-channels"
-      className="messages-more-channels"
-      aria-expanded={snap.showMoreChannels}
-      onClick={() => setShowMoreChannels(!snap.showMoreChannels)}
-    >
-      <span className="messages-more-channels-glyph" aria-hidden="true">
-        <ChevronDownIcon className={snap.showMoreChannels ? 'rotate-180' : ''} />
-      </span>
-      <span>{snap.showMoreChannels ? 'Show less' : `Show ${moreEntries.length} more`}</span>
-    </button>
-  ) : null;
+  // App channels are not listed here any more (see ./inbox.ts): #2967's
+  // "Show N more" fold over the ones outside Your apps went with them.
+  const shown = inbox.filter(matches);
 
   return (
     <section className={`messages-list-pane ${specBeside ? 'hidden' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
@@ -899,13 +881,8 @@ function ConversationList() {
             ? <h3 key={`head-${entry.section}`} className="messages-section-head" data-inbox-section={entry.section}>{SECTION_LABELS[entry.section]}</h3>
             : null;
           const row = inboxRow(entry);
-          // #2967: the toggle sits where the channels outside Your apps
-          // begin — above them once they are shown, so "Show less" is next to
-          // what it folds.
-          const toggle = entry.more && (i === 0 || !shown[i - 1].more) ? moreToggle : null;
-          return [head, toggle, row].filter(Boolean);
+          return [head, row].filter(Boolean);
         })}
-        {moreToggle && !shown.some((entry) => entry.more) && (snap.filter === 'all' || snap.filter === 'channels') ? moreToggle : null}
       </div>
     </section>
   );

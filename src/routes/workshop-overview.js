@@ -59,8 +59,9 @@
 //
 // Every app the viewer may SEE, under the same visibility filter as
 // GET /api/apps: self-hosted rows are admin-only, and a view-private app is
-// absent unless they are a member. Which of those are "Your apps" is not
-// decided here — that is `Home.isYours` / `Home.partitionApps`, one answer
+// absent unless they are a member. Which of those are the viewer's
+// communities is not decided here — that is `Home.isJoined` over the
+// `is_member` flag GET /api/apps serves (services/communities.js), one answer
 // the platform already has, and the screen composes these counts onto the
 // rows it gets from /api/apps rather than this endpoint growing a second
 // copy of it. Apps with nothing on either number are omitted; the client
@@ -85,10 +86,11 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 //
 // Keyed to the demo APP rows GET /api/apps injects under the same flag
 // (`demoIconApps` in src/routes/apps.js), so the numbers are deterministic and
-// a declared check can assert them. Only `staging-demo-your-app` reaches "Your
-// apps" — the others inherit is_favorited/is_collaborator false, so
-// Home.isYours excludes them — and they are named anyway, so a preview where
-// one of them has been favourited shows numbers rather than a row of zeroes.
+// a declared check can assert them. Three of them are the viewer's
+// communities under ?demo=1 — `staging-demo-your-app` (a Community),
+// `staging-demo-long-name` (a Group) and `staging-demo-emoji-icon` (Just
+// you), one per Workshop section — and the fourth is named anyway, so a
+// preview where it has been joined shows numbers rather than two zeroes.
 // Display-only: nothing in the platform reads these back, and strictly a
 // no-op in production.
 const DEMO_COUNTS = {

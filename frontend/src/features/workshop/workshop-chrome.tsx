@@ -280,10 +280,11 @@ export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
 
    ── And its own fetch ────────────────────────────────────────────────
 
-   GET /api/apps, partitioned by Home.partitionApps exactly as the all-apps
-   screen does — "which apps are mine" is a decision the platform already
-   makes once. It runs in an effect and never during render, so the chip
-   draws with the app it already knows and the list arrives under it.
+   GET /api/apps, filtered by Home.isJoined exactly as the all-communities
+   screen does — "which communities am I in" is a decision the platform
+   already makes once (services/communities.js). It runs in an effect and
+   never during render, so the chip draws with the app it already knows and
+   the list arrives under it.
 */
 
 /** The demo flag every board fetch forwards, in the same spelling. */
@@ -390,11 +391,10 @@ export function AppWorkshopScope({ slug, name, iconUrl, iconEmoji }: {
         if (!res.ok) return;
         const data = await res.json();
         const home = (window as unknown as {
-          Home?: { partitionApps?: (rows: unknown[]) => { yours: PickerApp[] } };
+          Home?: { isJoined?: (row: unknown) => boolean };
         }).Home;
-        const rows = home?.partitionApps
-          ? home.partitionApps(data.apps || []).yours
-          : ((data.apps || []) as PickerApp[]);
+        const list = (data.apps || []) as Array<PickerApp & { is_member?: boolean }>;
+        const rows = list.filter((row) => (home?.isJoined ? home.isJoined(row) : !!row.is_member));
         if (!cancelled) setApps(rows);
       } catch {
         // OFFLINE IS SILENCE. The chip still names this app and still offers

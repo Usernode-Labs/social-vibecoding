@@ -9474,3 +9474,342 @@ CREATE TABLE IF NOT EXISTS user_merges (
 CREATE UNIQUE INDEX IF NOT EXISTS user_merges_merged_unique ON user_merges (merged_user_id);
 CREATE INDEX IF NOT EXISTS idx_user_merges_kept ON user_merges (kept_user_id, created_at DESC);
 COMMENT ON TABLE user_merges IS 'staging:private';
+
+-- ── Communities: who a project belongs to ───────────────────────────────
+--
+-- Every project (today: every row in `apps`) belongs to exactly one
+-- community, and a community is the unit people join. It is the internal
+-- name only: on screen a community is labelled by its AUDIENCE — "Just
+-- you", "Group" or "Community" — and what it owns are "projects". See
+-- AGENTS.md, "Communities own projects".
+--
+-- STAGE 0 KEEPS THEM ONE-TO-ONE. Each app gets its own community (the
+-- trigger below mints one on insert, the loop under it backfills existing
+-- apps), and nothing yet puts a second app into one. That is why this
+-- table is almost bare: the name and the audience still live on the app
+-- while there is only one app to read them from, and move here the day a
+-- community can own more than one project.
+--
+--   audience is DERIVED, never stored (src/services/communities.js,
+--   audienceSql): a view-public app is 'open' (Community); a private one
+--   with anyone beyond its creator in it — a member or a pending invite —
+--   is 'invited' (Group); anything else is 'solo' (Just you). Storing it
+--   would give dapp.json's visibility reconcile a second column to keep in
+--   step, and the first time it forgot, the label would lie.
+--
+-- Deliberately NOT staging:private, for the reason app_collaborators gives:
+-- membership decides who may propose and vote, so a staging clone without
+-- it would refuse every vote its own checks cast. No row carries a secret.
+CREATE TABLE IF NOT EXISTS communities (
+  id          SERIAL PRIMARY KEY,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS community_id INTEGER REFERENCES communities(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_apps_community ON apps (community_id);
+
+-- Who is in a community. Joining is what lets a person propose changes to
+-- its projects and vote on them (src/services/communities.js,
+-- requireMembership); reading, using and chatting stay on the app's own
+-- view/collab visibility, which this table does not replace.
+--
+-- `source` records how the row arrived, for the admin console and for the
+-- day someone asks "why am I in this": 'creator' and 'collaborator' mirror
+-- app_collaborators, 'favorite' is a Your-apps pin, 'active' and 'voter'
+-- are the one-time backfill below, 'auto' is the platform's own project
+-- (every account with platform access is in it), and 'joined' is the Join
+-- button.
+CREATE TABLE IF NOT EXISTS community_members (
+  community_id INTEGER NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source       VARCHAR(16) NOT NULL DEFAULT 'joined',
+  joined_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (community_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_community_members_user ON community_members (user_id);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'community_members_source_check' AND conrelid = 'community_members'::regclass
+  ) THEN
+    ALTER TABLE community_members ADD CONSTRAINT community_members_source_check
+      CHECK (source IN ('creator', 'collaborator', 'favorite', 'active', 'voter', 'auto', 'joined'));
+  END IF;
+END $$;
+
+-- Every app gets a community the moment it exists. AFTER INSERT rather than
+-- BEFORE, and that is load-bearing: the platform's own row is written by an
+-- `INSERT ... ON CONFLICT (slug) DO UPDATE` on every boot
+-- (src/db/migrate.js), and a BEFORE trigger fires ahead of the conflict
+-- check — it would mint an orphan community per boot. AFTER INSERT fires
+-- only for a row that was really inserted.
+--
+-- The platform's own project also takes in every account that already has
+-- platform access, which is what "everyone is in Homeroom's development"
+-- means on a fresh database, where that row is seeded after the accounts.
+CREATE OR REPLACE FUNCTION create_app_community() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  cid INTEGER;
+BEGIN
+  INSERT INTO communities (created_by) VALUES (NEW.created_by) RETURNING id INTO cid;
+  UPDATE apps SET community_id = cid WHERE id = NEW.id;
+  IF NEW.self_hosted THEN
+    INSERT INTO community_members (community_id, user_id, source)
+      SELECT cid, u.id, 'auto' FROM users u WHERE u.has_platform_access
+    ON CONFLICT (community_id, user_id) DO NOTHING;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'apps_create_community'
+       AND tgrelid = 'apps'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER apps_create_community
+      AFTER INSERT ON apps
+      FOR EACH ROW WHEN (NEW.community_id IS NULL)
+      EXECUTE FUNCTION create_app_community();
+  END IF;
+END $$;
+
+-- A deleted app takes its community with it once nothing else points at it
+-- (always, while communities and apps are one-to-one). The members go with
+-- the community by cascade.
+CREATE OR REPLACE FUNCTION drop_orphan_app_community() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.community_id IS NOT NULL THEN
+    DELETE FROM communities c
+     WHERE c.id = OLD.community_id
+       AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.community_id = c.id);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'apps_drop_orphan_community'
+       AND tgrelid = 'apps'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER apps_drop_orphan_community
+      AFTER DELETE ON apps
+      FOR EACH ROW
+      EXECUTE FUNCTION drop_orphan_app_community();
+  END IF;
+END $$;
+
+-- Backfill: one community per existing app. Idempotent — only rows still
+-- without one are touched, so later boots do nothing.
+DO $$
+DECLARE
+  r RECORD;
+  cid INTEGER;
+BEGIN
+  FOR r IN SELECT id, created_by FROM apps WHERE community_id IS NULL ORDER BY id LOOP
+    INSERT INTO communities (created_by, created_at) VALUES (r.created_by, NOW()) RETURNING id INTO cid;
+    UPDATE apps SET community_id = cid WHERE id = r.id;
+  END LOOP;
+END $$;
+
+-- COLLABORATORS AND PINS ARE MEMBERS. Three triggers keep this table a
+-- superset of the two older ones, whichever of the many paths wrote them
+-- (create and fork, invite accept, the dapp.json admin reconcile, demo
+-- mode, the staging seeds) — a trigger is the one place none of them can
+-- forget.
+--
+--   app_collaborators 'member' row  → joins (and leaving the app's
+--     collaborators leaves the community: removal is the owner's "remove
+--     member", and Leave deletes both);
+--   app_favorites pin (hidden=FALSE) → joins. Unpinning does NOT leave:
+--     a pin is a shortcut on Home, and taking it off Home is not leaving;
+--   users gaining platform access   → joins the platform's own project.
+CREATE OR REPLACE FUNCTION sync_collaborator_community_member() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    DELETE FROM community_members m
+     USING apps a
+     WHERE a.id = OLD.app_id
+       AND m.community_id = a.community_id
+       AND m.user_id = OLD.user_id;
+    RETURN NULL;
+  END IF;
+  INSERT INTO community_members (community_id, user_id, source)
+    SELECT a.community_id, NEW.user_id,
+           CASE WHEN a.created_by = NEW.user_id THEN 'creator' ELSE 'collaborator' END
+      FROM apps a
+     WHERE a.id = NEW.app_id AND a.community_id IS NOT NULL
+  ON CONFLICT (community_id, user_id) DO NOTHING;
+  RETURN NULL;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'app_collaborators_join_community'
+       AND tgrelid = 'app_collaborators'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER app_collaborators_join_community
+      AFTER INSERT OR UPDATE OF status ON app_collaborators
+      FOR EACH ROW WHEN (NEW.status = 'member')
+      EXECUTE FUNCTION sync_collaborator_community_member();
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'app_collaborators_leave_community'
+       AND tgrelid = 'app_collaborators'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER app_collaborators_leave_community
+      AFTER DELETE ON app_collaborators
+      FOR EACH ROW WHEN (OLD.status = 'member')
+      EXECUTE FUNCTION sync_collaborator_community_member();
+  END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION sync_favorite_community_member() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO community_members (community_id, user_id, source)
+    SELECT a.community_id, NEW.user_id, 'favorite'
+      FROM apps a
+     WHERE a.id = NEW.app_id AND a.community_id IS NOT NULL
+  ON CONFLICT (community_id, user_id) DO NOTHING;
+  RETURN NULL;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'app_favorites_join_community'
+       AND tgrelid = 'app_favorites'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER app_favorites_join_community
+      AFTER INSERT OR UPDATE OF hidden ON app_favorites
+      FOR EACH ROW WHEN (NOT NEW.hidden)
+      EXECUTE FUNCTION sync_favorite_community_member();
+  END IF;
+END $$;
+
+-- Only on the false → true edge. A later write that sets the flag to TRUE
+-- again (an admin re-grant, a repeated redemption) must not put back
+-- someone who has since left.
+CREATE OR REPLACE FUNCTION join_platform_community() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.has_platform_access THEN
+    RETURN NULL;
+  END IF;
+  INSERT INTO community_members (community_id, user_id, source)
+    SELECT a.community_id, NEW.id, 'auto'
+      FROM apps a
+     WHERE a.self_hosted AND a.community_id IS NOT NULL
+  ON CONFLICT (community_id, user_id) DO NOTHING;
+  RETURN NULL;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'users_join_platform_community'
+       AND tgrelid = 'users'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER users_join_platform_community
+      AFTER INSERT OR UPDATE OF has_platform_access ON users
+      FOR EACH ROW WHEN (NEW.has_platform_access)
+      EXECUTE FUNCTION join_platform_community();
+  END IF;
+END $$;
+
+-- One-time backfill: everyone who is already taking part is already a
+-- member, so requiring membership to propose and vote locks nobody out.
+-- Guarded by a marker row, like weekly_limit_backfilled: a re-runnable
+-- insert would put back, on every boot, everyone who has since left.
+--
+--   - collaborators (creator included) and non-hidden pins;
+--   - the active users each app's vote threshold counts today
+--     (src/services/active-users.js: ever >= 60s on one day, and a visit in
+--     the last 10 days; on a collab-private app only its collaborators,
+--     who are already in by the line above);
+--   - anyone who proposed a change or voted on one in the last 90 days —
+--     the people whose vote the new rule would otherwise refuse first;
+--   - on the platform's own project, every account with platform access,
+--     because today every such account may vote there.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'community_members_backfilled') THEN
+    INSERT INTO community_members (community_id, user_id, source, joined_at)
+      SELECT a.community_id, c.user_id,
+             CASE WHEN a.created_by = c.user_id THEN 'creator' ELSE 'collaborator' END,
+             COALESCE(c.accepted_at, c.created_at, NOW())
+        FROM app_collaborators c JOIN apps a ON a.id = c.app_id
+       WHERE c.status = 'member' AND a.community_id IS NOT NULL
+    ON CONFLICT (community_id, user_id) DO NOTHING;
+
+    INSERT INTO community_members (community_id, user_id, source, joined_at)
+      SELECT a.community_id, f.user_id, 'favorite', f.created_at
+        FROM app_favorites f JOIN apps a ON a.id = f.app_id
+       WHERE NOT f.hidden AND a.community_id IS NOT NULL
+    ON CONFLICT (community_id, user_id) DO NOTHING;
+
+    INSERT INTO community_members (community_id, user_id, source)
+      SELECT DISTINCT a.community_id, x.user_id, 'active'
+        FROM app_activity x JOIN apps a ON a.id = x.app_id
+       WHERE x.date >= CURRENT_DATE - 10
+         AND a.community_id IS NOT NULL
+         AND NOT a.self_hosted
+         AND a.collab_visibility = 'public'
+         AND EXISTS (
+           SELECT 1 FROM app_activity q
+            WHERE q.app_id = x.app_id AND q.user_id = x.user_id AND q.seconds_spent >= 60
+         )
+    ON CONFLICT (community_id, user_id) DO NOTHING;
+
+    INSERT INTO community_members (community_id, user_id, source)
+      SELECT DISTINCT a.community_id, p.user_id, 'voter'
+        FROM (
+          SELECT cs.app_id, v.user_id
+            FROM pr_votes v JOIN chat_sessions cs ON cs.id = v.session_id
+           WHERE v.created_at > NOW() - INTERVAL '90 days'
+          UNION
+          SELECT cs.app_id, cs.user_id
+            FROM chat_sessions cs
+           WHERE cs.promoted_at > NOW() - INTERVAL '90 days'
+        ) p
+        JOIN apps a ON a.id = p.app_id
+       WHERE p.user_id IS NOT NULL
+         AND a.community_id IS NOT NULL
+         AND a.collab_visibility = 'public'
+    ON CONFLICT (community_id, user_id) DO NOTHING;
+
+    INSERT INTO community_members (community_id, user_id, source)
+      SELECT a.community_id, u.id, 'auto'
+        FROM apps a CROSS JOIN users u
+       WHERE a.self_hosted AND a.community_id IS NOT NULL AND u.has_platform_access
+    ON CONFLICT (community_id, user_id) DO NOTHING;
+
+    INSERT INTO platform_settings (key, value)
+      VALUES ('community_members_backfilled', 'true')
+      ON CONFLICT (key) DO NOTHING;
+  END IF;
+END $$;

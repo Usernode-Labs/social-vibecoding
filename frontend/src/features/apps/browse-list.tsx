@@ -145,7 +145,7 @@ function Row({ view }: { view: RowView }): ReactNode {
         data-slug={view.slug}
         data-added={String(view.added)}
         aria-pressed={view.added}
-        aria-label={view.added ? undefined : 'Add to Your apps'}
+        aria-label={view.added ? undefined : `Join ${view.name}`}
         title={view.addTitle}
         onClick={(e) => {
           e.stopPropagation();
@@ -155,14 +155,15 @@ function Row({ view }: { view: RowView }): ReactNode {
         {view.added
           ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
           : <PlusIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />}
-        {/* #1553: "Add" alone never said add to WHAT, so the row spelled out
-            "Add to Your apps". QA 2026-09-24 Q10: that 127px pill left the
-            app's NAME ten characters on a desktop box and nothing at all at
-            1024. The visible label is "+ Add" again, and the destination
-            stays where #1553 put it for everyone who is not reading the
-            glyph: the accessible name and the title attribute both say
-            "Add to Your apps". "Added" is a state and stays short. */}
-        {view.added ? 'Added' : 'Add'}
+        {/* JOIN, not Add (communities, stage 1). The pill used to put the
+            app on Home; it now puts YOU in the app's community, which is
+            what lets you propose and vote (and it still pins the app, so
+            nothing you relied on went away). QA 2026-09-24 Q10's width rule
+            holds: the visible label is one short word and the accessible
+            name carries the rest — "Join <app>", so a screen reader hears
+            what is being joined. "Joined" is a state and stays short; a tap
+            on it asks before leaving (Home.setMembership). */}
+        {view.added ? 'Joined' : 'Join'}
       </button>
         </>
       )}

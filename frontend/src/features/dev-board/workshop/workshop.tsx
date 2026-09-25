@@ -78,6 +78,7 @@ import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { AppWorkshopScope } from '../../workshop/workshop-chrome';
+import { CommunityCard } from './community-card';
 import { readAskStream } from './ask-stream';
 
 type SortKey = 'people' | 'activity' | 'open';
@@ -3255,6 +3256,17 @@ export function DevWorkshop(): ReactNode {
               from it; what goes is this screen's copy of the door. */}
         </section>
       ) : null}
+
+      {/* ── Who it is for (communities) ──
+          The community this project belongs to: its audience, its members,
+          its approval rule and its channel, and Join for an outsider. Under
+          the pane about where the app is and above the viewer's own work,
+          because it answers the question a newcomer arrives with — can I
+          take part here, and how — before the ones only a member has. It
+          is also where the channel went when Messages stopped listing one
+          per app (#2718's review took the door off the pane above; this is
+          its home now). See ./community-card.tsx. */}
+      {slug ? <CommunityCard slug={slug} /> : null}
 
       {/* ── Yours, first ──
           The first question a returning member has is about their OWN work,

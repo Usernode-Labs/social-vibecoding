@@ -59,10 +59,29 @@ test('one clock orders the chats, and the channels follow as their own section',
     filter: 'all',
   });
   // A channel with newer activity does not jump over a DM: it is a room you
-  // visit, not a conversation waiting on you. #general leads the channels,
-  // then the apps newest first, and one nobody has spoken in sits last.
-  assert.deepEqual(merged.map((e) => e.key), ['person:1', 'agent:a1', 'channel:9', 'app:notes', 'app:quiet']);
-  assert.deepEqual(merged.map((e) => e.section), ['chats', 'chats', 'channels', 'channels', 'channels']);
+  // visit, not a conversation waiting on you. #general IS the channels
+  // section now: the app channels live on their project's page
+  // (communities), so a `discussions` list handed in is not merged at all.
+  assert.deepEqual(merged.map((e) => e.key), ['person:1', 'agent:a1', 'channel:9']);
+  assert.deepEqual(merged.map((e) => e.section), ['chats', 'chats', 'channels']);
+});
+
+test('the app channel open at #messages/app/<slug> is listed while it is open, and only then', () => {
+  const open = inbox.buildInbox({
+    conversations: [{ id: 9, kind: 'channel', lastActivityAt: at('2026-01-09T00:00:00Z') }],
+    openApp: { slug: 'notes', lastAt: at('2026-01-03T00:00:00Z') },
+    agents: [],
+    filter: 'all',
+  });
+  assert.deepEqual(open.map((e) => [e.key, e.section]), [['channel:9', 'channels'], ['app:notes', 'channels']],
+    'under #general, so the list beside the thread still says where you are');
+  const people = inbox.buildInbox({
+    conversations: [], openApp: { slug: 'notes', lastAt: null }, agents: [], filter: 'people',
+  });
+  assert.deepEqual(people, [], 'and a filter that does not admit channels leaves it out');
+  // The screen hands in the open one and nothing else.
+  assert.match(SCREEN, /openApp: snap\.route\.appSlug/);
+  assert.doesNotMatch(SCREEN, /discussions: snap\.discussions,/);
 });
 
 test('a row with no timestamp sorts last, not first', () => {
@@ -105,7 +124,7 @@ test('each filter admits exactly its own kind, and All admits every one', () => 
   assert.equal(inbox.admits('agents', 'person'), false);
   const channelsOnly = inbox.buildInbox({
     conversations: [{ id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') }, { id: 9, kind: 'channel', lastActivityAt: null }],
-    discussions: [{ slug: 'notes', lastAt: null }], agents: [], filter: 'channels',
+    openApp: { slug: 'notes', lastAt: null }, agents: [], filter: 'channels',
   });
   assert.deepEqual(channelsOnly.map((e) => e.key), ['channel:9', 'app:notes']);
 });

@@ -29,7 +29,7 @@
 // bought. Keystrokes go to Browse.setQuery, which still coalesces them on the
 // 100ms debounce the input listener used to own.
 //
-// The prototype's FILTER CHIPS (scrDiscover: All / Featured / Your apps / New)
+// The prototype's FILTER CHIPS (scrDiscover: All / Featured / Joined / New)
 // ride the same bar, between the search and Sort. `filter` is the second
 // CONTROLLED store field beside `sort` — the pressed chip is drawn off it, so
 // it can never disagree with the rows — rendered from a copy of Browse.FILTERS
@@ -95,7 +95,7 @@ const SORT_OPTIONS: Array<{ key: string; label: string }> = [
 const FILTER_CHIPS: Array<{ key: string; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'featured', label: 'Featured' },
-  { key: 'yours', label: 'Your apps' },
+  { key: 'yours', label: 'Joined' },
   { key: 'new', label: 'New' },
 ];
 
