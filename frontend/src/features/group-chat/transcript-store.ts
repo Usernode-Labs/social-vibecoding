@@ -354,6 +354,12 @@ export interface TranscriptLead {
   /** The placeholder line, or null when there are messages to show. */
   placeholder: string | null;
   /**
+   * #2992: the history request failed — the line to show with a "Try again"
+   * control, drawn whether or not live rows have landed since. Null or absent
+   * when the last load succeeded.
+   */
+  error?: string | null;
+  /**
    * The general chat's quiet card, drawn AFTER the rows when nobody has
    * posted a message of their own among the loaded ones — the activity
    * notices land in this stream on their own, so "empty" is rare and "no
