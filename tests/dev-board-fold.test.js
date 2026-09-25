@@ -24,6 +24,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { kanbanHtml } = require('./lib/dev-card-html');
+const checkCap = require('./lib/check-cap');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -1267,7 +1268,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // staging conversations 990803 and 990801, the way #2779 folded its four.
   // Main stood at 810 exactly, the 20-slot floor, so the ceiling moved to
   // 840 with it (services/app-manifest.js), leaving 29 slots.
-  assert.equal(DAPP.tests.length, 811);
+  //
+  // A mismatch says what the count is, what it is pinned at, and what to do
+  // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
+  checkCap.assertPinned(DAPP.tests.length, 811);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
