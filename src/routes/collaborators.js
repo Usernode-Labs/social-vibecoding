@@ -20,30 +20,9 @@ const events = require('../services/events');
 const { drainGuard } = require('../services/lifecycle');
 const { userDirectoryLimiter } = require('../middleware/rate-limits');
 
-// Hydrate one freshly-inserted notification row into the serialize()
-// wire shape (same column set listForUser produces) and push it live.
-async function hydrateAndPush(pool, notifRows) {
-  if (!notifRows.length) return;
-  const { rows: hydrated } = await pool.query(
-    `SELECT n.id, n.kind, n.read_at, n.created_at,
-            n.app_id, a.slug AS app_slug, a.name AS app_name,
-            n.chat_message_id, NULL AS message_content,
-            n.session_id, NULL AS pr_title, NULL AS pr_number,
-            su.username AS source_username, n.user_id, n.detail
-       FROM notifications n
-       LEFT JOIN apps a ON a.id = n.app_id
-       LEFT JOIN users su ON su.id = n.source_user_id
-      WHERE n.id = ANY($1::int[])`,
-    [notifRows.map((r) => r.id)]
-  );
-  const { pushNotificationToUser } = require('../services/ws');
-  for (const row of hydrated) {
-    pushNotificationToUser(row.user_id, {
-      type: 'notification_new',
-      notification: notifications.serialize(row),
-    });
-  }
-}
+// Shared with POST /api/apps, which sends a Group's invites at creation
+// (services/collab-invites.js).
+const { hydrateAndPush, sendInvite } = require('../services/collab-invites');
 
 function collaboratorRoutes(config) {
   const router = Router();
@@ -205,44 +184,14 @@ function collaboratorRoutes(config) {
         return res.status(400).json({ error: 'You are already a collaborator' });
       }
 
-      const { rows: inserted } = await pool.query(
-        `INSERT INTO app_collaborators (app_id, user_id, status, invited_by)
-         VALUES ($1, $2, 'invited', $3)
-         ON CONFLICT (app_id, user_id) DO NOTHING
-         RETURNING user_id`,
-        [app.id, target.id, req.user.id]
-      );
-      if (!inserted.length) {
-        const { rows: existing } = await pool.query(
-          'SELECT status FROM app_collaborators WHERE app_id = $1 AND user_id = $2',
-          [app.id, target.id]
-        );
-        const status = existing[0]?.status;
+      const sent = await sendInvite(pool, { app, target, inviterId: req.user.id });
+      if (!sent.ok) {
         return res.status(409).json({
-          error: status === 'member'
+          error: sent.status === 'member'
             ? `@${target.username} is already a collaborator`
             : `@${target.username} already has a pending invite`,
         });
       }
-
-      // Badge bump + drawer history row, pushed live.
-      try {
-        const notifRows = await notifications.createCollabInviteNotification(pool, {
-          appId: app.id,
-          recipientId: target.id,
-          inviterId: req.user.id,
-        });
-        await hydrateAndPush(pool, notifRows);
-      } catch (err) {
-        log.warn('collab', 'invite notify failed', { err: err.message });
-      }
-
-      events.record(pool, {
-        type: events.EVENT_TYPES.COLLAB_INVITED,
-        userId: req.user.id,
-        appId: app.id,
-        metadata: { invitedUserId: target.id },
-      });
 
       log.info('collab', 'Invite sent', {
         slug: app.slug, invitee: target.username, by: req.user.username,

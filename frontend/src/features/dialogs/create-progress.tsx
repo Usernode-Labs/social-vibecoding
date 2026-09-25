@@ -51,6 +51,12 @@ export interface CreateProgressProps {
    */
   surface?: 'card' | 'pane';
   progress: CreationProgressState;
+  /**
+   * The live ending's primary label. "Open app" (the default) for the fork
+   * dialog; the create dialog lands on the new project's own page instead
+   * and says "Open project" (communities, stage 3).
+   */
+  openLabel?: string;
   onOpenApp: () => void;
   onRetry: () => void;
   onSetSecrets: () => void;
@@ -176,6 +182,7 @@ export function CreateProgress({
   mode,
   surface = 'card',
   progress,
+  openLabel = 'Open app',
   onOpenApp,
   onRetry,
   onSetSecrets,
@@ -271,7 +278,7 @@ export function CreateProgress({
         </button>
         {outcome === 'live' ? (
           <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onOpenApp}>
-            Open app
+            {openLabel}
           </Button>
         ) : null}
         {outcome === 'needs-secrets' ? (

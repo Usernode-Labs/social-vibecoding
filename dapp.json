@@ -1389,10 +1389,10 @@
       "expectText": "STAGING_DEMO_PROPOSED"
     },
     {
-      "name": "Create-app modal opens in 'new' mode with the state on the presented card (#748)",
+      "name": "Create-app modal opens in 'new' mode with the state on the presented card (#748), titled New project (communities, stage 3)",
       "path": "/#create",
       "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-import-state=\"idle\"]",
-      "expectText": "Create a new app"
+      "expectText": "New project"
     },
     {
       "name": "Create-app modal shows current app quota and usage (#1611)",
@@ -1404,7 +1404,7 @@
       "name": "Create-app dialog wears the pane styling: a rounded white name card on the details step (#1910, #1911)",
       "path": "/?shot=create-details#create",
       "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-step=\"details\"] #create-name-block.rounded-2xl.bg-white #app-name.bg-transparent",
-      "expectText": "App name"
+      "expectText": "Project name"
     },
     {
       "name": "Create-app dialog lands on the import view through ?shot=create-import, with the repo URL field and Check pill in one white card (#1910)",
@@ -1413,16 +1413,22 @@
       "expectText": "GitHub repo URL"
     },
     {
-      "name": "Create-app dialog opens on a start step with two choices and a step count, not every field at once (#1911)",
+      "name": "Create-project dialog opens on who it is for: Just me chosen, then A group and A community, with a step count (communities, stage 3)",
       "path": "/#create",
-      "expectSelector": ".un-modal #create-card[data-step=\"start\"] [data-create-step=\"start\"] .create-mode-pill[data-mode-pill=\"new\"] + .create-mode-pill[data-mode-pill=\"import\"]",
+      "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-audience=\"solo\"] .create-who-pill[data-audience-pill=\"solo\"] + .create-who-pill[data-audience-pill=\"invited\"] + .create-who-pill[data-audience-pill=\"open\"]",
       "expectText": "Step 1 of 3"
     },
     {
-      "name": "Create-app dialog's last step holds the two visibility rails and the Create pill, reached through ?shot=create-access (#1911)",
-      "path": "/?shot=create-access#create",
-      "expectSelector": ".un-modal #create-card[data-step=\"access\"] [data-create-step=\"access\"] #create-visibility-block .create-vis-pill[data-view-vis=\"private\"]",
-      "expectText": "Who can build it"
+      "name": "A community's create dialog ends on who approves changes: members vote, or people you pick (communities, stage 3)",
+      "path": "/?shot=create-approve#create",
+      "expectSelector": ".un-modal #create-card[data-step=\"approve\"][data-audience=\"open\"][data-final=\"true\"] #create-approve-block .create-approver-pill[data-approver-pill=\"anyone\"] + .create-approver-pill[data-approver-pill=\"invited\"]",
+      "expectText": "Who approves changes?"
+    },
+    {
+      "name": "A group names its people when it is created: the invite field under the chosen row (communities, stage 3)",
+      "path": "/?shot=create-group#create",
+      "expectSelector": ".un-modal #create-card[data-audience=\"invited\"][data-step=\"start\"] [data-create-step=\"who\"] #create-invite-block #create-invitees",
+      "expectText": "Invite people"
     },
     {
       "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",

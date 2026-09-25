@@ -3235,7 +3235,9 @@ html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-promoted {
    board's tab strip) — the scale makes adjacent cells appear to shift.
    Keep the brightness dim, drop the transform. */
 .create-mode-pill:active,
-.create-vis-pill:active,
+.create-who-pill:active,
+.create-approver-pill:active,
+.create-approvals-pill:active,
 .members-vis-pill:active,
 [data-theme-mode]:active {
   transform: none;
@@ -12169,65 +12171,63 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
   overscroll-behavior-y: var(--create-modal-overscroll, auto);
 }
 
-/* Create-app modal: segmented "Create new | Import existing" toggle.
-   The active state is keyed off the parent #create-card[data-mode="..."]
-   attribute so app.js only has to flip a single attribute to change modes
-   (no per-button class juggling, no race with the form-reset path).
-   It must be the CARD, not #create-modal: the native-kit modal adoption
-   (frontend/src/lib/static-modal.ts) lifts the card out of #create-modal
-   while presented, so selectors rooted at the modal stop matching.
+/* ── The create dialog's choices (communities, stage 3) ───────────────
+   Every choice in #create-card is a white card (or a segment) that takes
+   ONE selected look: the accent fill with white ink. The selection is keyed
+   off the CARD's data attributes — data-audience, data-mode, data-approvers,
+   data-approvals — so the component only flips an attribute (no per-button
+   class juggling, no race with the form-reset path). It must be the CARD, not
+   #create-modal: the native-kit modal adoption (frontend/src/lib/static-modal.ts)
+   lifts the card out of #create-modal while presented, so selectors rooted at
+   the modal stop matching.
 
-   THE SELECTED FILL IS THE SHELL'S ACCENT (#2566). It was the language's
-   solid inversion — a near-black fill inverting to near-white in dark —
-   and read as "black", not as "chosen": people asked for the colour the
-   product uses for selection instead. That colour is violet-600, the fill
-   this dialog's own Create/Import button already wears
-   (`Button variant="pillAccent"` → `bg-violet-600`), with white ink.
-   It is written as a literal here for the same reason the button carries
-   no `dark:` step: violet-600 clears AA against white in BOTH themes
-   (5.70:1), where violet-500 — the usual dark lift — measures 4.24:1 and
-   would fail the 15px choice title. The inversion lives on unchanged
-   elsewhere: @/components/ui/chip.tsx, the Leaderboard's section strip
-   and the Improve rail's view toggle all still state it. The
-   raised-face-on-a-recessed-track look these pills used to share with the
-   drawer's theme selector lives on in `.members-vis-pill` and `.theme-seg`
-   above; this dialog left it. */
-#create-card .create-mode-pill {
-  color: var(--text-muted);
+   THE FILL IS THE ACCENT THE CREATE BUTTON WEARS (#2566): Tailwind's
+   violet-600, which tailwind.config.js remaps to the platform blue #0a6ee0.
+   It was the literal #7c3aed, the pre-reskin violet, which made the chosen
+   row purple beside a blue Create button: two colours for one meaning. A
+   literal, with no dark step, for the reason the button carries none: white
+   on #0a6ee0 is 4.9:1 in both themes, where the dark theme's lighter accent
+   would not carry white text. */
+#create-card :is(.create-who-pill, .create-mode-pill, .create-approver-pill, .create-approvals-pill) {
+  color: var(--text-primary);
   cursor: pointer;
 }
-#create-card .create-mode-pill:hover {
-  color: var(--text-primary);
+#create-card .create-approvals-pill { color: var(--text-muted); }
+#create-card .create-approvals-pill:hover { color: var(--text-primary); }
+#create-card :is(.create-who-pill, .create-mode-pill, .create-approver-pill) .create-choice-caption {
+  color: var(--text-muted);
 }
-#create-card[data-mode="new"]    .create-mode-pill[data-mode-pill="new"],
-#create-card[data-mode="import"] .create-mode-pill[data-mode-pill="import"] {
-  background: #7c3aed; /* violet-600 */
+#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"],
+#create-card[data-audience="invited"]   .create-who-pill[data-audience-pill="invited"],
+#create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"],
+#create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"],
+#create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"],
+#create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"],
+#create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"],
+#create-card[data-approvals="majority"] .create-approvals-pill[data-approvals-pill="majority"],
+#create-card[data-approvals="atLeast"]  .create-approvals-pill[data-approvals-pill="atLeast"] {
+  background: #0a6ee0; /* violet-600, as tailwind.config.js compiles it */
   color: #ffffff;
   cursor: default;
 }
-
-/* Visibility segmented pills (create modal). Active state is a
-   JS-toggled .active class — unlike the mode pills there are two
-   independent controls per surface, so an attribute on the modal root
-   doesn't fit. Same accent fill as .create-mode-pill (#2566): one
-   dialog, one selected colour — leaving these inverted would have put a
-   black "Public" on the access step of a dialog whose first step had
-   just gone violet. */
-.create-vis-pill {
-  color: var(--text-muted);
-  cursor: pointer;
+/* 0.9 on the fill: the caption is 12px, and full white would outweigh the
+   title above it; 0.9 still clears AA on #0a6ee0. */
+#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"] .create-choice-caption,
+#create-card[data-audience="invited"]   .create-who-pill[data-audience-pill="invited"] .create-choice-caption,
+#create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"] .create-choice-caption,
+#create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
+#create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"] .create-choice-caption,
+#create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"] .create-choice-caption,
+#create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"] .create-choice-caption {
+  color: inherit;
+  opacity: 0.9;
 }
-.create-vis-pill:hover {
-  color: var(--text-primary);
-}
-.create-vis-pill.active {
-  background: #7c3aed; /* violet-600 */
-  color: #ffffff;
-}
-.create-vis-pill:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
+/* "What are you making?": App is the one kind today, in the accent; the two
+   still to come are quiet and say "Soon". Chips, not choices: nothing here
+   is pressed. */
+#create-card .create-kind-pill { background: var(--dc-sheet-raise, #ffffff); color: var(--text-primary); }
+#create-card .create-kind-pill.create-kind-on { background: #0a6ee0; color: #ffffff; }
+#create-card .create-kind-pill.create-kind-soon { color: var(--text-muted); }
 
 /* The Members modal's visibility pills keep the recessed-track look they
    shared with the create dialog before #1910 restyled it; that dialog is
@@ -12253,70 +12253,73 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
    The flow is: paste URL → click Check → on success, the name field
    reveals so the user can confirm/edit it. data-import-state on
    #create-card drives the reveal so the component only flips an
-   attribute, never toggles .hidden on each child. (The Import button
-   itself is gated by the STEP now — see below — because the access step
-   cannot be reached until the check has passed.) */
+   attribute, never toggles .hidden on each child. */
 #create-card[data-mode="new"] .create-import-block { display: none; }
 
 #create-card[data-mode="import"] #create-name-block { display: none; }
 #create-card[data-mode="import"][data-import-state="ok"] #create-name-block { display: block; }
 
-/* THE THREE STEPS UNFOLD IN ONE CARD (#1911). Every step's section ships
-   on every step — the declared checks and the legacy lookups select on the
-   same ids whichever steps are showing — and #create-card[data-step] is
-   the FURTHEST step reached: everything up to it is on screen, the rest
-   is folded. Same attribute-driven mechanism data-mode and
-   data-import-state use above (and, for the same reason, keyed on the
-   CARD: the kit lifts it out of #create-modal while presented).
+/* THE STEPS UNFOLD IN ONE CARD (#1911; four of them since communities,
+   stage 3). Every step's section ships on every step — the declared checks
+   and the legacy lookups select on the same ids whichever steps are showing
+   — and #create-card[data-step] is the FURTHEST step reached: everything up
+   to it is on screen, the rest is folded. Keyed on the CARD, like data-mode.
 
-   The footer follows: Cancel always; Next until the last step has
-   unfolded, then Create / Import. Create is hidden on the details step
-   too (QA 2026-09-24 Q6): showing it beside Next put two equal accent
-   buttons on step 2, and Create there skipped "Who can use it". */
+   The approval step belongs only to a group or a community made new: Just me
+   has nobody else to approve anything, and an imported repo's own dapp.json
+   decides. The footer follows data-final, which the component sets from the
+   same rule: Cancel always; Next until the last step for these answers,
+   then Create / Import (QA 2026-09-24 Q6: never two accent buttons at
+   once). */
+#create-card[data-step="who"]     [data-create-step="start"],
+#create-card[data-step="who"]     [data-create-step="details"],
+#create-card[data-step="who"]     [data-create-step="approve"],
 #create-card[data-step="start"]   [data-create-step="details"],
-#create-card[data-step="start"]   [data-create-step="access"],
-#create-card[data-step="details"] [data-create-step="access"] {
+#create-card[data-step="start"]   [data-create-step="approve"],
+#create-card[data-step="details"] [data-create-step="approve"],
+#create-card[data-audience="solo"] [data-create-step="approve"],
+#create-card[data-mode="import"]   [data-create-step="approve"] {
   display: none;
 }
-#create-card[data-step="start"]   #create-submit,
-#create-card[data-step="details"] #create-submit,
-#create-card[data-step="access"]  #create-next {
+#create-card[data-final="false"] #create-submit,
+#create-card[data-final="true"]  #create-next {
   display: none;
 }
 
-/* The start step's two choice rows carry .create-mode-pill, so the rule
-   above paints the chosen one in the accent; unchosen rows read as
-   plain white cards in the primary ink with a muted caption. Once a
-   choice is made the step COLLAPSES to the chosen row: the other row and
-   the captions fold away, the chevron gives way to "Change", and pressing
-   the row reopens the choice. */
-#create-card [data-create-step="start"] .create-mode-pill {
-  color: var(--text-primary);
-}
-#create-card [data-create-step="start"] .create-choice-caption {
-  color: var(--text-muted);
-}
-/* 0.9, not the 0.8 this carried: the caption is 12px, and on the accent
-   fill (#2566) white at 0.8 measures 4.18:1 — below AA — where 0.9 reads
-   at 4.90:1. On the near-black fill it replaced, 0.8 was 12.6:1, so the
-   step was free there and is not here. It still sits plainly under the
-   title, which is the full white. */
-#create-card[data-mode="new"]    .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
-#create-card[data-mode="import"] .create-mode-pill[data-mode-pill="import"] .create-choice-caption {
-  color: inherit;
-  opacity: 0.9;
-}
-#create-card[data-step="start"] .create-choice-change { display: none; }
-#create-card:not([data-step="start"]) .create-choice-chevron,
-#create-card:not([data-step="start"]) .create-choice-caption,
-#create-card:not([data-step="start"])[data-mode="new"]    .create-mode-pill[data-mode-pill="import"],
-#create-card:not([data-step="start"])[data-mode="import"] .create-mode-pill[data-mode-pill="new"] {
+/* A step COLLAPSES to its chosen row once the next one opens: the other rows
+   and the captions fold away, the chevron gives way to "Change", and
+   pressing the row reopens the choice. */
+#create-card[data-step="who"] [data-create-step="who"] .create-choice-change,
+#create-card:is([data-step="who"], [data-step="start"]) [data-create-step="start"] .create-choice-change {
   display: none;
 }
-#create-card:not([data-step="start"]) .create-mode-pill {
+#create-card:not([data-step="who"]) [data-create-step="who"] :is(.create-choice-chevron, .create-choice-caption),
+#create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill:not([data-audience-pill="solo"]),
+#create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill:not([data-audience-pill="invited"]),
+#create-card:not([data-step="who"])[data-audience="open"]    .create-who-pill:not([data-audience-pill="open"]),
+#create-card:is([data-step="details"], [data-step="approve"]) [data-create-step="start"] :is(.create-choice-chevron, .create-choice-caption, .create-kind-soon, .create-start-label),
+#create-card:is([data-step="details"], [data-step="approve"])[data-mode="new"]    .create-mode-pill[data-mode-pill="import"],
+#create-card:is([data-step="details"], [data-step="approve"])[data-mode="import"] .create-mode-pill[data-mode-pill="new"] {
+  display: none;
+}
+#create-card:not([data-step="who"]) .create-who-pill,
+#create-card:is([data-step="details"], [data-step="approve"]) .create-mode-pill {
   padding-top: 0.5rem;
   padding-bottom: 0.5rem;
 }
+
+/* A group names its people under its collapsed row; nobody else is asked. */
+#create-card .create-invite-block { display: none; }
+#create-card[data-audience="invited"]:not([data-step="who"]) .create-invite-block { display: block; }
+/* A group or a community imported: why there is no approval step. */
+#create-card .create-import-rule-note { display: none; }
+#create-card[data-mode="import"]:not([data-audience="solo"]) .create-import-rule-note { display: block; }
+/* "At least N" is a follow-up under "People I pick", and the number only
+   once it is chosen. */
+#create-card .create-approvals-block,
+#create-card .create-approvals-n-block { display: none; }
+#create-card[data-approvers="invited"] .create-approvals-block { display: block; }
+#create-card[data-approvers="invited"][data-approvals="atLeast"] .create-approvals-n-block { display: block; }
 
 /* Import status row — spinner on checking, green check on success,
    red text on failure. JS sets the text + adds an --ok / --err
