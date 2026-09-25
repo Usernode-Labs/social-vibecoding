@@ -5,7 +5,11 @@
  */
 
 export { WalletRow } from '../../frontend/src/features/header/wallet-row';
-export { WalletSheetBody } from '../../frontend/src/features/header/wallet-sheet-body';
+export {
+  WalletSheetBody,
+  BACKGROUND_SERVICE_ACTIVE,
+  BACKGROUND_SERVICE_INACTIVE,
+} from '../../frontend/src/features/header/wallet-sheet-body';
 export {
   walletSheetStore,
   WALLET_EMPTY,

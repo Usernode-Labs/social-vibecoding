@@ -46,6 +46,31 @@ const ROW_LINE = 'flex items-center justify-between py-2 border-b border-zinc-10
 
 // ── the block-production card ──────────────────────────────────────────
 
+/**
+ * Android only (#3059): while this phone produces blocks, the app keeps a
+ * background service running with a persistent notification. Say so in plain
+ * words, and say it is off when production is delegated or not set up yet.
+ * The Android permission's own name never appears here.
+ */
+export const BACKGROUND_SERVICE_ACTIVE
+  = 'A background service keeps running so this phone can keep producing blocks'
+  + ' and stay in sync with the network while you are not using the app.'
+  + ' A notification stays visible while it is active.';
+export const BACKGROUND_SERVICE_INACTIVE
+  = 'The background service is not active. This phone is not producing blocks,'
+  + ' so nothing keeps running while you are not using the app.';
+
+function BackgroundServiceNote({ active }: { active: boolean }): ReactNode {
+  return (
+    <div
+      data-background-service={active ? 'active' : 'inactive'}
+      className="mt-3 text-sm text-zinc-500 dark:text-zinc-400"
+    >
+      {active ? BACKGROUND_SERVICE_ACTIVE : BACKGROUND_SERVICE_INACTIVE}
+    </div>
+  );
+}
+
 function StakingCard({ s }: { s: WalletSheetState }): ReactNode {
   const staking: StakingView = s.staking;
   if (staking.kind === 'absent') return null;
@@ -74,6 +99,7 @@ function StakingCard({ s }: { s: WalletSheetState }): ReactNode {
         <>
           {/* Setup unfinished is NOT "not delegated": it offers a retry. */}
           <div className="text-sm font-semibold">Wallet setup is still in progress</div>
+          {s.isAndroid ? <BackgroundServiceNote active={false} /> : null}
           <Button
             layout="full" size="narrowBold" className="mt-3"
             disabled={s.refreshPending}
@@ -108,6 +134,7 @@ function StakingCard({ s }: { s: WalletSheetState }): ReactNode {
               </>
             ) : null}
           </div>
+          {s.isAndroid ? <BackgroundServiceNote active={staking.kind === 'local'} /> : null}
           <Button
             layout="full" size="narrowBold" className="mt-3"
             disabled={s.stakingPending}

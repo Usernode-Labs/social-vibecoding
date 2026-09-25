@@ -253,6 +253,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
         submissionSupported: WalletSheet._submissionSupported,
         stateError: WalletSheet._stateError || null,
         staking: WalletSheet._stakingView(s.staking),
+        isAndroid: !!(window.unNative && window.unNative.platform === 'android'),
         stakingPending: WalletSheet._stakingPending,
         refreshPending: WalletSheet._refreshPending,
         receipts: WalletSheet._receiptViews(),
