@@ -57,7 +57,7 @@ async function showFirstRunSheet(permissions) {
         return { version: 4, capabilities: ['getSettingsState'] };
       },
       async getSettingsState() { return { permissions }; },
-      async requestPermissions() { return { granted: false, permissions }; },
+      async requestAlarmPermissions() { return { granted: false, permissions }; },
       async openBatterySettings() { return true; },
     },
     PlatformUI: {

@@ -13,7 +13,7 @@
 //   2. Even when the chip did render, iOS's requestAuthorization presents
 //      a dialog ONLY while the permission is un-determined. Once the user
 //      has answered once, it resolves immediately and shows nothing — so a
-//      screen whose only move is "call requestPermissions and hope" is a
+//      screen whose only move is "request permission and hope" is a
 //      tap that does nothing forever, however many times it is pressed.
 //
 // The decision now lives in two pure functions in native-chrome.js (same
@@ -143,7 +143,7 @@ test('Android is unchanged: the snapshot is the answer, so always ask', () => {
   }
 });
 
-test('outside the app, or with no requestPermissions: a named reason, not ' +
+test('outside the app, or with no notification request: a named reason, not ' +
      'a silent return', () => {
   const { NativeChrome } = boot();
   const off = NativeChrome.decideNotificationTap({
@@ -155,10 +155,10 @@ test('outside the app, or with no requestPermissions: a named reason, not ' +
     ...IOS_IN_APP, hasRequestMethod: false, pushStatus: 'undetermined',
   });
   assert.equal(noMethod.verdict, 'no-bridge');
-  assert.match(noMethod.reason, /requestPermissions/);
+  assert.match(noMethod.reason, /requestNotificationPermission/);
 });
 
-test('a build that positively advertises no requestPermissions is ' +
+test('a build that positively advertises no notification request is ' +
      'unsupported; an INCONCLUSIVE probe still asks', () => {
   const { NativeChrome } = boot();
   assert.equal(NativeChrome.decideNotificationTap({
@@ -261,6 +261,12 @@ test('the settings row is a real control, not an inert div', () => {
   assert.match(ui, /if \(!row\.action\) \{[\s\S]{0,140}<div id=\{row\.id\}/,
     'no action means a div, never a button that does nothing');
   assert.match(ui, /onClick=\{\(\) => run\(row\.action as string\)\}/);
+});
+
+test('the Settings notification action uses only the native notification request', () => {
+  assert.match(settingsSource, /nc\.supports\('requestNotificationPermission'\)/);
+  assert.match(settingsSource, /bridge\.requestNotificationPermission\(\)/);
+  assert.doesNotMatch(settingsSource, /bridge\.requestPermissions\(\)/);
 });
 
 test('the row reads the real iOS push permission BEFORE it renders, not ' +

@@ -40,7 +40,7 @@ function boot(opts = {}) {
   };
   const capabilities = opts.capabilities || [
     'getSettingsState', 'getSocialPushState', 'requestNotificationPermission',
-    'requestPermissions', 'getWalletState', 'requestAlarmPermissions',
+    'getWalletState', 'requestAlarmPermissions',
   ];
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
@@ -60,11 +60,6 @@ function boot(opts = {}) {
       async requestNotificationPermission() {
         calls.push('requestNotificationPermission');
         if (failures-- > 0) throw new Error('temporary bridge failure');
-        if (opts.statusAfterRequest) status = opts.statusAfterRequest;
-        return { granted: opts.granted === true, permissions };
-      },
-      async requestPermissions() {
-        calls.push('requestPermissions');
         if (opts.statusAfterRequest) status = opts.statusAfterRequest;
         return { granted: opts.granted === true, permissions };
       },
@@ -122,7 +117,6 @@ test('iOS asks through the native bridge without opening a web sheet', async () 
   await h.NativeChrome.maybeShowFirstRunPermissions();
   assert.deepEqual(h.calls.filter((call) => call === 'requestNotificationPermission'),
     ['requestNotificationPermission']);
-  assert.equal(h.calls.includes('requestPermissions'), false);
   assert.equal(h.calls.includes('socialPushRefresh'), true);
   assert.equal(h.sheets.length, 0);
   assert.equal(h.stored[askedKey], '1');
@@ -151,16 +145,6 @@ test('iOS status wins over the unrelated exact-alarm snapshot', async () => {
     statusAfterRequest: 'authorized', granted: true });
   await h.NativeChrome.maybeShowFirstRunPermissions();
   assert.equal(h.calls.includes('requestNotificationPermission'), true);
-});
-
-test('older iOS builds use the existing native requestPermissions method', async () => {
-  const h = boot({ permissions: IOS,
-    capabilities: ['getSettingsState', 'getSocialPushState', 'requestPermissions'],
-    statusAfterRequest: 'authorized', granted: true });
-  await h.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(h.calls.includes('requestPermissions'), true);
-  assert.equal(h.calls.includes('requestNotificationPermission'), false);
-  assert.equal(h.sheets.length, 0);
 });
 
 test('unsupported and failed bridge requests leave the prompt eligible', async () => {
@@ -199,7 +183,6 @@ test('Android requests notifications directly before block production', async ()
   const h = boot({ permissions: ANDROID, kitUnavailable: true, granted: true });
   await h.NativeChrome.maybeShowFirstRunPermissions();
   assert.equal(h.calls.includes('requestNotificationPermission'), true);
-  assert.equal(h.calls.includes('requestPermissions'), false);
   assert.equal(h.calls.includes('socialPushRefresh'), true);
   assert.equal(h.calls.includes('blockProductionRead'), false);
   assert.equal(h.sheets.length, 0);

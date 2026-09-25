@@ -79,10 +79,6 @@ function load({ permissions, wallet, staking, bpRequested = true, stored = {},
         calls.push('requestAlarmPermissions');
         return { granted: false, permissions };
       },
-      async requestPermissions() {
-        calls.push('requestPermissions');
-        return { granted: false, permissions };
-      },
       async openBatterySettings() { calls.push('openBatterySettings'); return true; },
       async manageStaking() { calls.push('manageStaking'); return staking; },
       async requestNotificationPermission() {
@@ -187,7 +183,6 @@ test('a producing phone is asked one step at a time, exact alarms first', async 
   await findButton(content, 'Allow exact alarms').listeners.click();
   assert.ok(h.calls.includes('requestAlarmPermissions'),
     'the granular method is used, so no notification prompt rides along');
-  assert.ok(!h.calls.includes('requestPermissions'));
 });
 
 test('the battery step prepares the user for the system dialog', async () => {

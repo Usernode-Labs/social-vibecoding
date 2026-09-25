@@ -646,16 +646,11 @@
           (pushStatus !== 'undetermined' && NativeChrome._notificationAsked())) {
         return false;
       }
-      const granular = typeof bridge.requestNotificationPermission === 'function' &&
+      const supported = typeof bridge.requestNotificationPermission === 'function' &&
         (await NativeChrome.supports('requestNotificationPermission')) !== false;
-      const legacyIos = !isAndroid &&
-        typeof bridge.requestPermissions === 'function' &&
-        (await NativeChrome.supports('requestPermissions')) !== false;
-      if (!granular && !legacyIos) return false;
+      if (!supported) return false;
       try {
-        const result = await (granular
-          ? bridge.requestNotificationPermission()
-          : bridge.requestPermissions());
+        const result = await bridge.requestNotificationPermission();
         NativeChrome._markNotificationAsked();
         if (isAndroid) {
           if (result && result.granted === true &&
@@ -735,7 +730,7 @@
     // Pure, so it is unit-testable without a WebView (same discipline as
     // the kit's decideBackdropDismiss). Given everything knowable BEFORE
     // the tap, say what the tap must do. The one verdict this must never
-    // return is "call requestPermissions and hope": on iOS that method
+    // return is "call requestNotificationPermission and hope": on iOS that method
     // resolves immediately and shows NO dialog once the permission is
     // determined, so a screen that always calls it is a tap that does
     // nothing at all — for good, however many times it is pressed.
@@ -745,7 +740,7 @@
     //   "already"      it is already granted; repaint, don't ask
     //   "settings"     determined-denied — only the OS settings app can
     //                  change it now, so send the user there
-    //   "unsupported"  this build does not advertise requestPermissions
+    //   "unsupported"  this build does not advertise requestNotificationPermission
     //   "no-bridge"    there is no app-side channel at all
     // Every non-"request" verdict carries a `reason` for the log line and
     // `settings: true` when the OS settings page is the way out.
@@ -757,18 +752,18 @@
           settings: false,
           reason: s.isNative !== true
             ? 'not running inside the Homeroom app'
-            : 'the bridge exposes no requestPermissions()',
+            : 'the bridge exposes no requestNotificationPermission()',
         };
       }
       // `supported` is tri-state: false only when the build positively
       // advertised a capability list without this method. An unknown
-      // (degraded probe, old build with no list) must still try — a
+      // (degraded probe) must still try — a
       // cold-start hiccup must not disable the only control there is.
       if (s.supported === false) {
         return {
           verdict: 'unsupported',
           settings: s.canOpenSettings === true,
-          reason: 'this app build does not advertise requestPermissions',
+          reason: 'this app build does not advertise requestNotificationPermission',
         };
       }
       if (s.isAndroid === true) return { verdict: 'request', settings: false };
@@ -1114,11 +1109,7 @@
             b.disabled = true;
             try {
               const bridge = window.usernode;
-              const granular = typeof bridge.requestAlarmPermissions === 'function' &&
-                (await NativeChrome.supports('requestAlarmPermissions')) !== false;
-              await (granular
-                ? bridge.requestAlarmPermissions()
-                : bridge.requestPermissions());
+              await bridge.requestAlarmPermissions();
             } catch (e) {
               console.warn('[native-chrome] requestAlarmPermissions failed:', e);
             } finally { b.disabled = false; }
@@ -1235,7 +1226,7 @@
     // so both screens read the grant the same way.
     //
     // The native permission caches settle asynchronously after the OS
-    // dialog, and some builds resolve requestPermissions() BEFORE the
+    // dialog, and a bridge call may resolve BEFORE the
     // user has answered it at all — so a single read reports "not
     // granted" moments after a real grant. Poll for a determined status;
     // a determined answer wins over the resolved grant flag. A fresh

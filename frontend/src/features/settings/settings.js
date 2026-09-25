@@ -5335,7 +5335,7 @@
     // Android's returned snapshot IS the answer, so it re-renders straight
     // from it. iOS's is not: the native permission caches settle
     // asynchronously after the OS dialog and some builds resolve
-    // requestPermissions() before the user has even answered, so trusting
+    // requestNotificationPermission() before the user has even answered, so trusting
     // that one read repainted the row as "Not granted" moments after a
     // real grant — and nothing started push registration. Defer to
     // NativeChrome.settleIosPushGrant, which polls for a determined status
@@ -5372,7 +5372,7 @@
       const nc = window.NativeChrome;
       const bridge = window.usernode;
       const hasRequest = !!bridge &&
-        typeof bridge.requestPermissions === 'function';
+        typeof bridge.requestNotificationPermission === 'function';
       if (this._unDemoMode()) {
         // The browser demo link has no app behind it. Still answers
         // visibly — but this is a preview, not a dead end, so it does not
@@ -5385,7 +5385,7 @@
         return;
       }
       if (!nc || typeof nc.decideNotificationTap !== 'function') {
-        // Old bundle: fall back to the plain ask rather than refusing.
+        // If the decision helper is unavailable, use the notification-only action.
         if (!hasRequest) {
           this._unNotifDeadEnd('no-bridge', {
             text: 'Notification permission is only available inside the ' +
@@ -5395,14 +5395,14 @@
           return;
         }
         await this._applyNotifAnswer(isAndroid,
-          await bridge.requestPermissions());
+          await bridge.requestNotificationPermission());
         return;
       }
       const plan = nc.decideNotificationTap({
         isNative: !!bridge && bridge.isNative === true,
         hasRequestMethod: hasRequest,
         supported: typeof nc.supports === 'function'
-          ? await nc.supports('requestPermissions')
+          ? await nc.supports('requestNotificationPermission')
           : null,
         isAndroid,
         pushStatus: this._unPushStatus,
@@ -5427,7 +5427,8 @@
       }
       let next = null;
       try {
-        next = await this._unRaceNativeAnswer(bridge.requestPermissions());
+        next = await this._unRaceNativeAnswer(
+          bridge.requestNotificationPermission());
       } catch (err) {
         this._unNotifDeadEnd(err && err.usernodeNoAnswer ? 'no-answer' : 'failed', {
           text: err && err.usernodeNoAnswer
@@ -5446,7 +5447,7 @@
     // What the tap ended up as, once the app answered. `settleIosPushGrant`
     // stays the authority on iOS: the native permission caches settle
     // asynchronously after the OS dialog and some builds resolve
-    // requestPermissions() before the user has even answered, so trusting
+    // requestNotificationPermission() before the user has even answered, so trusting
     // that one read repainted the row as "Not granted" moments after a real
     // grant — and nothing started push registration. It polls for a
     // determined status and kicks SocialPush, so this screen and the
@@ -5487,7 +5488,7 @@
       this._publishUsernode();
     },
 
-    // The bridge's own ceiling for requestPermissions is two minutes,
+    // The bridge's own ceiling for requestNotificationPermission is two minutes,
     // which is the right ceiling for a prompt a user has to read but a
     // terrible one for a native side that never answers: two minutes of a
     // disabled control and no explanation reads as a dead tap. Surface the

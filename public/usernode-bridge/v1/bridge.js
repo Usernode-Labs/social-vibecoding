@@ -97,7 +97,6 @@
     setDebugMode: true,
     setFacematchStrict: true,
     resetZkChallenge: true,
-    requestPermissions: true,
     openBatterySettings: true,
     requestNotificationPermission: true,
     requestAlarmPermissions: true,
@@ -4949,7 +4948,8 @@
   //  Public API: native settings (bridge v3)
   //  (usernode.getSettingsState / setNodeSleepEnabled /
   //   setDebugMode / setFacematchStrict / resetZkChallenge /
-  //   requestPermissions / openBatterySettings / logout)
+  //   requestNotificationPermission / requestAlarmPermissions /
+  //   openBatterySettings / logout)
   // =====================================================================
   //
   // Backs the "Usernode app" sections of the Settings modal. Contract:
@@ -4963,7 +4963,7 @@
   // start), and every setter resolves the same refreshed snapshot — so
   // they all share this budget rather than the short probe timeout.
   var _SETTINGS_STATE_TIMEOUT_MS = 12000;
-  // requestPermissions blocks on an OS permission dialog the user may
+  // Permission requests block on an OS dialog the user may
   // ponder for a while; the ceiling here is purely defensive.
   var _PERMISSION_REQUEST_TIMEOUT_MS = 120000;
 
@@ -5083,18 +5083,17 @@
     );
   };
 
-  // requestPermissions() → refreshed settings state plus { granted }.
-  // May pend on an OS permission dialog.
-  window.usernode.requestPermissions = function () {
-    return callNativeChromeAction(
-      "requestPermissions", {}, _PERMISSION_REQUEST_TIMEOUT_MS
-    );
-  };
-
   // Request only notification consent through the operating system.
   window.usernode.requestNotificationPermission = function () {
     return callNativeChromeAction(
       "requestNotificationPermission", {}, _PERMISSION_REQUEST_TIMEOUT_MS
+    );
+  };
+
+  // Request only the Android alarm and battery permissions.
+  window.usernode.requestAlarmPermissions = function () {
+    return callNativeChromeAction(
+      "requestAlarmPermissions", {}, _PERMISSION_REQUEST_TIMEOUT_MS
     );
   };
 
@@ -5110,7 +5109,7 @@
   // page for the app.
   //
   // This is the ONLY way back from a determined-denied iOS notification
-  // permission: once the user has said no, requestPermissions() resolves
+  // permission: once the user has said no, requestNotificationPermission() resolves
   // immediately and presents no dialog at all, so a screen offering only
   // "request" is a tap that does nothing forever. Settings → Usernode app
   // routes there through NativeChrome.decideNotificationTap.

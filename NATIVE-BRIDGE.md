@@ -684,7 +684,7 @@ recoverable rather than a dead end.
 | `setNodeSleepEnabled(enabled)` | `{ enabled: bool }` | toggles node sleep on inactivity |
 | `setDebugMode(enabled)` | `{ enabled: bool }` | toggles the app's debug mode |
 | `setFacematchStrict(enabled)` | `{ enabled: bool }` | toggles strict ZK-passport facematch |
-| `requestPermissions()` | — | native alarm-permission prompt; snapshot plus a `granted` bool |
+| `requestNotificationPermission()` | — | requests only the OS notification permission; snapshot plus a `granted` bool |
 | `requestAlarmPermissions()` | — | Android: opens the first missing producer permission only (the exact-alarm settings page, else the battery dialog), never the notification prompt; call again for the next step. Snapshot plus a `granted` bool (exact alarms) |
 
 `setIosKeepAlive` was removed in v4 with the iOS keep-alive service.
@@ -695,7 +695,7 @@ recoverable rather than a dead end.
 |---|---|
 | `resetZkChallenge()` | discards in-progress ZK identity registration (confirm web-side first) |
 | `openBatterySettings()` | Android: shows the one-tap system "let this app always run in the background?" dialog while battery optimization is on, else the app's App info page |
-| `openNotificationSettings()` | opens the OS notification settings page for the app. The only way back from a **determined-denied** iOS notification permission: once the user has answered the OS prompt, `requestPermissions()` resolves immediately and presents no dialog, so a screen offering only "request" is a tap that does nothing forever. Capability-gated, and fails fast (probe timeout, not the 120 s permission timeout) — an *inconclusive* probe still calls through, per issue #978. |
+| `openNotificationSettings()` | opens the OS notification settings page for the app. The only way back from a **determined-denied** iOS notification permission: once the user has answered the OS prompt, `requestNotificationPermission()` resolves immediately and presents no dialog, so a screen offering only "request" is a tap that does nothing forever. Capability-gated, and fails fast (probe timeout, not the 120 s permission timeout) — an *inconclusive* probe still calls through, per issue #978. |
 | `prepareForLogin()` | from an anonymous trusted shell, closes and drains any privately recovered native session before Social receives a session-mint request; no-op when native is already signed out |
 | `logout()` | performs the bounded hard native logout (node stop/drain plus identity and credential cleanup); attempt web revocation and clear caches first, then invoke this as the terminal operation; `offlineLogout` permits API failure and guarantees native WebView cleanup |
 

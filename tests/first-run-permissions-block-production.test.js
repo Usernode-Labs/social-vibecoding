@@ -75,7 +75,6 @@ function boot(opts) {
       },
       async getSettingsState() { return { permissions: opts.permissions }; },
       async getSocialPushState() { return opts.socialPushState || null; },
-      async requestPermissions() { return { granted: false, permissions: opts.permissions }; },
       async requestNotificationPermission() {
         nativeRequests.push('notification');
         return { granted: true, permissions: opts.permissions };
