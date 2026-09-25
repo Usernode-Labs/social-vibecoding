@@ -3926,6 +3926,11 @@
       "expectText": "Programme profile"
     },
     {
+      "name": "Admin support view shows a user's points",
+      "path": "/#admin/support/900302",
+      "expectSelector": "#admin-support-points"
+    },
+    {
       "name": "Analytics states the week's platform-key LLM spend (#1788)",
       "path": "/?demo=1#admin/analytics",
       "expectText": "LLM spend this week"

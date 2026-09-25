@@ -1267,7 +1267,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // staging conversations 990803 and 990801, the way #2779 folded its four.
   // Main stood at 810 exactly, the 20-slot floor, so the ceiling moved to
   // 840 with it (services/app-manifest.js), leaving 29 slots.
-  assert.equal(DAPP.tests.length, 811);
+  //
+  // 811 → 812: +1, the admin Support view's points card over staging user
+  // 900302 (#admin/support/900302), leaving 28 slots.
+  assert.equal(DAPP.tests.length, 812);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
