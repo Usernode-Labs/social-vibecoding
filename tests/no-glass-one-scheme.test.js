@@ -65,12 +65,11 @@ test('the solid plane colours are the fills composited over the wallpaper', () =
 
 test('what content scrolls or slides behind is solid, in the plane colour', () => {
   const solid = [
-    [/\.platform-tabs \{ background-color: var\(--dc-sheet-solid\); \}/, 'the tab bar'],
     [/\.platform-parked \{ background-color: var\(--dc-sheet-solid\); \}/, 'the parked strip'],
-    [/body:has\(#app-view:not\(\.hidden\)\[data-app-surface="platform"\]\) #platform-header \{\s*background-color: var\(--dc-sheet-solid\);\s*\}/, 'the header, on both routes'],
     [/\.dc-lift-panel \{ background-color: var\(--dc-sheet-solid\); \}/, 'the bell and Homeroom menu sheets'],
     [/\.un-sheet, \.un-sheet::after, \.un-panel, \.un-panel::after,[\s\S]*?\{\s*background-color: var\(--dc-sheet-solid\);\s*\}/, 'kit sheets and panels'],
     [/\.un-modal \{ background-color: var\(--dc-sheet\); \}/, 'kit dialogs (a 95% fill, so the opaque sheet)'],
+    [/\.un-modal:has\(#feedback-form\) \{ background-color: var\(--dc-sheet-solid\); \}/, 'Send Feedback, in the plane colour like the sheets'],
     [/background-color: var\(--create-modal-fill, var\(--dc-strip-solid\)\)/, 'the centred create dialog'],
     [/#dc-session-header\.un-scrolled \{ background-color: var\(--dc-strip-solid\); \}/, 'the scrolled session header'],
     [/\.dev-ws-pane-head, \.dev-ws-pane-body, \.dev-ws-ear \{ background-color: var\(--dc-sheet-solid\); \}/, 'the Workshop pane, head, body and ear together'],
@@ -78,9 +77,45 @@ test('what content scrolls or slides behind is solid, in the plane colour', () =
     [/\.global-chat-composer \{ background: var\(--dc-sheet-solid\); \}/, 'the Global Chat composer'],
   ];
   for (const [re, what] of solid) assert.match(css, re, `${what} is solid`);
+});
+
+// THE TAB BAR AND THE HEADER KEEP THE GLASS LOOK, FAKED. The wallpaper is
+// fixed, so what the glass showed over it never changed: the tint over the
+// washes. Each bar paints exactly that once, from a viewport-sized fixed
+// layer clipped to the bar, with no filter anywhere.
+const FAKE = /\{\s*content: '';\s*position: fixed;\s*inset: 0;\s*z-index: -1;\s*pointer-events: none;[\s\S]*?background: linear-gradient\(var\(--dc-sheet-fill\), var\(--dc-sheet-fill\)\), var\(--home-washes, var\(--dc-sheet-solid\)\);\s*\}/;
+
+test('the tab bar and the header fake their glass from the fixed wallpaper', () => {
+  const tabs = css.slice(css.indexOf('.platform-tabs {\n  background-color: transparent;'));
+  assert.match(tabs, /^\.platform-tabs \{\s*background-color: transparent;\s*clip-path: inset\(0\);\s*\}/,
+    'the tab bar is see-through to its own layer, and clips it');
+  assert.match(tabs, new RegExp('\\.platform-tabs::before ' + FAKE.source), 'the tab bar paints the tint over the washes');
+  const head = css.indexOf('#platform-header::before');
+  assert.ok(head > 0, 'the header has its layer');
+  assert.match(css.slice(css.lastIndexOf('body:has(:is(#home-screen', head), css.indexOf('}', head) + 1), FAKE,
+    'the header paints the same tint over the same washes');
+  assert.match(css, /#platform-header \{\s*background-color: transparent;\s*clip-path: inset\(0 round 0 0 1\.25rem 1\.25rem\);\s*\}/,
+    'the header clips to its own rounded-b-2xl notch (1.25rem, tailwind.config.js)');
   const peek = css.slice(css.indexOf('.platform-tabs.platform-tabs-peek {'));
-  assert.match(peek.slice(0, peek.indexOf('}')), /background-color: var\(--dc-sheet-solid\);/,
-    'the peeked rail floats over the page, so it restates the solid');
+  assert.match(peek.slice(0, peek.indexOf('}')), /background-color: transparent;/,
+    'the peeked rail is the same faked glass as the docked one');
+  assert.doesNotMatch(css, /(\.platform-tabs|#platform-header)[^{]*\{[^}]*backdrop-filter: blur/,
+    'no live blur came back with the look');
+});
+
+test('the fake and the wallpaper paint the same washes', () => {
+  // One token, so the bar's layer lines up with the body's pixel for pixel
+  // and cannot drift when the wallpaper changes: every wallpaper variant
+  // (light, dark, phone, wide) draws its star and grain over --home-washes.
+  const wallpapers = [...css.matchAll(/--home-wallpaper:\s*([\s\S]*?);/g)].map((m) => m[1]);
+  assert.equal(wallpapers.length, 4, 'four wallpaper variants');
+  for (const w of wallpapers) assert.match(w, /var\(--home-grain\)[^,]*,\s*var\(--home-washes\)$/);
+  const washes = [...css.matchAll(/--home-washes:\s*([\s\S]*?);/g)].map((m) => m[1]);
+  assert.equal(washes.length, 4, 'each variant defines its washes');
+  for (const w of washes) {
+    assert.doesNotMatch(w, /home-star|home-grain/, 'no star or grain: a blur erased both');
+    assert.match(w, /var\(--home-ground\)$/, 'the ground colour closes the list');
+  }
 });
 
 test('the planes that only sit on the wallpaper keep their fills', () => {

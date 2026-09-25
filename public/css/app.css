@@ -3572,12 +3572,14 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      shorthand is what that variable has to hold; the body uses the same
      value, and the 640px rule below swaps in the wider one. Each layer is
      `<image> <position> / <size> <repeat>`, the colour rides on the last. */
-  --home-wallpaper:
-    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
-    var(--home-grain) 0 0 / 240px 240px repeat,
+  --home-washes:
     radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
+  --home-wallpaper:
+    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-grain) 0 0 / 240px 240px repeat,
+    var(--home-washes);
   background: var(--home-wallpaper);
 }
 /* THE WALLPAPER FOLLOWS THE APP'S TONE AS WELL AS THE SHELL'S (#1945). The
@@ -3610,12 +3612,14 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      image, so the shorthands below keep their shape and the desktop rule
      needs no second copy. */
   --home-grain: none;
-  --home-wallpaper:
-    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
-    var(--home-grain) 0 0 / 240px 240px repeat,
+  --home-washes:
     radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at 70px calc(100% - 69px), rgba(118, 31, 15, 0.75) 90px, rgba(118, 31, 15, 0.375) 170px, rgba(118, 31, 15, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
+  --home-wallpaper:
+    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-grain) 0 0 / 240px 240px repeat,
+    var(--home-washes);
 }
 /* WIDE VIEWPORTS. The three discs above are the phone frame's, anchored in
    px to its corners, and on a desktop window they shrink into the corners
@@ -3628,9 +3632,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
   body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
-    --home-wallpaper:
-      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
-      var(--home-grain) 0 0 / 240px 240px repeat,
+    --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat,
@@ -3638,11 +3640,13 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(245, 215, 230, 0.65), rgba(245, 215, 230, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(252, 219, 212, 0.7), rgba(252, 219, 212, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(229, 216, 239, 0.55), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
-  }
-  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-wallpaper:
       var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
+      var(--home-washes);
+  }
+  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+    --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at 70px calc(100% - 69px), rgba(118, 31, 15, 0.75) 90px, rgba(118, 31, 15, 0.375) 170px, rgba(118, 31, 15, 0) 250px) 0 0 / 100% 100% no-repeat,
@@ -3650,6 +3654,10 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(117, 36, 77, 0.65), rgba(117, 36, 77, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(118, 31, 15, 0.7), rgba(118, 31, 15, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(80, 48, 105, 0.55), rgba(80, 48, 105, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
+    --home-wallpaper:
+      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+      var(--home-grain) 0 0 / 240px 240px repeat,
+      var(--home-washes);
   }
 }
 /* THE BAR OVER THE WALLPAPER. On every wallpaper route the header's
@@ -3715,12 +3723,30 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-/* Pages scroll under the header, so it is solid on every platform. */
+/* …AND THE HEADER, faked the same way as the tab bar ("FAKED GLASS" below),
+   on exactly the routes the glass rules above cover. The clip follows the
+   bar's own `rounded-b-2xl` (1.25rem in tailwind.config.js), so the notch
+   the surfaces below tuck into keeps its shape. Nothing inside the header
+   reaches past its box, so the clip cuts nothing. */
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
              #settings-screen, #messages-screen, #workshop-screen,
              #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
-  background-color: var(--dc-sheet-solid);
+  background-color: transparent;
+  clip-path: inset(0 round 0 0 1.25rem 1.25rem);
+}
+body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
+             #settings-screen, #messages-screen, #workshop-screen,
+             #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header::before,
+body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  /* Resolved here, on the bar, so it reads the route's --home-washes (set on
+     <body>); a route with no wallpaper gets the solid plane colour. */
+  background: linear-gradient(var(--dc-sheet-fill), var(--dc-sheet-fill)), var(--home-washes, var(--dc-sheet-solid));
 }
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
@@ -10185,6 +10211,10 @@ html .un-backdrop.platform-backdrop-dim {
    opaque is also what lets lib/overlay-scrim.js drop the per-frame cutout
    and dim with the kit's own backdrop. */
 .un-modal { background-color: var(--dc-sheet); }
+/* Send Feedback wears the plane colour the sheets do, not the neutral white:
+   it is the dialog people open from the same menus as those sheets, and it
+   read as a different material beside them. */
+.un-modal:has(#feedback-form) { background-color: var(--dc-sheet-solid); }
 .un-sheet, .un-sheet::after, .un-panel, .un-panel::after,
 #apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),
 .un-sheet:has(#apps-switcher-sheet)::after {
@@ -17688,8 +17718,35 @@ html.un-kb #platform-tabs {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-/* Pages scroll under the bar, so it is solid on every platform. */
-.platform-tabs { background-color: var(--dc-sheet-solid); }
+/* FAKED GLASS: THE TAB BAR (and the header, "…AND THE HEADER" above). The
+   two places the glass carries the look, so they keep it, without a filter.
+   The wallpaper is fixed, so what the glass showed over it never changed:
+   the tint over the washes behind the bar (a 24px blur erases the grain and
+   the star, and the washes are soft already). So the bar paints exactly
+   that, once: a viewport-sized fixed layer of the same `--home-washes` the
+   wallpaper draws, so it lines up with the body's pixel for pixel, under the
+   glass tint, and clipped to the bar by `clip-path`, which, unlike
+   `overflow`, also clips a fixed descendant (the usual stand-in for
+   `background-attachment: fixed`, which iOS ignores). Nothing is sampled per
+   frame, so scrolling costs nothing. The one thing it gives up is page
+   content showing through as it passes under: that is the part that cost a
+   filter pass on every frame. Nothing between the bar and the viewport has a
+   transform or a filter (see `.platform-tabs` above), so `fixed` is the
+   screen. */
+.platform-tabs {
+  background-color: transparent;
+  clip-path: inset(0);
+}
+.platform-tabs::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  /* Resolved here, on the bar, so it reads the route's --home-washes (set on
+     <body>); a route with no wallpaper gets the solid plane colour. */
+  background: linear-gradient(var(--dc-sheet-fill), var(--dc-sheet-fill)), var(--home-washes, var(--dc-sheet-solid));
+}
 
 /* THE BAR SITS LOWER ON iOS (#2766). The inset under it there is the
    home-indicator strip, 34px on a Face ID iPhone, and the indicator is a 5px
@@ -18969,9 +19026,9 @@ html.un-kb #platform-parked {
        `--dc-sheet`, so the rail came back over the page as a white panel
        rather than as the rail. `.platform-tabs` already carries the frost;
        restating the fill is what stops the solid one winning, and the
-       rule above (`.platform-tabs`, solid on every platform since the
-       glass came off) is what it matches. */
-    background-color: var(--dc-sheet-solid);
+       rule above (`.platform-tabs`, faked glass on every platform) is what
+       it matches: transparent, so the bar's fixed layer is the surface. */
+    background-color: transparent;
     backdrop-filter: var(--dc-frost);
     -webkit-backdrop-filter: var(--dc-frost);
     border-right: 1px solid var(--app-sheet-line);

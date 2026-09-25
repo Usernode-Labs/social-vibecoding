@@ -417,9 +417,9 @@ test('#2795: the peeked rail is the frosted rail, and fades out', () => {
   const css = read('public/css/app.css');
   const peek = css.slice(css.indexOf('  .platform-tabs.platform-tabs-peek {'));
   const rule = peek.slice(0, peek.indexOf('}'));
-  // It floats over the page, and nothing blurs any more, so it is the same
-  // solid as the docked bar: the plane colour, not the neutral white sheet.
-  assert.match(rule, /background-color: var\(--dc-sheet-solid\);/);
+  // The same faked glass as the docked bar (no filter): transparent, so the
+  // bar's fixed layer is the surface, and never the neutral white sheet.
+  assert.match(rule, /background-color: transparent;/);
   assert.match(rule, /backdrop-filter: var\(--dc-frost\);/);
   assert.doesNotMatch(rule, /background-color: var\(--dc-sheet\);/, 'not the solid white sheet');
   assert.match(rule, /transition: opacity 200ms ease-in;/);
