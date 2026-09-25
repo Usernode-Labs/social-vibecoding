@@ -95,25 +95,42 @@ export interface TourStep {
   needsPanel?: boolean;
   /** Shut the Improve panel and the app's menu on the way in. */
   closesPanel?: boolean;
+  /**
+   * Next and Back step over it when none of its targets is on screen. For
+   * the Getting started card, which only an account that came through the
+   * join screen has: a replay from Settings, a year later, has no card to
+   * point at, and a step describing one that is not there is worse than no
+   * step.
+   */
+  optional?: boolean;
 }
 
+/*
+ * ── Communities, stage 5: the tour a new account gets after joining ─────
+ *
+ * It runs after "What communities do you want to join?"
+ * (../../auth/communities-first-run.js), so it can talk about the Home that
+ * screen just filled: the shortcuts to what they joined, the menu inside
+ * every app, where their communities are listed, where to find more, and
+ * the three first steps on top of Home. Create is no longer a step of its
+ * own (the Your apps step names the tile that ends the grid), and neither
+ * are Challenges, whose onboarding the Getting started card now does.
+ */
 export const TOUR_STEPS: readonly TourStep[] = [
   {
     id: 'welcome',
     title: 'Welcome to Homeroom',
-    body: 'Every app here is built by the people using it, and changes ship when the group votes them in.',
+    body: 'Every community here builds its own app. Changes ship when the community votes them in.',
     targets: [],
   },
   {
-    id: 'create',
-    title: 'Create a new app',
-    body: 'Create a new app here. Describe it and an AI builds the first version.',
-    // The launcher grid's trailing tile (../create-tile.tsx). It draws with
-    // the first grid paint, so on the rare tour that starts before the apps
-    // have loaded, the Your apps area it will end is the next best thing to
-    // point at. It was `#home-create-section`, a section of its own, until
-    // Create moved into the grid.
-    targets: ['#home-create-tile', '#home-apps-section'],
+    // The launcher grid, which the join screen has just put the person's
+    // communities on. `#home-apps-section` is the fallback for a tour that
+    // starts before the grid has painted.
+    id: 'apps',
+    title: 'Your apps',
+    body: 'Shortcuts to the apps you use. A small mark says where each one lives: people for a group, a lock for one that is just yours. The last tile starts a new project.',
+    targets: ['#app-list', '#home-apps-section'],
   },
   {
     // ONE STEP, WHERE THERE WERE TWO (#2718 review). The arc was "press the
@@ -126,55 +143,47 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // way rather than skipping past it — step 4 points INSIDE the menu, so
     // a Next that only moved the counter would land on nothing.
     id: 'app-menu',
-    title: "The app's own menu",
-    body: 'The mark opens the menu for the app you are in. Tap it, or tap Next to open it.',
+    title: 'The Homeroom menu',
+    body: 'Inside any app, this mark opens its menu. Tap it, or tap Next to open it.',
     targets: ['#platform-mark-btn'],
     interactive: true,
     advanceOn: 'menu-open',
   },
   {
-    // BACK FROM THE MERGE, and correct again. #2718 deleted this step because
-    // it moved "Give feedback" out of the panel and into the mark's menu;
-    // its review moved the control back to a button in this very well, so
-    // the step it deleted is the step the product wants. Taking main's copy
-    // verbatim rather than rewriting it: nothing about what it teaches
-    // changed while it was away.
-    id: 'feedback',
-    title: 'Give feedback',
-    body: "Feedback sends the app's group a note about what should change.",
-    targets: ['#improve-row-feedback'],
+    // Give feedback and New change, as ONE step now: they sit side by side
+    // in the menu's action well (`#improve-quick-actions`,
+    // ../../improve/actions.tsx), so one cut-out draws around both and one
+    // sentence says what each is for.
+    id: 'menu-actions',
+    title: 'Give feedback, or change it',
+    body: 'Feedback sends the community a note about what should change. New change starts one yourself: describe it, try the preview, then put it to a vote.',
+    targets: ['#improve-quick-actions', '#improve-row-feedback'],
     needsPanel: true,
   },
   {
-    id: 'new-change',
-    title: 'New change',
-    body: 'New change starts a working session on the app: describe it, try the preview, then put it to a vote.',
-    targets: ['#improve-row-new-session'],
-    needsPanel: true,
-  },
-  {
-    // `#app-context-row-workshop` until #2718, which is an id nothing has
-    // rendered for some time — the step fell through to no target and drew
-    // its card with no cut-out. Workshop is a TAB now, and the tab is on
-    // screen on every platform route, so the target resolves everywhere.
+    // THE STEP THAT LEAVES THE MENU: the step before it points inside the
+    // menu, and the tab this one points at is behind it.
     id: 'workshop',
-    title: 'Workshop',
-    // Communities (stage 2): the tab lists what you have JOINED, by who it
-    // is for, not Home's shortcuts, so the step says so.
+    title: 'Your communities',
     body: 'Workshop lists every community and group you are in, and your own projects, with what needs you in each.',
     targets: ['#platform-tab-workshop'],
-    // THE STEP THAT LEAVES THE MENU, and it is this one now rather than
-    // Challenges: the two steps before it point at rows INSIDE the menu, and
-    // the tab this one points at is behind it. Challenges keeps the flag too,
-    // for the arc that never opened the menu at all.
     closesPanel: true,
   },
   {
-    id: 'challenges',
-    title: 'Challenges',
-    body: 'Complete challenges to finish onboarding and earn your first points.',
-    targets: ['#home-challenges-section'],
+    // The tab, where the directory is. Home's Discover section is the
+    // fallback. Keeps `closesPanel` for the arc that never opened the menu.
+    id: 'discover',
+    title: 'Discover',
+    body: 'Find more communities to join. Joining one puts it on Home.',
+    targets: ['#platform-tab-discover', '#home-discover-section'],
     closesPanel: true,
+  },
+  {
+    id: 'getting-started',
+    title: 'Getting started',
+    body: 'Three first steps to take part. They tick off as you go, and you can close the card when you are done.',
+    targets: ['#home-getting-started'],
+    optional: true,
   },
   {
     // `#app-switcher-btn` until #2718, which retired the chip. Settings is a
@@ -211,6 +220,18 @@ export const IMPROVE_STEP_INDEX = TOUR_STEPS.findIndex(
 export function clampIndex(index: number): number {
   if (!Number.isFinite(index)) return 0;
   return Math.max(0, Math.min(TOUR_LENGTH - 1, Math.trunc(index)));
+}
+
+/**
+ * The step Next (`dir` 1) or Back (`dir` -1) lands on from `at`: the
+ * neighbour, stepping over an `optional` step whose target `present` says is
+ * not on screen. With nowhere to go, it stays where it is.
+ */
+export function stepFrom(at: number, dir: 1 | -1, present: (step: TourStep) => boolean): number {
+  for (let i = clampIndex(at) + dir; i >= 0 && i < TOUR_LENGTH; i += dir) {
+    if (!TOUR_STEPS[i].optional || present(TOUR_STEPS[i])) return i;
+  }
+  return clampIndex(at);
 }
 
 /**

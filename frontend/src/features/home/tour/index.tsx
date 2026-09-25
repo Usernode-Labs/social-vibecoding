@@ -14,8 +14,8 @@
  * Nothing here is a drawing of the product. The Improve arc works because the
  * Improve row is reachable on Home: the app's own menu, behind the Homeroom
  * mark, targeting the platform's own self-hosted row for as long as Home is up
- * (`Home.publishImproveTarget`, #1367). So steps 3 to 6 are one interaction
- * rather than four descriptions:
+ * (`Home.publishImproveTarget`, #1367). So steps 3 to 5 are one interaction
+ * rather than three descriptions:
  *
  *   * step 3 spotlights the MARK that opens that menu, asking the viewer to
  *     press it. The click is NOT intercepted: the tour subscribes to
@@ -24,15 +24,17 @@
  *     Next opens the menu through `AppContext.open()` — the same path — and
  *     the same watcher advances it, so Next never lands on step 4 with the
  *     menu shut;
- *   * steps 4 and 5 spotlight `#improve-row-feedback` and
- *     `#improve-row-new-session` INSIDE the panel the viewer just opened, and
- *     Next moves between them. Both are DESCRIBED, not driven: the cut-out
- *     blocks the press the way the dim around it does, because each of them
- *     leaves the tour (a dialog, a new session) and a spotlight is not an
- *     instruction to press. ./tour-steps.ts carries the whole argument;
- *   * steps 6 and 7 leave the panel for the mark and the Workshop tab;
- *   * step 7 shuts the panel through `Improve.close()`, the controller's own
- *     close path and never a write into its DOM, then points at Challenges.
+ *   * step 4 spotlights `#improve-quick-actions`, the well holding Give
+ *     feedback and New change INSIDE the menu the viewer just opened. It is
+ *     DESCRIBED, not driven: the cut-out blocks the press the way the dim
+ *     around it does, because each of them leaves the tour (a dialog, a new
+ *     session) and a spotlight is not an instruction to press.
+ *     ./tour-steps.ts carries the whole argument;
+ *   * step 5 shuts the menu through `Improve.close()`, the controller's own
+ *     close path and never a write into its DOM, then points at the
+ *     Workshop tab, and the steps after it at Discover and at Home's
+ *     Getting started card (communities, stage 5), which Next and Back step
+ *     over when the card is not there (`optional`).
  *
  * ── The island rules, and how each is kept ────────────────────────────
  *
@@ -115,7 +117,9 @@
  *     has been read);
  *   * ../../settings/terms-first-run.js has to be done with. Its `settled()`
  *     is the same promise ../../auth/username-first-run.js exposes and terms
- *     itself awaits, so awaiting terms covers both gates;
+ *     itself awaits, so awaiting terms covers both gates; and after it,
+ *     ../../auth/communities-first-run.js, the join screen whose answer
+ *     fills the Home this tour then describes;
  *   * `#home-screen` has to be on screen. The tour points at things on Home
  *     and never navigates the viewer anywhere;
  *   * and `?shot=`, `?demo=` and `?token=` routes are skipped outright. The
@@ -169,7 +173,7 @@ import {
 import { useTourRequest } from './tour-request';
 import {
   clampIndex, IMPROVE_STEP_INDEX, isLastStep, nextOpensMenu, resumeIndex, stepAt, stepCounter,
-  TOUR_LENGTH,
+  stepFrom, TOUR_LENGTH, type TourStep,
 } from './tour-steps';
 import {
   clearStep, currentUserId, readDone, readStep, writeDone, writeStep,
@@ -271,17 +275,28 @@ function whenHomeVisible(): Promise<boolean> {
   });
 }
 
-/** Await the first-run terms gate, if this document has one. */
-async function whenTermsSettled(): Promise<void> {
-  const gate = (window as unknown as {
-    TermsFirstRun?: { settled?: () => Promise<void> };
-  }).TermsFirstRun;
-  if (!gate || typeof gate.settled !== 'function') return;
-  try {
-    await gate.settled();
-  } catch {
-    /* A broken gate must not keep the tour from ever running. */
+/**
+ * Await the first-run steps that come before the tour: the terms gate (which
+ * itself awaits the username step) and then "What communities do you want
+ * to join?" (../../auth/communities-first-run.js). The tour talks about the
+ * Home that last screen fills, so it starts only once it is answered.
+ */
+async function whenFirstRunSettled(): Promise<void> {
+  type Gate = { settled?: () => Promise<void> };
+  const host = window as unknown as { TermsFirstRun?: Gate; CommunitiesFirstRun?: Gate };
+  for (const gate of [host.TermsFirstRun, host.CommunitiesFirstRun]) {
+    if (!gate || typeof gate.settled !== 'function') continue;
+    try {
+      await gate.settled();
+    } catch {
+      /* A broken gate must not keep the tour from ever running. */
+    }
   }
+}
+
+/** An optional step is shown only when something it points at is there. */
+function targetPresent(step: TourStep): boolean {
+  return !!findTarget(step.targets);
 }
 
 /**
@@ -480,7 +495,7 @@ export function OnboardingTour() {
     if (readDone(userId)) return;
     let cancelled = false;
     void (async () => {
-      await whenTermsSettled();
+      await whenFirstRunSettled();
       if (cancelled || started.current) return;
       await whenUserSettled();
       if (cancelled || started.current) return;
@@ -745,7 +760,7 @@ export function OnboardingTour() {
     backToTopOfHome();
   }, [userId]);
 
-  const goBack = useCallback(() => setIndex(clampIndex(indexRef.current - 1)), []);
+  const goBack = useCallback(() => setIndex(stepFrom(indexRef.current, -1, targetPresent)), []);
   const goNext = useCallback(() => {
     const at = indexRef.current;
     // The menu step's Next does what the mark does rather than moving the
@@ -754,7 +769,7 @@ export function OnboardingTour() {
     // into.
     if (nextOpensMenu(at)) void AppContext.open();
     else if (isLastStep(at)) finish();
-    else setIndex(clampIndex(at + 1));
+    else setIndex(stepFrom(at, 1, targetPresent));
   }, [finish]);
 
   useEffect(() => {

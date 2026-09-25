@@ -72,6 +72,7 @@ const { messagesOverviewRoutes } = require('./src/routes/messages-overview');
 const { platformAboutRoutes } = require('./src/routes/platform-about');
 const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
 const { homePanelRoutes } = require('./src/routes/home-panels');
+const { onboardingRoutes } = require('./src/routes/onboarding');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
 const { chatDraftsRoutes } = require('./src/routes/chat-drafts');
 const { agentSessionDraftsRoutes } = require('./src/routes/agent-session-drafts');
@@ -659,6 +660,10 @@ app.use(reportSnapshotRoutes(config));
 // show/hide. Me-scoped reads, so it sits behind authMiddleware like the
 // ordering routes above.
 app.use(homePanelRoutes(config));
+// A new account's first run (communities, stage 5): the join screen that
+// follows the username and terms steps, and the Getting started card on
+// Home. Me-scoped, so behind authMiddleware with the panels above.
+app.use(onboardingRoutes(config));
 // Free-form home-grid placement: where each app tile and widget sits, per
 // breakpoint. Me-scoped like the panels route above.
 app.use(homeLayoutRoutes(config));
