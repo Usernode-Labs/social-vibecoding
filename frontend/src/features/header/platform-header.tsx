@@ -227,7 +227,7 @@ export function PlatformHeader() {
   // sites agreeing by convention.
   const {
     slug: backSlug, tab: backTab, subTab: backSubTab,
-    sessionOrigin, boardView,
+    sessionOrigin, boardView, topicOrigin,
   } = useStoreState(improveStore);
   const routeUp = appRouteUpHref(backSlug, backTab, backSubTab, sessionOrigin);
   // #2916: on a Workshop topic the back control is the "‹ Workshop" chip at
@@ -236,7 +236,7 @@ export function PlatformHeader() {
   // from rather than left to renderDevView's 'none' reset, so the page has
   // exactly one back control by construction.
   const paneBack = topicBackHref({
-    slug: backSlug, tab: backTab, subTab: backSubTab, boardView,
+    slug: backSlug, tab: backTab, subTab: backSubTab, boardView, topicOrigin,
   });
   // An app route that has a level above it wins over the imperative call;
   // everything else keeps whatever the last setBackIcon() published, which on
