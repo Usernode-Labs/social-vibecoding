@@ -13840,8 +13840,13 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   flex: none;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   height: 30px;
+  /* As wide as its "✓ Yes" face, so casting a vote does not change the
+     button's width. It did, and the band re-measured around the new width
+     and folded or unfolded a pill beside it: the row moved under the tap. */
+  min-width: 78px;
   padding: 0 8px 0 11px;
   border: 0;
   border-radius: 14px;
@@ -17304,8 +17309,18 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* `space-between` with the eyebrow gone leaves the chips alone at the START
    of the row, which is where they belong: on a healthy board there is no
    grouping state to report and the row is just the sort control. */
-.dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; flex-wrap: wrap; }
-.dev-ws-sort-opts { display: flex; gap: 4px; }
+.dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; }
+.dev-ws-sort-opts { display: flex; gap: 4px; flex: none; }
+/* The eyebrow's grouping note comes and goes ("· drafting categories…"),
+   and a longer eyebrow used to push the chips onto a second line and the
+   whole list down with them. It gives way instead: on one line it shortens
+   with an ellipsis, and where the row cannot hold both (a phone) it always
+   has its own line, so the chips never move. */
+.dev-ws-sort > .dev-ws-eyebrow { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 639px) {
+  .dev-ws-sort { flex-wrap: wrap; row-gap: 6px; }
+  .dev-ws-sort > .dev-ws-eyebrow { flex-basis: 100%; }
+}
 .dev-ws-chip {
   height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--app-sheet-line);
   background: var(--dc-sheet); color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer;
@@ -17349,6 +17364,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-stat + .dev-ws-stat { padding-left: 10px; border-left: 1px solid var(--app-sheet-line); }
 .dev-ws-theme-people b { display: block; font-size: 20px; font-weight: 600; color: var(--text-primary); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .dev-ws-theme-say { grid-column: 1 / -1; margin: 2px 0 0; font-size: 14px; color: var(--text-primary); }
+/* A shut theme's summary is re-drafted as the board changes, and its length
+   moved every theme below it. Shut, it holds to three lines; open, it reads
+   in full. */
+.dev-ws-theme:not(.dev-ws-theme-open) .dev-ws-theme-say {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+}
 .dev-ws-theme-counts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .dev-ws-cnt {
   display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border-radius: 8px;

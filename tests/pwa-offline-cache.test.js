@@ -875,7 +875,7 @@ test('a refresh of a board already on screen tells the worker it is not a boot',
   assert.match(refreshActive.slice(0, 1200),
     /if \(document\.hidden\) return;[\s\S]*?App\._announceRefreshIntent\(\);[\s\S]*?const visible =/,
     'a correction re-pull announces refresh intent before any loader runs');
-  const refreshDev = view.slice(view.indexOf('  refreshDevData(kind) {'));
+  const refreshDev = view.slice(view.indexOf('  refreshDevData(kind, live = null) {'));
   assert.match(refreshDev.slice(0, 800), /App\._announceRefreshIntent\?\.\(\);/,
     'every live board refresh announces refresh intent');
   // And the worker honours it: an announced refresh is never laned.

@@ -529,6 +529,12 @@ export function TopicHead({ conversation = false }: { conversation?: boolean }):
 }
 
 /** Refresh from the endpoint that owns this lifecycle's metadata. */
+/** A copy of `row` with the viewer's in-flight vote applied (AppView's overlay). */
+function withPendingVote(av: any, row: any) {
+  if (av && typeof av._overlayPendingVote === 'function') av._overlayPendingVote(row);
+  return row;
+}
+
 export async function readChangeDetail(item: any, owner: boolean, signal: AbortSignal) {
   const id = item.id;
   const av = (window as any).AppView;
@@ -1080,7 +1086,11 @@ function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
           {s.total != null ? <span className="dev-steps-count">{`${s.done}/${s.total}`}</span> : null}
         </div>
         <ol className="dev-steps-list border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-          {s.rows.map((r) => <StepRowView key={r.key} r={r} help={help} />)}
+          {/* Keyed by the GATE where there is one. A step's `key` names the
+              ledger row it wears, and that changes as the row gains or loses
+              detail (_topicStepsView's `useRow`), which remounted the step
+              and redrew it from nothing mid-read. */}
+          {s.rows.map((r) => <StepRowView key={r.gate || r.key} r={r} help={help} />)}
         </ol>
       </div>
     </section>
@@ -1150,31 +1160,68 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
   const id = item?.id;
+  // THE PAGE RE-READS ITS ROW WHEN SOMETHING HAPPENS TO IT, not on a timer.
+  // It polled every ten seconds for as long as it was open, because the
+  // checks verdict never reached it over the socket (the server's envelope
+  // bug) — and every poll that answered redrew the page, which is where the
+  // 36 px and 129 px jumps under a reader came from. What moves it now:
+  //   - `change-detail-refresh` with this id: re-read (App._liveRefresh,
+  //     for a vote, a session change, a verdict, the before/after tiles);
+  //   - with `{ id, row }`: adopt a row the Workshop just read for this page;
+  //   - with `{ id, patch }`: merge a live patch (a checks tick), which would
+  //     otherwise be painted over by this page's older read;
+  //   - with 'all': the socket reconnected (App.resyncCurrentView);
+  //   - the page coming back into view after a read was skipped for it.
   useEffect(() => {
     if (!id || !active) return;
     const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const refresh = (event: Event) => {
-      if ((event as CustomEvent).detail === Number(id)) setRevision((n) => n + 1);
-    };
-    window.addEventListener('change-detail-refresh', refresh);
+    let skipped = false;
     async function load() {
+      // These portals can remain mounted while another screen is open, and a
+      // hidden tab reads nothing; either reads when it is seen again.
+      if (!root.current?.getClientRects().length || document.visibilityState === 'hidden') {
+        skipped = true;
+        return;
+      }
+      skipped = false;
       try {
-        // These portals can remain mounted while another screen is open.
-        if (!root.current?.getClientRects().length || document.visibilityState === 'hidden') return;
         const session = await readChangeDetail(item, owner, abort.signal);
         if (!abort.signal.aborted) { setLoaded(session); setError(''); }
       } catch (err) {
         if (!abort.signal.aborted) setError((err as Error).message);
-      } finally {
-        if (!abort.signal.aborted) timer = setTimeout(load, 10000);
       }
     }
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail === 'all') { setRevision((n) => n + 1); return; }
+      if (detail && typeof detail === 'object') {
+        if (Number(detail.id) !== Number(id)) return;
+        if (detail.row) { setLoaded(detail.row); setError(''); return; }
+        if (detail.patch) {
+          setLoaded((current: any) => (current && Number(current.id) === Number(id) ? { ...current, ...detail.patch } : current));
+        }
+        return;
+      }
+      if (Number(detail) === Number(id)) setRevision((n) => n + 1);
+    };
+    const seen = () => { if (skipped && document.visibilityState !== 'hidden') void load(); };
+    window.addEventListener('change-detail-refresh', refresh);
+    document.addEventListener('visibilitychange', seen);
+    const shown = typeof ResizeObserver === 'function' && root.current ? new ResizeObserver(seen) : null;
+    if (shown && root.current) shown.observe(root.current);
     void load();
-    return () => { abort.abort(); clearTimeout(timer); window.removeEventListener('change-detail-refresh', refresh); };
+    return () => {
+      abort.abort();
+      window.removeEventListener('change-detail-refresh', refresh);
+      document.removeEventListener('visibilitychange', seen);
+      shown?.disconnect();
+    };
   }, [id, revision, owner, active, item?.status]);
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
-  const session = item && loaded?.id === id ? { ...item, ...loaded } : item;
+  // This page's read wins over the lighter cached row, except for a vote
+  // still on its way to the server: the voter's Yes stays on the button
+  // from the click, not from whichever read lands after it.
+  const session = item && loaded?.id === id ? withPendingVote(av, { ...item, ...loaded }) : item;
   const built = session && av ? av._topicViewFor(['active', 'paused'].includes(session.status) ? 'session' : 'proposal', session) : null;
   const card = built?.card || initialCard;
   const body: TopicBody = built?.body || initialBody;

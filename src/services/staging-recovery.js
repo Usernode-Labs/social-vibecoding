@@ -329,13 +329,16 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     // CHECK_MAX_AUTO_RETRIES bound the retries instead of the old silent
     // infinite skip loop (#461).
     const visuals = require('./visuals');
-    await visuals.storeChecks(
+    const stored = await visuals.storeChecks(
       pool, session.id, session.checks_commit_sha || null,
       { state: 'error', results: [] },
       `could not compare ${compareHead} with main: ${err.message}`.slice(0, 280)
     ).catch((e) => log.warn('staging-recovery', 'compare-failure verdict write failed', {
       sessionId: session.id, err: e.message,
     }));
+    if (stored) {
+      visuals.notifyChecks(session.id, { state: 'error', results: [] }, session.checks_commit_sha || null, null);
+    }
     return 'skipped';
   }
 
@@ -439,7 +442,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
         // names the recovered PR verbatim.
         preferredTitle: session.proposed_pr_title || null,
         broadcast: (event, data) =>
-          broadcastGlobal({ type: 'session_event', sessionId: session.id, event, ...data }),
+          broadcastGlobal({ ...data, type: 'session_event', sessionId: session.id, event }),
       });
     } catch (err) {
       log.warn('staging-recovery', 'Recovery PR creation via applyPrMetadata failed', {
@@ -541,7 +544,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // callers; captureForSession is itself _inFlight-guarded so a concurrent
   // live capture isn't duplicated.
   visuals.captureForSession(config, session, app, commitHash, stagingResult, {
-    send: () => {},
+    send: null,
     trigger: checkTriggerForReason(reason),
     // Deliberately NOT forced: a rebuild whose head already has a passing
     // verdict has nothing new to learn, and this path fires on every heal
@@ -646,7 +649,7 @@ async function recordChecksSkipped({
   log.info('staging-recovery', 'Checks marked skipped', { sessionId: session.id, reason });
   try {
     const { broadcastGlobal } = require('./ws');
-    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'skipped' });
+    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'skipped', checkState: 'skipped' });
   } catch (err) {
     log.warn('staging-recovery', 'skipped-verdict notify failed', { sessionId: session.id, err: err.message });
   }
@@ -744,7 +747,7 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
     });
     try {
       const { broadcastGlobal } = require('./ws');
-      broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error' });
+      broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error', checkState: 'error' });
     } catch { /* narration only */ }
     return;
   }
@@ -787,7 +790,7 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
     });
     if (created.length) await notifications.hydrateAndPush(pool, created[0]);
     const { broadcastGlobal } = require('./ws');
-    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error' });
+    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error', checkState: 'error' });
   } catch (e) {
     log.warn('staging-recovery', 'boot-failure notify failed', { sessionId: session.id, err: e.message });
   }
@@ -829,7 +832,7 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
   const visuals = require('./visuals');
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
   visuals.captureForSession(config, session, app, session.checks_commit_sha || null, null, {
-    send: () => {},
+    send: null,
     trigger: checkTriggerForReason(reason),
     // A human pressing "Re-run checks" — or an agent correcting the capture
     // routes (#1199) — is asking for a FRESH verdict, so these paths force

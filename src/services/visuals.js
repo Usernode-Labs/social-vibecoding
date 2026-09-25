@@ -1733,7 +1733,11 @@ function hasInFlightCapture(sessionId) {
 //
 // `send` (optional) is the turn's SSE/bus emitter; when absent (promote
 // path) we publish straight to the session bus + global WS so open
-// clients still upgrade in place.
+// clients still upgrade in place. Pass NOTHING when there is no turn, never
+// a no-op: the notifiers hand the event to `send` alone, so `() => {}`
+// silently dropped the checks verdict and the before/after tiles for every
+// open page on the re-check, rebuild, re-run and import paths, which then
+// learned the result only from their own polls.
 // Resolve the capture pixel density from an apps row (issue #360).
 // 1 only when the app explicitly opted out via dapp.json's
 // `screenshot.deviceScaleFactor: 1` (persisted on
@@ -3320,6 +3324,16 @@ async function overCeilingCheckRow(repoOwner, repoName, headCeilingDropped) {
   };
 }
 
+// The global socket's frame for a session's event: `type` must stay
+// 'session_event', which is the only case the shell's socket router has for
+// these. Spreading the event AFTER `type` (as every copy of this used to)
+// let the event's own `type: 'checks_ready'` overwrite it, and the router
+// dropped every checks and visuals frame on the floor: the progress ticks,
+// the verdicts, the before/after tiles.
+function sessionEventEnvelope(sessionId, name, event) {
+  return { ...event, type: 'session_event', sessionId, event: name };
+}
+
 // Capture completes after staging_ready fired, so the staging card needs a
 // follow-up event to upgrade in place. Prefer the turn's own `send` (POST
 // SSE + global WS + session bus, all dedup'd by _seq client-side); fall
@@ -3335,7 +3349,7 @@ function notifyVisualsReady(sessionId, visuals, send) {
     const event = { type: 'visuals_ready', _seq: `vis${Date.now().toString(36)}-${++_notifySeq}`, ...data };
     sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
-    broadcastGlobal({ type: 'session_event', sessionId, event: 'visuals_ready', ...event });
+    broadcastGlobal(sessionEventEnvelope(sessionId, 'visuals_ready', event));
   } catch (err) {
     log.warn('visuals', 'visuals_ready notify failed', { sessionId, err: err.message });
   }
@@ -3447,7 +3461,7 @@ function notifyChecksProgress(sessionId, commitSha, progress, phase = null, trig
     };
     sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
-    broadcastGlobal({ type: 'session_event', sessionId, event: 'checks_ready', ...event });
+    broadcastGlobal(sessionEventEnvelope(sessionId, 'checks_ready', event));
   } catch (err) {
     log.warn('visuals', 'checks_progress notify failed', { sessionId, err: err.message });
   }
@@ -3626,7 +3640,7 @@ function notifyChecksPending(sessionId, commitSha, phase = null, trigger = null)
     };
     sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
-    broadcastGlobal({ type: 'session_event', sessionId, event: 'checks_ready', ...event });
+    broadcastGlobal(sessionEventEnvelope(sessionId, 'checks_ready', event));
   } catch (err) {
     log.warn('visuals', 'checks_pending notify failed', { sessionId, err: err.message });
   }
@@ -3655,6 +3669,10 @@ function notifyChecks(sessionId, result, commitSha, send) {
     commitSha: commitSha || null,
   };
   try {
+    // A live turn's `send` fans out to the session bus AND the global
+    // socket itself. Without one, both are published here. A caller with no
+    // turn must pass nothing: a no-op `send` swallows the verdict for every
+    // open page (see captureForSession's `send` note).
     if (send) {
       send('checks_ready', data);
       return;
@@ -3662,7 +3680,7 @@ function notifyChecks(sessionId, result, commitSha, send) {
     const event = { type: 'checks_ready', _seq: `chk${Date.now().toString(36)}-${++_notifySeq}`, ...data };
     sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
-    broadcastGlobal({ type: 'session_event', sessionId, event: 'checks_ready', ...event });
+    broadcastGlobal(sessionEventEnvelope(sessionId, 'checks_ready', event));
   } catch (err) {
     log.warn('visuals', 'checks_ready notify failed', { sessionId, err: err.message });
   }
@@ -3670,6 +3688,7 @@ function notifyChecks(sessionId, result, commitSha, send) {
 
 module.exports = {
   kubernetesCaptureOrigin,
+  sessionEventEnvelope,
   captureForSession,
   scheduleVisualEvidence,
   // The settlement half of a run and the in-flight seat, for the harvester

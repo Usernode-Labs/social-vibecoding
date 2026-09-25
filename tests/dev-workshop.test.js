@@ -5452,3 +5452,31 @@ test('the Workshop keeps no swatch of its own — it imports the one the threads
     /import \{ swatchFor \} from '\.\.\/\.\.\/messages\/format';/,
     'the sheet reads the same module — that is what makes the two match');
 });
+
+// ── The theme order holds between sorts ────────────────────────────────
+//
+// The list was re-sorted on every refetch, so a vote, a verdict or a new card
+// anywhere on the board could move the theme a reader was looking at: the
+// largest layout shift measured on the Workshop (0.16) was a card dropping
+// 255 px when a draft became a proposal and its theme's counts moved.
+
+test('a refetch keeps every theme where it was; only a chip press re-sorts', () => {
+  const { orderThemesStable } = devCardApi();
+  const theme = (id, people, extra = {}) => ({
+    id, people: Array.from({ length: people }, (_, i) => `u${i}`), lastActive: 0,
+    counts: { open: 0 }, ...extra,
+  });
+  const first = orderThemesStable(null, [theme('a', 1), theme('b', 3), theme('z', 0, { ungrouped: true })], 'people');
+  assert.deepEqual(first.map((t) => t.id), ['b', 'a', 'z'], 'the first paint sorts');
+  const held = { key: 'people', ids: first.map((t) => t.id) };
+  // "a" gains people, "c" is new, "b" is still here: nothing already shown moves.
+  const next = orderThemesStable(held,
+    [theme('a', 9), theme('b', 3), theme('c', 5), theme('z', 0, { ungrouped: true })], 'people');
+  assert.deepEqual(next.map((t) => t.id), ['b', 'a', 'c', 'z'],
+    'a refetch keeps the order, adds new themes after it, and "Not yet grouped" stays last');
+  assert.equal(next[1].people.length, 9, 'with each theme\'s fresh numbers');
+  // A theme that is gone is dropped; a chip press sorts afresh.
+  assert.deepEqual(orderThemesStable(held, [theme('a', 9)], 'people').map((t) => t.id), ['a']);
+  assert.deepEqual(orderThemesStable({ key: 'activity', ids: ['b', 'a'] },
+    [theme('a', 9), theme('b', 3)], 'people').map((t) => t.id), ['a', 'b']);
+});
