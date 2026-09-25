@@ -16231,6 +16231,44 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-keys-hint { display: none; }
 
+/* ── Join, under the Join button (communities) ─────────────────────────
+   The community card's question (features/dev-board/workshop/
+   community-card.tsx), asked the way the vote is asked: the vote popover's
+   question, its muted line, an answer button and a quiet "later" under it
+   — the classes above — in a popover that hangs from the button rather than
+   from a rail. At every width, because the button is inside a card, not at
+   the floor of a feed: it opens where the thumb already is.
+
+   Right-aligned to the button, which ends the card's first row, with the
+   arrow over the button's middle. The width stops short of the viewport on
+   a phone, so the popover never meets the screen edge. */
+.dev-ws-join-anchor { position: relative; margin-left: auto; flex: none; }
+.dev-ws-join-pop {
+  position: absolute; top: calc(100% + 12px); right: -6px; z-index: 7;
+  width: min(300px, calc(100vw - 56px));
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 16px 16px 10px; box-sizing: border-box;
+  border-radius: 18px; border: 1px solid var(--app-sheet-line);
+  background-color: var(--dc-sheet);
+  box-shadow: 0 18px 50px rgba(24, 39, 75, .22);
+  text-align: left;
+}
+.dev-ws-join-pop::before {
+  content: ""; position: absolute; top: -8px; right: 26px; width: 14px; height: 14px;
+  background: var(--dc-sheet);
+  border-left: 1px solid var(--app-sheet-line); border-top: 1px solid var(--app-sheet-line);
+  transform: rotate(45deg);
+}
+.dev-ws-join-pop .dev-ws-ask-q { margin: 0; font-size: 18px; }
+.dev-ws-join-pop .dev-ws-vote-sub { margin: 0 0 4px; font-size: 13px; }
+.dev-ws-join-pop .dev-ws-answer-btn { height: 46px; font-size: 15px; border-radius: 12px; }
+.dev-ws-join-pop .dev-ws-vote-later { margin-top: 0; }
+.dev-ws-answer-join { background: var(--brand-tint); color: var(--brand-ink); }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-join-pop { animation: dev-ws-join-pop-in .18s ease-out both; transform-origin: calc(100% - 32px) 0; }
+}
+@keyframes dev-ws-join-pop-in { from { opacity: 0; transform: translateY(-4px) scale(.96); } to { opacity: 1; transform: none; } }
+
 /* ── The ask pane, inside its sheet ────────────────────────────────── */
 .dev-ws-ask { gap: 8px; }
 .dev-ws-ask-log {

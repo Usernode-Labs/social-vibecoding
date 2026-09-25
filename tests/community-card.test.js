@@ -48,12 +48,22 @@ test('the card renders nothing until its read has answered', () => {
   assert.match(src, /if \(!data\) return null;/);
 });
 
-test('the channel opens at its old address, and Join goes through Home.setMembership', () => {
+test('the channel opens at its old address; Join asks under its button and joins through offerJoin', () => {
   const src = read(CARD);
   assert.match(src, /href=\{`#messages\/app\/\$\{encodeURIComponent\(slug\)\}`\}/,
     'the channel keeps its address: what moved is where you find it');
-  assert.match(src, /home\.setMembership\(slug, joined\)/,
-    'one request and one toast for Join, wherever it is pressed');
+  assert.match(src, /await offerJoin\(\{ code: 'join_required', app: \{ slug, name: data\.name \|\| slug \} \}\)/,
+    'the button asks the question every refusal asks, through the same function');
+  assert.match(src, /registerJoinAnchor\(slug, \{/,
+    'and while it shows, the card is where that question is asked');
+  assert.match(src, /getClientRects\(\)\.length > 0/,
+    'but only while it is actually on screen');
+  assert.match(src, /className="dev-ws-join-pop"[\s\S]*className="dev-ws-ask-q"[\s\S]*className="dev-ws-vote-sub"[\s\S]*dev-ws-answer-btn dev-ws-answer-join[\s\S]*className="dev-ws-vote-later"/,
+    'the popup wears the vote popover\'s question, line, answer and "later"');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ws-join-pop \{\s*position: absolute; top: calc\(100% \+ 12px\)/,
+    'it hangs from the button');
+  assert.match(src, /home\.setMembership\(slug, false\)/, 'Leave is the same call Discover makes');
   assert.match(src, /_plusMenuShowsMembers/,
     'Members & approvals is offered to exactly whom the "+" menu offers it');
   assert.match(src, /data\.is_member && !data\.is_creator/, 'the creator is never offered Leave');

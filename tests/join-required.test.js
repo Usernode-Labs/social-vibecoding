@@ -125,3 +125,32 @@ test('installed once, before hydration, and shared with the WebSocket chat path'
   assert.match(chat, /window\.UsernodeReact\?\.offerJoin/);
   assert.match(chat, /msg\.retry/, 'the refused message is sent again, not retyped');
 });
+
+test('with an anchor on screen the question is asked there, not in a dialog', async () => {
+  const h = harness({ answers: [response(403, REFUSED), response(200, { ok: true })] });
+  try {
+    const asked = [];
+    const off = h.mod.registerJoinAnchor('notes', {
+      visible: () => true,
+      ask: async (body) => { asked.push(body.app.slug); return true; },
+    });
+    const res = await h.win.fetch('/api/apps/notes/issues', { method: 'POST' });
+    assert.equal(res.status, 200);
+    assert.deepEqual(asked, ['notes'], 'the community card asked, under its Join button');
+    assert.equal(h.asked.length, 0, 'and the dialog did not');
+    assert.deepEqual(h.joined, [['notes', true]], 'the join itself is still offerJoin\'s');
+    off();
+  } finally { h.restore(); }
+});
+
+test('a hidden or removed anchor falls back to the dialog', async () => {
+  const h = harness({ answers: [response(403, REFUSED), response(200, { ok: true }), response(403, REFUSED), response(200, { ok: true })] });
+  try {
+    const off = h.mod.registerJoinAnchor('notes', { visible: () => false, ask: async () => { throw new Error('asked'); } });
+    await h.win.fetch('/api/apps/notes/messages', { method: 'POST' });
+    assert.equal(h.asked.length, 1, 'a card on a hidden screen does not swallow the question');
+    off();
+    await h.win.fetch('/api/apps/notes/messages', { method: 'POST' });
+    assert.equal(h.asked.length, 2, 'nor does one that has gone');
+  } finally { h.restore(); }
+});

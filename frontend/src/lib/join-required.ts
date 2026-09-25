@@ -56,6 +56,46 @@ export function isJoinRequired(body: unknown): body is JoinRequired {
 const asking = new Map<string, Promise<boolean>>();
 
 /**
+ * WHERE the question is asked. On a project's own page the community card
+ * (features/dev-board/workshop/community-card.tsx) draws a Join button, and
+ * the question belongs under it — an inline popup, the way the vote is asked
+ * under Vote — rather than in a dialog over the whole screen. The card
+ * registers an ANCHOR for its app while its Join button is on screen, and
+ * the question for that app is asked there; with no anchor showing (the
+ * app's chat in Messages, another tab) it falls back to the platform's
+ * confirm dialog.
+ *
+ * An anchor only ASKS: it resolves true for Join and false for anything
+ * else, and the membership is written here either way, so there is one join
+ * path whoever asked.
+ */
+export type JoinAnchor = {
+  ask: (body: JoinRequired) => Promise<boolean>;
+  /** False while the card is mounted but not showing (a hidden screen). */
+  visible: () => boolean;
+};
+
+const anchors = new Map<string, JoinAnchor>();
+
+/** Register the anchor for `slug`; call the returned function to remove it. */
+export function registerJoinAnchor(slug: string, anchor: JoinAnchor): () => void {
+  anchors.set(slug, anchor);
+  return () => {
+    if (anchors.get(slug) === anchor) anchors.delete(slug);
+  };
+}
+
+async function askInDialog(body: JoinRequired, name: string): Promise<boolean> {
+  const w = window as any;
+  return !!(await w.ConfirmModal?.show?.({
+    title: `Join ${name}?`,
+    message: 'Members start changes, file requests, vote and chat here. Join to take part.',
+    confirmLabel: 'Join',
+    cancelLabel: 'Not now',
+  }));
+}
+
+/**
  * Ask whether to join the app the refusal names, and join it on a yes.
  * Resolves true when the viewer is now a member. Concurrent calls for one app
  * share the question.
@@ -68,12 +108,8 @@ export function offerJoin(body: JoinRequired): Promise<boolean> {
   const question = (async () => {
     const w = window as any;
     const name = body.app?.name || slug;
-    const ok = await w.ConfirmModal?.show?.({
-      title: `Join ${name}?`,
-      message: 'Members start changes, file requests, vote and chat here. Join to take part.',
-      confirmLabel: 'Join',
-      cancelLabel: 'Not now',
-    });
+    const anchor = anchors.get(slug);
+    const ok = anchor && anchor.visible() ? await anchor.ask(body) : await askInDialog(body, name);
     if (!ok) return false;
     if (typeof w.Home?.setMembership !== 'function') return false;
     // The name rides along for the toast: Home may not have loaded this app

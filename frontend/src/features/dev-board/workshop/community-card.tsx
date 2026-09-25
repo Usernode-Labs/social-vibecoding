@@ -33,11 +33,16 @@
  *   is where you find it. A viewer who may not talk here (a view-public,
  *   collab-private app) gets no row rather than a door that refuses them.
  *
- * And JOIN. Joining is what lets you propose and vote here, so an outsider
- * sees the button at the top of the card and a member sees Leave at its foot.
- * The request and its toast are Home.setMembership's — the same function
- * Discover's pill and the join-required prompt call — so all three leave the
- * same flags behind.
+ * And JOIN. Joining is what lets you take part here, so an outsider sees the
+ * button at the top of the card and a member sees Leave at its foot. The
+ * button asks before it joins, in a popup UNDER it — the way Vote asks under
+ * Vote (the Workshop's vote popover, whose lines and answer button this
+ * wears) — and while it is on screen it is also where every other refusal
+ * for this app is asked: file a request or start a change from this page
+ * without having joined, and the question opens here rather than in a
+ * dialog over the page (lib/join-required.ts, registerJoinAnchor). The join
+ * itself is Home.setMembership's, the same call Discover's pill makes, so
+ * every path leaves the same flags behind.
  *
  * ── The island rules it keeps ──────────────────────────────────────────
  *
@@ -47,10 +52,11 @@
  * was asked for.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { HashIcon, LockIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
+import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 import { agoStamp } from '../../../lib/timestamp';
 
 type Audience = 'open' | 'invited' | 'solo';
@@ -123,6 +129,12 @@ async function readCommunity(slug: string): Promise<CommunityPayload | null> {
 export function CommunityCard({ slug }: { slug: string }) {
   const [data, setData] = useState<CommunityPayload | null>(null);
   const [busy, setBusy] = useState(false);
+  // The open Join question, if one is: its answer goes back to whoever asked
+  // (lib/join-required.ts's offerJoin), which does the joining.
+  const [asking, setAsking] = useState<null | { answer: (ok: boolean) => void }>(null);
+  const cardRef = useRef<HTMLElement | null>(null);
+  const joinRef = useRef<HTMLButtonElement | null>(null);
+  const popRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     const next = slug ? await readCommunity(slug) : null;
@@ -134,14 +146,76 @@ export function CommunityCard({ slug }: { slug: string }) {
     void load();
   }, [load]);
 
+  // THE ANCHOR. While this card shows a Join button, the question for this
+  // app is asked here. `visible` is what stops a card on a screen that is
+  // mounted but hidden from swallowing a question asked in Messages. On the
+  // way out, a question still open is answered No, so nothing waits forever.
+  const canJoin = !!data && !data.is_member;
+  useEffect(() => {
+    if (!canJoin) return undefined;
+    let open: ((ok: boolean) => void) | null = null;
+    const off = registerJoinAnchor(slug, {
+      visible: () => !!joinRef.current && joinRef.current.getClientRects().length > 0,
+      ask: () => new Promise<boolean>((resolve) => {
+        open = resolve;
+        setAsking({
+          answer: (ok) => {
+            open = null;
+            setAsking(null);
+            resolve(ok);
+          },
+        });
+        cardRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+      }),
+    });
+    return () => {
+      off();
+      if (open) open(false);
+    };
+  }, [slug, canJoin]);
+
+  // Closing it: Escape, or a press anywhere outside the popup. A listener
+  // rather than a scrim, because this card is `.dev-ws-strip`, whose
+  // backdrop-filter makes it the containing block for anything fixed inside
+  // it — a full-screen scrim drawn here would cover the card and nothing else.
+  useEffect(() => {
+    if (!asking) return undefined;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') asking.answer(false); };
+    const onDown = (e: Event) => {
+      const t = e.target as Node | null;
+      if (t && (popRef.current?.contains(t) || joinRef.current?.contains(t))) return;
+      asking.answer(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [asking]);
+
   if (!data) return null;
 
-  const setMembership = async (joined: boolean) => {
+  // The button asks the same question every other refusal asks, through the
+  // same function, which finds this card as its anchor.
+  const join = async () => {
+    if (busy) return;
+    if (asking) { asking.answer(false); return; }
+    setBusy(true);
+    try {
+      await offerJoin({ code: 'join_required', app: { slug, name: data.name || slug } });
+    } finally {
+      setBusy(false);
+      void load();
+    }
+  };
+
+  const leave = async () => {
     const home = (window as any).Home;
     if (!home?.setMembership || busy) return;
     setBusy(true);
     try {
-      await home.setMembership(slug, joined);
+      await home.setMembership(slug, false);
     } finally {
       setBusy(false);
       void load();
@@ -161,7 +235,16 @@ export function CommunityCard({ slug }: { slug: string }) {
   const when = channel?.last_at ? agoStamp(channel.last_at) : null;
 
   return (
-    <section className="dev-ws-strip" data-ws-community="" data-audience={data.audience}>
+    <section
+      ref={cardRef}
+      className="dev-ws-strip"
+      data-ws-community=""
+      data-audience={data.audience}
+      // Lifted while the popup is open: the popup hangs below this card, and
+      // the card after it is its own stacking context (backdrop-filter) that
+      // would otherwise paint over it.
+      style={asking ? { position: 'relative', zIndex: 5 } : undefined}
+    >
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">Who it’s for</span>
       </div>
@@ -169,18 +252,48 @@ export function CommunityCard({ slug }: { slug: string }) {
         <AudienceGlyph audience={data.audience} />
         <span className="font-medium">{audienceLine(data)}</span>
         {!data.is_member ? (
-          <Button
-            type="button"
-            variant="pillAccent"
-            size="sm"
-            ink="solid"
-            className="ml-auto"
-            data-ws-community-join=""
-            disabled={busy}
-            onClick={() => { void setMembership(true); }}
-          >
-            Join
-          </Button>
+          <span className="dev-ws-join-anchor">
+            <Button
+              ref={joinRef}
+              type="button"
+              variant="pillAccent"
+              size="sm"
+              ink="solid"
+              data-ws-community-join=""
+              aria-haspopup="dialog"
+              aria-expanded={!!asking}
+              disabled={busy && !asking}
+              onClick={() => { void join(); }}
+            >
+              Join
+            </Button>
+            {asking ? (
+              <div
+                ref={popRef}
+                className="dev-ws-join-pop"
+                role="dialog"
+                aria-label={`Join ${data.name || slug}?`}
+                data-ws-join-pop=""
+              >
+                <p className="dev-ws-ask-q">Join {data.name || slug}?</p>
+                <p className="dev-ws-vote-sub">Members start changes, file requests, vote and chat here.</p>
+                <div className="dev-ws-answer-row">
+                  <button
+                    type="button"
+                    className="dev-ws-answer-btn dev-ws-answer-join"
+                    data-ws-join-answer="join"
+                    autoFocus
+                    onClick={() => asking.answer(true)}
+                  >
+                    Join
+                  </button>
+                </div>
+                <button type="button" className="dev-ws-vote-later" data-ws-join-answer="later" onClick={() => asking.answer(false)}>
+                  Not now
+                </button>
+              </div>
+            ) : null}
+          </span>
         ) : null}
       </div>
       {names.length ? (
@@ -235,7 +348,7 @@ export function CommunityCard({ slug }: { slug: string }) {
             className="text-xs text-zinc-500 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
             data-ws-community-leave=""
             disabled={busy}
-            onClick={() => { void setMembership(false); }}
+            onClick={() => { void leave(); }}
           >
             Leave
           </button>
