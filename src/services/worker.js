@@ -3423,7 +3423,7 @@ async function inspectContainerState(containerName) {
 async function _consumeJournal(containerName, journal, progress, state, { sessionId = null, startedAt = null } = {}) {
   if (usesKubernetesWorkers()) {
     const since = startedAt || new Date().toISOString();
-    let charsConsumed = 0;
+    let linesConsumed = 0;
     const counters = newWatchdogCounters();
     let lastProbeAt = Date.now();
     // WORKER_JWT_TTL is the jsonwebtoken duration string "24h". Use its
@@ -3432,15 +3432,23 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
     const deadline = Date.now() + WORKER_JWT_TTL_MS;
     const readJournal = async () => {
       try {
-        const { stdout } = await execWorkerCommand(containerName, ['cat', journal]);
-        // cat may race a writer halfway through a JSON record or marker.
+        // Only the lines written since the last poll. Reading the whole
+        // journal every second made each poll a fresh journal-sized string,
+        // and a line sliced from it keeps that whole string alive inside
+        // state.rawStdout: a long turn pinned one full copy per second of
+        // output, and the platform ran out of heap (2026-09-25). Counting
+        // lines rather than bytes cannot drift on multi-byte text.
+        const { stdout } = await execWorkerCommand(containerName, ['tail', '-n', `+${linesConsumed + 1}`, journal]);
+        // tail may race a writer halfway through a JSON record or marker.
         // Advance only past complete lines, including blank lines. The next
-        // cumulative read supplies the remainder without losing or replaying
-        // records (and therefore provider usage) at a polling boundary.
+        // read starts at the first line not yet consumed, so no record (and
+        // therefore no provider usage) is lost or replayed at a boundary.
+        let start = 0;
         let newline;
-        while ((newline = stdout.indexOf('\n', charsConsumed)) !== -1) {
-          const line = stdout.slice(charsConsumed, newline);
-          charsConsumed = newline + 1;
+        while ((newline = stdout.indexOf('\n', start)) !== -1) {
+          const line = stdout.slice(start, newline);
+          start = newline + 1;
+          linesConsumed += 1;
           state.rawStdout += `${line}\n`;
           parseLine(line, progress, state);
           if (state.execExitSeen) return;
