@@ -13407,8 +13407,13 @@ const AppView = {
   // and the chip would be noise on every row; the server has already
   // withheld a rate for a check with too few observations to judge.
   FLAKE_CHIP_FLOOR: 0.05,
+  // The cap is the longest reason any check writes: the repo unit suite's
+  // summary (FAILURE_DETAIL_MAX in services/unit-suite-row.js), which lists
+  // every failing test file before any test name. At 500 the card cut it
+  // mid-name and dropped the files after the first; a browser check's
+  // reason is a sentence and never came near either figure.
   _checkReason(r) {
-    const base = (r && r.failureReason) ? String(r.failureReason).slice(0, 500) : null;
+    const base = (r && r.failureReason) ? String(r.failureReason).slice(0, 1600) : null;
     const runs = r && Number(r.runs);
     const fails = r && Number(r.fails);
     if (!Number.isFinite(runs) || runs < 2 || !Number.isFinite(fails) || fails < 1) return base;

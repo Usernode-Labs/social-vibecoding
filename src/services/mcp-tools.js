@@ -32,6 +32,7 @@
 const log = require('./logger');
 const { changeWebPath } = require('./change-destination');
 const visualEvidencePlan = require('./visual-evidence-plan');
+const unitSuiteRow = require('./unit-suite-row');
 const {
   READ_SCOPE,
   WRITE_SCOPE,
@@ -599,10 +600,19 @@ function shapeChecks(session) {
     failingTruncated: failed.length > MAX_LIST_ITEMS,
     // And WHY they failed, which the capture stored per row and this shape
     // used to drop on the floor.
-    failures: failed.slice(0, MAX_FAILURE_DETAILS).map((t) => ({
+    //
+    // The repo unit suite's row leads and keeps its whole reason: it is one
+    // row for every failing unit test, appended after the browser checks,
+    // and its reason is the per-file list that tells the agent which test
+    // files to run. Ten rows and 400 characters in, it held neither.
+    failures: [
+      ...failed.filter(unitSuiteRow.isUnitSuiteRow),
+      ...failed.filter((t) => !unitSuiteRow.isUnitSuiteRow(t)),
+    ].slice(0, MAX_FAILURE_DETAILS).map((t) => ({
       name: untrusted(t.name || t.path || 'unnamed test', MAX_TITLE_CHARS),
       path: t.path ? untrusted(String(t.path), MAX_TITLE_CHARS) : null,
-      reason: untrusted(failureReasonOf(t), MAX_FAILURE_REASON_CHARS) || null,
+      reason: untrusted(failureReasonOf(t), unitSuiteRow.isUnitSuiteRow(t)
+        ? unitSuiteRow.FAILURE_DETAIL_MAX : MAX_FAILURE_REASON_CHARS) || null,
     })),
     total: results.length,
     error: session.check_error_detail

@@ -36,6 +36,7 @@ const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
+const unitSuiteRow = require('../services/unit-suite-row');
 const {
   getAppConventions,
   getSelfHostedRefuseList,
@@ -914,10 +915,23 @@ async function loadSessionCheckContext(pool, sessionId) {
 // So the board renders these same rows now, and both callers derive from one
 // function — an agent and a human reading different answers about the same
 // run is the failure this shape prevents.
+//
+// Both caps bend for the repo unit suite's row. It is ONE row standing for
+// every failing unit test, and its reason is the only place the fix turn
+// learns which test files to run. The row is appended after the browser
+// checks, so behind twelve failing ones the row cap dropped it, and 300
+// characters of its reason held a few test names and no file — a fix turn
+// then re-ran the whole suite to find the rest. So it leads, where the row
+// cap cannot reach it, and keeps the whole reason unit-suite.js already
+// bounded.
 function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MAX) {
   if (checkState !== 'failing') return { total: 0, blocking: 0, rows: [] };
-  const failing = (Array.isArray(testResults) ? testResults : [])
+  const all = (Array.isArray(testResults) ? testResults : [])
     .filter((r) => r && r.status !== 'pass');
+  const failing = [
+    ...all.filter(unitSuiteRow.isUnitSuiteRow),
+    ...all.filter((r) => !unitSuiteRow.isUnitSuiteRow(r)),
+  ];
   return {
     total: failing.length,
     // Advisory rows report but do not block, so a reviewer counting them as
@@ -927,7 +941,8 @@ function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MA
     rows: failing.slice(0, max).map((r) => ({
       name: String(r.name || 'unnamed check').slice(0, 160),
       path: String(r.path || '').slice(0, 160) || null,
-      reason: String(r.failureReason || 'failed').slice(0, 300),
+      reason: String(r.failureReason || 'failed')
+        .slice(0, unitSuiteRow.isUnitSuiteRow(r) ? unitSuiteRow.FAILURE_DETAIL_MAX : 300),
       advisory: !!r.advisory,
       consoleError: Array.isArray(r.consoleErrors) && r.consoleErrors[0]
         ? String(r.consoleErrors[0].message || '').slice(0, 200)
@@ -948,6 +963,15 @@ function buildFailingChecksBlock(checkState, testResults) {
   });
   const more = failing.length > FAILING_CHECKS_MAX
     ? `\n(+${failing.length - FAILING_CHECKS_MAX} more failing)` : '';
+  // The unit suite's reason is a per-file list, and the point of it is that
+  // the agent re-runs those files instead of the whole suite (minutes).
+  const unitRow = summary.rows.some((r) => unitSuiteRow.isUnitSuiteRow({ name: r.name, path: r.path }));
+  const unitNote = unitRow ? `
+
+The "${unitSuiteRow.UNIT_CHECK_NAME}" row is the repo's own \`npm test\`.
+Its reason names every failing test FILE with how many of its tests failed,
+then as many of their names as fit. Re-run just those files, with the runner
+and flags the repo's \`test\` script uses, rather than the whole suite.` : '';
 
   return `
 
@@ -968,7 +992,7 @@ Treat fixing these as part of this turn's task unless the user's request
 explicitly says otherwise. Reproduce them locally first: boot the app
 (see the in-loop browser instructions) and run \`usernode-run-checks\`
 against the exact \`path:\` routes above, then fix the app (or the check,
-if the check itself is wrong) and commit the fix with your other work.
+if the check itself is wrong) and commit the fix with your other work.${unitNote}
 
 ==== END PROPOSAL CHECKS ====`;
 }

@@ -74,3 +74,35 @@ test('hostile row content is truncated, not trusted', () => {
   assert.ok(block.includes('x'.repeat(160)) && !block.includes('x'.repeat(161)), 'name capped at 160');
   assert.ok(block.includes('y'.repeat(300)) && !block.includes('y'.repeat(301)), 'reason capped at 300');
 });
+
+// Change 4868: the repo unit suite's row is appended after the browser
+// checks and its reason is a per-file list of every failing test. Cut at
+// 300 characters it held a few names and no file, and behind twelve
+// failing browser checks it was not in the block at all — so the fix turn
+// re-ran the whole suite to find what failed.
+const UNIT_REASON = [
+  ...['tests/agent-sessions-postgres.test.js (8): one Mayor turn at a time; a dead turn\'s lease is taken over…'],
+  'tests/dev-board-fold.test.js (1): the manifest declares exactly the checks this file accounts for',
+  'tests/improve-session-spinner.test.js (1): the busy spinner is one check',
+  'tests/proposal-tests-manifest.test.js (1): this repo\'s own manifest fits under the ceiling',
+  '# tests 13015', '# pass 13000', '# fail 15', '# cancelled 0',
+].join(' | ').padEnd(1500, '.');
+const unitRow = () => ({
+  index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json',
+  status: 'fail', advisory: false, failureReason: UNIT_REASON, consoleErrors: [],
+});
+
+test('the unit suite row leads the block, whole, however many checks fail', () => {
+  const browser = Array.from({ length: 20 }, (_, i) => failRow({ name: `check ${i}`, path: `/p${i}` }));
+  const block = buildFailingChecksBlock('failing', [...browser, unitRow()]);
+  assert.match(block, /:\n\n- \[BLOCKING\] "Repo unit suite \(npm test\) passes" \(path: package\.json\) — tests\/agent-sessions-postgres/,
+    'first in the list, where the row cap cannot drop it');
+  assert.ok(block.includes(UNIT_REASON), 'the whole reason, not 300 characters of it');
+  assert.ok(block.includes('tests/proposal-tests-manifest.test.js (1)'), 'down to the last file');
+  assert.match(block, /\(\+9 more failing\)/, 'the row cap still holds for the browser checks');
+  assert.match(block, /Re-run just those files/);
+});
+
+test('without a unit suite row the block does not mention re-running test files', () => {
+  assert.doesNotMatch(buildFailingChecksBlock('failing', [failRow()]), /Re-run just those files/);
+});

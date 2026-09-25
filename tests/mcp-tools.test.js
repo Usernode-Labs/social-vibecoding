@@ -2074,6 +2074,22 @@ test('the checks a proposal reports name the tests that are failing', () => {
   assert.ok(shaped.failing[1].includes('Settings saves'));
 });
 
+test('the unit suite row leads the failure reasons and keeps its whole file list', () => {
+  // It is appended after the browser checks, and its reason is the one
+  // place the agent learns which test files failed (change 4868).
+  const reason = `tests/a.test.js (8): t1; t2… | tests/b.test.js (1): t9 | # fail 9 ${'.'.repeat(1200)}`;
+  const shaped = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [
+      ...Array.from({ length: 12 }, (_, i) => ({ name: `browser ${i}`, status: 'fail', failureReason: 'x'.repeat(900) })),
+      { index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail', failureReason: reason },
+    ],
+  });
+  assert.equal(shaped.failures.length, 10);
+  assert.equal(shaped.failures[0].reason, `<untrusted-content>${reason}</untrusted-content>`);
+  assert.ok(shaped.failures[1].reason.includes('… [truncated]'), 'other rows keep their clip');
+});
+
 test('checks degrade to a knowable nothing rather than a guess', () => {
   // A proposal whose checks have not run yet must not read as passing.
   const pending = tools.shapeChecks({});
