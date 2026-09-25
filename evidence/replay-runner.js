@@ -447,6 +447,38 @@ function discardRecoveredNetworkChanges(diagnostics, failures, successes, consol
   return { requests: recovered.size, consoleErrors: recoveredConsole.size };
 }
 
+function pageRouteIdentity(value) {
+  try {
+    const url = new URL(value);
+    return `${url.pathname}${url.hash}`;
+  } catch { return null; }
+}
+
+// A GET/HEAD fetch or XHR cancelled while the page navigates away belongs to
+// the old screen. Keep same-route aborts, documents, assets, mutations, and
+// every other network failure visible. UI assertions have already completed.
+function discardCancelledReads(diagnostics, failures, consoleEvents) {
+  const cancelled = new Set(failures.filter((failure) =>
+    diagnostics.failedRequests.includes(failure.entry)
+      && /\bnet::ERR_ABORTED\b/i.test(failure.error)
+      && ['GET', 'HEAD'].includes(String(failure.method || '').toUpperCase())
+      && ['fetch', 'xhr'].includes(failure.resourceType)
+      && failure.startRoute && failure.endRoute && failure.startRoute !== failure.endRoute
+  ).map((failure) => failure.entry));
+  diagnostics.failedRequests = diagnostics.failedRequests.filter((entry) => !cancelled.has(entry));
+  const cancelledKeys = new Set(failures.filter((failure) => cancelled.has(failure.entry))
+    .map((failure) => requestIdentity(failure.url, failure.method)));
+  const remainingKeys = new Set(failures.filter((failure) => diagnostics.failedRequests.includes(failure.entry))
+    .map((failure) => requestIdentity(failure.url, failure.method)));
+  const matchingConsole = new Set(consoleEvents.filter((event) => {
+    const key = requestIdentity(event.url, event.method);
+    return key && cancelledKeys.has(key) && !remainingKeys.has(key)
+      && /\bnet::ERR_ABORTED\b/i.test(event.message);
+  }).map((event) => event.entry));
+  diagnostics.consoleErrors = diagnostics.consoleErrors.filter((entry) => !matchingConsole.has(entry));
+  return { requests: cancelled.size, consoleErrors: matchingConsole.size };
+}
+
 function publicRelativePath(value) {
   const url = value instanceof URL ? new URL(value.toString()) : new URL(value);
   url.searchParams.delete('token');
@@ -1031,6 +1063,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   const initialNavigationRetries = new Set();
   let initialNavigationPending = true;
   const networkFailures = [];
+  const requestStartPages = new WeakMap();
   const successfulRequests = new Map();
   const consoleEvents = [];
   let networkOrder = 0;
@@ -1043,6 +1076,9 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       diagnostics.consoleErrors.push(entry);
       consoleEvents.push({ entry, url: message.location()?.url || '', method: 'GET', message: message.text() });
     }
+  });
+  page.on('request', (request) => {
+    requestStartPages.set(request, page.url());
   });
   page.on('pageerror', (error) => {
     if (diagnostics.pageErrors.length < MAX_CONSOLE_ITEMS) {
@@ -1058,10 +1094,17 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
         location: diagnosticLocation(request.url(), origin),
         error: safeDiagnosticText(request.failure()?.errorText || '', 120),
       };
+      if (/\bnet::ERR_ABORTED\b/i.test(failure.error)) {
+        failure.fromPage = diagnosticLocation(requestStartPages.get(request) || '', origin);
+        failure.atPage = diagnosticLocation(page.url(), origin);
+      }
       diagnostics.failedRequests.push(failure);
       if (initialNavigationPending) initialNavigationFailures.push({ request, failure });
       networkFailures.push({
         entry: failure, url: request.url(), method: request.method(),
+        resourceType: request.resourceType(),
+        startRoute: pageRouteIdentity(requestStartPages.get(request)),
+        endRoute: pageRouteIdentity(page.url()),
         error: request.failure()?.errorText || '', order: ++networkOrder,
       });
     }
@@ -1173,6 +1216,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     const recoveredNetwork = discardRecoveredNetworkChanges(
       diagnostics, networkFailures, successfulRequests, consoleEvents
     );
+    const cancelledReads = discardCancelledReads(diagnostics, networkFailures, consoleEvents);
     if (diagnostics.consoleErrors.length || diagnostics.pageErrors.length
         || diagnostics.failedRequests.length || diagnostics.blockedRequests.length) {
       throw new ReplayFailure(
@@ -1205,6 +1249,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       location: diagnosticLocation(page.url(), origin),
       httpErrorCount: diagnostics.httpErrors.length,
       recoveredNetworkChanges: recoveredNetwork.requests,
+      cancelledReads: cancelledReads.requests,
       controlledFailureHits: controlledFailure?.hits || 0,
       expectedFailureConsoleCount,
     });
@@ -1456,6 +1501,7 @@ module.exports = {
   navigateStart,
   discardRecoveredInitialNavigationFailures,
   discardRecoveredNetworkChanges,
+  discardCancelledReads,
   discardExpectedControlledFailureConsole,
   installOriginFence,
   executeAction,

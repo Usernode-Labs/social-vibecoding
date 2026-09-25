@@ -73,7 +73,7 @@ async function recoverInterrupted(config, pool, {
       try {
         await stateService.transitionRun(pool, run.id, 'failed', {
           failureCode: 'evidence_run_interrupted',
-          failureReason: 'The visual change preview stopped reporting progress before it completed. The worker may have stopped during a deployment. You can retry the preview run.',
+          failureReason: 'The visual change preview stopped reporting progress before it completed. The cause is not recorded; you can retry the preview run.',
           recoveryMinIdleMs: minIdleMs,
         });
         failed += 1;

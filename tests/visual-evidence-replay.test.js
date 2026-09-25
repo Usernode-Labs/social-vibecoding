@@ -500,6 +500,38 @@ test('a later successful request clears only the matching transient network-chan
   assert.deepEqual(diagnostics.consoleErrors, [otherConsole]);
 });
 
+test('an asserted UI may cancel obsolete reads without hiding failed mutations or documents', () => {
+  const cancelled = { error: 'net::ERR_ABORTED' };
+  const sameRoute = { error: 'net::ERR_ABORTED' };
+  const mutation = { error: 'net::ERR_ABORTED' };
+  const document = { error: 'net::ERR_ABORTED' };
+  const reset = { error: 'net::ERR_CONNECTION_RESET' };
+  const cancelledConsole = { message: 'Failed to load resource: net::ERR_ABORTED' };
+  const otherConsole = { message: 'Unrelated application error' };
+  const diagnostics = {
+    failedRequests: [cancelled, sameRoute, mutation, document, reset],
+    consoleErrors: [cancelledConsole, otherConsole],
+  };
+  const failures = [
+    { entry: cancelled, url: 'http://evidence:3000/api/details', method: 'GET', resourceType: 'fetch', error: cancelled.error,
+      startRoute: '/#messages/1', endRoute: '/app/demo/dev/proposals/1' },
+    { entry: sameRoute, url: 'http://evidence:3000/api/current', method: 'GET', resourceType: 'fetch', error: sameRoute.error,
+      startRoute: '/app/demo/dev/proposals/1', endRoute: '/app/demo/dev/proposals/1' },
+    { entry: mutation, url: 'http://evidence:3000/api/action', method: 'POST', resourceType: 'fetch', error: mutation.error },
+    { entry: document, url: 'http://evidence:3000/page', method: 'GET', resourceType: 'document', error: document.error },
+    { entry: reset, url: 'http://evidence:3000/api/other', method: 'GET', resourceType: 'xhr', error: reset.error },
+  ];
+  const consoles = [
+    { entry: cancelledConsole, url: 'http://evidence:3000/api/details', method: 'GET', message: cancelledConsole.message },
+    { entry: otherConsole, url: 'http://evidence:3000/api/other', method: 'GET', message: otherConsole.message },
+  ];
+  assert.deepEqual(replay.discardCancelledReads(diagnostics, failures, consoles), {
+    requests: 1, consoleErrors: 1,
+  });
+  assert.deepEqual(diagnostics.failedRequests, [sameRoute, mutation, document, reset]);
+  assert.deepEqual(diagnostics.consoleErrors, [otherConsole]);
+});
+
 test('session bootstrap accepts only a bounded session cookie value', () => {
   assert.equal(replay.sessionCookieValue([
     { name: 'set-cookie', value: 'theme=light; Path=/' },

@@ -5518,9 +5518,11 @@ function startAppStorageCapSweeper(config) {
 const DRAIN_TIMEOUT_MS = 5000;
 // Budget for closing the pg pool after the handler drain (#767). Sits
 // INSIDE the same compose stop_grace_period as DRAIN_TIMEOUT_MS —
-// tests/caddy-deploy-grace.test.js pins DRAIN + POOL_CLOSE <= grace — so a
+// tests/caddy-deploy-grace.test.js pins drain + evidence marking + pool close
+// below grace — so a
 // pool that refuses to settle can never push the exit past the SIGKILL.
 const POOL_CLOSE_TIMEOUT_MS = 1000;
+const EVIDENCE_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
 
 // ── The process being replaced tells its tabs where traffic went (#2545) ─
 //
@@ -5670,6 +5672,33 @@ async function cleanup() {
     log.info('server', 'All handlers and visual evidence runs drained');
   }
   await pushStop;
+
+  // A planned replay is hosted by this server process. If it is still active
+  // when the drain expires, record the actual shutdown now so its owner can
+  // retry immediately. The recovery sweep remains the fallback for SIGKILL,
+  // crashes, and a database that cannot accept this bounded write.
+  const interruptedEvidence = require('./src/services/visual-evidence-orchestrator').inFlightRunSnapshot();
+  if (interruptedEvidence.length && shutdownPool) {
+    let markTimer = null;
+    const marking = Promise.allSettled(interruptedEvidence.map((runId) =>
+      require('./src/services/visual-evidence-state').transitionRun(shutdownPool, runId, 'failed', {
+        failureCode: 'evidence_run_interrupted',
+        failureReason: 'The platform process shut down while this visual change preview was running. You can retry the preview run.',
+      })
+    ));
+    const result = await Promise.race([
+      marking,
+      new Promise((resolve) => {
+        markTimer = setTimeout(() => resolve(null), EVIDENCE_SHUTDOWN_MARK_TIMEOUT_MS);
+      }),
+    ]);
+    if (markTimer) clearTimeout(markTimer);
+    log.info('server', 'Marked active visual evidence runs interrupted on shutdown', {
+      attempted: interruptedEvidence.length,
+      marked: result?.filter((entry) => entry.status === 'fulfilled').length || 0,
+      timedOut: result === null,
+    });
+  }
 
   // Close the pg pool so in-flight queries settle instead of being severed
   // by process.exit(). Bounded: a pool that won't drain must not hold the

@@ -128,6 +128,12 @@ test('evidence heartbeat renews only the current active run and stores a bounded
     agentActivity: { version: 1, events: [{ kind: 'tool_start', tool: 'browser_navigate' }] },
     agentFinalResponse: { excerpt: 'Planner stopped.', characters: 16 },
   });
+  await state.heartbeatRun(pool, id, 'clone_base', {
+    heartbeat: { processId: 'a'.repeat(16), poolTotal: 10, poolIdle: 0, poolWaiting: 8 },
+  });
+  assert.deepEqual(JSON.parse(statement.values[2]), {
+    heartbeat: { processId: 'a'.repeat(16), poolTotal: 10, poolIdle: 0, poolWaiting: 8 },
+  });
   await assert.rejects(state.heartbeatRun(pool, id, 'pass_1', {
     replayEvents: Array.from({ length: 40 }, () => ({ message: 'x'.repeat(2000) })),
   }), { code: 'invalid_evidence_heartbeat' });

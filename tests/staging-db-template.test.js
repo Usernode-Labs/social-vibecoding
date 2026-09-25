@@ -286,7 +286,14 @@ test('one immutable prepared source feeds both evidence sides before cleanup', a
     assert.equal(dbManager.isPreparedCloneSource(prepared.templateDb), true);
     assert.match(prepared.fingerprint, /^[0-9a-f]{64}$/);
     assert.equal(prepared.refreshedAt.length > 0, true);
-    await dbManager.cloneFromPreparedSource(prepared, 'app_demo_staging_s91_aaaaaa');
+    const phases = [];
+    await dbManager.cloneFromPreparedSource(prepared, 'app_demo_staging_s91_aaaaaa', {
+      onProgress: (phase) => phases.push(phase),
+    });
+    assert.deepEqual(phases, [
+      'drop_target', 'create_role', 'copy_template', 'reassign_ownership',
+      'truncate_private', 'scrub_private', 'redaction_complete', 'connection_limit',
+    ]);
     await dbManager.cloneFromPreparedSource(prepared, 'app_demo_staging_s92_bbbbbb');
     const evidenceConnections = connections.filter((connection) =>
       connection.db.startsWith('app_demo_staging_s9'));

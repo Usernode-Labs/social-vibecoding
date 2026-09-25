@@ -284,7 +284,9 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
     for (const side of ['base', 'head']) {
       onProgress?.({ stage: `clone_${side}` });
       const spec = pair.sides[side];
-      const cloned = await dbManager.cloneFromPreparedSource(pair.preparedSource, spec.dbName);
+      const cloned = await dbManager.cloneFromPreparedSource(pair.preparedSource, spec.dbName, {
+        onProgress: (phase) => onProgress?.({ stage: `clone_${side}_${phase}` }),
+      });
       clones.push([side, cloned]);
     }
     const cloneBySide = Object.fromEntries(clones);

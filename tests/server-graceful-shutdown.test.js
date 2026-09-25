@@ -192,6 +192,40 @@ test('cleanup is idempotent — SIGTERM then SIGINT must not tear down twice', a
   }
 });
 
+test('shutdown marks an unfinished visual replay with its actual interruption reason before closing the pool', async () => {
+  const { server, restore } = loadServer();
+  const orchestrator = require('../src/services/visual-evidence-orchestrator');
+  const evidenceState = require('../src/services/visual-evidence-state');
+  const lifecycle = require('../src/services/lifecycle');
+  const saved = {
+    keys: orchestrator.inFlightSnapshot, ids: orchestrator.inFlightRunSnapshot,
+    transition: evidenceState.transitionRun, waitFor: lifecycle.waitFor,
+  };
+  const runId = 'a'.repeat(32);
+  const order = [];
+  orchestrator.inFlightSnapshot = () => ['42:head'];
+  orchestrator.inFlightRunSnapshot = () => [runId];
+  lifecycle.waitFor = async () => false;
+  evidenceState.transitionRun = async (_pool, id, next, patch) => {
+    order.push('marked');
+    assert.equal(id, runId);
+    assert.equal(next, 'failed');
+    assert.equal(patch.failureCode, 'evidence_run_interrupted');
+    assert.match(patch.failureReason, /platform process shut down/);
+  };
+  try {
+    const pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
+    await runCleanup(server, { listener: fakeListener(), pool });
+    assert.deepEqual(order, ['marked', 'poolEnd']);
+  } finally {
+    orchestrator.inFlightSnapshot = saved.keys;
+    orchestrator.inFlightRunSnapshot = saved.ids;
+    evidenceState.transitionRun = saved.transition;
+    lifecycle.waitFor = saved.waitFor;
+    restore();
+  }
+});
+
 test('cleanup survives a listener that throws on close', async () => {
   const { server, logs, restore } = loadServer();
   try {
