@@ -2015,9 +2015,10 @@
       "expectText": "Top users"
     },
     {
-      "name": "Admin Users list renders",
+      "name": "Admin Users list renders, with its Total points column",
       "path": "/#admin/users",
-      "expectText": "Users"
+      "expectSelector": "#admin-users-points-header",
+      "expectText": "Total points"
     },
     {
       "name": "Admin App storage section renders",
