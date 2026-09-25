@@ -263,6 +263,7 @@ test('the limit is green above 40% left, yellow down to 15%, red below; nothing 
   assert.equal(parts.creditView(figures(3840)).wideLabel, '$38 left / $50', 'with room: what is left over the allowance');
   assert.equal(parts.creditView(figures(410)).wideLabel, '$4.10 left / $50');
   assert.equal(parts.creditView(figures(0)).wideLabel, 'None left / $50');
+  assert.equal(parts.creditView(figures(3840)).allowance, '$50', 'the allowance alone, for the muted half');
   assert.equal(parts.creditView(figures(-30)).fraction, 0, 'overspent reads empty, not negative');
   assert.equal(parts.creditView(figures(4934)).description, '$49.34 of this week’s $50.00 left');
   assert.equal(parts.creditView(figures(100, { weekly: false })).description, '$1.00 of today’s $50.00 left');
@@ -290,7 +291,8 @@ test('the pill is gray in every state and only its ink changes; a bar along its 
   // The wrapper is the row's spacer and the query container; the labels swap on its width.
   assert.match(html, /^<div class="flex min-w-0 flex-1 justify-end \[container-type:inline-size\]"/, 'the pill measures the room it has, not itself');
   assert.match(html, /<span class="\[@container\(min-width:10rem\)\]:hidden"[^>]*>\$38 left<\/span>/, 'narrow: the short label');
-  assert.match(html, /<span class="hidden \[@container\(min-width:10rem\)\]:inline"[^>]*>\$38 left \/ \$50<\/span>/, 'with room: "$38 left / $50"');
+  assert.match(html, /<span class="hidden \[@container\(min-width:10rem\)\]:inline"[^>]*>\$38 left<span class="font-normal text-zinc-500 dark:text-zinc-400"> \/ \$50<\/span><\/span>/,
+    'with room: "$38 left" in the tone, " / $50" in the muted ink');
   // The bar hugs the pill's bottom edge, clipped by its radius, anchored left.
   assert.match(html, /<button[^>]*class="relative [^"]*overflow-hidden rounded-full/, 'the pill clips the bar to its rounding');
   assert.match(html, /<span class="pointer-events-none absolute inset-x-0 bottom-0 h-\[3px\]" aria-hidden="true">/, 'along the bottom, full width');

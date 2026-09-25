@@ -48,10 +48,13 @@ test('#3079: the pill says the thinking level after the model, muted, centred, o
   assert.match(none, /aria-label="Model: GPT-5"/, 'a model with no thinking level: its name alone');
   assert.doesNotMatch(none, /data-agent-session-model-effort/);
 
-  // The label is the option the sheet ticks, and only for a model that takes one.
+  // Only for a model that takes a thinking level.
   const model = panel.slice(panel.indexOf('function useModelChoice('), panel.indexOf('function useCredit('));
   assert.match(model, /const effort = current && offersReasoning\(current, catalog\)/);
-  assert.match(model, /const effortLabel = effort \? \(effort\.options\.find\(\(option\) => option\.value === effort\.value\)\?\.label \|\| ''\) : '';/);
+  // One source for the pill's level (#3079): model-choice.ts effortLabel,
+  // which never falls back to a "Default" placeholder.
+  assert.match(model, /effortLabel: effortLabel\(current, catalog\),/);
+  assert.doesNotMatch(model, /effort\.options\.find\(/);
   assert.match(panel, /<ModelPill\s+label=\{model\.label\}\s+effort=\{model\.effortLabel\}/);
 });
 

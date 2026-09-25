@@ -39,6 +39,7 @@ import {
   choiceFromValue,
   choiceValue,
   effectiveChoice,
+  effortLabel,
   effortOptions,
   effortValue,
   offersReasoning,
@@ -1120,13 +1121,13 @@ function useModelChoice() {
       onPick: (picked: string) => void chooseAgent({ ...current, reasoningEffort: picked || null }),
     }
     : null;
-  // #3079: the pill says the thinking level after the model, for a model
-  // that takes one: the label of the option the sheet ticks.
-  const effortLabel = effort ? (effort.options.find((option) => option.value === effort.value)?.label || '') : '';
   return {
     ready: !!(options.length && current),
     label: selected ? selected.label : 'Model',
-    effortLabel,
+    // #3079: the pill names the thinking level after the model, for a model
+    // that takes one: its own level, or the default it follows. Nothing when
+    // none is known, never a "Default" placeholder (model-choice.ts).
+    effortLabel: effortLabel(current, catalog),
     options: modelList(options),
     value,
     effort,

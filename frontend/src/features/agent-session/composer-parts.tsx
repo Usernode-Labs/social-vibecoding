@@ -33,6 +33,8 @@ export interface CreditView {
   label: string;
   /** The label with the allowance after it, for a pill with room: "$38 left / $50". */
   wideLabel: string;
+  /** The allowance alone, "$50": the wide label's muted second half. */
+  allowance: string;
   /** For a screen reader and the tooltip: "$38.40 of this week's $50.00 left". */
   description: string;
   weekly: boolean;
@@ -66,6 +68,7 @@ export function creditView(figures: AiBudgetFigures | null | undefined): CreditV
     tone,
     label,
     wideLabel: `${label} / ${dollars(figures.limitCents)}`,
+    allowance: dollars(figures.limitCents),
     description: `${dollars(remainingCents, true)} of ${window} ${dollars(figures.limitCents, true)} left`,
     weekly: !!figures.weekly,
     byokCents: Number(figures.byokCents) || 0,
@@ -110,7 +113,12 @@ export function CreditPill({ credit, onOpen }: { credit: CreditView; onOpen: () 
         onClick={onOpen}
       >
         <span className="[@container(min-width:10rem)]:hidden" data-agent-session-credits-label="compact">{credit.label}</span>
-        <span className="hidden [@container(min-width:10rem)]:inline" data-agent-session-credits-label="wide">{credit.wideLabel}</span>
+        {/* What is left in the tone's ink; the allowance after it in the
+            muted ink, so the colour reads as "how much is left" alone. */}
+        <span className="hidden [@container(min-width:10rem)]:inline" data-agent-session-credits-label="wide">
+          {credit.label}
+          <span className="font-normal text-zinc-500 dark:text-zinc-400">{` / ${credit.allowance}`}</span>
+        </span>
         <span className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px]" aria-hidden="true">
           <span
             className={`block h-full bg-current ${BAR_INK[credit.tone]}`}
