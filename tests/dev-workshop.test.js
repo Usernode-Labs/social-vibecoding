@@ -3665,15 +3665,15 @@ test('the pane head pins, and the pane does not clip what must escape it', () =>
   for (const token of ['--dc-sheet-fill', '--dc-frost', '--dc-sheet']) {
     assert.ok(CSS.includes(`${token}:`), `${token} is defined`);
   }
-  // ...and where there is no backdrop-filter the fill is ALL there is, so it
-  // falls back opaque. 50% white with rows sliding crisply under it is the
-  // rendering fault the frost prevents, not a slightly flatter bar. Every
-  // other frosted surface in this file carries the same guard.
-  // Both halves go opaque TOGETHER — staying the same colour as each other
-  // matters more here than either one's material.
+  // ...and with no blur on any platform (app.css "No glass, on any
+  // platform") the fill is ALL there is, so the pane is solid. 50% white with
+  // rows sliding crisply under it is the rendering fault the frost used to
+  // prevent, not a slightly flatter bar. All three go solid TOGETHER, and the
+  // same on every platform: staying the same colour as each other matters
+  // more here than either one's material.
   assert.match(CSS,
-    /@supports not \(\(backdrop-filter[^{]*\{\s*\.dev-ws-pane-head, \.dev-ws-pane-body, \.dev-ws-ear \{ background-color: var\(--dc-sheet\); \}/,
-    'head, body and ear fall back to the same opaque fill');
+    /\n\.dev-ws-pane-head, \.dev-ws-pane-body, \.dev-ws-ear \{ background-color: var\(--dc-sheet-solid\); \}/,
+    'head, body and ear are one solid fill on every platform');
   // On By stage the BAR spans the window — it is a pinned edge, and one that
   // stopped short of the board under it would look like a mistake — but what
   // sits IN it keeps the reading column. The exact bound is asserted below,

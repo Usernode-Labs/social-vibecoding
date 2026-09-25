@@ -11,7 +11,7 @@ const kitCss = fs.readFileSync(path.join(root, 'public/usernode-native/v1/native
 const index = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 
 function performanceBlock() {
-  const start = css.indexOf('Native iOS performance baseline (#787)');
+  const start = css.indexOf('No glass, on any platform (#787, #3104');
   const end = css.indexOf('/* Pressed-state opt-outs:', start);
   assert.ok(start >= 0 && end > start, 'native iOS performance block is present');
   return css.slice(start, end);
@@ -29,26 +29,25 @@ test('native iOS performance mode uses existing first-paint platform signals', (
     'the optimization must not rely on brittle device scoring');
 });
 
-// THE GLASS IS OFF ON EVERY iPHONE. #787 and #3104 dropped it in the app
-// only; the product decision since is that Safari and the home-screen PWA
-// lose it too (same engine, same hardware, same cost). `.un-ios` is the kit's
-// own platform class, so Android and desktop keep the glass.
-test('every iPhone removes live blur from shell-owned frosted surfaces', () => {
+// NO GLASS ON ANY PLATFORM. #787 and #3104 dropped it in the app only, which
+// left two colour schemes. The shell's own frosted chrome from the kit loses
+// its blur everywhere, and the two translucent nav tokens are pinned for
+// everyone; see tests/no-glass-one-scheme.test.js for the planes.
+test('the kit chrome the shell draws has no blur on any platform', () => {
   const block = performanceBlock();
-  const blur = block.match(/((?:html\.un-ios [^,{]+,\s*)+html\.un-ios [^,{]+) \{\s*-webkit-backdrop-filter:\s*none;\s*backdrop-filter:\s*none;\s*\}/);
-  assert.ok(blur, 'one rule takes the blur off, scoped to html.un-ios');
-  const selectors = blur[1].split(',').map((s) => s.trim());
-  assert.deepEqual(selectors, [
+  const blur = block.match(/\n((?:\.[\w.-]+,\s*)+\.[\w.-]+) \{\s*-webkit-backdrop-filter:\s*none;\s*backdrop-filter:\s*none;\s*\}/);
+  assert.ok(blur, 'one unscoped rule takes the blur off');
+  assert.deepEqual(blur[1].split(',').map((s) => s.trim()), [
     '.platform-chat-header.un-scrolled',
     '.un-navbar',
     '.un-action-card',
     '.un-alert',
     '.un-toast',
-  ].map((s) => `html.un-ios ${s}`), 'on every iPhone, not only in the app');
-  assert.match(block, /\nhtml\.un-ios \{\s*--un-navbar-bg:\s*var\(--bg-primary\);\s*--un-toast-bg:\s*#1c1c2a;\s*\}/,
-    'translucent navigation receives an opaque fallback on every iPhone');
-  assert.doesNotMatch(block, /html\.un-ios\.in-native-webview( \.[\w-]+)*(\.un-scrolled)?,?\s*(\{|,)\s*-webkit-backdrop-filter/,
-    'no glass opt-out is left scoped to the app alone');
+  ]);
+  assert.match(block, /\n:root \{\s*--un-navbar-bg:\s*var\(--bg-primary\);\s*--un-toast-bg:\s*#1c1c2a;\s*\}/,
+    'translucent navigation is pinned to the platform surface everywhere');
+  assert.doesNotMatch(block, /html\.un-ios( \.|,| \{)/,
+    'nothing in the glass opt-out is scoped to a platform any more');
 });
 
 test('the kit that sets .un-ios never classes desktop macOS or Android as iOS', () => {
@@ -64,8 +63,9 @@ test('the kit that sets .un-ios never classes desktop macOS or Android as iOS', 
 
 test('native iOS view-transition override is transform-only and shorter', () => {
   const block = performanceBlock();
-  // The glass widened to every iPhone; the transition did not. It is about
-  // the app's full-page snapshot, so Safari and the PWA keep the kit's own.
+  // The glass came off everywhere; the transition change did not spread. It
+  // is about the app's full-page snapshot, so Safari and the PWA keep the
+  // kit's own.
   const vt = block.match(/^\s*html\.un-ios[^\n{]*\[data-un-vt[^\n{]*/gm) || [];
   assert.ok(vt.length >= 6, `found ${vt.length} view-transition selectors`);
   for (const sel of vt) {
@@ -145,67 +145,4 @@ test('the native-iOS scope is reachable from a URL so checks and screenshots can
     scoped.some((t) => /in-native-webview/.test(t.expectSelector || '')),
     'a test must assert the scoping class actually landed on <html>',
   );
-});
-
-// The pane glass (`--dc-frost`) spread past the surfaces #787 listed: the tab
-// bar, the header, the Messages / Settings / Workshop planes and every kit
-// sheet, panel and dialog, all of which content scrolls behind or a spring
-// moves on every frame. #3104 had the iOS app draw them the way the
-// stylesheet already draws them with no backdrop-filter at all; every iPhone
-// (Safari and the home-screen PWA too) now does.
-const FALLBACK = '@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {';
-const SCOPE = ':where(html.un-ios) ';
-
-function splitSelectors(list) {
-  const out = [];
-  let depth = 0;
-  let cur = '';
-  for (const ch of list) {
-    if (ch === '(') depth += 1;
-    if (ch === ')') depth -= 1;
-    if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; } else cur += ch;
-  }
-  if (cur.trim()) out.push(cur.trim());
-  return out;
-}
-
-test('every iPhone turns the pane frost off at its token, and only there', () => {
-  assert.match(performanceBlock(), /\nhtml\.un-ios \{\s*--dc-frost:\s*none;\s*\}/);
-  assert.equal((css.match(/--dc-frost\s*:/g) || []).length, 2,
-    'declared once for everyone and once for every iPhone: Android and desktop keep the glass');
-  assert.doesNotMatch(css, /:where\(html\.un-ios\.in-native-webview\)/,
-    'no no-glass twin is left scoped to the app alone');
-  assert.equal((css.match(/:where\(html\.un-ios\) /g) || []).length, 32,
-    'all 32 twins moved to the iPhone scope');
-});
-
-test('every no-backdrop-filter fallback has an iPhone twin right after it, with the same rules', () => {
-  let at = css.indexOf(FALLBACK);
-  let blocks = 0;
-  while (at >= 0) {
-    const end = css.indexOf('\n}', at);
-    const body = css.slice(at + FALLBACK.length, end);
-    const after = css.slice(end + 2, end + 2 + 1600);
-    for (const [, selectors, decls] of body.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-      const twin = splitSelectors(selectors.split(/\s+/).join(' ')).map((s) => SCOPE + s).join(',\n')
-        + ` { ${decls.split(/\s+/).join(' ').trim()} }`;
-      assert.ok(after.includes(twin), `every iPhone mirrors: ${selectors.trim().slice(0, 60)}`);
-      assert.match(decls, /background-color:\s*var\(--dc-(sheet|strip)\)/, 'an opaque plane, as designed');
-    }
-    blocks += 1;
-    at = css.indexOf(FALLBACK, end);
-  }
-  assert.ok(blocks >= 14, `found ${blocks} fallback blocks`);
-});
-
-test('the frosted surfaces with no fallback block go opaque on every iPhone too', () => {
-  const glass = css.match(/body:has\(:is\(([^)]*)\):not\(\.hidden\)\) #platform-header \{\s*background-color: var\(--dc-sheet-fill\);/);
-  assert.ok(glass, 'the header glass rule');
-  const roots = glass[1].split(',').map((s) => s.trim());
-  const twin = css.match(/:where\(html\.un-ios\) body:has\(:is\(([^)]*)\):not\(\.hidden\)\) #platform-header,\s*:where\(html\.un-ios\) body:has\(#app-view:not\(\.hidden\)\[data-app-surface="platform"\]\) #platform-header \{\s*background-color: var\(--dc-sheet\);/);
-  assert.ok(twin, 'the header takes the tab bar\'s opaque fallback on every iPhone, on both of its glass routes');
-  assert.deepEqual(twin[1].split(',').map((s) => s.trim()), roots, 'on exactly the routes the glass rule covers');
-  for (const selector of ['.global-chat-composer', '.global-chat-result', '.gc-event-box']) {
-    assert.ok(css.includes(`${SCOPE}${selector} { background`), `${selector} is opaque on every iPhone`);
-  }
 });

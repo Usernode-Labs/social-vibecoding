@@ -58,16 +58,20 @@ test('native.css is NOT restyled — the frost is the shell\'s alone', () => {
     'the kit stylesheet reads none of the shell\'s tokens');
 });
 
-test('without backdrop-filter the surfaces go opaque and keep the dim', () => {
-  const FALLBACK = '.un-modal, .un-sheet, .un-sheet::after, .un-panel, .un-panel::after,\n'
-    + '  #apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),\n'
-    + '  .un-sheet:has(#apps-switcher-sheet)::after {';
-  assert.ok(APP_CSS.includes(FALLBACK), 'the fallback covers the kit surfaces and the mark\'s menu');
-  const fallback = APP_CSS.slice(APP_CSS.indexOf(FALLBACK)).slice(0, 300);
-  assert.match(fallback, /background-color: var\(--dc-sheet\)/, 'the opaque sheet colour');
-  const before = APP_CSS.slice(0, APP_CSS.indexOf(FALLBACK));
-  assert.match(before.slice(-200), /@supports not \(\(backdrop-filter: blur\(1px\)\)/,
-    'inside the no-backdrop-filter block');
+test('the surfaces are solid on every platform, and keep the dim', () => {
+  // No blur anywhere (app.css "No glass, on any platform"), so a surface that
+  // floats over other UI is opaque, unconditionally: the dialog in the opaque
+  // sheet (it was a 95% fill), sheets, panels and the mark's menu in the
+  // plane colour they showed over the wallpaper.
+  assert.match(APP_CSS, /\n\.un-modal \{ background-color: var\(--dc-sheet\); \}/, 'the dialog');
+  const SOLID = '.un-sheet, .un-sheet::after, .un-panel, .un-panel::after,\n'
+    + '#apps-switcher-sheet, .un-sheet:has(#apps-switcher-sheet),\n'
+    + '.un-sheet:has(#apps-switcher-sheet)::after {';
+  assert.ok(APP_CSS.includes(SOLID), 'one rule covers the kit surfaces and the mark\'s menu');
+  const solid = APP_CSS.slice(APP_CSS.indexOf(SOLID)).slice(0, 300);
+  assert.match(solid, /background-color: var\(--dc-sheet-solid\)/, 'the solid plane colour');
+  assert.doesNotMatch(APP_CSS.slice(APP_CSS.indexOf(SOLID) - 200, APP_CSS.indexOf(SOLID)), /@supports/,
+    'not inside a per-browser block: every platform draws it');
 });
 
 test('content adopted into a kit surface does not frost a second time (#2825)', () => {
@@ -168,8 +172,10 @@ test('the create dialog sits on the strip\'s frosted tint, opaque strip as fallb
   // QA 2026-09-24 Q8: the centred (desktop) card keeps the frosted tint as
   // the fallback of `--create-modal-fill`, which only the full-screen layouts
   // set (next test).
-  assert.match(body, /background-color: var\(--create-modal-fill, var\(--dc-strip-fill\)\)/);
-  assert.match(APP_CSS, /\.un-modal:has\(> #create-card\) \{ background-color: var\(--dc-strip\); \}/);
+  // With no blur on any platform the centred card would let the page read
+  // through a 38% fill, so its default is the strip colour made solid.
+  assert.match(body, /background-color: var\(--create-modal-fill, var\(--dc-strip-solid\)\)/);
+  assert.doesNotMatch(APP_CSS, /\.un-modal:has\(> #create-card\) \{ background-color: var\(--dc-strip\); \}/);
 });
 
 test('full screen, the create dialog is the opaque strip ground (QA 2026-09-24 Q8)', () => {

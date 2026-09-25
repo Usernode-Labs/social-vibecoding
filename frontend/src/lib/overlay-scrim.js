@@ -107,8 +107,8 @@ function paintBox(paint) {
 // AN OPAQUE SURFACE NEEDS NO HOLE. The cutout exists for one reason: a
 // frosted surface samples whatever is painted behind it, so a dim under it
 // would be frosted into the glass. A surface that draws no backdrop filter
-// (every iPhone since the glass came off there, app.css "Native iOS
-// performance baseline"; any browser without backdrop-filter) is opaque, and
+// (every platform's kit surface since the glass came off, app.css "No
+// glass, on any platform") is opaque, and
 // nothing behind it shows. For those the paint layer is pure cost: a
 // MutationObserver on the kit's inline style re-read the surface's computed
 // style and rects and rewrote a many-layer gradient on a viewport-and-a-half

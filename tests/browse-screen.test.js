@@ -847,9 +847,14 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
     'phone: the body (or the empty note) closes it');
   assert.match(paneBlock, /\.browse-pane-body:empty \{ display: none; \}/,
     'phone: an empty list collapses so the note can be the body');
+  // No blur on any platform (app.css "No glass, on any platform"): the list
+  // scrolls under the pinned head, so on a phone the pane is solid, all
+  // three parts together so they stay one colour, the same on every platform.
   assert.match(paneBlock,
-    /@supports not \(\(backdrop-filter: blur\(1px\)\) or \(-webkit-backdrop-filter: blur\(1px\)\)\) \{[\s\S]*?\.browse-pane-note \{ background-color: var\(--dc-sheet\); \}/,
-    'phone: without a backdrop filter all three parts go opaque together');
+    /@media \(max-width: 767px\) \{\s*#browse-screen \.browse-pane-head,\s*#browse-screen \.browse-pane-body,\s*#browse-screen \.browse-pane-note \{ background-color: var\(--dc-sheet-solid\); \}\s*\}/,
+    'phone: head, body and note go solid together, the same on every platform');
+  assert.doesNotMatch(browseCss, /@supports not \(\(backdrop-filter/,
+    'no per-platform glass fallback is left in the Browse section');
   const mdBlock = browseCss.slice(browseCss.indexOf('@media (min-width: 768px)'));
   const box = mdBlock.slice(0, mdBlock.indexOf('}\n}') + 3);
   assert.match(box, /\.browse-row,\s*\n\s*\.browse-row \+ \.browse-row \{/);
