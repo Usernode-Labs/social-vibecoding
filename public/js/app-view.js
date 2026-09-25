@@ -4702,6 +4702,13 @@ const AppView = {
         pills.push({ key: 'explore', label: 'Explore in dev chat', title: AppView.EXPLORE_CHAT_TITLE, explore: item.id });
       }
       if (!AppView.readOnly && !isMerged && mine && item.status === 'promoted') {
+        // #3114: the non-destructive counterpart to Withdraw. The PR stays
+        // open; the proposal just leaves review until it is proposed again.
+        pills.push({
+          key: 'unpromote', cls: 'gc-vote-btn', label: 'Move back to Underway',
+          title: 'Take this proposal out of review to keep working on it (clears its votes, keeps the PR open)',
+          act: { fn: 'unpromoteProposal', args: [item.id] },
+        });
         pills.push({
           key: 'withdraw', cls: 'gc-vote-btn', label: 'Withdraw',
           title: 'Withdraw this proposal (closes the PR, removes it from the vote panel)',
@@ -5003,6 +5010,7 @@ const AppView = {
     session: '💻',    // 💻 the dev session behind a proposal
     withdraw: '✕',         // ✕ danger
     undo: '↩',             // ↩ danger
+    unpromote: '↶',        // ↶ back a column, from In review to Underway
     kudos: '★',            // ★ matches the bounty badge on the meta line
     explore: '✨',          // ✨ was inline in the label; now the icon
     generate: '✧',         // ✧ sibling sparkle: the headless AI run
@@ -11912,6 +11920,12 @@ const AppView = {
     }
     if (st.mine && !ro && !isMerged && !isMerging && pr.status === 'promoted') {
       items.push({
+        label: 'Move back to Underway',
+        icon: 'unpromote',
+        title: 'Take this proposal out of review to keep working on it (clears its votes, keeps the PR open)',
+        act: () => AppView.unpromoteProposal(pr.id),
+      });
+      items.push({
         label: 'Withdraw',
         icon: 'withdraw',
         title: 'Withdraw this proposal (closes the PR, removes it from the vote panel)',
@@ -14408,6 +14422,39 @@ const AppView = {
     // _loadDevFeed's repaint no-ops in the opened-topic view (#dev-body is
     // absent), so the withdrawn proposal card would stay stale there. Repaint
     // the topic head from the freshly-refetched data.
+    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
+        && document.getElementById('gc-thread-head')) {
+      AppView._renderTopicHead();
+    }
+  },
+
+  // #3114: take the viewer's own proposal out of review and back to
+  // Underway, keeping its PR open (POST /api/sessions/:id/unpromote, owner-
+  // scoped). Votes are voided server-side, so the confirm says so. On success
+  // the feed reloads: /promoted only returns promoted/merging rows, so the
+  // card leaves the vote panel and reappears among the Underway sessions.
+  async unpromoteProposal(sessionId) {
+    if (!sessionId) return;
+    const pr = (AppView._proposals || []).find((p) => p.id === sessionId);
+    const prNum = pr ? (pr.pr_number || pr.id) : sessionId;
+    const ok = await ConfirmModal.show({
+      title: 'Move back to Underway?',
+      message: `This takes PR #${prNum} out of review so you can keep working on it. Its votes are cleared and it cannot be merged until you propose it again. The pull request stays open.`,
+      confirmLabel: 'Move back',
+    });
+    if (!ok) return;
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/unpromote`, { method: 'POST' });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        PlatformUI.toast(data.error || `Could not move it back (HTTP ${resp.status}).`);
+        return;
+      }
+    } catch (err) {
+      PlatformUI.toast(`Could not move it back: ${err.message}`);
+      return;
+    }
+    await AppView._loadDevFeed();
     if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
         && document.getElementById('gc-thread-head')) {
       AppView._renderTopicHead();
