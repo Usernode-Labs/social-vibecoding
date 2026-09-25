@@ -258,7 +258,16 @@ const MANIFEST_FILENAME = 'dapp.json';
 // unchanged 650s TESTS_DEADLINE_MS still clears the 2x margin by ~245s, so
 // neither the deadline nor RUN_TIMEOUT_MS moves. The step buys 38 slots over
 // the 792 declared here; #2387's six, merged beside it, leave 32 over 798.
-const MAX_DECLARED_TESTS = 830;
+
+//
+// 830 → 850 (the bell-hover wobble proposal): the change declares one check,
+// putting the manifest at 811 against the 810 floor. Fourteenth crossing,
+// same arithmetic: 850 checks at ~3.9s over the pool of 16 is ~207s, and the
+// unchanged 650s TESTS_DEADLINE_MS still clears the 2x margin by ~236s, so
+// neither the deadline nor RUN_TIMEOUT_MS moves. The step buys 39 slots over
+// the 811 declared here, restoring the 20-slot floor the proposal suites
+// require.
+const MAX_DECLARED_TESTS = 850;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
