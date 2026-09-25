@@ -240,7 +240,7 @@ test('the card\'s checks open the dialog and a failing run offers Re-run; the ba
   assert.match(failing, /<button[^>]*data-agent-session-checks="failing"[^>]*>[\s\S]*?2 checks failing<\/button>/, 'the line is the way to the list');
   assert.match(failing, /data-agent-session-preview-recheck="true">Re-run checks</);
   assert.match(failing, /data-agent-session-preview-open="true">Open preview<\/button><a[^>]*data-agent-session-preview-change/,
-    'Open preview and View change stay side by side (the declared check)');
+    'Open preview and Open draft proposal stay side by side (the declared check)');
   const passing = renderToHtml(createElement(api.PreviewCardView, {
     item, change: change({ checkState: 'passing' }), wide: true, action: null, busy: false,
   }));

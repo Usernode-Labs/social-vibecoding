@@ -93,6 +93,7 @@ import {
   setPaneTab,
   dockPreview,
   openPreview,
+  openPreviewOver,
   recheckChange,
   removeAttachment,
   renameCurrentSession,
@@ -123,6 +124,7 @@ import {
   type SpecSplit,
 } from './spec-layout';
 import { openFocusedApp } from './open-app';
+import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { ProposeButton } from './propose-confirm';
 import { readUnsent, writeUnsent } from './unsent';
@@ -529,6 +531,17 @@ const CHECK_TONE: Record<string, string> = {
   error: 'text-amber-700 dark:text-amber-300',
 };
 
+/**
+ * A change's preview: in the side pane where there is room beside the chat,
+ * otherwise the platform's own preview over the chat (a phone, a narrow
+ * window, the side panel beside a running app). Never a bare new tab: that
+ * was signed out of the app and away from the conversation.
+ */
+function showPreview(preview: { changeId: number; url: string; prNumber: number | null }, beside: boolean) {
+  if (beside) openPreview(preview);
+  else openPreviewOver(preview);
+}
+
 function findChange(session: AgentSession | null, changeId: number | null): AgentChange | null {
   if (!session || changeId == null) return null;
   return [session.activeChange, ...(session.changes || [])].find((change) => change && change.id === changeId) || null;
@@ -537,9 +550,10 @@ function findChange(session: AgentSession | null, changeId: number | null): Agen
 /**
  * A change's staging build, as a card (#2779 follow-up). The newest one of a
  * change is live:
- *   - deployed: Open preview (in the side pane on a wide screen, a new tab
- *     otherwise), View change (its card), and Propose to group while it has
- *     not been proposed; then "In vote" with the proposal.
+ *   - deployed: Open preview (in the side pane on a wide screen, over the
+ *     chat otherwise, the side panel included), Open draft proposal (its
+ *     page), and Propose to group while it has not been proposed; then "In
+ *     vote" with the proposal.
  *   - failed: why, and Retry (a rebuild; its result writes the next card).
  * It says where the change's checks stand, because they gate merge. An older
  * card is "Superseded by a newer preview" and offers nothing: its build is
@@ -619,25 +633,25 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
               {action === 'retry' ? 'Retrying…' : 'Retry'}
             </button>
           ) : null
+        ) : item.url && item.changeId != null ? (
+          <button
+            type="button"
+            className={CARD_BUTTON}
+            onClick={() => showPreview({ changeId: item.changeId as number, url: item.url as string, prNumber }, wide)}
+            data-agent-session-preview-open
+          >
+            Open preview
+          </button>
         ) : item.url ? (
-          wide && item.changeId != null ? (
-            <button
-              type="button"
-              className={CARD_BUTTON}
-              onClick={() => openPreview({ changeId: item.changeId as number, url: item.url as string, prNumber })}
-              data-agent-session-preview-open
-            >
-              Open preview
-            </button>
-          ) : (
-            <a className={CARD_BUTTON} href={item.url} target="_blank" rel="noopener noreferrer" data-agent-session-preview-open>
-              Open preview
-            </a>
-          )
+          // A build no change owns has nothing to open the platform's preview
+          // with (it is opened by change): its address, as it always was.
+          <a className={CARD_BUTTON} href={item.url} target="_blank" rel="noopener noreferrer" data-agent-session-preview-open>
+            Open preview
+          </a>
         ) : null}
         {changeHref ? (
           <a className={CARD_BUTTON} href={changeHref} data-agent-session-preview-change>
-            {inVote ? 'View proposal' : 'View change'}
+            {inVote || merged ? 'View proposal' : 'Open draft proposal'}
           </a>
         ) : null}
         {proposable && item.changeId != null ? (
@@ -804,18 +818,27 @@ function SpecContent({ sheet }: { sheet: SpecSheetState }) {
   );
 }
 
-/** Below 1024px, and in the side panel: the spec over the conversation, as a sheet. */
+/**
+ * Below 1024px: the spec over the conversation, as a sheet. In the side panel
+ * it fills the panel, as the preview does there: a sheet with the chat
+ * peeking above it left the spec a strip of a narrow column. The panel's
+ * Expand opens both beside the chat, full width.
+ */
 function SpecSheet({ sheet }: { sheet: SpecSheetState }) {
+  const cover = isEmbeddedPanel();
   return (
     <div
       className="absolute inset-0 z-30 flex flex-col bg-zinc-950/30"
       data-agent-session-spec-sheet={sheet.changeId}
+      data-agent-session-spec-cover={cover ? '' : undefined}
       onClick={(event) => { if (event.target === event.currentTarget) closeSpec(); }}
     >
       <section
         role="dialog"
         aria-label="Spec"
-        className="platform-safe-bar mt-auto flex max-h-[92%] w-full flex-col rounded-t-3xl bg-white shadow-xl dark:bg-zinc-900 sm:mt-0 sm:h-full sm:max-h-none sm:rounded-none"
+        className={cover
+          ? 'platform-safe-bar flex h-full w-full flex-col bg-white dark:bg-zinc-900'
+          : 'platform-safe-bar mt-auto flex max-h-[92%] w-full flex-col rounded-t-3xl bg-white shadow-xl dark:bg-zinc-900 sm:mt-0 sm:h-full sm:max-h-none sm:rounded-none'}
       >
         <SpecContent sheet={sheet} />
       </section>
@@ -1582,6 +1605,7 @@ function Composer({ id }: { id: string }) {
 // ── The changes drawer ─────────────────────────────────────────────────
 
 function ChangesDrawer({ session }: { session: AgentSession }) {
+  const wide = useWideEnoughForSpec();
   const active = session.activeChange;
   const others = (session.changes || []).filter((change) => !active || change.id !== active.id);
   const closed = new Set(['merged', 'archived']);
@@ -1616,7 +1640,15 @@ function ChangesDrawer({ session }: { session: AgentSession }) {
             {active.checkState ? <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">Checks: {active.checkState}</p> : null}
             <div className="mt-3 flex flex-wrap gap-2">
               {active.stagingUrl ? (
-                <a className="rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500" href={active.stagingUrl} target="_blank" rel="noopener noreferrer">Open preview</a>
+                <Button
+                  type="button"
+                  data-agent-session-drawer-preview
+                  variant="pillAccent"
+                  ink="solid"
+                  onClick={() => showPreview({ changeId: active.id, url: active.stagingUrl as string, prNumber: active.prNumber ?? null }, wide)}
+                >
+                  Open preview
+                </Button>
               ) : null}
               <button
                 type="button"
