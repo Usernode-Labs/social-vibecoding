@@ -38,8 +38,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "a62435f8e2074bbd",
-          "length": 169580
+          "sha": "7a7cb91e87477aad",
+          "length": 169812
         },
         "tools": [
           "dispatch_claude_code",
@@ -129,8 +129,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "594a54ecae178ca1",
-          "length": 167953
+          "sha": "61a4b12f13439ff2",
+          "length": 168185
         },
         "tools": [
           "dispatch_claude_code",
@@ -164,8 +164,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "594a54ecae178ca1",
-          "length": 167953
+          "sha": "61a4b12f13439ff2",
+          "length": 168185
         },
         "tools": [
           "dispatch_claude_code",
@@ -284,8 +284,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "594a54ecae178ca1",
-          "length": 167953
+          "sha": "61a4b12f13439ff2",
+          "length": 168185
         },
         "tools": [
           "dispatch_claude_code",
@@ -367,8 +367,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "594a54ecae178ca1",
-          "length": 167953
+          "sha": "61a4b12f13439ff2",
+          "length": 168185
         },
         "tools": [
           "dispatch_claude_code",
@@ -447,8 +447,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "594a54ecae178ca1",
-          "length": 167953
+          "sha": "61a4b12f13439ff2",
+          "length": 168185
         },
         "tools": [
           "dispatch_claude_code",
@@ -532,8 +532,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "594a54ecae178ca1",
-          "length": 167953
+          "sha": "61a4b12f13439ff2",
+          "length": 168185
         },
         "tools": [
           "dispatch_claude_code",
@@ -623,8 +623,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "594a54ecae178ca1",
-          "length": 167953
+          "sha": "61a4b12f13439ff2",
+          "length": 168185
         },
         "tools": [
           "dispatch_claude_code",
@@ -700,8 +700,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "594a54ecae178ca1",
-          "length": 167953
+          "sha": "61a4b12f13439ff2",
+          "length": 168185
         },
         "tools": [
           "dispatch_claude_code",
@@ -774,8 +774,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "594a54ecae178ca1",
-          "length": 167953
+          "sha": "61a4b12f13439ff2",
+          "length": 168185
         },
         "tools": [
           "dispatch_claude_code",
@@ -945,8 +945,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "594a54ecae178ca1",
-          "length": 167953
+          "sha": "61a4b12f13439ff2",
+          "length": 168185
         },
         "tools": [
           "dispatch_claude_code",
@@ -980,8 +980,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "f56cc948174d4d81",
-          "length": 168315
+          "sha": "8416a792d6db9d74",
+          "length": 168547
         },
         "tools": [
           "suggest_replies"
@@ -1168,8 +1168,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "f56cc948174d4d81",
-          "length": 168315
+          "sha": "8416a792d6db9d74",
+          "length": 168547
         },
         "tools": [
           "dispatch_claude_code",
@@ -1211,8 +1211,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "9ab75f5fb5a23033",
-          "length": 169049
+          "sha": "1bd4e80592449eca",
+          "length": 169281
         },
         "tools": [
           "suggest_replies"
@@ -1404,8 +1404,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "f56cc948174d4d81",
-          "length": 168315
+          "sha": "8416a792d6db9d74",
+          "length": 168547
         },
         "tools": [
           "dispatch_claude_code",
@@ -1439,8 +1439,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "f56cc948174d4d81",
-          "length": 168315
+          "sha": "8416a792d6db9d74",
+          "length": 168547
         },
         "tools": [
           "suggest_replies"
@@ -1594,8 +1594,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "f56cc948174d4d81",
-          "length": 168315
+          "sha": "8416a792d6db9d74",
+          "length": 168547
         },
         "tools": [
           "dispatch_claude_code",
@@ -1693,8 +1693,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "c3c19eca0bc06e05",
-          "length": 168015
+          "sha": "47ff82451692d234",
+          "length": 168247
         },
         "tools": [
           "suggest_answers",
@@ -1770,8 +1770,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "594a54ecae178ca1",
-          "length": 167953
+          "sha": "61a4b12f13439ff2",
+          "length": 168185
         },
         "tools": [
           "dispatch_claude_code",
@@ -1899,8 +1899,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "594a54ecae178ca1",
-          "length": 167953
+          "sha": "61a4b12f13439ff2",
+          "length": 168185
         },
         "tools": [
           "dispatch_claude_code",
@@ -1930,7 +1930,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"3bb3d244f6995652\",\"length\":170328},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"402be0b20867186c\",\"length\":170560},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
@@ -2044,7 +2044,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"3bb3d244f6995652\",\"length\":170328},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"402be0b20867186c\",\"length\":170560},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
