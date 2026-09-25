@@ -15576,7 +15576,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    open, which is how the strip already says "this one is active".
    The wrapper is the dropdown's containing block (actions-row.tsx hangs
    `#dev-plus-menu` off its right edge). */
-.dev-ws-plus { position: relative; flex: none; display: flex; }
+.dev-ws-plus {
+  /* #2934: A BEAT OF AIR between the "+" and the tab strip it ends, so the
+     two read as neighbours rather than one mass: the button hangs a few
+     pixels below the tabs' own line, clear of the bar in both modes and at
+     both widths. The wrapper's own declarations are unchanged (relative is
+     the dropdown's containing block; flex: none keeps the strip's spare
+     width from squeezing it). */
+  position: relative; flex: none; display: flex;
+  margin-top: 4px;
+}
 .dev-ws-plus-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 40px; height: 40px; padding: 0;
@@ -16412,6 +16421,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      the pill ends on it — Current status · Needs you · All items · + — and
      the ear's measured inset, read off the track's right edge, clears it. */
   .dev-ws-tablist { flex: 0 0 auto; }
+  .dev-ws-plus { margin-top: 3px; }
   .dev-ws-plus-btn { width: 32px; height: 32px; }
   .dev-ws-plus-glyph { width: 18px; height: 18px; }
 
