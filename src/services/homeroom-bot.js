@@ -154,6 +154,8 @@ const TRIPWIRE_VERDICTS = Object.freeze(['question', 'empty']);
 // in the first day, a median of 31 seconds apart, which is the idle poll.
 const BACKOFF_BASE_MS = 2 * 60 * 1000;
 const BACKOFF_CEILING_MS = 60 * 60 * 1000;
+// How far past one turn's budget a claimed queue row counts as abandoned.
+const STALE_CLAIM_MARGIN_SECONDS = 10 * 60;
 
 // Bounds on what a verdict may carry into the ledger.
 const MAX_FIELD_CHARS = 4000;
@@ -755,6 +757,50 @@ async function refreshApps(pool, settings, appIds, deps = {}) {
  * `batchSize` of that app's items. Apps in `excludeAppIds` are skipped so
  * concurrent passes never share an app (one container, one turn at a time).
  */
+/**
+ * Release rows a pass claimed and never finished. runTriage claims its row
+ * (`started_at`) before it runs; nextBatch takes unclaimed rows only, and a
+ * refresh updates and deletes unclaimed rows only, so a row whose pass died
+ * mid-turn (a platform restart) was skipped for good and its issue never
+ * looked at again. Passes hold the loop's lock, so nothing live is older
+ * than one turn's budget; past that, with a margin, the claim is abandoned.
+ */
+async function releaseStaleClaims(pool, settings) {
+  const seconds = (Number(settings?.turnSeconds) || DEFAULTS.turnSeconds) + STALE_CLAIM_MARGIN_SECONDS;
+  const { rowCount } = await pool.query(
+    `UPDATE homeroom_bot_queue SET started_at = NULL
+      WHERE started_at IS NOT NULL AND started_at < NOW() - make_interval(secs => $1)`,
+    [seconds],
+  );
+  if (rowCount) log.info('homeroom-bot', 'Released queue rows an unfinished pass had claimed', { count: rowCount });
+  return rowCount || 0;
+}
+
+/**
+ * A triage that threw left its row claimed, recorded nothing, and so was
+ * never tried again (rss-reader #24, 2026-09-25: its "looking" post and then
+ * silence). Record it as a failed run and drop the row, as recordFailure does
+ * for a failure it sees. Not a retry: a throw that repeats would sit at the
+ * head of the queue and starve every other app. What it has seen is now, so
+ * the bot's own post just before the throw is not read as a change; the issue
+ * is looked at again when somebody changes it, or on an admin's Run now.
+ */
+async function recordThrownTriage(pool, { app, item, settings, err }) {
+  try {
+    await insertRun(pool, {
+      appId: app.id, issueNumber: item.issue_number,
+      mode: live.isLiveFor(settings, app) ? 'live' : settings.mode,
+      verdict: 'failed', error: `threw: ${err?.message || err}`,
+      threadSeenAt: new Date().toISOString(),
+    });
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+  } catch (recordErr) {
+    log.warn('homeroom-bot', 'Could not record a triage that threw', {
+      app: app.slug, issueNumber: item.issue_number, err: recordErr.message,
+    });
+  }
+}
+
 async function nextBatch(pool, { batchSize, excludeAppIds = [], pausedApps = [] }) {
   const { rows: head } = await pool.query(
     `SELECT q.app_id
@@ -1635,6 +1681,9 @@ async function runOnce(pool, config, deps = {}) {
     out.mode = settings.mode;
     if (settings.mode === 'off') return out;
 
+    // Before anything is picked: a row an unfinished pass claimed is free again.
+    out.releasedClaims = await releaseStaleClaims(pool, settings);
+
     const now = deps.now ? deps.now() : Date.now();
     // Take the wakes that arrived before this pass. Ones that arrive DURING
     // it are left for the next, which tick() schedules at once.
@@ -1718,6 +1767,7 @@ async function runOnce(pool, config, deps = {}) {
           });
         } catch (err) {
           log.error('homeroom-bot', 'Triage threw', { app: batch.app.slug, issueNumber: item.issue_number, err: err.message });
+          await recordThrownTriage(pool, { app: batch.app, item, settings: live, err });
           r = { ran: false, reason: 'threw' };
         }
         if (r.ran) { processed += 1; clearFault(); }
