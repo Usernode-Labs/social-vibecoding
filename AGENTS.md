@@ -224,12 +224,20 @@ remaining live-proposal boundary.
   should render a separate "community" layer for it. The table is bare on
   purpose; a name and an audience move onto it when a community can own
   more than one project.
-- **Membership gates proposing and voting, not reading or building.**
-  `communities.requireSessionMembership` answers 403 `join_required` on
-  promote and vote; the collab guard in `app-access.js` still decides who
-  may be there at all. Collaborators, Home pins and platform access join by
-  trigger — write those rows, not `community_members`, unless the action is
-  literally Join or Leave. The vote threshold still counts active users.
+- **Membership gates taking part, not reading.** Starting a change,
+  proposing, filing a request, voting (on proposals and requests) and posting
+  in an app's chat answer 403 `join_required` to a non-member
+  (`communities.requireAppMembership` / `requireSessionMembership` /
+  `requireIssueMembership`, and `chatNeedsJoin` on the WebSocket, which
+  answers with a `join_required` frame). Mount the matching gate on any new
+  write route of that kind; the client's fetch wrapper
+  (`frontend/src/lib/join-required.ts`) turns the 403 into a Join prompt and
+  a retry, so no caller handles it by hand. The collab guard in
+  `app-access.js` still decides who may be there at all; admins pass.
+  Collaborators, Home pins and platform access join by trigger — write those
+  rows, not `community_members`, unless the action is literally Join or
+  Leave. The vote threshold counts active MEMBERS
+  (`services/active-users.js`, concept #3).
 
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 

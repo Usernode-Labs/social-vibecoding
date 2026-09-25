@@ -905,6 +905,7 @@ const Home = {
   // finger: a pin joins the app's community (the app_favorites trigger in
   // schema.sql), and taking the pin off Home is not leaving it.
   _discoverAddShotRan: false,
+  _quietLeaveOffer: false,
   async _maybeDiscoverAddShot() {
     if (Home._discoverAddShotRan) return;
     try {
@@ -948,6 +949,11 @@ const Home = {
       `#home-discover-section .card-add-btn[data-slug="${slug}"][data-added="true"]`,
     ), 8000);
     if (!ticked) return;
+    // The unpin below is the fixture's, not a person's: no "Leave too?" for
+    // it (see _offerLeaveAfterUnpin). Left set for the rest of this page
+    // load, which is the shot's: the offer runs after the unpin's request
+    // lands, which can be after `gone` below has already been seen.
+    Home._quietLeaveOffer = true;
     ticked.click();
 
     const gone = await until(
@@ -2046,7 +2052,7 @@ const Home = {
     // answered by a toast rather than by silence.
     if (app && app.demo) return;
     if (!app) return Home._favoriteUnknown(slug, desired, onChange);
-    const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden };
+    const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden, is_member: app.is_member };
     // Asked BEFORE the flip, while the answer still describes where the card
     // is: an app currently in a rail stays in it for the rest of the visit.
     if (!Home.isYours(app)) {
@@ -2056,6 +2062,9 @@ const Home = {
     }
     app.is_favorited = desired;
     if (app.is_collaborator) app.your_apps_hidden = !desired;
+    // A pin JOINS (the app_favorites trigger in schema.sql), so the cached
+    // flag follows it, and Discover's pill and the Workshop agree at once.
+    if (desired) app.is_member = true;
     // Only an ADD needs the reveal: a removal takes a tile away, and a grid
     // that expanded itself to show an absence would be nonsense.
     if (desired) Home._revealSlug = slug;
@@ -2072,9 +2081,11 @@ const Home = {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
       PlatformUI.toast(desired ? 'Added to Your apps' : 'Removed from Your apps');
+      if (!desired) await Home._offerLeaveAfterUnpin(app);
     } catch (err) {
       app.is_favorited = prev.is_favorited;
       app.your_apps_hidden = prev.your_apps_hidden;
+      app.is_member = prev.is_member;
       // The add never happened, so nothing should be revealed for it. load()
       // renders, and a stale slug would expand the grid for an app that is
       // not there.
@@ -2083,6 +2094,32 @@ const Home = {
       await Home.load();
       if (typeof onChange === 'function') onChange();
     }
+  },
+
+  // Taking an app off Home is not leaving it (a pin is a shortcut), but it is
+  // the moment someone might MEAN to, so it is asked, once, after the unpin
+  // has landed: "Leave <app> too?". A yes goes through setMembership with its
+  // own confirm skipped — this question already was the confirm. Asked only
+  // of a member who could leave: never of the creator (the server refuses),
+  // never of someone who is not in it, and not during the ?shot=discover-add
+  // round trip, whose unpin is a fixture's, not a person's.
+  async _offerLeaveAfterUnpin(app) {
+    if (!app || !app.is_member || app.demo || Home._quietLeaveOffer) return false;
+    const me = typeof App !== 'undefined' && App.user ? App.user.id : null;
+    if (me != null && app.created_by === me) return false;
+    const confirmModal = typeof window !== 'undefined' ? window.ConfirmModal : null;
+    const name = app.name || app.slug;
+    const ok = await confirmModal?.show?.({
+      title: `Leave ${name} too?`,
+      message: app.view_visibility === 'private'
+        ? 'It’s off your Home screen. Leaving also ends your access until someone invites you back.'
+        : 'It’s off your Home screen. You can stay a member, or leave and stop proposing and voting on its changes.',
+      confirmLabel: 'Leave',
+      cancelLabel: 'Stay a member',
+      danger: true,
+    });
+    if (!ok) return false;
+    return Home.setMembership(app.slug, false, undefined, { confirmed: true });
   },
 
   // Join or leave the community `slug` belongs to — Discover's Join pill,
@@ -2100,14 +2137,14 @@ const Home = {
   // (409) and the confirm would be a dead end.
   //
   // Resolves true when the membership is now `desired`, false otherwise.
-  async setMembership(slug, desired, onChange) {
+  async setMembership(slug, desired, onChange, opts = {}) {
     const known = (list) => (Array.isArray(list) ? list : []).find((a) => a && a.slug === slug);
     const app = known(Home._apps)
       || known(typeof window !== 'undefined' ? window.Browse?._apps : null)
       || null;
     if (app && app.demo) return false;
-    const name = (app && app.name) || slug;
-    if (!desired) {
+    const name = (app && app.name) || opts.name || slug;
+    if (!desired && !opts.confirmed) {
       const privateApp = !!app && app.view_visibility === 'private';
       // No confirm dialog in this document means no leaving from it: a
       // silent leave is the one outcome this step exists to prevent.

@@ -4547,19 +4547,9 @@ const AppView = {
       window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(id) }));
     };
     repaint();
-    let joinAsk = null;
     try {
       const response = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
       const data = await response.json().catch(() => ({}));
-      // Proposing is for the community's members (services/communities.js).
-      // Asked AFTER `finally` has released this change's action slot, not
-      // here: the Join prompt is a question, and the retry it leads to has
-      // to be able to start. (A `return` from here would skip that too —
-      // it leaves the function once `finally` runs — hence the throw.)
-      if (response.status === 403 && data.code === 'join_required') {
-        joinAsk = data;
-        throw new Error(data.error || 'join_required');
-      }
       if (!response.ok || data.ok === false) throw new Error(data.error === 'proposal_not_ready'
         ? 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.'
         : data.message || data.error || 'The action could not be completed.');
@@ -4583,15 +4573,11 @@ const AppView = {
       }
       if (AppView.appData?.slug === slug) await AppView._loadDevData();
     } catch (error) {
-      if (joinAsk) { /* asked below, once the action slot is free */ }
-      else if (stillVisible()) PlatformUI.toast(error?.name === 'TypeError' ? 'Network error' : error.message);
+      if (stillVisible()) PlatformUI.toast(error?.name === 'TypeError' ? 'Network error' : error.message);
       else console.warn('Change action failed after leaving the session:', error.message);
     } finally {
       AppView._changeActions.delete(Number(id));
       repaint();
-    }
-    if (joinAsk && stillVisible() && await AppView.offerJoin(joinAsk)) {
-      await AppView.runChangeAction(id, action, item);
     }
   },
 
@@ -14392,15 +14378,6 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/promote`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        // Proposing is for members: offer Join and share again on a yes.
-        if (data.code === 'join_required') {
-          if (btn) {
-            btn.disabled = false;
-            btn.textContent = oldText;
-          }
-          if (await AppView.offerJoin(data)) return AppView.promoteImportedSession(sessionId, btn);
-          return;
-        }
         if (window.PlatformUI && PlatformUI.toast) {
           PlatformUI.toast(data.error || `Could not put this PR up for vote (HTTP ${resp.status}).`);
         }
@@ -19190,19 +19167,6 @@ const AppView = {
         // refetch below repaints from the server anyway, but the rollback is
         // what makes the card reappear the instant the server says no.
         rollback();
-        // Voting is for the community's members (services/communities.js).
-        // A refusal for that reason is a question, not an error: offer Join,
-        // and on a yes cast the same vote again with the line already in
-        // hand, so a No is not asked for twice. The in-flight key is
-        // released first — the retry is a new press, and `finally` below
-        // would otherwise still be holding it.
-        if (data.code === 'join_required') {
-          AppView._voteInFlight.delete(key);
-          if (await AppView.offerJoin(data)) {
-            return await AppView.castVote(sessionId, vote, expectedEpoch, { ...(opts || {}), reason });
-          }
-          return false;
-        }
         // A rejection that names the current epoch lets the very next click
         // land, rather than needing a refetch to have finished first.
         if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
@@ -19235,30 +19199,6 @@ const AppView = {
     finally {
       AppView._voteInFlight.delete(key);
     }
-  },
-
-  // A 403 `join_required` from promote or vote (services/communities.js,
-  // requireSessionMembership): ask whether to join the community that owns
-  // the app, and join it on a yes. Resolves true when the viewer is now a
-  // member, so the caller can repeat the press this interrupted. Home owns
-  // the request and the toast (Home.setMembership), so joining from here
-  // and from Discover leave the same flags behind.
-  async offerJoin(data) {
-    const slug = data && data.app && data.app.slug;
-    if (!slug) {
-      window.PlatformUI?.toast?.((data && data.error) || 'Join this project to take part.');
-      return false;
-    }
-    const name = data.app.name || slug;
-    const ok = await window.ConfirmModal?.show?.({
-      title: `Join ${name}?`,
-      message: 'Members propose and vote on its changes. Join to take part.',
-      confirmLabel: 'Join',
-    });
-    if (!ok) return false;
-    const home = window.Home;
-    if (!home || typeof home.setMembership !== 'function') return false;
-    return !!(await home.setMembership(slug, true));
   },
 
   // Vote on a governance proposal (env-var change, close-issue, rename,

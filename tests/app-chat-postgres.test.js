@@ -97,7 +97,20 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     );
   }
   const client = (who, app) => ({ user: { id: who.id, username: who.username }, appId: app.id, appSlug: app.slug });
+  // Posting is for the app's community (src/services/communities.js), so a
+  // poster here has joined first, the way a person does with the Join
+  // button — written straight to community_members so it pins nothing, and
+  // the Messages list's yours/more sections below stay what they test.
+  async function joinCommunity(app, who) {
+    await pool.query(
+      `INSERT INTO community_members (community_id, user_id, source)
+         SELECT community_id, $2, 'joined' FROM apps WHERE id = $1
+       ON CONFLICT DO NOTHING`,
+      [app.id, who.id]
+    );
+  }
   async function post(who, app, content, extra = {}) {
+    await joinCommunity(app, who);
     const result = await ws.handleMessage(pool, client(who, app), { type: 'chat', content, ...extra });
     return result;
   }
@@ -142,6 +155,27 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
   const other = await makeApp('ta-other', { owner: alice, name: 'Other' });
   await member(chan, alice);
   await member(chan, bob);
+
+  // ── Posting is for members (communities) ────────────────────────────
+
+  await t.test('a post from someone who has not joined is answered join_required, and stores nothing', async () => {
+    const outsider = await user('ta_outsider');
+    const sent = [];
+    const socket = { ...client(outsider, chan), ws: { readyState: 1, send: (raw) => sent.push(JSON.parse(raw)) } };
+    const before = Number((await pool.query('SELECT COUNT(*) AS n FROM chat_messages WHERE app_id = $1', [chan.id])).rows[0].n);
+    const result = await ws.handleMessage(pool, socket, { type: 'chat', content: 'hello?' });
+    assert.deepEqual(result, { ok: false, code: 'join_required' });
+    assert.equal(sent.length, 1, 'answered on that one socket, not dropped in silence');
+    assert.equal(sent[0].type, 'join_required');
+    assert.equal(sent[0].app.slug, chan.slug);
+    assert.deepEqual(sent[0].retry, { type: 'chat', content: 'hello?' }, 'the message comes back to be sent again');
+    const after = Number((await pool.query('SELECT COUNT(*) AS n FROM chat_messages WHERE app_id = $1', [chan.id])).rows[0].n);
+    assert.equal(after, before);
+    const typing = await ws.handleMessage(pool, socket, { type: 'typing' });
+    assert.notEqual(typing && typing.code, 'join_required', 'a typing indicator is not posting');
+    assert.equal((await call('POST', `/api/apps/${chan.slug}/messages`, outsider, { content: 'over HTTP' })).status, 403,
+      'nor over the bearer-compatible HTTP route');
+  });
 
   // ── Reply threads ────────────────────────────────────────────────────
 

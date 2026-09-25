@@ -6,21 +6,23 @@
 // its only project: its name, its icon, its page. What this module adds is
 // the part that is already a community's rather than an app's:
 //
-//   MEMBERSHIP. Joining is what lets a person propose changes to a
-//   community's projects and vote on them. `requireSessionMembership` is the
-//   gate, mounted beside appAccess.sessionCollabGuard on promote and vote.
-//   Reading, using, chatting and building a change stay on the app's own
-//   view/collab visibility (services/app-access.js), which this does not
-//   replace: the collab guard still decides whether you may be here at all,
-//   and this decides whether your proposal and your vote count.
+//   MEMBERSHIP. Joining is what lets a person TAKE PART: start a change,
+//   propose it, file a request, vote (on proposals and on requests) and post
+//   in the app's chat. The gates are below — requireAppMembership,
+//   requireSessionMembership, requireIssueMembership and chatNeedsJoin for
+//   the WebSocket — each mounted on the write route it guards. Reading and
+//   using an app stay on its own view/collab visibility
+//   (services/app-access.js), which this does not replace: the collab guard
+//   still decides whether you may be here at all, and this decides whether
+//   you have joined.
 //
 //   AUDIENCE. Who a community is for: 'solo' (Just you), 'invited' (Group)
 //   or 'open' (Community). Derived from the app, never stored — see
 //   audienceSql.
 //
-// The vote THRESHOLD is untouched: services/active-users.js still counts
-// active users, so joining changes who may vote, not how many votes a
-// proposal needs.
+// The vote THRESHOLD counts active MEMBERS: services/active-users.js
+// intersects its activity rule with this table, so the people a proposal
+// needs votes from are the people who are allowed to cast them.
 
 const log = require('./logger');
 const appAccess = require('./app-access');
@@ -163,17 +165,91 @@ async function leave(pool, app, userId) {
 function joinRequiredBody(app) {
   const name = app.name || app.slug || 'this project';
   return {
-    error: `Join ${name} to propose and vote on its changes.`,
+    error: `Join ${name} to take part: members start changes, file requests, vote and chat there.`,
     code: 'join_required',
     app: { slug: app.slug, name },
   };
 }
 
-// Express middleware for session-addressed routes (/api/sessions/:id/...):
-// the caller must be a member of the community the session's app belongs
-// to. It answers only that question: a caller without collab access falls
-// through to whichever guard or route refuses them, so it is safe on either
-// side of appAccess.sessionCollabGuard.
+// The columns every gate below reads, off an `apps` row aliased `a`, with
+// `$2` the caller's user id.
+const GATE_COLUMNS = `a.id, a.slug, a.name, a.community_id, a.collab_visibility, a.view_visibility,
+                EXISTS (SELECT 1 FROM community_members m
+                         WHERE m.community_id = a.community_id AND m.user_id = $2) AS is_member`;
+
+// Whether `app` (a row carrying GATE_COLUMNS) should be refused with
+// join_required for `user`. Only ever TRUE for someone who could otherwise
+// take part — see the notes on requireSessionMembership (below) for the
+// three ways it answers false.
+async function refusesToJoin(pool, app, user) {
+  if (!app || user?.isAdmin) return false;
+  if (app.community_id == null || app.is_member) return false;
+  return appAccess.checkAppAccess(pool, app, user, 'collab');
+}
+
+// The same gate as middleware over a resolved row, for the three route
+// gates below, which differ only in how they find the app.
+function gate(pool, findApp, what) {
+  return async (req, res, next) => {
+    if (req.user?.isAdmin) return next();
+    try {
+      const app = await findApp(req);
+      if (await refusesToJoin(pool, app, req.user)) return res.status(403).json(joinRequiredBody(app));
+      return next();
+    } catch (err) {
+      log.error('communities', `membership guard failed (${what})`, { err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  };
+}
+
+// For `/api/apps/:slug/...` write routes: starting a change, filing a
+// request, importing a pull request, posting to the app's chat over HTTP.
+// A slug that does not resolve falls through to the route's own 404.
+function requireAppMembership(pool) {
+  return gate(pool, async (req) => {
+    if (!req.params.slug) return null;
+    const { rows } = await pool.query(
+      `SELECT ${GATE_COLUMNS} FROM apps a WHERE a.slug = $1`,
+      [req.params.slug, req.user?.id || null]
+    );
+    return rows[0] || null;
+  }, 'app');
+}
+
+// For `/api/issues/:id/...` write routes: voting on a request or a
+// governance proposal.
+function requireIssueMembership(pool) {
+  return gate(pool, async (req) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return null;
+    const { rows } = await pool.query(
+      `SELECT ${GATE_COLUMNS} FROM issues i JOIN apps a ON a.id = i.app_id WHERE i.id = $1`,
+      [id, req.user?.id || null]
+    );
+    return rows[0] || null;
+  }, 'issue');
+}
+
+// The WebSocket chat write (src/services/ws.js, a 'chat' message). Returns
+// the join_required body to send back to that one client, or null to let the
+// message through. Only 'chat' is gated: typing indicators and reactions are
+// not posting, and a Join prompt on a keystroke would be a trap.
+async function chatNeedsJoin(pool, appId, user) {
+  if (!appId || user?.isAdmin) return null;
+  const { rows } = await pool.query(
+    `SELECT ${GATE_COLUMNS} FROM apps a WHERE a.id = $1`,
+    [appId, user?.id || null]
+  );
+  const app = rows[0];
+  return (await refusesToJoin(pool, app, user)) ? joinRequiredBody(app) : null;
+}
+
+// For session-addressed routes (/api/sessions/:id/...): proposing, voting,
+// cloning a headless run. The rules every gate here shares are stated once,
+// on this one. Each answers only "has the caller joined": a caller without
+// collab access falls through to whichever guard or route refuses them, so
+// a gate is safe on either side of appAccess.sessionCollabGuard.
 //
 // Admins pass, as they pass every access check: they are who the
 // screenshot and proposal-checks runners sign in as.
@@ -183,34 +259,22 @@ function joinRequiredBody(app) {
 // between the two on its first boot — and refusing every vote on it would
 // be a regression nobody asked for. A missing session falls through to the
 // route's own 404, as the collab guard's does.
+//
+// And the third: someone who may not build here at all is the collab
+// guard's to refuse, with its existence-hiding 404. Answering them with a
+// 403 that names the app would disclose a private one — and the CLI handoff
+// router mounts this ahead of the guard, so no gate here assumes the guard
+// already ran.
 function requireSessionMembership(pool) {
-  return async (req, res, next) => {
-    if (req.user?.isAdmin) return next();
+  return gate(pool, async (req) => {
     const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return next();
-    try {
-      const { rows } = await pool.query(
-        `SELECT a.id, a.slug, a.name, a.community_id, a.collab_visibility, a.view_visibility,
-                EXISTS (SELECT 1 FROM community_members m
-                         WHERE m.community_id = a.community_id AND m.user_id = $2) AS is_member
-           FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-          WHERE cs.id = $1`,
-        [id, req.user?.id || null]
-      );
-      const app = rows[0];
-      if (!app || app.community_id == null || app.is_member) return next();
-      // Someone who may not build here at all is the collab guard's to
-      // refuse, with its existence-hiding 404. Answering them with a 403
-      // that names the app would disclose a private one — and the CLI
-      // handoff router mounts this ahead of the guard, so it cannot assume
-      // the guard already ran.
-      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) return next();
-      return res.status(403).json(joinRequiredBody(app));
-    } catch (err) {
-      log.error('communities', 'membership guard failed', { id, err: err.message });
-      return res.status(500).json({ error: 'Internal server error' });
-    }
-  };
+    if (!Number.isFinite(id)) return null;
+    const { rows } = await pool.query(
+      `SELECT ${GATE_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
+      [id, req.user?.id || null]
+    );
+    return rows[0] || null;
+  }, 'session');
 }
 
 // The members the community card shows by name: most recent first, capped.
@@ -293,6 +357,9 @@ module.exports = {
   join,
   leave,
   joinRequiredBody,
+  requireAppMembership,
   requireSessionMembership,
+  requireIssueMembership,
+  chatNeedsJoin,
   listMembers,
 };

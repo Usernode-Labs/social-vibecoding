@@ -1571,6 +1571,47 @@ test('with no confirm dialog there is no leaving', async () => {
   assert.equal(fetchCalls.length, 0);
 });
 
+test('unpinning a member app asks, once, whether to leave too', async () => {
+  const { Home, fetchCalls, win } = makeBrowse();
+  const mine = app({ slug: 'mine', name: 'Mine', is_member: true, is_favorited: true, created_by: 77 });
+  Home._apps = [mine];
+  const asked = [];
+  win.ConfirmModal = { show: async (o) => { asked.push(o); return true; } };
+  await Home.toggleAdded('mine', false, () => {});
+  assert.equal(asked.length, 1, 'one question, the leave question — not a second confirm after it');
+  assert.equal(asked[0].title, 'Leave Mine too?');
+  assert.equal(asked[0].cancelLabel, 'Stay a member');
+  assert.deepEqual(fetchCalls.map((c) => [c.url, c.body]), [
+    ['/api/apps/mine/favorite', { favorited: false }],
+    ['/api/apps/mine/membership', { joined: false }],
+  ]);
+  assert.equal(mine.is_member, false);
+});
+
+test('"Stay a member" keeps the membership; nobody is asked who is not in it, or who started it', async () => {
+  const { Home, fetchCalls, win } = makeBrowse({ user: { id: 5 } });
+  const asked = [];
+  win.ConfirmModal = { show: async (o) => { asked.push(o); return false; } };
+  const stay = app({ slug: 'stay', is_member: true, is_favorited: true, created_by: 77 });
+  const outsider = app({ slug: 'pinned', is_favorited: true });
+  const mine = app({ slug: 'mine', is_member: true, is_favorited: true, created_by: 5 });
+  Home._apps = [stay, outsider, mine];
+  await Home.toggleAdded('stay', false, () => {});
+  assert.equal(stay.is_member, true, 'Stay a member');
+  await Home.toggleAdded('pinned', false, () => {});
+  await Home.toggleAdded('mine', false, () => {});
+  assert.equal(asked.length, 1, 'only the member who could leave was asked');
+  assert.ok(fetchCalls.every((c) => !/membership/.test(c.url)));
+});
+
+test('pinning marks the app joined at once, because the pin joins it', async () => {
+  const { Home } = makeBrowse();
+  const fresh = app({ slug: 'fresh' });
+  Home._apps = [fresh];
+  await Home.toggleAdded('fresh', true, () => {});
+  assert.equal(fresh.is_member, true);
+});
+
 test('a refused join puts the flags back and re-syncs', async () => {
   const { Home, toasts } = makeBrowse({ fetchOk: false });
   const fresh = app({ slug: 'fresh', name: 'Fresh' });

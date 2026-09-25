@@ -949,7 +949,7 @@ function proposalHandoffRoutes(config) {
   // earlier is deleted before the error is returned. A half-made card in
   // everyone's In-progress area, with no commits behind it, is worse than the
   // refusal it came from.
-  router.post('/api/apps/:slug/work/share-in-progress', proposalJson, drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/work/share-in-progress', proposalJson, drainGuard, communities.requireAppMembership(pool), async (req, res) => {
     let input;
     try {
       input = parseShareInProgressBody(req.body);
@@ -1069,7 +1069,7 @@ function proposalHandoffRoutes(config) {
     }
   });
 
-  router.post('/api/apps/:slug/proposal-handoffs', proposalJson, drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/proposal-handoffs', proposalJson, drainGuard, communities.requireAppMembership(pool), async (req, res) => {
     if (!requireCli(req, res)) return;
     let input;
     try {

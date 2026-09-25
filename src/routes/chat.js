@@ -7,6 +7,7 @@ const models = require('../services/models');
 const modelCosts = require('../services/model-costs');
 const { listActiveUserIds } = require('../services/active-users');
 const appAccess = require('../services/app-access');
+const communities = require('../services/communities');
 const attachmentsSvc = require('../services/attachments');
 const messageBookmarks = require('../services/message-bookmarks');
 const appChat = require('../services/app-chat');
@@ -716,7 +717,7 @@ function chatRoutes(config) {
   // bearer rather than a browser session cookie. Route the JSON request
   // through the same handler so persistence, thread validation, broadcasts,
   // events, mentions, replies, and unread-state updates cannot drift.
-  router.post('/api/apps/:slug/messages', groupChatWriteLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/messages', groupChatWriteLimiter, communities.requireAppMembership(pool), async (req, res) => {
     try {
       // Posting is collab-gated and returns the same 404 for a missing app
       // and denied access, so private app slugs cannot be enumerated.

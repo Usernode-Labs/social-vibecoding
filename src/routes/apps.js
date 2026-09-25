@@ -3207,7 +3207,7 @@ function appRoutes(config) {
   // gate would ask of an unopposed proposal right now: the app's own
   // `approvals_required` when dapp.json sets one, otherwise
   // active-users.requiredVotes over the same electorate governance.js
-  // counts (approvers on an invited-policy app, active users otherwise).
+  // counts (approvers on an invited-policy app, active members otherwise).
   // It is the headline number, not the whole gate — opposition raises it
   // and the lazy-consensus window can merge below it — and the card says
   // "to merge", not "exactly".

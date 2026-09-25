@@ -2147,6 +2147,8 @@ function voteRoutes(config) {
   // collaborate. A 403 `join_required` is what lets the client offer Join
   // in place of the refusal.
   const requireMembership = communities.requireSessionMembership(pool);
+  // Importing a pull request is starting a change, by another road.
+  const requireAppMembership = communities.requireAppMembership(pool);
 
   // Promote a session's PR for voting
   // drainGuard (#767): promote/merge kick container work (staging build,
@@ -2914,7 +2916,7 @@ function voteRoutes(config) {
   // POST import a PR. Collab access. Creates a shared In-progress
   // `source='imported'` session by default and kicks its SHA-pinned checks
   // build; trusted automated callers can request `promote: true`.
-  router.post('/api/apps/:slug/pr-import', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/pr-import', drainGuard, requireAppMembership, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
       if (!app) return res.status(404).json({ error: 'App not found' });

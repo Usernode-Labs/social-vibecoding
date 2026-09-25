@@ -264,6 +264,49 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     }
   });
 
+  await t.test('the vote threshold counts active MEMBERS, and the gates cover taking part', async () => {
+    const activeUsers = require('../src/services/active-users');
+    const owner = await user();
+    const joined = await user();
+    const visitor = await user();
+    const a = await app({ createdBy: owner.id });
+    await collaborate(a.id, owner.id);
+    await communities.join(pool, a, joined.id);
+    for (const u of [owner, joined, visitor]) {
+      await pool.query(
+        `INSERT INTO app_activity (app_id, user_id, date, seconds_spent) VALUES ($1, $2, CURRENT_DATE, 120)`,
+        [a.id, u.id]
+      );
+    }
+    assert.equal((await activeUsers.getActiveUserStats(pool, a.id)).active, 2,
+      'the visitor used the app but never joined, so a proposal needs no vote of theirs');
+    assert.deepEqual((await activeUsers.listActiveUserIds(pool, a.id)).sort((x, y) => x - y),
+      [owner.id, joined.id].sort((x, y) => x - y), 'and is not asked for one');
+    assert.equal(await activeUsers.isUserActive(pool, a.id, visitor.id), false);
+    assert.equal(await activeUsers.isUserActive(pool, a.id, joined.id), true);
+
+    const run = (mw, params, u) => new Promise((resolve) => {
+      const res = { status(code) { this.code = code; return this; }, json(body) { resolve({ code: this.code, body }); } };
+      mw({ params, user: u && { id: u.id, isAdmin: !!u.is_admin } }, res, () => resolve({ next: true }));
+    });
+    const bySlug = communities.requireAppMembership(pool);
+    assert.equal((await run(bySlug, { slug: a.slug }, visitor)).body.code, 'join_required',
+      'starting a change, filing a request and posting are refused to a non-member');
+    assert.deepEqual(await run(bySlug, { slug: a.slug }, joined), { next: true });
+    assert.deepEqual(await run(bySlug, { slug: 'no-such-app' }, visitor), { next: true },
+      'an unknown slug is the route\'s own 404');
+    const { rows: iss } = await pool.query(
+      `INSERT INTO issues (app_id, title, created_by) VALUES ($1, 'A request', $2) RETURNING id`, [a.id, owner.id]
+    );
+    const byIssue = communities.requireIssueMembership(pool);
+    assert.equal((await run(byIssue, { id: String(iss[0].id) }, visitor)).body.code, 'join_required',
+      'voting on a request is voting');
+    assert.deepEqual(await run(byIssue, { id: String(iss[0].id) }, joined), { next: true });
+    const frame = await communities.chatNeedsJoin(pool, a.id, visitor);
+    assert.equal(frame.code, 'join_required', 'the WebSocket chat write is answered, not dropped');
+    assert.equal(await communities.chatNeedsJoin(pool, a.id, joined), null);
+  });
+
   await t.test('deleting an app drops its community', async () => {
     const a = await app();
     await pool.query('DELETE FROM apps WHERE id = $1', [a.id]);

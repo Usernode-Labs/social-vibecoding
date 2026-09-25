@@ -17,6 +17,7 @@ const { weekStartUtc, countWeeklyBountiesUsed, WEEKLY_BOUNTY_LIMIT } = require('
 const { placeBounty } = require('../services/bounties');
 const { claimIssueForUser } = require('../services/issue-claims');
 const appAccess = require('../services/app-access');
+const communities = require('../services/communities');
 const appAdmins = require('../services/app-admins');
 const topicAttrs = require('../services/topic-attributes');
 // #2086: the featured-illustration governance kind. Its proposals are
@@ -956,7 +957,7 @@ function issueRoutes(config) {
   // Create an issue / proposal — kinds per VALID_KINDS above (general is
   // the default). Rate-limited per kind: close_issue proposals draw from
   // their own bucket, everything else from issue-create.
-  router.post('/api/apps/:slug/issues', issueKindLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/issues', issueKindLimiter, communities.requireAppMembership(pool), async (req, res) => {
     let { title, description, kind = 'general', payload = {} } = req.body || {};
 
     if (!VALID_KINDS.includes(kind)) {
@@ -1313,7 +1314,7 @@ function issueRoutes(config) {
   // normaliser, the same 280-character cap, required on a No and optional on
   // a Yes. Lazily required, matching the direction this module already uses
   // for './votes' (see the demo close rows in the by-id handler above).
-  router.post('/api/issues/:id/vote', governanceVoteLimiter, async (req, res) => {
+  router.post('/api/issues/:id/vote', governanceVoteLimiter, communities.requireIssueMembership(pool), async (req, res) => {
     const { vote } = req.body;
     if (!['up', 'down'].includes(vote)) {
       return res.status(400).json({ error: 'Vote must be "up" or "down"' });
