@@ -42,6 +42,7 @@ import { memo, useEffect, useRef, type ReactNode } from 'react';
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js';
+import { navStore } from '../nav/nav-store.js';
 import { appFrameRefs, appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
 
@@ -210,6 +211,7 @@ function liveFrames(state: ReturnType<typeof appFrameStore.get>): string[] {
  */
 export function AppFrameHost(): ReactNode {
   const state = useStoreState(appFrameStore);
+  const { screen } = useStoreState(navStore) as { screen: string | null };
   const hostRef = useRef<HTMLDivElement | null>(null);
 
   // Written on the ref, not rendered, so `className` stays a constant string —
@@ -221,13 +223,15 @@ export function AppFrameHost(): ReactNode {
   // app's bridge reports (`background`) is turned into `data-app-tone` on
   // <html> — a node React does not own, written from an effect the same way
   // the head's theme module writes `.dark` there — and cleared the moment the
-  // frame is parked or dropped. `useEffect`, not a layout effect: the tone is
-  // a repaint of the strip, never something a first paint has to wait for,
-  // and it must not run in the prerender pass at all (the shipped document
-  // carries no tone, exactly like the empty store).
+  // frame is parked or dropped, or the router reveals any other screen (the
+  // app left by a tab keeps its frame active; see toneForState). `useEffect`,
+  // not a layout effect: the tone is a repaint of the strip, never something
+  // a first paint has to wait for, and it must not run in the prerender pass
+  // at all (the shipped document carries no tone, exactly like the empty
+  // store).
   useEffect(() => {
-    publishAppTone(document, state, window);
-  }, [state.slug, state.active, state.background]);
+    publishAppTone(document, state, window, false, screen);
+  }, [state.slug, state.active, state.background, screen]);
 
   return (
     <div

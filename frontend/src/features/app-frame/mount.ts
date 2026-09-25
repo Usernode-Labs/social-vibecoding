@@ -27,6 +27,7 @@ import { createElement } from 'react';
 import { flushSync } from 'react-dom';
 
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { navStore } from '../nav/nav-store.js';
 import { appFrameBridge } from './app-frame-bridge.js';
 import { appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
@@ -87,6 +88,6 @@ if (typeof window !== 'undefined') {
   // not changed and the publish would otherwise be a no-op.
   const themed = window as unknown as { Theme?: { onChange?: (fn: () => void) => void } };
   themed.Theme?.onChange?.(() => {
-    publishAppTone(document, appFrameStore.get(), window, true);
+    publishAppTone(document, appFrameStore.get(), window, true, navStore.get().screen);
   });
 }
