@@ -36,6 +36,8 @@ const story = z.object({
     baseState: z.enum(['present', 'not_present']).optional()
       .describe('Use not_present only for a genuinely new screen/control; base replay must still assert and capture its stable parent or explicit absence page.'),
     animation: z.enum(['none', 'steps', 'motion']),
+    controlledFailurePath: z.string().min(6).max(512).optional()
+      .describe('Only for an error state: exact same-origin /api/ GET path to block on both revisions. Set the FIRST intent.steps entry exactly to "Controlled test: deliberately block the declared API GET on both revisions." so reviewers see the condition. Replay requires a real matching request on both sides.'),
   }).strict(),
 }).strict();
 const intentSchema = {

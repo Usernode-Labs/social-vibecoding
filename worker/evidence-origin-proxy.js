@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const https = require('node:https');
 const net = require('node:net');
+const crypto = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 
 const DIAGNOSTIC_MARKER = '__USERNODE_EVIDENCE_BROWSER__ ';
@@ -32,6 +33,47 @@ const port = Number(process.env.EVIDENCE_PROXY_PORT || 17891);
 const readyFile = process.env.EVIDENCE_PROXY_READY || '';
 const originList = [...origins];
 let documentOrdinal = 0;
+const controlToken = String(process.env.EVIDENCE_PROXY_CONTROL_TOKEN || '');
+const controlPath = '/__usernode_evidence_control/request-failure';
+const controlledFailures = new Set();
+let controlledFailureHits = 0;
+
+function validApiPath(value) {
+  if (typeof value !== 'string' || value.length > 512 || !value.startsWith('/api/')
+      || value.includes('*') || value.includes('\\') || /[\u0000-\u001f\u007f]/.test(value)) return false;
+  try {
+    const url = new URL(value, 'http://evidence.invalid');
+    return !url.hash && `${url.pathname}${url.search}` === value;
+  } catch { return false; }
+}
+
+function validControlToken(value) {
+  if (!/^[0-9a-f]{64}$/.test(controlToken) || typeof value !== 'string'
+      || value.length !== controlToken.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(value), Buffer.from(controlToken));
+}
+
+function controlRequest(req, res) {
+  if (req.method !== 'POST' || !validControlToken(req.headers['x-evidence-control-token'])) {
+    return reject(res);
+  }
+  let data = '';
+  req.on('data', (chunk) => {
+    data += chunk;
+    if (data.length > 1024) req.destroy();
+  });
+  req.on('end', () => {
+    let body;
+    try { body = JSON.parse(data); } catch { return reject(res, 400); }
+    if (!body || Object.keys(body).sort().join(',') !== 'enabled,path'
+        || typeof body.enabled !== 'boolean' || !validApiPath(body.path)) return reject(res, 400);
+    if (body.enabled) controlledFailures.add(body.path);
+    else controlledFailures.delete(body.path);
+    diagnostic({ kind: 'controlled_failure_set', enabled: body.enabled });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, enabled: body.enabled, hitCount: controlledFailureHits }));
+  });
+}
 
 function diagnostic(event) {
   // Only fixed-shape metadata leaves the proxy. Never log URL, query,
@@ -50,6 +92,7 @@ function reject(socketOrResponse, code = 403) {
 }
 
 const server = http.createServer((req, res) => {
+  if (req.url === controlPath) return controlRequest(req, res);
   let target;
   try {
     target = new URL(req.url);
@@ -58,6 +101,12 @@ const server = http.createServer((req, res) => {
     catch { return reject(res, 400); }
   }
   if (!origins.has(target.origin)) return reject(res);
+  if (req.method === 'GET' && controlledFailures.has(`${target.pathname}${target.search}`)) {
+    controlledFailureHits += 1;
+    diagnostic({ kind: 'controlled_failure_hit',
+      side: target.origin === originList[0] ? 'base' : 'head', hitOrdinal: controlledFailureHits });
+    return res.destroy();
+  }
   const isDocument = req.headers['sec-fetch-dest'] === 'document';
   const ordinal = isDocument ? ++documentOrdinal : null;
   const startedAt = performance.now();

@@ -32,6 +32,50 @@ test('runner accepts a validated pair and only publishes artifacts on pass two',
   assert.equal(first.publishArtifacts, false);
 });
 
+test('controlled replay failure intercepts only its declared GET and counts a real hit', async () => {
+  let routeHandler;
+  const context = { route: async (_glob, handler) => { routeHandler = handler; } };
+  const diagnostics = { blockedRequests: [] };
+  const controlled = { path: '/api/lists/demo', enabled: false, hits: 0,
+    requests: new WeakSet(), urls: new Set() };
+  await replay.installOriginFence(context, new Set(['http://base-evidence:3000']), diagnostics, controlled);
+  await replay.executeAction(null, { type: 'requestFailure', path: controlled.path, enabled: true },
+    'http://base-evidence:3000', null, '', controlled);
+  const calls = [];
+  const request = { url: () => 'http://base-evidence:3000/api/lists/demo', method: () => 'GET' };
+  await routeHandler({ request: () => request, abort: async (code) => calls.push(['abort', code]),
+    continue: async () => calls.push(['continue']) });
+  assert.deepEqual(calls, [['abort', 'failed']]);
+  assert.equal(controlled.hits, 1);
+  assert.equal(controlled.requests.has(request), true);
+  assert.equal(controlled.urls.has(request.url()), true);
+
+  const other = { url: () => 'http://base-evidence:3000/api/lists/other', method: () => 'GET' };
+  await routeHandler({ request: () => other, abort: async (code) => calls.push(['abort', code]),
+    continue: async () => calls.push(['continue']) });
+  assert.deepEqual(calls.at(-1), ['continue']);
+  await replay.executeAction(null, { type: 'requestFailure', path: controlled.path, enabled: false },
+    'http://base-evidence:3000', null, '', controlled);
+  await routeHandler({ request: () => request, abort: async (code) => calls.push(['abort', code]),
+    continue: async () => calls.push(['continue']) });
+  assert.deepEqual(calls.at(-1), ['continue']);
+});
+
+test('only Chromium resource errors for deliberately failed exact requests are expected', () => {
+  const generated = { message: 'Failed to load resource: net::ERR_FAILED' };
+  const appError = { message: 'Could not load account data' };
+  const unrelated = { message: 'Failed to load resource: net::ERR_FAILED' };
+  const diagnostics = { consoleErrors: [generated, appError, unrelated] };
+  const failure = { hits: 1, urls: new Set(['http://base-evidence:3000/api/list']) };
+  const removed = replay.discardExpectedControlledFailureConsole(diagnostics, [
+    { entry: generated, url: 'http://base-evidence:3000/api/list', message: generated.message },
+    { entry: appError, url: 'http://base-evidence:3000/app.js', message: appError.message },
+    { entry: unrelated, url: 'http://base-evidence:3000/api/other', message: unrelated.message },
+  ], failure);
+  assert.equal(removed, 1);
+  assert.deepEqual(diagnostics.consoleErrors, [appError, unrelated]);
+});
+
 test('an isolated browser job can only select a declared story and viewport', () => {
   const selection = { storyId: 'invite-suggestions', viewport: 'desktop' };
   assert.deepEqual(replay.validateInput(input({ selection })).selection, selection);
@@ -387,6 +431,73 @@ test('initial navigation never retries application failures or a second transpor
   } }, 'http://base-evidence:3000/', (event) => retries.push(event), async () => {}), networkError);
   assert.equal(calls, 3, 'one application attempt plus two bounded transport attempts');
   assert.deepEqual(retries, [{ attempt: 2, code: 'network_changed' }]);
+});
+
+test('a successful initial navigation retry discards only its recovered document failure', () => {
+  const mainFrame = {};
+  const page = { mainFrame: () => mainFrame };
+  const startUrl = 'http://base-evidence:3000/?demo=1&token=member.jwt#messages';
+  const request = (url, error, { frame = mainFrame, navigation = true, type = 'document' } = {}) => ({
+    url: () => url,
+    failure: () => ({ errorText: error }),
+    frame: () => frame,
+    isNavigationRequest: () => navigation,
+    resourceType: () => type,
+  });
+  const recovered = { error: 'net::ERR_NETWORK_CHANGED' };
+  const apiFailure = { error: 'net::ERR_NETWORK_CHANGED' };
+  const unrelatedDocument = { error: 'net::ERR_CONNECTION_RESET' };
+  const diagnostics = { failedRequests: [recovered, apiFailure, unrelatedDocument] };
+  const failures = [
+    { failure: recovered, request: request('http://base-evidence:3000/?demo=1&token=member.jwt', recovered.error) },
+    { failure: apiFailure, request: request('http://base-evidence:3000/api/messages', apiFailure.error, { navigation: false, type: 'fetch' }) },
+    { failure: unrelatedDocument, request: request('http://base-evidence:3000/other?demo=1&token=member.jwt', unrelatedDocument.error) },
+  ];
+
+  assert.equal(replay.discardRecoveredInitialNavigationFailures(
+    diagnostics, failures, page, startUrl, new Set(['network_changed']), 200
+  ), 1);
+  assert.deepEqual(diagnostics.failedRequests, [apiFailure, unrelatedDocument]);
+
+  const failedRetry = { failedRequests: [recovered] };
+  assert.equal(replay.discardRecoveredInitialNavigationFailures(
+    failedRetry, failures, page, startUrl, new Set(['network_changed']), 500
+  ), 0);
+  assert.deepEqual(failedRetry.failedRequests, [recovered]);
+});
+
+test('a later successful request clears only the matching transient network-change diagnostic', () => {
+  const recovered = { error: 'net::ERR_NETWORK_CHANGED' };
+  const wrongMethod = { error: 'net::ERR_NETWORK_CHANGED' };
+  const unrecovered = { error: 'net::ERR_NETWORK_CHANGED' };
+  const realFailure = { error: 'net::ERR_CONNECTION_RESET' };
+  const recoveredConsole = { message: 'Failed to load resource: net::ERR_NETWORK_CHANGED' };
+  const otherConsole = { message: 'Failed to load resource: net::ERR_NETWORK_CHANGED' };
+  const diagnostics = {
+    failedRequests: [recovered, wrongMethod, unrecovered, realFailure],
+    consoleErrors: [recoveredConsole, otherConsole],
+  };
+  const failures = [
+    { entry: recovered, url: 'http://evidence:3000/health', method: 'GET', error: recovered.error, order: 2 },
+    { entry: wrongMethod, url: 'http://evidence:3000/health', method: 'POST', error: wrongMethod.error, order: 3 },
+    { entry: unrecovered, url: 'http://evidence:3000/api/items', method: 'GET', error: unrecovered.error, order: 4 },
+    { entry: realFailure, url: 'http://evidence:3000/other', method: 'GET', error: realFailure.error, order: 5 },
+  ];
+  const successes = new Map([
+    ['GET http://evidence:3000/health', 6],
+    ['GET http://evidence:3000/api/items', 1],
+    ['GET http://evidence:3000/other', 7],
+  ]);
+  const consoleEvents = [
+    { entry: recoveredConsole, url: 'http://evidence:3000/health', method: 'GET', message: recoveredConsole.message },
+    { entry: otherConsole, url: 'http://evidence:3000/api/items', method: 'GET', message: otherConsole.message },
+  ];
+
+  assert.deepEqual(replay.discardRecoveredNetworkChanges(
+    diagnostics, failures, successes, consoleEvents
+  ), { requests: 1, consoleErrors: 1 });
+  assert.deepEqual(diagnostics.failedRequests, [wrongMethod, unrecovered, realFailure]);
+  assert.deepEqual(diagnostics.consoleErrors, [otherConsole]);
 });
 
 test('session bootstrap accepts only a bounded session cookie value', () => {

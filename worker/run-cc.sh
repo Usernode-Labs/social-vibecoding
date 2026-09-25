@@ -354,6 +354,7 @@ if [ "$MODE" = "evidence" ]; then
   EVIDENCE_DIAGNOSTIC_TAIL_PID=$!
   export EVIDENCE_PROXY_PORT=17891
   export EVIDENCE_PROXY_SERVER="http://127.0.0.1:$EVIDENCE_PROXY_PORT"
+  export EVIDENCE_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
   export EVIDENCE_PROXY_READY="$EVIDENCE_TMP/proxy.ready"
   export EVIDENCE_ALLOWED_ORIGINS="[\"$EVIDENCE_BASE_ORIGIN\",\"$EVIDENCE_HEAD_ORIGIN\"]"
   node /usr/local/bin/evidence-origin-proxy.js &

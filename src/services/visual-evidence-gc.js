@@ -13,6 +13,11 @@ const { visualHeadForSession, sameSha } = require('./pr-vote-revision');
 const FAILED_MEDIA_HOURS = 24;
 const ROLLBACK_MEDIA_DAYS = 7;
 const RUN_RETENTION_DAYS = 30;
+// A live run renews its durable row every 30 seconds. Waiting for the entire
+// 24-minute run budget after heartbeats stop hides interrupted deployments
+// and stalls the owner's manual rerun option. Keep a generous five-minute
+// silence window; pre-heartbeat runs retain their separate legacy grace.
+const HEARTBEAT_SILENCE_MS = 5 * 60_000;
 // Runs started before heartbeats were deployed may legitimately be in a
 // 30-minute image build. Give those rows a longer one-time grace period.
 const LEGACY_RUN_GRACE_MS = 45 * 60_000;
@@ -35,7 +40,8 @@ async function cleanupRunResources(config, run) {
 async function recoverInterrupted(config, pool, {
   maxAgeMs = null, limit = 20, cleanup = cleanupRunResources, stateService = state,
 } = {}) {
-  const ageMs = Math.max(60_000, Number(maxAgeMs) || config.visualEvidence?.maxRunMs || 1_440_000);
+  const runBudgetMs = Math.max(60_000, Number(config.visualEvidence?.maxRunMs) || 1_440_000);
+  const ageMs = Math.max(60_000, Number(maxAgeMs) || Math.min(runBudgetMs, HEARTBEAT_SILENCE_MS));
   const legacyAgeMs = Math.max(ageMs, LEGACY_RUN_GRACE_MS);
   const { rows } = await pool.query(
     `SELECT r.*, a.slug AS app_slug, s.visual_evidence_run_id AS current_run_id
@@ -67,7 +73,7 @@ async function recoverInterrupted(config, pool, {
       try {
         await stateService.transitionRun(pool, run.id, 'failed', {
           failureCode: 'evidence_run_interrupted',
-          failureReason: 'The visual change preview worker stopped before the run completed. Retry the preview run.',
+          failureReason: 'The visual change preview stopped reporting progress before it completed. The worker may have stopped during a deployment. You can retry the preview run.',
           recoveryMinIdleMs: minIdleMs,
         });
         failed += 1;

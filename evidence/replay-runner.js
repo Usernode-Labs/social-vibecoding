@@ -380,6 +380,73 @@ async function navigateStart(page, url, onRetry = () => {}, wait = (ms) => new P
   }
 }
 
+function recoveredInitialDocumentFailure(request, page, startUrl, retryCodes) {
+  if (!retryCodes?.size || !request?.isNavigationRequest?.()
+      || request.resourceType?.() !== 'document') return false;
+  try {
+    if (request.frame() !== page.mainFrame()) return false;
+    const requested = new URL(request.url());
+    const start = new URL(startUrl);
+    // URL fragments are local to the browser and never identify an HTTP
+    // request. Match the exact origin, path and query (including the fixture
+    // token) so an unrelated API or document failure cannot be suppressed.
+    if (requested.origin !== start.origin || requested.pathname !== start.pathname
+        || requested.search !== start.search) return false;
+    const code = RETRYABLE_INITIAL_NAVIGATION.exec(String(request.failure()?.errorText || ''))?.[1]?.toLowerCase();
+    return !!code && retryCodes.has(code);
+  } catch { return false; }
+}
+
+function discardRecoveredInitialNavigationFailures(
+  diagnostics, failures, page, startUrl, retryCodes, navigationStatus
+) {
+  if (navigationStatus < 200 || navigationStatus >= 400 || !retryCodes?.size) return 0;
+  const recovered = new Set(failures
+    .filter(({ request }) => recoveredInitialDocumentFailure(request, page, startUrl, retryCodes))
+    .map(({ failure }) => failure));
+  diagnostics.failedRequests = diagnostics.failedRequests.filter((failure) => !recovered.has(failure));
+  return recovered.size;
+}
+
+function requestIdentity(url, method) {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    return `${String(method || 'GET').toUpperCase()} ${parsed.toString()}`;
+  } catch { return null; }
+}
+
+// Chromium keeps requestfailed and console records after an app successfully
+// retries the same request. Suppress only an ERR_NETWORK_CHANGED entry with a
+// later 2xx/3xx response for the exact method and URL. Any unrecovered
+// request, other network error, unrelated console error, or page exception
+// still fails the replay. The two clean passes and UI assertions are unchanged.
+function discardRecoveredNetworkChanges(diagnostics, failures, successes, consoleEvents) {
+  const recovered = new Set();
+  const unrecoveredKeys = new Set();
+  const recordedFailures = new Set(diagnostics.failedRequests);
+  for (const failure of failures) {
+    if (!recordedFailures.has(failure.entry)) continue;
+    const key = requestIdentity(failure.url, failure.method);
+    const laterSuccess = key && successes.get(key) > failure.order;
+    if (key && /\bnet::ERR_NETWORK_CHANGED\b/i.test(failure.error) && laterSuccess) {
+      recovered.add(failure.entry);
+    } else if (key) {
+      unrecoveredKeys.add(key);
+    }
+  }
+  diagnostics.failedRequests = diagnostics.failedRequests.filter((entry) => !recovered.has(entry));
+  const recoveredKeys = new Set(failures.filter((failure) => recovered.has(failure.entry))
+    .map((failure) => requestIdentity(failure.url, failure.method)));
+  const recoveredConsole = new Set(consoleEvents.filter((event) => {
+    const key = requestIdentity(event.url, event.method);
+    return key && recoveredKeys.has(key) && !unrecoveredKeys.has(key)
+      && /\bnet::ERR_NETWORK_CHANGED\b/i.test(event.message);
+  }).map((event) => event.entry));
+  diagnostics.consoleErrors = diagnostics.consoleErrors.filter((entry) => !recoveredConsole.has(entry));
+  return { requests: recovered.size, consoleErrors: recoveredConsole.size };
+}
+
 function publicRelativePath(value) {
   const url = value instanceof URL ? new URL(value.toString()) : new URL(value);
   url.searchParams.delete('token');
@@ -530,9 +597,15 @@ function networkTracker(page) {
   };
 }
 
-async function executeAction(page, action, origin, network, authToken = '') {
+async function executeAction(page, action, origin, network, authToken = '', controlledFailure = null) {
   const startedAt = Date.now();
   switch (action.type) {
+    case 'requestFailure':
+      if (!controlledFailure || controlledFailure.path !== action.path) {
+        throw new ReplayFailure('invalid_controlled_failure', 'Request failure does not match the accepted intent.');
+      }
+      controlledFailure.enabled = action.enabled;
+      break;
     case 'navigate':
       await page.goto(authorizedUrl(origin, action.path, authToken), { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
       break;
@@ -778,14 +851,23 @@ async function encodeWebm(frames, { fps, targetBytes, maxBytes }) {
   } finally { await fsp.rm(dir, { recursive: true, force: true }); }
 }
 
-async function installOriginFence(context, allowedOrigins, diagnostics) {
+async function installOriginFence(context, allowedOrigins, diagnostics, controlledFailure = null) {
   await context.route('**/*', async (route) => {
     const request = route.request();
     const url = request.url();
     if (/^(?:data|blob|about):/.test(url)) return route.continue();
     let origin;
     try { origin = new URL(url).origin; } catch { origin = null; }
-    if (origin && allowedOrigins.has(origin)) return route.continue();
+    if (origin && allowedOrigins.has(origin)) {
+      if (controlledFailure?.enabled && request.method() === 'GET'
+          && new URL(url).pathname + new URL(url).search === controlledFailure.path) {
+        controlledFailure.requests.add(request);
+        controlledFailure.hits += 1;
+        controlledFailure.urls.add(url);
+        return route.abort('failed');
+      }
+      return route.continue();
+    }
     if (diagnostics.blockedRequests.length < MAX_CONSOLE_ITEMS) {
       diagnostics.blockedRequests.push({
         origin: safeDiagnosticText(origin || 'invalid', 120),
@@ -794,6 +876,20 @@ async function installOriginFence(context, allowedOrigins, diagnostics) {
     }
     return route.abort('blockedbyclient');
   });
+}
+
+function discardExpectedControlledFailureConsole(diagnostics, consoleEvents, controlledFailure) {
+  if (!controlledFailure?.hits) return 0;
+  let discarded = 0;
+  for (const { entry, url, message } of consoleEvents) {
+    if (!controlledFailure.urls.has(url)
+        || !/^Failed to load resource: net::ERR_(?:FAILED|BLOCKED_BY_CLIENT)$/i.test(message.trim())) continue;
+    const index = diagnostics.consoleErrors.indexOf(entry);
+    if (index < 0) continue;
+    diagnostics.consoleErrors.splice(index, 1);
+    discarded += 1;
+  }
+  return discarded;
 }
 
 async function addCookies(context, origin, values) {
@@ -863,6 +959,10 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   const diagnostics = {
     consoleErrors: [], pageErrors: [], failedRequests: [], blockedRequests: [], httpErrors: [],
   };
+  const controlledFailure = story.intent.controlledFailurePath
+    ? { path: story.intent.controlledFailurePath, enabled: false, hits: 0,
+      requests: new WeakSet(), urls: new Set() }
+    : null;
   const bootstrap = { attempted: false, cookieAlreadyPresent: false, sessionCookieInstalled: false, responseStatus: null };
   const eventBase = {
     runId: input.runId, pass: input.pass, storyId: story.id,
@@ -897,7 +997,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     // for base and head to observe each other.
     const allowedOrigins = new Set([origin]);
     setupPhase = 'install_origin_fence';
-    await installOriginFence(context, allowedOrigins, diagnostics);
+    await installOriginFence(context, allowedOrigins, diagnostics, controlledFailure);
     setupPhase = 'install_cookies';
     await addCookies(context, origin, input.cookies[side]);
     setupPhase = 'bootstrap_session';
@@ -926,12 +1026,22 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     });
   }
   const network = networkTracker(page);
+  const startUrl = authorizedUrl(origin, sidePlan.startPath, authToken);
+  const initialNavigationFailures = [];
+  const initialNavigationRetries = new Set();
+  let initialNavigationPending = true;
+  const networkFailures = [];
+  const successfulRequests = new Map();
+  const consoleEvents = [];
+  let networkOrder = 0;
   page.on('console', (message) => {
     if (message.type() === 'error' && diagnostics.consoleErrors.length < MAX_CONSOLE_ITEMS) {
-      diagnostics.consoleErrors.push({
+      const entry = {
         message: safeDiagnosticText(message.text()),
         source: diagnosticLocation(message.location()?.url || '', origin),
-      });
+      };
+      diagnostics.consoleErrors.push(entry);
+      consoleEvents.push({ entry, url: message.location()?.url || '', method: 'GET', message: message.text() });
     }
   });
   page.on('pageerror', (error) => {
@@ -940,17 +1050,28 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     }
   });
   page.on('requestfailed', (request) => {
+    if (controlledFailure?.requests.has(request)) return;
     let sameOrigin = false;
     try { sameOrigin = new URL(request.url()).origin === origin; } catch {}
     if (sameOrigin && diagnostics.failedRequests.length < MAX_CONSOLE_ITEMS) {
-      diagnostics.failedRequests.push({
+      const failure = {
         location: diagnosticLocation(request.url(), origin),
         error: safeDiagnosticText(request.failure()?.errorText || '', 120),
+      };
+      diagnostics.failedRequests.push(failure);
+      if (initialNavigationPending) initialNavigationFailures.push({ request, failure });
+      networkFailures.push({
+        entry: failure, url: request.url(), method: request.method(),
+        error: request.failure()?.errorText || '', order: ++networkOrder,
       });
     }
   });
   page.on('response', (response) => {
     const status = response.status();
+    if (status >= 200 && status < 400) {
+      const key = requestIdentity(response.url(), response.request().method());
+      if (key) successfulRequests.set(key, ++networkOrder);
+    }
     if (status < 400 || diagnostics.httpErrors.length >= MAX_CONSOLE_ITEMS) return;
     const location = diagnosticLocation(response.url(), origin);
     if (location.sameOrigin) diagnostics.httpErrors.push({ status, location });
@@ -963,15 +1084,23 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   let failureStage = { phase: 'navigate_start' };
   try {
     emitEvent({ type: 'navigation_started', ...eventBase });
-    const response = await navigateStart(page, authorizedUrl(origin, sidePlan.startPath, authToken),
-      ({ attempt, code }) => emitEvent({ type: 'navigation_retry', ...eventBase, attempt, code }));
+    const response = await navigateStart(page, startUrl, ({ attempt, code }) => {
+      initialNavigationRetries.add(code);
+      emitEvent({ type: 'navigation_retry', ...eventBase, attempt, code });
+    });
+    initialNavigationPending = false;
     navigation = {
       status: typeof response?.status === 'function' ? response.status() : null,
     };
+    const recoveredRequestCount = discardRecoveredInitialNavigationFailures(
+      diagnostics, initialNavigationFailures, page, startUrl,
+      initialNavigationRetries, navigation.status
+    );
     await settlePage(page, { motion });
     emitEvent({
       type: 'navigation_completed', ...eventBase,
       status: navigation.status,
+      recoveredRequestCount,
       location: diagnosticLocation(page.url(), origin),
     });
     failureStage = { phase: 'capture_start' };
@@ -989,7 +1118,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
         actionId: action.id, actionStage: action.stage, actionType: action.type,
       });
       if (Date.now() >= sideDeadline) throw new ReplayFailure('side_timeout', `${side} exceeded its ${planContract.MAX_SIDE_MS} ms budget.`);
-      const durationMs = await executeAction(page, action, origin, network, authToken);
+      const durationMs = await executeAction(page, action, origin, network, authToken, controlledFailure);
       await settlePage(page, { motion });
       actionResults.push({ id: action.id, stage: action.stage, type: action.type, durationMs, passed: true });
       emitEvent({
@@ -1034,6 +1163,16 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     stages.push({ stage: '__checkpoint__', image: contextPng });
 
     failureStage = { phase: 'browser_diagnostics' };
+    if (controlledFailure && controlledFailure.hits === 0) {
+      throw new ReplayFailure('controlled_failure_unused',
+        'The declared API request was never made while the controlled failure was enabled.');
+    }
+    const expectedFailureConsoleCount = discardExpectedControlledFailureConsole(
+      diagnostics, consoleEvents, controlledFailure
+    );
+    const recoveredNetwork = discardRecoveredNetworkChanges(
+      diagnostics, networkFailures, successfulRequests, consoleEvents
+    );
     if (diagnostics.consoleErrors.length || diagnostics.pageErrors.length
         || diagnostics.failedRequests.length || diagnostics.blockedRequests.length) {
       throw new ReplayFailure(
@@ -1065,6 +1204,9 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       recordedFrameCount: result.recordedFrameCount,
       location: diagnosticLocation(page.url(), origin),
       httpErrorCount: diagnostics.httpErrors.length,
+      recoveredNetworkChanges: recoveredNetwork.requests,
+      controlledFailureHits: controlledFailure?.hits || 0,
+      expectedFailureConsoleCount,
     });
     return result;
   } catch (error) {
@@ -1312,6 +1454,11 @@ module.exports = {
   waitForVisibleText,
   authorizedUrl,
   navigateStart,
+  discardRecoveredInitialNavigationFailures,
+  discardRecoveredNetworkChanges,
+  discardExpectedControlledFailureConsole,
+  installOriginFence,
+  executeAction,
   publicRelativePath,
   redactedUrl,
   sessionCookieValue,

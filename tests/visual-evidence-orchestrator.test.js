@@ -10,6 +10,29 @@ const controlPlane = require('../src/services/visual-evidence-control');
 const orchestrator = require('../src/services/visual-evidence-orchestrator');
 const fixtures = require('./fixtures/visual-evidence');
 
+test('evidence and staging use the same UI file classifier', () => {
+  const serverOnly = [
+    'src/routes/notifications.js', 'src/services/mobile-push-badge.js',
+    'tests/mobile-push-badge.test.js',
+  ];
+  assert.equal(orchestrator.uiFileHeuristic(serverOnly), false);
+  assert.equal(orchestrator.uiFileHeuristic(['frontend/src/Shell.tsx']), true);
+  assert.equal(orchestrator.uiFileHeuristic(['public/js/app-view.js']), true);
+  assert.equal(orchestrator.uiFileHeuristic(['src/features/widgets/icon.svg']), true);
+});
+
+test('run diagnostics retain bounded recovery and controlled-failure counts', () => {
+  const navigation = orchestrator.replayProgressEvent({ type: 'navigation_completed',
+    status: 200, recoveredRequestCount: 1 }, 2);
+  const side = orchestrator.replayProgressEvent({ type: 'side_finished',
+    controlledFailureHits: 1, expectedFailureConsoleCount: 1,
+    recoveredNetworkChanges: 0 }, 2);
+  assert.equal(navigation.recoveredRequestCount, 1);
+  assert.equal(side.controlledFailureHits, 1);
+  assert.equal(side.expectedFailureConsoleCount, 1);
+  assert.equal(side.recoveredNetworkChanges, 0);
+});
+
 const RUN_ID = '1'.repeat(32);
 const BASE = 'a'.repeat(40);
 const HEAD = 'b'.repeat(40);
@@ -130,6 +153,17 @@ async function execute(fixture, options = {}) {
     ...(options.onAgentFinalResponse ? { onAgentFinalResponse: options.onAgentFinalResponse } : {}),
   }, fixture.dependencies);
 }
+
+test('a UI-classified no-story declaration fails before provisioning or agent dispatch', async () => {
+  const fixture = setup();
+  fixture.run.intent = contract.parseIntent({
+    version: 1, impact: 'none', rationale: 'Only an error state changes.', stories: [],
+  });
+  await assert.rejects(execute(fixture), { code: 'visual_evidence_intent_conflict' });
+  assert.equal(fixture.calls.dispatches, 0);
+  assert.equal(fixture.calls.cleaned, 0);
+  assert.deepEqual(fixture.transitions.map((entry) => entry.next), ['failed']);
+});
 
 test('a successful agent plan publishes captured media without a model verdict', async () => {
   const fixture = setup();

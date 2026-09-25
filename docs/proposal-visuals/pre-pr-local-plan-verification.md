@@ -33,6 +33,16 @@ a plan that changes the intent. The plan schema and examples are in
    executable plan for the specific user-visible claim. Choose `animation:
    none` for a static state, `steps` for meaningful user interactions, and
    `motion` only when movement is the claim.
+   For an error state that requires a failed API request, declare the exact
+   `GET /api/...` path in `intent.controlledFailurePath`. Put
+   `Controlled test: deliberately block the declared API GET on both revisions.`
+   as the first `intent.steps` entry; validation requires the reviewer label.
+   Put matching `requestFailure` actions with `enabled: true` before the triggering
+   interaction in both `replay.before` and `replay.after`; disable it after
+   the interaction if the flow needs a recovery step. The toggle sequence
+   must match on both sides. A successful capture requires the browser to
+   actually make that blocked request on each side, and the reviewer flow is
+   labeled as a controlled test.
 3. Run the command. It checks out the two exact commits, builds both Docker
    images, snapshots the *local* database, and restores that same snapshot
    separately for base and head before each story and viewport. It mints the

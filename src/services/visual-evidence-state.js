@@ -336,7 +336,9 @@ function runSummary(row, artifactSummary = []) {
     headSha: row.head_sha,
     failureCode: row.failure_code || null,
     failureReason: row.failure_reason || null,
-    repairAvailable: row.state === 'failed' && Number(row.repair_attempt || 0) < 1,
+    repairAvailable: row.state === 'failed'
+      && row.failure_code !== 'visual_evidence_intent_conflict'
+      && Number(row.repair_attempt || 0) < 1,
     planHash: row.plan_hash || null,
     replayCount: Number.isInteger(trace?.runs) ? Math.max(0, Math.min(2, trace.runs)) : null,
     repairCount: Number.isInteger(Number(row.repair_attempt))
