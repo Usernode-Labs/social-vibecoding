@@ -1038,7 +1038,8 @@ test('slow paired environment provisioning does not consume the agent exploratio
 test('background evidence heartbeat records progress and stops when the run ends', async () => {
   const seen = [];
   const writes = [];
-  const heartbeat = orchestrator.startRunHeartbeat({ totalCount: 10, idleCount: 1, waitingCount: 3 }, RUN_ID, {
+  const heartbeatPool = { totalCount: 10, idleCount: 1, waitingCount: 3 };
+  const heartbeat = orchestrator.startRunHeartbeat(heartbeatPool, RUN_ID, {
     heartbeatRun: async (_pool, _runId, phase, patch) => { seen.push(phase); writes.push(patch); },
   }, null, 10);
   heartbeat.onProgress({ stage: 'checkout_revisions' });
@@ -1055,13 +1056,44 @@ test('background evidence heartbeat records progress and stops when the run ends
   assert.equal(writes.at(-1).heartbeat.poolTotal, 10);
   assert.equal(writes.at(-1).heartbeat.poolIdle, 1);
   assert.equal(writes.at(-1).heartbeat.poolWaiting, 3);
+  const observer = orchestrator.liveRunObserver(RUN_ID, heartbeatPool);
+  assert.equal(observer.ownsRun, true);
+  assert.equal(observer.processId, writes.at(-1).heartbeat.processId);
+  assert.equal(observer.heartbeatWrite.phase, 'checkout_revisions');
+  assert.match(observer.heartbeatWrite.lastSucceededAt, /^20\d\d-/);
   assert.ok(seen.length >= 2, 'the lease renews during a slow provisioning step');
   heartbeat.stop();
+  assert.equal(orchestrator.liveRunObserver(RUN_ID, heartbeatPool).ownsRun, false);
   const stoppedAt = seen.length;
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(seen.length, stoppedAt, 'finished runs stop renewing their lease');
   assert.equal(orchestrator.progressPhase({ phase: 'build', detail: 'private output' }), 'build_build');
   assert.equal(orchestrator.progressPhase({ detail: 'private output' }), null);
+});
+
+test('private observer identifies a heartbeat write still waiting in the owner process', async () => {
+  let started;
+  let release;
+  const writeStarted = new Promise((resolve) => { started = resolve; });
+  const writeReleased = new Promise((resolve) => { release = resolve; });
+  const heartbeat = orchestrator.startRunHeartbeat({}, RUN_ID, {
+    heartbeatRun: async () => { started(); await writeReleased; },
+  }, null, 1000);
+  try {
+    await writeStarted;
+    const waiting = orchestrator.liveRunObserver(RUN_ID, {});
+    assert.equal(waiting.ownsRun, true);
+    assert.match(waiting.heartbeatWrite.startedAt, /^20\d\d-/);
+    assert.equal(waiting.heartbeatWrite.lastSucceededAt, null);
+    release();
+    await new Promise((resolve) => setImmediate(resolve));
+    const finished = orchestrator.liveRunObserver(RUN_ID, {});
+    assert.equal(finished.heartbeatWrite.startedAt, null);
+    assert.match(finished.heartbeatWrite.lastSucceededAt, /^20\d\d-/);
+  } finally {
+    release();
+    heartbeat.stop();
+  }
 });
 
 test('terminal failure metadata fits the database and redacts credentials before persistence', async () => {

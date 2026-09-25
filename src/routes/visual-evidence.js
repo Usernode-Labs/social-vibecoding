@@ -180,6 +180,7 @@ function visualEvidenceRoutes(config) {
         })),
         failureCode: run.failure_code,
         failureReason: run.failure_reason,
+        observer: orchestrator.liveRunObserver(run.id, pool),
         trace: {
           progress: trace.progress || null,
           heartbeat: trace.heartbeat || null,

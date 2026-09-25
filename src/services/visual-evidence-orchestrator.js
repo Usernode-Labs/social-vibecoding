@@ -32,6 +32,7 @@ const stopRequested = new Set();
 const DIFF_CONTEXT_CHARS = 8_000;
 const inFlight = new Map();
 const inFlightRunIds = new Map();
+const liveHeartbeats = new Map();
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const EVIDENCE_PROCESS_ID = crypto.randomBytes(8).toString('hex');
 const EVIDENCE_PROCESS_STARTED_AT = new Date().toISOString();
@@ -114,6 +115,11 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
   let agentFinalResponse = null;
   let lastAgentFlushAt = 0;
   let lastHeartbeatWriteMs = null;
+  const live = {
+    phase, writeStartedAt: null, lastSucceededAt: null,
+    lastErrorAt: null, lastErrorCode: null,
+  };
+  liveHeartbeats.set(runId, live);
   const flush = () => {
     if (stopped || typeof stateService.heartbeatRun !== 'function') return;
     if (writing) { pending = true; return; }
@@ -137,17 +143,23 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
           ...(agentFinalResponse ? { agentFinalResponse } : {}),
         };
         const writeStartedAt = Date.now();
+        live.writeStartedAt = new Date(writeStartedAt).toISOString();
         await stateService.heartbeatRun(pool, runId, phase,
           Object.keys(patch).length ? patch : null);
         lastHeartbeatWriteMs = Date.now() - writeStartedAt;
+        live.lastSucceededAt = new Date().toISOString();
+        live.writeStartedAt = null;
       } while (pending && !stopped);
     }).catch((error) => {
+      live.lastErrorAt = new Date().toISOString();
+      live.lastErrorCode = String(error?.code || 'heartbeat_write_failed').slice(0, 64);
       log.warn('visual-evidence', 'Evidence heartbeat failed', {
         runId, phase, error: error.message,
         poolTotal: pool.totalCount, poolIdle: pool.idleCount, poolWaiting: pool.waitingCount,
       });
     }).finally(() => {
       writing = false;
+      live.writeStartedAt = null;
       if (pending && !stopped) flush();
     });
   };
@@ -198,9 +210,39 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
         }
       }
       const next = progressPhase(event);
-      if (next && next !== phase) { phase = next; flush(); }
+      if (next && next !== phase) { phase = next; live.phase = next; flush(); }
     },
-    stop() { stopped = true; clearInterval(timer); },
+    stop() {
+      stopped = true;
+      clearInterval(timer);
+      if (liveHeartbeats.get(runId) === live) liveHeartbeats.delete(runId);
+    },
+  };
+}
+
+// This private observer is evaluated by the process answering diagnostics,
+// rather than copied from the run's last successful database heartbeat. A
+// different process ID on the same host proves a restart; an in-progress
+// write on the owner distinguishes a blocked heartbeat from a stopped owner.
+function liveRunObserver(runId, pool) {
+  const live = liveHeartbeats.get(runId) || null;
+  return {
+    observedAt: new Date().toISOString(),
+    host: os.hostname().replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 128),
+    processId: EVIDENCE_PROCESS_ID,
+    processStartedAt: EVIDENCE_PROCESS_STARTED_AT,
+    buildSha: exactSha(process.env.GIT_SHA),
+    ownsRun: !!live,
+    heartbeatWrite: live ? {
+      phase: live.phase,
+      startedAt: live.writeStartedAt,
+      lastSucceededAt: live.lastSucceededAt,
+      lastErrorAt: live.lastErrorAt,
+      lastErrorCode: live.lastErrorCode,
+    } : null,
+    poolTotal: Number.isInteger(pool?.totalCount) ? pool.totalCount : null,
+    poolIdle: Number.isInteger(pool?.idleCount) ? pool.idleCount : null,
+    poolWaiting: Number.isInteger(pool?.waitingCount) ? pool.waitingCount : null,
   };
 }
 
@@ -1700,6 +1742,7 @@ module.exports = {
   progressPhase,
   replayProgressEvent,
   startRunHeartbeat,
+  liveRunObserver,
   notifyEvidence,
   failCurrentRun,
   executeRun,
