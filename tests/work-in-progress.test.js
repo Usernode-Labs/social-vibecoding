@@ -15,9 +15,9 @@
 //      user to pause something.
 //   2. A CONVERSATION STANDS FOR THE CHANGES IT STARTED: they are opened
 //      through it, and not listed again beside it.
-//   3. The platform mark's menu offers up to three of your in-progress items
-//      on the app it is about, conversations first; Recents lists agent
-//      sessions on its one clock.
+//   3. The platform mark's menu offers your five most recent agent sessions,
+//      on every app and on Home, then "Show more" when there are others;
+//      Recents lists agent sessions on its one clock.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -37,30 +37,53 @@ const conversation = (over = {}) => ({
   ...over,
 });
 test('the mark\'s Continue rows: agent sessions only, newest first, paused like any other', () => {
-  const rows = model.continueRows('notes', [
+  const { rows, more } = model.continueRows([
     conversation(),
     conversation({ id: 8, title: null, lastActivityAt: '2026-09-24T11:00:00Z', activeChange: { appSlug: 'notes', status: 'active', title: null }, busy: true }),
     conversation({ id: 11, title: null, lastActivityAt: '2026-09-24T12:00:00Z', activeChange: null }),
-    conversation({ id: 9, activeChange: { appSlug: 'recipes', status: 'active', title: 'x' } }),
     conversation({ id: 10, status: 'archived' }),
     conversation({ id: 12, lastActivityAt: '2026-09-24T09:00:00Z', activeChange: null, doneUnseen: true }),
-  ], 5);
+  ]);
   assert.deepEqual(rows.map((r) => r.key), ['agent:8', 'agent:7', 'agent:12']);
+  assert.equal(more, false, 'every one of them is shown');
   assert.deepEqual(rows.map((r) => r.href), ['#messages/agent/8', '#messages/agent/7', '#messages/agent/12'],
     'a conversation opens itself');
   assert.equal(rows[0].title, 'Agent session', 'an untitled conversation still says what it is');
   assert.ok(!rows.some((r) => r.key === 'agent:11'), 'one nothing was said in yet is not work in progress');
   assert.equal(rows[1].detail, 'In progress', 'a paused change reads as the work in progress it is');
   assert.deepEqual(rows.map((r) => r.activity), ['working', null, 'done'], 'each with the lists\' mark');
-  assert.equal(model.continueRows('notes', [conversation(), conversation({ id: 2 }), conversation({ id: 3 }), conversation({ id: 4 })]).length, 3,
-    'three at most by default');
-  assert.deepEqual(model.continueRows(null, [conversation()]), [], 'no app, no rows');
+});
+
+test('the mark\'s Continue rows: every app\'s sessions, the five newest, and whether there are more', () => {
+  // Not only the app the menu is open on: another app's session, one whose
+  // change names no app, and one with only a focus app are all yours.
+  const { rows } = model.continueRows([
+    conversation({ id: 1, lastActivityAt: '2026-09-24T10:00:00Z' }),
+    conversation({ id: 2, lastActivityAt: '2026-09-24T11:00:00Z', activeChange: { appSlug: 'recipes', status: 'active', title: 'x' } }),
+    conversation({ id: 3, lastActivityAt: '2026-09-24T12:00:00Z', focusApp: null, activeChange: { appSlug: null, status: 'active', title: 'y' } }),
+    conversation({ id: 4, lastActivityAt: '2026-09-24T09:00:00Z', focusApp: { slug: 'recipes' }, activeChange: null }),
+  ]);
+  assert.deepEqual(rows.map((r) => r.key), ['agent:3', 'agent:2', 'agent:1', 'agent:4']);
+
+  const many = Array.from({ length: 7 }, (_, i) => conversation({
+    id: i + 1, lastActivityAt: `2026-09-24T1${i}:00:00Z`,
+  }));
+  const list = model.continueRows(many);
+  assert.equal(model.CONTINUE_MAX, 5);
+  assert.deepEqual(list.rows.map((r) => r.key), ['agent:7', 'agent:6', 'agent:5', 'agent:4', 'agent:3'],
+    'the five most recent');
+  assert.equal(list.more, true, 'and there are more');
+  assert.equal(model.continueRows(many.slice(0, 5)).more, false, 'exactly five is all of them');
+  assert.deepEqual(model.continueRows([]), { rows: [], more: false });
+  assert.doesNotMatch(read('frontend/src/features/app-context/continue-model.ts'), /=== slug|appOf\(/,
+    'no per-app filter left');
   assert.doesNotMatch(read('frontend/src/features/app-context/continue-model.ts'), /improve/i, 'classic changes are the Workshop\'s, one row up');
 });
 
-test('the mark\'s menu: the app\'s own rows first, then Continue, after mount only, with "See all sessions"', () => {
+test('the mark\'s menu: the app\'s own rows first, then Continue, after mount only, with "Show more" when there are more', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /const continuing = mounted && view !== 'about'/, 'never in the prerender: the hydrating render matches it');
+  assert.match(sheet, /const continuing = mounted && view !== 'about'\s*\? continueRows\(agentSessions \|\| \[\]\)\s*: \{ rows: \[\], more: false \};/,
+    'never in the prerender (the hydrating render matches it), and not keyed on the app');
   assert.match(sheet, /if \(open && window\.App\?\.user\) void loadAgentSessions\(\);/,
     'for any signed-in viewer: the flag never hides a conversation that exists');
   const at = (id) => sheet.indexOf(`id="${id}"`);
@@ -68,7 +91,9 @@ test('the mark\'s menu: the app\'s own rows first, then Continue, after mount on
     && at('app-menu-row-discussion') < at('app-menu-row-about')
     && at('app-menu-row-about') < at('app-menu-continue'),
     'Go to workshop, the discussion and About are the app\'s section; Continue follows them');
-  assert.match(sheet, /id="app-menu-continue-all"[\s\S]{0,200}label="See all sessions"[\s\S]{0,200}setMessagesFilter\('agents'\)/);
+  assert.match(sheet, /\{continuing\.more \? \(\s*<MenuRow\s+id="app-menu-continue-all"[\s\S]{0,200}label="Show more"[\s\S]{0,200}setMessagesFilter\('agents'\)/,
+    'only when there are more, and it opens Messages\' Agents list');
+  assert.doesNotMatch(sheet, /See all sessions/);
   assert.match(sheet, /<AgentActivityMark activity=\{row\.activity\} \/>/);
   assert.doesNotMatch(sheet, /See all your work|continue-change/);
 });
