@@ -2978,10 +2978,12 @@ locally inside the worker the same way a staging container does:
 - **`USERNODE_ENV=staging`** against a **fresh, empty local database** —
   the build turn exposes `INLOOP_ENV`, `INLOOP_PORT`, and
   `INLOOP_DATABASE_URL` for exactly this. Typical launch:
-  `USERNODE_ENV=$INLOOP_ENV PORT=$INLOOP_PORT DATABASE_URL=$INLOOP_DATABASE_URL node server.js &`
+  `usernode-run-inloop node server.js &`
   (or this app's declared `dapp.json` entrypoint).
-- Private secrets resolve from the manifest's `staging_default` /
-  `default` only, same as a real staging build — never the prod store.
+- The launch command supplies the manifest's committed `staging_default` /
+  `default` values, as staging does. If a required value has no committed
+  fallback, it reports the missing key and stops. Never copy a production
+  secret or invent a credential just to make the local check run.
 - Navigate to `http://127.0.0.1:$INLOOP_PORT` at the real starting route for
   the flow you will declare. Self-app app screens stay under
   `/app/<slug>/...`; put its other SPA routes after the `#`.
@@ -2990,9 +2992,10 @@ locally inside the worker the same way a staging container does:
   390×844). This local check helps you fix the head revision; the later paired
   evidence run independently explores and replays both revisions.
 - A **blank or empty page usually means missing seed data, not a bug** —
-  the local DB starts empty. Add the `IS_STAGING` seed (or a `?demo=1`
-  route) per "Staging mock data" and re-check, rather than "fixing"
-  code that already works.
+  the local DB starts empty. Check the app's existing staging fixtures or
+  `?demo=1` route first. A sign-in screen means this browser is signed out;
+  use an existing documented fake staging account through the normal UI if
+  possible. Do not change auth code or seed passwords solely for this check.
 - Keep it tight (a couple of launch→check→fix cycles, a minute or two).
   **If the app won't boot** — no local Postgres, a missing required
   secret, a crash on start — don't fight it: note that you skipped the
