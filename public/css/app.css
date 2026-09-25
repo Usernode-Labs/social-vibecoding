@@ -17856,6 +17856,12 @@ html.un-ios {
   display: inline-flex;
   flex: none;
 }
+/* THE RAIL'S SETTINGS COG (#3120) is desktop-only: the phone's bar is five
+   equal cells and Settings stays a row of the Profile screen there. The
+   desktop block below is the only place that gives it a box. */
+.platform-rail-settings {
+  display: none;
+}
 .platform-tab-glyph {
   width: 24px;
   height: 24px;
@@ -18364,6 +18370,53 @@ html.un-kb #platform-parked {
   }
   #platform-tab-me {
     order: 2;
+  }
+  /* ROOM FOR THE COG (#3120): Settings sits at the end of Me's row, so the
+     row gives up the cog's 44px plus the rail's 4px step between targets,
+     and a long username ellipsizes before it rather than under it. The cog
+     follows Me in the markup but is out of flow, so Me is still the last
+     item the `order` above places. */
+  #platform-tab-me {
+    margin-right: 48px;
+  }
+  /* SETTINGS BESIDE YOU (#3120). A square the height of Me's row, pinned to
+     the same foot: absolutely placed, because the rail is a flex COLUMN and
+     a second item in it would stack under Me rather than sit beside it. The
+     offsets are the rail's own padding (8px, plus the home-indicator inset
+     at the foot), so its bottom edge is Me's bottom edge. `.platform-tabs`
+     is `position: fixed`, which makes the rail the containing block. The
+     ink, radius, lit fill and hover are a tab row's, so it reads as one more
+     place in the rail rather than a toolbar button. */
+  .platform-rail-settings {
+    position: absolute;
+    right: 8px;
+    bottom: calc(8px + var(--platform-safe-bottom, 0px));
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    color: var(--text-muted);
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .platform-rail-settings[aria-current="page"] {
+    background: var(--brand-tint);
+    color: var(--brand-ink);
+  }
+  .platform-rail-settings-glyph {
+    width: 22px;
+    height: 22px;
+    flex: none;
+  }
+  @media (hover: hover) {
+    .platform-rail-settings:not([aria-current="page"]):hover {
+      background: color-mix(in srgb, var(--brand-tint) 55%, transparent);
+      color: var(--brand-ink);
+    }
   }
   .platform-parked {
     bottom: calc(var(--platform-rail-foot-h) + var(--platform-safe-bottom, 0px));
