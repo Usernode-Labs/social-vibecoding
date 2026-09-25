@@ -372,6 +372,7 @@ const Improve = {
       // no longer change under it.
       boardView: Improve._boardView(),
       sessionOrigin: Improve._sessionOriginFor(prev, next, nextSubTab),
+      topicOrigin: Improve._topicOriginFor(prev, next, nextSubTab),
     });
   },
 
@@ -465,6 +466,42 @@ const Improve = {
   /** Called by a session row in Messages just before its anchor navigates. */
   enterSessionFrom(href) {
     Improve._nextSessionOrigin = typeof href === 'string' && href.startsWith('#') ? href : null;
+  },
+
+  /**
+   * Where a TOPIC's back chip should point, when not its board (#3103).
+   *
+   * The session rule's shape, narrower: only a door that names its origin
+   * yields one. A card shared into a Messages conversation opens the topic
+   * route, and the Improve store's `prev` cannot say it came from Messages —
+   * it describes the last APP route. Taken once on the way in; kept while
+   * the route stays a topic (navigateToApp re-publishes it once the app's
+   * record loads); dropped by every other route.
+   */
+  _topicOriginFor(prev, next, nextSubTab) {
+    if (!(next === 'dev' && nextSubTab === 'topic')) return null;
+    const named = Improve._nextTopicOrigin;
+    Improve._nextTopicOrigin = null;
+    if (named) return named;
+    return prev.tab === 'dev' && prev.subTab === 'topic' ? (prev.topicOrigin || null) : null;
+  },
+
+  /** The origin the NEXT topic entry should record. See `_topicOriginFor`. */
+  _nextTopicOrigin: null,
+
+  /** Called by a shared card in Messages just before its anchor navigates. */
+  enterTopicFrom(href) {
+    Improve._nextTopicOrigin = typeof href === 'string' && href.startsWith('#') ? href : null;
+  },
+
+  /**
+   * The captured topic origin ends with the app-view visit it belonged to.
+   * App._showOnlyScreen calls this on every reveal of another screen, so a
+   * topic later reached some other way (the bell, a link) does not inherit a
+   * conversation it was not opened from.
+   */
+  clearTopicOrigin() {
+    if (improveStore.get().topicOrigin) improveStore.set({ topicOrigin: null });
   },
 
   /**

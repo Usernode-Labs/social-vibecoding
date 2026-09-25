@@ -105,6 +105,7 @@ import {
   saveComposerDraft,
   sendSavedDraft,
   stopAgentTurn,
+  stopPreviewCapture,
   switchActiveChange,
   useAgentSessionPick,
   useAgentSessionSelector,
@@ -1099,6 +1100,66 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
   );
 }
 
+const CAPTURE_STEPS: Record<string, string> = {
+  provisioning: 'Preparing the before and after builds',
+  exploring: 'Finding the screens to capture',
+  replaying: 'Replaying the flow on both builds',
+  reviewing: 'Saving the captures',
+};
+
+/**
+ * The active change's visual change preview while it is captured: after the
+ * coding agent finished, Homeroom records before-and-after captures of the
+ * proposal, and that is not the coding agent working. Stop ends it; the
+ * proposal's Rerun starts it again.
+ */
+export function PreviewCapture({ change }: { change: AgentChange }) {
+  const capture = change.previewCapture;
+  const [clock, setClock] = useState(Date.now());
+  const [stopping, setStopping] = useState(false);
+  useEffect(() => {
+    if (!capture) return undefined;
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [capture]);
+  useEffect(() => { setStopping(false); }, [capture?.state]);
+  if (!capture) return null;
+  const started = capture.startedAt ? Date.parse(capture.startedAt) : NaN;
+  const seconds = Number.isFinite(started) ? Math.max(0, Math.round((clock - started) / 1000)) : null;
+  const stop = async () => {
+    setStopping(true);
+    await stopPreviewCapture();
+    setStopping(false);
+  };
+  return (
+    <div
+      className="flex min-w-0 items-center gap-2 text-[13px] text-zinc-500 dark:text-zinc-400"
+      data-agent-session-capture={capture.state}
+      aria-live="polite"
+    >
+      <SpinnerArcIcon className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+      <span className="min-w-0 truncate">
+        <span className="font-medium text-zinc-700 dark:text-zinc-200">Capturing previews</span>
+        {CAPTURE_STEPS[capture.state] ? ` · ${CAPTURE_STEPS[capture.state]}` : ''}
+      </span>
+      {seconds != null ? <span className="shrink-0 tabular-nums text-xs">{Math.floor(seconds / 60)}m {seconds % 60}s</span> : null}
+      <Button
+        type="button"
+        data-agent-session-capture-stop
+        variant="pillNeutral"
+        size="xs"
+        disabledStyle="dim"
+        ink="neutral"
+        className="ml-auto shrink-0 text-xs"
+        disabled={stopping}
+        onClick={() => void stop()}
+      >
+        {stopping ? 'Stopping…' : 'Stop'}
+      </Button>
+    </div>
+  );
+}
+
 function EmptyState({ about, request }: { about: About; request: DraftRequest | null }) {
   const app = about?.focusApp?.name || null;
   // Started from a request (Start work): say which, before anything is sent.
@@ -1872,6 +1933,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
           {items.map((item) => <Item key={item.key} item={item} sessionId={snapshot.id} />)}
           <LiveTurn runShown={runShown} />
           <FollowOutput scroll={scroll} stick={stick} count={items.length} />
+          {snapshot.session?.activeChange?.previewCapture ? <PreviewCapture change={snapshot.session.activeChange} /> : null}
           {snapshot.credits ? <CreditsCard refusal={snapshot.credits} /> : null}
           {snapshot.error ? (
             <p role="alert" className="rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{snapshot.error}</p>

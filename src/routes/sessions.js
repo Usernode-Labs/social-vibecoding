@@ -4078,6 +4078,44 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   });
 
+  // POST /api/sessions/:id/unpromote (#3114)
+  //   Move the caller's own proposal from "In review" back to "Underway"
+  //   without closing its pull request: votes are voided, the merge path can
+  //   no longer claim it, and a later promote puts it up for a fresh vote.
+  //   Owner-scoped like /archive. All the safety lives in
+  //   sessionLifecycle.unpromoteSession's single guarded UPDATE.
+  router.post('/api/sessions/:id/unpromote', async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      if (!Number.isInteger(sessionId) || sessionId <= 0) {
+        return res.status(400).json({ error: 'Bad session id' });
+      }
+      const result = await sessionLifecycle.unpromoteSession({
+        pool, sessionId, userId: req.user.id, actorUsername: req.user.username,
+      });
+      if (result.ok) {
+        return res.json({ ok: true, status: result.status, ...(result.already ? { alreadyUnderway: true } : {}) });
+      }
+      switch (result.code) {
+        case 'not_found':
+          return res.status(404).json({ error: 'Proposal not found' });
+        case 'forbidden':
+          return res.status(403).json({ error: 'Only the proposer can move this proposal back to Underway' });
+        case 'merging':
+          return res.status(409).json({ error: 'This proposal is already merging, so it can no longer be moved back to Underway.' });
+        case 'busy':
+          return res.status(409).json({ error: 'A build is running on this change. Wait for it to finish, then move it back to Underway.' });
+        case 'pending_secret':
+          return res.status(409).json({ error: 'This proposal holds a secret value that is discarded when it leaves review. Withdraw it instead if you want to stop it.' });
+        default:
+          return res.status(409).json({ error: 'This proposal is no longer in review.' });
+      }
+    } catch (err) {
+      log.error('sessions', 'Unpromote failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // POST /api/sessions/:id/reset-agent-context
   //   Switch a session's coding-agent backend/model (plan.md §11.3).
   //   Keeps the Git branch + working tree but starts a fresh agent

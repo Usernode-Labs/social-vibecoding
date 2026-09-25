@@ -108,6 +108,10 @@ async function previewDraft(pool, { user, hint = null }) {
 
 // ── Shaping ────────────────────────────────────────────────────────────
 
+// A run that has started and not settled. A 'planned' run has not started
+// (or never will: see the proposal's "not started" reason).
+const CAPTURING_STATES = new Set(['provisioning', 'exploring', 'replaying', 'reviewing']);
+
 function shapeChangeRow(row) {
   if (!row || row.change_id == null) return null;
   return {
@@ -125,6 +129,15 @@ function shapeChangeRow(row) {
     // signed into as the self-hosted app, with its review fixtures on).
     checkFailing: Number(row.change_check_failing) || 0,
     appSelfHosted: !!row.change_app_self_hosted,
+    // The visual change preview being captured now, which the conversation
+    // shows with a Stop. Null once it settles, and on the changes-list rows,
+    // which do not read it.
+    previewCapture: CAPTURING_STATES.has(row.change_evidence_state)
+      ? {
+        state: row.change_evidence_state,
+        startedAt: row.change_evidence_started_at ? new Date(row.change_evidence_started_at).toISOString() : null,
+      }
+      : null,
   };
 }
 
@@ -211,6 +224,8 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
+            c.visual_evidence_state AS change_evidence_state,
+            (SELECT r.started_at FROM visual_evidence_runs r WHERE r.id = c.visual_evidence_run_id) AS change_evidence_started_at,
             ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
             (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM agent_sessions s
@@ -247,6 +262,8 @@ async function getAgentSession(pool, { userId, id }) {
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
+            c.visual_evidence_state AS change_evidence_state,
+            (SELECT r.started_at FROM visual_evidence_runs r WHERE r.id = c.visual_evidence_run_id) AS change_evidence_started_at,
             ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
             (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM agent_sessions s

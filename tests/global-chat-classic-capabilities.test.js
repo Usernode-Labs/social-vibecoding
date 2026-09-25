@@ -36,9 +36,9 @@ function context(overrides = {}) {
 test('the registry contains every mapped route, Settings section, and navigation surface', () => {
   const definitions = classicCapabilityDefinitions();
   const registry = new CapabilityRegistry(definitions);
-  const expected = inventory.summary.mappedRoutes
-    + inventory.summary.settingsSections
-    + inventory.summary.navigationSurfaces
+  const expected = inventory.routes.filter((item) => item.status === 'mapped').length
+    + inventory.settings.length
+    + inventory.navigation.length
     + 12; // focused settings/activity reads, two updates, and cross-app history reads
   assert.equal(definitions.length, expected);
   assert.equal(registry.size, expected);

@@ -15,6 +15,8 @@ export interface AgentChange {
   checkFailing?: number;
   /** The change is to the platform's own (self-hosted) app. */
   appSelfHosted?: boolean;
+  /** Its visual change preview, while one is being captured. */
+  previewCapture?: { state: string; startedAt: string | null } | null;
 }
 
 /**
@@ -464,6 +466,14 @@ export async function stopTurn(id: number): Promise<{ stopped: boolean; reason?:
     await request(`/api/sessions/${body.changeId}/stop`, { method: 'POST', body: '{}' }).catch(() => null);
   }
   return body;
+}
+
+/** Stop the change's running visual change preview (the proposal's Rerun starts it again). */
+export async function stopPreviewCapture(appSlug: string, changeId: number): Promise<{ stopped: boolean; reason?: string }> {
+  return json<{ stopped: boolean; reason?: string }>(
+    await request(`/api/apps/${encodeURIComponent(appSlug)}/proposals/${changeId}/evidence/stop`, { method: 'POST', body: '{}' }),
+    'Could not stop capturing previews.',
+  );
 }
 
 export interface SpecVersion {

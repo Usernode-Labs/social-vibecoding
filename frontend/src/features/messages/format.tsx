@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type MouseEvent } from 'react';
 
 import { messageStamp } from '../../lib/timestamp';
 import { decorateRefs } from './channels';
@@ -117,6 +117,26 @@ const OBJECT_LABELS: Record<SharedObjectCard['type'], string> = {
   app: 'App', issue: 'Issue', proposal: 'Code proposal', governance: 'Governance proposal', spec: 'Spec version',
 };
 
+// #3103: a shared card that opens a Workshop topic or a dev session records
+// the conversation it was tapped in, so that page's back returns here rather
+// than to the app's Workshop. The Improve store's own "where from" is the last
+// APP route, and a Messages conversation is not one. Plain clicks only: a
+// modified click opens a new tab, which navigates nothing here. Not in the side
+// panel's document, whose links are the top window's to follow.
+export function recordObjectOrigin(event: MouseEvent<HTMLAnchorElement>, href: string): void {
+  const w = window as unknown as {
+    NavLink?: { isNativeClick?: (e: unknown) => boolean };
+    App?: { embeddedPanel?: boolean };
+    Improve?: { enterTopicFrom?: (href: string) => void; enterSessionFrom?: (href: string) => void };
+  };
+  if (!href.startsWith('#app/') || w.App?.embeddedPanel) return;
+  if (w.NavLink?.isNativeClick?.(event)) return;
+  const here = window.location.hash;
+  const origin = here.startsWith('#messages') ? here : '#messages';
+  if (/\/dev\/sessions\//.test(href)) w.Improve?.enterSessionFrom?.(origin);
+  else if (/\/dev\/(?:issues|proposals|governance)\//.test(href)) w.Improve?.enterTopicFrom?.(origin);
+}
+
 export function ObjectCard({ object, compact = false }: { object: SharedObjectCard; compact?: boolean }) {
   if (!object.available) {
     return (
@@ -142,7 +162,7 @@ export function ObjectCard({ object, compact = false }: { object: SharedObjectCa
     </>
   );
   return object.href ? (
-    <a href={object.href} className="messages-object-card" target={object.href.startsWith('http') ? '_blank' : undefined} rel="noopener noreferrer">{body}</a>
+    <a href={object.href} className="messages-object-card" target={object.href.startsWith('http') ? '_blank' : undefined} rel="noopener noreferrer" onClick={(event) => recordObjectOrigin(event, object.href as string)}>{body}</a>
   ) : <div className="messages-object-card">{body}</div>;
 }
 

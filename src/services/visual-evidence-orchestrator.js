@@ -22,6 +22,11 @@ const worker = require('./worker');
 
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 const CLOSED_STATUSES = new Set(['merged', 'archived']);
+const EVIDENCE_STOPPED_REASON = 'Stopped before it finished. Nothing was captured for this commit; run it again from the proposal to capture it.';
+// Runs a person stopped while this process executes them. The stop already
+// made the run terminal in the database; this keeps its runner from handing
+// the preview agent another turn before a state transition refuses it.
+const stopRequested = new Set();
 const DIFF_CONTEXT_CHARS = 8_000;
 const inFlight = new Map();
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -841,6 +846,22 @@ function notifyEvidence(session, app, evidenceState, extra = {}) {
       ...extra,
     });
   } catch (_) { /* live refresh is best-effort; durable state is authoritative */ }
+  notifyConversations(session.id);
+}
+
+// A conversation shows its active change's running preview (and its Stop),
+// so the owners of the open conversations on this change re-read them.
+function notifyConversations(changeId) {
+  let pool;
+  try { pool = require('../db/pool').getPool(); } catch (_) { return; }
+  if (!pool || typeof pool.query !== 'function') return;
+  pool.query(
+    `SELECT id, user_id FROM agent_sessions WHERE active_change_id = $1 AND status = 'open'`,
+    [Number(changeId)]
+  ).then(({ rows }) => {
+    const ws = require('./ws');
+    for (const row of rows) ws.pushToUser(row.user_id, { type: 'agent_session_changed', agentSessionId: row.id });
+  }).catch(() => { /* the conversation catches up on its next read */ });
 }
 
 async function failCurrentRun(pool, runId, error, stateService = state, runTrace = null) {
@@ -1145,6 +1166,9 @@ async function executeRun(config, options, injected = {}) {
     });
 
     const dispatchOnce = async (forceBackend = null, repairAttempt = 0) => {
+      if (stopRequested.has(run.id)) {
+        throw new VisualEvidenceOrchestrationError('evidence_stopped', EVIDENCE_STOPPED_REASON);
+      }
       let window = agentWindows.get(repairAttempt);
       if (!window) {
         window = { startedAt: Date.now(), suspendedAt: suspendedMs() };
@@ -1402,6 +1426,7 @@ async function executeRun(config, options, injected = {}) {
     throw error;
   } finally {
     registration?.unregister();
+    if (run) stopRequested.delete(run.id);
     try {
       if (pair) {
         const cleanupStartedAt = Date.now();
@@ -1589,6 +1614,45 @@ function inFlightRunFor(sessionId) {
   return null;
 }
 
+// A person's Stop on the change's running visual change preview. The run is
+// failed at once, with its own code, so the proposal reads "stopped" and an
+// automatic trigger for the same head does not start it again (a person's
+// Rerun still does). The preview agent is killed only when the change's
+// worker is running an evidence turn: never a coding turn. Whatever step the
+// runner is inside ends at its next state transition, which the failed run
+// refuses, and its temporary environments are released then.
+async function stopForSession(pool, sessionId, injected = {}) {
+  const stateService = injected.state || state;
+  const workerApi = injected.worker || worker;
+  const session = await loadSession(pool, sessionId);
+  const runId = session.visual_evidence_run_id;
+  if (!runId) return { stopped: false, reason: 'not_running' };
+  const run = await stateService.getRun(pool, runId);
+  if (!run || run.current_run_id !== run.id || !ACTIVE_STATES.has(run.state)) {
+    return { stopped: false, reason: 'not_running' };
+  }
+  try {
+    await stateService.transitionRun(pool, run.id, 'failed', {
+      failureCode: 'evidence_stopped',
+      failureReason: EVIDENCE_STOPPED_REASON,
+    });
+  } catch (error) {
+    if (['invalid_evidence_transition', 'stale_evidence_operation'].includes(error?.code)) {
+      return { stopped: false, reason: 'not_running' };
+    }
+    throw error;
+  }
+  if (inFlight.has(`${Number(sessionId)}:${run.head_sha}`)) stopRequested.add(run.id);
+  if (workerApi.getActiveTurnMode(sessionId) === 'evidence') {
+    await workerApi.stopTurn(sessionId).catch((error) => {
+      log.warn('visual-evidence', 'Could not stop the preview agent', { sessionId, runId: run.id, error: error.message });
+    });
+  }
+  log.info('visual-evidence', 'Visual change preview stopped', { sessionId, runId: run.id, from: run.state });
+  notifyEvidence(session, publicSessionAndApp(session).app, 'failed', { failureCode: 'evidence_stopped' });
+  return { stopped: true, runId: run.id };
+}
+
 module.exports = {
   VisualEvidenceOrchestrationError,
   exactSha,
@@ -1617,4 +1681,6 @@ module.exports = {
   NOT_STARTED_REASONS,
   inFlightSnapshot,
   inFlightRunFor,
+  stopForSession,
+  EVIDENCE_STOPPED_REASON,
 };
