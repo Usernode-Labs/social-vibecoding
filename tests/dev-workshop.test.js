@@ -3566,11 +3566,16 @@ test('the "+" is drawn as part of the strip, not as a floating action', () => {
   assert.match(tab[1], /height: 40px; padding: 0 4px;/);
   assert.match(decls, /\.dev-ws-tablist \{ flex: 1 1 auto; min-width: 0; display: flex; gap: 2px; \}/,
     'the list takes the pill less the "+" cell');
-  assert.match(decls, /\.dev-ws-plus \{ position: relative; flex: none; display: flex; \}/,
-    "the dropdown's containing block, never squeezed");
+  // #2934: the "+" hangs a few pixels below the tabs' line, so it does not sit
+  // flush against the bar — the offset the issue asked for, on the wrapper so
+  // the button's own metrics stay the strip's.
+  assert.match(decls, /\.dev-ws-plus \{\s*position: relative; flex: none; display: flex;\s*margin-top: 4px;\s*\}/,
+    "the dropdown's containing block, never squeezed, and offset from the bar");
   // A WIDE WINDOW: the pill's last segment, at the desktop tabs' 32px.
   const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
   assert.match(wide[1], /\.dev-ws-tablist \{ flex: 0 0 auto; \}/);
+  // #2934: the desktop offset, tuned to the 32px segment.
+  assert.match(wide[1], /\.dev-ws-plus \{ margin-top: 3px; \}/);
   assert.match(wide[1], /\.dev-ws-plus-btn \{ width: 32px; height: 32px; \}/);
   // Inside the TRACK — which is what lets the ear's measured inset clear it
   // with no change of its own: useEarInset reads the track's right edge.
