@@ -5107,7 +5107,7 @@
     {
       "name": "#2800: Me is the rail's last row, straight after Recents, so the thin rule the rail draws above Me sits between them",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs > #platform-recents + a#platform-tab-me:last-child"
+      "expectSelector": "#platform-tabs > #platform-recents + a#platform-tab-me + a#platform-rail-settings:last-child"
     },
     {
       "name": "#2919: the desktop rail's Recents folds anything older than 5 days ago behind a collapsed Show N older button at its foot (the demo conversations are all from August)",
