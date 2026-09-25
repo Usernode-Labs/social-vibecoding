@@ -1026,8 +1026,9 @@ function authRoutes(config) {
   });
 
   // #2779: opt in to (or out of) agent sessions. The same shape as the
-  // session-bridge toggle above, gated on who may choose yet
-  // (AGENT_SESSIONS_OPT_IN): only admins while the feature ships dark.
+  // session-bridge toggle above, gated on who may choose
+  // (AGENT_SESSIONS_OPT_IN): every user, unless the deployment sets it to
+  // `admins`.
   // `enabled: null` clears the choice back to the deployment default.
   router.post('/api/me/agent-sessions', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
