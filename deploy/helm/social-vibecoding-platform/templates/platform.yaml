@@ -79,6 +79,9 @@ spec:
             - name: PLATFORM_DEPLOYMENT
               value: {{ include "social-vibecoding-platform.fullname" . | quote }}
             - {name: NODE_ENV, value: production}
+            {{- with .Values.platform.nodeOptions }}
+            - {name: NODE_OPTIONS, value: {{ . | quote }}}
+            {{- end }}
             - {name: PORT, value: "3000"}
             - {name: APP_RUNTIME, value: kubernetes}
             - {name: PREVIEW_LIFECYCLE_ENABLED, value: {{ .Values.platform.previewLifecycleEnabled | default false | quote }}}
