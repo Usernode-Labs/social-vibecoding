@@ -2200,6 +2200,42 @@ test('#1887: a card about your own session opens the CARD, with the session a li
     'the shot is read where the other Workshop shots are');
 });
 
+test('#3081: an agent session\'s change card opens the AGENT SESSION, not its old dev chat', () => {
+  // A change started from an agent session is revised in that conversation;
+  // its dev chat at /dev/sessions/<id> only shows a strip leading there. The
+  // open card's "Open session ›" went to the dev chat all the same — the old
+  // screen, and not one the owner could type into. It goes where the change
+  // page's door (`_buildDoorView`) already sends the owner.
+  const mine = { id: 52, session_title: 'Agent-built change', status: 'active', pr_number: null, linked_issues: [],
+    agent_session_id: 7301, created_at: at(1), last_activity_at: at(0) };
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._mySessions = [{ ...mine }];
+  AppView._workshopShot = 'mine-session';
+  const row = AppView._workshopView().mine.rows
+    .find((r) => r.t === 'card' && r.card.attrs['data-session-chip'] === '52');
+  assert.ok(row, 'the change is on the lander with its usual hook');
+  assert.equal(row.card.attrs['data-session-agent'], '7301', 'the card names the conversation it was started from');
+
+  const open = workshopHtml(AppView);
+  assert.match(open, /<div class="dev-ws-sheet-actions"><a href="#messages\/agent\/7301" class="dev-ws-link" data-ws-open-session="mine:my-session:52">Open session ›<\/a><\/div>/,
+    'the link under the open card is the agent session');
+  assert.ok(!open.includes('/dev/sessions/52'), 'and nothing on the card leads to the old dev chat');
+  assert.match(open, /href="#app\/demo-app\/dev\/proposals\/52" data-ws-open-card="mine:my-session:52">Open card<\/a>/,
+    'the change page is still the pill');
+
+  const { sessionHref } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
+  assert.equal(sessionHref('demo-app', row.card), '#messages/agent/7301');
+  // A session with no agent conversation keeps its dev chat.
+  assert.equal(sessionHref('demo-app', { attrs: { 'data-session-chip': '52' } }), '#app/demo-app/dev/sessions/52');
+
+  // Only the viewer's own, non-imported session carries the mark.
+  const imported = AppView._mySessionCardModel({ ...mine, source: 'imported' });
+  assert.equal(imported.attrs['data-session-agent'], undefined);
+  const plainSession = AppView._mySessionCardModel({ ...mine, agent_session_id: null });
+  assert.equal(plainSession.attrs['data-session-agent'], undefined);
+});
+
 test('the band is Open card\u2019s one seat: the facts-line seat and its inline-actions path are gone', () => {
   // `statusLead` put a caller's control at the right end of the facts line
   // and moved the card's own pills up beside it. Nothing passed one once the

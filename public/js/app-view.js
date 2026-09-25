@@ -10591,6 +10591,14 @@ const AppView = {
     const attrs = { role: 'button', tabindex: '0', title: `${s.busy ? 'AI is working: ' : ''}${label}` };
     if (imported) attrs['data-shared-session-row'] = String(s.id);
     else attrs['data-session-chip'] = String(s.id);
+    // #3081: a change started from an agent session is revised in that
+    // conversation — its own dev chat only shows a strip leading there — so
+    // the open card's "Open session ›" (fold.tsx `sessionHref`) goes to it.
+    // The same rule `_buildDoorView` applies to the change page's door.
+    const agentSessionId = Number(s.agent_session_id);
+    if (!imported && Number.isInteger(agentSessionId) && agentSessionId > 0) {
+      attrs['data-session-agent'] = String(agentSessionId);
+    }
     return {
       key: `my-session:${s.id}`,
       cls: `${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}${mutedCls}`,
