@@ -80,16 +80,22 @@ test('the card: its actions for each state, and nothing on a superseded one', ()
   assert.match(live, />Staging deployed · PR #14</);
   assert.match(live, /data-agent-session-checks="failing"[^>]*>2 checks failing</);
   assert.match(live, /<button[^>]*data-agent-session-preview-open[^>]*>Open preview<\/button>/, 'wide: a button, for the side pane');
-  assert.match(live, /href="#app\/notes\/dev\/proposals\/50"[^>]*>View change</, 'the change\'s own card');
+  assert.match(live, /href="#app\/notes\/dev\/proposals\/50"[^>]*>Open draft proposal</, 'the change\'s own page, while it is a draft');
   assert.match(live, /data-agent-session-preview-propose[^>]*>Propose to group</);
 
-  assert.match(render({ wide: false }), /<a[^>]*href="https:\/\/s\.example"[^>]*target="_blank"[^>]*>Open preview</, 'narrow: a new tab, as before');
+  // Narrow (a phone, the side panel): the same button, and never a bare new
+  // tab, which was signed out of the app and away from the chat.
+  const narrow = render({ wide: false });
+  assert.match(narrow, /<button[^>]*data-agent-session-preview-open[^>]*>Open preview<\/button>/, 'narrow: over the chat, not a new tab');
+  assert.doesNotMatch(narrow, /target="_blank"/);
   const voting = render({ change: change({ status: 'promoted', checkState: 'passing' }) });
   assert.match(voting, /data-agent-session-preview-status[^>]*>In vote</);
   assert.match(voting, />View proposal</);
   assert.doesNotMatch(voting, /Propose to group/, 'proposed once');
   assert.match(voting, /data-agent-session-checks="passing"/);
-  assert.match(render({ change: change({ status: 'merged' }) }), />Merged</);
+  const merged = render({ change: change({ status: 'merged' }) });
+  assert.match(merged, />Merged</);
+  assert.match(merged, />View proposal</, 'a merged change is no draft');
   assert.match(render({ action: 'propose', busy: true }), /disabled=""[^>]*data-agent-session-preview-propose[^>]*>Proposing…</);
 
   const failed = render({ item: item({ failed: true, url: null, error: 'npm ci failed', text: 'Staging build failed' }) });
@@ -157,6 +163,109 @@ test('Open preview docks the platform\'s preview in the pane, signed in to the c
     delete globalThis.fetch;
     delete globalThis.EventSource;
   }
+});
+
+// Where there is no room beside the chat (a phone, the side panel beside a
+// running app) Open preview used to open the bare staging address in a new
+// tab: signed out of the app, away from the chat. It is the platform's own
+// preview now, over the chat. The panel's Expand carries it, and an open spec,
+// into the full-width chat, beside the conversation.
+test('narrow: the preview opens over the chat, signed in; Expand carries it and the spec to the full-width chat', async () => {
+  const session = {
+    id: 7, title: 'Dark mode', status: 'open', focusApp: null, focusContext: {}, busy: false,
+    activeChange: { id: 50, appSlug: 'notes', appName: 'Notes', status: 'active', title: 'Dark mode', prNumber: 14, appSelfHosted: false },
+    changes: [], lastActivityAt: null, createdAt: null,
+  };
+  const fetchFor = async (url) => ({
+    ok: true,
+    status: 200,
+    json: async () => (/\/messages\?/.test(url) ? { messages: [], nextAfter: null }
+      : /\/actions$/.test(url) ? { actions: [] }
+        : /\/spec$/.test(url) ? { spec: '# Dark mode', versions: [{ version: 2 }] }
+          : { session, turn: null }),
+  });
+  const calls = [];
+  let host = null;
+  const appView = {
+    setStagingDockHost: (h) => { host = h; calls.push(['host', h && h.slotId]); },
+    ensureStaging: async (...args) => { calls.push(['ensure', ...args]); },
+    closeStagingOverlay: () => { if (host && host.closed) host.closed(); host = null; },
+  };
+  globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {} }, UsernodeReact: {}, AppView: appView };
+  globalThis.EventSource = class { close() {} };
+  globalThis.fetch = fetchFor;
+  let carried;
+  try {
+    // The panel's document.
+    const panel = loadTsx('frontend/src/features/agent-session/store.ts');
+    await panel.openAgentSession({ id: 7, host: 'messages' });
+    panel.setDrawerOpen(true);
+    panel.openPreviewOver({ changeId: 50, url: 'https://s.example', prNumber: 14 });
+    assert.deepEqual(calls.find((c) => c[0] === 'ensure'), ['ensure', 50, 'https://s.example', null,
+      { readOnly: false, app: { slug: 'notes', self_hosted: false } }],
+      'the platform\'s preview, not docked (over the chat), signed in to the change\'s app');
+    assert.equal(host.live(), false, 'nothing to dock into');
+    assert.equal(panel.getAgentSessionState().drawerOpen, false, 'the drawer steps aside');
+    assert.equal(panel.getAgentSessionState().preview, null, 'no side pane where there is no room');
+    assert.deepEqual(panel.paneToCarry(), {
+      sessionId: 7, spec: null, preview: { changeId: 50, url: 'https://s.example', prNumber: 14 }, tab: 'preview',
+    });
+
+    await panel.openSpec(50);
+    panel.setSpecTab('tech');
+    carried = panel.paneToCarry();
+    assert.deepEqual(carried.spec, { changeId: 50, version: 2, tab: 'tech' });
+    assert.equal(carried.tab, 'spec', 'the one showing last');
+
+    appView.closeStagingOverlay();
+    assert.equal(panel.paneToCarry().preview, null, 'a closed preview is not carried');
+    assert.equal(panel.agentSessionController.paneToCarry, panel.paneToCarry, 'published for the top window');
+  } finally {
+    delete globalThis.window;
+    delete globalThis.fetch;
+    delete globalThis.EventSource;
+  }
+
+  // The top document, after Expand: the same conversation, full width.
+  globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {} }, UsernodeReact: {}, AppView: appView };
+  globalThis.EventSource = class { close() {} };
+  globalThis.fetch = fetchFor;
+  try {
+    const top = loadTsx('frontend/src/features/agent-session/store.ts');
+    top.adoptPane(carried);
+    assert.equal(top.getAgentSessionState().specSheet, null, 'held until that conversation is open');
+    await top.openAgentSession({ id: 7, host: 'messages' });
+    await new Promise((resolve) => setImmediate(resolve));
+    const state = top.getAgentSessionState();
+    assert.deepEqual(state.preview, { changeId: 50, url: 'https://s.example', prNumber: 14, app: { slug: 'notes', self_hosted: false } });
+    assert.equal(state.specSheet.changeId, 50);
+    assert.equal(state.specSheet.tab, 'tech');
+    assert.equal(state.paneTab, 'spec');
+
+    // Another conversation does not take it.
+    const other = loadTsx('frontend/src/features/agent-session/store.ts');
+    other.adoptPane({ ...carried, sessionId: 8 });
+    await other.openAgentSession({ id: 7, host: 'messages' });
+    assert.equal(other.getAgentSessionState().preview, null);
+    assert.equal(other.getAgentSessionState().specSheet, null);
+  } finally {
+    delete globalThis.window;
+    delete globalThis.fetch;
+    delete globalThis.EventSource;
+  }
+});
+
+test('the side panel\'s Expand hands the panel\'s open pane to the full-width chat', () => {
+  const controller = read('frontend/src/features/side-panel/controller.ts');
+  const expand = controller.slice(controller.indexOf('export function expand()'), controller.indexOf('export function appPresence('));
+  assert.match(expand, /carryAgentPane\(\);\s*navigateTop\(expandRoute\(route\)\);/, 'read before the panel is dropped');
+  assert.match(expand, /paneToCarry\?\.\(\)/);
+  assert.match(expand, /adoptPane\?\.\(pane\)/);
+
+  const panel = read('frontend/src/features/agent-session/index.tsx');
+  assert.match(panel, /const cover = isEmbeddedPanel\(\);/, 'in the side panel the spec fills the panel');
+  assert.doesNotMatch(panel, /href=\{active\.stagingUrl\}/, 'the Changes drawer\'s Open preview is no bare new tab either');
+  assert.match(panel, /data-agent-session-drawer-preview[\s\S]{0,300}showPreview\(/);
 });
 
 test('Propose (once its panel is confirmed) uses the owner\'s propose route; Retry uses the ensure route', async () => {

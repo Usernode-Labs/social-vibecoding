@@ -498,9 +498,11 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   if (state.id === id && state.open) {
     publish({ open: true, host, drawerOpen: drawer || state.drawerOpen });
     syncTitle();
+    applyCarriedPane();
     return;
   }
   const version = ++navigation;
+  overPreview = null;
   publish({
     open: true,
     host,
@@ -519,6 +521,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     if (version !== navigation) return;
     publish((current) => ({ session, phase: 'ready', sessions: withListed(current, session) }));
     syncTitle();
+    applyCarriedPane();
     void loadDrafts(id);
     refreshCredits();
     if (session.busy) {
@@ -606,6 +609,7 @@ function openDraft(host: AgentSessionHost) {
 /** The screen or pane stopped showing this conversation. A running turn goes on server-side. */
 export function deactivateAgentSession() {
   navigation += 1;
+  overPreview = null;
   closeEvents();
   if (turnAbort) turnAbort.abort();
   turnAbort = null;
@@ -1319,6 +1323,88 @@ export function closePreview() {
   if (state.preview) publish({ preview: null, paneTab: 'spec' });
 }
 
+let overPreview: PreviewPaneState | null = null;
+
+/**
+ * A change's preview where there is no room for the side pane (a phone, a
+ * narrow window, the side panel beside a running app): the platform's own
+ * preview over the conversation, signed in to the change's app, with its own
+ * Back. It used to open the bare staging address in a new tab, signed out
+ * and away from the chat. In the side panel it covers the panel, not the app
+ * beside it; the panel's Expand takes it into the full-width chat, beside
+ * the conversation (paneToCarry).
+ */
+export function openPreviewOver(preview: { changeId: number; url: string; prNumber: number | null }) {
+  const view = typeof window !== 'undefined' ? window.AppView : null;
+  if (!view || typeof view.ensureStaging !== 'function') {
+    try { window.open(preview.url, '_blank', 'noopener'); } catch { /* nothing to open it with */ }
+    return;
+  }
+  const change = changeById(preview.changeId);
+  const app = change && change.appSlug ? { slug: change.appSlug, self_hosted: !!change.appSelfHosted } : null;
+  const shown: PreviewPaneState = { ...preview, app };
+  overPreview = shown;
+  if (state.drawerOpen) publish({ drawerOpen: false });
+  // Not a dock: this host only hears the preview close, so Expand knows
+  // whether there is still one to carry.
+  view.setStagingDockHost?.({
+    slotId: PREVIEW_SLOT_ID,
+    live: () => false,
+    collapse: () => {},
+    redock: () => {},
+    closed: () => { if (overPreview === shown) overPreview = null; },
+  });
+  void view.ensureStaging(preview.changeId, preview.url, null, {
+    readOnly: false,
+    ...(app ? { app } : {}),
+  });
+}
+
+/**
+ * What a conversation has open beside it (or over it), to hand to another
+ * document: the side panel's Expand opens the same conversation full width,
+ * and the spec and the preview come along, beside it there.
+ */
+export interface CarriedPane {
+  sessionId: number;
+  spec: { changeId: number; version: number | null; tab: SpecTab } | null;
+  preview: { changeId: number; url: string; prNumber: number | null } | null;
+  tab: PaneTab;
+}
+
+export function paneToCarry(): CarriedPane | null {
+  if (!state.open || typeof state.id !== 'number') return null;
+  const sheet = state.specSheet;
+  const shown = state.preview || overPreview;
+  if (!sheet && !shown) return null;
+  return {
+    sessionId: state.id,
+    spec: sheet ? { changeId: sheet.changeId, version: sheet.version, tab: sheet.tab } : null,
+    preview: shown ? { changeId: shown.changeId, url: shown.url, prNumber: shown.prNumber } : null,
+    tab: sheet && shown ? state.paneTab : (shown ? 'preview' : 'spec'),
+  };
+}
+
+let carriedPane: CarriedPane | null = null;
+
+/** Another document's open spec and preview, shown once that conversation is open here. */
+export function adoptPane(pane: CarriedPane | null) {
+  carriedPane = pane && typeof pane.sessionId === 'number' ? pane : null;
+  applyCarriedPane();
+}
+
+function applyCarriedPane() {
+  const pane = carriedPane;
+  if (!pane || !state.open || state.id !== pane.sessionId || !state.session) return;
+  carriedPane = null;
+  if (pane.preview) openPreview(pane.preview);
+  if (pane.spec) {
+    void openSpec(pane.spec.changeId, pane.spec.version);
+    setSpecTab(pane.spec.tab);
+  }
+  setPaneTab(pane.tab);
+}
+
 export function setPaneTab(tab: PaneTab) {
   if (state.paneTab !== tab) publish({ paneTab: tab });
 }
@@ -1504,6 +1590,9 @@ export const agentSessionController = {
   refreshList: loadAgentSessions,
   listChanged: agentSessionListChanged,
   draftsChanged: agentSessionDraftsChanged,
+  /** The side panel's Expand: what this document's conversation has open, and taking it in the other. */
+  paneToCarry,
+  adoptPane,
 };
 
 if (typeof window !== 'undefined') {

@@ -421,8 +421,31 @@ function navigateTop(route: string): void {
  */
 export function expand(): void {
   const route = sidePanelStore.get().route;
-  if (route) navigateTop(expandRoute(route));
+  if (route) {
+    carryAgentPane();
+    navigateTop(expandRoute(route));
+  }
   if (sidePanelStore.get().open || sidePanelStore.get().frameSrc) drop();
+}
+
+interface CarriesPane {
+  UsernodeReact?: { agentSession?: { paneToCarry?: () => unknown; adoptPane?: (pane: unknown) => void } };
+}
+
+/**
+ * An agent conversation's spec or preview, open over it in the panel, comes
+ * along on Expand: the full-width conversation opens with them beside it,
+ * which is where the panel sends anything that needs the room. Read from the
+ * panel's document before it is dropped; taken by this one's store once the
+ * conversation has loaded. Nothing open, or no panel document: nothing moves.
+ */
+function carryAgentPane(): void {
+  try {
+    const inner = (sidePanelRefs.frame?.contentWindow as unknown as CarriesPane | null)?.UsernodeReact?.agentSession;
+    const pane = inner?.paneToCarry?.();
+    if (!pane) return;
+    (window as unknown as CarriesPane).UsernodeReact?.agentSession?.adoptPane?.(pane);
+  } catch { /* the panel's document is elsewhere or gone: nothing to carry */ }
 }
 
 /**

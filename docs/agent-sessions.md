@@ -671,7 +671,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 *Follow-up: staging builds as cards, with the preview beside the chat.* A build used to say "Staging deployed!" with a link that opened a new tab.
 
 - **Every build is a card** (`PreviewCard`, from `transcript.ts`'s `PreviewItem`):
-  - **Deployed:** Open preview, View change (the change's card, `#app/<slug>/dev/proposals/<id>`), and Propose to group while it is active or paused. Once proposed it reads "In vote", with View proposal.
+  - **Deployed:** Open preview, Open draft proposal (the change's page, `#app/<slug>/dev/proposals/<id>`; it was "View change"), and Propose to group while it is active or paused. Once proposed it reads "In vote", with View proposal, as a merged change does.
   - **Failed** (the `stagingFailed` row the build writes, previously folded into the run's steps): the error, Retry, and Propose to group. Proposing rebuilds the preview itself, as in the dev chat.
   - **Checks:** the card says where the change's checks stand ("Checks running", "Checks passing", "2 checks failing"), because they gate merge. The failing count comes from the change's `test_results`.
   - **Superseded:** only a change's newest card is live. Older ones read "Superseded by a newer preview" and offer nothing.
@@ -681,7 +681,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
   - It also gained an explicit app (`opts.app`), so the preview signs in to the change's app rather than whatever app is on screen, and `opts.readOnly`.
   - The slot stays mounted, hidden, while the Spec tab shows, so the preview keeps its state.
   - While a preview is open the divider's floor is the staging panel's 320px. The preview's iframe ignores the pointer during a drag.
-  - A narrow screen opens the preview in a new tab, as before.
+  - Where there is no room beside the chat (a phone, a narrow window, the side panel beside a running app), the preview opens over the chat instead: the platform's own preview, signed in to the change's app, with its Back to the conversation. It used to open the bare staging address in a new tab, signed out. The Changes drawer's Open preview follows the same rule. In the side panel the spec fills the panel too, rather than rising as a sheet over part of it, and the panel's Expand carries an open spec or preview into the full-width chat, beside the conversation (`paneToCarry` / `adoptPane`).
 - **Propose and Retry.**
   - Propose confirms ("Put this up for the group's vote?", naming the change and its PR), then calls the owner's `POST /api/sessions/:id/promote`.
   - Retry calls the owner's `POST /api/sessions/:id/ensure-staging`. The build's `staging_ready` or `staging_failed` reaches the conversation, writes the next card, and ends "Retrying…". A build whose answer never lands (a restart, a lost event) gives up after the dev chat preview's three minutes, and says the result will still appear.
