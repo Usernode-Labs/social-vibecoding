@@ -40,6 +40,12 @@ a plan that changes the intent. The plan schema and examples are in
    replay/encoder twice, restoring the snapshot between cases and passes. A
    failed locator, action, assertion, media check,
    or reproducibility check exits nonzero and writes a failure JSON file.
+   For the platform app, both the local verifier and hosted replay also apply
+   the same member conversation fixture to each disposable database after its
+   exact-revision image boots, but only when that revision supplied the source
+   staging conversation. This allows a member story to open a real Messages
+   row and load its transcript. The fixture never changes the running app's
+   database or a production account.
 4. On success, inspect the PNGs and any WebM in
    `.local-visual-evidence/pre-pr-<run-id>/`. Confirm that the captures show
    the claim; replay success alone only proves the steps ran reproducibly and
@@ -64,10 +70,14 @@ PR imports; updates to an existing proposal still use the separate
 `submit_visual_evidence_plan` action for their new head.
 
 The command reads Git objects and the local development database. It does not
-read production data, call a model, create a PR, or submit a proposal. It does
-not invent fixture users or app content. The local fixture may lack a state
-needed for the claim; in that case, the author must create representative
-*local* test state or report that the evidence cannot yet be verified.
+read production data, call a model, create a PR, or submit a proposal. Its
+platform-only member conversation is copied from a staging fixture that the
+exact revision seeds into each disposable database; it does not copy private
+production conversations. Other required states may still be absent. In that
+case, the author must create representative *local* test state or report that
+the evidence cannot yet be verified. Declared `dapp.json` checks use the
+read-only administrator identity, so a route that those checks can open is
+not proof that a member can open it.
 
 ## Scope
 

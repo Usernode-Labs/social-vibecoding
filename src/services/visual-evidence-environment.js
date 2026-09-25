@@ -6,6 +6,7 @@
 // public hostname and the app is not told which side it is rendering.
 
 const fs = require('fs/promises');
+const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 const applicationRuntime = require('./application-runtime');
@@ -17,6 +18,7 @@ const github = require('./github');
 const log = require('./logger');
 const pendingSecrets = require('./pending-secrets');
 const stagingEnv = require('./staging-env');
+const evidenceFixtures = require('./visual-evidence-fixtures');
 const { getPool } = require('../db/pool');
 
 const IMAGE_RECIPE = 'v1';
@@ -222,6 +224,9 @@ async function preparePair(config, { pool = getPool(config), run, session, app, 
       rootDir,
       preparedSource: source,
       fixtureFingerprint: source.fingerprint,
+      fixtureProfileSet: false,
+      fixtureProfile: null,
+      availableFixtures: [],
       sides: {
         base: {
           sha: baseSha, checkout: baseCheckout.dir, env: baseEnv,
@@ -268,16 +273,22 @@ async function stopPair(config, pair, { strict = false } = {}) {
   return { stopped: errors.length === 0, errors };
 }
 
-async function resetPair(config, pair) {
+async function resetPair(config, pair, { onProgress = null } = {}) {
   if (!pair?.preparedSource || !pair?.sides) throw new VisualEvidenceEnvironmentError('invalid_evidence_pair', 'Prepared evidence pair is required.');
   await stopPair(config, pair, { strict: true });
   try {
-    const clones = await allSettledValues(['base', 'head'].map(async (side) => {
+    // Two real evidence resets timed out while the clone passes ran together.
+    // The ownership/redaction passes scan this app's large schema; serialize
+    // them to reduce contention against the same immutable source.
+    const clones = [];
+    for (const side of ['base', 'head']) {
+      onProgress?.({ stage: `clone_${side}` });
       const spec = pair.sides[side];
       const cloned = await dbManager.cloneFromPreparedSource(pair.preparedSource, spec.dbName);
-      return [side, cloned];
-    }));
+      clones.push([side, cloned]);
+    }
     const cloneBySide = Object.fromEntries(clones);
+    onProgress?.({ stage: 'deploy_pair' });
     const deployments = await allSettledValues(['base', 'head'].map(async (side) => {
       const spec = pair.sides[side];
       const deployed = await applicationRuntime.deploy(config, {
@@ -304,6 +315,38 @@ async function resetPair(config, pair) {
       return [side, deployed];
     }));
     pair.deployments = Object.fromEntries(deployments);
+    let fixtureProfile = null;
+    let availableFixtures = [];
+    if (pair.app.slug === config.selfAppSlug) {
+      onProgress?.({ stage: 'inspect_evidence_fixtures' });
+      const fixtureInputs = Object.fromEntries(['base', 'head'].map((side) => [side, {
+        databaseUrl: dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password),
+        slug: pair.app.slug, runId: pair.runId, side,
+      }]));
+      const ready = await allSettledValues(['base', 'head'].map((side) =>
+        evidenceFixtures.canCopyMemberAgentSession(fixtureInputs[side])));
+      // A fixture must exist on BOTH exact revisions. Never insert a state
+      // on only one side of a before/after comparison.
+      if (ready.every(Boolean)) {
+        onProgress?.({ stage: 'seed_evidence_fixtures' });
+        const seeded = await allSettledValues(['base', 'head'].map((side) =>
+          evidenceFixtures.copyMemberAgentSession({
+            ...fixtureInputs[side], selfAppSlug: config.selfAppSlug,
+          })));
+        fixtureProfile = evidenceFixtures.PROFILE;
+        availableFixtures = [seeded[0]];
+      }
+    }
+    if (pair.fixtureProfileSet && pair.fixtureProfile !== fixtureProfile) {
+      throw new VisualEvidenceEnvironmentError('evidence_fixture_mismatch',
+        'A paired evidence reset changed the available fixture profile.');
+    }
+    pair.fixtureProfileSet = true;
+    pair.fixtureProfile = fixtureProfile;
+    pair.availableFixtures = availableFixtures;
+    pair.fixtureFingerprint = fixtureProfile
+      ? crypto.createHash('sha256').update(`${pair.preparedSource.fingerprint}\n${fixtureProfile}`).digest('hex')
+      : pair.preparedSource.fingerprint;
     return {
       origins: {
         base: applicationRuntime.appOrigin(config, pair.deployments.base),
@@ -312,6 +355,7 @@ async function resetPair(config, pair) {
       baseSha: pair.sides.base.sha,
       headSha: pair.sides.head.sha,
       fixtureFingerprint: pair.fixtureFingerprint,
+      availableFixtures,
       baseImageDigest: pair.sides.base.imageDigest,
       headImageDigest: pair.sides.head.imageDigest,
     };
