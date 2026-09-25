@@ -14,11 +14,15 @@ async function replay(t, snapshots, sessionId) {
   let reads = 0;
   const progress = [];
   t.mock.method(kubernetes, 'execInWorker', async (_config, _runtime, command) => {
-    if (command[0] !== 'cat') return { stdout: 'busy', stderr: '' };
+    if (command[0] !== 'tail') return { stdout: 'busy', stderr: '' };
     assert.ok(reads < snapshots.length, 'consumer must stop at the completed exit marker');
+    // Each snapshot is the whole file at that poll; `tail -n +K` returns it
+    // from line K, a half-written last line included.
     const snapshot = snapshots[reads++];
     if (snapshot instanceof Error) throw snapshot;
-    return { stdout: snapshot, stderr: '' };
+    assert.deepEqual([command[1], command[3]], ['-n', '/home/node/.claude/turn-test.log']);
+    const fromLine = Number(String(command[2]).replace(/^\+/, ''));
+    return { stdout: snapshot.split('\n').slice(fromLine - 1).join('\n'), stderr: '' };
   });
   let complete = false;
   const pending = worker.resumeTurnFromJournal(sessionId, {
