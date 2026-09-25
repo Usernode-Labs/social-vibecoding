@@ -175,6 +175,15 @@ const stoppedSessions = new Map();
 // What the last pass refused, for the dashboard's loop line. Refusals are
 // counted here instead of being written as verdict rows.
 let lastRefusals = [];
+// A platform fault backs off the WHOLE bot (#3122): the worker quota, a
+// missing key or a refused ledger fails every app the same way, and the
+// loop used to retry the same issue every 30 seconds, writing a failed row
+// each time — 60 rows in 70 minutes while the volume quota was full.
+// { attempts, until, error, at }. In memory for the same reason as
+// appBackoff: a restart is the event most likely to have cleared it.
+let platformFault = null;
+// When the bot last freed its own leftover worker volumes.
+let lastVolumeSweepAt = 0;
 // Apps whose issues changed since the last pass (wake), and whether a full
 // reconcile was asked for (the mode was switched on, say). Read and cleared
 // at the top of every pass; only meaningful on the Pod running the loop.
@@ -845,6 +854,90 @@ function clearRefusals(appId) {
   appBackoff.delete(Number(appId));
 }
 
+/**
+ * A platform fault, said the way the dashboard should say it (#3122). The
+ * quota refusal arrives as a Kubernetes Status body several hundred
+ * characters long; what anyone needs from it is which quota is full.
+ */
+function summarizeFault(error) {
+  const text = String(error || '').replace(/\s+/g, ' ').trim();
+  if (/exceeded quota/i.test(text)) {
+    return /persistentvolumeclaims|requests\.storage/i.test(text)
+      ? 'the worker storage quota is full'
+      : 'a worker quota is full';
+  }
+  return clip(text, 160) || 'unknown platform fault';
+}
+
+/** Whether the bot is inside a platform-fault backoff, and for how long. */
+function faultBackoff(now = Date.now()) {
+  if (!platformFault || platformFault.until <= now) return null;
+  return { ...platformFault, remainingMs: platformFault.until - now };
+}
+
+/** Double the bot-wide backoff, from 2 minutes up to an hour. */
+function noteFault(error, now = Date.now()) {
+  const attempts = (platformFault?.attempts || 0) + 1;
+  const delayMs = Math.min(BACKOFF_BASE_MS * (2 ** (attempts - 1)), BACKOFF_CEILING_MS);
+  platformFault = { attempts, until: now + delayMs, error: summarizeFault(error), at: now };
+  return { attempts, delayMs, summary: platformFault.error };
+}
+
+/**
+ * The same fault the current streak already recorded. A retry that fails
+ * the same way is logged, not written to the ledger again: one row says
+ * the bot hit it, and the loop line says it is still waiting.
+ */
+function isRepeatFault(error) {
+  return !!platformFault && platformFault.error === summarizeFault(error);
+}
+
+/** A turn ran, so the platform is fine again. */
+function clearFault() {
+  platformFault = null;
+}
+
+/**
+ * Free the worker volumes the bot's own sessions still hold (#3122).
+ *
+ * Every Kubernetes worker used to claim a 5Gi volume, and the bot keeps one
+ * session per app, paused forever, so every app it ever triaged held one:
+ * 26 of the namespace's 120 when the quota refused everybody's workers.
+ * The bot has needed no persistent storage since each issue got a fresh
+ * thread (#3036), and its workers now start on temporary storage, so what
+ * is left is only what it claimed before. A volume is freed only when no
+ * worker Deployment for that session exists, so a warm worker is never
+ * pulled from under a turn; its volume goes on a later sweep, once the
+ * worker has idled out.
+ */
+async function releaseBotVolumes(pool, bot, deps = {}) {
+  const worker = deps.worker || require('./worker');
+  if (typeof worker.listWorkerVolumes !== 'function') return [];
+  const volumes = await worker.listWorkerVolumes();
+  const detached = (volumes || []).filter((v) => !v.attached && !v.terminating
+    && Number.isSafeInteger(Number(v.sessionId)));
+  if (!detached.length) return [];
+  const { rows } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE user_id = $1 AND id = ANY($2::int[])',
+    [bot.id, detached.map((v) => Number(v.sessionId))],
+  );
+  const mine = new Set(rows.map((r) => Number(r.id)));
+  const freed = [];
+  for (const volume of detached) {
+    const sessionId = Number(volume.sessionId);
+    if (!mine.has(sessionId)) continue;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await worker.destroyCcVolume(sessionId);
+      freed.push(sessionId);
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not free a bot worker volume', { sessionId, err: err.message });
+    }
+  }
+  if (freed.length) log.info('homeroom-bot', 'Freed bot worker volumes', { sessionIds: freed });
+  return freed;
+}
+
 /** This session's container was just killed on a budget stop (#2870). */
 function noteStopped(sessionId, now = Date.now()) {
   stoppedSessions.set(Number(sessionId), now);
@@ -999,7 +1092,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
 
   const recordFailure = async (error, extra = {}, { infra = false } = {}) => {
     if (REFUSAL_ERRORS.has(error)) return recordRefusal(error);
-    const id = await insertRun(pool, {
+    // A platform fault the current streak already recorded gets no second
+    // row (#3122); the retry is still logged below.
+    const id = infra && isRepeatFault(error) ? null : await insertRun(pool, {
       appId: app.id, issueNumber, mode, verdict: 'failed', error,
       threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, ...extra,
@@ -1052,6 +1147,10 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     await worker.ensureWorkerImage();
     containerName = await worker.ensureWorker(session.id, {
       repoOwner: repo.owner, repoName: repo.repo, branchName: session.branch_name,
+      // Scratch storage, not a volume (#3122, using #3119's option). Every
+      // issue starts a fresh thread, so nothing on the worker needs to
+      // outlive it, and a volume per app is what filled the quota.
+      temporary: true,
       onProgress: () => {},
     });
   } catch (err) {
@@ -1344,6 +1443,30 @@ async function runOnce(pool, config, deps = {}) {
     }
 
     const bot = await ensureBotUser(pool, config);
+
+    // Free what the bot's own sessions still hold, on the refresh cadence
+    // (#3122). Runs before the fault check on purpose: a full quota is
+    // exactly when freeing a volume helps.
+    if (now - lastVolumeSweepAt >= REFRESH_INTERVAL_MS) {
+      lastVolumeSweepAt = now;
+      try {
+        const freed = await releaseBotVolumes(pool, bot, deps);
+        if (freed.length) out.volumesFreed = freed.length;
+      } catch (err) {
+        log.warn('homeroom-bot', 'Bot volume sweep failed', { err: err.message });
+      }
+    }
+
+    // Inside a platform-fault backoff nothing is dispatched (#3122). A wake
+    // still refreshes the queue above, but cannot restart the retry storm.
+    const fault = faultBackoff(now);
+    if (fault) {
+      out.paused = 'infra';
+      out.detail = fault.error;
+      out.retryInMs = fault.remainingMs;
+      return out;
+    }
+
     // An app inside its backoff window is skipped exactly like a paused one
     // (#2737). Without this, a session that refuses every turn is retried on
     // every wake, which is how one wedged app wrote 121 rows in a day.
@@ -1383,7 +1506,7 @@ async function runOnce(pool, config, deps = {}) {
           log.error('homeroom-bot', 'Triage threw', { app: batch.app.slug, issueNumber: item.issue_number, err: err.message });
           r = { ran: false, reason: 'threw' };
         }
-        if (r.ran) processed += 1;
+        if (r.ran) { processed += 1; clearFault(); }
         if (r.budget) budgets.push({ app: batch.app.slug, issueNumber: item.issue_number, kind: r.budget });
         if (r.reason === 'budget') { out.paused = 'budget'; break; }
         // A refusal moves on to the next APP rather than stopping the pass:
@@ -1392,7 +1515,17 @@ async function runOnce(pool, config, deps = {}) {
           refusals.push({ app: r.app, error: r.detail, retryInMs: r.retryInMs });
           break;
         }
-        if (r.reason === 'infra') { out.paused = 'infra'; out.detail = r.detail || null; break; }
+        if (r.reason === 'infra') {
+          const fault = noteFault(r.detail);
+          log.warn('homeroom-bot', 'Platform fault; the bot backs off', {
+            app: batch.app.slug, issueNumber: item.issue_number, fault: fault.summary,
+            attempts: fault.attempts, retryInMs: fault.delayMs,
+          });
+          out.paused = 'infra';
+          out.detail = fault.summary;
+          out.retryInMs = fault.delayMs;
+          break;
+        }
       }
       return processed;
     }));
@@ -1430,6 +1563,8 @@ async function tick(config) {
     const { getPool } = require('../db/pool');
     const out = await runOnce(getPool(config), config);
     if (out.processed > 0 && !out.paused && out.mode !== 'off') delay = BUSY_PASS_DELAY_MS;
+    // A platform fault waits out its backoff rather than the 30-second idle.
+    if (out.paused === 'infra' && out.retryInMs > 0) delay = Math.max(IDLE_PASS_DELAY_MS, out.retryInMs);
     // A wake that landed while this pass ran is not made to wait out the
     // idle delay; a pass that paused (budget, fault) is not spun by it.
     if (wakeRequested && !out.paused && out.mode !== 'off') delay = 0;
@@ -1775,6 +1910,12 @@ module.exports = {
   clearStaleTurn,
   noteStopped,
   wasStoppedRecently,
+  summarizeFault,
+  faultBackoff,
+  noteFault,
+  isRepeatFault,
+  clearFault,
+  releaseBotVolumes,
   describeStop,
   relaySpend,
   STOP_SETTLE_MS,
@@ -1813,7 +1954,7 @@ module.exports = {
   QUESTION_TRIPWIRE_PER_DAY,
   _resetForTests() {
     lastRefreshAt = 0; triagePromptCache = null; stopped = false; passInFlight = false; lastPass = null;
-    appBackoff.clear(); lastRefusals = [];
+    appBackoff.clear(); lastRefusals = []; platformFault = null; lastVolumeSweepAt = 0;
     if (timer) clearTimeout(timer);
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
   },
