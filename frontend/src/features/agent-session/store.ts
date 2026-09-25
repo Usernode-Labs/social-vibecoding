@@ -366,6 +366,7 @@ function closeEvents() {
   }
   events = null;
   eventFilter = null;
+  stopBusyPoll();
 }
 
 /**
@@ -387,6 +388,98 @@ function followEvents(id: number, turnId: string | null = null) {
       handleEvent(id, event);
     } catch { /* malformed frame */ }
   };
+}
+
+// ── A turn whose stream broke ──────────────────────────────────────────
+//
+// The turn's own stream (POST .../turns) can break while the server still
+// has the message: a dropped connection, or the platform restarting mid-turn,
+// which every deploy does because it replaces the platform's one pod. The
+// browser then throws its own raw words (WebKit's "Error in input stream",
+// Chrome's "network error"), which say nothing about the message: the turn
+// usually carries on, or has already finished, on the server. So read where
+// it stands rather than report a refusal and hand back a message that was
+// sent. The event bus is each pod's own memory, so a new pod's
+// GET .../events never hears a turn the old one is still finishing: a turn
+// followed this way is also re-read until the server says it has ended.
+
+const RESUME_ATTEMPTS = 4;
+const RESUME_RETRY_MS = 1000;
+const BUSY_POLL_MS = 5000;
+const NOT_SENT_TEXT = 'Could not reach Homeroom, so your message was not sent. Try again.';
+const LOST_TEXT = 'The connection dropped while the Mayor was answering. Reload to see where it stands.';
+let busyPoll: ReturnType<typeof setTimeout> | null = null;
+
+function stopBusyPoll() {
+  if (busyPoll) clearTimeout(busyPoll);
+  busyPoll = null;
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+}
+
+/** The server's own answer (api.ts's json() carries its status); anything else is the connection. */
+function refusedByServer(error: unknown): boolean {
+  return typeof (error as { status?: unknown } | null)?.status === 'number';
+}
+
+function pollWhileBusy(id: number) {
+  stopBusyPoll();
+  busyPoll = setTimeout(async () => {
+    busyPoll = null;
+    if (state.id !== id || !state.turn.running) return;
+    try {
+      const { session } = await api.getSession(id);
+      if (state.id !== id || !state.turn.running) return;
+      if (!session.busy) {
+        publish({ turn: IDLE_TURN });
+        closeEvents();
+        void refreshAll(id).catch(() => {});
+        return;
+      }
+    } catch { /* the next read */ }
+    if (state.id === id && state.turn.running) pollWhileBusy(id);
+  }, BUSY_POLL_MS);
+}
+
+/**
+ * Settle a turn whose stream ended before its `done`, from what the server
+ * says. `sentAfter` is the newest message before this one: a user row past it
+ * means the server took the message, as it had once the stream carried any
+ * event (`accepted`).
+ */
+async function resumeTurn(id: number, { message, sentAfter, accepted }: {
+  message: string;
+  sentAfter: number;
+  accepted: boolean;
+}) {
+  for (let attempt = 0; attempt < RESUME_ATTEMPTS; attempt += 1) {
+    // A restarting platform answers again within seconds.
+    // eslint-disable-next-line no-await-in-loop
+    if (attempt) await wait(RESUME_RETRY_MS * attempt);
+    if (state.id !== id) return;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const [{ session, turn }] = await Promise.all([api.getSession(id), refreshMessages(id)]);
+      if (state.id !== id) return;
+      publish((current) => ({ session, sessions: withListed(current, session) }));
+      if (session.busy) {
+        patchTurn({
+          running: true,
+          ...(turn ? { phase: turn.phase, startedAt: turn.startedAt || state.turn.startedAt || Date.now() } : {}),
+        });
+        followEvents(id);
+        pollWhileBusy(id);
+        return;
+      }
+      const taken = accepted || state.messages.some((row) => row.role === 'user' && row.id > sentAfter);
+      publish({ turn: IDLE_TURN, ...(taken ? {} : { error: NOT_SENT_TEXT, returnedText: message }) });
+      return;
+    } catch { /* not answering yet: try again */ }
+  }
+  if (state.id !== id) return;
+  publish({ turn: IDLE_TURN, error: accepted ? LOST_TEXT : NOT_SENT_TEXT, ...(accepted ? {} : { returnedText: message }) });
 }
 
 export function handleEvent(id: number, event: AgentTurnEvent) {
@@ -819,8 +912,9 @@ export async function sendAgentMessage(text: string) {
   if (files.some((item) => item.status === 'uploading')) return;
   publish({ error: '', credits: null });
   const shown = message || (files.length === 1 ? `Attached ${files[0].name}` : `Attached ${files.length} files`);
+  const sentAfter = newestMessageId(state.messages);
   patchTurn({
-    running: true, phase: 'mayor', pendingUserText: shown, pendingAfterId: newestMessageId(state.messages),
+    running: true, phase: 'mayor', pendingUserText: shown, pendingAfterId: sentAfter,
     startedAt: Date.now(), streamText: '', cards: [],
   });
   const id = draft ? await createFromDraft(draft) : state.id;
@@ -841,6 +935,8 @@ export async function sendAgentMessage(text: string) {
   // The tray empties once the server has taken the message (its first
   // event), not before: a refused message keeps its files for the retry.
   let accepted = false;
+  // No answer from the server, only a broken connection (resumeTurn).
+  let streamBroke = false;
   const abort = new AbortController();
   // A conversation the viewer left while it was being created still gets its
   // message, but its stream is not this screen's to stop.
@@ -859,6 +955,10 @@ export async function sendAgentMessage(text: string) {
     });
   } catch (error) {
     if (abort.signal.aborted) return;
+    if (!refusedByServer(error)) {
+      streamBroke = true;
+      return;
+    }
     const refused = creditsRefusal(error);
     if (refused) {
       // Out of platform credits: the card that says how to keep building,
@@ -875,9 +975,13 @@ export async function sendAgentMessage(text: string) {
     if (busy) followEvents(id);
   } finally {
     if (turnAbort === abort) turnAbort = null;
-    // The stream can end without a `done` (a dropped connection): settle
-    // from what the server has persisted.
-    if (state.id === id && state.turn.running && !events) {
+    // The stream can end without a `done`, cleanly or with a network error
+    // (a dropped connection, a platform restart): settle from where the
+    // server says the turn stands. A stop the viewer asked for follows the
+    // bus for its `stopped`.
+    if (state.id === id && !abort.signal.aborted && (streamBroke || (state.turn.running && !events))) {
+      await resumeTurn(id, { message, sentAfter, accepted });
+    } else if (state.id === id && state.turn.running && !events) {
       followEvents(id);
     }
     void refreshAll(id).catch(() => {});
@@ -977,6 +1081,19 @@ export async function stopAgentTurn() {
     patchTurn({ stopping: false });
     publish({ error: errorText(error, 'Could not stop the Mayor.') });
   }
+}
+
+/** Stop the active change's visual change preview; the conversation re-reads to drop it. */
+export async function stopPreviewCapture() {
+  const id = state.id;
+  const change = state.session?.activeChange;
+  if (!id || !change || !change.appSlug || !change.previewCapture) return;
+  try {
+    await api.stopPreviewCapture(change.appSlug, change.id);
+  } catch (error) {
+    if (state.id === id) publish({ error: errorText(error, 'Could not stop capturing previews.') });
+  }
+  if (state.id === id) await refreshSession(id).catch(() => {});
 }
 
 export async function decideCard(actionId: string, decision: 'confirm' | 'dismiss') {
@@ -1537,7 +1654,17 @@ export async function chooseAgent(choice: AgentChoice) {
 // another tab (the server's `agent_session_changed`, routed by app.js). The
 // lists redraw their marks from a fresh read; a burst of events is one read.
 let listTimer: ReturnType<typeof setTimeout> | null = null;
-export function agentSessionListChanged() {
+let openTimer: ReturnType<typeof setTimeout> | null = null;
+export function agentSessionListChanged(event?: { agentSessionId?: unknown } | null) {
+  // The conversation on screen changed outside a turn (its change's preview
+  // started capturing, or settled): it re-reads itself too.
+  const openId = state.id;
+  if (openId && event && Number(event.agentSessionId) === openId && !state.turn.running && !openTimer) {
+    openTimer = setTimeout(() => {
+      openTimer = null;
+      if (state.id === openId && !state.turn.running) void refreshSession(openId).catch(() => {});
+    }, 250);
+  }
   if (listTimer) return;
   listTimer = setTimeout(() => {
     listTimer = null;

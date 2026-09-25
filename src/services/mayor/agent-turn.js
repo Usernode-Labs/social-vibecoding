@@ -145,6 +145,7 @@ function defaults(deps = {}) {
     // every pod, when either happens.
     notifyUser: deps.notifyUser || ((userId, payload) => require('../ws').pushToUser(userId, payload)),
     isChangeBusy: deps.isChangeBusy || ((changeId) => require('../active-workers').isSessionBusy(changeId)),
+    activeTurnMode: deps.activeTurnMode || ((changeId) => require('../worker').getActiveTurnMode(changeId)),
   };
 }
 
@@ -976,7 +977,11 @@ function turnState(agentSessionId) {
 // as a running dispatch, and stop goes to the change.
 function recoveredRunState(agentSessionId, changeId, deps = {}) {
   if (stopRegistry.has(agentSessionId) || !changeId) return null;
-  if (!defaults(deps).isChangeBusy(changeId)) return null;
+  const d = defaults(deps);
+  if (!d.isChangeBusy(changeId)) return null;
+  // The change's visual change preview is not the coding agent: the
+  // conversation shows it as its own capture (activeChange.previewCapture).
+  if (d.activeTurnMode(changeId) === 'evidence') return null;
   return { phase: 'cc', stopping: false, changeId };
 }
 

@@ -420,9 +420,10 @@ test('"back out of an issue / proposal / governance topic" is the in-pane Worksh
   // never a literal `/board`, because Workshop and Board are one screen in
   // two layouts and back has to name the one the reader came from.
   assert.match(improveStoreJs,
-    /export function topicBackHref\(\{ slug, tab, subTab, boardView \}\) \{\n\s+return slug && tab === 'dev' && subTab === 'topic' \? boardHref\(slug, boardView\) : null;/,
-    'the chip resolves a topic route to its board through boardHref');
-  assert.match(topicBackTsx, /const href = topicBackHref\(\{ slug, tab, subTab, boardView \}\);\n\s+if \(!href\) return null;/,
+    /export function topicBackHref\(\{ slug, tab, subTab, boardView, topicOrigin = null \}\) \{\n\s+if \(!\(slug && tab === 'dev' && subTab === 'topic'\)\) return null;\n\s+return topicOrigin \|\| boardHref\(slug, boardView\);/,
+    'the chip resolves a topic route to its board through boardHref, unless a '
+    + 'Messages card recorded the conversation it was opened from (#3103)');
+  assert.match(topicBackTsx, /const href = topicBackHref\(\{ slug, tab, subTab, boardView, topicOrigin \}\);\n\s+if \(!href\) return null;/,
     'and renders only when that answer exists');
   // First in `.dev-topic`, so it sits above the hero or the card and scrolls
   // with them, on every kind of topic (TopicHead is the head of all of them).

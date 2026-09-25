@@ -3,11 +3,11 @@
   "inventoryReviewed": true,
   "parityReady": true,
   "summary": {
-    "totalRoutes": 719,
-    "mappedRoutes": 563,
+    "totalRoutes": 721,
+    "mappedRoutes": 565,
     "exemptRoutes": 156,
     "reviewRequiredRoutes": 0,
-    "clientApiReferences": 415,
+    "clientApiReferences": 417,
     "unmatchedClientApiReferences": 0,
     "settingsSections": 22,
     "navigationSurfaces": 10
@@ -8732,6 +8732,26 @@
     {
       "source": "src/routes/sessions.js",
       "method": "POST",
+      "path": "/api/sessions/:id/unpromote",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "development.post.sessions.item.unpromote.536b3a7c",
+      "domain": "development",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "session",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#workshop",
+      "clientReferences": [
+        "frontend/src/features/dev-chat/dev-chat.js",
+        "public/js/app-view.js",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "method": "POST",
       "path": "/api/sessions/:id/reset-agent-context",
       "expression": null,
       "status": "mapped",
@@ -12264,6 +12284,8 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/dev/proposals/:sessionId",
       "clientReferences": [
+        "frontend/src/features/agent-session/api.ts",
+        "public/js/app-view.js",
         "public/js/app-view.js"
       ]
     },
@@ -12299,6 +12321,25 @@
       "mobileSupported": true,
       "classicPath": "#app/:slug/dev/proposals/:sessionId",
       "clientReferences": [
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/visual-evidence.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/proposals/:sessionId/evidence/stop",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "governance.post.apps.item.proposals.item.evidence.stop.6d65aed7",
+      "domain": "governance",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "proposal",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/dev/proposals/:sessionId",
+      "clientReferences": [
+        "frontend/src/features/agent-session/api.ts",
         "public/js/app-view.js"
       ]
     },

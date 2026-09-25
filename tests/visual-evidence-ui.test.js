@@ -104,3 +104,19 @@ test('the workshop summary uses protected focus URLs only after verification', (
   assert.equal(summary.after, url('2'));
   assert.equal(summary.claim, evidence().claims[0].claim);
 });
+
+test('a running preview offers Stop, and a stopped one reads stopped with Retry', () => {
+  const running = AppView.visualEvidenceHtml(evidence({ state: 'exploring', artifacts: [] }), { sessionId: 42 });
+  assert.match(running, /data-evidence-stop="1"[^>]*onclick="AppView\.stopVisualEvidence\(42, this\)">Stop</);
+  const notStarted = AppView.visualEvidenceHtml(evidence({ state: 'planned', artifacts: [] }), { sessionId: 42 });
+  assert.doesNotMatch(notStarted, /data-evidence-stop/, 'nothing is running to stop');
+
+  const stopped = AppView.visualEvidenceHtml(evidence({
+    state: 'failed', artifacts: [], failureCode: 'evidence_stopped', repairAvailable: false,
+    failureReason: 'Stopped before it finished.',
+  }), { sessionId: 42 });
+  assert.match(stopped, /Visual change preview stopped/);
+  assert.doesNotMatch(stopped, /bg-red-500\/10/, 'a stop is not a failure');
+  assert.match(stopped, /Retry visual change preview/);
+  assert.doesNotMatch(stopped, /data-evidence-stop/);
+});

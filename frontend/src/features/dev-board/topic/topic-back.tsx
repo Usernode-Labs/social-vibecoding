@@ -52,7 +52,7 @@ import type { MouseEvent, ReactNode } from 'react';
 import { ChevronLeftIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../../lib/use-store-state';
-import { improveStore, topicBackHref } from '../../improve/improve-store.js';
+import { improveStore, topicBackHref, topicBackLabel } from '../../improve/improve-store.js';
 
 function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
   const nav = (window as unknown as {
@@ -66,18 +66,21 @@ function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
 }
 
 export function TopicBack(): ReactNode {
-  const { slug, tab, subTab, boardView } = useStoreState(improveStore);
-  const href = topicBackHref({ slug, tab, subTab, boardView });
+  const { slug, tab, subTab, boardView, topicOrigin } = useStoreState(improveStore);
+  const href = topicBackHref({ slug, tab, subTab, boardView, topicOrigin });
   if (!href) return null;
+  // #3103: a card opened from a Messages conversation goes back to it, and
+  // says so; everywhere else the chip is the Workshop's.
+  const label = topicBackLabel(href);
   return (
     <a
       className="dev-topic-back un-touch-target"
       href={href}
-      aria-label="Back to Workshop"
+      aria-label={`Back to ${label}`}
       onClick={onBackClick}
     >
       <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
-      <span>Workshop</span>
+      <span>{label}</span>
     </a>
   );
 }

@@ -383,6 +383,26 @@ function visualEvidenceRoutes(config) {
     }
   });
 
+  // Stop the running visual change preview. The same people as Rerun, which
+  // is how a stopped run is started again.
+  router.post('/api/apps/:slug/proposals/:sessionId/evidence/stop', async (req, res) => {
+    const id = sessionId(req.params.sessionId);
+    if (!id) return res.status(404).json({ error: 'Proposal not found' });
+    try {
+      const ctx = await loadContext(pool, req.params.slug, id, req.user, 'collab');
+      if (!ctx) return res.status(404).json({ error: 'Proposal not found' });
+      const canManage = ctx.session.user_id === req.user?.id
+        || await appAdmins.canManageApp(pool, ctx.app, req.user);
+      if (!canManage) return res.status(404).json({ error: 'Proposal not found' });
+      const result = await orchestrator.stopForSession(pool, id);
+      return res.json(result);
+    } catch (err) {
+      if (err?.code) return sendError(res, err);
+      log.error('visual-evidence', 'Evidence stop failed', { sessionId: id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/apps/:slug/proposals/:sessionId/evidence/override', async (req, res) => {
     const id = sessionId(req.params.sessionId);
     if (!id) return res.status(404).json({ error: 'Proposal not found' });
