@@ -1267,7 +1267,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // staging conversations 990803 and 990801, the way #2779 folded its four.
   // Main stood at 810 exactly, the 20-slot floor, so the ceiling moved to
   // 840 with it (services/app-manifest.js), leaving 29 slots.
-  assert.equal(DAPP.tests.length, 811);
+  //
+  // 811 → 814: +3: the Settings Node row refreshing without a tap, and the
+  // wallet's Block production card order/style in the producing and
+  // delegated states (the style assertions fold into the order check).
+  // 26 slots left under 840.
+  assert.equal(DAPP.tests.length, 814);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
