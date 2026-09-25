@@ -269,6 +269,18 @@ const MANIFEST_FILENAME = 'dapp.json';
 // ~206s of ideal work, and the unchanged 650s TESTS_DEADLINE_MS still clears
 // the 2x margin by ~238s, so neither the deadline nor RUN_TIMEOUT_MS moves.
 // The step buys 29 slots over the 811 declared here.
+//
+// THE RULE AT THE FLOOR, stated once because three guards enforce it and on
+// #4868 they gave opposite advice. Fold first: a check that can share a
+// route with an existing one joins that check's expectSelector with :has()
+// instead of taking a slot. If the merged manifest still crosses the 20-slot
+// floor, the proposal that crosses it raises this ceiling in the same change
+// and adds its paragraph above, with the arithmetic;
+// tests/checks-budget.test.js decides whether TESTS_DEADLINE_MS and
+// RUN_TIMEOUT_MS move with it. Every raise above was made that way, and a
+// feature is not held behind a second vote because main already sat at the
+// floor. Never delete a check to make room. tests/lib/check-cap.js puts
+// the same words in the failing guards' messages.
 const MAX_DECLARED_TESTS = 840;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js

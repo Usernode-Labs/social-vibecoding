@@ -24,6 +24,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { kanbanHtml } = require('./lib/dev-card-html');
+const checkCap = require('./lib/check-cap');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -1282,7 +1283,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // independently took the same 811 to 814, with the Settings/wallet trio
   // above. Neither set overlaps the other, so the merged manifest holds
   // every one of them: 811 + 1 + 3 = 815.
-  assert.equal(DAPP.tests.length, 815);
+  //
+  // A mismatch says what the count is, what it is pinned at, and what to do
+  // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
+  checkCap.assertPinned(DAPP.tests.length, 815);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
