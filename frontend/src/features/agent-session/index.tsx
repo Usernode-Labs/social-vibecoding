@@ -19,7 +19,7 @@ import {
   DraftSendIcon,
   DraftTrashIcon,
   EllipsisHorizontalIcon,
-  PlusIcon,
+  PaperclipIcon,
   SaveDraftIcon,
   SparklesIcon,
   SpinnerArcIcon,
@@ -1424,13 +1424,13 @@ function Composer({ id }: { id: string }) {
         <button
           type="button"
           className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-800 hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
-          aria-label="Add photos or files"
-          title="Add photos or files"
+          aria-label="Attach photos or files"
+          title="Attach photos or files"
           disabled={archived || snapshot.phase === 'loading'}
           data-agent-session-attach
           onClick={() => picker.current?.click()}
         >
-          <PlusIcon className="h-5 w-5" aria-hidden="true" />
+          <PaperclipIcon className="h-5 w-5" aria-hidden="true" />
         </button>
         <input
           ref={picker}
