@@ -200,7 +200,7 @@
     {
       "key": "ARCHIVED_RETENTION_MS",
       "group": "Proposals & retention",
-      "default": "2592000000",
+      "default": "604800000",
       "description": "How long archived proposals are retained before deletion."
     },
     {

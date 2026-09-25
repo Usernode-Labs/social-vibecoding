@@ -295,6 +295,78 @@ test('one dispatch per turn; one the change cannot take is refused to the model'
   assert.match(none.model.requests[1].messages.at(-1).content[0].content, /^not_available/);
 });
 
+// Conversation 7, change 4952: after the card, the Mayor said "dispatching
+// the coding agent to build it now" and called nothing. Its wrap-up after a
+// failed dispatch said "Retrying now." with no tool that could retry.
+test('a reply that says the coding agent is starting, with no call, gets one round to make it', async () => {
+  const { model, stub } = await runTurn({
+    steps: [
+      { text: 'Change 4952 is open for #9 — dispatching the coding agent to build it now.' },
+      { toolUses: [{ id: 'd1', name: 'dispatch_coding_agent', input: { prompt: 'Build #9' } }] },
+      { text: 'Built.' },
+    ],
+  });
+  assert.equal(stub.runs.length, 1);
+  const nudge = model.requests[1].messages;
+  assert.deepEqual(nudge.at(-2), { role: 'assistant', content: [{ type: 'text', text: 'Change 4952 is open for #9 — dispatching the coding agent to build it now.' }] });
+  assert.equal(nudge.at(-1).role, 'user');
+  assert.match(nudge.at(-1).content, /did not call dispatch_coding_agent or dispatch_scout, so nothing is running/);
+});
+
+test('with no dispatch on offer, the claim is taken back, and only one round is spent on it', async () => {
+  const { model, stub } = await runTurn({
+    stub: dispatchStub({ dispatchable: false }),
+    steps: [{ text: 'Dispatching the coding agent now.' }],
+  });
+  assert.equal(stub.runs.length, 0);
+  assert.equal(model.requests.length, 2, 'the repeated claim is not nudged again');
+  assert.match(model.requests[1].messages.at(-1).content, /no dispatch is available on this turn/);
+
+  // A claim made beside a tool call, with an empty closing round, rides on the
+  // tool results rather than as an empty assistant message.
+  const split = await runTurn({
+    stub: dispatchStub({ dispatchable: false }),
+    steps: [
+      { text: "I'll start the coding agent on it.", toolUses: [{ id: 'r1', name: 'suggest_replies', input: { replies: ['Thanks'] } }] },
+      { text: '' },
+      { text: 'Nothing has started yet.' },
+    ],
+  });
+  assert.equal(split.model.requests.length, 3);
+  const last = split.model.requests[2].messages.at(-1);
+  assert.equal(last.role, 'user');
+  assert.equal(last.content[0].type, 'tool_result');
+  assert.match(last.content.at(-1).text, /nothing is running/);
+});
+
+test('questions, offers and past runs are not claims', () => {
+  for (const text of [
+    'Want me to start the coding agent on it?',
+    'I can dispatch the coding agent whenever you are ready.',
+    'The coding agent has finished. The details are above.',
+    'Starting point: the header component.',
+  ]) assert.equal(agentTurn.claimsDispatch(text), false, text);
+  for (const text of [
+    'Change 4952 is open for #9 — dispatching the coding agent to build it now.',
+    "You're right. Dispatching the coding agent now.",
+    "I'll send it to the scout first.",
+  ]) assert.equal(agentTurn.claimsDispatch(text), true, text);
+});
+
+test('the wrap-up is told it cannot retry or dispatch', async () => {
+  const { model } = await runTurn({
+    stub: dispatchStub({ outcome: { ran: false, changeId: 50, kind: 'build', isError: true, stopped: false, toolResultText: 'bootstrap_failed: setup stopped' } }),
+    steps: [
+      { text: 'Building.', toolUses: [{ id: 'd1', name: 'dispatch_coding_agent', input: { prompt: 'Build' } }] },
+      { text: 'The run did not start. Ask me to try again.' },
+    ],
+  });
+  const wrap = model.requests[1];
+  assert.ok(wrap.systemPrompt.endsWith(agentTurn.WRAP_UP_NOTE));
+  assert.match(agentTurn.WRAP_UP_NOTE, /cannot retry, dispatch or start anything/);
+  assert.match(model.requests[0].systemPrompt, /Never say it is starting, running or being retried unless you make that call/);
+});
+
 test('a stopped dispatch skips the wrap-up', async () => {
   const stub = dispatchStub({
     outcome: { ran: true, changeId: 50, kind: 'build', isError: false, stopped: true, stoppedBy: 'ada', toolResultText: 'stopped' },

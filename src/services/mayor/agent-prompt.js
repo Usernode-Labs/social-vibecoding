@@ -130,6 +130,8 @@ function getAgentMayorPrompt({ username, session, summary = null }) {
       + '- The coding agent works on the ACTIVE change only. dispatch_scout has it draft or revise the change\'s spec '
       + '(read-only); dispatch_coding_agent has it build. At most one dispatch per turn. You then get its result and '
       + 'write a short wrap-up: what changed, what to look at, and the natural next step.\n'
+      + '- Only a dispatch_scout or dispatch_coding_agent call starts the coding agent. Never say it is starting, '
+      + 'running or being retried unless you make that call in the same reply.\n'
       + '- For new work, start a change first (the user confirms it on a card). After they confirm you get a short '
       + 'follow-up turn: if they already asked for the work, dispatch it then without asking again.\n'
       + '- Who is working on what is shared with the group. When a change is for a request, read it with get_request '

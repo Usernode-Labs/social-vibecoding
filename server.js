@@ -5141,7 +5141,8 @@ let stalePrSweeperHandle = null;
 //   Pass 2 (archive): if still untouched PR_STALE_GRACE_MS after that
 //     warning, auto-archive it (reversible — keeps CC + branch).
 //   Pass 3 (GC): archived sessions past ARCHIVED_RETENTION_MS get their
-//     CC volume purged so memory stops occupying disk.
+//     CC volume purged so memory stops occupying disk, and a merged
+//     change's Kubernetes worker volume that outlived its merge is freed.
 // "Interest" = the later of promoted_at and the newest vote; casting a
 // vote clears stale_notified_at (see routes/votes.js), reviving the PR.
 function startStalePrSweeper(config) {
@@ -5403,6 +5404,13 @@ function startStalePrSweeper(config) {
         }
       } catch (err) {
         log.warn('server', 'Archived CC GC sweep failed', { err: err.message });
+      }
+      try {
+        await require('./src/services/worker-volume-reclaim').reclaimWorkerVolumes({
+          pool, mode: 'closed', limit: 50,
+        });
+      } catch (err) {
+        log.warn('server', 'Merged worker volume sweep failed', { err: err.message });
       }
     }
   }, config.staleSweepIntervalMs).unref();

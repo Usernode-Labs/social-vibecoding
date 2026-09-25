@@ -685,7 +685,7 @@ function load() {
     // GC destroys the CC volume (memory). The row + branch survive, so
     // unarchive still works afterward but Claude starts fresh. Set to 0
     // to keep CC volumes forever (no hard GC).
-    archivedRetentionMs: parseInt(process.env.ARCHIVED_RETENTION_MS || String(30 * 24 * 60 * 60 * 1000), 10),
+    archivedRetentionMs: parseInt(process.env.ARCHIVED_RETENTION_MS || String(7 * 24 * 60 * 60 * 1000), 10),
     // How often the stale-PR / archived-GC sweeper runs. These actions
     // are day-scale, so it polls infrequently. Default 1h.
     staleSweepIntervalMs: parseInt(process.env.STALE_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),

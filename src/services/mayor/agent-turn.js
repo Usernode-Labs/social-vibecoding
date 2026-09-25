@@ -53,6 +53,31 @@ const TITLE_MAX = 80;
 const LEASE_RENEW_MS = 30_000;
 const EMPTY_REPLY_TEXT = 'I could not put an answer together that time. Could you say that again?';
 
+// The wrap-up is offered no tool but suggest_replies, so it cannot act on a
+// dispatch that failed. Without this it has promised "Retrying now."
+const WRAP_UP_NOTE = 'THIS REPLY\nYou are writing the wrap-up for the dispatch above. You cannot call any tool here '
+  + 'except suggest_replies, so you cannot retry, dispatch or start anything in this reply. If the run did not start '
+  + 'or did not finish, say so plainly and say what the user can do next, such as asking you to try again.';
+
+// A reply that says the coding agent is starting. Questions and offers ("Want
+// me to build it?") do not count; the check reads each sentence on its own.
+const DISPATCH_CLAIM = /\b(?:(?:i'll|i will|i'm going to|i am going to|let me)\s+(?:dispatch|re-dispatch|start|launch|kick off|retry|send|hand)|dispatching|re-dispatching|starting|launching|kicking off|retrying|sending|handing)\b[^.!?\n]{0,60}\b(?:coding agent|scout)\b/i;
+
+function claimsDispatch(text) {
+  return String(text || '').split(/(?<=[.!?])\s+|\n+/)
+    .some((sentence) => !sentence.trim().endsWith('?') && DISPATCH_CLAIM.test(sentence));
+}
+
+function dispatchClaimNote(dispatchable) {
+  return dispatchable
+    ? '[HOMEROOM] Your reply says the coding agent is starting, but you did not call dispatch_coding_agent or '
+      + 'dispatch_scout, so nothing is running. If the user asked for this work, call the tool now. Otherwise, tell '
+      + 'the user in one sentence that nothing has started.'
+    : '[HOMEROOM] Your reply says the coding agent is starting, but no dispatch is available on this turn (the '
+      + 'active change cannot take one right now), so nothing is running. Tell the user in one sentence that '
+      + 'nothing has started.';
+}
+
 const IMMEDIATE_WRITE_TOOLS = new Set(['recheck_change']);
 const SUGGEST_REPLIES = 'suggest_replies';
 const WEB_FETCH = 'web_fetch';
@@ -656,11 +681,12 @@ async function runAgentTurn({
       if (payer) {
         wrapByok = payer.byok;
         const session = await d.agentSessions.getAgentSession(pool, { userId: user.id, id: agentSessionId });
+        const basePrompt = session
+          ? d.getAgentMayorPrompt({ username: user.username, session, summary: summary.text })
+          : systemPrompt;
         const wrap = await mayor.client.streamChat({
           messages: [...convo, { role: 'user', content: results }],
-          systemPrompt: session
-            ? d.getAgentMayorPrompt({ username: user.username, session, summary: summary.text })
-            : systemPrompt,
+          systemPrompt: `${basePrompt}\n\n${WRAP_UP_NOTE}`,
           model: mayor.model,
           tools: [d.tools.SUGGEST_REPLIES_TOOL],
           onToken: (text) => send('token', { text }),
@@ -741,6 +767,7 @@ async function runAgentTurn({
 
     let dispatchUse = null;
     let pendingResults = null;
+    let claimChecked = false;
     for (let round = 0; ; round += 1) {
       const lastRound = round >= MAX_TOOL_ROUNDS;
       const offer = await toolOffer();
@@ -766,6 +793,21 @@ async function runAgentTurn({
       const text = d.stripFakeCompletionMarker(result.text || '').trim();
       if (text) visibleText = visibleText ? `${visibleText}\n\n${text}` : text;
       const toolUses = Array.isArray(result.toolUses) ? result.toolUses : [];
+      // The turn is ending without a dispatch. A reply that says one is
+      // under way gets one more round to make the call or take it back. A
+      // pending card is exempt: its dispatch follows the user's confirm.
+      if (!toolUses.length && !stop.stopped && !lastRound && !claimChecked && !cards.length) {
+        claimChecked = true;
+        if (claimsDispatch(visibleText)) {
+          const note = dispatchClaimNote(offer.dispatchable);
+          // The claim can sit in an earlier round's text, with this round's
+          // reply empty; an empty assistant message is not replayable.
+          convo = text
+            ? [...convo, { role: 'assistant', content: [{ type: 'text', text }] }, { role: 'user', content: note }]
+            : withTrailingUserText(convo, note);
+          continue;
+        }
+      }
       if (stop.stopped || !toolUses.length || lastRound) break;
 
       convo = [...convo, { role: 'assistant', content: result.rawContent }];
@@ -1003,6 +1045,9 @@ module.exports = {
   withTrailingUserText,
   dispatchAttachmentIds,
   followUpNote,
+  claimsDispatch,
+  dispatchClaimNote,
+  WRAP_UP_NOTE,
   titleFromMessage,
   fallbackWrapUp,
   runAgentTurn,
