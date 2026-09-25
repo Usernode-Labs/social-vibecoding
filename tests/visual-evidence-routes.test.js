@@ -185,6 +185,9 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.equal(diagnostics.replayPlan.stories[0].id, fixtures.plan().stories[0].id);
   assert.deepEqual(diagnostics.trace.replayPasses, [{ pass: 1, durationMs: 20 }]);
   assert.equal(diagnostics.trace.heartbeat.poolWaiting, 3);
+  assert.match(diagnostics.observer.processId, /^[0-9a-f]{16}$/);
+  assert.equal(diagnostics.observer.ownsRun, false);
+  assert.equal(diagnostics.observer.heartbeatWrite, null);
   assert.equal(diagnostics.trace.agentDispatches[0].backend, 'claude_code');
   assert.equal(diagnostics.trace.agentDispatches[0].fallbackReason, 'model_without_tools');
   assert.equal(diagnostics.trace.agentActivity.events[0].kind, 'agent_deadline');

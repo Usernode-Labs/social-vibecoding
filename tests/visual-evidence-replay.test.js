@@ -532,6 +532,31 @@ test('an asserted UI may cancel obsolete reads without hiding failed mutations o
   assert.deepEqual(diagnostics.consoleErrors, [otherConsole]);
 });
 
+test('a read aborted during component cleanup uses the asserted final route when navigation has not updated yet', () => {
+  const startRoute = '/app/demo/dev/proposals/10';
+  const failure = { error: 'net::ERR_ABORTED' };
+  const consoleError = { message: 'Failed to load resource: net::ERR_ABORTED' };
+  const request = {
+    entry: failure, url: 'http://evidence:3000/api/apps/demo/proposals/10',
+    method: 'GET', resourceType: 'fetch', error: failure.error,
+    startRoute, endRoute: startRoute,
+  };
+  const consoleEvents = [{
+    entry: consoleError, url: request.url, method: 'GET', message: consoleError.message,
+  }];
+  const arrived = { failedRequests: [failure], consoleErrors: [consoleError] };
+  assert.deepEqual(replay.discardCancelledReads(
+    arrived, [request], consoleEvents, '/app/demo/workshop'
+  ), { requests: 1, consoleErrors: 1 });
+  assert.deepEqual(arrived, { failedRequests: [], consoleErrors: [] });
+
+  const stayed = { failedRequests: [failure], consoleErrors: [consoleError] };
+  assert.deepEqual(replay.discardCancelledReads(
+    stayed, [request], consoleEvents, startRoute
+  ), { requests: 0, consoleErrors: 0 });
+  assert.deepEqual(stayed, { failedRequests: [failure], consoleErrors: [consoleError] });
+});
+
 test('session bootstrap accepts only a bounded session cookie value', () => {
   assert.equal(replay.sessionCookieValue([
     { name: 'set-cookie', value: 'theme=light; Path=/' },
