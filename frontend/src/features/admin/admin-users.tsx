@@ -235,7 +235,7 @@ async function resetUserPassword(user: User) {
 async function deleteUser(user: User): Promise<boolean> {
   const ok = await console_()._confirm({
     title: 'Delete user?',
-    message: 'Permanently remove this account and sign-in access? Shared messages and attachments stay under “Deleted user.” External cleanup may remain pending.',
+    message: 'Anonymise this account and remove its sign-in access? Its name, email, profile and private data are erased; messages, votes and contributions stay under an anonymous “deleted-user” name. External cleanup may remain pending.',
     confirmLabel: 'Delete',
     danger: true,
   });

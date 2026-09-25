@@ -112,9 +112,9 @@ function DeleteConfirm({ user, onCancel, onConfirm }: {
   return (
     <div className="rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-4">
       <p className="text-xs text-red-700 dark:text-red-300 mb-3">
-        {'This permanently deletes '}
+        {'This permanently anonymises '}
         <strong>{expected}</strong>
-        {' from their platform account and signs them out everywhere. This affects ANY platform user, not just programme membership. Shared messages and attachments remain under “Deleted user.” External cleanup may remain pending. Type '}
+        {' from their platform account and signs them out everywhere. This affects ANY platform user, not just programme membership. Their name, email and private data are erased; messages, votes and contributions remain under an anonymous “deleted-user” name. External cleanup may remain pending. Type '}
         <code>{expected}</code>
         {' exactly to confirm.'}
       </p>

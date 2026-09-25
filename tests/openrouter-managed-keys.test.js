@@ -166,7 +166,7 @@ test('default-open managed provisioning stores the key internally and returns on
   const client = {
     query: async (sql, params = []) => {
       const text = String(sql);
-      if (/SELECT id FROM users WHERE id = \$1 FOR UPDATE/.test(text)) return { rows: [{ id: params[0] }] };
+      if (/SELECT id FROM users WHERE id = \$1 AND anonymised_at IS NULL FOR UPDATE/.test(text)) return { rows: [{ id: params[0] }] };
       if (/FROM user_social_identities/.test(text)) {
         identityQueries += 1;
         return { rows: [] };

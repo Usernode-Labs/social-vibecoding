@@ -817,6 +817,13 @@
     {
       "source": "src/services/account-deletion.js",
       "kind": "structural-template",
+      "fingerprint": "6080daf019a66e5bb391",
+      "count": 1,
+      "preview": "`DELETE FROM ${ident(col.schema_name)}.${ident(col.table_name)} WHERE ${ident(col.column_name)} = $1`"
+    },
+    {
+      "source": "src/services/account-deletion.js",
+      "kind": "structural-template",
       "fingerprint": "746ec64bf1e3488f9fe5",
       "count": 1,
       "preview": "`DELETE FROM ${table} WHERE user_id = $1 AND message_id IS NULL`"

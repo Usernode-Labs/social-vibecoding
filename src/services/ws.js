@@ -160,7 +160,7 @@ function attach(server, config) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         const client = { ws, user };
         globalClients.add(client);
-        void pool.query('SELECT id FROM users WHERE id = $1', [user.id])
+        void pool.query('SELECT id FROM users WHERE id = $1 AND anonymised_at IS NULL', [user.id])
           .then(result => { if (!result.rows.length) disconnectUser(user.id); })
           .catch(() => disconnectUser(user.id));
         log.debug('ws', 'Global events client connected', { userId: user.id });
@@ -211,14 +211,14 @@ function attach(server, config) {
 
     const client = { ws, user, appId, appSlug };
     joinRoom(appId, client);
-    const live = await pool.query('SELECT id FROM users WHERE id = $1', [user.id]).catch(() => ({ rows: [] }));
+    const live = await pool.query('SELECT id FROM users WHERE id = $1 AND anonymised_at IS NULL', [user.id]).catch(() => ({ rows: [] }));
     if (!live.rows.length) { disconnectUser(user.id); return; }
 
     log.info('ws', 'Client connected', { userId: user.id, appSlug });
 
     ws.on('message', async (raw) => {
       try {
-        const live = await pool.query('SELECT id FROM users WHERE id = $1', [user.id]);
+        const live = await pool.query('SELECT id FROM users WHERE id = $1 AND anonymised_at IS NULL', [user.id]);
         if (!live.rows.length) { disconnectUser(user.id); return; }
         const msg = JSON.parse(raw);
         await handleMessage(pool, client, msg);
