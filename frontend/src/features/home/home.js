@@ -1652,9 +1652,24 @@ const Home = {
       const initial = Home._searchReveal._initializedBar !== bar;
       if (h) Home._searchReveal._initializedBar = bar;
       if ((initial || park) && !Home._searchReveal.isPinned() && h && screen.scrollTop < h) {
-        screen.scrollTop = h;
+        if (initial) screen.scrollTop = h;
+        else Home._searchReveal.glide(screen, h);
       }
       Home._searchReveal.mark();
+    },
+
+    // Tuck a bar the viewer can SEE. The first park happens before anything
+    // is drawn, so it is instant; a later one (blur on an empty field) moved
+    // the whole screen up by the bar's height in a single frame while the
+    // keyboard was still going down. Scrolled smoothly, it slides away.
+    glide(screen, top) {
+      let still = false;
+      try { still = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (err) { /* unknown: animate */ }
+      if (still || typeof screen.scrollTo !== 'function') {
+        screen.scrollTop = top;
+        return;
+      }
+      screen.scrollTo({ top, behavior: 'smooth' });
     },
 
     _wireScroll(screen) {

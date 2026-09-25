@@ -10226,12 +10226,30 @@ html .un-backdrop.platform-backdrop-dim {
 
    0px whenever the visual viewport is not panned — no keyboard, desktop, and
    Android, where the kit measured no pan — and while pinch-zoomed, so there
-   the kit's own `top` is untouched. Every kit modal in the shell takes
+   the kit's own placement is untouched. Every kit modal in the shell takes
    it: each dialog `useDialog` presents, the username and terms gates,
    session options and the build log. The alert card (`.un-alert`) is centred
-   the same way but is not a `.un-modal`, and is left to the kit. */
-.un-modal {
-  top: calc(var(--platform-vv-top, 0px) + 50% - var(--un-kb-inset, 0px) / 2);
+   the same way but is not a `.un-modal`, and is left to the kit.
+
+   THE PAN IS A `translate`, NOT A TERM OF `top`, AND IT NEVER EASES. iOS
+   moves the page by the whole pan in one frame, both ways: when it reveals
+   a focused field, and back again the moment the field blurs. A `translate`
+   by the same amount, in the same frame, cancels that jump exactly, so the
+   dialog holds still while the kit eases `top` and the height (native.css
+   `.un-modal`, 250ms) toward the new band. As a term of `top` the pan eased
+   with them instead: the page had already jumped and the dialog followed a
+   quarter of a second late, thrown down by the whole pan on blur (300px
+   behind a tall form) and dipping on focus. The same frame is the kit's
+   doing: it reads the keyboard in the viewport's own resize event and
+   clears it in the blur, and lib/visual-viewport.ts answers both at once.
+   The kit's own modals rarely pan at all now (native.js
+   attachModalFieldFocus); this is for a field focused from code.
+
+   Only while the keyboard is up, the one time there is a pan: any
+   `translate` but `none` keeps the card on a transformed layer, which the
+   Android create screen below is anchored precisely to avoid. */
+html.un-kb .un-modal {
+  translate: 0 var(--platform-vv-top, 0px);
 }
 
 /* THE OVERLAP MUST BE A FULL RADIUS, and it has to come from whatever is
@@ -12075,6 +12093,29 @@ html.in-native-webview {
   --create-modal-overscroll: contain;
   --create-modal-padding: calc(20px + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) calc(16px + env(safe-area-inset-right, 0px)) calc(20px + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))) calc(16px + env(safe-area-inset-left, 0px));
 }
+/* FULL SCREEN HAS NOTHING BEHIND IT. With the keyboard up the screen ends
+   where the visible band does, and on iOS the keys and their accessory bar
+   are translucent: the strip between showed Home through them, dimmed —
+   "Challenges" under a form about a new app. The screen's own backdrop
+   takes its ground instead, so what shows below it is more of the screen.
+   It still fades in and out with the kit's backdrop, under a screen that
+   fades the same way. The centred desktop card keeps its dim. The screen's
+   lift shadow goes too: cast on that same ground it drew a line across the
+   strip where the screen ends. */
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+  html .un-backdrop:has(+ .un-modal > #create-card) {
+    background: var(--create-modal-fill);
+  }
+  html .un-modal:has(> #create-card) {
+    box-shadow: none;
+  }
+}
+html.in-native-webview .un-backdrop:has(+ .un-modal > #create-card) {
+  background: var(--create-modal-fill);
+}
+html.in-native-webview .un-modal:has(> #create-card) {
+  box-shadow: none;
+}
 /* The native Android create screen always fills the viewport. Anchoring its
    box directly gives the same bounds as 50% plus translate(-50%, -50%), but
    avoids keeping the settled full-screen form on a transformed layer during
@@ -12908,6 +12949,16 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
 .app-launch-cover-note {
   font-size: 0.8125rem;
   color: var(--text-faint);
+}
+/* The spinner keeps its box while hidden. The column is centred, so a
+   spinner that arrived at 500ms by leaving `display: none` lifted the icon,
+   the name and the note by half its height mid-zoom. Invisible and still,
+   it holds the room it will use. Two classes, so it outranks Tailwind's
+   `.hidden`, which loads after this sheet. */
+.app-launch-cover-spinner.hidden {
+  display: block;
+  visibility: hidden;
+  animation: none;
 }
 /* Both app frames the cover can sit over: the signed-in App tab and the
    anonymous landing viewer. */

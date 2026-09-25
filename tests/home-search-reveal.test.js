@@ -220,6 +220,35 @@ test('unpin re-tucks the bar (blur on an empty field)', () => {
   assert.equal(screen.scrollTop, 52, 'unpin syncs immediately');
 });
 
+test('a bar the viewer can see glides away; the first park is instant', () => {
+  // Re-tucked with one scrollTop write, the whole screen moved up by the
+  // bar's height in a single frame, while the keyboard was still going down.
+  const { Home, screen } = makeHome({ barHeight: 52, scrollTop: 0 });
+  const glides = [];
+  screen.scrollTo = (opts) => { glides.push(opts); screen.scrollTop = opts.top; };
+  Home._searchReveal.sync();
+  assert.equal(screen.scrollTop, 52, 'nothing is drawn yet: parked at once');
+  assert.deepEqual(glides, []);
+  screen.scrollTop = 0;
+  Home._searchReveal.pin();
+  Home._searchReveal.unpin();
+  assert.equal(glides.length, 1);
+  assert.equal(glides[0].top, 52);
+  assert.equal(glides[0].behavior, 'smooth');
+});
+
+test('reduced motion tucks the bar at once', () => {
+  const { Home, screen, sandbox } = makeHome({ barHeight: 52, scrollTop: 0 });
+  sandbox.matchMedia = () => ({ matches: true });
+  const glides = [];
+  screen.scrollTo = (opts) => { glides.push(opts); };
+  Home._searchReveal.sync();
+  screen.scrollTop = 0;
+  Home._searchReveal.unpin();
+  assert.equal(screen.scrollTop, 52);
+  assert.deepEqual(glides, []);
+});
+
 test('?shot=home-search leaves the bar revealed for screenshots', () => {
   const { Home, screen, bar } = makeHome({
     barHeight: 52, scrollTop: 0, search: '?shot=home-search',

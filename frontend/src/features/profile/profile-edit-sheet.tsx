@@ -39,7 +39,9 @@
  *   mid-presentation.
  * - **The card is restored before React unmounts it.** The kit has physically
  *   reparented it; the layout-effect cleanup runs before React detaches the
- *   node, so `restore()` there is what stops a `NotFoundError` on close.
+ *   node, so bringing it home there is what stops a `NotFoundError` on close.
+ *   `release()` does that and leaves a snapshot in the kit's shell for the
+ *   exit, which otherwise faded out an empty box where the card had been.
  * - **The root is the flagged node, the card is the lifted one.** Exactly the
  *   dialogs' split (lib/static-modal.ts): `.platform-modal-adopted` is
  *   `display: none !important`, so it cannot go on the node the kit is
@@ -358,8 +360,7 @@ export function ProfileEditSheet({
       if (!adoption) return;
       const handle = adoption;
       adoption = null;
-      handle.restore();
-      handle.dismiss();
+      handle.release();
     };
   }, []);
 

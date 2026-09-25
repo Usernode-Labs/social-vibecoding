@@ -92,7 +92,8 @@
  *   unNative.physics                  — the pure math (also the node export)
  *
  * On mobile the kit also maintains `--un-kb-inset` on <html> (the
- * on-screen-keyboard occlusion, tracked via visualViewport) plus class
+ * on-screen-keyboard occlusion, tracked via visualViewport while a text
+ * field is focused) plus class
  * `un-kb` while it is non-zero, so sheets / action sheets / modals /
  * alerts ride above the keyboard out of the box. Apps may consume the
  * var for their own fixed bottom bars. No-op on desktop.
@@ -523,6 +524,21 @@
     return !KB_NON_TEXT_INPUT_TYPES[type]; // unknown types default to text
   }
 
+  // Whether the focused element can be holding the on-screen keyboard up.
+  // Only a text-entry field raises it, and blurring that field is what
+  // retracts it, so with nothing editable focused there is no keyboard —
+  // whatever the visual viewport still reports. iOS reports the retraction
+  // only once its animation has finished, 250–400ms after the keys are
+  // gone, and everything keyed off the inset (the tab bar, a dialog's
+  // height, a column's padding) used to wait that long and then snap.
+  // A focused IFRAME may hold a field the page cannot see into, so it
+  // keeps the measurement. input: isTextEntryField's descriptor, or null.
+  function keyboardCanBeUp(input) {
+    if (!input) return false;
+    if (String(input.tag || '').toLowerCase() === 'iframe') return true;
+    return isTextEntryField(input);
+  }
+
   // Keyboard-aware reveal math for a focused field inside a content
   // scroller. scrollIntoView({block:'nearest'}) is blind here: keyboard
   // clearance is CONTENT PADDING on the scroller, not a smaller
@@ -851,6 +867,7 @@
     keyboardInset: keyboardInset,
     layoutViewportHeight: layoutViewportHeight,
     isTextEntryField: isTextEntryField,
+    keyboardCanBeUp: keyboardCanBeUp,
     revealScrollDelta: revealScrollDelta,
     reorderDropIndex: reorderDropIndex,
     gridDropSide: gridDropSide,
@@ -919,36 +936,82 @@
    * spring/drag semantics are unchanged. Apps may consume the var for
    * their own fixed bottom bars. Structural no-op on desktop or where
    * visualViewport is absent: no listeners, no var, CSS falls back to 0px.
+   *
+   * The inset drops to 0 the moment focus leaves a text field
+   * (keyboardCanBeUp), not when iOS finally reports the smaller keyboard:
+   * that report lands after the keys have gone, so the surfaces riding the
+   * inset moved late and all at once. Cleared on blur, they move WITH the
+   * retracting keyboard instead.
    * ──────────────────────────────────────────────────────────────────── */
 
   // Current keyboard inset (px), shared with attachKeyboardAvoidance so
   // instances read it directly instead of parsing the CSS custom property.
   var kbInset = 0;
+  // Called with the new inset after the var and the class are written: a
+  // presented modal waits on it to reveal the field it just focused.
+  var kbWatchers = [];
 
   (function () {
     var vv = window.visualViewport;
     if (!vv || platform === 'desktop') return;
     var rafPending = false;
-    function apply() {
-      rafPending = false;
-      var inset = keyboardInset({
-        layoutHeight: layoutViewportHeight(),
-        vvHeight: vv.height,
-        vvScale: vv.scale,
-      });
+    function describe(el) {
+      // Focus inside a shadow root is reported as its host.
+      while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+      if (!el || el === document.body || el === document.documentElement) return null;
+      return {
+        tag: el.tagName,
+        type: el.type,
+        readOnly: !!el.readOnly,
+        disabled: !!el.disabled,
+        contentEditable: !!el.isContentEditable,
+      };
+    }
+    function publish(inset) {
       if (inset === kbInset) return;
       kbInset = inset;
       document.documentElement.style.setProperty('--un-kb-inset', inset + 'px');
       document.documentElement.classList.toggle('un-kb', inset > 0);
+      kbWatchers.slice().forEach(function (fn) {
+        try { fn(inset); } catch (e) { /* one surface must not stop the rest */ }
+      });
+    }
+    function apply() {
+      rafPending = false;
+      publish(!keyboardCanBeUp(describe(document.activeElement)) ? 0 : keyboardInset({
+        layoutHeight: layoutViewportHeight(),
+        vvHeight: vv.height,
+        vvScale: vv.scale,
+      }));
+    }
+    // A blur that takes focus nowhere a keyboard can live clears the inset
+    // IN the event, not a frame later: iOS starts scrolling the page back
+    // down the moment the field blurs, and the first frame after a blur has
+    // measured ~100ms late on iOS — long enough for the page to slide down
+    // before a dialog riding the inset began to follow. `relatedTarget` is
+    // where focus is going; a hop to another field keeps the keyboard.
+    function onFocusOut(e) {
+      if (!keyboardCanBeUp(describe(e.relatedTarget))) publish(0);
+      schedule();
     }
     function schedule() {
       if (rafPending) return;
       rafPending = true;
       requestAnimationFrame(apply);
     }
-    vv.addEventListener('resize', schedule, { passive: true });
+    // The keyboard's own report is read IN the event. iOS pans the page
+    // to a focused field in the same frame it reports the smaller visual
+    // viewport, and anything answering that pan (the shell moves a modal
+    // by it, keyed on `un-kb`) has to land in that frame too: the next
+    // animation frame measured ~45ms later there, long enough to see the
+    // page move and the dialog follow. Scrolls, which fire every frame of
+    // a pinch or pan, stay coalesced to one read per frame.
+    vv.addEventListener('resize', apply, { passive: true });
     vv.addEventListener('scroll', schedule, { passive: true });
     window.addEventListener('resize', schedule, { passive: true });
+    // Re-read a frame later as well, once focus has landed.
+    document.addEventListener('focusin', schedule, true);
+    document.addEventListener('focusout', onFocusOut, true);
   })();
 
   /* ────────────────────────────────────────────────────────────────────
@@ -3562,6 +3625,150 @@
     }
   });
 
+  // ── A modal's fields take focus without moving the page ─────────────
+  // Tapping a field in a centred modal let iOS reveal it natively: it
+  // scrolled the whole page up under the dialog as the keyboard rose, and
+  // back down as it fell, and reported neither until the animation was
+  // over. The dialog is `position: fixed`, so it rode that scroll off the
+  // top of the screen, and anything compensating for the pan could only
+  // move once the report came: a dip on the way up, a throw on the way
+  // down. The modal needs no pan. It already moves into the band above the
+  // keyboard itself (`--un-kb-inset` in its `top` and height), so the pan
+  // is eliminated at its source, as attachKeyboardAvoidance does for a
+  // content scroller: the tap on a text field is taken (preventDefault
+  // kills the click, the native focus and the native reveal) and the field
+  // is focused with preventScroll. What the native reveal did for a field
+  // below the fold is done inside the card once it has settled at its new
+  // height. Scoped exactly as there: text-entry fields only, a field whose
+  // keyboard is up keeps its native caret and selection, a drag past the
+  // slop is not a tap, and a finger a recognizer owns is left alone. One
+  // addition: a field the dialog focused from code has no keyboard yet, and
+  // its first tap is taken too (see onTouchEnd). Returns detach.
+  var MODAL_SETTLE_MS = 280; // the modal's 250ms top/height ease, and a frame
+  var MODAL_REVEAL_FALLBACK_MS = 700; // no inset reported: resize mode, hardware keys
+  function attachModalFieldFocus(card) {
+    if (!window.visualViewport || platform === 'desktop') return function () {};
+    var touch = null;
+    var timers = [];
+    var watcher = null;
+    var offered = null; // a field focused from code whose keyboard a tap raised
+
+    function fieldAt(target) {
+      if (!target || target.nodeType !== 1 || !target.closest) return null;
+      var field = target.closest('input, textarea, [contenteditable]');
+      if (!field || !card.contains(field)) return null;
+      return isTextEntryField({
+        tag: field.tagName.toLowerCase(),
+        type: field.type,
+        readOnly: !!field.readOnly,
+        disabled: !!field.disabled,
+        contentEditable: !!field.isContentEditable,
+      }) ? field : null;
+    }
+
+    function reveal(field) {
+      if (document.activeElement !== field || !card.contains(field)) return;
+      var c = card.getBoundingClientRect();
+      var f = field.getBoundingClientRect();
+      var delta = revealScrollDelta({
+        fieldTop: f.top,
+        fieldBottom: f.bottom,
+        innerHeight: c.bottom,
+        inset: 0,
+        margin: 12,
+        topLimit: c.top + 12,
+      });
+      if (!delta) return;
+      var max = Math.max(0, card.scrollHeight - card.clientHeight);
+      var top = Math.max(0, Math.min(max, card.scrollTop + delta));
+      if (top === card.scrollTop) return;
+      try {
+        card.scrollTo({ top: top, behavior: prefersReducedMotion ? 'auto' : 'smooth' });
+      } catch (e) {
+        card.scrollTop = top;
+      }
+    }
+
+    function clear() {
+      timers.forEach(clearTimeout);
+      timers = [];
+      if (watcher) {
+        var i = kbWatchers.indexOf(watcher);
+        if (i >= 0) kbWatchers.splice(i, 1);
+        watcher = null;
+      }
+    }
+
+    // Reveal once the card has its keyboard-up height: straight away on a
+    // hop between fields with the keys already up, else when the inset
+    // lands and the card has eased to it.
+    function settle(field) {
+      clear();
+      if (kbInset > 0) {
+        requestAnimationFrame(function () { reveal(field); });
+        return;
+      }
+      watcher = function (inset) {
+        if (!(inset > 0)) return;
+        clear();
+        timers.push(setTimeout(function () { reveal(field); }, MODAL_SETTLE_MS));
+      };
+      kbWatchers.push(watcher);
+      timers.push(setTimeout(function () { reveal(field); }, MODAL_REVEAL_FALLBACK_MS));
+    }
+
+    function onTouchStart(e) {
+      touch = e.touches.length === 1
+        ? { x: e.touches[0].clientX, y: e.touches[0].clientY, moved: false }
+        : null;
+    }
+    function onTouchMove(e) {
+      if (!touch || touch.moved) return;
+      if (e.touches.length !== 1) { touch.moved = true; return; }
+      if (Math.abs(e.touches[0].clientX - touch.x) > KB_TAP_SLOP
+        || Math.abs(e.touches[0].clientY - touch.y) > KB_TAP_SLOP) touch.moved = true;
+    }
+    function onTouchCancel() { touch = null; }
+    function onTouchEnd(e) {
+      var t = touch;
+      touch = null;
+      if (!t || t.moved || !e.cancelable) return;
+      if (e.touches && e.touches.length) return;
+      if (gestures.owner('touch') != null) return;
+      var field = fieldAt(e.target);
+      if (!field) return;
+      if (document.activeElement === field) {
+        // Focused, with its keyboard up (or raised here once already): the
+        // tap places the caret, natively.
+        if (kbInset > 0 || offered === field) return;
+        // Focused from code (a dialog focusing its first field). iOS raises
+        // no keyboard for that, and raises it on this tap instead, panning
+        // the page as it does. Refocused inside the tap, it comes up with
+        // no pan. Once per field: a hardware keyboard never reports an
+        // inset, and every later tap there must still place the caret.
+        offered = field;
+        try { field.blur(); } catch (err) { /* ignore */ }
+      }
+      e.preventDefault();
+      try { field.focus({ preventScroll: true }); } catch (err) {
+        try { field.focus(); } catch (err2) { /* ignore */ }
+      }
+      settle(field);
+    }
+
+    card.addEventListener('touchstart', onTouchStart, { passive: true });
+    card.addEventListener('touchmove', onTouchMove, { passive: true });
+    card.addEventListener('touchend', onTouchEnd, { passive: false });
+    card.addEventListener('touchcancel', onTouchCancel, { passive: true });
+    return function detach() {
+      clear();
+      card.removeEventListener('touchstart', onTouchStart);
+      card.removeEventListener('touchmove', onTouchMove);
+      card.removeEventListener('touchend', onTouchEnd);
+      card.removeEventListener('touchcancel', onTouchCancel);
+    };
+  }
+
   // presentModal({ content | contentEl, onDismiss?, dismissible? }) —
   // content is an HTML string, contentEl an Element to adopt. dismissible
   // (default true) gates backdrop-tap and Escape. Returns { dismiss(), el }.
@@ -3585,6 +3792,7 @@
     // `trap`: Tab cycles inside this card while it is the topmost entry.
     var entry = { dismissible: dismissible, dismiss: dismiss, trap: card };
     modalStack.push(entry);
+    var detachFieldFocus = attachModalFieldFocus(card);
     var fade = animateDialog(card, backdrop, function () {
       var auto = card.querySelector('[autofocus]');
       try { (auto || card).focus(); } catch (e) { /* ignore */ }
@@ -3593,6 +3801,7 @@
     function dismiss() {
       if (closed) return;
       closed = true;
+      detachFieldFocus();
       var i = modalStack.indexOf(entry);
       if (i >= 0) modalStack.splice(i, 1);
       fade.dismiss(function () {

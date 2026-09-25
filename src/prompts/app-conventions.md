@@ -2381,7 +2381,11 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   especially on desktop/tablet where a bottom sheet reads as a phone
   idiom. Keyboard avoidance is built in (see below): with the
   on-screen keyboard up, the card re-centers in the visible strip
-  above it and shrinks to fit. Returns `{ dismiss(), el }`.
+  above it and shrinks to fit, its top edge holding still while its
+  bottom follows the keys. A tap on a text field in the card focuses
+  it without letting iOS scroll the page under the dialog, and a field
+  below the fold is scrolled into view inside the card instead.
+  Returns `{ dismiss(), el }`.
 - **Side panel / drawer.** `unNative.presentPanel({ side?, content |
   contentEl, width?, onDismiss? })` — a full-height surface that springs
   in from the **right** edge (`side: 'left'` for the other one) over the
@@ -2458,6 +2462,8 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   in px) plus class `un-kb` on `<html>` while it is non-zero. Sheets,
   action sheets, modals and alerts consume it automatically and ride
   above the keyboard — smoothly, without disturbing drag-to-dismiss.
+  The inset clears the moment focus leaves the text field, so those
+  surfaces move with the retracting keyboard rather than after it.
   **Do not hand-roll `.un-sheet { bottom: … }` overrides or per-app
   visualViewport plumbing anymore** — delete them when adopting this;
   the kit owns the inset now. Apps may consume `var(--un-kb-inset,
