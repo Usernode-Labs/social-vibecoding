@@ -30,24 +30,22 @@
  *
  * The clock still orders the TOP of the list — direct messages, group chats
  * and agents, which are the threads a person is IN — but the channels come
- * after them as their own section. A channel is a room you visit, not a
- * conversation waiting on you, so it does not jump over a DM because
- * somebody said something in it.
+ * after them as their own section: #general first, which every user is in,
+ * then one channel per app the viewer is a member of. A channel is a room
+ * you visit, not a conversation waiting on you, so it does not jump over a
+ * DM because somebody said something in it. Within the section the clock
+ * orders the app channels, and one nobody has spoken in sits at the end.
  *
- * ── App channels live on their project's page now (communities) ───────
+ * ── Your apps first, the rest behind "Show more" (#2967) ──────────────
  *
- * The section holds #general and nothing else. An app's channel is its
- * community's room, so it moved to where the community is — the community
- * card on that project's Workshop page
- * (features/dev-board/workshop/community-card.tsx), reached from the
- * Workshop tab's list of your communities — and Messages is people and
- * agents. The channel's own address, `#messages/app/<slug>`, still opens
- * here; it is the LIST that no longer carries a row per app. The discussions
- * are still loaded (channels.ts builds the #mention directory from them, and
- * the new-agent dialog picks its app from them); they are not merged here.
- *
- * The #2967 split of app channels into Your apps and "Show more" went with
- * them.
+ * The app channels split in two, the way Home's own list does: YOUR apps —
+ * the ones you are a member of and have not hidden, and the ones you added —
+ * and then every other app you have been active in (posted or reacted in its
+ * chat, voted, proposed, filed a request). The server says which is which
+ * (`section` on each row, src/routes/messages-overview.js); the second group
+ * is marked `more` here and the view folds it behind "Show N more". A server
+ * that sends no section is an older one whose rows are all member apps, so
+ * they are all yours, in the order they always had.
  */
 
 // `mayor` is an agent session (#2779): a conversation with the Mayor that
@@ -66,6 +64,8 @@ export interface InboxEntry {
   section: InboxSection;
   /** ISO, or null when the source has no clock (see the header). */
   at: string | null;
+  /** An app channel outside Your apps, folded behind "Show more" (#2967). */
+  more?: boolean;
 }
 
 /**
@@ -142,8 +142,7 @@ export function sectionRuns<T extends { section: InboxSection }>(entries: T[], h
 export function admits(filter: InboxFilter, kind: InboxKind): boolean {
   if (filter === 'all') return true;
   if (filter === 'people') return kind === 'person';
-  // #general is the channels section (#2783). `app` stays admitted for the
-  // one app channel a deep link has open (`openApp` in buildInbox).
+  // #general and the app channels are one section, and one filter (#2783).
   if (filter === 'channels') return kind === 'channel' || kind === 'app';
   // A session is an agent conversation (#2770), and so is a conversation
   // with the Mayor (#2779): Agents admits all three.
@@ -164,7 +163,7 @@ function byClock(a: InboxEntry, b: InboxEntry): number {
 
 /**
  * Merge the lists into one, filtered: the chats newest first, then the
- * channels — #general (see the header for where the app channels went).
+ * channels — #general, then the app channels newest first.
  *
  * The caller keeps its own arrays — this returns descriptors, not rows, so
  * each kind is still drawn by the component that knows how, and each entry
@@ -175,12 +174,7 @@ function byClock(a: InboxEntry, b: InboxEntry): number {
  */
 export function buildInbox(input: {
   conversations: Array<{ id: number; lastActivityAt: string; kind?: string }>;
-  /**
-   * The app channel open at `#messages/app/<slug>`, if one is. It is listed
-   * under #general while it is open, so the list beside the thread still
-   * says where you are; closing it takes the row away again.
-   */
-  openApp?: AppDiscussion | null;
+  discussions: AppDiscussion[];
   agents: AgentChat[];
   /** Optional so a caller with no Improve store still merges three kinds. */
   sessions?: AgentSession[];
@@ -190,6 +184,8 @@ export function buildInbox(input: {
 }): InboxEntry[] {
   const chats: InboxEntry[] = [];
   const rooms: InboxEntry[] = [];
+  const apps: InboxEntry[] = [];
+  const moreApps: InboxEntry[] = [];
   for (const item of input.conversations) {
     if (item.kind === 'channel') {
       if (admits(input.filter, 'channel')) {
@@ -199,8 +195,14 @@ export function buildInbox(input: {
       chats.push({ key: `person:${item.id}`, kind: 'person', section: 'chats', at: item.lastActivityAt });
     }
   }
-  if (input.openApp && admits(input.filter, 'app')) {
-    rooms.push({ key: `app:${input.openApp.slug}`, kind: 'app', section: 'channels', at: input.openApp.lastAt });
+  if (admits(input.filter, 'app')) {
+    for (const item of input.discussions) {
+      if (item.section === 'more') {
+        moreApps.push({ key: `app:${item.slug}`, kind: 'app', section: 'channels', at: item.lastAt, more: true });
+      } else {
+        apps.push({ key: `app:${item.slug}`, kind: 'app', section: 'channels', at: item.lastAt });
+      }
+    }
   }
   if (admits(input.filter, 'agent')) {
     for (const item of input.agents) {
@@ -225,5 +227,5 @@ export function buildInbox(input: {
   // Stable within a timestamp: `sort` is stable in every engine this ships
   // to, so two rows that happened in the same second keep the order their
   // own source gave them — which for conversations is the server's.
-  return [...chats.sort(byClock), ...rooms];
+  return [...chats.sort(byClock), ...rooms, ...apps.sort(byClock), ...moreApps.sort(byClock)];
 }

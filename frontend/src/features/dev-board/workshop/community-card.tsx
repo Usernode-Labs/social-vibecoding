@@ -33,11 +33,11 @@
  *   so ("to merge", not "exactly") because opposition raises it and the
  *   quiet-week path can merge below it (services/active-users.js).
  *
- *   WHERE THEY TALK. The channel: the app's general discussion, which the
- *   Messages list carried as one row per app until this took it over (see
- *   features/messages/inbox.ts). Its address is unchanged,
- *   `#messages/app/<slug>`, so it opens where it always opened; what moved
- *   is where you find it. A viewer who may not talk here (a view-public,
+ *   WHERE THEY TALK. The channel: the app's general discussion, the same
+ *   room Messages lists under Channels (features/messages/inbox.ts), at the
+ *   same address, `#messages/app/<slug>`. It is listed in both places for
+ *   now: Messages is where people already look for it, and this is where a
+ *   newcomer finds it. A viewer who may not talk here (a view-public,
  *   collab-private app) gets no row rather than a door that refuses them.
  *
  * Joining is what lets you take part here. The button asks the question every

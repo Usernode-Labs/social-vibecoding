@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 
 import { groupsWithPrevious } from '@/components/ui/chat';
 import {
-  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon,
   SearchIcon, SparklesIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
@@ -48,6 +48,7 @@ import {
   setUserBlocked,
   selectConversation,
   setListCollapsed,
+  setShowMoreChannels,
   syncChrome,
   setFilter,
   typingUsers,
@@ -768,9 +769,7 @@ function ConversationList() {
   // in the search box or per publish of a store this list does not draw.
   const inbox = useMemo(() => buildInbox({
     conversations: snap.conversations,
-    openApp: snap.route.appSlug
-      ? snap.discussions.find((item) => item.slug === snap.route.appSlug) || null
-      : null,
+    discussions: snap.discussions,
     agents,
     sessions,
     mayors,
@@ -813,9 +812,28 @@ function ConversationList() {
     const g = byAgent.get(entry.key.slice('agent:'.length));
     return !!g && inboxMatches(g.title, q);
   };
-  // App channels are not listed here any more (see ./inbox.ts): #2967's
-  // "Show N more" fold over the ones outside Your apps went with them.
-  const shown = inbox.filter(matches);
+  // #2967: the channels outside Your apps fold behind "Show N more" — except
+  // while searching (a query looks through everything), and except the one
+  // that is open, which stays in view wherever it lives.
+  const moreEntries = inbox.filter((entry) => entry.more);
+  const openSlug = snap.route.appSlug;
+  const shown = inbox.filter(matches).filter((entry) => !entry.more || !!q || snap.showMoreChannels
+    || (entry.kind === 'app' && entry.key === `app:${openSlug}`));
+  const moreToggle = moreEntries.length && !q ? (
+    <button
+      key="more-channels"
+      type="button"
+      id="messages-more-channels"
+      className="messages-more-channels"
+      aria-expanded={snap.showMoreChannels}
+      onClick={() => setShowMoreChannels(!snap.showMoreChannels)}
+    >
+      <span className="messages-more-channels-glyph" aria-hidden="true">
+        <ChevronDownIcon className={snap.showMoreChannels ? 'rotate-180' : ''} />
+      </span>
+      <span>{snap.showMoreChannels ? 'Show less' : `Show ${moreEntries.length} more`}</span>
+    </button>
+  ) : null;
 
   return (
     <section className={`messages-list-pane ${specBeside ? 'hidden' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
@@ -881,15 +899,30 @@ function ConversationList() {
             rather than rows ruled straight onto the strip. The card is the
             rows' parent, so `:last-child` (which drops the last separator)
             now means the last row of its section. Under a filter there is no
-            label and one card. */}
-        {sectionRuns(shown, snap.filter === 'all').map((run) => [
-          run.head
-            ? <h3 key={`head-${run.section}`} className="messages-section-head" data-inbox-section={run.section}>{SECTION_LABELS[run.section]}</h3>
-            : null,
-          <div key={`card-${run.section}`} className="messages-section-card" data-inbox-card={run.section}>
-            {run.entries.map((entry) => inboxRow(entry))}
-          </div>,
-        ])}
+            label and one card.
+
+            #2967's toggle is a row of the channels card: it sits where the
+            channels outside Your apps begin (above them once they are shown,
+            so "Show less" is next to what it folds), or at the card's foot
+            while they are folded. */}
+        {sectionRuns(shown, snap.filter === 'all').map((run) => {
+          const rows = run.entries.flatMap((entry, i) => {
+            const toggle = entry.more && (i === 0 || !run.entries[i - 1].more) ? moreToggle : null;
+            return [toggle, inboxRow(entry)].filter(Boolean);
+          });
+          const foot = run.section === 'channels' && moreToggle && !run.entries.some((entry) => entry.more)
+            ? moreToggle : null;
+          return [
+            run.head
+              ? <h3 key={`head-${run.section}`} className="messages-section-head" data-inbox-section={run.section}>{SECTION_LABELS[run.section]}</h3>
+              : null,
+            <div key={`card-${run.section}`} className="messages-section-card" data-inbox-card={run.section}>
+              {rows}
+              {foot}
+            </div>,
+          ];
+        })}
+        {moreToggle && !shown.some((entry) => entry.section === 'channels') && (snap.filter === 'all' || snap.filter === 'channels') ? moreToggle : null}
       </div>
     </section>
   );

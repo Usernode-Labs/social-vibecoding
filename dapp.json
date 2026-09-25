@@ -5222,10 +5222,10 @@
       "expectText": "3 replies in thread"
     },
     {
-      "name": "Messages lists #general but no row per app: an app's channel lives on its project's page (communities)",
+      "name": "#2967: the channels you are not in fold under “Show N more”",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll:has(a.messages-channel-row[data-inbox-channel=\"general\"]):not(:has(a[data-inbox-app]))",
-      "expectText": "Channels"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll button#messages-more-channels.messages-more-channels[aria-expanded=\"false\"]",
+      "expectText": "more"
     },
     {
       "name": "#2779 follow-up: \"Open app\" is offered on an ordinary app's chat and never on the platform's own",

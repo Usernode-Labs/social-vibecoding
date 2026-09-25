@@ -3104,8 +3104,8 @@ export function DevWorkshop(): ReactNode {
           FIRST ON THE PAGE. A person arriving from Discover or a shared link
           met four numbers about the code before the thing's own name; the
           page now leads with identity, the way a profile does, and the
-          dashboard follows. It is also where the channel went when Messages
-          stopped listing one per app. See ./community-card.tsx. */}
+          dashboard follows. Its channel row is the same room Messages lists
+          under Channels. See ./community-card.tsx. */}
       {slug ? (
         <CommunityCard
           slug={slug}

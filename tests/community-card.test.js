@@ -56,7 +56,7 @@ test('the hero draws its identity before the read, and the rest only after it', 
 test('the channel opens at its old address; Join asks under its button and joins through offerJoin', () => {
   const src = read(CARD);
   assert.match(src, /href=\{`#messages\/app\/\$\{encodeURIComponent\(slug\)\}`\}/,
-    'the channel keeps its address: what moved is where you find it');
+    'the channel is the same room Messages lists, at the same address');
   assert.match(src, /await offerJoin\(\{ code: 'join_required', app: \{ slug, name: name \|\| data\.name \|\| slug \} \}\)/,
     'the button asks the question every refusal asks, through the same function');
   assert.match(src, /registerJoinAnchor\(slug, \{/,

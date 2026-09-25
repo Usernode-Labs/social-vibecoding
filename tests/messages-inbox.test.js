@@ -59,29 +59,10 @@ test('one clock orders the chats, and the channels follow as their own section',
     filter: 'all',
   });
   // A channel with newer activity does not jump over a DM: it is a room you
-  // visit, not a conversation waiting on you. #general IS the channels
-  // section now: the app channels live on their project's page
-  // (communities), so a `discussions` list handed in is not merged at all.
-  assert.deepEqual(merged.map((e) => e.key), ['person:1', 'agent:a1', 'channel:9']);
-  assert.deepEqual(merged.map((e) => e.section), ['chats', 'chats', 'channels']);
-});
-
-test('the app channel open at #messages/app/<slug> is listed while it is open, and only then', () => {
-  const open = inbox.buildInbox({
-    conversations: [{ id: 9, kind: 'channel', lastActivityAt: at('2026-01-09T00:00:00Z') }],
-    openApp: { slug: 'notes', lastAt: at('2026-01-03T00:00:00Z') },
-    agents: [],
-    filter: 'all',
-  });
-  assert.deepEqual(open.map((e) => [e.key, e.section]), [['channel:9', 'channels'], ['app:notes', 'channels']],
-    'under #general, so the list beside the thread still says where you are');
-  const people = inbox.buildInbox({
-    conversations: [], openApp: { slug: 'notes', lastAt: null }, agents: [], filter: 'people',
-  });
-  assert.deepEqual(people, [], 'and a filter that does not admit channels leaves it out');
-  // The screen hands in the open one and nothing else.
-  assert.match(SCREEN, /openApp: snap\.route\.appSlug/);
-  assert.doesNotMatch(SCREEN, /discussions: snap\.discussions,/);
+  // visit, not a conversation waiting on you. #general leads the channels,
+  // then the apps newest first, and one nobody has spoken in sits last.
+  assert.deepEqual(merged.map((e) => e.key), ['person:1', 'agent:a1', 'channel:9', 'app:notes', 'app:quiet']);
+  assert.deepEqual(merged.map((e) => e.section), ['chats', 'chats', 'channels', 'channels', 'channels']);
 });
 
 test('a row with no timestamp sorts last, not first', () => {
@@ -124,7 +105,7 @@ test('each filter admits exactly its own kind, and All admits every one', () => 
   assert.equal(inbox.admits('agents', 'person'), false);
   const channelsOnly = inbox.buildInbox({
     conversations: [{ id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') }, { id: 9, kind: 'channel', lastActivityAt: null }],
-    openApp: { slug: 'notes', lastAt: null }, agents: [], filter: 'channels',
+    discussions: [{ slug: 'notes', lastAt: null }], agents: [], filter: 'channels',
   });
   assert.deepEqual(channelsOnly.map((e) => e.key), ['channel:9', 'app:notes']);
 });
@@ -286,9 +267,10 @@ test('one row shape per kind; the channels are headed rather than pilled', () =>
     'a heading over each section, under All only');
   assert.match(SCREEN, /<div key=\{`card-\$\{run\.section\}`\} className="messages-section-card" data-inbox-card=\{run\.section\}>/,
     'and each section\'s rows in a card of their own, so the last row of a section drops its separator');
-  const e = (section) => ({ section });
-  assert.deepEqual(inbox.sectionRuns([e('chats'), e('chats'), e('channels')], true).map((r) => [r.section, r.head, r.entries.length]),
-    [['chats', true, 2], ['channels', true, 1]], 'one card per section, each headed under All');
+  const e = (section, more) => ({ section, more });
+  assert.deepEqual(inbox.sectionRuns([e('chats'), e('chats'), e('channels'), e('channels', true)], true)
+    .map((r) => [r.section, r.head, r.entries.length]),
+  [['chats', true, 2], ['channels', true, 2]], 'one card per section, each headed under All; the folded channels stay in theirs');
   assert.deepEqual(inbox.sectionRuns([e('channels')], false).map((r) => [r.section, r.head]), [['channels', false]],
     'under a filter: one card, no heading');
   const conversationRow = SCREEN.slice(SCREEN.indexOf('function ConversationRow'), SCREEN.indexOf('function KindPill'));
