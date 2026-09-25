@@ -860,6 +860,71 @@ test('runOnce: inside a fault backoff it refreshes but dispatches nothing, and s
   bot._resetForTests();
 });
 
+test('runOnce: a triage that throws is recorded as failed and its claimed row is dropped', async () => {
+  // runTriage claims its row before its first GitHub read. A throw used to
+  // leave the row claimed with nothing recorded, so the issue was never tried
+  // again (rss-reader #24: a "looking" post, then silence).
+  bot._resetForTests();
+  const { pool } = mockPool({ settings: [{ key: bot.KEY_MODE, value: 'shadow' }] });
+  const writes = [];
+  let heads = 0;
+  let items = 0;
+  const realQuery = pool.query.bind(pool);
+  pool.query = async (sql, params) => {
+    const s = String(sql);
+    if (/FROM homeroom_bot_queue q JOIN apps/.test(s)) return { rows: heads++ === 0 ? [{ app_id: 9 }] : [] };
+    if (/SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = \$1/.test(s)) return { rows: [APP] };
+    if (/FROM homeroom_bot_queue\s+WHERE app_id = \$1 AND started_at IS NULL/.test(s)) return { rows: items++ === 0 ? [ITEM] : [] };
+    if (/INSERT INTO homeroom_bot_runs|DELETE FROM homeroom_bot_queue|UPDATE homeroom_bot_queue/.test(s)) writes.push({ s, params });
+    if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
+    return realQuery(sql, params);
+  };
+  const before = Date.now();
+  const out = await bot.runOnce(pool, {}, {
+    github: {
+      isEnabled: () => true,
+      async fetchPublicIssues() { return { issues: [] }; },
+      async fetchPublicIssue() { throw new TypeError('botUsername.toLowerCase is not a function'); },
+    },
+    limits: { async checkBudget() { return { ok: true }; } },
+    worker: { async listWorkerVolumes() { return []; } },
+    forceRefresh: true,
+  });
+  assert.equal(out.processed, 0);
+  assert.ok(writes.some((w) => /UPDATE homeroom_bot_queue SET started_at = NOW\(\) WHERE id = \$1/.test(w.s) && w.params[0] === ITEM.id),
+    'the triage claimed its row before it threw');
+  const run = writes.find((w) => /INSERT INTO homeroom_bot_runs/.test(w.s));
+  assert.ok(run, 'the failure is recorded, so the dashboard shows it');
+  assert.equal(run.params[0], APP.id);
+  assert.equal(run.params[1], ITEM.issue_number);
+  assert.equal(run.params[4], 'failed');
+  assert.equal(run.params[18], 'threw: botUsername.toLowerCase is not a function');
+  assert.ok(Date.parse(run.params[12]) >= before,
+    'what it has seen is now, so its own post just before the throw is not read as a change');
+  assert.ok(writes.some((w) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(w.s) && w.params[0] === ITEM.id),
+    'the claimed row is dropped, not left claimed forever');
+  bot._resetForTests();
+});
+
+test('runOnce: each pass frees rows an unfinished pass claimed, past one turn\'s budget', async () => {
+  bot._resetForTests();
+  const { pool, log } = mockPool({ settings: [
+    { key: bot.KEY_MODE, value: 'shadow' }, { key: bot.KEY_TURN_SECONDS, value: '900' },
+  ] });
+  const out = await bot.runOnce(pool, {}, {
+    github: { async fetchPublicIssues() { return { issues: [] }; } },
+    worker: { async listWorkerVolumes() { return []; } },
+  });
+  const release = log.find((l) => /UPDATE homeroom_bot_queue SET started_at = NULL\s+WHERE started_at IS NOT NULL AND started_at < NOW\(\) - make_interval\(secs => \$1\)/.test(l.sql || ''));
+  assert.ok(release, 'claims left by a pass that died (a restart mid-turn) are released');
+  assert.deepEqual(release.params, [900 + 600], 'one turn\'s budget plus a ten-minute margin: nothing live is that old');
+  assert.equal(out.releasedClaims, 0);
+  const off = mockPool({ settings: [{ key: bot.KEY_MODE, value: 'off' }] });
+  await bot.runOnce(off.pool, {});
+  assert.ok(!off.log.some((l) => /SET started_at = NULL/.test(l.sql || '')), 'off touches nothing');
+  bot._resetForTests();
+});
+
 test('the loop waits out a fault backoff instead of the 30-second idle', () => {
   assert.match(SRC, /if \(out\.paused === 'infra' && out\.retryInMs > 0\) delay = Math\.max\(IDLE_PASS_DELAY_MS, out\.retryInMs\);/);
   assert.match(SRC, /if \(r\.ran\) \{ processed \+= 1; clearFault\(\); \}/, 'a turn that ran ends the streak');
