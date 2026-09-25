@@ -321,6 +321,13 @@ html.un-android .un-switch:checked:active::before {
   left: 100%;
   display: flex;
   align-items: stretch;
+}
+/* A layer only while a finger drags the row. A permanent `will-change`
+   kept one composited layer per swipeable row alive for the life of the
+   list (every notification row, every conversation), almost all of them
+   parked out of sight; `.un-dragging` is on the wrap from the drag's axis
+   lock to the finger lifting. */
+.un-swipe.un-dragging .un-swipe-tray {
   will-change: transform;
 }
 .un-swipe-action {
@@ -554,6 +561,10 @@ html.un-android .un-switch:checked:active::before {
   background: var(--un-backdrop);
   opacity: 0;
   will-change: opacity;
+  /* A drag that starts on the dim is not a scroll of the page behind it.
+     Taps are untouched: `touch-action` only withholds panning and zooming
+     from the browser, so the click that dismisses still arrives. */
+  touch-action: none;
 }
 .un-backdrop.un-backdrop-fade {
   transition: opacity var(--un-dialog-fade-duration) ease;
@@ -622,6 +633,11 @@ html.un-kb .un-sheet {
   margin: 8px auto;
   border-radius: var(--un-radius-full);
   background: var(--un-hairline);
+  /* A drag from the grabber is always the sheet's own. `.un-sheet` says
+     `none` too, but a host that lets a sheet with a scroller pan (the
+     platform's `pan-y` sheets) hands that to every child; `touch-action`
+     intersects down the tree, so `none` here takes the grabber back. */
+  touch-action: none;
 }
 .un-sheet-body {
   padding: 4px 16px 20px;

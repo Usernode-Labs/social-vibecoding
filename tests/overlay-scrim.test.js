@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-function harness(globals = {}) {
+function harness(globals = {}, prepare = () => {}) {
   const callbacks = new Map(), observers = [], events = new Map();
   let next = 0, reads = 0;
   const style = {
@@ -41,6 +41,7 @@ function harness(globals = {}) {
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../frontend/src/lib/overlay-scrim.js'), 'utf8').replace(/export /g, ''), sandbox);
+  prepare({ surface, backdrop, paint, style });
   const detach = sandbox.attachOverlayScrim(surface, backdrop, paint);
   return { surface, backdrop, paint, style, observers, events, callbacks, detach,
     scrimBackground: sandbox.scrimBackground,
@@ -217,4 +218,120 @@ test('QA 2026-09-24 Q25: strips meet on device pixels, the hole snapped outward'
   const flat = h.scrimBackground({ left: 100, top: 200, right: 300, bottom: 600 }, [[0, 0], [0, 0], [0, 0], [0, 0]], 400, 800, 2);
   assert.match(flat, /0px 600px \/ 400px 200px no-repeat/);
   h.detach();
+});
+
+// ── An opaque kit surface lets the kit's backdrop carry the dim ─────────
+// The cutout exists so a FROSTED surface does not frost a dimmed page. With
+// the glass off (every iPhone; a browser without backdrop-filter) the surface
+// is opaque, and the paint layer's per-frame rebuild — a MutationObserver on
+// the kit's inline style, a computed-style and rect read and a many-layer
+// gradient write on every spring frame, 23-30 per sheet open or close — buys
+// nothing. The kit backdrop is marked instead and app.css paints the dim on it.
+
+function classes(...names) {
+  const set = new Set(names);
+  return { set, contains: (c) => set.has(c), add: (c) => set.add(c), remove: (c) => set.delete(c) };
+}
+function kitBackdrop(previous = null) {
+  return { classList: classes('un-backdrop'), previousElementSibling: previous, getAnimations: () => [] };
+}
+
+test('an opaque surface over a kit backdrop does no observing, scheduling or painting', () => {
+  let frameRequests = 0;
+  const h = harness({ requestAnimationFrame() { frameRequests++; return 1; } }, ({ backdrop, style }) => {
+    Object.assign(backdrop, kitBackdrop());
+    style.visibility = 'visible';
+    style.backdropFilter = 'none';
+    style.webkitBackdropFilter = 'none';
+  });
+  assert.equal(h.observers.length, 0, 'no MutationObserver, ResizeObserver or <html> observer');
+  assert.equal(h.events.size, 0, 'no surface, window or visual-viewport listeners');
+  assert.equal(frameRequests, 0, 'nothing scheduled');
+  assert.equal(h.reads(), 0, 'no geometry read');
+  assert.equal(h.paint.style.background, undefined, 'the gradient is never built');
+  assert.equal(h.paint.style.visibility, 'hidden', 'the paint layer stays out of the picture');
+  assert.ok(h.backdrop.classList.contains('platform-backdrop-dim'), 'the kit backdrop carries the dim');
+  h.detach();
+  assert.equal(h.backdrop.classList.contains('platform-backdrop-dim'), false, 'detach undoes the mark');
+});
+
+test('a browser without backdrop-filter counts as opaque too', () => {
+  const h = harness({}, ({ backdrop }) => { Object.assign(backdrop, kitBackdrop()); });
+  // The harness style has neither property, as a browser that lacks them.
+  assert.equal(h.observers.length, 0);
+  assert.ok(h.backdrop.classList.contains('platform-backdrop-dim'));
+  h.detach();
+});
+
+test('a frosted surface keeps the cutout exactly as before', () => {
+  for (const [prop, value] of [['backdropFilter', 'blur(24px) saturate(1.6)'], ['webkitBackdropFilter', 'blur(24px) saturate(1.6)']]) {
+    const h = harness({}, ({ backdrop, style }) => {
+      Object.assign(backdrop, kitBackdrop());
+      style[prop] = value;
+    });
+    assert.equal(h.observers.length, 3, `${prop}: surface/backdrop, size and <html> observers`);
+    assert.equal(h.backdrop.classList.contains('platform-backdrop-dim'), false, `${prop}: the backdrop stays clear`);
+    h.style.visibility = 'visible';
+    h.observers[0].fn(); h.frame();
+    assert.match(h.paint.style.background, /linear-gradient/, `${prop}: the paint layer cuts the hole`);
+    h.detach();
+  }
+});
+
+test('the decision keys off the surface\'s own computed backdrop filter', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../frontend/src/lib/overlay-scrim.js'), 'utf8');
+  assert.match(src, /export const BACKDROP_DIM_CLASS = 'platform-backdrop-dim';/, 'the class app.css styles');
+  assert.match(src, /return on\(style\.backdropFilter\) \|\| on\(style\.webkitBackdropFilter\);/);
+  assert.match(src, /!drawsBackdropFilter\(getComputedStyle\(surface\)\)/);
+  const attach = src.slice(src.indexOf('export function attachOverlayScrim('));
+  const early = attach.indexOf('if (dimsWithBackdrop(surface, backdrop))');
+  assert.ok(early > 0 && early < attach.indexOf('new MutationObserver'),
+    'decided before any observer is created');
+});
+
+test('a surface opened over another kit surface keeps the paint layer', () => {
+  // The backdrop sits a layer below every kit surface, so it could not dim
+  // the sheet underneath; the paint layer, stacked at the new surface's level,
+  // does.
+  const lower = { classList: classes('un-sheet'), previousElementSibling: null };
+  const h = harness({}, ({ backdrop, style }) => {
+    Object.assign(backdrop, kitBackdrop({ classList: classes('overlay-scrim'), previousElementSibling: lower }));
+    style.backdropFilter = 'none';
+  });
+  assert.equal(h.observers.length, 3);
+  assert.equal(h.backdrop.classList.contains('platform-backdrop-dim'), false);
+  h.detach();
+});
+
+test('a React rail\'s own backdrop is not taken over', () => {
+  const h = harness({}, ({ style }) => { style.backdropFilter = 'none'; });
+  assert.equal(h.observers.length, 3, 'the rail path is unchanged');
+  h.detach();
+});
+
+test('app.css paints the dim on a marked backdrop, over the transparent rule, with the scrim\'s reach', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../public/css/app.css'), 'utf8');
+  const clear = css.indexOf('.un-backdrop:has(+ .un-modal),\n.un-backdrop:has(+ .un-sheet),\n.un-backdrop:has(+ .un-panel) {\n  background: transparent;');
+  const at = css.indexOf('\nhtml .un-backdrop.platform-backdrop-dim {');
+  assert.ok(clear > 0 && at > clear, 'the dim rule follows the transparent one');
+  const body = css.slice(at, css.indexOf('\n}', at));
+  assert.match(body, /background: var\(--pane-scrim\);/, 'the scrim\'s own colour');
+  assert.match(body, /inset: -100vh 0;/, 'and its reach past a keyboard-panned viewport');
+  assert.match(css.slice(css.indexOf('\n.overlay-scrim {')), /^\n\.overlay-scrim \{[^}]*inset: -100vh 0;[^}]*background: var\(--pane-scrim\);/,
+    'the same reach and colour as the paint layer it replaces');
+});
+
+test('the kit drives the backdrop\'s opacity for sheets, panels and dialogs', () => {
+  const kit = fs.readFileSync(path.join(__dirname, '../public/usernode-native/v1/native.js'), 'utf8');
+  for (const fn of ['presentSheet', 'presentPanel']) {
+    const src = kit.slice(kit.indexOf(`function ${fn}(`));
+    const render = src.slice(src.indexOf('function render(val)'), src.indexOf('function springTo'));
+    assert.match(render, /backdrop\.style\.opacity = presence;/, `${fn}: the dim rides the position`);
+  }
+  const modal = kit.slice(kit.indexOf('function presentModal('));
+  assert.match(modal, /backdrop\.className = 'un-backdrop un-backdrop-fade';/);
+  assert.match(modal, /animateDialog\(card, backdrop,/, 'the dialog\'s backdrop fades with its card');
+  const fade = kit.slice(kit.indexOf('function animateDialog('));
+  assert.match(fade, /backdrop\.style\.opacity = '1';\s*card\.classList\.add\('un-in'\);/);
+  assert.match(fade, /card\.classList\.remove\('un-in'\);\s*backdrop\.style\.opacity = '0';/);
 });

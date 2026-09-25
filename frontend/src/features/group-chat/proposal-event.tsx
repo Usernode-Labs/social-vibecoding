@@ -44,6 +44,8 @@
  * it, while the box is an anchor, and a tap there follows the link.
  */
 
+import { memo } from 'react';
+
 import { ChatMessageRow } from '@/components/ui/chat';
 import { Avatar } from '@/components/ui/feed';
 import { ChevronRightIcon } from '@/components/ui/icons';
@@ -166,7 +168,7 @@ function WeeklyBox({ w }: { w: NonNullable<ProposalEvent['weekly']> }) {
   );
 }
 
-export function EventRow({ msg }: { msg: TranscriptMessage }) {
+export const EventRow = memo(function EventRow({ msg }: { msg: TranscriptMessage }) {
   const ev = msg.event;
   if (!ev) return null;
   if (ev.type === 'weekly' && ev.weekly) {
@@ -231,4 +233,4 @@ export function EventRow({ msg }: { msg: TranscriptMessage }) {
         : <div className="gc-event-box">{box}</div>}
     </ChatMessageRow>
   );
-}
+});

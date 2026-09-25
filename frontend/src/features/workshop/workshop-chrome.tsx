@@ -1,16 +1,20 @@
 /**
- * The Workshop's scope chip and the panel behind it (#2718, #2759, #2768).
+ * The Workshop's scope chip and the panel behind it (#2718, #2759, #2768,
+ * #3051).
  *
  * ── Where it lives now ────────────────────────────────────────────────
  *
- * On ONE APP's Workshop, and only there. It says which app's Workshop you are
- * in and its panel offers the others — and All apps, which is the way back up
- * to the all-apps Workshop screen.
+ * On BOTH ends of the Workshop again. On ONE APP's Workshop it says which
+ * app's Workshop you are in and its panel offers the others, and All apps,
+ * which is the way back up to the all-apps Workshop screen.
  *
- * It used to lead that all-apps screen too, reading "All apps" and narrowing
- * by navigating. #2759 took it off: that screen IS a flat list of your apps,
- * each row the way into its Workshop, so a chip whose panel was the same list
- * again was the one fact on the screen said twice.
+ * #2759 took it off that all-apps screen: the screen was then a flat list of
+ * your apps, so a chip whose panel was the same list again said one fact
+ * twice. #3051 (the owner's request) brings it back as "All apps", because
+ * the screen is no longer only that list: it has the app Workshop's own two
+ * tabs, Current status and Needs you, read across every one of your apps, and
+ * the chip is what says the tabs are about all of them rather than one. Its
+ * panel is the same panel, with All apps ticked (`AllAppsScope` below).
  *
  * ── Two controls, one panel (#2768) ───────────────────────────────────
  *
@@ -105,16 +109,15 @@ const CHIP = 'inline-flex items-center gap-2 max-w-full h-9 pl-2 pr-2.5 rounded-
 /**
  * "(icon) App name ⌄" — which app's Workshop this is, and the list behind it.
  *
- * It names the app rather than "All apps": the all-apps screen no longer
- * wears a chip (#2759), so this is only ever the scoped end of the control.
- * It is never disabled, because there is always somewhere to go — back up to
- * all of your apps.
+ * `scope: null` is the all-apps end (#3051): the grid glyph the panel's own
+ * All apps row wears, and the words "All apps". It is never disabled, because
+ * there is always somewhere to go: another app, or back up to all of them.
  */
 export function WorkshopScope({ open, id, scope, onToggle }: {
   open: boolean;
   id: string;
-  /** The app this Workshop is showing. */
-  scope: PickerApp;
+  /** The app this Workshop is showing, or null for all of your apps. */
+  scope: PickerApp | null;
   onToggle: (next: boolean) => void;
 }) {
   return (
@@ -127,14 +130,18 @@ export function WorkshopScope({ open, id, scope, onToggle }: {
       aria-controls={`${id}-picker`}
       onClick={() => onToggle(!open)}
     >
-      <span
-        aria-hidden="true"
-        className="app-icon-tile shrink-0 w-6 h-6 rounded-lg overflow-hidden flex items-center justify-center text-xs font-bold"
-        data-icon={appIconKind(scope as never)}
-      >
-        <AppIconContent app={scope as never} />
-      </span>
-      <span className="min-w-0 truncate">{scope.name || scope.slug}</span>
+      {scope ? (
+        <span
+          aria-hidden="true"
+          className="app-icon-tile shrink-0 w-6 h-6 rounded-lg overflow-hidden flex items-center justify-center text-xs font-bold"
+          data-icon={appIconKind(scope as never)}
+        >
+          <AppIconContent app={scope as never} />
+        </span>
+      ) : (
+        <Squares2X2Icon className="w-5 h-5 shrink-0 ml-0.5" aria-hidden="true" />
+      )}
+      <span className="min-w-0 truncate">{scope ? (scope.name || scope.slug) : 'All apps'}</span>
       <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
     </button>
   );
@@ -173,14 +180,15 @@ function PanelRow({ id, leading, title, detail, trailing, onClick }: {
 /**
  * The scope chip's panel: which workshop you are looking at.
  *
- * All apps first — the way back up — then each of your apps, the one on
- * screen carrying the tick.
+ * All apps first, then each of your apps, the one on screen carrying the
+ * tick. On the all-apps screen (`scope: null`) the tick is on All apps and
+ * that row only closes the panel, for the reason an app's own row does below.
  */
 export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
   apps: PickerApp[] | null;
   id: string;
-  /** The app this Workshop is showing. */
-  scope: PickerApp;
+  /** The app this Workshop is showing, or null for all of your apps. */
+  scope: PickerApp | null;
   onClose: () => void;
   /** The panel's root, for the keyboard handling in AppWorkshopScope. */
   panelRef?: RefObject<HTMLDivElement | null>;
@@ -210,7 +218,14 @@ export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
         id={`${id}-all`}
         leading={<Squares2X2Icon className="w-5 h-5" />}
         title="All apps"
-        onClick={() => { onClose(); goToAllApps(); }}
+        trailing={scope === null
+          ? <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+          : undefined}
+        onClick={() => {
+          onClose();
+          if (scope === null) return;
+          goToAllApps();
+        }}
       />
       {rows.map((app) => (
         <PanelRow
@@ -224,7 +239,7 @@ export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
             </span>
           )}
           title={app.name || app.slug}
-          trailing={scope.slug === app.slug
+          trailing={scope?.slug === app.slug
             ? <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
             : undefined}
           // THE APP YOU ARE ALREADY IN closes the panel and goes nowhere. A
@@ -233,7 +248,7 @@ export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
           // where it started.
           onClick={() => {
             onClose();
-            if (scope.slug === app.slug) return;
+            if (scope?.slug === app.slug) return;
             void goToApp(app.slug);
           }}
         />
@@ -281,6 +296,63 @@ function demoQuery(): string {
 }
 
 /**
+ * Keyboard and outside presses for a scope panel (QA 2026-09-24 Q18).
+ *
+ * The panel only closed through its own chip (or a row). Now opening moves
+ * focus to its first row, Escape closes it and puts focus back on whichever
+ * control opened it (the chip, or on an app's Workshop on a phone the
+ * header's title) and a press anywhere outside the panel and those controls
+ * closes it too. The controls are found by the `aria-controls` they carry,
+ * and are spared the outside press because their own click toggles.
+ *
+ * One hook for both ends of the chip (#3051): the app's Workshop and the
+ * all-apps screen close their panels by the same rules.
+ */
+function usePanelDismiss(
+  open: boolean,
+  panelRef: RefObject<HTMLDivElement | null>,
+  panelId: string,
+  close: () => void,
+): void {
+  const openerRef = useRef<HTMLElement | null>(null);
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    if (!open) return undefined;
+    const controlSel = `[aria-controls="${panelId}"]`;
+    const focused = document.activeElement as HTMLElement | null;
+    openerRef.current = focused && focused.matches?.(controlSel) ? focused : null;
+    const opener = () => {
+      const was = openerRef.current;
+      if (was && was.isConnected && was.getClientRects().length) return was;
+      return Array.from(document.querySelectorAll<HTMLElement>(controlSel))
+        .find((el) => el.getClientRects().length > 0) || null;
+    };
+    focusFirstItem(panelRef.current);
+    const onDown = (event: Event) => {
+      const target = event.target as Element | null;
+      if (!target || panelRef.current?.contains(target)) return;
+      if (target.closest?.(controlSel)) return;
+      closeRef.current();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      const back = opener();
+      closeRef.current();
+      back?.focus({ preventScroll: true });
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, panelId, panelRef]);
+}
+
+/**
  * The scope chip and its panel, for the Workshop of ONE app.
  *
  * `slug` is the app on screen; `name`, `iconUrl` and `iconEmoji` are what the
@@ -298,49 +370,9 @@ export function AppWorkshopScope({ slug, name, iconUrl, iconEmoji }: {
   const [apps, setApps] = useState<PickerApp[] | null>(null);
   const setOpen = (next: boolean) => appScopeStore.set({ open: next });
   const panelRef = useRef<HTMLDivElement>(null);
-  const openerRef = useRef<HTMLElement | null>(null);
 
-  // ── Keyboard and outside presses (QA 2026-09-24 Q18) ────────────────
-  //
-  // The panel only closed through its own chip (or a row). Now opening
-  // moves focus to its first row, Escape closes it and puts focus back on
-  // whichever control opened it — the chip, or on a phone the header's
-  // title — and a press anywhere outside the panel and those controls
-  // closes it too. The controls are found by the `aria-controls` both carry,
-  // and are spared the outside press because their own click toggles.
-  useEffect(() => {
-    if (!open) return undefined;
-    const controlSel = `[aria-controls="${APP_SCOPE_PANEL_ID}"]`;
-    const focused = document.activeElement as HTMLElement | null;
-    openerRef.current = focused && focused.matches?.(controlSel) ? focused : null;
-    const opener = () => {
-      const was = openerRef.current;
-      if (was && was.isConnected && was.getClientRects().length) return was;
-      return Array.from(document.querySelectorAll<HTMLElement>(controlSel))
-        .find((el) => el.getClientRects().length > 0) || null;
-    };
-    focusFirstItem(panelRef.current);
-    const onDown = (event: Event) => {
-      const target = event.target as Element | null;
-      if (!target || panelRef.current?.contains(target)) return;
-      if (target.closest?.(controlSel)) return;
-      appScopeStore.set({ open: false });
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      const back = opener();
-      appScopeStore.set({ open: false });
-      back?.focus({ preventScroll: true });
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('touchstart', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('touchstart', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
+  // Keyboard and outside presses: see usePanelDismiss.
+  usePanelDismiss(open, panelRef, APP_SCOPE_PANEL_ID, () => appScopeStore.set({ open: false }));
 
   // A panel left open does not outlive the app it was opened on, nor the
   // Workshop: the header's control would otherwise find it already open on
@@ -397,5 +429,50 @@ export function AppWorkshopScope({ slug, name, iconUrl, iconEmoji }: {
         />
       ) : null}
     </div>
+  );
+}
+
+
+/* ════════════════════════════════════════════════════════════════════
+   THE CHIP ON THE ALL-APPS SCREEN (#3051)
+   ════════════════════════════════════════════════════════════════════ */
+
+/** The all-apps chip's id. Its panel is this plus `-picker`. */
+export const ALL_APPS_SCOPE_ID = 'workshop-scope';
+
+/**
+ * "All apps ⌄" at the head of the all-apps Workshop screen, and its panel.
+ *
+ * Controlled: the screen's own store holds the open flag (`scopeOpen`) and
+ * the app list it already fetched (`rows`), so this adds no fetch and no
+ * state of its own. The first render is the chip alone, closed, which is
+ * what the prerender carries; the panel renders only once somebody taps.
+ */
+export function AllAppsScope({ apps, open, onToggle }: {
+  apps: PickerApp[] | null;
+  open: boolean;
+  onToggle: (next: boolean) => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const panelId = `${ALL_APPS_SCOPE_ID}-picker`;
+  usePanelDismiss(open, panelRef, panelId, () => onToggle(false));
+  return (
+    <>
+      <WorkshopScope id={ALL_APPS_SCOPE_ID} open={open} scope={null} onToggle={onToggle} />
+      {open ? (
+        // Its own line of the chip's flex row, LAST, so it drops under the
+        // tabs rather than between the chip and them; full bleed, because
+        // the panel draws its own `mx-4` gutter.
+        <div className="order-last min-w-0 basis-[calc(100%+2rem)] -mx-4">
+          <WorkshopPicker
+            id={panelId}
+            apps={apps}
+            scope={null}
+            onClose={() => onToggle(false)}
+            panelRef={panelRef}
+          />
+        </div>
+      ) : null}
+    </>
   );
 }

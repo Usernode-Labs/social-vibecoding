@@ -140,14 +140,13 @@ test('the backdrops stay, transparent — they are the click target', () => {
   }
 });
 
-test('without backdrop-filter the pane goes opaque and the dim survives', () => {
-  // The scrim is a shadow, not a filter, so only the fill falls back — the
-  // same admission `.dc-lift-session` already makes: the effect is the blur.
-  const at = APP_CSS.indexOf('@supports not ((backdrop-filter', APP_CSS.indexOf('.dc-lift-panel {'));
-  assert.ok(at > 0, 'the panel needs its own no-filter fallback');
-  const block = APP_CSS.slice(at, APP_CSS.indexOf('\n}\n', at));
-  assert.match(block, /\.dc-lift-panel \{ background-color: var\(--dc-sheet\); \}/);
-  assert.doesNotMatch(block, /box-shadow/, 'the dim is not part of the fallback');
+test('the pane is solid on every platform and the dim survives', () => {
+  // It floats over the page and nothing blurs any more (app.css "No glass,
+  // on any platform"), so it is the plane colour made solid, after the rule
+  // it overrides. The scrim is a shadow, not a filter, so only the fill moves.
+  const at = APP_CSS.indexOf('.dc-lift-panel { background-color: var(--dc-sheet-solid); }');
+  assert.ok(at > APP_CSS.indexOf('.dc-lift-panel {'), 'the solid fill follows the panel rule');
+  assert.match(rule('.dc-lift-panel'), /box-shadow: var\(--dc-lift-shadow\)/, 'the lift shadow stays');
 });
 
 test('the dev screen keeps its glass — this change does not reach it', () => {

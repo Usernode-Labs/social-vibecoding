@@ -74,10 +74,10 @@ import {
   LIVE_APP_LABEL, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs,
 } from '../app-frame/live-apps';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
-import { loadAgentSessions, useAgentSessionState } from '../agent-session/store';
+import { loadAgentSessions, useAgentSessions } from '../agent-session/store';
 import { ACTIVITY_LABEL } from '../agent-session/activity';
 import { AgentActivityIcon } from '../agent-session/activity-mark';
-import { useGlobalChatState } from '../global-chat/store';
+import { useGlobalChatSelector } from '../global-chat/store';
 import { improveStore } from '../improve/improve-store.js';
 import type { AgentChat } from '../messages/inbox';
 import { useMessagesSnapshot } from '../messages/store';
@@ -259,7 +259,8 @@ export function RecentsList() {
   useMidnightRender();
   const { apps } = useStoreState(recentAppsStore);
   const snap = useMessagesSnapshot();
-  const chat = useGlobalChatState();
+  const bootstrap = useGlobalChatSelector((s) => s.bootstrap);
+  const threads = useGlobalChatSelector((s) => s.threads);
   const live = useLiveAppSlugs();
   const current = useCurrentAppSlug();
   const improve = useStoreState(improveStore);
@@ -279,13 +280,13 @@ export function RecentsList() {
 
   // Gated on the same two flags the Messages inbox reads, so a shell where
   // the experimental chat is off shows no agent rows here either.
-  const agentsOn = !!chat.bootstrap?.parityReady
-    && chat.bootstrap.profiles.globalChat.enabled === true;
+  const agentsOn = !!bootstrap?.parityReady
+    && bootstrap.profiles.globalChat.enabled === true;
   // Agent sessions (#2779 follow-up), read once the viewer is named; the
   // store keeps the list current as conversations start and move. The flag
   // or not, as Messages lists them: turning agent sessions off never hides a
   // conversation that already exists.
-  const { sessions: agentSessions } = useAgentSessionState();
+  const agentSessions = useAgentSessions();
   useEffect(() => {
     if (viewer) void loadAgentSessions();
   }, [viewer]);
@@ -306,7 +307,7 @@ export function RecentsList() {
       apps,
       conversations: snap.conversations,
       discussions: snap.discussions,
-      agents: agentsOn ? (chat.threads as AgentChat[]) : [],
+      agents: agentsOn ? (threads as AgentChat[]) : [],
       agentSessions,
       viewerId: Number(window.App?.user?.id) || null,
       active: active.map((item) => item.app!.slug),

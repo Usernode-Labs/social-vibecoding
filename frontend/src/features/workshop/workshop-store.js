@@ -36,17 +36,41 @@ import { createStore } from '../../lib/plain-store.js';
  */
 
 /**
+ * @typedef {object} WorkshopItem  One row behind a count (#3051).
+ * @property {'session'|'proposal'|'governance'} kind
+ * @property {number} id
+ * @property {string} title
+ * @property {string} status
+ * @property {string|null} at
+ */
+
+/**
  * @typedef {object} WorkshopState
  * @property {boolean} open   The router has this screen on show.
  * @property {WorkshopRow[]|null} rows  Null until the first load answers.
  * @property {boolean} error The load failed; the screen offers a retry.
+ * @property {'status'|'needs'} tab  Which of the two tabs is showing (#3051).
+ * @property {boolean} scopeOpen  The All apps chip's panel is open (#3051).
+ * @property {Record<string, {working: WorkshopItem[], needs: WorkshopItem[]}>|null} items
+ *   GET /api/workshop/items, keyed by slug. Null until it answers.
+ * @property {boolean} itemsError  That read failed; the tabs say so.
  */
 
-/** @type {WorkshopState} */
+/**
+ * `tab: 'status'` and `scopeOpen: false` are the prerender too: the Current
+ * status pane showing, the Needs you pane `hidden`, the chip's panel not
+ * rendered at all.
+ *
+ * @type {WorkshopState}
+ */
 const INITIAL = {
   open: false,
   rows: null,
   error: false,
+  tab: 'status',
+  scopeOpen: false,
+  items: null,
+  itemsError: false,
 };
 
 export const workshopStore = createStore(INITIAL);

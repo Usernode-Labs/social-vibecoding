@@ -309,7 +309,7 @@ test('the composer keeps what was typed per conversation, and the drafts list of
 
   const panel = read('frontend/src/features/agent-session/index.tsx');
   assert.match(panel, /data-agent-session-send="save"[\s\S]*?aria-label="Save as draft"/, 'the one button turns into Save');
-  assert.match(panel, /const saving = running && !snapshot\.turn\.stopping && !!value\.trim\(\);/,
+  assert.match(panel, /const saving = running && !snapshot\.stopping && !!value\.trim\(\);/,
     'Save only with something typed, and never while stopping: Stop fills the box under its own click');
   assert.match(panel, /key="save"\s+type="submit"/, 'Save and Stop are different buttons, so a type flip never lands on one click');
   assert.match(panel, /if \(running\) \{\s*if \(saveComposerDraft\(text\)\) update\(''\);\s*return;\s*\}/, 'Enter mid-turn parks, never sends');

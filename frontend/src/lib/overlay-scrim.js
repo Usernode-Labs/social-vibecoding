@@ -104,8 +104,55 @@ function paintBox(paint) {
   return { left: 0, top: 0, width: innerWidth, height: layoutViewportHeight() };
 }
 
+// AN OPAQUE SURFACE NEEDS NO HOLE. The cutout exists for one reason: a
+// frosted surface samples whatever is painted behind it, so a dim under it
+// would be frosted into the glass. A surface that draws no backdrop filter
+// (every platform's kit surface since the glass came off, app.css "No
+// glass, on any platform") is opaque, and
+// nothing behind it shows. For those the paint layer is pure cost: a
+// MutationObserver on the kit's inline style re-read the surface's computed
+// style and rects and rewrote a many-layer gradient on a viewport-and-a-half
+// layer on every spring frame, 23-30 rewrites per sheet open or close. So the
+// paint layer stays hidden, nothing is observed, and the kit's own backdrop
+// carries the dim: the kit already drives its opacity with the surface (1:1
+// with a sheet's or panel's position, the same fade as a dialog's card), and
+// `.platform-backdrop-dim` in app.css gives it the scrim's colour and reach.
+//
+// Only the kit's backdrops (`.un-backdrop`) take this path: a React rail's
+// backdrop has presentation rules of its own (the app menu's is undimmed at
+// `sm`+), and it is frosted wherever it is not adopted into a kit sheet. And
+// not a surface opened OVER another kit surface: the backdrop sits one layer
+// below the surfaces (native.css z-index 9990 vs 9991+), so it could not dim
+// the one underneath the way the paint layer, stacked at the new surface's
+// own level, does. That case keeps the paint layer as it was.
+export const BACKDROP_DIM_CLASS = 'platform-backdrop-dim';
+const KIT_SURFACES = ['un-sheet', 'un-panel', 'un-modal', 'un-action-sheet', 'un-alert'];
+
+export function drawsBackdropFilter(style) {
+  const on = (value) => !!value && value !== 'none';
+  return on(style.backdropFilter) || on(style.webkitBackdropFilter);
+}
+
+function overKitSurface(backdrop) {
+  for (let el = backdrop.previousElementSibling; el; el = el.previousElementSibling) {
+    if (KIT_SURFACES.some(name => el.classList?.contains(name))) return true;
+  }
+  return false;
+}
+
+export function dimsWithBackdrop(surface, backdrop) {
+  return !!backdrop.classList?.contains('un-backdrop')
+    && !overKitSurface(backdrop)
+    && !drawsBackdropFilter(getComputedStyle(surface));
+}
+
 export function attachOverlayScrim(surface, backdrop, paint) {
   if (!surface || !backdrop || !paint) return () => {};
+  if (dimsWithBackdrop(surface, backdrop)) {
+    backdrop.classList.add(BACKDROP_DIM_CLASS);
+    paint.style.visibility = 'hidden';
+    return () => { backdrop.classList.remove(BACKDROP_DIM_CLASS); };
+  }
   let disposed = false;
   let last = {};
   let visible = false;

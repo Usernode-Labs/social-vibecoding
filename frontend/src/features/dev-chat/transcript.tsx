@@ -6,7 +6,7 @@
  * ── What this component does NOT bind ─────────────────────────────────
  *
  * `initScrollTracking` binds click, keydown and scroll on `#dc-messages`
- * ITSELF, once per `renderChatView`, and that element stays dev-chat.js's. So
+ * ITSELF, once per element, and those listeners stay dev-chat.js's. So
  * the spec-preview card, the Q/A chips and their two action buttons keep their
  * `data-*` hooks and no onClick — exactly like the quick-reply pills, and for
  * the same reason: the host outlives every repaint of its contents, so the
@@ -18,7 +18,16 @@
  * stop. Those are onClick now, holding the closure instead of a global name.
  */
 
-import { useCallback, useEffect, useRef, type ReactNode, type SyntheticEvent } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type CSSProperties,
+  type ReactNode,
+  type SyntheticEvent,
+} from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { createLogFollower, revealDisclosure, type LogFollower } from './log-follow';
@@ -49,6 +58,31 @@ function fmt(): any {
 }
 
 const STAMP_STYLE = { fontSize: '9px', opacity: 0.4, marginLeft: 'auto' } as const;
+
+/**
+ * Markup another module built, set as the element's html.
+ *
+ * Every html sink in this file goes through here, for one reason: React 19
+ * compares `dangerouslySetInnerHTML` by the IDENTITY of its `{ __html }`
+ * object and reassigns `innerHTML` whenever that object is new. An inline
+ * `{{ __html: … }}` is new on every render, so every republish tore down and
+ * rebuilt every message body in the transcript — its images reloading, its
+ * text selection lost — with identical text. The wrapper here is the same
+ * object while the string is the same (#3104 found and fixed the same thing in
+ * Messages; board-frame.tsx documents it too).
+ */
+function Html({ as: Tag = 'div', html, className, style }: {
+  as?: 'div' | 'span';
+  html: string;
+  className?: string;
+  style?: CSSProperties;
+}): ReactNode {
+  const inner = useMemo(() => ({ __html: html }), [html]);
+  return <Tag className={className} style={style} dangerouslySetInnerHTML={inner} />;
+}
+
+const VISUALS_STYLE = { margin: '6px 0 2px' } as const;
+const MORE_STYLE = { padding: '8px 10px' } as const;
 
 /** `<span style="font-size:9px;opacity:0.4;margin-left:auto">id ts</span>`. */
 function Stamp({ text }: { text: string }): ReactNode {
@@ -89,7 +123,7 @@ function Failure({ r }: { r: Extract<TranscriptRow, { t: 'failure' }> }): ReactN
       </span>
       <span className="dc-failure-body">
         {r.html !== undefined
-          ? <span className="dc-failure-text" dangerouslySetInnerHTML={{ __html: r.html }} />
+          ? <Html as="span" className="dc-failure-text" html={r.html} />
           : <span className="dc-failure-text">{r.text}</span>}
         {r.chips && r.chips.length ? (
           <span className="dc-failure-chips">
@@ -146,7 +180,7 @@ function StatusLine({ r }: { r: Extract<TranscriptRow, { t: 'status' }> }): Reac
     >
       <StatusIcon kind={r.icon} />
       {r.html !== undefined
-        ? <span dangerouslySetInnerHTML={{ __html: ` ${r.html} ` }} />
+        ? <Html as="span" html={` ${r.html} `} />
         : ` ${r.text} `}
       <Elapsed e={r.elapsed} />
       {r.forceStop ? (
@@ -335,7 +369,7 @@ function Attached({ r }: { r: Extract<TranscriptRow, { t: 'attached' }> }): Reac
         <span className="dc-cc-head">
           <StatusIcon kind={r.icon} />
           {r.html !== undefined
-            ? <span dangerouslySetInnerHTML={{ __html: ` ${r.html}` }} />
+            ? <Html as="span" html={` ${r.html}`} />
             : ` ${r.text}`}
           <span className="dc-cc-attached-chevron" aria-hidden="true"></span>
           <Stamp text={r.stamp} />
@@ -357,7 +391,7 @@ function Attached({ r }: { r: Extract<TranscriptRow, { t: 'attached' }> }): Reac
             {r.body.text}
           </pre>
         )
-        : <div className="dc-cc-attached-md" dangerouslySetInnerHTML={{ __html: r.body.html }} />}
+        : <Html className="dc-cc-attached-md" html={r.body.html} />}
     </details>
   );
 }
@@ -377,7 +411,7 @@ function SpecCard({ r }: { r: Extract<TranscriptRow, { t: 'spec' }> }): ReactNod
           <span className="dc-spec-preview-title">{r.header}</span>
           <span className="dc-spec-preview-cta">View full spec →</span>
         </div>
-        <div className="dc-spec-preview-snippet" dangerouslySetInnerHTML={{ __html: r.snippetHtml }} />
+        <Html className="dc-spec-preview-snippet" html={r.snippetHtml} />
       </div>
     </>
   );
@@ -468,12 +502,11 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
             ? <a href={r.prUrl} target="_blank" rel="noreferrer" className="dc-pr-link">{`PR #${r.prNumber}`}</a>
             : <span style={{ color: 'var(--text-muted)' }}>Changes ready</span>}
           {r.title ? <span className="dc-pr-title">{r.title}</span> : null}
-          {r.closesHtml ? <span className="contents" dangerouslySetInnerHTML={{ __html: r.closesHtml }} /> : null}
+          {r.closesHtml ? <Html as="span" className="contents" html={r.closesHtml} /> : null}
           <span style={{ fontSize: '9px', opacity: 0.4, marginLeft: '8px' }}>{r.stamp}</span>
         </div>
         {r.visualsHtml ? (
-          <div className="dc-pr-card-visuals" style={{ margin: '6px 0 2px' }}
-            dangerouslySetInnerHTML={{ __html: r.visualsHtml }} />
+          <Html className="dc-pr-card-visuals" style={VISUALS_STYLE} html={r.visualsHtml} />
         ) : null}
         {!embedded && !historical ? <div className="dc-pr-card-actions">
           <button
@@ -517,7 +550,7 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
             ? <span className="ms-badge ms-badge-violet" title={MERGED_TITLE}>✓ Merged, now live in the app</span>
             : null}
           {r.status2.kind === 'badge'
-            ? <span className="contents" dangerouslySetInnerHTML={{ __html: r.status2.html }} />
+            ? <Html as="span" className="contents" html={r.status2.html} />
             : null}
         </div> : <p className="dev-topic-note">{r.status2.kind === 'merged' ? 'Merged, now live in the app' : historical ? 'Earlier build result' : 'Build result. Current actions are above.'}</p>}
       </div>
@@ -536,7 +569,10 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
 function LiveContent({ rowKey, html }: { rowKey: string; html: string }): ReactNode {
   const s = useStoreState(streamStore);
   const live = s.key === rowKey ? s.html : '';
-  return <div className="dc-msg-content" dangerouslySetInnerHTML={{ __html: live || html }} />;
+  // `Html`, like every other sink: a transcript republish mid-turn (a
+  // progress line, a status row) re-renders this row with the same frame,
+  // and a new wrapper would rewrite the bubble the stream just painted.
+  return <Html className="dc-msg-content" html={live || html} />;
 }
 
 function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
@@ -564,7 +600,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
       </div>
       {r.live
         ? <LiveContent rowKey={r.key} html={r.contentHtml} />
-        : <div className="dc-msg-content" dangerouslySetInnerHTML={{ __html: r.contentHtml }} />}
+        : <Html className="dc-msg-content" html={r.contentHtml} />}
       {r.more ? (
         <details
           className="dc-cc-log" style={{ marginTop: '6px' }}
@@ -572,8 +608,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
           open={more.open} onToggle={more.onToggle}
         >
           <summary className="dc-cc-log-toggle">Full output</summary>
-          <div className="dc-msg-content" style={{ padding: '8px 10px' }}
-            dangerouslySetInnerHTML={{ __html: r.more.html }} />
+          <Html className="dc-msg-content" style={MORE_STYLE} html={r.more.html} />
         </details>
       ) : null}
       {r.attachments && r.attachments.length ? (
@@ -584,7 +619,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
             </a>
           ) : (
             <a key={a.href} className="dc-msg-att-chip" href={a.href} download={a.name} title={`Download ${a.name}`}>
-              <span className="contents" dangerouslySetInnerHTML={{ __html: a.badgeHtml || '' }} />
+              <Html as="span" className="contents" html={a.badgeHtml || ''} />
               <span className="dc-attach-name">{a.name}</span>
               <span className="dc-attach-size">{a.size}</span>
             </a>
@@ -688,7 +723,54 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
   );
 }
 
-function Row({ r, embedded = false, historical = false }: { r: TranscriptRow; embedded?: boolean; historical?: boolean }): ReactNode {
+/**
+ * Two row models, compared by VALUE.
+ *
+ * The models are plain JSON-shaped data — strings, numbers, booleans, null,
+ * and arrays and objects of those (see ./transcript-store.ts) — and
+ * `_transcriptView` builds every one of them afresh on every publish, so
+ * identity never survives a republish and a shallow `memo` would skip
+ * nothing. The html strings inside them come out of `renderMarkdown`'s cache
+ * as the same string objects, so the comparison is mostly pointer checks.
+ */
+function sameData(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) if (!sameData(a[i], b[i])) return false;
+    return true;
+  }
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) {
+    if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+    if (!sameData((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false;
+  }
+  return true;
+}
+
+interface RowProps { r: TranscriptRow; embedded?: boolean; historical?: boolean }
+
+function sameRowProps(a: RowProps, b: RowProps): boolean {
+  return !!a.embedded === !!b.embedded && !!a.historical === !!b.historical && sameData(a.r, b.r);
+}
+
+/*
+ * MEMOIZED, on the row's model by value. Every publish — a progress line, an
+ * estimate, a chip tap, a status poll — re-renders `DevChatTranscript`, and it
+ * used to re-render every row under it: each disclosure re-reading its open
+ * state out of localStorage, each body re-diffed. A row whose model did not
+ * change now skips all of that.
+ *
+ * What a row renders that is NOT in its model still updates, because each is
+ * a subscription of its own and a subscription re-renders its component
+ * whatever its parent did: the ticking labels (`nowStore`) and the live
+ * bubble (`streamStore`). The one other thing read at render time is a
+ * disclosure's persisted open state, and it only changes when the reader
+ * toggles that disclosure, which the DOM already shows.
+ */
+const Row = memo(function Row({ r, embedded = false, historical = false }: RowProps): ReactNode {
   switch (r.t) {
     case 'status': return <StatusLine r={r} />;
     case 'failure': return <Failure r={r} />;
@@ -701,11 +783,11 @@ function Row({ r, embedded = false, historical = false }: { r: TranscriptRow; em
     // into it (`.dc-credits-card > .dc-credits-options`, and its
     // `details[data-credits-dev]`), and the banner and the Generate-proposal
     // modal render the same builder. The sink generates no box.
-    case 'credits': return <span className="contents" dangerouslySetInnerHTML={{ __html: r.html }} />;
+    case 'credits': return <Html as="span" className="contents" html={r.html} />;
     case 'msg': return <Bubble r={r} />;
     default: return null;
   }
-}
+}, sameRowProps);
 
 /**
  * The rows, the walkthrough and the trailing dots.
@@ -790,7 +872,7 @@ export function DevChatTranscript({ embedded = false }: { embedded?: boolean }):
           module's markup (`DevFlowSelect`), through a host that generates no
           box so the card stays a direct child of the scroll container. */}
       {s.devFlowHtml
-        ? <div className="contents" dangerouslySetInnerHTML={{ __html: s.devFlowHtml }} />
+        ? <Html className="contents" html={s.devFlowHtml} />
         : null}
       {/* #990's trailing dots, suppressed while a live coding run is already
           painting progress of its own. */}
@@ -804,4 +886,4 @@ export function DevChatTranscript({ embedded = false }: { embedded?: boolean }):
   );
 }
 
-export { StatusLine, Failure, Attached, ChangesCard, Bubble, LiveContent, Row };
+export { StatusLine, Failure, Attached, ChangesCard, Bubble, LiveContent, Row, Html };

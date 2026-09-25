@@ -200,7 +200,7 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // the tab bar's five glyphs are in the document on every route, the app
     // menu draws a chat bubble and an info circle, and the parked strip draws
     // an ✕. (The Workshop's scope chip drew the grid until #2759 took it off
-    // the all-apps screen; the grid is listed below again.)
+    // the all-apps screen, and draws it again since #3051 brought it back.)
     //
     // INTO IT, and every one is a row of the app chip's menu that is not
     // there any more. The platform's destinations left that menu for the tab
@@ -213,7 +213,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // glyph that stops prerendering because a surface was retired is
     // expected, and one that stops because a component broke is a hydration
     // bug wearing the same clothes.
-    'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z',
+    // CogIcon's two paths (the gear, and the hub 'M15 12a3…') LEFT this list
+    // with #3120: the desktop rail's Settings cog (#platform-rail-settings)
+    // sits beside Me at the rail's foot and renders unconditionally, so the
+    // cog is in the cold document again.
     'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
     'M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z',
     'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
@@ -236,7 +239,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // when the lazily mounted Settings interior first renders.
     'M13 7l5 5m0 0l-5 5m5-5H6',
     'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',
-    'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
     'M15 18l-6-6 6-6',
     'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z',
     'M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6',
@@ -262,12 +264,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M4 5a8 3 0 1 0 16 0 8 3 0 1 0-16 0',
     'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6',
     'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
-    // THE GRID, back behind state (#2759). The all-apps Workshop screen's
-    // scope chip drew it unconditionally as its "All apps" tile; that chip is
-    // gone — the screen is itself the list of apps — and the grid is left
-    // only in the app Workshop's "Which workshop?" panel, which renders once
-    // somebody taps.
-    'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
+    // THE GRID left this list again with #3051. #2759 had put it behind state
+    // when the all-apps Workshop's scope chip went; the owner brought that
+    // chip back as "All apps", and it draws the grid unconditionally.
     'M4 6h16M4 12h16M4 18h16',
     'M4 9.5h16',
     'M4.5 12.75l6 6 9-13.5',

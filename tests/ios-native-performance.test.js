@@ -11,7 +11,7 @@ const kitCss = fs.readFileSync(path.join(root, 'public/usernode-native/v1/native
 const index = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 
 function performanceBlock() {
-  const start = css.indexOf('Native iOS performance baseline (#787)');
+  const start = css.indexOf('No glass, on any platform (#787, #3104');
   const end = css.indexOf('/* Pressed-state opt-outs:', start);
   assert.ok(start >= 0 && end > start, 'native iOS performance block is present');
   return css.slice(start, end);
@@ -29,25 +29,50 @@ test('native iOS performance mode uses existing first-paint platform signals', (
     'the optimization must not rely on brittle device scoring');
 });
 
-test('native iOS removes live blur from shell-owned frosted surfaces', () => {
+// NO GLASS ON ANY PLATFORM. #787 and #3104 dropped it in the app only, which
+// left two colour schemes. The shell's own frosted chrome from the kit loses
+// its blur everywhere, and the two translucent nav tokens are pinned for
+// everyone; see tests/no-glass-one-scheme.test.js for the planes.
+test('the kit chrome the shell draws has no blur on any platform', () => {
   const block = performanceBlock();
-  for (const selector of [
+  const blur = block.match(/\n((?:\.[\w.-]+,\s*)+\.[\w.-]+) \{\s*-webkit-backdrop-filter:\s*none;\s*backdrop-filter:\s*none;\s*\}/);
+  assert.ok(blur, 'one unscoped rule takes the blur off');
+  assert.deepEqual(blur[1].split(',').map((s) => s.trim()), [
     '.platform-chat-header.un-scrolled',
     '.un-navbar',
     '.un-action-card',
     '.un-alert',
     '.un-toast',
-  ]) {
-    assert.ok(block.includes(selector), `covers ${selector}`);
-  }
-  assert.match(block, /-webkit-backdrop-filter:\s*none/);
-  assert.match(block, /backdrop-filter:\s*none/);
-  assert.match(block, /--un-navbar-bg:\s*var\(--bg-primary\)/,
-    'translucent navigation receives an opaque fallback');
+  ]);
+  assert.match(block, /\n:root \{\s*--un-navbar-bg:\s*var\(--bg-primary\);\s*--un-toast-bg:\s*#1c1c2a;\s*\}/,
+    'translucent navigation is pinned to the platform surface everywhere');
+  assert.doesNotMatch(block, /html\.un-ios( \.|,| \{)/,
+    'nothing in the glass opt-out is scoped to a platform any more');
+});
+
+test('the kit that sets .un-ios never classes desktop macOS or Android as iOS', () => {
+  const kit = fs.readFileSync(path.join(root, 'public/usernode-native/v1/native.js'), 'utf8');
+  const detect = kit.slice(kit.indexOf('function detectPlatform()'), kit.indexOf('var platform = detectPlatform();'));
+  assert.match(detect, /\/iPhone\|iPad\|iPod\/\.test\(ua\)/);
+  // A Mac reports MacIntel too; only an iPad (iPadOS 13+) has touch points.
+  assert.match(detect, /navigator\.platform === 'MacIntel' && navigator\.maxTouchPoints > 1/);
+  assert.ok(detect.indexOf("return 'ios'") < detect.indexOf('/Android/.test(ua)'),
+    'iOS is decided from the UA and touch points alone, before the Android branch');
+  assert.match(kit, /document\.documentElement\.classList\.add\('un-' \+ platform\)/);
 });
 
 test('native iOS view-transition override is transform-only and shorter', () => {
   const block = performanceBlock();
+  // The glass came off everywhere; the transition change did not spread. It
+  // is about the app's full-page snapshot, so Safari and the PWA keep the
+  // kit's own.
+  const vt = block.match(/^\s*html\.un-ios[^\n{]*\[data-un-vt[^\n{]*/gm) || [];
+  assert.ok(vt.length >= 6, `found ${vt.length} view-transition selectors`);
+  for (const sel of vt) {
+    assert.match(sel, /^\s*html\.un-ios\.in-native-webview\[data-un-vt/, `stays native-only: ${sel.trim()}`);
+  }
+  assert.doesNotMatch(css, /html\.un-ios\[data-un-vt/,
+    'the shell never overrides the kit\'s iOS transition outside the app');
   assert.match(block, /animation-duration:\s*260ms/);
   assert.match(block, /un-vt-native-ios-parallax-out-left/);
   assert.match(block, /un-vt-native-ios-parallax-in-left/);
@@ -79,6 +104,12 @@ test('only decorative loops stop; progress indicators and other platforms retain
     'functional progress spinners stay animated');
   assert.doesNotMatch(block, /un-android|un-desktop/,
     'Android and desktop are outside the optimization scope');
+  // Motion is reduced in the app only; Safari and the PWA keep their loops.
+  const loops = [...block.matchAll(/^(html[^\n{]*(?:status-dot\.creating|work-cog-spinning|app-version-pill-dot|dc-active-dot-busy)[^\n{]*)/gm)];
+  assert.equal(loops.length, 5, 'the five decorative-loop selectors');
+  for (const [, sel] of loops) {
+    assert.match(sel, /^html\.un-ios\.in-native-webview /, `native-only: ${sel}`);
+  }
 });
 
 test('the native-iOS scope is reachable from a URL so checks and screenshots can see it', () => {
@@ -114,62 +145,4 @@ test('the native-iOS scope is reachable from a URL so checks and screenshots can
     scoped.some((t) => /in-native-webview/.test(t.expectSelector || '')),
     'a test must assert the scoping class actually landed on <html>',
   );
-});
-
-// The pane glass (`--dc-frost`) spread past the surfaces #787 listed: the tab
-// bar, the header, the Messages / Settings / Workshop planes and every kit
-// sheet, panel and dialog, all of which content scrolls behind or a spring
-// moves on every frame. The iOS app now draws them the way the stylesheet
-// already draws them with no backdrop-filter at all.
-const FALLBACK = '@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {';
-const SCOPE = ':where(html.un-ios.in-native-webview) ';
-
-function splitSelectors(list) {
-  const out = [];
-  let depth = 0;
-  let cur = '';
-  for (const ch of list) {
-    if (ch === '(') depth += 1;
-    if (ch === ')') depth -= 1;
-    if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; } else cur += ch;
-  }
-  if (cur.trim()) out.push(cur.trim());
-  return out;
-}
-
-test('native iOS turns the pane frost off at its token, and only there', () => {
-  assert.match(performanceBlock(), /html\.un-ios\.in-native-webview \{\s*--dc-frost:\s*none;\s*\}/);
-  assert.equal((css.match(/--dc-frost\s*:/g) || []).length, 2,
-    'declared once for everyone and once for the iOS app: Safari, the PWA and Android keep the glass');
-});
-
-test('every no-backdrop-filter fallback has an iOS twin right after it, with the same rules', () => {
-  let at = css.indexOf(FALLBACK);
-  let blocks = 0;
-  while (at >= 0) {
-    const end = css.indexOf('\n}', at);
-    const body = css.slice(at + FALLBACK.length, end);
-    const after = css.slice(end + 2, end + 2 + 1600);
-    for (const [, selectors, decls] of body.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-      const twin = splitSelectors(selectors.split(/\s+/).join(' ')).map((s) => SCOPE + s).join(',\n')
-        + ` { ${decls.split(/\s+/).join(' ').trim()} }`;
-      assert.ok(after.includes(twin), `the iOS app mirrors: ${selectors.trim().slice(0, 60)}`);
-      assert.match(decls, /background-color:\s*var\(--dc-(sheet|strip)\)/, 'an opaque plane, as designed');
-    }
-    blocks += 1;
-    at = css.indexOf(FALLBACK, end);
-  }
-  assert.ok(blocks >= 14, `found ${blocks} fallback blocks`);
-});
-
-test('the frosted surfaces with no fallback block go opaque in the iOS app too', () => {
-  const glass = css.match(/body:has\(:is\(([^)]*)\):not\(\.hidden\)\) #platform-header \{\s*background-color: var\(--dc-sheet-fill\);/);
-  assert.ok(glass, 'the header glass rule');
-  const roots = glass[1].split(',').map((s) => s.trim());
-  const twin = css.match(/:where\(html\.un-ios\.in-native-webview\) body:has\(:is\(([^)]*)\):not\(\.hidden\)\) #platform-header,\s*:where\(html\.un-ios\.in-native-webview\) body:has\(#app-view:not\(\.hidden\)\[data-app-surface="platform"\]\) #platform-header \{\s*background-color: var\(--dc-sheet\);/);
-  assert.ok(twin, 'the header takes the tab bar\'s opaque fallback in the iOS app, on both of its glass routes');
-  assert.deepEqual(twin[1].split(',').map((s) => s.trim()), roots, 'on exactly the routes the glass rule covers');
-  for (const selector of ['.global-chat-composer', '.global-chat-result', '.gc-event-box']) {
-    assert.ok(css.includes(`${SCOPE}${selector} { background`), `${selector} is opaque in the iOS app`);
-  }
 });

@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -27,6 +28,7 @@ import {
   AppWindowIcon,
 } from '@/components/ui/icons';
 
+import { useInnerHtml } from '../../lib/html';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import type { AiBudgetState } from '../header/ai-budget';
@@ -105,7 +107,8 @@ import {
   stopAgentTurn,
   stopPreviewCapture,
   switchActiveChange,
-  useAgentSessionState,
+  useAgentSessionPick,
+  useAgentSessionSelector,
   type PaneTab,
   type PreviewPaneState,
   type SpecSheetState,
@@ -143,6 +146,16 @@ import { CreditsCard, HandoffPanel } from './handoff';
 // React owns every node below the screen root; no legacy module writes into
 // it. The first render is the hidden, empty root the prerendered shell
 // ships, and everything loads in effects.
+//
+// ── What re-renders while the Mayor streams ───────────────────────────
+//
+// The store lands a streamed reply once per animation frame (store.ts,
+// bufferToken). Of this screen, only the live turn and FollowOutput read the
+// streamed text; everything else reads the fields it draws through
+// useAgentSessionSelector / useAgentSessionPick, so a frame of new words
+// re-renders neither the panel, the composer nor a past reply. Past replies
+// are memo()'d rows whose markdown keeps its `{ __html }` object (see
+// ../../lib/html.tsx), so an earlier message is never re-parsed into the DOM.
 
 function markdown(text: string, breaks = true): string | null {
   const render = typeof window === 'undefined' ? null : window.DevChat?.renderMarkdown;
@@ -150,14 +163,15 @@ function markdown(text: string, breaks = true): string | null {
   try { return render(text, { breaks }); } catch { return null; }
 }
 
-function MayorText({ text }: { text: string }) {
+const MayorText = memo(function MayorText({ text }: { text: string }) {
   const html = useMemo(() => markdown(text), [text]);
+  const inner = useInnerHtml(html || '');
   if (html) {
     // renderMarkdown is the dev chat's sanitizer (marked + DOMPurify).
-    return <div className="dc-msg-content text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100" dangerouslySetInnerHTML={{ __html: html }} />;
+    return <div className="dc-msg-content text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100" dangerouslySetInnerHTML={inner} />;
   }
   return <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100">{text}</p>;
-}
+});
 
 function appInitial(name: string | null | undefined) {
   return (name || '?').trim().charAt(0).toUpperCase() || '?';
@@ -261,9 +275,8 @@ function SessionBar({ session, about, embedded, action }: {
   /** The pane's own control at the bar's end — Messages' full-width toggle. */
   action?: ReactNode;
 }) {
-  const snapshot = useAgentSessionState();
+  const building = useAgentSessionSelector((s) => s.turn.running && s.turn.phase === 'cc');
   const active = session?.activeChange || null;
-  const building = snapshot.turn.running && snapshot.turn.phase === 'cc';
   const count = session?.changes?.length || 0;
   const target = openAppTarget(active, about);
   // It wraps on both surfaces (#3016). On a phone its five controls are wider
@@ -367,8 +380,8 @@ function SessionMenu({ session }: { session: AgentSession | null }) {
 // ── Transcript pieces ──────────────────────────────────────────────────
 
 function Card({ card, live = false }: { card: CardView; live?: boolean }) {
-  const snapshot = useAgentSessionState();
-  const deciding = snapshot.deciding === card.id;
+  const decidingId = useAgentSessionSelector((s) => s.deciding);
+  const deciding = decidingId === card.id;
   const pending = card.status === 'pending';
   return (
     <section
@@ -396,7 +409,7 @@ function Card({ card, live = false }: { card: CardView; live?: boolean }) {
             layout="iconRow"
             variant="pillAccent"
             disabledStyle="dim"
-            disabled={!!snapshot.deciding}
+            disabled={!!decidingId}
             onClick={() => void decideCard(card.id, 'confirm')}
           >
             {deciding ? <SpinnerArcIcon className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
@@ -408,7 +421,7 @@ function Card({ card, live = false }: { card: CardView; live?: boolean }) {
             variant="pillNeutral"
             disabledStyle="dim"
             ink="neutral"
-            disabled={!!snapshot.deciding}
+            disabled={!!decidingId}
             onClick={() => void decideCard(card.id, 'dismiss')}
           >
             Not now
@@ -433,7 +446,12 @@ function Card({ card, live = false }: { card: CardView; live?: boolean }) {
   );
 }
 
-function Item({ item, sessionId = null }: { item: TranscriptItem; sessionId?: number | null }) {
+/**
+ * One row of the transcript. memo(): `buildTranscript` hands back the same
+ * item objects until the messages or actions change, so a row whose item is
+ * unchanged skips its render (and its markdown) when the panel re-renders.
+ */
+const Item = memo(function Item({ item, sessionId = null }: { item: TranscriptItem; sessionId?: number | null }) {
   switch (item.kind) {
     case 'user':
       return (
@@ -483,7 +501,10 @@ function Item({ item, sessionId = null }: { item: TranscriptItem; sessionId?: nu
     default:
       return null;
   }
-}
+});
+
+/** What a finished run reads from the turn: nothing that changes. */
+const NOT_LIVE = { startedAt: null, progress: '' };
 
 /**
  * A coding-agent run, as the dev chat draws one: its `Attached` card, a
@@ -492,8 +513,12 @@ function Item({ item, sessionId = null }: { item: TranscriptItem; sessionId?: nu
  * run carries the turn's live progress line and clock.
  */
 export function RunCard({ run }: { run: RunItem }) {
-  const snapshot = useAgentSessionState();
   const running = run.status === 'running';
+  // Only the running run follows the turn's clock and progress line; a
+  // finished one reads nothing from the turn, so the turn never re-renders it.
+  const turn = useAgentSessionPick((s) => (running
+    ? { startedAt: s.turn.startedAt, progress: s.turn.progress }
+    : NOT_LIVE));
   const html = useMemo(() => (run.output ? markdown(run.output) : null), [run.output]);
   const duration = durationLabel(run.durationMs);
   const logText = [...run.steps, ...run.log].join('\n');
@@ -505,11 +530,11 @@ export function RunCard({ run }: { run: RunItem }) {
     text: runHeading(run),
     caption: run.agent || undefined,
     elapsed: running
-      ? (snapshot.turn.startedAt ? { kind: 'since', since: snapshot.turn.startedAt } : null)
+      ? (turn.startedAt ? { kind: 'since', since: turn.startedAt } : null)
       : duration ? { kind: 'fixed', label: `(took ${duration})` } : null,
     stamp: '',
-    progress: running && snapshot.turn.progress
-      ? { current: snapshot.turn.progress, steps: run.log.length, phase: '', estimate: '', countdownTo: null, cohortSince: null }
+    progress: running && turn.progress
+      ? { current: turn.progress, steps: run.log.length, phase: '', estimate: '', countdownTo: null, cohortSince: null }
       : undefined,
     body: html
       ? { kind: 'md', html }
@@ -561,16 +586,16 @@ function findChange(session: AgentSession | null, changeId: number | null): Agen
  * gone or stale.
  */
 export function PreviewCard({ item }: { item: PreviewItem }) {
-  const snapshot = useAgentSessionState();
+  const { changeAction, session } = useAgentSessionPick((s) => ({ changeAction: s.changeAction, session: s.session }));
   const wide = useWideEnoughForSpec();
-  const action = snapshot.changeAction && snapshot.changeAction.changeId === item.changeId ? snapshot.changeAction.kind : null;
+  const action = changeAction && changeAction.changeId === item.changeId ? changeAction.kind : null;
   return (
     <PreviewCardView
       item={item}
-      change={findChange(snapshot.session, item.changeId)}
+      change={findChange(session, item.changeId)}
       wide={wide}
       action={action}
-      busy={!!snapshot.changeAction}
+      busy={!!changeAction}
     />
   );
 }
@@ -685,6 +710,7 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
 /** A spec the scout drafted: the dev chat's spec card, opening the viewer over the conversation. */
 export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec' }> }) {
   const snippet = useMemo(() => (item.preview ? markdown(item.preview, false) : null), [item.preview]);
+  const snippetInner = useInnerHtml(snippet || '');
   const open = () => { if (item.changeId) void openSpec(item.changeId, item.version); };
   const title = `Spec${item.version ? ` v${item.version}` : ''}${item.lines ? ` · ${item.lines} lines` : ''}`;
   return (
@@ -707,7 +733,7 @@ export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec
         <span className="dc-spec-preview-cta">View full spec →</span>
       </div>
       {snippet
-        ? <div className="dc-spec-preview-snippet" dangerouslySetInnerHTML={{ __html: snippet }} />
+        ? <div className="dc-spec-preview-snippet" dangerouslySetInnerHTML={snippetInner} />
         : item.preview ? <div className="dc-spec-preview-snippet">{item.preview}</div> : null}
     </div>
   );
@@ -725,9 +751,10 @@ export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec
  */
 function SpecMarkdown({ text, tagged = false }: { text: string; tagged?: boolean }) {
   const html = useMemo(() => markdown(text, false), [text]);
+  const inner = useInnerHtml(html || '');
   const tag = tagged ? { 'data-agent-session-spec-text': '' } : {};
   return html
-    ? <div className="dc-msg-content text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100" {...tag} dangerouslySetInnerHTML={{ __html: html }} />
+    ? <div className="dc-msg-content text-[15px] leading-relaxed text-zinc-900 dark:text-zinc-100" {...tag} dangerouslySetInnerHTML={inner} />
     : <pre className="whitespace-pre-wrap text-sm text-zinc-900 dark:text-zinc-100" {...tag}>{text}</pre>;
 }
 
@@ -779,9 +806,9 @@ export function SpecBody({ text, tab, split, onTab }: {
 }
 
 function SpecContent({ sheet }: { sheet: SpecSheetState }) {
-  const snapshot = useAgentSessionState();
+  const session = useAgentSessionSelector((s) => s.session);
   const split = useMemo(() => (sheet.text ? splitSpec(sheet.text) : null), [sheet.text]);
-  const change = [snapshot.session?.activeChange, ...(snapshot.session?.changes || [])]
+  const change = [session?.activeChange, ...(session?.changes || [])]
     .find((c) => c && c.id === sheet.changeId) || null;
   return (
     <>
@@ -1015,16 +1042,26 @@ function TypingDots() {
 }
 
 function LiveTurn({ runShown }: { runShown: boolean }) {
-  const snapshot = useAgentSessionState();
-  const turn = snapshot.turn;
+  // The one reader of the streamed text on this screen (with FollowOutput):
+  // it re-renders once per frame of a reply, and nothing around it does.
+  const turn = useAgentSessionSelector((s) => s.turn);
+  const actionList = useAgentSessionSelector((s) => s.actions);
   const [clock, setClock] = useState(Date.now());
+  // The clock is drawn only for a build (`phase === 'cc'`), so it ticks only
+  // then; each tick re-renders this, and the memo()'d MayorText under it
+  // skips, so the reply so far is not parsed again every second.
+  const ticking = turn.running && turn.phase === 'cc';
   useEffect(() => {
-    if (!turn.running) return undefined;
+    if (!ticking) return undefined;
+    setClock(Date.now());
     const timer = window.setInterval(() => setClock(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [turn.running]);
+  }, [ticking]);
+  const cards = useMemo(() => {
+    const actions = new Map(actionList.map((action) => [action.id, action]));
+    return turn.cards.map((card) => cardView(card, actions));
+  }, [turn.cards, actionList]);
   if (!turn.running && !turn.pendingUserText) return null;
-  const actions = new Map(snapshot.actions.map((action) => [action.id, action]));
   const seconds = turn.startedAt ? Math.max(0, Math.round((clock - turn.startedAt) / 1000)) : 0;
   // A running build draws its own card with the progress and the clock.
   const working = turn.running && !(runShown && turn.phase === 'cc');
@@ -1045,7 +1082,7 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
         <article data-agent-session-live>
           <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Mayor</p>
           {turn.streamText ? <MayorText text={turn.streamText} /> : null}
-          {turn.cards.map((card) => <Card key={card.id} card={cardView(card, actions)} live />)}
+          {cards.map((card) => <Card key={card.id} card={card} live />)}
           {working ? (
             <div
               className={`flex min-w-0 items-center gap-2 text-[13px] text-zinc-500 dark:text-zinc-400 ${said ? 'mt-2' : ''}`}
@@ -1186,8 +1223,8 @@ function starters(about: About, request: DraftRequest | null) {
  * its own.
  */
 function Replies({ replies }: { replies: string[] }) {
-  const snapshot = useAgentSessionState();
-  if (!replies.length || snapshot.turn.running) return null;
+  const running = useAgentSessionSelector((s) => s.turn.running);
+  if (!replies.length || running) return null;
   return (
     <div className="flex gap-2 overflow-x-auto px-4 pb-2" data-agent-session-replies>
       {replies.map((reply) => (
@@ -1214,7 +1251,9 @@ function Replies({ replies }: { replies: string[] }) {
  * `budget_updated` (../header/ai-credit.js).
  */
 function useModelChoice() {
-  const snapshot = useAgentSessionState();
+  const snapshot = useAgentSessionPick((s) => ({
+    catalog: s.catalog, session: s.session, draft: s.draft, choosing: s.choosing, phase: s.phase,
+  }));
   useEffect(() => { void loadModelCatalog(); }, []);
   const catalog = snapshot.catalog;
   const explicit = snapshot.session ? (snapshot.session.agent || null) : (snapshot.draft?.agent || null);
@@ -1341,17 +1380,32 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
  * inside draws no edge of its own in any engine (public/css/app.css).
  */
 function Composer({ id }: { id: string }) {
-  const snapshot = useAgentSessionState();
+  // The fields the box draws from, and not the streamed text: a reply
+  // arriving does not re-render the box being typed in.
+  const snapshot = useAgentSessionPick((s) => ({
+    id: s.id,
+    draft: s.draft,
+    session: s.session,
+    phase: s.phase,
+    returnedText: s.returnedText,
+    composerFill: s.composerFill,
+    handoff: s.handoff,
+    drafts: s.drafts,
+    attachments: s.attachments,
+    running: s.turn.running,
+    stopping: s.turn.stopping,
+    turnPhase: s.turn.phase,
+  }));
   const [value, setValue] = useState('');
   const input = useRef<HTMLTextAreaElement | null>(null);
-  const running = snapshot.turn.running;
+  const running = snapshot.running;
   const archived = snapshot.session?.status === 'archived';
   const returned = snapshot.returnedText;
   const target = snapshot.id ?? (snapshot.draft ? 'new' : null);
   // Save needs something typed, and a turn not already stopping: Stop hands
   // the message back to the box, and the button must stay Stop under the
   // same click rather than become a Save that the click then submits.
-  const saving = running && !snapshot.turn.stopping && !!value.trim();
+  const saving = running && !snapshot.stopping && !!value.trim();
   const model = useModelChoice();
   const credit = useCredit();
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -1628,10 +1682,10 @@ function Composer({ id }: { id: string }) {
             size="icon"
             ink={running ? 'dangerTint' : 'solid'}
             className="inline-flex h-10 w-10 shrink-0 items-center justify-center"
-            disabled={running ? (snapshot.turn.stopping || snapshot.turn.phase === 'mayor2') : (!sendable || uploading)}
+            disabled={running ? (snapshot.stopping || snapshot.turnPhase === 'mayor2') : (!sendable || uploading)}
             aria-label={running ? 'Stop' : uploading ? 'Send (waiting for files to upload)' : 'Send'}
             title={running
-              ? (snapshot.turn.phase === 'mayor2' ? 'The wrap-up cannot be stopped' : 'Stop')
+              ? (snapshot.turnPhase === 'mayor2' ? 'The wrap-up cannot be stopped' : 'Stop')
               : uploading ? 'Waiting for your files to upload' : 'Send'}
             onClick={running ? () => void stopAgentTurn() : undefined}
           >
@@ -1762,19 +1816,72 @@ function ChangesDrawer({ session }: { session: AgentSession }) {
 // ── The panel and the screen ───────────────────────────────────────────
 
 /**
+ * Follow new output only while the reader is at the bottom (the dev chat's
+ * rule): scrolling up to read is not undone by the next words. Opening a
+ * conversation, or sending in it, goes back to the bottom.
+ *
+ * A component of its own, drawing nothing, because it reads the streamed
+ * text: in the panel, that read made the whole panel re-render for every
+ * token. Here it is one cheap render per frame of a reply. The three effects
+ * keep their order (the two that re-arm `stick` run before the one that
+ * scrolls), and they run after the frame's rows are in the DOM, so the
+ * height they measure includes them.
+ */
+function FollowOutput({ scroll, stick, count }: {
+  scroll: { current: HTMLDivElement | null };
+  stick: { current: boolean };
+  /** How many transcript rows are drawn: a new row is new output too. */
+  count: number;
+}) {
+  const live = useAgentSessionPick((s) => ({
+    id: s.id,
+    streamText: s.turn.streamText,
+    running: s.turn.running,
+    cards: s.turn.cards.length,
+    pendingUserText: s.turn.pendingUserText,
+  }));
+  useEffect(() => { stick.current = true; }, [live.id]);
+  useEffect(() => { if (live.pendingUserText) stick.current = true; }, [live.pendingUserText]);
+  useEffect(() => {
+    if (!scroll.current || !stick.current) return;
+    scroll.current.scrollTop = scroll.current.scrollHeight;
+  }, [live.id, count, live.streamText, live.running, live.cards, live.pendingUserText]);
+  return null;
+}
+
+/**
  * `headerAction` is a surface's addition to the session bar, drawn at its
  * end: the Messages pane passes its full-width toggle, which every
  * discussion pane carries in that place.
  */
 export function AgentSessionPanel({ embedded = false, headerAction = null }: { embedded?: boolean; headerAction?: ReactNode }) {
-  const snapshot = useAgentSessionState();
+  // Everything the panel draws except the live turn, which LiveTurn and
+  // FollowOutput read for themselves: a frame of streamed text does not
+  // re-render the panel.
+  const snapshot = useAgentSessionPick((s) => ({
+    id: s.id,
+    phase: s.phase,
+    session: s.session,
+    draft: s.draft,
+    messages: s.messages,
+    actions: s.actions,
+    running: s.turn.running,
+    turnPhase: s.turn.phase,
+    pendingUserText: s.turn.pendingUserText,
+    credits: s.credits,
+    error: s.error,
+    drawerOpen: s.drawerOpen,
+    specSheet: s.specSheet,
+    preview: s.preview,
+    paneTab: s.paneTab,
+  }));
   const scroll = useRef<HTMLDivElement | null>(null);
   const root = useRef<HTMLDivElement | null>(null);
   // The side pane beside the chat (the spec, a preview, or both), or the
   // spec over it (./spec-layout.ts). False until mounted, so the first
   // render is the one the prerender printed.
   const beside = useSidePaneBeside(embedded ? 'messages' : 'screen');
-  const liveRun = snapshot.turn.running && snapshot.turn.phase === 'cc';
+  const liveRun = snapshot.running && snapshot.turnPhase === 'cc';
   const items = useMemo(
     () => buildTranscript(snapshot.messages, snapshot.actions, Date.now(), { liveRun }),
     [snapshot.messages, snapshot.actions, liveRun],
@@ -1792,24 +1899,16 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
     return () => window.clearInterval(timer);
   }, [runShown]);
   const replies = latestReplies(items);
-  const empty = snapshot.phase === 'ready' && !items.length && !snapshot.turn.running && !snapshot.turn.pendingUserText;
+  const empty = snapshot.phase === 'ready' && !items.length && !snapshot.running && !snapshot.pendingUserText;
   const about: About = snapshot.session || snapshot.draft;
   const request = snapshot.draft ? draftRequest(snapshot.draft.hint) : null;
 
-  // Follow new output only while the reader is at the bottom (the dev chat's
-  // rule): scrolling up to read is not undone by the next token. Opening a
-  // conversation, or sending in it, goes back to the bottom.
+  // Whether the reader is at the bottom, which FollowOutput keeps them at.
   const stick = useRef(true);
   const onScroll = () => {
     const el = scroll.current;
     if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
-  useEffect(() => { stick.current = true; }, [snapshot.id]);
-  useEffect(() => { if (snapshot.turn.pendingUserText) stick.current = true; }, [snapshot.turn.pendingUserText]);
-  useEffect(() => {
-    if (!scroll.current || !stick.current) return;
-    scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [snapshot.id, items.length, snapshot.turn.streamText, snapshot.turn.running, snapshot.turn.cards.length, snapshot.turn.pendingUserText]);
   // The transcript shrinks when something grows under it (the saved drafts,
   // a taller message box): a reader at the bottom stays there.
   useEffect(() => {
@@ -1833,6 +1932,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
           {empty ? <EmptyState about={about} request={request} /> : null}
           {items.map((item) => <Item key={item.key} item={item} sessionId={snapshot.id} />)}
           <LiveTurn runShown={runShown} />
+          <FollowOutput scroll={scroll} stick={stick} count={items.length} />
           {snapshot.session?.activeChange?.previewCapture ? <PreviewCapture change={snapshot.session.activeChange} /> : null}
           {snapshot.credits ? <CreditsCard refusal={snapshot.credits} /> : null}
           {snapshot.error ? (
@@ -1851,7 +1951,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
 }
 
 export function AgentSessionScreen() {
-  const snapshot = useAgentSessionState();
+  const snapshot = useAgentSessionPick((s) => ({ open: s.open, host: s.host }));
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'agent-session-screen', false);
 

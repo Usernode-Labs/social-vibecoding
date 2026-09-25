@@ -801,6 +801,13 @@
       "preview": "COUNTS_SQL"
     },
     {
+      "source": "src/routes/workshop-overview.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "d664a2029343883317f2",
+      "count": 1,
+      "preview": "ITEMS_SQL"
+    },
+    {
       "source": "src/services/account-deletion.js",
       "kind": "runtime-expression",
       "fingerprint": "4b27e9ec27ea24b432b7",

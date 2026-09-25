@@ -42,7 +42,7 @@
  * link on the open card.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -1221,7 +1221,14 @@ function BeforeAfter({ v, near, onFull }: {
 
 /* ── One item of the feed ────────────────────────────────────────────── */
 
-function FeedItem({ row, index, count, tint, near, voted, wide, slug, onFull }: {
+/**
+ * memo(): the feed holds the Ask sheet's draft and its streamed answer, so it
+ * renders on every keystroke and every token of an answer, and none of that
+ * is any item's business. Every prop is a primitive, a row off the publish,
+ * or a callback the feed keeps stable (`openFull`), so an item renders again
+ * only when something it draws changed.
+ */
+const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, slug, onFull }: {
   row: QueueRow;
   index: number;
   count: number;
@@ -1292,7 +1299,7 @@ function FeedItem({ row, index, count, tint, near, voted, wide, slug, onFull }: 
       </div>
     </section>
   );
-}
+});
 
 /**
  * The scroll position the end card is keyed under (see `curKeyRef` in
@@ -1692,10 +1699,11 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   const tryIt = () => {
     if (preview && preview.state === 'live') callAppView('swapToStagingForSession', preview.sessionId, preview.url);
   };
-  const openFull = (el: HTMLElement) => callAppView(
+  // Stable, so the memo()'d items it is handed to skip a render of the feed.
+  const openFull = useCallback((el: HTMLElement) => callAppView(
     el.dataset.evidence === 'true' ? 'openEvidenceComparison' : 'openVisualComparison',
     el,
-  );
+  ), []);
   const menuKey = row ? row.card.rail.menuKey : undefined;
   // The card's own page, offered under More as "Open card": here the item IS
   // the screen, so there is no card face to tap for it (app-view.js's

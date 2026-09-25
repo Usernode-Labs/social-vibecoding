@@ -2,16 +2,6 @@
   "schemaVersion": 1,
   "inventoryReviewed": true,
   "parityReady": true,
-  "summary": {
-    "totalRoutes": 720,
-    "mappedRoutes": 564,
-    "exemptRoutes": 156,
-    "reviewRequiredRoutes": 0,
-    "clientApiReferences": 417,
-    "unmatchedClientApiReferences": 0,
-    "settingsSections": 22,
-    "navigationSurfaces": 10
-  },
   "navigation": [
     {
       "id": "navigation.home",
@@ -12693,6 +12683,25 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "apps.get.workshop.counts.e8eda08e",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/app-context/app-context-sheet.tsx",
+        "frontend/src/features/workshop/index.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "method": "GET",
+      "path": "/api/workshop/items",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.workshop.items.c3e79db0",
       "domain": "apps",
       "risk": "read",
       "confirmation": "never",

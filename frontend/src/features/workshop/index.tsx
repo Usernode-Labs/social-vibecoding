@@ -18,6 +18,16 @@
  * `App._appBackHref` in public/js/app.js), so the two screens read as one
  * level and its drill-in rather than as two places that happen to link.
  *
+ * ── The two tabs (#3051) ───────────────────────────────────────────────
+ *
+ * The owner asked for the app Workshop's own two questions here too, read
+ * across all of your apps: an "All apps" scope chip at the head of the
+ * screen, then Current status (the list above, plus the work you have in
+ * flight, item by item under each app) and Needs you (the votes waiting on
+ * you, item by item under each app). The items are the rows behind the two
+ * counts, from GET /api/workshop/items, which reads the same five
+ * populations through the same predicates; see its module header.
+ *
  * ── Where the numbers come from ────────────────────────────────────────
  *
  * GET /api/workshop/counts (src/routes/workshop-overview.js), which answers
@@ -46,16 +56,24 @@
  * class has exactly one owner.
  */
 
-import { useRef, type ReactNode } from 'react';
+import { useRef, type MouseEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 
-import { GroupedList, ListRow } from '@/components/ui/grouped-list';
+import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
-import { HandRaisedIcon, SpeechCheckIcon } from '@/components/ui/icons';
+import {
+  BallotIcon, HandRaisedIcon, SpeechCheckIcon,
+} from '@/components/ui/icons';
+import {
+  SECTION_TABS_LIST_BASE, SECTION_TAB_ACTIVE, SECTION_TAB_BASE, SECTION_TAB_INACTIVE,
+  Tabs, TabsList, TabsTrigger,
+} from '@/components/ui/tabs';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
+import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { AllAppsScope } from './workshop-chrome';
 import { workshopStore } from './workshop-store.js';
 
 // The legacy router reads the DOM on the line after it routes — the ?shot=
@@ -74,6 +92,18 @@ type WorkshopRow = {
 };
 
 type Counts = Record<string, { working?: number; needs?: number } | undefined>;
+
+type WorkshopItem = {
+  kind: 'session' | 'proposal' | 'governance';
+  id: number;
+  title: string;
+  status: string;
+  at: string | null;
+};
+
+type Items = Record<string, { working?: WorkshopItem[]; needs?: WorkshopItem[] } | undefined>;
+
+type TabKey = 'status' | 'needs';
 
 /** The demo flag the board's own fetches forward, in the same spelling. */
 function demoQuery(): string {
@@ -110,6 +140,208 @@ export function joinCounts(apps: Array<Omit<WorkshopRow, 'working' | 'needs'>>, 
       needs: Number(found?.needs) || 0,
     };
   });
+}
+
+/**
+ * `?ws=needs` or `?ws=status` opens the screen on that tab: the same
+ * parameter, in the same spelling, the app's own Workshop reads
+ * (AppView._workshopTabParam). A declared check runs against the default
+ * state and never clicks, so without it the Needs you pane could not be
+ * checked at all. Anything else leaves the tab where the viewer left it.
+ */
+export function tabFromQuery(search: string): TabKey | null {
+  try {
+    const v = new URLSearchParams(search).get('ws');
+    return v === 'needs' || v === 'status' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Where an item opens: its own full-screen page inside its app, in the
+ * spelling the app's board uses (features/dev-board/card/fold.tsx's
+ * `openHref` / `sessionHref`). A hash route, so a tap routes in place and a
+ * modified click opens a tab, like every other row here.
+ */
+export function itemHref(slug: string, item: WorkshopItem): string {
+  const app = encodeURIComponent(slug);
+  if (item.kind === 'session') return `#app/${app}/dev/sessions/${item.id}`;
+  if (item.kind === 'governance') return `#app/${app}/dev/governance/${item.id}`;
+  return `#app/${app}/dev/proposals/${item.id}`;
+}
+
+/** The grey line under an item: what kind of thing it is, and when. */
+export function itemCaption(item: WorkshopItem, section: TabKey): string {
+  let what: string;
+  if (section === 'needs') {
+    what = item.kind === 'governance' ? 'Group decision waiting on your vote' : 'Change waiting on your vote';
+  } else if (item.kind === 'session') {
+    what = item.status === 'paused' ? 'Your change, paused' : 'Your change, in progress';
+  } else if (item.kind === 'governance') {
+    what = 'Your group decision, open for votes';
+  } else {
+    what = item.status === 'merging' ? 'Your change, merging' : 'Your change, up for a vote';
+  }
+  const when = item.at ? agoStamp(item.at).text : '';
+  return when ? `${what} · ${when}` : what;
+}
+
+/**
+ * The item groups one tab draws: each of your apps that has something in
+ * `section`, in the order the app list shows them, with its rows.
+ *
+ * Exported and pure so tests can drive it. `more` is how many of the app's
+ * items the bounded read left out (GET /api/workshop/items returns the
+ * newest few per app); it is read from the count the app's row already
+ * carries, so the tab says "and 4 more" rather than silently stopping.
+ */
+export function groupItems(
+  rows: WorkshopRow[],
+  items: Items,
+  section: TabKey,
+): Array<{ app: WorkshopRow; items: WorkshopItem[]; more: number }> {
+  const key = section === 'needs' ? 'needs' : 'working';
+  const out: Array<{ app: WorkshopRow; items: WorkshopItem[]; more: number }> = [];
+  for (const app of rows) {
+    const list = items[app.slug]?.[key] || [];
+    if (!list.length) continue;
+    const counted = section === 'needs' ? app.needs : app.working;
+    out.push({ app, items: list, more: Math.max(0, (counted || 0) - list.length) });
+  }
+  return out;
+}
+
+/**
+ * One app's items under one tab: the app's name as a section label over a
+ * card of item rows, the widget language's primary shape again.
+ *
+ * The label is the way into the app's own Workshop, where the rest of that
+ * app's items are, so it is an anchor to the same address an app row uses.
+ */
+function ItemGroup({ app, items, more, section }: {
+  app: WorkshopRow;
+  items: WorkshopItem[];
+  more: number;
+  section: TabKey;
+}) {
+  const workshopHref = `/app/${encodeURIComponent(app.slug)}/workshop`;
+  const go = (event: MouseEvent) => {
+    const win = window as any;
+    if (win.NavLink?.isNativeClick?.(event)) return;
+    event.preventDefault();
+    win.App?.navigateToApp?.(app.slug, 'dev');
+  };
+  return (
+    <section data-workshop-group={app.slug}>
+      <SectionHeader className="flex items-center gap-2">
+        <span
+          aria-hidden="true"
+          className="app-icon-tile w-6 h-6 shrink-0 rounded-lg overflow-hidden flex items-center justify-center text-xs font-bold"
+          data-icon={appIconKind(app as any)}
+        >
+          <AppIconContent app={app as any} />
+        </span>
+        <a href={workshopHref} onClick={go} className="min-w-0 truncate hover:underline">
+          {app.name || app.slug}
+        </a>
+      </SectionHeader>
+      <GroupedList>
+        {items.map((item) => (
+          <ListRow
+            key={`${item.kind}-${item.id}`}
+            as="a"
+            href={itemHref(app.slug, item)}
+            data-workshop-item={item.kind}
+            leading={(
+              <span
+                aria-hidden="true"
+                className="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300"
+              >
+                {section === 'needs'
+                  ? <BallotIcon className="w-5 h-5" />
+                  : <HandRaisedIcon className="w-5 h-5" />}
+              </span>
+            )}
+            title={item.title || 'Untitled'}
+            titleClassName="font-semibold"
+            subtitle={itemCaption(item, section)}
+          />
+        ))}
+        {more > 0 ? (
+          <ListRow
+            as="a"
+            href={workshopHref}
+            onClick={go}
+            data-workshop-more={String(more)}
+            title={`${more} more in ${app.name || app.slug}`}
+            titleClassName="font-medium text-[0.9375rem] text-zinc-500 dark:text-zinc-400"
+          />
+        ) : null}
+      </GroupedList>
+    </section>
+  );
+}
+
+/**
+ * A tab's item groups, or what stands in for them: skeletons while the read
+ * is in flight, a quiet line when it failed or found nothing. Never the
+ * apps' error card: the app list above is the screen's one hard dependency,
+ * and it already has one.
+ */
+function ItemPane({ rows, items, itemsError, section, emptyText, heading }: {
+  rows: WorkshopRow[] | null;
+  items: Items | null;
+  itemsError: boolean;
+  section: TabKey;
+  /** The line for "nothing here". Empty: say nothing at all. */
+  emptyText: string;
+  /**
+   * A label over the groups, for a pane where they follow something else
+   * (Current status: the app list). Given one, the pane is quiet while it
+   * loads too, because the list above is already drawing skeletons.
+   */
+  heading?: string;
+}): ReactNode {
+  const NOTE = 'px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400';
+  if (itemsError) {
+    return <p className={NOTE} data-workshop-items-error="">Couldn't load these items. Each app's own Workshop still has them.</p>;
+  }
+  if (!rows || !items) {
+    if (heading) return null;
+    return (
+      <SkeletonGroup label="Loading items">
+        <GroupedList className="mt-2">
+          {[0, 1].map((i) => (
+            <ListRow
+              key={i}
+              chevron={false}
+              leading={<Skeleton shape="block" className="w-11 h-11 rounded-xl" />}
+              title={<Skeleton className="max-w-[60%]" />}
+            />
+          ))}
+        </GroupedList>
+      </SkeletonGroup>
+    );
+  }
+  const groups = groupItems(rows, items, section);
+  if (!groups.length) {
+    return emptyText ? <p className={NOTE} data-workshop-items-empty="">{emptyText}</p> : null;
+  }
+  return (
+    <>
+      {/* Heavier than the app labels under it, so the two levels read
+          as a heading and its groups rather than as four equal labels. */}
+      {heading ? (
+        <SectionHeader className="font-semibold text-zinc-900 dark:text-zinc-100" data-workshop-items-heading="">
+          {heading}
+        </SectionHeader>
+      ) : null}
+      {groups.map((g) => (
+        <ItemGroup key={g.app.slug} app={g.app} items={g.items} more={g.more} section={section} />
+      ))}
+    </>
+  );
 }
 
 /**
@@ -245,14 +477,17 @@ export function WorkshopScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const state = useStoreState(workshopStore) as {
     open: boolean; rows: WorkshopRow[] | null; error: boolean;
+    tab: TabKey; scopeOpen: boolean; items: Items | null; itemsError: boolean;
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
-  // ONE LIST, EVERY APP. The three tabs — Current status / Needs you / All
-  // items — are gone from this screen (see ./workshop-chrome.tsx): they are
-  // the APP Workshop's tabs, about one app's items, and up here they were
-  // filtering a list of apps by whether a number on it was non-zero. Each row
-  // already carries both numbers, so the filter hid apps to say something the
-  // rows were saying anyway.
+  // TWO TABS, READ ACROSS EVERY APP (#3051). #2718's review took the app
+  // Workshop's three tabs off this screen because up here they only FILTERED
+  // the list of apps by whether a number on a row was non-zero. These two
+  // are not filters over that list: Current status keeps the list, with its
+  // numbers, and adds the work you have in flight; Needs you is the votes
+  // waiting on you, item by item, grouped by app. Both are the app
+  // Workshop's own two questions asked of all your apps at once. (All items
+  // stays an app's own: every item of every app is not a page.)
   const rows = state.rows ? orderRows(state.rows) : null;
   const all = rows;
   // `#workshop-empty` keeps its ONE meaning — you have no apps at all — and
@@ -296,13 +531,13 @@ export function WorkshopScreen() {
             word twice, an inch apart, on the two screens that had been made
             to agree about what a title IS. The bar is the title, which is
             what it is for on every other screen in the shell. */}
-        {/* NO SCOPE CHIP HERE EITHER (#2759). It read "All apps" and its
-            panel listed your apps so you could pick one — but this screen IS
-            that list, every row the way into its app's Workshop, so the chip
-            was the one control on the page that repeated the page. The chip
-            lives on ONE app's Workshop now (./workshop-chrome.tsx), where
-            naming the app and offering the others is something the screen
-            does not already say. */}
+        {/* THE SCOPE CHIP IS BACK (#3051, reversing #2759 on the owner's
+            request). #2759 took it off because this screen was then only the
+            list of your apps, and a chip whose panel listed them again
+            repeated the page. The screen now has the app Workshop's two tabs
+            read across all of your apps, and "All apps" is what says so: the
+            same chip an app's Workshop wears with that app's name
+            (./workshop-chrome.tsx), at its other end. */}
         {/* THE LEGEND IS NOT DECORATION. Two bare numbers on a row cannot be
             read, and the per-pill tooltip is not available to a thumb — so the
             two glyphs are named once, here, in the muted line the language
@@ -337,102 +572,177 @@ export function WorkshopScreen() {
             legible cold. */}
         {/* `pt-5` CLEARS THE HEADER'S NOTCH (#2718 review). The bar is
             `rounded-b-2xl -mb-2`, so every screen root starts 8px UNDER its
-            bottom edge and whatever leads a screen has to step down past it.
-            The chip carried that step while it led the screen; the legend
-            leads now, so it carries it: the 8 the notch owes plus 12 of air,
-            which is what Messages' own first element steps down by. */}
-        <p className="px-4 pt-5 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-500 dark:text-zinc-500">
-          <span className="inline-flex items-center gap-1">
-            <HandRaisedIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-            You are working on
-            {totals ? <b id="workshop-total-working" className={TOTAL}>{totals.working}</b> : null}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <SpeechCheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-            Votes waiting on you
-            {totals ? <b id="workshop-total-needs" className={TOTAL}>{totals.needs}</b> : null}
-          </span>
-        </p>
-        <GroupedList id="workshop-list">
-          {/* #2445: THE EMPTY STATE IS A CARD, NOT A GREY CAPTION — the same
-              correction Home's Discover block took in #1913
-              (features/home/panels/discover.tsx): a title, a quieter second
-              line and a trailing chevron, and the whole thing is the way on
-              to the one thing there is to do here. It reads as an
-              INVITATION rather than as an error note where the rows usually
-              are. Same destination as Discover's, `#apps`, because "you have
-              no apps" and "there is nothing to discover" are answered by the
-              same directory.
+            bottom edge and whatever leads a screen has to step down past it:
+            the 8 the notch owes plus 12 of air, which is what Messages' own
+            first element steps down by. The chip's row leads again (#3051),
+            so it carries that step, and the legend under it sits close. */}
+        {/* THE ALL APPS CHIP AND THE TABS (#3051) lead the screen, and this
+            row carries the header notch clearance (`pt-5`, see above) the
+            legend carried while it led. The chip says what the tabs are
+            about, all of your apps, and its panel is the way into one. */}
+        <div className="px-4 pt-5 pb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <AllAppsScope
+            apps={rows}
+            open={state.scopeOpen}
+            onToggle={(next) => workshopStore.set({ scopeOpen: next })}
+          />
+          <Tabs value={state.tab} onValueChange={(v) => workshopController.setTab(v as TabKey)}>
+            <TabsList className={SECTION_TABS_LIST_BASE} aria-label="Workshop sections">
+              <TabsTrigger
+                id="workshop-tab-status"
+                type="button"
+                value="status"
+                data-workshop-tab="status"
+                className={SECTION_TAB_BASE}
+                activeClassName={SECTION_TAB_ACTIVE}
+                inactiveClassName={SECTION_TAB_INACTIVE}
+              >
+                Current status
+              </TabsTrigger>
+              <TabsTrigger
+                id="workshop-tab-needs"
+                type="button"
+                value="needs"
+                data-workshop-tab="needs"
+                className={SECTION_TAB_BASE}
+                activeClassName={SECTION_TAB_ACTIVE}
+                inactiveClassName={SECTION_TAB_INACTIVE}
+              >
+                Needs you
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+        {/* THE STATUS PANE IS HIDDEN, NOT UNMOUNTED, on the other tab:
+            #workshop-list is in the prerendered document (the id inventory
+            and three declared checks resolve against it), and a tab switch
+            must not throw the list's rows away to redraw them. The Needs you
+            pane is all client data, so it renders only while it is showing,
+            which keeps the cold document as small as it was.
 
-              It is a `ListRow`, not a hand-rolled copy of Discover's plate:
-              that card wears the Home panels' lane language
-              (`home-discover-lane`, a tint, a hairline) because that is the
-              surface it sits on, and THIS surface is the grouped-list card
-              every other row on this screen is drawn in. Same shape, this
-              screen's vocabulary. An anchor rather than a button for the
-              reason AppRow gives — a hash href is the browser's to open in a
-              new tab — and with no leading tile.
+            NO GLYPHS IN THE TABS, unlike the app Workshop's bottom rail: this
+            is the segmented strip @/components/ui/tabs draws on the
+            Leaderboard, a text control, and the chip beside it already
+            carries the one mark this row needs. */}
+        <div data-workshop-pane="status" className={state.tab === 'status' ? '' : 'hidden'}>
+          <p className="px-4 pt-1 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-500 dark:text-zinc-500">
+            <span className="inline-flex items-center gap-1">
+              <HandRaisedIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+              You are working on
+              {totals ? <b id="workshop-total-working" className={TOTAL}>{totals.working}</b> : null}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <SpeechCheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+              Votes waiting on you
+              {totals ? <b id="workshop-total-needs" className={TOTAL}>{totals.needs}</b> : null}
+            </span>
+          </p>
+          <GroupedList id="workshop-list">
+            {/* #2445: THE EMPTY STATE IS A CARD, NOT A GREY CAPTION — the same
+                correction Home's Discover block took in #1913
+                (features/home/panels/discover.tsx): a title, a quieter second
+                line and a trailing chevron, and the whole thing is the way on
+                to the one thing there is to do here. It reads as an
+                INVITATION rather than as an error note where the rows usually
+                are. Same destination as Discover's, `#apps`, because "you have
+                no apps" and "there is nothing to discover" are answered by the
+                same directory.
 
-              FIRST, not last, and that is load-bearing: the row separator is
-              `[&:not(:last-child)]:after:*` on the row itself, so a note after
-              the rows would leave the last one drawing a hairline under
-              nothing. Ahead of them it changes which element is last not at
-              all. It ships in the prerender — hidden — because the shell's id
-              inventory resolves against that document.
+                It is a `ListRow`, not a hand-rolled copy of Discover's plate:
+                that card wears the Home panels' lane language
+                (`home-discover-lane`, a tint, a hairline) because that is the
+                surface it sits on, and THIS surface is the grouped-list card
+                every other row on this screen is drawn in. Same shape, this
+                screen's vocabulary. An anchor rather than a button for the
+                reason AppRow gives — a hash href is the browser's to open in a
+                new tab — and with no leading tile.
 
-              THE CARD DRAWS NO HAIRLINE OF ITS OWN, in either state, and that
-              is right rather than incidental. Showing, it is the only thing in
-              the list, and a rule under the last row is a rule under nothing —
-              which is the very reason this sits first. Hidden, the wrapper is
-              `display: none`, so neither it nor the row inside it renders
-              anything at all, and the rows below keep the separators they
-              would have had. The row gets there by being the wrapper's only
-              child, so `:not(:last-child)` is false for it always.
+                FIRST, not last, and that is load-bearing: the row separator is
+                `[&:not(:last-child)]:after:*` on the row itself, so a note after
+                the rows would leave the last one drawing a hairline under
+                nothing. Ahead of them it changes which element is last not at
+                all. It ships in the prerender — hidden — because the shell's id
+                inventory resolves against that document.
 
-              THE ID AND THE `hidden` CLASS ARE THE API. dapp.json selects
-              `#workshop-empty.hidden` to prove the card is gone once the list
-              has rows, so the id stays on ONE element and visibility stays a
-              class toggle on it — never conditional rendering, which would
-              take the element out of the document the check resolves against.
+                THE CARD DRAWS NO HAIRLINE OF ITS OWN, in either state, and that
+                is right rather than incidental. Showing, it is the only thing in
+                the list, and a rule under the last row is a rule under nothing —
+                which is the very reason this sits first. Hidden, the wrapper is
+                `display: none`, so neither it nor the row inside it renders
+                anything at all, and the rows below keep the separators they
+                would have had. The row gets there by being the wrapper's only
+                child, so `:not(:last-child)` is false for it always.
 
-              AND IT IS A WRAPPER, NOT THE ANCHOR ITSELF. That is the whole
-              reason this div exists, and removing it breaks a merge-gating
-              check silently. A second declared selector reads
+                THE ID AND THE `hidden` CLASS ARE THE API. dapp.json selects
+                `#workshop-empty.hidden` to prove the card is gone once the list
+                has rows, so the id stays on ONE element and visibility stays a
+                class toggle on it — never conditional rendering, which would
+                take the element out of the document the check resolves against.
 
-                #workshop-list a[data-workshop-app]:first-of-type
-                  [data-workshop-needs]:not([data-workshop-needs="0"])
+                AND IT IS A WRAPPER, NOT THE ANCHOR ITSELF. That is the whole
+                reason this div exists, and removing it breaks a merge-gating
+                check silently. A second declared selector reads
 
-              to prove an app with a decision waiting LEADS the list.
-              `:first-of-type` counts siblings OF THAT ELEMENT NAME and is
-              purely structural — `display: none` does not exempt an element
-              from it — so an `<a id="workshop-empty">` sitting here as a
-              sibling of the rows makes the first app row the SECOND `<a>`,
-              and that selector matches nothing whether the card is showing or
-              not. It shipped that way once (#2445) and the check failed on
-              the very next run. Inside this div the card's anchor is the
-              first `<a>` among ITS siblings, where it satisfies nothing and
-              blocks nothing, and the first row is the first `<a>` among the
-              list's own children again. */}
-          <div id="workshop-empty" className={empty ? '' : 'hidden'}>
-            <ListRow
-              as="a"
-              href="#apps"
-              title="You have no apps yet"
-              subtitle="Browse the directory to find one to join."
-              subtitleClassName="whitespace-normal"
-            />
-          </div>
-          {state.error
-            ? (
-              <AppsLoadError
-                title="Couldn't load your workshop"
-                onRetry={() => { void workshopController.reload(); }}
+                  #workshop-list a[data-workshop-app]:first-of-type
+                    [data-workshop-needs]:not([data-workshop-needs="0"])
+
+                to prove an app with a decision waiting LEADS the list.
+                `:first-of-type` counts siblings OF THAT ELEMENT NAME and is
+                purely structural — `display: none` does not exempt an element
+                from it — so an `<a id="workshop-empty">` sitting here as a
+                sibling of the rows makes the first app row the SECOND `<a>`,
+                and that selector matches nothing whether the card is showing or
+                not. It shipped that way once (#2445) and the check failed on
+                the very next run. Inside this div the card's anchor is the
+                first `<a>` among ITS siblings, where it satisfies nothing and
+                blocks nothing, and the first row is the first `<a>` among the
+                list's own children again. */}
+            <div id="workshop-empty" className={empty ? '' : 'hidden'}>
+              <ListRow
+                as="a"
+                href="#apps"
+                title="You have no apps yet"
+                subtitle="Browse the directory to find one to join."
+                subtitleClassName="whitespace-normal"
               />
-            )
-            : rows === null
-              ? <RowSkeletons />
-              : rows.map((row) => <AppRow key={row.slug} row={row} />)}
-        </GroupedList>
+            </div>
+            {state.error
+              ? (
+                <AppsLoadError
+                  title="Couldn't load your workshop"
+                  onRetry={() => { void workshopController.reload(); }}
+                />
+              )
+              : rows === null
+                ? <RowSkeletons />
+                : rows.map((row) => <AppRow key={row.slug} row={row} />)}
+          </GroupedList>
+          {/* The work you have in flight, item by item, under each app. Quiet
+              when there is none: the legend's total already says 0. */}
+          {state.error ? null : (
+            <ItemPane
+              rows={rows}
+              items={state.items}
+              itemsError={state.itemsError}
+              section="status"
+              emptyText=""
+              heading="What you are working on"
+            />
+          )}
+        </div>
+        {state.tab === 'needs' ? (
+          <div data-workshop-pane="needs">
+            {state.error ? null : (
+              <ItemPane
+                rows={rows}
+                items={state.items}
+                itemsError={state.itemsError}
+                section="needs"
+                emptyText="Nothing is waiting on your vote in any of your apps."
+              />
+            )}
+          </div>
+        ) : null}
       </div>
     </main>
   );
@@ -456,24 +766,32 @@ export function WorkshopScreen() {
  */
 export const workshopController = {
   open() {
-    workshopStore.set({ open: true });
+    let asked: TabKey | null = null;
+    try { asked = tabFromQuery(location.search); } catch { asked = null; }
+    workshopStore.set(asked ? { open: true, tab: asked } : { open: true });
     return workshopController.reload();
   },
   close() {
-    workshopStore.set({ open: false });
+    workshopStore.set({ open: false, scopeOpen: false });
   },
   isOpen() {
     return workshopStore.get().open;
+  },
+  /** Show one of the two tabs, and close the chip's panel on the way. */
+  setTab(tab: TabKey) {
+    workshopStore.set({ tab: tab === 'needs' ? 'needs' : 'status', scopeOpen: false });
   },
   async reload() {
     const demo = demoQuery();
     workshopStore.set({ error: false });
     let apps: Array<Omit<WorkshopRow, 'working' | 'needs'>> | null = null;
     let counts: Counts = {};
+    let items: Items | null = null;
     try {
-      const [appsRes, countsRes] = await Promise.all([
+      const [appsRes, countsRes, itemsRes] = await Promise.all([
         fetch(`/api/apps${demo}`),
         fetch(`/api/workshop/counts${demo}`).catch(() => null),
+        fetch(`/api/workshop/items${demo}`).catch(() => null),
       ]);
       if (appsRes.ok) {
         const data = await appsRes.json();
@@ -485,6 +803,12 @@ export const workshopController = {
       if (countsRes && countsRes.ok) {
         const data = await countsRes.json().catch(() => null);
         if (data && data.counts && typeof data.counts === 'object') counts = data.counts;
+      }
+      // THE ITEMS ARE OPTIONAL TOO, like the counts: losing them costs the
+      // two tabs' item lists (each says so in a line), never the screen.
+      if (itemsRes && itemsRes.ok) {
+        const data = await itemsRes.json().catch(() => null);
+        if (data && data.items && typeof data.items === 'object') items = data.items;
       }
     } catch {
       // Offline is a state, not a crash: fall through to the error card,
@@ -499,7 +823,12 @@ export const workshopController = {
       workshopStore.set({ error: true });
       return;
     }
-    workshopStore.set({ rows: joinCounts(apps, counts), error: false });
+    workshopStore.set({
+      rows: joinCounts(apps, counts),
+      error: false,
+      items: items || {},
+      itemsError: !items,
+    });
   },
 };
 
