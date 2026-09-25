@@ -442,7 +442,7 @@ test('refreshVoteControls patches the phase with the tint on hosts, and the phas
   const html = renderComponent(EVENT, 'EventRow', { msg: submitted('open') });
   assert.match(html, /data-session-id="5" data-pr-number="12"/);
 
-  const render = stripped.match(/\n {2}render\(\) \{([\s\S]*?)\n {2}\},/);
+  const render = stripped.match(/\n {2}render\((?:opts)?\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(render, 'render() found');
   assert.match(render[1], /publishTranscript\(\s*GroupChat\.messages\.map\(GroupChat\._messageView\),\s*'main',/);
   assert.match(render[1], /exhausted: !GroupChat\.hasMore/);

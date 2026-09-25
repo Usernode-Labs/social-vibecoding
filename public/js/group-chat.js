@@ -473,7 +473,9 @@ const GroupChat = {
         GroupChat.oldestMessageId = messages[0].id;
       }
 
-      GroupChat.render();
+      // Flushed: both branches below measure the scroller, and the rows have
+      // to be in it first (features/group-chat/mount.ts publishTranscript).
+      GroupChat.render({ flush: true });
 
       if (isFirstLoad && !GroupChat._didInitialScroll) {
         GroupChat.scrollToBottom();
@@ -868,7 +870,7 @@ const GroupChat = {
       ? window.UsernodeReact.groupChat : null;
   },
 
-  render() {
+  render(opts) {
     const container = document.getElementById('gc-messages');
     if (!container) return;
     // (Re)establish the portal: #gc-messages is created fresh by
@@ -894,6 +896,7 @@ const GroupChat = {
             || 'this app',
         },
       },
+      { flush: !!(opts && opts.flush) },
     );
   },
 
@@ -1112,7 +1115,7 @@ const GroupChat = {
       st.failed = false;
       const a = GroupChat.activeThread;
       if (a && a.type === type && Number(a.ref) === Number(ref)) {
-        GroupChat.renderThread();
+        GroupChat.renderThread({ flush: true });
       }
     } catch { /* surfaced below */ } finally {
       st.loading = false;
@@ -1144,7 +1147,7 @@ const GroupChat = {
   },
 
   // Paint the active thread's cached messages into #gc-thread-messages.
-  renderThread() {
+  renderThread(opts) {
     const a = GroupChat.activeThread;
     const el = document.getElementById('gc-thread-messages');
     if (!a || !el) return;
@@ -1191,6 +1194,8 @@ const GroupChat = {
           },
         } : {}),
       },
+      // A history page measures the scroller below; see render().
+      { flush: !!(opts && opts.flush) },
     );
     el.dataset.loaded = st.loaded ? '1' : '';
 

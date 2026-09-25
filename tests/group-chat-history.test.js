@@ -172,3 +172,74 @@ for (const scope of ['general', 'thread']) {
     });
   }
 }
+
+// A history page lands ABOVE the reader, so where the scroller ends up is
+// measured against the rows it just added. The transcript's store is batched
+// (features/group-chat/mount.ts): measured on the next line, the new rows
+// were not in the scroller yet. The first page opened at its OLDEST message
+// instead of the newest, and every earlier page threw the reader to the top
+// of what had just loaded (iOS has no scroll anchoring to hide it). The fake
+// below commits a publish only when it is flushed; a batched one lands after
+// the measurement, the way React's next commit does.
+const ROW_PX = 100;
+function setupScroll(scope) {
+  const requests = [];
+  const host = { dataset: {}, scrollHeight: 0, scrollTop: 0, clientHeight: 300 };
+  const flushes = [];
+  const sandbox = {
+    window: {}, URLSearchParams, location: { search: '' },
+    document: { getElementById: (id) => (id === 'gc-messages' || id === 'gc-thread-messages' ? host : null) },
+    fetch: (url) => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/group-chat.js'), 'utf8'), sandbox);
+  const gc = sandbox.window.GroupChat;
+  gc.appSlug = 'first-app';
+  gc._demoParam = () => '';
+  gc.markRead = async () => {};
+  gc._applyPendingReveal = () => {};
+  gc._messageView = (m) => ({ id: m.id });
+  const commit = (rows) => { host.scrollHeight = rows.length * ROW_PX; };
+  sandbox.window.UsernodeReact = {
+    groupChat: {
+      mountTranscript() {},
+      publishTranscript: (rows, key, lead, opts) => {
+        flushes.push(!!(opts && opts.flush));
+        if (opts && opts.flush) commit(rows);
+        else setImmediate(() => commit(rows));
+      },
+    },
+  };
+  if (scope === 'thread') gc.activeThread = { type: 'message', ref: 7 };
+  const load = () => (scope === 'general' ? gc.loadHistory() : gc.loadThreadHistory('message', 7));
+  const page = (from, count) => Array.from({ length: count }, (_, i) => ({ id: from + i }));
+  return { gc, host, requests, load, page, flushes };
+}
+
+for (const scope of ['general', 'thread']) {
+  test(`${scope}: the first page opens at its newest message, measured after its rows commit`, async () => {
+    const h = setupScroll(scope);
+    if (scope === 'thread') h.gc.renderThread();
+    const first = h.load();
+    h.requests[0].resolve({ ok: true, json: async () => ({ messages: h.page(51, 50) }) });
+    await first;
+    assert.equal(h.host.scrollHeight, 50 * ROW_PX, 'the rows were in the scroller when it was measured');
+    assert.equal(h.host.scrollTop, 50 * ROW_PX, 'pinned to the bottom, not left at the oldest row');
+    assert.equal(h.flushes.at(-1), true, 'the history publish is flushed');
+  });
+
+  test(`${scope}: an earlier page keeps the reader on the message they were reading`, async () => {
+    const h = setupScroll(scope);
+    if (scope === 'thread') h.gc.renderThread();
+    const first = h.load();
+    h.requests[0].resolve({ ok: true, json: async () => ({ messages: h.page(51, 50) }) });
+    await first;
+    // The reader scrolls up to the top of the loaded page and asks for more.
+    h.host.scrollTop = 0;
+    const earlier = h.load();
+    h.requests[1].resolve({ ok: true, json: async () => ({ messages: h.page(21, 30) }) });
+    await earlier;
+    assert.equal(h.host.scrollHeight, 80 * ROW_PX);
+    assert.equal(h.host.scrollTop, 30 * ROW_PX, 'offset by exactly the height the new rows added');
+  });
+}

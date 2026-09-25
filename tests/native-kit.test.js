@@ -1801,3 +1801,21 @@ test('QA 2026-09-24 Q28: only a lingering toast takes taps, never an action toas
   assert.match(css, /html\.un-android \.un-toast \{\n  left: 16px;\n  right: 16px;\n  width: auto;/,
     'the Android snackbar keeps spanning its insets');
 });
+
+// ── A dismissed surface stops taking input at once ─────────────────────
+// The exit spring runs to rest well after a sheet has left the screen, and
+// until teardown its backdrop, faded to nothing, still covered the page: the
+// first tap after closing a sheet (a tab, a row) landed on it and did nothing.
+// Every spring-driven dismissal releases input before its exit spring starts,
+// as the modal's fade already does (animateDialog).
+
+test('sheet, panel and action sheet release pointer input when they start to leave', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'), 'utf8');
+  assert.match(src, /function releaseInput\(\) \{[\s\S]*?style\.pointerEvents = 'none';[\s\S]*?\n {2}\}/);
+  const exits = [
+    ['presentSheet', /function dismiss\(velocity\) \{\s*if \(closed\) return;\s*closed = true;\s*releaseInput\(backdrop, sheet\);\s*springTo\(height/],
+    ['presentPanel', /closed = true;\s*var i = modalStack\.indexOf\(entry\);\s*if \(i >= 0\) modalStack\.splice\(i, 1\);\s*releaseInput\(backdrop, panel\);\s*springTo\(width, teardown\)/],
+    ['actionSheet', /settled = true;\s*settleAction = action \|\| null;\s*releaseInput\(backdrop, wrap\);\s*springTo\(height, 0, finishSettle\)/],
+  ];
+  for (const [name, re] of exits) assert.match(src, re, `${name} releases input before its exit spring`);
+});

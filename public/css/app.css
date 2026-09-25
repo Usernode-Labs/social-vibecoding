@@ -2159,6 +2159,8 @@ form.agent-session-composer:focus-within {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
+/* iOS app: opaque, as the no-backdrop-filter blocks do (#787, "THE PANE GLASS GOES TOO"). */
+:where(html.un-ios.in-native-webview) .global-chat-result { background: var(--dc-sheet); }
 .global-chat-result-head {
   display: flex;
   align-items: center;
@@ -2498,6 +2500,8 @@ form.agent-session-composer:focus-within {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
+/* iOS app: opaque, as the no-backdrop-filter blocks do (#787, "THE PANE GLASS GOES TOO"). */
+:where(html.un-ios.in-native-webview) .global-chat-composer { background: var(--dc-sheet); }
 .global-chat-composer textarea {
   flex: 1 1 auto;
   min-width: 0;
@@ -2989,6 +2993,24 @@ html.un-ios.in-native-webview .un-toast {
   backdrop-filter: none;
 }
 
+/* THE PANE GLASS GOES TOO. Since #787 the frost token (`--dc-frost`) spread to
+   the tab bar, the header, the Messages and Settings planes, the Workshop
+   panes and every kit sheet, panel and dialog: surfaces that content scrolls
+   behind, or that slide on every frame of a spring, which is the case #787
+   measured as expensive. The shell already defines what each of them looks
+   like with no backdrop-filter at all: every `@supports not
+   (backdrop-filter…)` block in this file drops the translucent fill for the
+   opaque `--dc-sheet` / `--dc-strip` behind it (the fill without the blur
+   leaves the star and the washes sitting unblurred under body text, which is
+   worse than a flat surface). In the iOS app each of those blocks has a twin
+   right after it, scoped here, so the app draws exactly that fallback. The
+   few frosted surfaces with no such block get the same `--dc-sheet` beside
+   their rules: the header, which matches the tab bar's material ("THE BAR IS
+   THE SAME MATERIAL…" below), and Global Chat's composer and result cards and
+   the app chat's event boxes. Safari, the PWA and Android keep the glass. */
+html.un-ios.in-native-webview {
+  --dc-frost: none;
+}
 /* The kit's default iOS page transition dims its full-page snapshot with a
    brightness filter while also translating it.  Keep the spatial push/pop
    cue, but use transform-only keyframes and a shorter capture lifetime in the
@@ -3677,6 +3699,13 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
+}
+/* iOS app: opaque, as the no-backdrop-filter blocks do (#787, "THE PANE GLASS GOES TOO"). */
+:where(html.un-ios.in-native-webview) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
+             #settings-screen, #messages-screen, #workshop-screen,
+             #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header,
+:where(html.un-ios.in-native-webview) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
+  background-color: var(--dc-sheet);
 }
 /* THE BAR TAKES THE APP'S TONE (#1945). A dark app under the light shell
    used to sit beneath a cream strip, and a light app under the dark shell
@@ -5153,6 +5182,11 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   #browse-screen .browse-pane-body,
   #browse-screen .browse-pane-note { background-color: var(--dc-sheet); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) #browse-screen .browse-pane-head,
+:where(html.un-ios.in-native-webview) #browse-screen .browse-pane-body,
+:where(html.un-ios.in-native-webview) #browse-screen .browse-pane-note { background-color: var(--dc-sheet); }
 
 /* ── App-card "…" actions menu ─────────────────────────────
    Popover built by Home.openCardMenu (appended to <body>, fixed-
@@ -8603,6 +8637,8 @@ span.gc-vote-btn-icon { cursor: default; }
   font-size: 13px; line-height: 1.4; color: var(--text-secondary);
   text-decoration: none;
 }
+/* iOS app: opaque, as the no-backdrop-filter blocks do (#787, "THE PANE GLASS GOES TOO"). */
+:where(html.un-ios.in-native-webview) .gc-event-box { background-color: var(--dc-sheet); }
 a.gc-event-box { cursor: pointer; }
 
 /* #2884: the folded rest of a run of cards — "… 4 more" under the first
@@ -10013,6 +10049,11 @@ html.un-kb #settings-content-col > .settings-sheet {
   .dc-lift-session { background-color: var(--dc-sheet); }
   #dc-session-header.un-scrolled { background-color: var(--dc-strip); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) .dc-lift-strip { background-color: var(--dc-strip); }
+:where(html.un-ios.in-native-webview) .dc-lift-session { background-color: var(--dc-sheet); }
+:where(html.un-ios.in-native-webview) #dc-session-header.un-scrolled { background-color: var(--dc-strip); }
 
 /* Mounted panes retain their DOM and state, but stop painting after exit.
    The separate overlay-scrim paint layer cuts out the rounded surface. It is
@@ -10053,6 +10094,9 @@ html.un-kb #settings-content-col > .settings-sheet {
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dc-lift-panel { background-color: var(--dc-sheet); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) .dc-lift-panel { background-color: var(--dc-sheet); }
 
 /* Shell-only frosted kit surfaces. PlatformUI attaches the same cutout
    paint layer used by the legacy panes. Kit opacity/presence and teardown
@@ -10118,6 +10162,16 @@ html.un-kb #settings-content-col > .settings-sheet {
     background-color: var(--dc-sheet);
   }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) .un-modal,
+:where(html.un-ios.in-native-webview) .un-sheet,
+:where(html.un-ios.in-native-webview) .un-sheet::after,
+:where(html.un-ios.in-native-webview) .un-panel,
+:where(html.un-ios.in-native-webview) .un-panel::after,
+:where(html.un-ios.in-native-webview) #apps-switcher-sheet,
+:where(html.un-ios.in-native-webview) .un-sheet:has(#apps-switcher-sheet),
+:where(html.un-ios.in-native-webview) .un-sheet:has(#apps-switcher-sheet)::after { background-color: var(--dc-sheet); }
 
 /* A DIALOG STAYS ON THE PART OF THE SCREEN THE KEYBOARD LEAVES (#2765).
 
@@ -11941,6 +11995,9 @@ a.drawer-ver--fork:hover {
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .un-modal:has(> #create-card) { background-color: var(--dc-strip); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) .un-modal:has(> #create-card) { background-color: var(--dc-strip); }
 
 /* Create / import fills mobile screens, including wide touch browsers and
    the native webview. These optional layout tokens affect only this dialog;
@@ -13294,6 +13351,9 @@ body.is-offline [data-offline-disabled] {
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :is(#dev-workshop, #dev-kanban) .dev-feed-entry { background-color: var(--dc-sheet); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) :is(#dev-workshop, #dev-kanban) .dev-feed-entry { background-color: var(--dc-sheet); }
 :is(#dev-workshop, #dev-kanban) .dev-feed-entry + .dev-feed-entry {
   margin-top: 4px;
 }
@@ -14154,6 +14214,9 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dev-topic-sheet { background-color: var(--dc-sheet); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) .dev-topic-sheet { background-color: var(--dc-sheet); }
 .dev-topic-sheet.dev-topic-card { padding: 6px; }
 .dev-topic-sheet:empty { display: none; }
 .dev-topic-h {
@@ -14885,6 +14948,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   #dev-topic-thread #gc-thread-messages { background-color: var(--dc-sheet); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) #dev-topic-thread #gc-thread-messages { background-color: var(--dc-sheet); }
 #dev-topic-thread #gc-thread-messages::before {
   content: "Discussion";
   display: block;
@@ -15048,6 +15114,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dev-ws-strip { background-color: var(--dc-sheet); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) .dev-ws-strip { background-color: var(--dc-sheet); }
 /* CENTRE, not baseline. Baseline was right while the only thing beside the
    eyebrow was a 22px pill; with a 30px ring in the line the eyebrow's
    baseline aligned to the bottom of the ring and the two read as two rows. */
@@ -15528,6 +15597,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dev-ws-tabs { background-color: var(--dc-sheet); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) .dev-ws-tabs { background-color: var(--dc-sheet); }
 /* A GLYPH BESIDE ITS LABEL, 40px tall. It was a glyph OVER its label, 58px,
    while this was a thumb bar at the foot of the window; at the head of the
    page it is a segmented control — the shape the wide layout already draws —
@@ -15981,6 +16053,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dev-ws-rail-ic { background-color: var(--dc-sheet); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) .dev-ws-rail-ic { background-color: var(--dc-sheet); }
 .dev-ws-rail-ic > svg { width: 24px; height: 24px; }
 .dev-ws-rail-lab { font-size: 11px; font-weight: 600; line-height: 1; color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .dev-ws-rail-key { display: none; }
@@ -16990,6 +17065,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dev-ws-pane-head, .dev-ws-pane-body, .dev-ws-ear { background-color: var(--dc-sheet); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) .dev-ws-pane-head,
+:where(html.un-ios.in-native-webview) .dev-ws-pane-body,
+:where(html.un-ios.in-native-webview) .dev-ws-ear { background-color: var(--dc-sheet); }
 /* Inside the pane the toolbar is a plain row: the frame's own `px-3 pt-2`
    placed it against the scroller's edge, and here the pane supplies both. */
 .dev-ws-pane .dev-ws-pane-head #dev-actions { padding: 0; }
@@ -17625,6 +17705,9 @@ html.un-kb #platform-tabs {
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .platform-tabs { background-color: var(--dc-sheet); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) .platform-tabs { background-color: var(--dc-sheet); }
 
 /* THE BAR SITS LOWER ON iOS (#2766). The inset under it there is the
    home-indicator strip, 34px on a Face ID iPhone, and the indicator is a 5px
@@ -17876,6 +17959,9 @@ html.un-ios {
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .platform-parked { background-color: var(--dc-sheet); }
 }
+/* The iOS app draws the same no-glass fallback (#787, "Native iOS
+   performance baseline"); `:where()` keeps the specificity above. */
+:where(html.un-ios.in-native-webview) .platform-parked { background-color: var(--dc-sheet); }
 
 /* THE WHOLE STRIP IS THE TARGET. A shortcut whose tappable area is a 60px
    pill inside a full-width bar is a shortcut you miss; the pill is a LABEL

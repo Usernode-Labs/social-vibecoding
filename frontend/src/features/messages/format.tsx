@@ -50,7 +50,12 @@ export function MessageMarkdown({ content, channels }: { content: string; channe
     decorateRefs(root, channels || NO_CHANNELS, me);
     return root.innerHTML;
   }, [content, channels]);
-  return <div className="messages-markdown gc-msg-content" dangerouslySetInnerHTML={{ __html: html }} />;
+  // The SAME object while the html is unchanged. React 19 compares this prop
+  // by identity and reassigns innerHTML when it differs, so an inline
+  // `{ __html }` tore down and rebuilt every message body on every render of
+  // its row, even with identical text (board-frame.tsx documents the same).
+  const inner = useMemo(() => ({ __html: html }), [html]);
+  return <div className="messages-markdown gc-msg-content" dangerouslySetInnerHTML={inner} />;
 }
 
 /**
