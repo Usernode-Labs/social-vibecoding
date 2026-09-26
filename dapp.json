@@ -692,9 +692,10 @@
       "expectSelector": "#notifications-sheet[data-open] a[href$=\"/proposals/990102\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc"
     },
     {
-      "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
+      "name": "Send Feedback offers a kudos bounty, unchecked by default (#964), and room for up to three images (#3027)",
       "path": "/?shot=feedback",
-      "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)"
+      "expectSelector": "#feedback-form:has(#feedback-screenshot-count:not(.hidden)) #feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)",
+      "expectText": "You can attach up to 3 images."
     },
     {
       "name": "First feedback is congratulated in a lasting confirmation (#1583)",

@@ -201,7 +201,17 @@ export function FeedbackDialog() {
         </div>
         {/*
             #683/#824: desktop drag-to-select, native mobile capture, and a
-            Photos fallback all converge on one preview/upload row.
+            Photos fallback all converge on one preview/upload list.
+
+            #3027: up to three images. #feedback-screenshot-preview is the
+            thumbnail LIST, rendered empty: the controller appends one item
+            per image (preview, status, its own 48px remove button) and takes
+            them away again, so it is that module's host like the rest of the
+            card. #feedback-screenshot-count says how many fit; it renders
+            empty and hidden for the same hydration reason as
+            #feedback-status, and the controller fills it on open. The picker
+            takes several files at once (`multiple`); the controller keeps
+            only as many as there is room for.
         */}
         <div className="mt-2">
           <div className="flex flex-wrap gap-2">
@@ -225,27 +235,15 @@ export function FeedbackDialog() {
               id="feedback-screenshot-input"
               type="file"
               accept="image/png,image/jpeg"
+              multiple
               className="hidden"
               tabIndex={-1}
               aria-hidden="true"
             />
           </div>
-          <div id="feedback-screenshot-preview" className="hidden items-center gap-2">
-            <img
-              id="feedback-screenshot-img"
-              alt="Screenshot preview"
-              className="h-14 max-w-[8rem] rounded-md border border-zinc-300 dark:border-zinc-700 object-cover"
-            />
-            <span id="feedback-screenshot-state" className="text-xs text-zinc-500 dark:text-zinc-400">
-            </span>
-            <button
-              id="feedback-screenshot-remove"
-              type="button"
-              aria-label="Remove screenshot"
-              className="rounded-full w-12 h-12 flex shrink-0 items-center justify-center text-xs bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors"
-            >
-              ✕
-            </button>
+          <p id="feedback-screenshot-count" className="hidden mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          </p>
+          <div id="feedback-screenshot-preview" className="hidden mt-2 flex-wrap items-center gap-2">
           </div>
         </div>
         {/*

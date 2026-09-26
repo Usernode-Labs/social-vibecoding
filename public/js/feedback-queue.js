@@ -45,6 +45,11 @@
   // storage quota, since one full-screen PNG can be several MB.
   const MAX_ENTRIES = 10;
   const MAX_SCREENSHOT_BYTES = 12 * 1024 * 1024;
+  // #3027: images per message — the same limit POST /api/feedback enforces
+  // (MAX_SCREENSHOTS_PER_ISSUE in src/routes/feedback.js). The dialog never
+  // hands over more; this only keeps a stray caller from queueing a message
+  // the server is certain to refuse.
+  const MAX_SCREENSHOTS = 3;
 
   // Retry schedule: 30s, 1m, 2m, 4m, 8m, then flat 10m. Deliberately slow —
   // the flush triggers (coming back online, a fresh sign-in) are the ones
@@ -54,7 +59,7 @@
   const MAX_BACKOFF_MS = 10 * 60_000;
   const FLUSH_INTERVAL_MS = 60_000;
 
-  // A send is at most a screenshot upload plus one POST. Two minutes is a
+  // A send is at most three screenshot uploads plus one POST. Two minutes is a
   // generous ceiling, after which another tab may assume the claiming tab
   // was closed mid-flight and take the record over.
   const CLAIM_STALE_MS = 2 * 60_000;
@@ -145,11 +150,21 @@
   // ?shot= screenshot deep links so a photographable queue never writes
   // anything to the device.
 
+  // #3027: a record's image bytes, oldest shape included. Records queued
+  // before multi-image support hold one Blob in `screenshot`; newer ones hold
+  // an array in `screenshots`. Both flush the same way.
+  function recordScreenshots(record) {
+    if (!record) return [];
+    if (Array.isArray(record.screenshots)) return record.screenshots.filter(Boolean);
+    return record.screenshot ? [record.screenshot] : [];
+  }
+
   function stripBlob(record) {
     const copy = Object.assign({}, record);
     delete copy.screenshot;
+    delete copy.screenshots;
     copy.screenshotBytes = 0;
-    copy.screenshotDropped = !!record.screenshot || !!record.screenshotDropped;
+    copy.screenshotDropped = recordScreenshots(record).length > 0 || !!record.screenshotDropped;
     return copy;
   }
 
@@ -327,26 +342,53 @@
     const queuedAt = record.queuedAt || formatQueuedAt(record.createdAt);
     if (queuedAt) body.queuedAt = queuedAt;
 
-    // The screenshot has to be uploaded now — its id only exists server-side.
-    // A transient failure retries the whole record (the words and the picture
-    // stay together); a permanent one files the text without the attachment,
-    // because the description is the part that matters.
-    if (record.screenshot) {
-      try {
-        const res = await fetch('/api/feedback/screenshot', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/octet-stream' },
-          body: record.screenshot,
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data && data.id) {
-          body.screenshotId = data.id;
-        } else if (classifyFailure({ status: res.status }) !== 'permanent') {
-          return { ok: false, status: res.status, networkError: false, error: (data && data.error) || 'screenshot upload failed' };
+    // The screenshots have to be uploaded now — their ids only exist
+    // server-side. A transient failure on ANY of them retries the whole
+    // record (the words and the pictures stay together); a permanent one
+    // files without that attachment, because the description is the part
+    // that matters. #3027: ids the dialog had already uploaded before it went
+    // offline ride in the payload, and the freshly minted ones join them.
+    //
+    // Progress is written back onto `record` as it happens (fresh objects,
+    // never a mutation of the stored ones): an image that uploaded moves from
+    // `screenshots` into `payload.screenshotIds`, and one the server refused
+    // outright leaves `screenshots`. flushOnce persists the record it passed
+    // in after a failure, so a retry uploads only what is still missing
+    // rather than minting a second (orphaned) row for every image that
+    // already made it, each against the per-user upload limiter.
+    const shots = recordScreenshots(record);
+    if (shots.length) {
+      const ids = Array.isArray(body.screenshotIds) ? body.screenshotIds.slice() : [];
+      const remaining = shots.slice();
+      const saveProgress = () => {
+        record.payload = Object.assign({}, record.payload, ids.length ? { screenshotIds: ids.slice() } : {});
+        record.screenshots = remaining.slice();
+        record.screenshotBytes = remaining.reduce((n, b) => n + (Number(b && b.size) || 0), 0);
+        delete record.screenshot;
+      };
+      for (const shot of shots) {
+        try {
+          const res = await fetch('/api/feedback/screenshot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: shot,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data && data.id) {
+            ids.push(data.id);
+            remaining.splice(remaining.indexOf(shot), 1);
+            saveProgress();
+          } else if (classifyFailure({ status: res.status }) !== 'permanent') {
+            return { ok: false, status: res.status, networkError: false, error: (data && data.error) || 'screenshot upload failed' };
+          } else {
+            remaining.splice(remaining.indexOf(shot), 1);
+            saveProgress();
+          }
+        } catch (err) {
+          return { ok: false, status: 0, networkError: true, error: 'network error' };
         }
-      } catch (err) {
-        return { ok: false, status: 0, networkError: true, error: 'network error' };
       }
+      if (ids.length) body.screenshotIds = ids;
     }
 
     try {
@@ -429,6 +471,7 @@
   const FeedbackQueue = {
     MAX_ENTRIES,
     MAX_SCREENSHOT_BYTES,
+    MAX_SCREENSHOTS,
     // Pure helpers, exported for tests and reused by the dialog.
     dedupeKey,
     withinCaps,
@@ -476,22 +519,25 @@
     },
 
     // Save a submit for later. `entry.payload` is the /api/feedback body the
-    // dialog would have posted; `entry.screenshot` is the captured Blob, kept
-    // as-is because its id can only be minted online.
+    // dialog would have posted; `entry.screenshots` are the captured Blobs
+    // not yet uploaded (#3027; `entry.screenshot`, one Blob, is the older
+    // shape and still accepted), kept as-is because their ids can only be
+    // minted online.
     async enqueue(entry) {
       const s = await ensureStore();
       const t = nowMs();
-      const screenshot = (entry && entry.screenshot) || null;
+      const shots = recordScreenshots(entry).slice(0, MAX_SCREENSHOTS);
       const record = {
         id: newId(),
         userId: currentUserId(),
         createdAt: t,
         queuedAt: formatQueuedAt(t),
         payload: Object.assign({}, (entry && entry.payload) || {}),
-        screenshot: s.keepsBlobs ? screenshot : null,
-        screenshotType: (screenshot && screenshot.type) || null,
-        screenshotBytes: s.keepsBlobs && screenshot ? (Number(screenshot.size) || 0) : 0,
-        screenshotDropped: !!screenshot && !s.keepsBlobs,
+        screenshots: s.keepsBlobs ? shots : [],
+        screenshotBytes: s.keepsBlobs
+          ? shots.reduce((n, b) => n + (Number(b && b.size) || 0), 0)
+          : 0,
+        screenshotDropped: shots.length > 0 && !s.keepsBlobs,
         attempts: 0,
         nextAttemptAt: t,
         status: 'pending',
@@ -560,7 +606,7 @@
         createdAt: t - (i + 1) * 60_000,
         queuedAt: formatQueuedAt(t - (i + 1) * 60_000),
         payload: {},
-        screenshot: null,
+        screenshots: [],
         screenshotBytes: 0,
         attempts: 0,
         nextAttemptAt: t + MAX_BACKOFF_MS,

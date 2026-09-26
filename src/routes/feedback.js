@@ -47,6 +47,57 @@ function buildScreenshotEmbed(id, domain) {
   return `\n\n**Screenshot:**\n![Screenshot](https://${domain}/issue-images/${id})`;
 }
 
+// #3027: how many images one feedback submit may carry ("one before saving
+// and one after saving", with room for a third). Enforced here, on the ids
+// the server itself validates; the dialog's own limit is only a courtesy.
+// Each image is still its own ≤4 MB upload under issueScreenshotLimiter, so
+// this bounds the issue body and the per-submit lookup, not upload volume.
+const MAX_SCREENSHOTS_PER_ISSUE = 3;
+
+// Pure (exported for tests): the image ids a POST /api/feedback body asks to
+// attach. `screenshotIds` is the array the dialog sends; `screenshotId` is
+// the single id every client sent before #3027, which an outbox entry queued
+// back then still carries — both are accepted and merged, and both count
+// toward the one limit. The count is taken from the raw array BEFORE dedupe,
+// so padding with repeats cannot slip a long array through, and no element
+// is examined once the array is known to be too long.
+// Returns { ok: true, ids } (deduped, in order) or { ok: false, error }.
+function parseScreenshotIds(body) {
+  const b = body || {};
+  const ids = [];
+  const tooMany = { ok: false, error: `You can attach at most ${MAX_SCREENSHOTS_PER_ISSUE} images` };
+  if (b.screenshotIds !== undefined && b.screenshotIds !== null) {
+    if (!Array.isArray(b.screenshotIds)) return { ok: false, error: 'screenshotIds must be an array' };
+    if (b.screenshotIds.length > MAX_SCREENSHOTS_PER_ISSUE) return tooMany;
+    for (const sid of b.screenshotIds) {
+      if (typeof sid !== 'string' || !SCREENSHOT_ID_RE.test(sid)) {
+        return { ok: false, error: 'Invalid screenshotId' };
+      }
+      ids.push(sid);
+    }
+  }
+  if (b.screenshotId !== undefined && b.screenshotId !== null && b.screenshotId !== '') {
+    if (typeof b.screenshotId !== 'string' || !SCREENSHOT_ID_RE.test(b.screenshotId)) {
+      return { ok: false, error: 'Invalid screenshotId' };
+    }
+    ids.push(b.screenshotId);
+  }
+  const unique = [...new Set(ids)];
+  if (unique.length > MAX_SCREENSHOTS_PER_ISSUE) return tooMany;
+  return { ok: true, ids: unique };
+}
+
+// Pure (exported for tests): the issue-body suffix for every attached image.
+// One image keeps the exact pre-#3027 line, so an issue with one screenshot
+// reads as it always has; several are numbered under one heading, in the
+// order they were attached.
+function buildScreenshotsEmbed(ids, domain) {
+  if (!Array.isArray(ids) || ids.length === 0) return '';
+  if (ids.length === 1) return buildScreenshotEmbed(ids[0], domain);
+  const lines = ids.map((id, i) => `![Screenshot ${i + 1}](https://${domain}/issue-images/${id})`);
+  return `\n\n**Screenshots:**\n${lines.join('\n')}`;
+}
+
 // #685: app-provided state snapshots ("Include app state" checkbox).
 // The bridge caps the serialized snapshot at 32,768 chars client-side;
 // 40,000 is a defensive server ceiling that keeps the JSON request body
@@ -294,7 +345,7 @@ function feedbackRoutes(config) {
 
   // #683: screenshot upload for the feedback modal. Upload happens
   // BEFORE submit: the client POSTs the captured image's raw bytes here,
-  // gets back an id, and passes it as `screenshotId` to /api/feedback
+  // gets back an id, and passes it in `screenshotIds` to /api/feedback
   // below, which links the row to the filed issue. Rows never linked are
   // GC'd by the server.js orphan sweeper after 24h.
   router.post(
@@ -354,29 +405,28 @@ function feedbackRoutes(config) {
       customTitle = req.body.title.trim() || null;
     }
 
-    // #683: optional attached screenshot. Must be a 32-hex id referencing
-    // an existing, not-yet-linked upload owned by this user — verified
-    // before any GitHub call so a bad id fails fast and files nothing.
-    let screenshotId = null;
-    if (req.body.screenshotId !== undefined && req.body.screenshotId !== null && req.body.screenshotId !== '') {
-      const sid = req.body.screenshotId;
-      if (typeof sid !== 'string' || !SCREENSHOT_ID_RE.test(sid)) {
-        return res.status(400).json({ error: 'Invalid screenshotId' });
-      }
+    // #683: optional attached screenshots. #3027 made it up to
+    // MAX_SCREENSHOTS_PER_ISSUE of them. Each must be a 32-hex id
+    // referencing an existing, not-yet-linked upload owned by this user —
+    // ALL of them, verified before any GitHub call, so one bad id fails fast
+    // and files nothing.
+    const parsedShots = parseScreenshotIds(req.body);
+    if (!parsedShots.ok) return res.status(400).json({ error: parsedShots.error });
+    const screenshotIds = parsedShots.ids;
+    if (screenshotIds.length) {
       try {
         const { rows } = await pool.query(
-          `SELECT 1 FROM issue_screenshots
-            WHERE id = $1 AND user_id = $2 AND issue_number IS NULL`,
-          [sid, req.user?.id]
+          `SELECT id FROM issue_screenshots
+            WHERE id = ANY($1::varchar[]) AND user_id = $2 AND issue_number IS NULL`,
+          [screenshotIds, req.user?.id]
         );
-        if (!rows.length) {
+        if (rows.length !== screenshotIds.length) {
           return res.status(400).json({ error: 'Unknown or already-used screenshot' });
         }
       } catch (err) {
         log.error('feedback', 'Screenshot lookup failed', { message: err.message });
         return res.status(500).json({ error: 'Internal server error' });
       }
-      screenshotId = sid;
     }
 
     // #685: optional app-provided state snapshot. Validated whenever
@@ -403,7 +453,7 @@ function feedbackRoutes(config) {
     const queuedAt = normalizeQueuedAt(req.body.queuedAt, Date.now());
 
     // #964: optional kudos bounty on the issue about to be filed. Validated
-    // up front (like title / screenshotId / pageState) so a malformed flag
+    // up front (like title / screenshotIds / pageState) so a malformed flag
     // fails fast rather than after an issue exists. Strict boolean: a
     // truthy string would make "false" pledge, which is exactly the kind of
     // accident that spends someone's allowance without their say-so.
@@ -531,9 +581,7 @@ function feedbackRoutes(config) {
       // the public /issue-images/:id URL GitHub's camo proxy, the in-app
       // topic view, and the coding agents can all fetch. Appended after
       // the description-length validation, so it never eats user budget.
-      const screenshotSuffix = screenshotId
-        ? buildScreenshotEmbed(screenshotId, require('../services/caddy').USERNODE_DOMAIN)
-        : '';
+      const screenshotSuffix = buildScreenshotsEmbed(screenshotIds, require('../services/caddy').USERNODE_DOMAIN);
       // #1054: one header line for an offline-queued message, empty for a
       // live submit (whose filing time IS its writing time).
       const queuedLine = queuedAt ? `**Saved offline:** ${queuedAt}\n` : '';
@@ -541,17 +589,19 @@ function feedbackRoutes(config) {
       // Best-effort: the issue is already on GitHub by the time this
       // runs, so a failure only risks the image 404ing after the 24h
       // sweep — never a failed request.
+      // #3027: every attached row, still bound to its uploader and to rows
+      // nobody has linked yet — the same conditions the lookup above checked.
       const linkScreenshot = async (owner, repo, issueNumber) => {
-        if (!screenshotId) return;
+        if (!screenshotIds.length) return;
         try {
           await pool.query(
             `UPDATE issue_screenshots
                 SET issue_owner = $2, issue_repo = $3, issue_number = $4
-              WHERE id = $1`,
-            [screenshotId, owner, repo, issueNumber]
+              WHERE id = ANY($1::varchar[]) AND user_id = $5 AND issue_number IS NULL`,
+            [screenshotIds, owner, repo, issueNumber, req.user?.id]
           );
         } catch (err) {
-          log.warn('feedback', 'Screenshot link failed', { screenshotId, message: err.message });
+          log.warn('feedback', 'Screenshot link failed', { screenshotIds, message: err.message });
         }
       };
 
@@ -689,6 +739,10 @@ module.exports = {
   validateScreenshotUpload,
   buildScreenshotEmbed,
   MAX_SCREENSHOT_BYTES,
+  // #3027: several images per submit — tests/feedback-multi-screenshot-server.test.js.
+  parseScreenshotIds,
+  buildScreenshotsEmbed,
+  MAX_SCREENSHOTS_PER_ISSUE,
   // #685: pure helpers exported for tests/feedback-page-state.test.js.
   buildPageStateEmbed,
   MAX_PAGE_STATE_CHARS,

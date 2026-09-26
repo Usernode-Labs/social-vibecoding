@@ -305,6 +305,15 @@ const RETIRED_IDS = {
   'landing-apps': 'The directory grid. 41 tiles, 36 locked, three of the four screens a visitor scrolled through, and none of them usable signed out. The directory is still FETCHED — ?shot=anon-back picks its target from it, pull-to-refresh re-runs it, and _loadLandingApps stays a router seam — it simply renders nothing.',
   // ── #2979: the activation-code prompt leaves sign-in ────────────────
   'register-link': 'The "Have an activation code? Register" foot pin under the password sign-in step. The #register route (register.tsx) and its own activation-code field are untouched — this retires only the login screen\'s entry point into it, along with the foot-pinning spacer and the now-unused REGISTER_LINE class constant.',
+  // ── #3027: Send feedback takes several images ──────────────────────
+  // The one-image preview row held one <img>, one status line and one ✕.
+  // With up to three images each gets its own of all three, built by
+  // feedback-controller.js inside the (kept) #feedback-screenshot-preview
+  // list, so three fixed ids would be duplicates. Nothing selected on them
+  // outside the controller.
+  'feedback-screenshot-img': 'The single attachment preview <img>. Each attached image is now an item the controller appends to #feedback-screenshot-preview, with its own preview and an alt text numbered by position.',
+  'feedback-screenshot-state': 'The single attachment\'s status line ("Uploading…", "Saved with your feedback…"). Each thumbnail item carries its own status span now, so an upload failing on one image is reported beside that image.',
+  'feedback-screenshot-remove': 'The single ✕ that dropped the only attachment. Each thumbnail has its own 48px remove button, labelled "Remove image N", so one picture can go without the others.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -673,6 +682,7 @@ const ADDED_IDS = {
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054). It has changed parents twice without changing id or writer — off the retired #feedback-btn onto #improve-btn, and off that onto the Homeroom mark when #2718 retired it — because it belongs on whichever control is the way to this dialog from the header. Bottom-left, opposite the working dot.',
   'feedback-screenshot-picker-btn': 'Photos fallback for mobile feedback screenshots (#824).',
   'feedback-screenshot-input': 'PNG/JPEG picker backing the mobile feedback fallback (#824).',
+  'feedback-screenshot-count': 'How many images fit and how many are attached (#3027: "You can attach up to 3 images.", "2 of 3 images attached."). Ships empty and hidden like #feedback-status; the controller fills it on every open and every add or remove.',
   // ── #1603: the description's requirement, said out loud ─────────
   // The field was always mandatory — submitFeedback returned early on an
   // empty one — but nothing on screen said so and the refusal was a bare
