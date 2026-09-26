@@ -19,6 +19,7 @@ const identities = require('./visual-evidence-identities');
 const planContract = require('./visual-evidence-plan');
 const replay = require('./visual-evidence-replay');
 const state = require('./visual-evidence-state');
+const turnLifecycle = require('./turn-lifecycle');
 const { isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
 const worker = require('./worker');
 
@@ -43,6 +44,8 @@ const REPAIRABLE_LOCATOR_CODES = new Set([
 ]);
 const MAX_REPAIR_ATTEMPTS = 2;
 const MAX_TRANSIENT_REPLAY_RETRIES = 1;
+const SESSION_IDLE_WAIT_MS = 120_000;
+const EVIDENCE_RECOVERY_WAIT_MS = 240_000;
 
 function transientNetworkReplayFailure(error) {
   const diagnostics = error?.detail?.browserDiagnostics;
@@ -563,20 +566,89 @@ function replayInput({ run, plan, deployment, authTokens, provenance, pass }) {
 
 async function waitForSessionIdle(pool, sessionId, {
   timeoutMs = 120_000,
+  recoveryTimeoutMs = timeoutMs,
   workerService = worker,
   intervalMs = 500,
+  now = Date.now,
+  wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+  onObservation = null,
 } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  const normalLimitMs = Math.max(1, Number(timeoutMs) || 120_000);
+  const recoveryLimitMs = Math.max(normalLimitMs, Number(recoveryTimeoutMs) || normalLimitMs);
+  const pollIntervalMs = Math.max(1, Number(intervalMs) || 500);
+  const startedAt = now();
+  let polls = 0;
+  let recoveryReason = null;
+  let busyObserved = false;
+  let lastObservation = null;
+  const safeTurnField = (value) => {
+    const text = String(value || '');
+    return /^[a-z][a-z0-9_-]{0,63}$/.test(text) ? text : null;
+  };
+  const observe = (patch) => {
+    lastObservation = {
+      version: 1,
+      outcome: 'waiting',
+      waitClass: recoveryReason ? 'evidence_recovery' : busyObserved ? 'session_busy' : 'none',
+      recoveryReason,
+      normalLimitMs,
+      recoveryLimitMs,
+      waitedMs: Math.max(0, now() - startedAt),
+      polls,
+      activeTurnPresent: false,
+      activeTurnMode: null,
+      activeTurnPhase: null,
+      workerInFlight: false,
+      workerMode: null,
+      ...patch,
+    };
+    if (typeof onObservation === 'function') onObservation({ ...lastObservation });
+    return lastObservation;
+  };
+
+  while (true) {
     const { rows } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [sessionId]);
     if (!rows[0]) throw new VisualEvidenceOrchestrationError('session_not_found', 'Proposal session not found.');
-    if (!rows[0].active_turn && !workerService.isInFlight(sessionId)) return true;
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    polls += 1;
+    const activeTurnPresent = !!rows[0].active_turn;
+    const activeTurn = turnLifecycle.parseActiveTurn(rows[0].active_turn);
+    const activeTurnMode = safeTurnField(activeTurn?.mode);
+    const activeTurnPhase = safeTurnField(turnLifecycle.phaseOf(activeTurn));
+    const workerInFlight = !!(await workerService.isInFlight(sessionId));
+    const workerMode = safeTurnField(await workerService.getActiveTurnMode?.(sessionId));
+    if (activeTurnPresent || workerInFlight) busyObserved = true;
+    if (!recoveryReason) {
+      if (activeTurnMode === 'evidence') recoveryReason = 'evidence_turn';
+      else if (activeTurnPhase === turnLifecycle.PHASE_CLEANUP_PENDING) {
+        recoveryReason = 'cleanup_pending';
+      } else if (workerMode === 'evidence') recoveryReason = 'evidence_worker';
+    }
+    const observation = observe({
+      activeTurnPresent,
+      activeTurnMode,
+      activeTurnPhase,
+      workerInFlight,
+      workerMode,
+    });
+    if (!activeTurnPresent && !workerInFlight) {
+      const result = { ...observation, outcome: 'idle' };
+      if (typeof onObservation === 'function') onObservation({ ...result });
+      return result;
+    }
+    const activeLimitMs = recoveryReason ? recoveryLimitMs : normalLimitMs;
+    if (observation.waitedMs >= activeLimitMs) {
+      const result = { ...observation, outcome: 'timeout' };
+      if (typeof onObservation === 'function') onObservation({ ...result });
+      throw new VisualEvidenceOrchestrationError(
+        'evidence_agent_busy',
+        recoveryReason
+          ? 'The previous visual evidence worker did not finish restart cleanup within the bounded retry window.'
+          : 'The proposal agent stayed busy past the visual change preview start window.',
+        { idleWait: result }
+      );
+    }
+    await wait(Math.min(pollIntervalMs, activeLimitMs - observation.waitedMs));
   }
-  throw new VisualEvidenceOrchestrationError(
-    'evidence_agent_busy',
-    'The proposal agent stayed busy past the visual change preview start window.'
-  );
 }
 
 function errorCode(error) {
@@ -909,6 +981,7 @@ function newRunMetrics() {
     repairTriggers: [],
     fixtureResets: [],
     artifactBytes: 0,
+    idleWait: null,
     tokenUsage: {},
   };
 }
@@ -958,6 +1031,7 @@ function traceSummary(metrics, extra = {}) {
     replayPasses: metrics.replayPasses.slice(0, 12),
     replayRetries: metrics.replayRetries.slice(0, 6),
     replayRuntime: metrics.replayRuntime,
+    idleWait: metrics.idleWait,
     lastReplayEvent: metrics.lastReplayEvent,
     replayEvents: metrics.replayEvents.slice(-MAX_REPLAY_EVENTS),
     fixtureResets: metrics.fixtureResets.slice(0, 12),
@@ -1034,6 +1108,7 @@ async function executeRun(config, options, injected = {}) {
     evidenceAgent: injected.evidenceAgent || evidenceAgent,
     evidenceControl: injected.evidenceControl || evidenceControl,
     worker: injected.worker || worker,
+    waitForSessionIdle: injected.waitForSessionIdle || waitForSessionIdle,
   };
   const { pool, revision, onProgress = null } = options;
   let run = options.run;
@@ -1106,11 +1181,29 @@ async function executeRun(config, options, injected = {}) {
     failurePhase = 'wait_for_idle';
     stage(failurePhase);
     const idleStartedAt = Date.now();
-    await waitForSessionIdle(pool, session.id, {
-      timeoutMs: Math.min(config.visualEvidence?.maxRunMs || 1_440_000, 120_000),
-      workerService: deps.worker,
-    });
-    addTiming(metrics, 'idleWait', idleStartedAt);
+    const runBudgetMs = config.visualEvidence?.maxRunMs || 1_440_000;
+    const idleTimeoutMs = Math.min(runBudgetMs, SESSION_IDLE_WAIT_MS);
+    const recoveryTimeoutMs = Math.min(runBudgetMs, EVIDENCE_RECOVERY_WAIT_MS);
+    let recoveryWaitReported = false;
+    try {
+      metrics.idleWait = await deps.waitForSessionIdle(pool, session.id, {
+        timeoutMs: idleTimeoutMs,
+        recoveryTimeoutMs,
+        workerService: deps.worker,
+        onObservation: (observation) => {
+          metrics.idleWait = observation;
+          if (observation.waitClass === 'evidence_recovery' && !recoveryWaitReported) {
+            recoveryWaitReported = true;
+            progress('Waiting for the interrupted visual evidence worker to finish cleanup…');
+          }
+        },
+      });
+    } catch (error) {
+      if (error?.detail?.idleWait) metrics.idleWait = error.detail.idleWait;
+      throw error;
+    } finally {
+      addTiming(metrics, 'idleWait', idleStartedAt);
+    }
     if (!authorPlan) {
       // A timeout stops the prior hosted turn and leaves its worker stop
       // marker intact. This is a new evidence run, so retire that marker

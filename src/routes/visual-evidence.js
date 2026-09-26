@@ -208,6 +208,7 @@ function visualEvidenceRoutes(config) {
           progress: trace.progress || null,
           heartbeat: trace.heartbeat || null,
           timingsMs: trace.timingsMs || null,
+          idleWait: trace.idleWait || null,
           replayPasses: trace.replayPasses || [],
           replayRuntime: trace.replayRuntime || null,
           lastReplayEvent: trace.lastReplayEvent || null,

@@ -98,6 +98,112 @@ const provenance = {
   headImageDigest: 'sha256:head',
 };
 
+function virtualWaitClock() {
+  let timeMs = 0;
+  return {
+    now: () => timeMs,
+    wait: async (delayMs) => { timeMs += delayMs; },
+  };
+}
+
+test('an ordinary coding turn keeps the normal evidence start deadline', async () => {
+  const clock = virtualWaitClock();
+  const pool = { query: async () => ({ rows: [{ active_turn: {
+    mode: 'build', phase: 'executing',
+  } }] }) };
+  await assert.rejects(orchestrator.waitForSessionIdle(pool, 42, {
+    timeoutMs: 20,
+    recoveryTimeoutMs: 50,
+    intervalMs: 10,
+    now: clock.now,
+    wait: clock.wait,
+    workerService: { isInFlight: () => true, getActiveTurnMode: () => 'build' },
+  }), (error) => {
+    assert.equal(error.code, 'evidence_agent_busy');
+    assert.deepEqual(error.detail.idleWait, {
+      version: 1, outcome: 'timeout', waitClass: 'session_busy', recoveryReason: null,
+      normalLimitMs: 20, recoveryLimitMs: 50, waitedMs: 20, polls: 3,
+      activeTurnPresent: true, activeTurnMode: 'build', activeTurnPhase: 'executing',
+      workerInFlight: true, workerMode: 'build',
+    });
+    return true;
+  });
+});
+
+test('an interrupted evidence turn may finish cleanup after the normal deadline', async () => {
+  const clock = virtualWaitClock();
+  const pool = { query: async () => ({ rows: [{
+    active_turn: clock.now() < 30
+      ? { mode: 'evidence', phase: 'cleanup_pending' }
+      : null,
+  }] }) };
+  const result = await orchestrator.waitForSessionIdle(pool, 42, {
+    timeoutMs: 20,
+    recoveryTimeoutMs: 50,
+    intervalMs: 10,
+    now: clock.now,
+    wait: clock.wait,
+    workerService: { isInFlight: () => false, getActiveTurnMode: () => null },
+  });
+  assert.deepEqual(result, {
+    version: 1, outcome: 'idle', waitClass: 'evidence_recovery',
+    recoveryReason: 'evidence_turn', normalLimitMs: 20, recoveryLimitMs: 50,
+    waitedMs: 30, polls: 4, activeTurnPresent: false,
+    activeTurnMode: null, activeTurnPhase: null, workerInFlight: false, workerMode: null,
+  });
+});
+
+test('a stuck evidence cleanup fails at the extended deadline with diagnostics', async () => {
+  const clock = virtualWaitClock();
+  const observations = [];
+  const pool = { query: async () => ({ rows: [{ active_turn: {
+    mode: 'evidence', phase: 'cleanup_pending',
+  } }] }) };
+  await assert.rejects(orchestrator.waitForSessionIdle(pool, 42, {
+    timeoutMs: 20,
+    recoveryTimeoutMs: 40,
+    intervalMs: 10,
+    now: clock.now,
+    wait: clock.wait,
+    onObservation: (observation) => observations.push(observation),
+    workerService: { isInFlight: () => false, getActiveTurnMode: () => null },
+  }), (error) => {
+    assert.equal(error.code, 'evidence_agent_busy');
+    assert.equal(error.detail.idleWait.waitClass, 'evidence_recovery');
+    assert.equal(error.detail.idleWait.waitedMs, 40);
+    assert.equal(error.detail.idleWait.polls, 5);
+    assert.equal(error.detail.idleWait.outcome, 'timeout');
+    return true;
+  });
+  assert.equal(observations.at(-1).outcome, 'timeout');
+});
+
+test('an idle-wait failure is retained in the durable run trace before any model call', async () => {
+  const fixture = setup();
+  const waiting = {
+    version: 1, outcome: 'waiting', waitClass: 'evidence_recovery',
+    recoveryReason: 'evidence_turn', normalLimitMs: 120_000, recoveryLimitMs: 240_000,
+    waitedMs: 239_500, polls: 480, activeTurnPresent: true,
+    activeTurnMode: 'evidence', activeTurnPhase: 'cleanup_pending',
+    workerInFlight: false, workerMode: null,
+  };
+  const timeout = { ...waiting, outcome: 'timeout', waitedMs: 240_000, polls: 481 };
+  fixture.dependencies.waitForSessionIdle = async (_pool, _sessionId, options) => {
+    options.onObservation(waiting);
+    throw Object.assign(new Error('The previous evidence worker is still clearing.'), {
+      code: 'evidence_agent_busy', detail: { idleWait: timeout },
+    });
+  };
+
+  await assert.rejects(execute(fixture), { code: 'evidence_agent_busy' });
+  const failure = fixture.transitions.at(-1);
+  assert.equal(failure.next, 'failed');
+  assert.deepEqual(failure.patch.traceSummary.idleWait, timeout);
+  assert.equal(failure.patch.traceSummary.failure.phase, 'wait_for_idle');
+  assert.deepEqual(failure.patch.traceSummary.failure.detail.idleWait, timeout);
+  assert.equal(fixture.calls.dispatches, 0);
+});
+
 function setup({ dispatch, storeArtifacts } = {}) {
   const transitions = [];
   const calls = { resets: 0, passes: [], stored: 0, cleaned: 0, dispatches: 0, stopClears: 0, workerReleased: 0 };
