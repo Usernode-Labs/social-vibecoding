@@ -115,6 +115,7 @@ foregrounded app may swallow the banner).
 | 17 | `conversation_mention` | Actor: `POST /api/conversations/:id/messages` `{"content":"@<recipientUsername> mention push test","idempotency_key":"push-mention-<run>"}`. The handle must be the recipient's exact active-member username. |
 | 18 | `conversation_reply` | Recipient first creates the setup message below; actor replies with `POST /api/conversations/:id/messages` `{"content":"reply push test","reply_to_id":<recipientMessageId>,"idempotency_key":"push-reply-<run>"}`. Conversation replies are REST-capable (unlike legacy app-chat replies). |
 | 19 | `conversation_reaction` | Actor: `POST /api/conversations/:id/messages/:recipientMessageId/reactions` `{"emoji":"👍"}`. This endpoint toggles, so the first call for that actor/message/emoji must add the reaction; a second call removes it and its notification. |
+| 20 | `session_stalled` | **Not force-testable on demand.** Fires instead of `session_done` when a dev-session turn ends on a failure (a provider error, an agent error or timeout, a worker lost mid-run), when restart recovery or the stale-turn watchdog finds a turn that never finished, or when a pressure/LRU pause lands on an open turn. Never on a stop the user pressed or an owner pause. Copy is pinned by `tests/mobile-push-policy.test.js`. |
 
 ### Messages sequence (kinds 15–19)
 

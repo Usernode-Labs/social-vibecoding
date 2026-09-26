@@ -373,13 +373,17 @@ const Notifications = {
     // browser tab sets the dedicated tab-title marker (the replacement
     // for the old streaming-driven "✅ Done"). If they're actively
     // looking at the page, the badge + drawer suffice.
-    if ((notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
+    // #3181: a turn that stopped before finishing is the other half of a
+    // finished one, and arrives on the same channels with its own marker.
+    if (PRIORITY_KINDS.has(notif.kind)
         && !notif.readAt
         && window.DevChat && DevChat.setCompletionTitle
         && DevChat._userIsAway && DevChat._userIsAway()) {
       DevChat.setCompletionTitle(notif.kind === 'session_done'
         ? 'sessionDone'
-        : (notif.detail === 'failed' ? 'autoSolveFailed' : 'autoSolveDone'));
+        : notif.kind === 'session_stalled'
+          ? 'sessionStalled'
+          : (notif.detail === 'failed' ? 'autoSolveFailed' : 'autoSolveDone'));
     }
     // #138: route an arriving completion through the alert channels — a
     // chime when the app is visible, an OS notification when it's hidden.
@@ -387,7 +391,7 @@ const Notifications = {
     // "user is elsewhere in the app, or backgrounded" path (notify_on_done
     // was armed, so a notification_new arrives); the "watching the same dev
     // chat" path is handled by DevChat._finishStreaming's direct tone.
-    if ((notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
+    if (PRIORITY_KINDS.has(notif.kind)
         && !notif.readAt
         && window.DevAlerts && typeof DevAlerts.onCompletion === 'function') {
       DevAlerts.onCompletion(completionAlertInfo(notif));
@@ -810,12 +814,15 @@ const Notifications = {
     // expanded.
     // #2779: a change an agent session started is worked on in that
     // conversation, so its completion opens the conversation.
-    if (item.kind === 'session_done' && item.agentSessionId) {
+    // #3181: a session that stopped before finishing opens exactly where a
+    // finished one does, since continuing it is what the row asks for.
+    const sessionTurnEnd = item.kind === 'session_done' || item.kind === 'session_stalled';
+    if (sessionTurnEnd && item.agentSessionId) {
       Notifications._dismissSheetForNav();
       window.location.hash = `#messages/agent/${encodeURIComponent(item.agentSessionId)}`;
       return;
     }
-    if (item.kind === 'session_done' && item.appSlug && item.sessionId) {
+    if (sessionTurnEnd && item.appSlug && item.sessionId) {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', {
@@ -1536,14 +1543,17 @@ function parsePlatformLimitDetail(detail) {
 // restoring a top-of-list pin is one stable partition in _renderList if the
 // group decides it wants one.
 //
-// Deliberately limited to these two kinds; grow this set rather than adding a
-// server-side priority column if more "priority" kinds emerge.
-const PRIORITY_KINDS = new Set(['session_done', 'auto_solve_done']);
+// Deliberately limited to these kinds; grow this set rather than adding a
+// server-side priority column if more "priority" kinds emerge. #3181 grew it
+// by session_stalled: a session that stopped before finishing demands the
+// same attention as one that finished, on the same channels (the tab title,
+// the chime, the OS notification; see handleIncoming).
+const PRIORITY_KINDS = new Set(['session_done', 'session_stalled', 'auto_solve_done']);
 function isPriorityNotif(n) {
   return !!n && PRIORITY_KINDS.has(n.kind) && !n.readAt;
 }
 
-// The four system-generated (source-user-less) notifications about the
+// The system-generated (source-user-less) notifications about the
 // viewer's OWN sessions and proposals. Everything social — mentions,
 // replies, reactions, kudos, vote nudges, invites, spec shares — is
 // everything else.
@@ -1554,9 +1564,11 @@ function isPriorityNotif(n) {
 // split that outlived the drawer is gone as well — the bell counts these
 // along with everything else — so what the set is left doing is naming the
 // kinds the app-context sheet draws a per-change unread dot for
-// (`sessionUnreadIds`, published by _renderBadge).
+// (`sessionUnreadIds`, published by _renderBadge). #3181 adds the fifth,
+// session_stalled: a change that stopped before finishing is exactly what
+// that dot should point at.
 const SESSION_NOTIF_KINDS = new Set([
-  'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
+  'session_done', 'session_stalled', 'auto_solve_done', 'stale_pr', 'check_failed',
 ]);
 function isSessionNotif(n) {
   return !!n && SESSION_NOTIF_KINDS.has(n.kind);
@@ -1651,6 +1663,19 @@ function completionAlertInfo(n) {
       body,
     };
   }
+  // #3181: the turn stopped before finishing (an error, a timeout, a lost
+  // worker). Same deep link as a finished one; the copy says what to do.
+  if (n.kind === 'session_stalled') {
+    return {
+      kind: 'session_stalled',
+      appSlug: n.appSlug || null,
+      sessionId: n.sessionId || null,
+      ...(n.agentSessionId ? { agentSessionId: n.agentSessionId } : {}),
+      headlessIssueNumber: null,
+      title: 'Session stopped before finishing',
+      body: `Your session on ${appName} stopped before finishing. Open it to continue`,
+    };
+  }
   // session_done — #971: the session's own title first, then the PR title,
   // and only then the machine-generated branch name.
   const label = n.sessionTitle || n.prTitle || n.branchName || 'your session';
@@ -1729,8 +1754,10 @@ function screenViews(items) {
 // flag for the same reason `conversation` is: the tab must never re-derive
 // the set from `kind` and drift from it. stale_pr and check_failed stay out:
 // they are about a proposal, not about an agent talking back to you.
+// #3181: a session that stopped before finishing is an agent talking back
+// too, so it lists beside the one that finished.
 const AGENT_NOTIF_KINDS = new Set([
-  'session_done', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted',
+  'session_done', 'session_stalled', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted',
 ]);
 
 // One notification row, as data. It has ONE renderer — ScreenRow in
@@ -2280,6 +2307,22 @@ function rowView(n) {
       ...headline(
         // #2779: a run in an agent session says what finished, not "session".
         n.agentSessionId ? 'The coding agent finished' : 'Session finished',
+        n.sessionTitle || prLabel || n.branchName || 'your session',
+      ),
+    };
+  }
+
+  // #3181: the other way a turn ends. It errored, timed out or lost its
+  // worker, or the platform paused the session mid-turn, so the work is not
+  // done and nothing else would say so. Same subject ladder as session_done;
+  // the app is on the meta line, so the label is the whole message.
+  if (n.kind === 'session_stalled') {
+    return {
+      ...base,
+      wrap: true,
+      icon: '⏸️',
+      ...headline(
+        n.agentSessionId ? 'The coding agent stopped before finishing' : 'Session stopped before finishing',
         n.sessionTitle || prLabel || n.branchName || 'your session',
       ),
     };

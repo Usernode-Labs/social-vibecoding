@@ -254,8 +254,10 @@ pgTest('the closed kind policy and account preferences gate enqueue at insert ti
   // #2386's two (friend_request, friend_accept), the same way; 31 → 33 with
   // #2387's two: conversation_thread_reply (under messages) and thread_reply
   // (an app-chat reply-thread reply, direct_interactions). 33 → 34 with
-  // platform_limit (server-wide cap alerts for full admins, app_alerts).
-  assert.equal(policy.length, 34, 'the seed carries the reviewed closed set');
+  // #3181's session_stalled, beside session_done in developer_sessions.
+  // 34 → 35 with platform_limit (server-wide cap alerts for full admins,
+  // app_alerts).
+  assert.equal(policy.length, 35, 'the seed carries the reviewed closed set');
   for (const { kind, default_enabled: enabled } of policy) {
     const row = await notify(client, { userId: alice, kind });
     assert.equal((await deliveriesFor(client, row.id)).length, enabled ? 1 : 0,

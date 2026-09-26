@@ -9,6 +9,8 @@
 // active users + creator + favoriters so they come vote; self-app PRs
 // go to creator + favoriters only), 'session_done'
 // (#161 — a dev-session turn finished after its owner left),
+// 'session_stalled' (#3181 — a dev-session turn ended without finishing:
+// an error, a timeout or a lost worker, or a system pause mid-turn),
 // 'auto_solve_done' (#161 — a headless auto-solve run finished; `detail`
 // holds the outcome: spec | code | spec_code (#170) | question | failed)
 // and 'spec_shared' (#86 — someone privately shared a spec version with
@@ -572,6 +574,29 @@ async function createSessionDoneNotification(pool, { userId, appId, sessionId })
         SELECT 1 FROM notifications n
         WHERE n.user_id = $1 AND n.session_id = $3
           AND n.kind = 'session_done' AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
+    [userId, appId, sessionId]
+  );
+  return rows;
+}
+
+// #3181: the other way a dev-session turn ends (kind='session_stalled'). A
+// turn that died on an error, a timeout or a lost worker, or a session the
+// platform paused in the middle of one, used to end in silence: nothing said
+// the work had stopped, and the owner found out when they next looked. The
+// caller decides what counts as stalled; a stop the user pressed never does.
+// Same shape and same unread dedup as session_done: at most one unread
+// session_stalled per (user, session).
+async function createSessionStalledNotification(pool, { userId, appId, sessionId }) {
+  if (!userId || !sessionId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
+     SELECT $1, $2, $3, NULL, 'session_stalled'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = $1 AND n.session_id = $3
+          AND n.kind = 'session_stalled' AND n.read_at IS NULL
       )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
     [userId, appId, sessionId]
@@ -1208,7 +1233,8 @@ const ACTION_COMPLETIONS = {
   // #161: opening a dev session is the canonical "user saw it" signal —
   // it resolves that session's completion notification even when the
   // user navigated there on their own. Triggered in GET /api/sessions/:id.
-  session_opened: { kinds: ['session_done'], scope: 'session_id' },
+  // #3181: opening it also answers "it stopped before finishing".
+  session_opened: { kinds: ['session_done', 'session_stalled'], scope: 'session_id' },
   // #161: cloning a ready auto-solve session resolves its completion
   // notification. Triggered in POST /api/sessions/:id/clone-headless,
   // scoped to the SOURCE (headless) session id.
@@ -1251,14 +1277,15 @@ async function markReadForAction(pool, userId, action, scopeId) {
 // #2779: an agent session's changes finish into the bell as session_done
 // rows, and they are worked on in the conversation, not on a dev chat of
 // their own — so opening the conversation is the "user saw it" signal for
-// every one of them, the way opening a dev session is for its own.
+// every one of them, the way opening a dev session is for its own. #3181: a
+// change that stopped before finishing is answered the same way.
 async function markReadForAgentSession(pool, userId, agentSessionId) {
   if (!userId || !agentSessionId) return 0;
   const { rowCount } = await pool.query(
     `UPDATE notifications n
         SET read_at = NOW()
        FROM chat_sessions cs
-      WHERE n.user_id = $1 AND n.kind = 'session_done' AND n.read_at IS NULL
+      WHERE n.user_id = $1 AND n.kind IN ('session_done', 'session_stalled') AND n.read_at IS NULL
         AND n.session_id = cs.id AND cs.agent_session_id = $2`,
     [userId, agentSessionId]
   );
@@ -1488,6 +1515,7 @@ module.exports = {
   createPlatformLimitNotifications,
   createCheckFailedNotification,
   createSessionDoneNotification,
+  createSessionStalledNotification,
   createAutoSolveDoneNotification,
   createConnectorSubmittedNotification,
   createAgentAwaitingInputNotification,
