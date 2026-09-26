@@ -71,7 +71,10 @@ the actual app list. A staging demo card without a deployment is not an app
 runtime. After clicking the app tile, use waitForHostedApp with that app's
 exact slug before leaving the app view. This waits for a successful document
 response in Homeroom's managed app frame; seeing a tile or iframe element is
-not enough. If no real app runtime is available, report that as a blocker.
+not enough. Inspect the loaded frame and browser errors on both revisions;
+a document can load while its scripts or external resources fail. Choose an
+app that loads cleanly under the evidence browser's origin policy. If no real
+app runtime is available, report that as a blocker.
 
 A target is exactly one of:
 {by:"testId",value}, {by:"role",role,name?,exact?},
@@ -159,6 +162,11 @@ Inspect the failed action or checkpoint in the live browser on BOTH exact
 revisions. A locator error needs an observed stable target. A motion checkpoint
 that ran before an animation settled needs an observed state transition and a
 bounded wait, while retaining the original checkpoint assertions unchanged.
+A static checkpoint that keeps changing needs an observed settled state; do
+not remove its interactions, focus, or assertions. If a hosted app had
+browser errors or blocked external requests, inspect another deployed public app on both
+revisions and select it only if its runtime loads cleanly. Do not allow new
+origins or suppress browser errors to make the replay pass.
 Same-origin API 404s mean the planned data route was unavailable: inspect the
 account and available fixtures, then follow a real list row to a loaded record.
 If the claim cannot be reached with that persona, report the missing fixture

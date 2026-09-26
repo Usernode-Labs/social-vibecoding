@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { PNG } = require('pngjs');
 const replay = require('../evidence/replay-runner');
 const { plan } = require('./fixtures/visual-evidence');
 
@@ -446,6 +447,35 @@ test('internal HTTP replay bootstraps the clone-local platform session cookie', 
     httpOnly: true, secure: false, sameSite: 'Lax',
   }]);
   assert.equal(calls.some(([name]) => name === 'dispose'), true);
+  const navigationToken = replay.replayNavigationToken('member.jwt', diagnostic);
+  assert.equal(new URL(replay.authorizedUrl('http://base-evidence:3000', '/#home', navigationToken))
+    .searchParams.has('token'), false, 'a cookie-backed replay must see the same first-run UI as the planner');
+  assert.equal(replay.replayNavigationToken('member.jwt', { cookieAlreadyPresent: true }), '');
+  assert.equal(replay.replayNavigationToken('member.jwt', {}), 'member.jwt',
+    'apps without a session cookie still need token-bearing navigation');
+});
+
+test('the intentionally sandboxed pending app frame warning is counted separately from browser errors', () => {
+  const warning = "Blocked script execution in 'about:blank' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.";
+  assert.equal(replay.expectedPendingFrameWarning(warning, {
+    sameOrigin: true, pathname: '/shell/assets/shell.js',
+  }), true);
+  assert.equal(replay.expectedPendingFrameWarning(warning, {
+    sameOrigin: false, pathname: '/shell/assets/shell.js',
+  }), false);
+  assert.equal(replay.expectedPendingFrameWarning('Uncaught TypeError: failed', {
+    sameOrigin: true, pathname: '/shell/assets/shell.js',
+  }), false);
+});
+
+test('page exceptions report only their origin class, never their stack URL', () => {
+  const platform = 'http://base-evidence:3000';
+  const hosted = new Set(['https://real-app.onhomeroom.com']);
+  const appError = { stack: 'ReferenceError: tailwind is not defined\n    at https://real-app.onhomeroom.com/app.js?token=secret.jwt:12:2' };
+  assert.equal(replay.pageErrorOriginKind(appError, platform, hosted), 'hosted_app');
+  assert.equal(replay.pageErrorOriginKind({ stack: 'Error: failed\n    at http://base-evidence:3000/app.js:1:1' },
+    platform, hosted), 'platform');
+  assert.equal(replay.pageErrorOriginKind({ stack: 'Error: failed' }, platform, hosted), 'unknown');
 });
 
 test('initial navigation retries one transport failure and keeps the same route', async () => {
@@ -631,10 +661,12 @@ test('a failed browser action identifies its plan action and stage', async () =>
   replayPlan.stories[0].intent.animation = 'none';
   replayPlan.stories[0].replay.checkpoint.animation = 'none';
   let contexts = 0;
+  let navigatedUrl = null;
   const handlers = {};
   const page = {
     on: (name, callback) => { handlers[name] = callback; }, off: () => {},
-    goto: async () => {
+    goto: async (url) => {
+      navigatedUrl = url;
       handlers.response?.({
         status: () => 404,
         url: () => 'http://base-evidence:3000/favicon.ico',
@@ -652,7 +684,7 @@ test('a failed browser action identifies its plan action and stage', async () =>
       visibleTestIds: ['members-trigger'],
     }),
     waitForTimeout: async () => {}, screenshot: async () => Buffer.from('png'),
-    url: () => 'http://base-evidence:3000/?token=member.jwt',
+    url: () => navigatedUrl || 'http://base-evidence:3000/',
     getByRole: () => ({
       first: () => ({ waitFor: async () => { throw new Error('timeout'); } }),
       count: async () => 0,
@@ -676,6 +708,8 @@ test('a failed browser action identifies its plan action and stage', async () =>
       phase: 'action', actionId: 'open-members', actionStage: 'members', actionType: 'click',
     });
     assert.equal(error.detail.pageState.sameOrigin, true);
+    assert.equal(new URL(navigatedUrl).searchParams.has('token'), false,
+      'the real replay side must navigate with its installed session cookie');
     assert.equal(error.detail.pageState.queryKeys.includes('token'), false);
     assert.deepEqual(error.detail.pageState.visibleIds, ['members-screen', 'browse-all-apps']);
     assert.deepEqual(error.detail.pageState.visibleControlIds, ['browse-all-apps']);
@@ -712,6 +746,28 @@ test('perceptual hash distance is a bounded bit count', () => {
   assert.equal(replay.hammingHex('0000000000000000', '0000000000000000'), 0);
   assert.equal(replay.hammingHex('0000000000000000', 'ffffffffffffffff'), 64);
   assert.equal(replay.hammingHex('0000000000000000', '0000000000000003'), 2);
+});
+
+test('a static checkpoint takes its required third sample even when real screenshots are slow', async () => {
+  const png = new PNG({ width: 90, height: 80 });
+  png.data.fill(255);
+  const image = PNG.sync.write(png);
+  let captures = 0;
+  const page = {
+    evaluate: async () => {},
+    waitForTimeout: async () => {},
+    screenshot: async () => {
+      captures += 1;
+      await new Promise((resolve) => setTimeout(resolve, 1_600));
+      return image;
+    },
+  };
+  const result = await replay.captureStableCheckpoint(page, { quiet: async () => {} });
+  assert.equal(captures, 3);
+  assert.equal(result.stability.sampleCount, 3);
+  assert.ok(result.stability.captureWaitMs > 3_000);
+  assert.equal(result.stability.samples[1].distance, 0);
+  assert.equal(result.stability.samples[2].distance, 0);
 });
 
 test('capture image contains the separate evidence runtime and its pinned dependencies', () => {

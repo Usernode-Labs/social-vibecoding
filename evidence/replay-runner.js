@@ -39,6 +39,9 @@ const MOTION_TARGET_BYTES = 2_000_000;
 const MOTION_MAX_BYTES = 6_000_000;
 const INITIAL_NAVIGATION_RETRY_DELAY_MS = 500;
 const RETRYABLE_INITIAL_NAVIGATION = /\bnet::ERR_(NETWORK_CHANGED|CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_REFUSED|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE)\b/i;
+const CHECKPOINT_SETTLE_MS = 12_000;
+const CHECKPOINT_MAX_SAMPLES = 6;
+const CHECKPOINT_SCREENSHOT_MS = 6_000;
 
 const CHROMIUM_ARGS = Object.freeze([
   '--disable-dev-shm-usage',
@@ -365,6 +368,13 @@ function authorizedUrl(origin, relativePath, token) {
   return url.toString();
 }
 
+function replayNavigationToken(authToken, bootstrap) {
+  // The bootstrap request has already exchanged this token for a session
+  // cookie. Match the planner's ordinary browser navigation once that cookie
+  // exists; ?token= also changes first-run UI such as the Home tour.
+  return bootstrap.sessionCookieInstalled || bootstrap.cookieAlreadyPresent ? '' : authToken;
+}
+
 // A freshly reset internal service can change its network endpoint between
 // session bootstrap and Chromium's first document request. Retry only that
 // pre-document transport failure, never an app response, action, or assertion.
@@ -515,6 +525,26 @@ function diagnosticLocation(value, origin) {
   } catch { return { sameOrigin: false }; }
 }
 
+function diagnosticOriginKind(value, origin, hostedOrigins) {
+  try {
+    const source = new URL(value).origin;
+    if (source === origin) return 'platform';
+    if (hostedOrigins.has(source)) return 'hosted_app';
+    return 'other_origin';
+  } catch { return 'unknown'; }
+}
+
+function pageErrorOriginKind(error, origin, hostedOrigins) {
+  // Playwright pageerror has no frame property. Chromium's first stack frame
+  // normally names the throwing script. Retain only this fixed origin class,
+  // never the URL, query, code, or stack itself.
+  for (const line of String(error?.stack || '').split('\n').slice(1, 8)) {
+    const source = line.match(/https?:\/\/[^\s)]+/)?.[0];
+    if (source) return diagnosticOriginKind(source, origin, hostedOrigins);
+  }
+  return 'unknown';
+}
+
 async function failurePageState(page, context, origin, navigation = null) {
   const url = typeof page.url === 'function' ? page.url() : '';
   const location = diagnosticLocation(url, origin);
@@ -573,6 +603,7 @@ async function failurePageState(page, context, origin, navigation = null) {
 
 function failureBrowserDiagnostics(diagnostics) {
   return {
+    expectedSandboxWarnings: diagnostics.expectedSandboxWarnings || 0,
     consoleErrorCount: diagnostics.consoleErrors.length,
     pageErrorCount: diagnostics.pageErrors.length,
     failedRequestCount: diagnostics.failedRequests.length,
@@ -589,6 +620,15 @@ function failureBrowserDiagnostics(diagnostics) {
     blockedRequests: diagnostics.blockedRequests.slice(0, 5),
     httpErrors: diagnostics.httpErrors.slice(0, 10),
   };
+}
+
+function expectedPendingFrameWarning(message, source) {
+  // The platform intentionally keeps its pending app iframe at about:blank
+  // with sandbox="" until a vetted app URL is ready. Chromium reports this
+  // exact blocked-script warning from the shell bundle; it is the security
+  // boundary working, not an app exception. Keep counting it for diagnostics.
+  return source?.sameOrigin === true && source.pathname === '/shell/assets/shell.js'
+    && message === "Blocked script execution in 'about:blank' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.";
 }
 
 function expectedFinalPath(startPath, pageUrl, origin, side = 'page', { allowDeclaredHome = false } = {}) {
@@ -615,35 +655,62 @@ async function settlePage(page, { motion = false } = {}) {
 async function captureStableCheckpoint(page, network, { motion = false } = {}) {
   if (motion) {
     await settlePage(page, { motion: true });
-    return page.screenshot({ type: 'png' });
+    return { png: await page.screenshot({ type: 'png' }), stability: { mode: 'motion', sampleCount: 1 } };
   }
   // A locator can become visible before the rest of an asynchronous screen
   // has finished loading. Wait for its current reads, then require the actual
   // pixels to agree across three separated samples. This keeps static
   // evidence from freezing a partially painted route or modal backdrop.
+  const networkStartedAt = Date.now();
+  let networkQuiet = true;
   try { await network.quiet(3_000, 350); }
   catch (error) {
     // Polling may keep the network busy while the page is visually settled.
     // The pixel samples below are the actual checkpoint readiness test.
     if (error?.code !== 'network_not_quiet') throw error;
+    networkQuiet = false;
   }
-  const deadline = Date.now() + 3_000;
+  const networkWaitMs = Date.now() - networkStartedAt;
+  // Three samples are required for two agreeing pairs. The old three-second
+  // wall deadline could expire after just two slow Chromium screenshots, so
+  // a perfectly static page had no possible way to pass. Bound each capture
+  // and the number of samples while allowing the required third sample.
+  const startedAt = Date.now();
+  const deadline = startedAt + CHECKPOINT_SETTLE_MS;
   let previous = null;
   let stablePairs = 0;
-  let samples = 0;
-  while (Date.now() < deadline) {
+  const samples = [];
+  while (samples.length < 3 || (Date.now() < deadline && samples.length < CHECKPOINT_MAX_SAMPLES)) {
+    const settleStartedAt = Date.now();
     await settlePage(page);
-    const png = await page.screenshot({ type: 'png' });
+    const settleMs = Date.now() - settleStartedAt;
+    const screenshotStartedAt = Date.now();
+    let png;
+    try { png = await page.screenshot({ type: 'png', timeout: CHECKPOINT_SCREENSHOT_MS }); }
+    catch {
+      throw new ReplayFailure('checkpoint_capture_failed',
+        'The browser could not capture the static checkpoint.',
+        { sampleCount: samples.length, samples, networkQuiet, networkWaitMs,
+          captureWaitMs: Date.now() - startedAt });
+    }
+    const screenshotMs = Date.now() - screenshotStartedAt;
+    const hashStartedAt = Date.now();
     const hash = perceptualHash(png);
-    samples += 1;
-    stablePairs = previous && hammingHex(previous, hash) <= 2 ? stablePairs + 1 : 0;
-    if (stablePairs >= 2) return png;
+    const hashMs = Date.now() - hashStartedAt;
+    const distance = previous == null ? null : hammingHex(previous, hash);
+    samples.push({ settleMs, screenshotMs, hashMs, distance });
+    stablePairs = distance != null && distance <= 2 ? stablePairs + 1 : 0;
+    if (stablePairs >= 2) return { png, stability: {
+      mode: 'static', sampleCount: samples.length, samples,
+      networkQuiet, networkWaitMs, captureWaitMs: Date.now() - startedAt,
+    } };
     previous = hash;
     await page.waitForTimeout(250);
   }
   throw new ReplayFailure('unstable_checkpoint',
     'The static screen kept changing at its checkpoint; wait for a real settled state before capturing.',
-    { samples });
+    { sampleCount: samples.length, samples, networkQuiet, networkWaitMs,
+      captureWaitMs: Date.now() - startedAt });
 }
 
 function networkTracker(page) {
@@ -1078,6 +1145,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   const recordInteraction = animation === 'steps';
   const diagnostics = {
     consoleErrors: [], pageErrors: [], failedRequests: [], blockedRequests: [], httpErrors: [],
+    expectedSandboxWarnings: 0,
   };
   const controlledFailure = story.intent.controlledFailurePath
     ? { path: story.intent.controlledFailurePath, enabled: false, hits: 0,
@@ -1148,7 +1216,8 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     });
   }
   const network = networkTracker(page);
-  const startUrl = authorizedUrl(origin, sidePlan.startPath, authToken);
+  const navigationToken = replayNavigationToken(authToken, bootstrap);
+  const startUrl = authorizedUrl(origin, sidePlan.startPath, navigationToken);
   const initialNavigationFailures = [];
   const initialNavigationRetries = new Set();
   let initialNavigationPending = true;
@@ -1157,11 +1226,41 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   const successfulRequests = new Map();
   const consoleEvents = [];
   let networkOrder = 0;
+  let recoveredNetworkChanges = 0;
+  let cancelledReads = 0;
+  let expectedFailureConsoleCount = 0;
+  const assertCleanBrowser = () => {
+    if (controlledFailure && controlledFailure.hits === 0) {
+      throw new ReplayFailure('controlled_failure_unused',
+        'The declared API request was never made while the controlled failure was enabled.');
+    }
+    expectedFailureConsoleCount += discardExpectedControlledFailureConsole(
+      diagnostics, consoleEvents, controlledFailure
+    );
+    recoveredNetworkChanges += discardRecoveredNetworkChanges(
+      diagnostics, networkFailures, successfulRequests, consoleEvents
+    ).requests;
+    cancelledReads += discardCancelledReads(
+      diagnostics, networkFailures, consoleEvents, pageRouteIdentity(page.url())
+    ).requests;
+    if (diagnostics.consoleErrors.length || diagnostics.pageErrors.length
+        || diagnostics.failedRequests.length || diagnostics.blockedRequests.length) {
+      throw new ReplayFailure('browser_diagnostics',
+        `${side} emitted browser errors, request failures, or attempted cross-origin traffic.`,
+        diagnostics);
+    }
+  };
   page.on('console', (message) => {
     if (message.type() === 'error' && diagnostics.consoleErrors.length < MAX_CONSOLE_ITEMS) {
+      const source = diagnosticLocation(message.location()?.url || '', origin);
+      if (expectedPendingFrameWarning(message.text(), source)) {
+        diagnostics.expectedSandboxWarnings += 1;
+        return;
+      }
       const entry = {
         message: safeDiagnosticText(message.text()),
-        source: diagnosticLocation(message.location()?.url || '', origin),
+        source,
+        sourceKind: diagnosticOriginKind(message.location()?.url || '', origin, hostedOrigins),
       };
       diagnostics.consoleErrors.push(entry);
       consoleEvents.push({ entry, url: message.location()?.url || '', method: 'GET', message: message.text() });
@@ -1172,7 +1271,10 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   });
   page.on('pageerror', (error) => {
     if (diagnostics.pageErrors.length < MAX_CONSOLE_ITEMS) {
-      diagnostics.pageErrors.push({ message: safeDiagnosticText(error.message) });
+      diagnostics.pageErrors.push({
+        message: safeDiagnosticText(error.message),
+        sourceKind: pageErrorOriginKind(error, origin, hostedOrigins),
+      });
     }
   });
   page.on('requestfailed', (request) => {
@@ -1266,7 +1368,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
         actionId: action.id, actionStage: action.stage, actionType: action.type,
       });
       if (Date.now() >= sideDeadline) throw new ReplayFailure('side_timeout', `${side} exceeded its ${planContract.MAX_SIDE_MS} ms budget.`);
-      const durationMs = await executeAction(page, action, origin, network, authToken,
+      const durationMs = await executeAction(page, action, origin, network, navigationToken,
         controlledFailure, hostedAppState);
       await settlePage(page, { motion });
       actionResults.push({ id: action.id, stage: action.stage, type: action.type, durationMs, passed: true });
@@ -1306,32 +1408,17 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     if (!focusRect || focusRect.width < 8 || focusRect.height < 8) {
       throw new ReplayFailure('focus_too_small', `${story.id} ${side} focus is too small to review.`);
     }
+    // A browser error is already decisive. Surface it before spending time on
+    // screenshots so it cannot be hidden by a later checkpoint timeout.
+    failureStage = { phase: 'browser_diagnostics' };
+    assertCleanBrowser();
     failureStage = { phase: 'capture_checkpoint' };
-    const contextPng = await captureStableCheckpoint(page, network, { motion });
+    const { png: contextPng, stability } = await captureStableCheckpoint(page, network, { motion });
+    emitEvent({ type: 'checkpoint_stability', ...eventBase, ...stability });
     stages.push({ stage: '__checkpoint__', image: contextPng });
 
     failureStage = { phase: 'browser_diagnostics' };
-    if (controlledFailure && controlledFailure.hits === 0) {
-      throw new ReplayFailure('controlled_failure_unused',
-        'The declared API request was never made while the controlled failure was enabled.');
-    }
-    const expectedFailureConsoleCount = discardExpectedControlledFailureConsole(
-      diagnostics, consoleEvents, controlledFailure
-    );
-    const recoveredNetwork = discardRecoveredNetworkChanges(
-      diagnostics, networkFailures, successfulRequests, consoleEvents
-    );
-    const cancelledReads = discardCancelledReads(
-      diagnostics, networkFailures, consoleEvents, pageRouteIdentity(page.url())
-    );
-    if (diagnostics.consoleErrors.length || diagnostics.pageErrors.length
-        || diagnostics.failedRequests.length || diagnostics.blockedRequests.length) {
-      throw new ReplayFailure(
-        'browser_diagnostics',
-        `${side} emitted browser errors, request failures, or attempted cross-origin traffic.`,
-        diagnostics
-      );
-    }
+    assertCleanBrowser();
     const result = {
       side, storyId: story.id, viewport: viewport.name, path: finalPath,
       actionResults, assertions, focusRect, contextPng, stages,
@@ -1356,10 +1443,11 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       recordedFrameCount: result.recordedFrameCount,
       location: diagnosticLocation(page.url(), origin),
       httpErrorCount: diagnostics.httpErrors.length,
-      recoveredNetworkChanges: recoveredNetwork.requests,
-      cancelledReads: cancelledReads.requests,
+      recoveredNetworkChanges,
+      cancelledReads,
       controlledFailureHits: controlledFailure?.hits || 0,
       expectedFailureConsoleCount,
+      expectedSandboxWarnings: diagnostics.expectedSandboxWarnings,
     });
     return result;
   } catch (error) {
@@ -1379,6 +1467,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       storyId: story.id, viewport: viewport.name, side, ...failureStage,
       pageState,
       bootstrap,
+      hostedAppSlugs: [...hostedAppState.loaded.keys()].slice(0, 10),
       targetStates,
       browserDiagnostics: failureBrowserDiagnostics(diagnostics),
     });
@@ -1610,6 +1699,7 @@ module.exports = {
   waitForNotVisible,
   waitForVisibleText,
   authorizedUrl,
+  replayNavigationToken,
   navigateStart,
   discardRecoveredInitialNavigationFailures,
   discardRecoveredNetworkChanges,
@@ -1618,6 +1708,8 @@ module.exports = {
   trustedHostedAppOrigins,
   loadTrustedHostedAppOrigins,
   installOriginFence,
+  expectedPendingFrameWarning,
+  pageErrorOriginKind,
   executeAction,
   publicRelativePath,
   redactedUrl,
@@ -1629,6 +1721,7 @@ module.exports = {
   centeredRect,
   normalizeCropPair,
   hammingHex,
+  captureStableCheckpoint,
   screenshotFingerprint,
   runReplay,
   contextualFailure,

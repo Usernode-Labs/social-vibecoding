@@ -52,9 +52,9 @@ function replayRepairKind(error, plan) {
     const httpErrors = diagnostics.httpErrors || [];
     const consoleErrors = diagnostics.consoleErrors || [];
     // A same-origin API 404 can mean the planner followed a check fixture
-    // under the wrong persona. Give it one bounded chance to find the real
-    // data path. JavaScript errors, failed network requests and blocked
-    // origins remain hard failures, never published as successful evidence.
+    // under the wrong persona. Give it a bounded chance to find real data.
+    // Browser errors and blocked origins always invalidate this replay; a
+    // hosted-app story may instead select another real app on a fresh pass.
     if (httpErrors.length > 0
         && httpErrors.every((item) => item.status === 404
           && item.location?.sameOrigin === true
@@ -65,6 +65,18 @@ function replayRepairKind(error, plan) {
         && !(diagnostics.pageErrors || []).length
         && !(diagnostics.failedRequests || []).length
         && !(diagnostics.blockedRequests || []).length) return 'route_data';
+    const story = plan?.stories?.find((item) => item.id === error.detail.storyId);
+    const openedHostedApp = ['before', 'after'].some((side) =>
+      story?.replay?.[side]?.actions?.some((action) => action.type === 'waitForHostedApp'));
+    if (openedHostedApp && error.detail.hostedAppSlugs?.length
+        && (diagnostics.blockedRequests?.some((item) => item.embedded === true)
+          || diagnostics.pageErrors?.some((item) => item.sourceKind === 'hosted_app')
+          || diagnostics.consoleErrors?.some((item) => item.sourceKind === 'hosted_app'))) return 'hosted_app';
+  }
+  if (code === 'unstable_checkpoint' && error?.detail?.phase === 'capture_checkpoint'
+      && error.detail.sampleCount >= 3) {
+    const story = plan?.stories?.find((item) => item.id === error.detail.storyId);
+    if (story && story.intent.animation !== 'motion') return 'static_timing';
   }
   // A missing element in a positive assertion is another locator error.
   // Wrong values and states remain hard failures except for an exact motion
@@ -639,10 +651,24 @@ function replayProgressEvent(event, pass) {
     ...(type === 'navigation_retry' && event?.attempt === 2 ? { attempt: 2 } : {}),
     ...(['actionCount', 'assertionCount', 'recordedFrameCount', 'httpErrorCount',
       'recoveredRequestCount', 'recoveredNetworkChanges', 'controlledFailureHits',
-      'expectedFailureConsoleCount', 'baseFrames', 'headFrames', 'bytes'].reduce((counts, key) => {
+      'expectedFailureConsoleCount', 'expectedSandboxWarnings', 'baseFrames', 'headFrames', 'bytes'].reduce((counts, key) => {
       if (Number.isInteger(event?.[key]) && event[key] >= 0) counts[key] = event[key];
       return counts;
     }, {})),
+    ...(type === 'checkpoint_stability' ? {
+      mode: event.mode === 'motion' ? 'motion' : 'static',
+      networkQuiet: event.networkQuiet === true,
+      ...(['sampleCount', 'networkWaitMs', 'captureWaitMs'].reduce((values, key) => {
+        if (Number.isInteger(event?.[key]) && event[key] >= 0) values[key] = event[key];
+        return values;
+      }, {})),
+      samples: Array.isArray(event.samples) ? event.samples.slice(0, 6).map((sample) => ({
+        ...(['settleMs', 'screenshotMs', 'hashMs', 'distance'].reduce((values, key) => {
+          if (Number.isInteger(sample?.[key]) && sample[key] >= 0) values[key] = sample[key];
+          return values;
+        }, {})),
+      })) : [],
+    } : {}),
     ...(type === 'session_bootstrap' ? {
       attempted: event.attempted === true,
       cookieAlreadyPresent: event.cookieAlreadyPresent === true,
@@ -1369,6 +1395,10 @@ async function executeRun(config, options, injected = {}) {
         registration.control.allowRepair(
           repairKind === 'motion_timing'
             ? 'A motion checkpoint ran while an observed element was still visible. Inspect both revisions and add an observed, bounded wait without changing the checkpoint assertions or interactions.'
+            : repairKind === 'static_timing'
+              ? 'The static checkpoint kept changing after at least three pixel samples. Inspect both revisions and wait for an observed settled state. Keep the original interactions, focus, and assertions.'
+            : repairKind === 'hosted_app'
+              ? 'The selected hosted app loaded but had browser errors or blocked external requests. Inspect a different deployed public app on both revisions, keep the original platform interaction and assertions, and use it only if its runtime loads cleanly. Do not widen the network policy or suppress browser errors.'
             : repairKind === 'route_data'
               ? 'The planned route produced same-origin API 404s. Inspect the accepted persona on both revisions, choose real accessible data, and follow the claimed user flow. Do not use an error page or a shell with missing content as evidence.'
             : 'A planned locator did not match the intended visible element during replay. Inspect its actual state on both revisions and correct the replays.',
@@ -1402,6 +1432,10 @@ async function executeRun(config, options, injected = {}) {
         failurePhase = 'agent_repair';
         progress(repairKind === 'motion_timing'
           ? 'A motion checkpoint ran before the animation settled; the evidence agent is checking the timing…'
+          : repairKind === 'static_timing'
+            ? 'The static checkpoint kept changing; the evidence agent is checking the settled state…'
+          : repairKind === 'hosted_app'
+            ? 'The selected app had browser errors; the evidence agent is checking another deployed app…'
           : repairKind === 'route_data'
             ? 'The planned route could not load its data; the evidence agent is checking the account and fixture…'
           : 'A planned control did not match the page; the evidence agent is inspecting and correcting it…');
@@ -1761,6 +1795,7 @@ module.exports = {
   traceSummary,
   progressPhase,
   replayProgressEvent,
+  replayRepairKind,
   startRunHeartbeat,
   liveRunObserver,
   notifyEvidence,
