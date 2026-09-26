@@ -1331,6 +1331,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // received and counted rows under a body:has(). The first-feedback check
   // pins the moment's new "See your feedback" beside the board button.
   //
+  // 820 → 820: the app limit card on Admin → Limits FOLDED rather than
+  // added. "The admin console's Limits section offers the Anthropic credit
+  // balance fields" now also requires #admin-app-limit (with its usage line)
+  // in the same section via :has(), and the card's description as
+  // expectText; its name and path are unchanged.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
   checkCap.assertPinned(DAPP.tests.length, 820);

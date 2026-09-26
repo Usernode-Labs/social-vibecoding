@@ -2323,6 +2323,9 @@ END $$;
 -- #2387 adds 'thread_reply': somebody replied in an app-chat reply thread
 -- you started or replied in; chat_message_id is the new reply, whose
 -- thread_ref is the thread's root message.
+-- #3181 adds 'session_stalled': a dev-session turn ended without finishing
+-- (an error, a timeout, a lost worker, or a system pause mid-turn);
+-- session_id points to the session, like 'session_done'.
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -4925,6 +4928,9 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('approver_invite_accepted', 'invitations', TRUE),
   ('spec_shared', 'shared_work', TRUE),
   ('session_done', 'developer_sessions', TRUE),
+  -- #3181: a dev-session turn that stopped before finishing. The other half
+  -- of session_done, so the same category.
+  ('session_stalled', 'developer_sessions', TRUE),
   ('auto_solve_done', 'developer_sessions', TRUE),
   ('connector_submitted', 'developer_sessions', TRUE),
   ('agent_awaiting_input', 'developer_sessions', TRUE),
@@ -4987,6 +4993,8 @@ DELETE FROM mobile_push_kind_categories
    'friend_request', 'friend_accept',
    -- #2387.
    'conversation_thread_reply',
+   -- #3181.
+   'session_stalled',
    -- Server-wide limit alerts for full admins.
    'platform_limit'
  );
@@ -9882,6 +9890,14 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_closed_at TIMESTAMPTZ
 -- { "workshop": "<iso>", "discover": "<iso>" }. Written only while the card
 -- is showing, and read only by it.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;
+-- When this account finished (or skipped) the welcome tour
+-- (frontend/src/features/home/tour). Server state for the same reason as the
+-- card's close: "done" used to live only in the browser's storage, so every
+-- other device, a cleared or evicted storage, a private window and the move
+-- to a new domain all offered the tour again. The browser's own flag still
+-- counts, and a browser that has it copies it here once. Reset first run
+-- clears it, so the tour follows the join screen again on every device.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at TIMESTAMPTZ;
 
 -- ── Platform limit alerts ──────────────────────────────────────────────
 --

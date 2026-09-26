@@ -82,8 +82,8 @@
     // Has THIS document shown the real join screen (never the ?shot=
     // fixture)? Read by the tour: a first run shown here, a new account's or
     // one an admin reset (Admin → Users → ⋯ → Reset first run), restarts the
-    // tour even in a browser that finished it before, because the tour keeps
-    // "done" per browser rather than on the server.
+    // tour even in a browser that finished it before, whatever this browser's
+    // or a stale copy of the account's "done" says.
     shownHere() {
       return CommunitiesFirstRun._shownHere === true;
     },

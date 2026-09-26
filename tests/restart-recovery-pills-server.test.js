@@ -141,7 +141,16 @@ test('mid-exec-killed breadcrumb carries the unrecoverable pills', async () => {
   assert.deepEqual(status.quickReplies,
     recoveryPills.buildRecoveryQuickReplies('unrecoverable'),
     'the live tab gets the pills without a reload');
+  // #3181: and the owner is told the session stopped before finishing.
+  assert.ok(stalledNotifyFor(pool, 77), 'the stalled-session notification ran');
 });
+
+// #3181: notifySessionStalled's first step, the owner lookup it shares with
+// session_done, issued for this session.
+function stalledNotifyFor(pool, sessionId) {
+  return pool.calls.some((c) => /SET notify_on_done = FALSE[\s\S]*RETURNING user_id, app_id/.test(c.sql)
+    && c.params[0] === sessionId);
+}
 
 test('worker-gone breadcrumb carries the unrecoverable pills', async () => {
   // No container for the session (state 'exited' with an active_turn record)
@@ -162,6 +171,7 @@ test('worker-gone breadcrumb carries the unrecoverable pills', async () => {
   assert.equal(gone.content, recoveryPills.TURN_UNFINISHED_BREADCRUMB);
   assert.deepEqual(gone.metadata.quickReplies,
     recoveryPills.buildRecoveryQuickReplies('unrecoverable'));
+  assert.ok(stalledNotifyFor(pool, 77), '#3181: the owner is told it stopped before finishing');
 });
 
 // ── 2. resumeDetachedTurnInner / watchdog breadcrumbs (source-invariant)
@@ -297,6 +307,10 @@ function makeBackfillPool({ sessions = [], lastRows = {}, newestSystem = {} } = 
         const row = newestSystem[params[0]];
         return { rows: row ? [row] : [] };
       }
+      // #3181: the stalled-turn notification reads the owner off the row.
+      if (/SET notify_on_done = FALSE[\s\S]*RETURNING user_id, app_id/i.test(text)) {
+        return { rows: [{ user_id: 9, app_id: 3 }], rowCount: 1 };
+      }
       return { rows: [], rowCount: 0 };
     },
   };
@@ -358,10 +372,15 @@ test('backfill: a trailing user row gets the missed-reply breadcrumb + resend pi
     newestSystem: { 5: { content: 'Thinking about your request...' } },
   });
   await restoreMissingQuickReplies({});
-  const w = writes(backfillPool);
+  const w = writes(backfillPool).filter((c) => /chat_session_messages/.test(c.sql));
   assert.equal(w.length, 1);
   assert.match(w[0].sql, /INSERT INTO chat_session_messages/);
   assert.equal(w[0].params[1], recoveryPills.UNANSWERED_BREADCRUMB);
+  // #3181: a turn that died before answering is a session that stopped
+  // before finishing, and its owner is told so, not left to find the row.
+  const stalled = backfillPool.calls.find((c) => /INSERT INTO notifications[\s\S]*'session_stalled'/.test(c.sql));
+  assert.ok(stalled, 'the owner gets a session_stalled notification');
+  assert.deepEqual(stalled.params, [9, 3, 5]);
   assert.deepEqual(JSON.parse(w[0].params[2]).quickReplies,
     ['Make the leaderboard sort by score', "What's the current state?"]);
 

@@ -1,5 +1,6 @@
 const appAllowance = require('../services/app-allowance');
 const platformLimits = require('../services/platform-limit-alerts');
+const appLimit = require('../services/app-limit');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -1074,7 +1075,7 @@ function appRoutes(config) {
     res.set('Cache-Control', 'private, no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
-      res.json(await appAllowance.read(pool, req.user, { maxApps: config.maxApps }));
+      res.json(await appAllowance.read(pool, req.user, { maxApps: await appLimit.effective(pool, config) }));
     } catch (err) {
       log.error('apps', 'App allowance lookup failed', { message: err.message });
       res.status(500).json({ error: 'Could not load your app allowance. Please try again.' });
@@ -1086,7 +1087,7 @@ function appRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     if (req.user.canAdminWrite) return res.status(400).json({ error: 'Your account already has unlimited app slots.' });
     try {
-      res.json(await appAllowance.requestMore(pool, req.user, { maxApps: config.maxApps }));
+      res.json(await appAllowance.requestMore(pool, req.user, { maxApps: await appLimit.effective(pool, config) }));
     } catch (err) {
       log.error('apps', 'App allowance request failed', { message: err.message });
       res.status(500).json({ error: 'Could not send your request. Please try again.' });
@@ -1175,21 +1176,23 @@ function appRoutes(config) {
       // Enforce global app cap (full admins bypass; view-only admins
       // don't — issue #311). Errored apps don't count
       // toward the limit — they hold ~no resources and can be deleted to
-      // free a slot.
-      if (!req.user?.canAdminWrite && config.maxApps > 0) {
+      // free a slot. The cap is the admin's setting when one is stored,
+      // else MAX_APPS (services/app-limit.js).
+      const maxApps = req.user?.canAdminWrite ? 0 : await appLimit.effective(pool, config);
+      if (maxApps > 0) {
         const { rows: countRows } = await pool.query(
           `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
         );
-        if (countRows[0].n >= config.maxApps) {
+        if (countRows[0].n >= maxApps) {
           log.warn('apps', 'App creation blocked by max-apps cap', {
             userId: req.user.id,
             active: countRows[0].n,
-            cap: config.maxApps,
+            cap: maxApps,
           });
           // Somebody was just refused: make sure the admins have heard.
           platformLimits.nudge(pool, config, 'apps');
           return res.status(429).json({
-            error: `This server is at its app limit (${config.maxApps}). Ask an admin to remove an app or raise the limit.`,
+            error: `This server is at its app limit (${maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
         }
       }
@@ -1344,14 +1347,15 @@ function appRoutes(config) {
         const allowance = await appAllowance.read(pool, req.user);
         if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
-      if (!req.user?.canAdminWrite && config.maxApps > 0) {
+      const maxApps = req.user?.canAdminWrite ? 0 : await appLimit.effective(pool, config);
+      if (maxApps > 0) {
         const { rows: countRows } = await pool.query(
           `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
         );
-        if (countRows[0].n >= config.maxApps) {
+        if (countRows[0].n >= maxApps) {
           platformLimits.nudge(pool, config, 'apps');
           return res.status(429).json({
-            error: `This server is at its app limit (${config.maxApps}). Ask an admin to remove an app or raise the limit.`,
+            error: `This server is at its app limit (${maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
         }
       }

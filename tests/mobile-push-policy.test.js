@@ -165,6 +165,10 @@ test('each kind renders its own title and body from send-time context', () => {
     ['session_done', CONTEXT,
       'Your build is ready · MyPage',
       '"Fix login redirect loop" finished. Review it while it\'s fresh'],
+    // #3181: the turn stopped before finishing. Where, then what to do.
+    ['session_stalled', CONTEXT,
+      'Your session on MyPage stopped before finishing',
+      'Open "Fix login redirect loop" to continue'],
     ['pr_proposed', { ...CONTEXT, prTitle: 'Fix login redirect loop', sessionTitle: null },
       '@alice proposed "Fix login redirect loop" · MyPage',
       '@alice would love your eyes on this'],
@@ -308,6 +312,11 @@ test('missing context degrades to the generic notification, never a throw', () =
     buildMessage({ ...INPUT, kind: 'session_done', context: {} }).notification,
     { title: 'Your build is ready' }
   );
+  // #3181: a stalled session still says what happened and what to do.
+  assert.deepEqual(
+    buildMessage({ ...INPUT, kind: 'session_stalled', context: {} }).notification,
+    { title: 'Your session stopped before finishing', body: 'Open it to continue' }
+  );
   // The new system-owned kinds can still identify the event without an
   // actor, app or proposal label, so they never regress to generic activity.
   assert.deepEqual(
@@ -410,11 +419,11 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
   }).notification;
   assert.deepEqual(copy('apps_warn:40:50'), {
     title: 'Nearing the app limit',
-    body: '40 of 50 apps are in use. Raise MAX_APPS in Platform variables before new apps are refused',
+    body: '40 of 50 apps are in use. Raise the limit in Admin \u2192 Limits before new apps are refused',
   });
   assert.deepEqual(copy('apps_full:50:50'), {
     title: 'App limit reached',
-    body: '50 of 50 apps are in use. New apps are refused until an admin raises MAX_APPS or removes one',
+    body: '50 of 50 apps are in use. New apps are refused until the limit is raised in Admin \u2192 Limits',
   });
   assert.deepEqual(copy('sessions_warn:60:75'), {
     title: 'Nearing the session limit',

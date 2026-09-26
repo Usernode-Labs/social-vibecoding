@@ -4,8 +4,11 @@
  *
  * The tour's own Skip says "You can reopen this from Settings", so this
  * section is the other half of that sentence rather than a nicety. It is one
- * button: clear the stored "finished" flag for this account, ask for the tour
- * again, and go to Home, which is where every step points.
+ * button: clear this browser's "finished" flag for this account, ask for the
+ * tour again, and go to Home, which is where every step points. The request
+ * opens the tour whatever the account's own "done" says
+ * (../../home/tour/tour-done.ts), and finishing it records "done" on both
+ * again.
  *
  * ── Why this pane may hold a handler at all ───────────────────────────
  *

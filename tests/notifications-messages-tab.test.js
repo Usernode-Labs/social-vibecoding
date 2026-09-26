@@ -143,7 +143,7 @@ test('there is no Agents tab: the strip is Unread, Messages, All', () => {
 
 test('agent notifications carry a flag set beside the kinds that name them', () => {
   const kinds = FE_SRC.slice(FE_SRC.indexOf('const AGENT_NOTIF_KINDS'));
-  for (const kind of ['session_done', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted']) {
+  for (const kind of ['session_done', 'session_stalled', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted']) {
     assert.match(kinds.slice(0, kinds.indexOf(']);')), new RegExp(`'${kind}'`));
   }
   assert.match(FE_SRC, /AGENT_NOTIF_KINDS\.has\(run\.item && run\.item\.kind\)\s*\n?\s*\? \{ \.\.\.rowView\(run\.item\), agent: true \}/);

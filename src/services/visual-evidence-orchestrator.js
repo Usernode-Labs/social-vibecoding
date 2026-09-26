@@ -42,9 +42,41 @@ const REPAIRABLE_LOCATOR_CODES = new Set([
   'ambiguous_locator', 'locator_not_found', 'locator_not_visible',
 ]);
 const MAX_REPAIR_ATTEMPTS = 2;
+const MAX_TRANSIENT_REPLAY_RETRIES = 1;
+
+function transientNetworkReplayFailure(error) {
+  const diagnostics = error?.detail?.browserDiagnostics;
+  if (!diagnostics || typeof diagnostics !== 'object') return null;
+  const failedRequests = Array.isArray(diagnostics.failedRequests)
+    ? diagnostics.failedRequests : [];
+  const consoleErrors = Array.isArray(diagnostics.consoleErrors)
+    ? diagnostics.consoleErrors : [];
+  const httpErrors = Array.isArray(diagnostics.httpErrors) ? diagnostics.httpErrors : [];
+  const blockedRequests = Array.isArray(diagnostics.blockedRequests)
+    ? diagnostics.blockedRequests : [];
+  if (!failedRequests.length
+      || failedRequests.some((item) => !/\bnet::ERR_NETWORK_CHANGED\b/i.test(item?.error || ''))
+      || consoleErrors.some((item) => !/\bnet::ERR_NETWORK_CHANGED\b/i.test(item?.message || ''))
+      || Number(diagnostics.httpErrorCount || 0) > 0 || httpErrors.length
+      || Number(diagnostics.blockedRequestCount || 0) > 0 || blockedRequests.length) return null;
+  return {
+    kind: 'network_changed',
+    code: errorCode(error),
+    ...(typeof error.detail.storyId === 'string' ? { storyId: error.detail.storyId } : {}),
+    ...(['base', 'head'].includes(error.detail.side) ? { side: error.detail.side } : {}),
+    failedRequestCount: failedRequests.length,
+    consoleErrorCount: consoleErrors.length,
+    pageErrorCount: Array.isArray(diagnostics.pageErrors) ? diagnostics.pageErrors.length : 0,
+  };
+}
 
 function replayRepairKind(error, plan) {
   const code = errorCode(error);
+  // The deterministic runner already retries a pure network-change pass once.
+  // A repeated transport failure cannot be repaired by changing the plan, so
+  // preserve it as infrastructure diagnostics instead of spending a model
+  // correction turn on a locator that only disappeared with the page bundle.
+  if (transientNetworkReplayFailure(error)) return null;
   if (REPAIRABLE_LOCATOR_CODES.has(code)) return 'locator';
   if (code === 'controlled_failure_unused') return 'controlled_failure';
   if (code === 'browser_diagnostics' && error?.detail?.phase === 'browser_diagnostics') {
@@ -78,13 +110,21 @@ function replayRepairKind(error, plan) {
     const story = plan?.stories?.find((item) => item.id === error.detail.storyId);
     if (story && story.intent.animation !== 'motion') return 'static_timing';
   }
-  // A missing element in a positive assertion is another locator error.
-  // Wrong values and states remain hard failures except for an exact motion
-  // checkpoint that can be verified after an observed, bounded state wait.
+  // A missing element in a positive assertion or more than one match for an
+  // assertion that requires a unique target is another locator error. Keep
+  // count assertions as claims about cardinality, and keep detached failures
+  // hard: narrowing a selector until nothing matches would not prove that the
+  // intended element disappeared. Wrong values and states remain hard
+  // failures except for an exact motion checkpoint that can be verified after
+  // an observed, bounded state wait.
   if (code !== 'assertion_failed' || error?.detail?.phase !== 'assertion') return null;
+  const assertionType = error.detail.assertion?.type;
+  const uniqueAssertion = ['visible', 'hidden', 'attached', 'checked', 'text', 'value', 'focusWithin']
+    .includes(assertionType);
+  if (uniqueAssertion && error.detail.count > 1) return 'locator';
   if (error.detail.count === 0
     && ['visible', 'attached', 'checked', 'text', 'value', 'focusWithin']
-      .includes(error.detail.assertion?.type)) return 'locator';
+      .includes(assertionType)) return 'locator';
   const detail = error.detail;
   const story = plan?.stories?.find((item) => item.id === detail.storyId);
   const side = detail.side === 'base' ? 'before' : detail.side === 'head' ? 'after' : null;
@@ -854,6 +894,7 @@ function newRunMetrics() {
       cleanup: 0,
     },
     replayPasses: [],
+    replayRetries: [],
     replayRuntime: null,
     lastReplayEvent: null,
     replayEvents: [],
@@ -915,6 +956,7 @@ function traceSummary(metrics, extra = {}) {
       total: Math.max(0, Date.now() - metrics.startedAtMs),
     },
     replayPasses: metrics.replayPasses.slice(0, 12),
+    replayRetries: metrics.replayRetries.slice(0, 6),
     replayRuntime: metrics.replayRuntime,
     lastReplayEvent: metrics.lastReplayEvent,
     replayEvents: metrics.replayEvents.slice(-MAX_REPLAY_EVENTS),
@@ -1171,38 +1213,47 @@ async function executeRun(config, options, injected = {}) {
             stage(failurePhase);
             return deployment;
           };
-          const firstStartedAt = Date.now();
-          failurePhase = 'pass_1';
-          stage(failurePhase);
-          const first = await deps.replay.runPassCases(
-            config,
-            session.id,
-            replayInput({ run, plan, deployment: exploration, authTokens, provenance: expectedProvenance, pass: 1 }),
-            { prepareCase: prepareCase(1), onEvent: (event) => {
-              recordReplayEvent(event, 1);
-            }, previewRunId: run.id }
-          );
-          metrics.replayPasses.push({
-            attempt,
-            pass: 1,
-            durationMs: Math.max(0, Date.now() - firstStartedAt),
-          });
-          const secondStartedAt = Date.now();
-          failurePhase = 'pass_2';
-          stage(failurePhase);
-          const second = await deps.replay.runPassCases(
-            config,
-            session.id,
-            replayInput({ run, plan, deployment: exploration, authTokens, provenance: expectedProvenance, pass: 2 }),
-            { prepareCase: prepareCase(2), onEvent: (event) => {
-              recordReplayEvent(event, 2);
-            }, previewRunId: run.id }
-          );
-          metrics.replayPasses.push({
-            attempt,
-            pass: 2,
-            durationMs: Math.max(0, Date.now() - secondStartedAt),
-          });
+          const runReplayPass = async (pass) => {
+            let retries = 0;
+            while (true) {
+              const passStartedAt = Date.now();
+              failurePhase = `pass_${pass}`;
+              stage(failurePhase);
+              try {
+                const result = await deps.replay.runPassCases(
+                  config,
+                  session.id,
+                  replayInput({ run, plan, deployment: exploration,
+                    authTokens, provenance: expectedProvenance, pass }),
+                  { prepareCase: prepareCase(pass), onEvent: (event) => {
+                    recordReplayEvent(event, pass);
+                  }, previewRunId: run.id }
+                );
+                metrics.replayPasses.push({
+                  attempt,
+                  pass,
+                  durationMs: Math.max(0, Date.now() - passStartedAt),
+                });
+                return result;
+              } catch (error) {
+                const transient = transientNetworkReplayFailure(error);
+                if (!transient || retries >= MAX_TRANSIENT_REPLAY_RETRIES) throw error;
+                retries += 1;
+                metrics.replayRetries.push({
+                  attempt, pass, retry: retries,
+                  durationMs: Math.max(0, Date.now() - passStartedAt),
+                  ...transient,
+                });
+                recordReplayEvent({
+                  type: 'pass_retry', code: transient.kind,
+                  storyId: transient.storyId, side: transient.side,
+                }, pass);
+                progress(`Evidence pass ${pass} hit a temporary network change; replaying the same plan once…`);
+              }
+            }
+          };
+          const first = await runReplayPass(1);
+          const second = await runReplayPass(2);
           failurePhase = 'compare';
           stage(failurePhase);
           const hardVerdict = deps.replay.comparePasses(first, second, {
@@ -1800,6 +1851,7 @@ module.exports = {
   progressPhase,
   replayProgressEvent,
   replayRepairKind,
+  transientNetworkReplayFailure,
   startRunHeartbeat,
   liveRunObserver,
   notifyEvidence,

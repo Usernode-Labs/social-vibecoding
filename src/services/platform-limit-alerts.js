@@ -4,9 +4,10 @@
 //
 // Two ceilings bound the whole server rather than one person or one app:
 //
-//   apps      MAX_APPS — every non-errored app on the host. A hard wall:
-//             past it, POST /api/apps and /fork answer 429 "This server is
-//             at its app limit" to everyone but full admins.
+//   apps      the app limit — every non-errored app on the host. A hard
+//             wall: past it, POST /api/apps and /fork answer 429 "This
+//             server is at its app limit" to everyone but full admins. Set
+//             in Admin → Limits, else MAX_APPS (services/app-limit.js).
 //   sessions  MAX_GLOBAL_SESSIONS — active + promoted coding workers. A soft
 //             wall: at it, starting or reopening a session pauses somebody
 //             else's idle one, and 429s "Platform is at capacity" when
@@ -36,10 +37,11 @@
 // notifications, so the leader's sweep and a create route racing it cannot
 // both claim the same crossing.
 //
-// Evaluated in two places: the leader's sweep (server.js,
-// startPlatformLimitSweeper) for both caps, and — for apps only — right
-// after a create or fork succeeds or is refused at the cap, so the alert
-// does not wait for the next sweep.
+// Evaluated by the leader's sweep (server.js, startPlatformLimitSweeper)
+// for both caps, and — for apps only — right after a create or fork
+// succeeds or is refused at the cap, and right after an admin changes the
+// app limit (routes/admin.js), so the alert does not wait for the next
+// sweep.
 //
 // STAGING: a preview's users table is a clone of production's, so a
 // notification there would reach real admins' phones about a throwaway
@@ -48,6 +50,7 @@
 
 const log = require('./logger');
 const { withTransaction } = require('./cli-auth');
+const appLimit = require('./app-limit');
 
 const DEFAULT_WARN_PERCENT = 80;
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
@@ -58,12 +61,15 @@ const LEVELS = Object.freeze(['ok', 'warn', 'full']);
 const RANK = Object.freeze({ ok: 0, warn: 1, full: 2 });
 
 // The caps this watches. `count` must be the exact query the enforcing
-// route uses, so the alert can never disagree with the refusal.
+// route uses, and `cap` the exact cap it enforces, so the alert can never
+// disagree with the refusal. `enabled` answers without the database, so a
+// nudge for a cap the deploy switched off costs nothing.
 const LIMITS = Object.freeze([
   Object.freeze({
     key: 'apps',
     envKey: 'MAX_APPS',
-    cap: (config) => Number(config && config.maxApps),
+    enabled: (config) => appLimit.deployDefault(config) > 0,
+    cap: (config, pool) => appLimit.effective(pool, config),
     async count(pool) {
       // routes/apps.js POST /api/apps and /fork; services/app-allowance.js.
       const { rows } = await pool.query(
@@ -75,7 +81,8 @@ const LIMITS = Object.freeze([
   Object.freeze({
     key: 'sessions',
     envKey: 'MAX_GLOBAL_SESSIONS',
-    cap: (config) => Number(config && config.maxGlobalSessions),
+    enabled: (config) => Number(config && config.maxGlobalSessions) > 0,
+    cap: async (config) => Number(config && config.maxGlobalSessions),
     async count(pool) {
       // routes/sessions.js — the global-cap probe every start/resume runs.
       const { rows } = await pool.query(
@@ -184,7 +191,7 @@ function defaultPublish(pool, row) {
 async function evaluate(pool, config, key, deps = {}) {
   const limit = LIMIT_BY_KEY.get(key);
   if (!limit) throw new Error(`unknown platform limit: ${key}`);
-  const cap = limit.cap(config);
+  const cap = await limit.cap(config, pool);
   const percent = warnPercent();
   const used = await limit.count(pool);
   if (!Number.isFinite(used) || used < 0) throw new Error(`bad ${key} count`);
@@ -256,7 +263,7 @@ async function sweep(pool, config, deps = {}) {
  */
 function nudge(pool, config, key) {
   const limit = LIMIT_BY_KEY.get(key);
-  if (!limit || !lines(limit.cap(config), DEFAULT_WARN_PERCENT)) return;
+  if (!limit || !limit.enabled(config)) return;
   Promise.resolve()
     .then(() => evaluate(pool, config, key))
     .catch((err) => {

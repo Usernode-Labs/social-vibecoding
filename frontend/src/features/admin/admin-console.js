@@ -290,7 +290,7 @@ const AdminConsole = {
     { key: 'users', label: 'Users', group: 'People' },
     { key: 'reports', label: 'Reports', group: 'People' },
     { key: 'codes', label: 'Activation codes', group: 'People' },
-    { key: 'limits', label: 'Spend limits', group: 'People' },
+    { key: 'limits', label: 'Limits', group: 'People' },
     // Programme people screens, promoted by the same #1179 reshuffle.
     { key: 'waitlist', label: 'Waitlist', group: 'People' },
     { key: 'onchain-accounts', label: 'Onchain accounts', group: 'People' },

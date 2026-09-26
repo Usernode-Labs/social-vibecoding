@@ -135,6 +135,9 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.match(agent.replayPlanGuide(), /exactly one\s+entry for every accepted story id/i);
   assert.match(agent.replayPlanGuide(), /Do not copy those fields yourself/);
   assert.match(agent.replayPlanGuide(), /Every interaction target and each checkpoint focus must\s+identify exactly one visible element/);
+  assert.match(agent.replayPlanGuide(), /Each visible, hidden, attached, text, value, checked,\s+or focusWithin checkpoint assertion must also use a unique target/);
+  assert.match(agent.replayPlanGuide(), /Use count only when the intended claim is the exact number of\s+matches/);
+  assert.match(agent.replayPlanGuide(), /A detached assertion means the intended target has no matches/);
   assert.match(agent.replayPlanGuide(), /execute every accepted interaction step on both revisions/);
   assert.match(agent.replayPlanGuide(), /actually click it on both revisions and\s+assert the resulting page or URL/);
   assert.match(agent.replayPlanGuide(), /state:"visible" or state:"hidden"/);

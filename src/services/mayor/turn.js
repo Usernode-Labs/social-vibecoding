@@ -81,6 +81,19 @@ const {
   resolveSuggestedAnswers,
 } = require('./tools');
 
+// #3181: did this turn stop before finishing? Only when it persisted a
+// failure row, and never when a person pressed stop: a stop is a deliberate
+// end whatever failed on the way ('agent_error' is the stop flag a
+// configuration refusal borrows in runClaudeCodeTool, not a person). Nor when
+// the platform is recovering the turn, since that recovery reports its own
+// ending.
+function turnStalled({ failed, recovering, stopHandle }) {
+  if (!failed || recovering) return false;
+  const stoppedByPerson = !!(stopHandle && stopHandle.stopped
+    && stopHandle.stoppedBy !== 'agent_error');
+  return !stoppedByPerson;
+}
+
 async function runMayorTurn(ctx, deps) {
   const {
     session,
@@ -109,6 +122,7 @@ async function runMayorTurn(ctx, deps) {
     invocationTelemetry,
     loadSessionSpec,
     notifySessionDone,
+    notifySessionStalled,
     runClaudeCodeTool,
     runScoutTool,
     safeAgentModelLabel,
@@ -121,6 +135,12 @@ async function runMayorTurn(ctx, deps) {
   const { broadcastGlobal } = require('../ws');
   const seqPrefix = Date.now().toString(36);
   let eventSeq = 0;
+  // #3181: how this turn is ending, read by the done hook in send() below.
+  // `failed` is set by any failure row the turn persists (sendStatus with
+  // turnError: an agent run that errored, timed out or lost its worker, the
+  // catch-all turn error); `recovering` by that catch-all when the platform
+  // has taken the turn over and will report its own ending.
+  const turnEnd = { failed: false, recovering: false };
   // Event types that are ONLY meaningful on the active SSE stream. They
   // must not also be broadcast on the global WebSocket because both
   // channels share a _seq-based dedup on the client: if such an event
@@ -184,7 +204,15 @@ async function runMayorTurn(ctx, deps) {
     // — the main exit, the early returns, and the catch fallthrough —
     // so this is the one hook needed for the left-mid-turn completion
     // notification. Fire-and-forget; the helper swallows its errors.
-    if (type === 'done') notifySessionDone(pool, session.id);
+    // #3181: a turn that ended on a failure says so ("stopped before
+    // finishing") instead of "finished". The stop handle is read at call
+    // time: a 'done' is only ever sent after it is registered below.
+    if (type === 'done') {
+      const notify = turnStalled({ ...turnEnd, stopHandle })
+        ? notifySessionStalled
+        : notifySessionDone;
+      notify(pool, session.id);
+    }
   };
 
   // Locals used across multiple branches of the CC flow. Previously these
@@ -256,6 +284,9 @@ async function runMayorTurn(ctx, deps) {
   // without a persisted row a mid-turn provider error looks like a
   // silent turn after refresh.
   const sendStatus = async (text, metadata) => {
+    // #3181: the scout and build tools report their failures through this
+    // same function, so it is the one place that sees every one of them.
+    if (metadata && metadata.turnError) turnEnd.failed = true;
     send('status', { text, ...(metadata || {}) });
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
@@ -1916,6 +1947,9 @@ async function runMayorTurn(ctx, deps) {
     const recoveringDurableTurn = await scheduleRetainedInteractiveTurn({
       pool, sessionId: session.id, scheduleInteractiveRecovery,
     });
+    // #3181: a turn the platform is finishing on its own has not stalled;
+    // the recovery sends its own notification when it ends.
+    if (recoveringDurableTurn) turnEnd.recovering = true;
     // Persist the failure as a status row so it survives refresh —
     // the 'error' event above is SSE-only and dies with the stream,
     // which used to make a mid-turn provider error (429 rate limit,
@@ -1954,4 +1988,4 @@ async function runMayorTurn(ctx, deps) {
   setTimeout(() => sessionBus.clearSession(session.id), 30000);
 }
 
-module.exports = { runMayorTurn };
+module.exports = { runMayorTurn, turnStalled };

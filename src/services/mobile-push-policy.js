@@ -95,9 +95,9 @@ function platformLimitCopy(detail) {
   if (limit === 'apps') {
     return level === 'full'
       ? { title: 'App limit reached',
-        body: `${used} of ${cap} apps are in use. New apps are refused until an admin raises MAX_APPS or removes one` }
+        body: `${used} of ${cap} apps are in use. New apps are refused until the limit is raised in Admin \u2192 Limits` }
       : { title: 'Nearing the app limit',
-        body: `${used} of ${cap} apps are in use. Raise MAX_APPS in Platform variables before new apps are refused` };
+        body: `${used} of ${cap} apps are in use. Raise the limit in Admin \u2192 Limits before new apps are refused` };
   }
   return level === 'full'
     ? { title: 'Session limit reached',
@@ -237,6 +237,16 @@ function buildCopy(kind, context, now) {
       return {
         title: withApp('Your build is ready'),
         body: quoted && `${quoted} finished. Review it while it's fresh`,
+      };
+    // #3181: the turn ended on an error, a timeout or a lost worker, or the
+    // platform paused the session mid-turn. The title says what happened and
+    // where; the body is the one thing to do about it.
+    case 'session_stalled':
+      return {
+        title: app
+          ? `Your session on ${truncate(app, TITLE_EMBED_MAX)} stopped before finishing`
+          : 'Your session stopped before finishing',
+        body: quoted ? `Open ${quoted} to continue` : 'Open it to continue',
       };
     case 'auto_solve_done': {
       if (detail === 'question') {

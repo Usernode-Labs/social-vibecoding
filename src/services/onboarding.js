@@ -52,6 +52,12 @@
  *
  * The two visits leave no row of their own, so the card records them
  * (`users.getting_started_seen`) while it is showing, and only then.
+ *
+ * ── The tour ───────────────────────────────────────────────────────────
+ *
+ * Only whether it is done (`users.tour_done_at`), so a tour finished on one
+ * device is not offered again on the next. The tour itself is all client
+ * (frontend/src/features/home/tour).
  */
 
 const communities = require('./communities');
@@ -383,8 +389,9 @@ async function markSeen(pool, userId, what) {
 /**
  * An admin's "Reset first run" (Admin → Users → ⋯): put an account back to a
  * new account's first run, so its next load shows the join screen, then the
- * tour (communities-first-run.js restarts it in the browser that shows the
- * screen, because "done" is kept per browser), then the Getting started card.
+ * tour, then the Getting started card. The tour's "done" is cleared here too
+ * (`tour_done_at`), so it follows the join screen on every device, not just
+ * in the browser that shows the screen (frontend/src/features/home/tour).
  *
  * It resets the first run and nothing the account owns: its communities,
  * Home tiles, username and terms answer stay as they are. The join screen
@@ -397,7 +404,8 @@ async function resetFirstRun(pool, userId) {
         SET needs_communities_choice = TRUE,
             communities_onboarded_at = NULL,
             getting_started_closed_at = NULL,
-            getting_started_seen = NULL
+            getting_started_seen = NULL,
+            tour_done_at = NULL
       WHERE id = $1
       RETURNING id, username`,
     [userId]
@@ -415,6 +423,21 @@ async function closeCard(pool, userId) {
   return { ok: true };
 }
 
+/**
+ * The welcome tour's Finish and Skip, and a browser that finished it before
+ * the account kept the answer copying its own flag here once. Idempotent: the
+ * first finish is the one recorded, and a replay finished later changes
+ * nothing.
+ */
+async function markTourDone(pool, userId) {
+  await pool.query(
+    `UPDATE users SET tour_done_at = NOW()
+      WHERE id = $1 AND tour_done_at IS NULL`,
+    [userId]
+  );
+  return { ok: true };
+}
+
 module.exports = {
   SUGGESTION_LIMIT,
   MAX_JOIN,
@@ -427,5 +450,6 @@ module.exports = {
   gettingStarted,
   markSeen,
   closeCard,
+  markTourDone,
   resetFirstRun,
 };

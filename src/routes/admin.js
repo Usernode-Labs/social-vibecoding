@@ -22,6 +22,8 @@ const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
+const appLimit = require('../services/app-limit');
+const platformLimits = require('../services/platform-limit-alerts');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
 const onboarding = require('../services/onboarding');
@@ -867,6 +869,53 @@ function adminRoutes(config) {
       res.json(await readLimitsPayload());
     } catch (err) {
       log.error('admin', 'Update limits failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── App limit ───────────────────────────────────────────────
+  //
+  // The server-wide cap on live apps (services/app-limit.js): MAX_APPS is
+  // the deploy's default, and a full admin can override it here without a
+  // deploy, which is the only lever the Kubernetes deploy has (its chart
+  // does not pass MAX_APPS through). Read open to view-only admins, like
+  // /limits; the write is requireAdminWrite.
+  //
+  // `limit` is a whole number, or null to clear the setting and fall back
+  // to MAX_APPS. A deploy that set MAX_APPS to 0 has switched the cap off,
+  // and the setting cannot switch it back on (409): see the precedence in
+  // services/app-limit.js.
+  router.get('/api/admin/app-limit', async (_req, res) => {
+    try {
+      res.json(await appLimit.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Read app limit failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/app-limit', requireAdminWrite, async (req, res) => {
+    const body = req.body || {};
+    if (!Object.prototype.hasOwnProperty.call(body, 'limit')) {
+      return res.status(400).json({ error: 'Provide limit: a whole number, or null to use MAX_APPS.' });
+    }
+    const invalid = appLimit.validate(body.limit);
+    if (invalid) return res.status(400).json({ error: invalid });
+    if (appLimit.deployDefault(config) <= 0) {
+      return res.status(409).json({
+        error: 'The deploy has switched the app limit off (MAX_APPS is 0), so there is nothing to set.',
+      });
+    }
+    try {
+      await appLimit.set(pool, { value: body.limit, actorId: req.user.id });
+      log.info('admin', 'App limit updated', { by: req.user.username, limit: body.limit });
+      // Re-measure now: a raise clears a standing warning, and a cut below
+      // the live count tells the other admins at once rather than at the
+      // next sweep.
+      platformLimits.nudge(pool, config, 'apps');
+      res.json(await appLimit.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Update app limit failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

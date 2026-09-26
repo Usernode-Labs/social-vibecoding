@@ -44,6 +44,49 @@ test('run diagnostics retain bounded recovery and controlled-failure counts', ()
   assert.equal(stability.captureWaitMs, 4900);
 });
 
+test('only a pure network-change browser failure qualifies for a deterministic replay retry', () => {
+  const failure = {
+    code: 'locator_not_found',
+    detail: {
+      storyId: 'approve-blank', side: 'base', phase: 'action',
+      browserDiagnostics: {
+        httpErrorCount: 0, blockedRequestCount: 0,
+        failedRequests: [
+          { error: 'net::ERR_NETWORK_CHANGED', location: { pathname: '/shell/assets/shell.js' } },
+          { error: 'net::ERR_NETWORK_CHANGED', location: { pathname: '/usernode-native/v1/native.js' } },
+        ],
+        consoleErrors: [
+          { message: 'Failed to load resource: net::ERR_NETWORK_CHANGED' },
+        ],
+        pageErrors: [{ message: 'Home is not defined', sourceKind: 'platform' }],
+        httpErrors: [], blockedRequests: [],
+      },
+    },
+  };
+  assert.deepEqual(orchestrator.transientNetworkReplayFailure(failure), {
+    kind: 'network_changed', code: 'locator_not_found', storyId: 'approve-blank',
+    side: 'base', failedRequestCount: 2, consoleErrorCount: 1, pageErrorCount: 1,
+  });
+  assert.equal(orchestrator.replayRepairKind(failure, fixtures.plan()), null);
+  assert.equal(orchestrator.transientNetworkReplayFailure({
+    ...failure,
+    detail: { ...failure.detail, browserDiagnostics: {
+      ...failure.detail.browserDiagnostics,
+      failedRequests: [
+        ...failure.detail.browserDiagnostics.failedRequests,
+        { error: 'net::ERR_CONNECTION_RESET' },
+      ],
+    } },
+  }), null);
+  assert.equal(orchestrator.transientNetworkReplayFailure({
+    ...failure,
+    detail: { ...failure.detail, browserDiagnostics: {
+      ...failure.detail.browserDiagnostics,
+      httpErrorCount: 1, httpErrors: [{ status: 503 }],
+    } },
+  }), null);
+});
+
 const RUN_ID = '1'.repeat(32);
 const BASE = 'a'.repeat(40);
 const HEAD = 'b'.repeat(40);
@@ -191,6 +234,72 @@ test('a successful agent plan publishes captured media without a model verdict',
     ['provisioning', 'exploring', 'replaying', 'reviewing', 'verified']);
   assert.equal(Object.hasOwn(fixture.transitions.at(-1).patch, 'semanticVerdict'), false);
   assert.equal(fixture.calls.workerReleased, 0, 'an active native coding session retains its memory');
+});
+
+test('a pure network change retries the same pass without spending a model repair', async () => {
+  const networkChanged = Object.assign(new Error('The page bundle changed network during startup.'), {
+    code: 'locator_not_found',
+    detail: {
+      storyId: 'invite-suggestions', viewport: 'desktop', side: 'base',
+      phase: 'action', actionId: 'open-members',
+      browserDiagnostics: {
+        httpErrorCount: 0, blockedRequestCount: 0,
+        failedRequests: [{ error: 'net::ERR_NETWORK_CHANGED',
+          location: { sameOrigin: true, pathname: '/shell/assets/shell.js' } }],
+        consoleErrors: [{ message: 'Failed to load resource: net::ERR_NETWORK_CHANGED' }],
+        pageErrors: [{ message: 'Home is not defined', sourceKind: 'platform' }],
+        httpErrors: [], blockedRequests: [],
+      },
+    },
+  });
+  const fixture = setup();
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      fixture.calls.passes.push(args[2].pass);
+      throw networkChanged;
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 1);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
+  assert.equal(fixture.calls.resets, 4);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 0);
+  const retry = fixture.transitions.at(-1).patch.traceSummary.replayRetries[0];
+  assert.deepEqual(retry, {
+    attempt: 1, pass: 1, retry: 1, durationMs: retry.durationMs,
+    kind: 'network_changed', code: 'locator_not_found', storyId: 'invite-suggestions',
+    side: 'base', failedRequestCount: 1, consoleErrorCount: 1, pageErrorCount: 1,
+  });
+});
+
+test('a repeated pure network change fails without asking the model to edit the plan', async () => {
+  const networkChanged = Object.assign(new Error('The page bundle changed network during startup.'), {
+    code: 'locator_not_found',
+    detail: {
+      storyId: 'invite-suggestions', side: 'base', phase: 'action', actionId: 'open-members',
+      browserDiagnostics: {
+        httpErrorCount: 0, blockedRequestCount: 0,
+        failedRequests: [{ error: 'net::ERR_NETWORK_CHANGED' }],
+        consoleErrors: [{ message: 'Failed to load resource: net::ERR_NETWORK_CHANGED' }],
+        pageErrors: [], httpErrors: [], blockedRequests: [],
+      },
+    },
+  });
+  const fixture = setup();
+  fixture.dependencies.replay.runPass = async (_config, _sessionId, input) => {
+    fixture.calls.passes.push(input.pass);
+    throw networkChanged;
+  };
+  await assert.rejects(execute(fixture), { code: 'locator_not_found' });
+  assert.equal(fixture.calls.dispatches, 1);
+  assert.deepEqual(fixture.calls.passes, [1, 1]);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 0);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.replayRetries.length, 1);
 });
 
 test('imported evidence releases its temporary worker after a passing run', async () => {
@@ -596,6 +705,31 @@ test('an actually changing static checkpoint can get a bounded observed-state re
     detail: { ...failure.detail, sampleCount: 2 } }, plan), null);
 });
 
+test('only ambiguous unique assertion targets become locator repairs', () => {
+  const plan = fixtures.plan();
+  const failure = (type, count, actual = null) => ({
+    code: 'assertion_failed',
+    detail: {
+      phase: 'assertion', side: 'base', assertionIndex: 0, count, actual,
+      assertion: { type, target: { by: 'css', value: '[data-step="approve"]' } },
+    },
+  });
+  for (const type of ['visible', 'hidden', 'attached', 'checked', 'text', 'value', 'focusWithin']) {
+    assert.equal(orchestrator.replayRepairKind(failure(type, 2), plan), 'locator', type);
+  }
+  assert.equal(orchestrator.replayRepairKind(failure('attached', 0), plan), 'locator');
+  assert.equal(orchestrator.replayRepairKind(failure('hidden', 1, true), plan), null);
+  assert.equal(orchestrator.replayRepairKind(failure('detached', 2), plan), null);
+  assert.equal(orchestrator.replayRepairKind({
+    code: 'assertion_failed',
+    detail: {
+      phase: 'assertion', side: 'base', assertionIndex: 0, count: 2,
+      assertion: { type: 'count', count: 1,
+        target: { by: 'css', value: '[data-step="approve"]' } },
+    },
+  }, plan), null);
+});
+
 test('a missing readiness locator gets one correction turn and fresh replay passes', async () => {
   const rejected = fixtures.plan();
   const corrected = fixtures.plan();
@@ -689,6 +823,64 @@ test('a missing positive assertion locator can receive a second bounded correcti
   assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 2);
   assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTriggers.map((item) => item.code),
     ['locator_not_found', 'assertion_failed']);
+});
+
+test('an ambiguous assertion locator can receive the remaining bounded correction', async () => {
+  const plans = [fixtures.plan(), fixtures.plan(), fixtures.plan()];
+  plans[1].stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  plans[2].stories[0].replay.checkpoint.assertions.before[0].target = {
+    by: 'css', value: '[data-step="approve"][data-approvers="anyone"]:not([hidden])',
+  };
+  const ambiguousAssertion = {
+    storyId: 'invite-suggestions', side: 'base', phase: 'assertion', assertionIndex: 0,
+    count: 2, actual: null,
+    assertion: {
+      type: 'attached',
+      target: { by: 'css', value: '[data-step="approve"][data-approvers="anyone"]' },
+    },
+  };
+  const failures = [
+    Object.assign(new Error('Action locator missing.'), {
+      code: 'locator_not_found', detail: { side: 'base', phase: 'action', actionId: 'wait-ready' },
+    }),
+    Object.assign(new Error('attached assertion failed.'), {
+      code: 'assertion_failed', detail: ambiguousAssertion,
+    }),
+  ];
+  const fixture = setup({
+    dispatch: async (options, dispatchCount) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      assert.equal(options.repairAttempt, dispatchCount - 1);
+      if (dispatchCount === 3) {
+        assert.deepEqual(control.getContext().repair.failure, {
+          kind: 'locator', code: 'assertion_failed',
+          message: 'attached assertion failed.', detail: ambiguousAssertion,
+        });
+      }
+      if (dispatchCount < 3) await assert.rejects(control.runPlan(plans[dispatchCount - 1]));
+      else await control.runPlan(plans[2]);
+      return { backend: 'claude_code', threadId: 'evidence-thread' };
+    },
+  });
+  const runPass = fixture.dependencies.replay.runPass;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (failures.length) {
+      fixture.calls.passes.push(args[2].pass);
+      throw failures.shift();
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 3);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 1, 2]);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 2);
+  assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTriggers, [
+    { kind: 'locator', code: 'locator_not_found', side: 'base', actionId: 'wait-ready' },
+    { kind: 'locator', code: 'assertion_failed', side: 'base', assertionIndex: 0 },
+  ]);
 });
 
 test('a visible element with the wrong asserted state fails without planner repair', async () => {
