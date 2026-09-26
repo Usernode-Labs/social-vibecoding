@@ -601,6 +601,14 @@ const App = {
     // (features/settings/terms-first-run.js), so it has to be re-offered
     // once there is a verified one.
     try { window.TermsFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
+    // And the communities join screen, which skips an unverified session for
+    // the same reason. Without this, a browser that has signed in before
+    // (every boot there starts from the snapshot) never showed it: that is
+    // how an account an admin reset (Admin → Users → Reset first run) missed
+    // its first run until it signed out and in again. It waits for the terms
+    // ask above, so the two never stack
+    // (frontend/src/features/auth/communities-first-run.js).
+    try { window.CommunitiesFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
     // resyncCurrentView is the DISCONNECT-RECOVERY sweep: reload home,
     // re-pull notifications, resync session state, re-read the version. It
     // belongs to the reconnect path, where the screen has been sitting on

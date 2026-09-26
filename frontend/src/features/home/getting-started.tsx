@@ -148,9 +148,13 @@ export function GettingStarted() {
     void load();
     const onChange = () => { void load(); };
     document.addEventListener('sv:authed', onChange);
+    // A boot from the session snapshot confirms the session later
+    // (app.js _reconcileSession), with the server's showGettingStarted.
+    document.addEventListener('sv:session', onChange);
     document.addEventListener('sv:communities-joined', onChange);
     return () => {
       document.removeEventListener('sv:authed', onChange);
+      document.removeEventListener('sv:session', onChange);
       document.removeEventListener('sv:communities-joined', onChange);
     };
   }, [load]);

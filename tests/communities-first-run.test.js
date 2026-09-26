@@ -180,10 +180,36 @@ test('a join screen shown in this browser starts the tour over', () => {
   assert.match(GATE, /shownHere\(\) \{\s*\n\s*return CommunitiesFirstRun\._shownHere === true;/);
   assert.match(GATE, /if \(!\(opts && opts\.demo\)\) CommunitiesFirstRun\._shownHere = true;/);
   // A finished tour waits for a pending join screen instead of giving up...
-  assert.match(TOUR, /if \(readDone\(userId\) && !firstRunPending\(\)\) return;/);
+  assert.match(TOUR, /if \(readDone\(userId\) && !firstRunPending\(\) && !firstRunShownHere\(\)\) return;/);
   // ...and once it has been shown here, "done" is cleared before the re-read.
   const start = TOUR.slice(TOUR.indexOf('if (started.current || userId == null) return;'));
-  const body = start.slice(0, start.indexOf('}, [userId, start]);'));
+  const body = start.slice(0, start.indexOf('}, [userId, start, firstRunRev]);'));
   assert.match(body, /if \(firstRunShownHere\(\)\) \{\s*\n\s*clearDone\(userId\);\s*\n\s*clearStep\(userId\);\s*\n\s*\}/);
   assert.ok(body.indexOf('clearDone(userId)') < body.lastIndexOf('if (readDone(userId)) return;'));
+});
+
+// A browser that has signed in before boots from the session snapshot, and
+// every first-run gate skips an unverified session. The join screen used to
+// stay skipped: only the terms ask was re-offered once the session was
+// confirmed, so an account whose first run an admin reset saw nothing until
+// it signed out and in again.
+test('the join screen is re-offered once a snapshot boot confirms the session', () => {
+  const APP_JS = read('public/js/app.js');
+  const reconcile = APP_JS.slice(APP_JS.indexOf('async _reconcileSession('), APP_JS.indexOf('// ── Staged boot'));
+  const terms = reconcile.indexOf('window.TermsFirstRun?.maybePrompt?.()');
+  const join = reconcile.indexOf('window.CommunitiesFirstRun?.maybePrompt?.()');
+  assert.ok(terms > 0 && join > terms, 'right after the terms ask, which it then waits for');
+  assert.ok(reconcile.indexOf('App.user = user;') < join, 'with the confirmed user, not the snapshot');
+  // The gate still skips the unverified boot itself.
+  assert.match(GATE, /if \(window\.App && window\.App\._sessionFromSnapshot\) \{\s*\n\s*CommunitiesFirstRun\._resolve\(\);\s*\n\s*return;/);
+  // It waits for a terms ask in flight or on screen, capped.
+  assert.match(GATE, /for \(let i = 0; terms && \(terms\._inFlight \|\| terms\._presented\) && i < 2400; i \+= 1\) \{/);
+  // The tour looks again once the screen is answered, which on this path is
+  // after its first look.
+  const TOUR = read('frontend/src/features/home/tour/index.tsx');
+  assert.match(TOUR, /document\.addEventListener\('sv:communities-joined', bump\);/);
+  assert.match(TOUR, /\}, \[userId, start, firstRunRev\]\);/);
+  // And the card reads the confirmed session's showGettingStarted.
+  assert.match(CARD_SRC, /document\.addEventListener\('sv:session', onChange\);/);
+  assert.match(APP_JS, /document\.dispatchEvent\(new CustomEvent\('sv:session', \{/);
 });
