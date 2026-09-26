@@ -12293,9 +12293,11 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-final="true"]  #create-next {
   display: none;
 }
-/* No Next on the two question steps (request #3160): pressing a row is the
-   answer and moves on by itself, so a Next under the rows only suggested it
-   did not. Cancel stays. Enter still advances (the form's submit handler). */
+/* #3160: a press on a single-choice row IS the answer and unfolds the next
+   step, so the first two steps have no Next beside their rows: a Next pill
+   there read as "pick, then press Next". It returns on the details step,
+   where there is free text to leave. Cancel stays; Enter still advances
+   (the form's submit handler). */
 #create-card:is([data-step="who"], [data-step="start"]) #create-next {
   display: none;
 }

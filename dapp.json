@@ -1389,9 +1389,9 @@
       "expectText": "STAGING_DEMO_PROPOSED"
     },
     {
-      "name": "Create-app modal opens in 'new' mode with the state on the presented card (#748), titled New project (communities, stage 3)",
+      "name": "Create-app modal opens with no way to begin chosen yet (#3160) and the state on the presented card (#748), titled New project (communities, stage 3)",
       "path": "/#create",
-      "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-import-state=\"idle\"]",
+      "expectSelector": ".un-modal #create-card[data-mode=\"\"][data-import-state=\"idle\"] .create-mode-pill[data-mode-pill=\"new\"][aria-pressed=\"false\"] + .create-mode-pill[data-mode-pill=\"import\"][aria-pressed=\"false\"]",
       "expectText": "New project"
     },
     {
@@ -1413,9 +1413,9 @@
       "expectText": "GitHub repo URL"
     },
     {
-      "name": "Create-project dialog opens on who it is for, nothing chosen yet: Just me, A group and A community, with a step count (communities, stage 3; request #3160)",
+      "name": "Create-project dialog opens on who it is for with nothing chosen (#3160): Just me, A group and A community, none pressed, with a step count (communities, stage 3)",
       "path": "/#create",
-      "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-audience=\"solo\"] .create-who-pill[data-audience-pill=\"solo\"] + .create-who-pill[data-audience-pill=\"invited\"] + .create-who-pill[data-audience-pill=\"open\"]",
+      "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-audience=\"\"]:not(:has([aria-pressed=\"true\"])) .create-who-pill[data-audience-pill=\"solo\"][aria-pressed=\"false\"] + .create-who-pill[data-audience-pill=\"invited\"] + .create-who-pill[data-audience-pill=\"open\"]",
       "expectText": "Step 1 of 3"
     },
     {

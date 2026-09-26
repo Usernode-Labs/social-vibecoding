@@ -6,7 +6,7 @@
  * Communities, stage 3: the dialog asks who a project is FOR before anything
  * else, because that answer decides the rest.
  *
- *   who      Just me (preselected), A group, or A community — the audiences
+ *   who      Just me, A group, or A community — the audiences
  *            services/communities.js derives (`solo`, `invited`, `open`), in
  *            the words the Workshop tab heads its sections with. A group
  *            names its people here, in #create-invitees, and they are invited
@@ -71,10 +71,11 @@
  *
  * ── The first render is the prerendered one ──────────────────────────
  *
- * Every choice starts at a constant — Just me, from scratch, idle, the first
- * step, members vote, majority — and renders that, so the first client render
- * matches public/index.html exactly (a mismatch `console.error`s, which fails
- * proposal checks). What a choice changes is written as data attributes on
+ * Every choice starts at a constant — NO audience, NO way to begin, NO
+ * approval rule (#3160: nothing is picked for you), idle, the first step,
+ * majority — and renders that, so the first client render matches
+ * public/index.html exactly (a mismatch `console.error`s, which fails
+ * proposal checks). An unanswered question renders its data attribute empty. What a choice changes is written as data attributes on
  * the card and the root, which app.css reads; `.active`-style classes are not
  * rendered from state at all.
  *
@@ -134,10 +135,102 @@ type Step = 'who' | 'start' | 'details' | 'approve';
  * both end on the details step. Exported and pure: the indicator's "of N"
  * and the footer's Next-or-Create both read it.
  */
-export function stepsFor(audience: Audience, mode: Mode): readonly Step[] {
-  return audience !== 'solo' && mode === 'new'
+export function stepsFor(audience: Audience | null, mode: Mode | null): readonly Step[] {
+  // Before a question is answered the count reads as the shorter walk for no
+  // audience, and as "made new" for no mode: the same counts the old
+  // preselected answers (Just me, from scratch) gave.
+  return audience && audience !== 'solo' && mode !== 'import'
     ? ['who', 'start', 'details', 'approve']
     : ['who', 'start', 'details'];
+}
+
+/**
+ * The single-choice answers and how far the card has unfolded. `null` is
+ * "not answered yet" (#3160): the dialog opens with nothing chosen, and the
+ * card's data attributes render empty for it, so no row wears the selected
+ * fill until it is pressed.
+ */
+export interface Answers {
+  step: Step;
+  audience: Audience | null;
+  mode: Mode | null;
+  approvers: Approvers | null;
+}
+
+export const NO_ANSWERS: Answers = Object.freeze({ step: 'who', audience: null, mode: null, approvers: null });
+
+const STEP_ORDER: readonly Step[] = ['who', 'start', 'details', 'approve'];
+
+/**
+ * How long after a press advanced the card a press that would REOPEN a
+ * question is ignored. The chosen row stays on screen, collapsed, under the
+ * pointer; without this the second click of a double click lands on it and
+ * folds the step that just opened straight back up.
+ */
+export const REOPEN_GUARD_MS = 500;
+
+type Question = 'who' | 'start' | 'approve';
+type AnswerFor<Q extends Question> = Q extends 'who' ? Audience : Q extends 'start' ? Mode : Approvers;
+
+/**
+ * A press on a choice row, as a pure transition (#3160). Exported so the
+ * behaviour is pinned without a browser (tests/create-app-steps.test.js).
+ *
+ *   - On the question's own step, the press IS the answer and unfolds the
+ *     next step: no Next needed. The last step (who approves) records the
+ *     answer and stays put, because creating is always a press of its own.
+ *   - On a later step the question's row has collapsed to the chosen answer;
+ *     pressing it reopens the question (the answers are kept, so the next
+ *     press moves on again; a DIFFERENT answer clears the answers that
+ *     depend on it). Ignored within
+ *     REOPEN_GUARD_MS of an advance: that is the second half of a double click.
+ *   - A question further on than the card has unfolded is hidden, and cannot
+ *     be answered.
+ *
+ * Returns `state` itself when nothing changes.
+ */
+export function answerChoice<Q extends Question>(
+  state: Answers,
+  question: Q,
+  value: AnswerFor<Q>,
+  msSinceAdvance: number,
+): Answers {
+  const at = STEP_ORDER.indexOf(state.step);
+  const asked = STEP_ORDER.indexOf(question);
+  if (asked > at) return state;
+  if (question === 'approve') {
+    return state.approvers === value ? state : { ...state, approvers: value as Approvers };
+  }
+  if (asked < at) {
+    if (msSinceAdvance < REOPEN_GUARD_MS) return state;
+    return { ...state, step: question };
+  }
+  // A CHANGED answer re-asks what depends on it, so a revisited question is
+  // never shown already answered from a different path: a new audience
+  // clears how to begin and who approves, a new way to begin clears who
+  // approves. The same answer pressed again keeps everything after it.
+  if (question === 'who') {
+    return value === state.audience
+      ? { ...state, step: 'start' }
+      : { ...state, audience: value as Audience, mode: null, approvers: null, step: 'start' };
+  }
+  return value === state.mode
+    ? { ...state, step: 'details' }
+    : { ...state, mode: value as Mode, approvers: null, step: 'details' };
+}
+
+/**
+ * The first question the answers leave open, and the words that ask for it;
+ * null when every question these answers walk has been answered. Create runs
+ * it before building the body, so nothing is POSTed with an answer nobody gave.
+ */
+export function missingAnswer(answers: Pick<Answers, 'audience' | 'mode' | 'approvers'>): { step: Step; message: string } | null {
+  if (!answers.audience) return { step: 'who', message: 'Choose who it is for.' };
+  if (!answers.mode) return { step: 'start', message: 'Choose how you want to start.' };
+  if (stepsFor(answers.audience, answers.mode).includes('approve') && !answers.approvers) {
+    return { step: 'approve', message: 'Choose who approves changes.' };
+  }
+  return null;
 }
 
 /**
@@ -152,7 +245,7 @@ export function createBody(answers: {
   repoUrl?: string;
   audience: Audience;
   invitees?: string;
-  approvers: Approvers;
+  approvers: Approvers | null;
   approvals: Approvals;
   approvalsN?: number;
 }): Record<string, unknown> {
@@ -196,14 +289,15 @@ const IDLE_STATUS: ImportStatus = { tone: 'none', text: '' };
  *
  * `create-access`, the old last step's link, lands on `create-approve`.
  */
-function shotState(): { mode: Mode; step: Step; audience: Audience } {
-  const open = { mode: 'new' as Mode, step: 'who' as Step, audience: 'solo' as Audience };
+function shotState(): Answers {
+  const open = NO_ANSWERS;
   try {
     const shot = new URLSearchParams(location.search).get('shot');
-    if (shot === 'create-import') return { ...open, mode: 'import', step: 'details' };
-    if (shot === 'create-details') return { ...open, step: 'details' };
+    // Each link carries the answers that would have led there.
+    if (shot === 'create-import') return { ...open, audience: 'solo', mode: 'import', step: 'details' };
+    if (shot === 'create-details') return { ...open, audience: 'solo', mode: 'new', step: 'details' };
     if (shot === 'create-group') return { ...open, step: 'start', audience: 'invited' };
-    if (shot === 'create-approve' || shot === 'create-access') return { ...open, step: 'approve', audience: 'open' };
+    if (shot === 'create-approve' || shot === 'create-access') return { ...open, step: 'approve', audience: 'open', mode: 'new' };
     return open;
   } catch {
     return open;
@@ -293,11 +387,16 @@ export function CreateAppDialog() {
   const approvalsNRef = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const lastStepRef = useRef<HTMLDivElement>(null);
+  const startHeadingRef = useRef<HTMLParagraphElement>(null);
+  const approveHeadingRef = useRef<HTMLParagraphElement>(null);
 
-  const [audience, setAudience] = useState<Audience>('solo');
-  const [mode, setMode] = useState<Mode>('new');
-  const [step, setStep] = useState<Step>('who');
-  const [approvers, setApprovers] = useState<Approvers>('anyone');
+  // The answers live in one object, mirrored in a ref: a handler reads the
+  // ref, so two presses dispatched before React re-renders see each other
+  // (the double-click guard in answerChoice depends on it).
+  const [answers, setAnswers] = useState<Answers>(NO_ANSWERS);
+  const answersRef = useRef<Answers>(NO_ANSWERS);
+  const advancedAtRef = useRef(0);
+  const { step, audience, mode, approvers } = answers;
   const [approvals, setApprovals] = useState<Approvals>('majority');
   const [importState, setImportState] = useState<ImportState>('idle');
   const [status, setStatus] = useState<ImportStatus>(IDLE_STATUS);
@@ -323,13 +422,14 @@ export function CreateAppDialog() {
 
   const dialog = useDialog('create', {
     onOpen: () => {
-      // A real open starts on the first step; the shot links land on the
-      // state they name. Focus follows: nothing on the first step wants the
-      // keyboard, the details step's first field does.
+      // A real open starts on the first step with nothing chosen; the shot
+      // links land on the state they name. Focus follows: nothing on the
+      // first step wants the keyboard, the details step's first field does.
       const initial = shotState();
-      applyMode(initial.mode);
-      setAudience(initial.audience);
-      setStep(initial.step);
+      commit(initial);
+      resetImport();
+      setError('');
+      advancedAtRef.current = 0;
       void invalidateAppAllowance();
       if (initial.step === 'details') setTimeout(() => focusDetails(initial.mode), 0);
     },
@@ -339,10 +439,8 @@ export function CreateAppDialog() {
     onClose: () => {
       formRef.current?.reset();
       setError('');
-      applyMode('new');
-      setAudience('solo');
-      setStep('who');
-      setApprovers('anyone');
+      resetImport();
+      commit(NO_ANSWERS);
       setApprovals('majority');
       // Drop the progress view too, so the next open lands on the form.
       // The build carries on server-side either way — closing this is
@@ -357,7 +455,7 @@ export function CreateAppDialog() {
   // server-side pre-flight gates submission — the field is not even visible
   // until the check passes.
   useIsomorphicLayoutEffect(() => {
-    if (nameRef.current) nameRef.current.required = mode === 'new';
+    if (nameRef.current) nameRef.current.required = mode !== 'import';
   }, [mode]);
 
   // Progress arrives on the WS `app_status` channel, which public/js/app.js
@@ -387,7 +485,7 @@ export function CreateAppDialog() {
   }, [creatingSlug]);
 
   /** The field the details step opens on, for the mode it is in. */
-  function focusDetails(forMode: Mode) {
+  function focusDetails(forMode: Mode | null) {
     (forMode === 'import' ? urlRef.current : nameRef.current)?.focus();
   }
 
@@ -396,56 +494,64 @@ export function CreateAppDialog() {
     setTimeout(() => lastStepRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 0);
   }
 
+  function commit(next: Answers) {
+    answersRef.current = next;
+    setAnswers(next);
+  }
+
+  function resetImport() {
+    setImportState('idle');
+    setStatus(IDLE_STATUS);
+  }
+
   /**
-   * The first question. A choice collapses the step to the chosen row and
-   * unfolds the next; once collapsed, pressing that row reopens the choice
-   * (what was typed below stays for when the later steps unfold again).
-   * A group's invite field shows under the collapsed row.
+   * A press on a choice row (#3160). The press is the answer: on its own
+   * step it collapses the step to the chosen row and unfolds the next one,
+   * with focus moved to what unfolded (a group's invite field, the next
+   * question's heading, the details step's first field) so a keyboard or
+   * screen-reader user lands where the dialog went. Once collapsed, pressing
+   * the row reopens the question; what was typed below stays for when the
+   * later steps unfold again. The transition itself is answerChoice above.
    */
-  function chooseAudience(next: Audience) {
-    if (step !== 'who') {
-      setError('');
-      setStep('who');
-      return;
-    }
-    setAudience(next);
+  function pick<Q extends Question>(question: Q, value: AnswerFor<Q>) {
+    const before = answersRef.current;
+    const after = answerChoice(before, question, value, Date.now() - advancedAtRef.current);
+    if (after === before) return;
     setError('');
-    setStep('start');
-    if (next === 'invited') setTimeout(() => inviteesRef.current?.focus(), 0);
-  }
-
-  /**
-   * The start step's choice — set the mode and unfold the details. Once the
-   * step has collapsed to the chosen row, pressing that row folds the later
-   * steps back up so the choice can be changed.
-   */
-  function choose(next: Mode) {
-    if (step !== 'start') {
-      setError('');
-      setStep('start');
-      return;
+    // A different way to begin drops the last one's check banner; the same
+    // one pressed again keeps a check that already passed.
+    if (after.mode !== before.mode) resetImport();
+    commit(after);
+    if (STEP_ORDER.indexOf(after.step) <= STEP_ORDER.indexOf(before.step)) return;
+    advancedAtRef.current = Date.now();
+    if (after.step === 'start') {
+      setTimeout(() => (after.audience === 'invited' ? inviteesRef.current : startHeadingRef.current)?.focus(), 0);
+    } else if (after.step === 'details') {
+      setTimeout(() => focusDetails(after.mode), 0);
     }
-    applyMode(next);
-    setStep('details');
-    setTimeout(() => focusDetails(next), 0);
   }
 
   /**
-   * Continue with the selected answer, or leave the details step. The
-   * details step runs the guards submit would, one step earlier, so a later
-   * step is never reached with nothing to create; the error line names what
-   * is missing.
+   * Leave the step that has free text on it: Next on the details step, or
+   * Enter in any field before the last step. The single-choice steps have no
+   * Next (a press on a row advances), so there it only asks for the answer
+   * still missing. The details step runs the guards submit would, one step
+   * earlier, so a later step is never reached with nothing to create; the
+   * error line names what is missing.
    */
   function next() {
-    if (step === 'who') {
-      chooseAudience(audience);
+    const current = answersRef.current;
+    if (current.step === 'who' || current.step === 'start') {
+      const missing = missingAnswer(current);
+      if (missing && missing.step === current.step) {
+        setError(missing.message);
+        return;
+      }
+      if (current.step === 'who' && current.audience) pick('who', current.audience);
+      else if (current.step === 'start' && current.mode) pick('start', current.mode);
       return;
     }
-    if (step === 'start') {
-      choose(mode);
-      return;
-    }
-    if (step !== 'details') return;
+    if (current.step !== 'details') return;
     const name = (nameRef.current?.value || '').trim();
     if (mode === 'import') {
       if (!normalizeRepositoryUrlInput()) return setError('Paste a GitHub repo URL first.');
@@ -458,19 +564,10 @@ export function CreateAppDialog() {
     }
     setError('');
     if (!isLast) {
-      setStep('approve');
+      commit({ ...current, step: 'approve' });
       reveal();
+      setTimeout(() => approveHeadingRef.current?.focus({ preventScroll: true }), 0);
     }
-  }
-
-  /** One entry point keeps every mirror of the mode in sync. */
-  function applyMode(next: Mode) {
-    setMode(next);
-    setError('');
-    // Switching back to "new" shouldn't leave a stale check banner around;
-    // switching into "import" lands on idle either way.
-    setImportState('idle');
-    setStatus(IDLE_STATUS);
   }
 
   // The import check.
@@ -541,6 +638,15 @@ export function CreateAppDialog() {
       next();
       return;
     }
+    // #3160: nothing is preselected any more, so an answer nobody gave is
+    // named and reopened rather than sent. (The server validates the body
+    // on its own terms either way.)
+    const missing = missingAnswer(answersRef.current);
+    if (missing) {
+      setError(missing.message);
+      if (missing.step !== answersRef.current.step) commit({ ...answersRef.current, step: missing.step });
+      return;
+    }
     const name = (nameRef.current?.value || '').trim();
     const repoUrl = mode === 'import' ? normalizeRepositoryUrlInput() : '';
     setError('');
@@ -558,9 +664,9 @@ export function CreateAppDialog() {
 
     const body = createBody({
       name,
-      mode,
+      mode: mode as Mode,
       repoUrl,
-      audience,
+      audience: audience as Audience,
       invitees: inviteesRef.current?.value || '',
       approvers,
       approvals,
@@ -614,12 +720,12 @@ export function CreateAppDialog() {
   // The card and the root carry every answer, like data-mode always has:
   // the kit lifts the card out of the root while presented, so CSS keyed on
   // the root alone would stop matching.
-  const answers = {
-    'data-mode': mode,
+  const cardState = {
+    'data-mode': mode ?? '',
     'data-import-state': importState,
     'data-step': step,
-    'data-audience': audience,
-    'data-approvers': approvers,
+    'data-audience': audience ?? '',
+    'data-approvers': approvers ?? '',
     'data-approvals': approvals,
     'data-final': isLast ? 'true' : 'false',
   };
@@ -628,19 +734,19 @@ export function CreateAppDialog() {
     <DialogRoot
       id="create-modal"
       ref={dialog.rootRef}
-      {...answers}
+      {...cardState}
       {...dialog.backdropProps}
     >
       <DialogCard
         size="sm"
         id="create-card"
-        {...answers}
+        {...cardState}
         className={PANE}
       >
         {created ? (
           <CreateProgress
             appName={created.name}
-            mode={mode}
+            mode={mode ?? 'new'}
             surface="pane"
             progress={progress}
             openLabel="Open project"
@@ -710,8 +816,9 @@ export function CreateAppDialog() {
                 key={choice.key}
                 type="button"
                 data-audience-pill={choice.key}
+                aria-pressed={audience === choice.key}
                 className={WHO_CHOICE}
-                onClick={() => chooseAudience(choice.key)}
+                onClick={() => pick('who', choice.key)}
               >
                 <WhoGlyph audience={choice.key} />
                 <span className="min-w-0 flex-1">
@@ -753,7 +860,7 @@ export function CreateAppDialog() {
               data-mode-pill, same #create-card[data-mode] colours.
           */}
           <div data-create-step="start" className="space-y-2">
-            <p className={STEP_HEADING}>2. What are you making?</p>
+            <p ref={startHeadingRef} className={STEP_HEADING + ' focus:outline-none'} tabIndex={-1}>2. What are you making?</p>
             <div className="create-kinds flex flex-wrap gap-2 pb-1">
               <span className={KIND + ' create-kind-on'} data-kind-pill="app">App</span>
               <span className={KIND + ' create-kind-soon'} data-kind-pill="doc" aria-disabled="true">
@@ -767,8 +874,9 @@ export function CreateAppDialog() {
             <button
               type="button"
               data-mode-pill="new"
+              aria-pressed={mode === 'new'}
               className={CHOICE}
-              onClick={() => choose('new')}
+              onClick={() => pick('start', 'new')}
             >
               <span className="min-w-0 flex-1">
                 <span className={CHOICE_TITLE}>Start from scratch</span>
@@ -780,8 +888,9 @@ export function CreateAppDialog() {
             <button
               type="button"
               data-mode-pill="import"
+              aria-pressed={mode === 'import'}
               className={CHOICE}
-              onClick={() => choose('import')}
+              onClick={() => pick('start', 'import')}
             >
               <span className="min-w-0 flex-1">
                 <span className={CHOICE_TITLE}>Import a GitHub repo</span>
@@ -909,13 +1018,14 @@ export function CreateAppDialog() {
               other rule there.
           */}
           <div data-create-step="approve" className="space-y-2" ref={step === 'approve' ? lastStepRef : undefined}>
-            <p className={STEP_HEADING}>4. Who approves changes?</p>
+            <p ref={approveHeadingRef} className={STEP_HEADING + ' focus:outline-none'} tabIndex={-1}>4. Who approves changes?</p>
             <div id="create-approve-block" className="space-y-2">
               <button
                 type="button"
                 data-approver-pill="anyone"
+                aria-pressed={approvers === 'anyone'}
                 className={APPROVER_CHOICE}
-                onClick={() => setApprovers('anyone')}
+                onClick={() => pick('approve', 'anyone')}
               >
                 <span className="min-w-0 flex-1">
                   <span className={CHOICE_TITLE}>Members vote</span>
@@ -925,8 +1035,9 @@ export function CreateAppDialog() {
               <button
                 type="button"
                 data-approver-pill="invited"
+                aria-pressed={approvers === 'invited'}
                 className={APPROVER_CHOICE}
-                onClick={() => setApprovers('invited')}
+                onClick={() => pick('approve', 'invited')}
               >
                 <span className="min-w-0 flex-1">
                   <span className={CHOICE_TITLE}>People I pick</span>
@@ -986,12 +1097,12 @@ export function CreateAppDialog() {
               on #create-card[data-final] rather than by mounting and
               unmounting (every id ships on every step). Cancel is always
               there; Next until the last step for these answers, then Create
-              / Import. No Back: the earlier steps are still on screen, and
-              each collapsed row's "Change" reopens its choice. And no Next
-              on the two question steps (request #3160): a row there is the
-              answer and moves on by itself, and nothing is filled until it
-              has been pressed (app.css, "Nothing is chosen while a step is
-              being asked").
+              / Import — except beside the single-choice rows, where a press
+              on a row advances and app.css hides Next (#3160). No Back: the
+              earlier steps are still on screen, and each collapsed row's
+              "Change" reopens its choice, and nothing is filled until it has
+              been pressed (app.css, "Nothing is chosen while a step is being
+              asked").
           */}
           <div className="flex gap-2 pt-1">
             <button
