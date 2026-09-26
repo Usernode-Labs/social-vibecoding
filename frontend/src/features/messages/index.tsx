@@ -1640,8 +1640,8 @@ function ConversationThread() {
       continue;
     }
     // A failed or unsent row is its own line: it carries a status of its own.
-    // So is a platform event (#general's proposal and merge lines), which has
-    // no author to share a name with the row above.
+    // So is a platform line (a Homeroom line kept as the root of a thread),
+    // which has no author to share a name with the row above.
     const grouped = !!previous && !previous.failed && !message.failed
       && !previous.system && !message.system
       && groupsWithPrevious(

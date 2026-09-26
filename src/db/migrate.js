@@ -186,6 +186,8 @@ async function migrate(config) {
   await backfillProposalIssuerAssignments(pool);
   await backfillUsernameChoiceForEmailHandles(pool);
   await migrateWaitlistCountryCodes(pool);
+  // After backfillVotesRequired, which reads the merge announcements.
+  await clearAutomatedChannelLines(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
@@ -592,6 +594,90 @@ async function migrateWaitlistCountryCodes(pool) {
     }
   } catch (err) {
     log.warn('db', 'waitlist country-code migration skipped', { err: err.message });
+  }
+}
+
+// ── Channels are what people said ─────────────────────────────────────
+//
+// Homeroom used to write its activity into a project's channel — a proposal
+// put up for a vote, a merge, a check verdict, a setting changed, main going
+// red — and, for its own project, into #general. It writes none now
+// (services/ws.js sendSystemMessage), and this clears the lines it wrote
+// before, so every channel holds only what people said:
+//
+//   - an app's channel (`chat_messages`, main stream) loses its platform
+//     rows: no sender, `system` / `vote` / `conflict`. Nobody can reply to
+//     one (app-chat.findThreadRoot takes a person's message only), and a
+//     proposal's, request's or decision's own thread keeps its copy where
+//     one was posted: only the main stream is touched.
+//   - a channel conversation (#general) loses Homeroom's rows: no sender,
+//     `system`. One that somebody answered in a thread is deleted the way a
+//     person's message with replies is — it keeps its place and loses its
+//     words — so the replies keep their root; the rest are removed.
+//
+// A reader whose #general cursor sat on a removed line is moved back to the
+// last line that stays (conversation_members' cursor would otherwise be set
+// NULL by its foreign key, and a NULL cursor reads the whole room as
+// unread). Nothing between the two can count as unread: every row between
+// them is one of the removed lines. An app channel's cursor is a plain id
+// compared with `>`, so it needs no move.
+//
+// Every boot, and a no-op once clean: it also sweeps up a line an older
+// instance wrote while a deploy was rolling. The app table is found through
+// its (user_id, app_id) index; the channel conversations are few. Best-effort:
+// a failure never aborts boot, and the channel half is one transaction.
+async function clearAutomatedChannelLines(pool) {
+  let client = null;
+  try {
+    const app = await pool.query(
+      `DELETE FROM chat_messages
+        WHERE user_id IS NULL AND thread_type IS NULL
+          AND msg_type IN ('system', 'vote', 'conflict')`
+    );
+    client = await pool.connect();
+    await client.query('BEGIN');
+    // Homeroom's main-stream lines in a channel, and whether anybody replied.
+    const { rows: lines } = await client.query(
+      `SELECT m.id, m.conversation_id,
+              EXISTS (SELECT 1 FROM conversation_messages r WHERE r.thread_root_id = m.id) AS answered
+         FROM conversation_messages m
+         JOIN conversations c ON c.id = m.conversation_id AND c.kind = 'channel'
+        WHERE m.sender_id IS NULL AND m.msg_type = 'system'
+          AND m.thread_root_id IS NULL AND m.deleted_at IS NULL
+        FOR UPDATE OF m`
+    );
+    const removed = lines.filter((l) => !l.answered).map((l) => l.id);
+    const kept = lines.filter((l) => l.answered).map((l) => l.id);
+    if (removed.length) {
+      await client.query(
+        `UPDATE conversation_members cm
+            SET last_read_message_id = (
+              SELECT MAX(p.id) FROM conversation_messages p
+               WHERE p.conversation_id = cm.conversation_id
+                 AND p.id < cm.last_read_message_id
+                 AND p.id <> ALL($1::int[]))
+          WHERE cm.last_read_message_id = ANY($1::int[])`,
+        [removed]
+      );
+      await client.query('DELETE FROM conversation_messages WHERE id = ANY($1::int[])', [removed]);
+    }
+    if (kept.length) {
+      await client.query(
+        `UPDATE conversation_messages SET content = '', deleted_at = NOW() WHERE id = ANY($1::int[])`,
+        [kept]
+      );
+    }
+    await client.query('COMMIT');
+    if (app.rowCount || removed.length || kept.length) {
+      log.info('db', 'Cleared Homeroom activity lines from channels', {
+        appChannels: app.rowCount, general: removed.length, keptForReplies: kept.length,
+      });
+    }
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    log.warn('db', 'Clearing activity lines from channels skipped', { err: err.message });
+  } finally {
+    if (client) client.release();
   }
 }
 
@@ -6060,26 +6146,24 @@ async function seedStagingReadonlyDevTab(pool) {
   }
 }
 
-// A QUIET app for the general chat's proposal events and quiet card
-// (features/group-chat/proposal-event.tsx, quiet-card.tsx): an app whose
-// Discussion holds nothing but the platform's own notices and not one message
-// from a person. The general chat draws only two of those notices — a
-// proposal put up for a vote and a proposal merged — so the rows below are
-// two settled submissions with their merges, two notices of other kinds that
-// the chat must NOT draw, and one submission whose vote is still open. The
-// declared checks read the open one as a message from its proposer with a
-// box that links to the proposal, a merge as a message from the app, and the
-// quiet card after them. The platform app's own staging transcript cannot
-// serve here: its fixtures seed dozens of human rows, which is exactly what
-// makes the card go away.
+// A QUIET app for the channel's quiet card and a proposal's own story
+// (features/group-chat/quiet-card.tsx, proposal-event.tsx): an app whose
+// channel holds not one message from a person and, since Homeroom writes no
+// activity into a channel (services/ws.js sendSystemMessage), nothing else
+// either. So its channel is the quiet card alone, and its one open proposal
+// keeps the line that put it up for a vote in the proposal's own thread,
+// where the change page's Discussion draws it as a message from whoever
+// proposed it. The platform app's own staging transcript cannot serve here:
+// its fixtures seed dozens of human rows, which is exactly what makes the
+// card go away.
 //
-// The open submission carries the metadata tag the live promote path writes,
-// so `GroupChat._eventHref` links it and `_votePhase` resolves it out of
-// /promoted; the two settled ones carry none, the shape of a row that
-// predates the tag, so their PR numbers come out of the wording alone.
-// Read-only viewers see the same rows. Ids in the free 90011x range;
-// idempotent via explicit ids + ON CONFLICT DO NOTHING; a no-op outside
-// staging.
+// The line carries the metadata tag the live promote path writes, so the
+// Discussion resolves its vote out of /promoted. Its id, 900118, is new: the
+// channel lines this fixture used to seed (900111-900117) are removed by
+// clearAutomatedChannelLines, and reusing one of their ids would leave the
+// thread copy behind their ON CONFLICT on the boot that removes them.
+// Read-only viewers see the same rows. Idempotent via explicit ids + ON
+// CONFLICT DO NOTHING; a no-op outside staging.
 async function seedStagingQuietDiscussion(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
@@ -6108,33 +6192,15 @@ async function seedStagingQuietDiscussion(pool) {
                NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours')
        ON CONFLICT DO NOTHING`
     );
-    // The general stream (thread_type NULL), oldest first, worded like the
-    // platform's own lines (routes/votes.js) with "Staging demo" in each so
-    // nobody mistakes one for history.
+    // The open proposal's own thread, worded like the platform's promote
+    // line (routes/votes.js) with "Staging demo" in its title.
     await pool.query(
-      `INSERT INTO chat_messages (id, app_id, user_id, content, msg_type, metadata, created_at)
+      `INSERT INTO chat_messages (id, app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
        VALUES
-         (900111, 900110, NULL,
-          'staging-demo-quiet-builder promoted PR #900107: Staging demo: the first change for voting',
-          'vote', '{}', NOW() - INTERVAL '3 hours'),
-         (900112, 900110, NULL,
-          'Staging demo: the first change is live (PR #900107). Thanks to everyone who voted (1/1 votes)',
-          'system', '{}', NOW() - INTERVAL '2 hours 40 minutes'),
-         (900113, 900110, NULL,
-          'staging-demo-quiet-builder promoted PR #900108: Staging demo: the second change for voting',
-          'vote', '{}', NOW() - INTERVAL '2 hours'),
-         (900114, 900110, NULL,
-          'Staging demo: issue #900110 closed by group vote (1/1)',
-          'system', '{}', NOW() - INTERVAL '1 hour 50 minutes'),
-         (900115, 900110, NULL,
-          'Staging demo: the second change is live (PR #900108). Thanks to everyone who voted (1/1 votes)',
-          'system', '{}', NOW() - INTERVAL '1 hour 40 minutes'),
-         (900116, 900110, NULL,
-          'Staging demo: PR #900109: an earlier change reached the vote threshold but is still running its tests. Merge is blocked until checks pass.',
-          'system', '{}', NOW() - INTERVAL '1 hour 10 minutes'),
-         (900117, 900110, NULL,
+         (900118, 900110, NULL,
           'staging-demo-quiet-builder promoted PR #900110: Staging demo: a proposal that is still up for a vote for voting',
-          'vote', '{"vote": {"sessionId": 900110, "prNumber": 900110}}', NOW() - INTERVAL '30 minutes')
+          'vote', '{"vote": {"sessionId": 900110, "prNumber": 900110}}', 'session', 900110,
+          NOW() - INTERVAL '30 minutes')
        ON CONFLICT DO NOTHING`
     );
     log.info('db', 'Staging quiet-discussion fixtures seeded');
@@ -13327,6 +13393,7 @@ module.exports = {
   migrate, seedStagingTopochain, seedStagingProfileCustomization,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
+  clearAutomatedChannelLines,
   backfillProposalIssuerAssignments,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,

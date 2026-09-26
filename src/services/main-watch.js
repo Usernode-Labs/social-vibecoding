@@ -397,6 +397,9 @@ async function resume(config, pool, appId, { by = null } = {}) {
   return describe(rows[0]);
 }
 
+// Worded for the group, and no longer written: a channel carries no
+// activity (ws.sendSystemMessage drops a line with no thread). The pause
+// itself is shown on the Workshop (main-pause-store).
 async function postGroup(pool, appId, content) {
   try {
     const { sendSystemMessage } = require('./ws');

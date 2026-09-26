@@ -6536,7 +6536,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
       await sendSystemMessage(pool, session.app_id,
         `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
         `The change is on main; an operator can retry the deploy once the cause is resolved.`,
-        'system'
+        'system', null, { type: 'session', ref: session.id }
       ).catch(() => {});
 
       try {
@@ -6618,7 +6618,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
           ).catch(() => {});
           await sendSystemMessage(pool, session.app_id,
             `${closedLabel} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Re-propose it from the session's dev-chat.`,
-            'system'
+            'system', null, { type: 'session', ref: session.id }
           ).catch(() => {});
           try {
             const { pushVoteUpdate, pushSessionUpdate } = require('../services/ws');
@@ -6731,7 +6731,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         (force && autoResolve)
           ? `${label} hit a conflict with main during an admin merge. Resolving the conflict automatically and retrying the merge.`
           : `${label} hit a conflict with main during a merge attempt. ${owner}: finish the merge by running "Sync with main" from the session's dev-chat. (Auto-resolution retries only when the proposal is eligible to merge on votes.)`,
-        'system'
+        'system', null, { type: 'session', ref: session.id }
       );
       // Auto-heal the conflict the same way the behind_main gate does.
       // autoResolve guards against the resolver's own retry re-entering
@@ -6766,7 +6766,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
     } else {
       await sendSystemMessage(pool, session.app_id,
         `Failed to merge PR #${session.pr_number || session.id}: ${err.message}`,
-        'system'
+        'system', null, { type: 'session', ref: session.id }
       );
     }
     if (isConflict) {
@@ -6898,7 +6898,7 @@ async function checkAndOpenRevert(config, pool, session, decider) {
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
         `Couldn't auto-revert ${label}: ${backfillReason}. Please open the revert PR manually.`,
-        'system'
+        'system', null, { type: 'session', ref: session.id }
       );
       return { reverted: false, error: 'no merge_commit_sha', backfillReason };
     }
@@ -6948,7 +6948,7 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     await sendSystemMessage(pool, session.app_id,
       `Couldn't auto-revert ${label}: ${err.message}. ` +
       `Most likely later commits depend on it. Please open the revert PR manually.`,
-      'system'
+      'system', null, { type: 'session', ref: session.id }
     );
     return { reverted: false, error: err.message };
   }
@@ -6981,14 +6981,14 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     [revertSessionId, session.id]
   );
 
-  // Announce in group chat so the new revert PR shows up in the vote
-  // panel with context. Tag the original PR # for breadcrumbs.
+  // Say so in the undone proposal's own thread, the breadcrumb from it to
+  // the revert PR (a channel carries no activity: ws.sendSystemMessage).
   const label = session.pr_title
     ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
     : `PR #${session.pr_number || session.id}`;
   await sendSystemMessage(pool, session.app_id,
     `${decider.username} proposed undoing ${label}. Opened revert PR #${revertInfo.prNumber}, which needs ${majority}/${activeCount} votes to land.`,
-    'system'
+    'system', null, { type: 'session', ref: session.id }
   );
 
   return {

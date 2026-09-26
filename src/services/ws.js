@@ -1303,72 +1303,35 @@ async function getReactionsForMessages(pool, messageIds, viewerId = null) {
   return out;
 }
 
-// Which system rows are #general's (see sendSystemMessage): the vote
-// announcement and the merge line, in the main stream, carrying the
-// proposal they are about. Returns that proposal's session id, or null.
-function generalEventProposal(msgType, metadata, thread) {
-  if (thread || !metadata || typeof metadata !== 'object') return null;
-  const ref = msgType === 'vote' ? metadata.vote : (msgType === 'system' ? metadata.merged : null);
-  const id = ref && Number(ref.sessionId);
-  return Number.isSafeInteger(id) && id > 0 ? id : null;
-}
-
-async function isSelfHostedApp(pool, appId) {
-  try {
-    const { rows } = await pool.query('SELECT self_hosted FROM apps WHERE id = $1', [appId]);
-    return !!(rows && rows[0] && rows[0].self_hosted === true);
-  } catch {
-    return false;
-  }
-}
-
 // `metadata` is an optional plain object persisted to chat_messages.metadata
 // (JSONB) and echoed on the live broadcast. Used e.g. by the vote-activity
 // lines (promote / vote cast) to carry { vote: { sessionId, prNumber } } so
 // the group-chat client can render live vote buttons inline on the row.
-// #194: optional `thread` ({ type: 'issue'|'session'|'governance', ref })
-// scopes the system message into that thread instead of general chat
-// (used by the per-vote activity rows, which post into the proposal's
-// thread). Callers are trusted — no ref validation here.
+// #194: `thread` ({ type: 'issue'|'session'|'governance', ref }) scopes the
+// system message into that thread (used by the per-vote activity rows,
+// which post into the proposal's thread). Callers are trusted — no ref
+// validation here.
+//
+// A CHANNEL IS WHAT PEOPLE SAID. With no thread there is nothing to write:
+// the main stream is the app's channel (the hub's Channel card, the Messages
+// room), and Homeroom's activity — a proposal put up for a vote, a merge, a
+// check verdict, a setting changed, main going red — is no longer a line in
+// it, nor in #general. The story of one proposal, request or decision stays
+// in its own thread, which is why the callers that announced an event twice
+// still post the thread copy, and why a proposal's own notices name its
+// thread. The app-wide notices that have no thread (main's suite, a release,
+// the Friday card, a visibility or governance change) are shown where that
+// state lives — the Workshop's pause banner, the admins' notifications, the
+// members' own notifications, dapp.json — and are not written anywhere.
+// db/migrate.js clearAutomatedChannelLines removes the lines written before.
 async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null, thread = null) {
-  // THE HOMEROOM COMMUNITY'S EVENTS GO TO #general. The platform's own app
-  // talks in #general now, and its old project discussion is read-only
-  // history (services/communities.js channelArchived), so the two events
-  // that discussion drew — a proposal put up for a vote and a merge — are
-  // posted into #general instead, as Homeroom's own line with the
-  // proposal's card. Only those two, and only in the main stream: a
-  // proposal's own thread keeps its copy, and the rows the discussion never
-  // drew stay where they were. With no #general (a fresh database), the
-  // old room keeps them.
-  const proposal = generalEventProposal(msgType, metadata, thread);
-  if (proposal && await isSelfHostedApp(pool, appId)) {
-    try {
-      const posted = await require('./conversations').postChannelEvent(pool, {
-        channelKey: 'general',
-        content,
-        metadata,
-        proposal: { appId, sessionId: proposal },
-      });
-      if (posted) {
-        pushConversationEvent(posted.memberIds, {
-          type: 'conversation_message_created',
-          conversationId: posted.conversationId,
-          messageId: posted.messageId,
-          threadRootId: null,
-        });
-        return { id: null, createdAt: posted.createdAt, conversationMessageId: posted.messageId };
-      }
-    } catch (err) {
-      log.warn('ws', 'Could not post the event to #general; keeping it in the app room', { appId, err: err.message });
-    }
-  }
+  if (!thread) return null;
   const { rows } = await pool.query(
     `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, created_at`,
     // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
-    [appId, content, msgType, JSON.stringify(metadata || {}),
-     thread ? thread.type : null, thread ? thread.ref : null]
+    [appId, content, msgType, JSON.stringify(metadata || {}), thread.type, thread.ref]
   );
 
   broadcast(appId, {
@@ -1379,7 +1342,7 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
     content,
     msgType,
     ...(metadata ? { metadata } : {}),
-    ...(thread ? { thread } : {}),
+    thread,
     createdAt: rows[0].created_at,
   });
   // #1688: the row, for a caller that hangs something off the message — the

@@ -149,6 +149,9 @@ function releasedMessage(record, runningSha) {
   return `✅ ${what} is live now${carried}.`;
 }
 
+// Worded for the group, and no longer written: a channel carries no
+// activity (ws.sendSystemMessage drops a line with no thread). A stalled
+// release still reaches the app's admins (notifyAdmins).
 async function postGroup(pool, appId, content) {
   try {
     const { sendSystemMessage } = require('./ws');
