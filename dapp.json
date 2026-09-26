@@ -5191,9 +5191,9 @@
       ]
     },
     {
-      "name": "#2779: an agent session's staging builds are cards: an older build is superseded, the newest offers Open preview and View change",
+      "name": "#2779: an agent session's staging builds are cards: an older build is superseded, the newest offers Open preview and View change, and says in words why its checks were skipped (#3180)",
       "path": "/#messages/agent/990801",
-      "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-preview=\"superseded\"] ~ [data-agent-session-preview=\"deployed\"] [data-agent-session-preview-open] + [data-agent-session-preview-change]",
+      "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-preview=\"superseded\"] ~ [data-agent-session-preview=\"deployed\"]:has(> [data-agent-session-checks-reason]) [data-agent-session-preview-open] + [data-agent-session-preview-change]",
       "expectText": "Superseded by a newer preview"
     },
     {
@@ -5285,9 +5285,9 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779)",
+      "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
       "path": "/#agent/990801/changes",
-      "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-drawer] [data-agent-session-active-change] a[href$=\"/dev/proposals/990802\"]"
+      "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
     }
   ],
   "governance": {
