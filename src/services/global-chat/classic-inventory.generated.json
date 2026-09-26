@@ -8757,6 +8757,7 @@
       "clientReferences": [
         "frontend/src/features/dev-board/topic/topic-head.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
+        "public/js/app-view.js",
         "public/js/app-view.js"
       ]
     },

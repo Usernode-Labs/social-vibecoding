@@ -148,7 +148,7 @@ test('a pending vote is re-applied to rows a pre-vote load publishes, until the 
 });
 
 test('the board load itself applies the overlay before publishing', () => {
-  const code = SRC.slice(SRC.indexOf('async _fetchDevData(slug)'), SRC.indexOf('async _loadDevFeed()'));
+  const code = SRC.slice(SRC.indexOf('async _fetchDevData(slug'), SRC.indexOf('async _loadDevFeed('));
   const overlay = code.indexOf('promoted.forEach((pr) => AppView._overlayPendingVote(pr));');
   assert.ok(overlay > -1, '_fetchDevData re-applies pending votes');
   assert.ok(overlay < code.indexOf('AppView.voteState = {'), 'before the chat rows are built from the same objects');
@@ -206,9 +206,77 @@ test('refreshDevData asks for a fresh load on a vote and nothing else', () => {
   AppView._loadDevData = (opts) => { asked.push(opts ? { ...opts } : null); return Promise.resolve(true); };
   AppView._refreshTopicOnDemandRow = async () => {};
   AppView._renderTopicHead = () => {};
-  AppView.refreshDevData('checks-poll');
+  AppView.refreshDevData('session');
   AppView.refreshDevData('vote');
   assert.deepEqual(asked, [null, { fresh: true }]);
+});
+
+// ── 4. A live vote reads the part of the board it moved ─────────────────
+
+test('a live vote on the board reloads the proposals alone; a merge adds Completed', () => {
+  const AppView = makeAppView();
+  AppView.appData = { slug: 'demo-app' };
+  AppView._devDataReady = true;
+  AppView._proposals = [openRow()];
+  AppView._mySessions = [{ id: 8, status: 'active' }];
+  const vote = (ids, merged = false) => AppView._partsForLive({ kinds: new Set(['vote']), ids: new Set(ids), merged });
+  assert.deepEqual([...vote([7])], ['promoted']);
+  assert.deepEqual([...vote([7], true)].sort(), ['merged', 'promoted']);
+  assert.deepEqual([...vote([8])], ['sessions'], 'a draft row lives in the session caches');
+  assert.equal(vote([99]).size, 0, 'a row this board does not show asks for nothing');
+  assert.equal(AppView._partsForLive({ kinds: new Set(['vote', 'session']), ids: new Set([7]) }), null,
+    'a session appearing or leaving is the whole board');
+  assert.equal(AppView._partsForLive({ kinds: new Set(['vote']), ids: null }), null,
+    'an event that names no row is the whole board');
+  AppView._devDataReady = false;
+  assert.equal(vote([7]), null, 'and so is any refresh before the first whole load');
+});
+
+test('a partial load sends only its requests and keeps every other cache', async () => {
+  const calls = [];
+  const AppView = makeAppView({
+    fetch: async (url) => {
+      calls.push(String(url).split('?')[0]);
+      return { ok: true, json: async () => ({ promoted: [openRow({ yes_count: 5 })], majority: 2, activeUsers: 3 }) };
+    },
+  });
+  AppView.appData = { slug: 'demo-app' };
+  AppView._devDataReady = true;
+  const issues = [{ number: 1 }];
+  AppView._ghIssues = issues;
+  AppView._merged = [{ id: 1, row_type: 'pr' }];
+  AppView._boardOrder = { issues: [{ ref: 1 }], review: [] };
+  AppView._govProposals = [{ id: 4 }];
+  AppView._proposalsCtx = { majority: 9, activeUsers: 9, locked: true };
+  const ok = await AppView._loadDevData({ fresh: true, parts: new Set(['promoted']) });
+  assert.equal(ok, true);
+  assert.deepEqual(calls, ['/api/apps/demo-app/promoted']);
+  assert.equal(AppView._proposals[0].yes_count, 5);
+  assert.equal(AppView._proposalsCtx.majority, 2);
+  assert.equal(AppView._ghIssues, issues);
+  assert.equal(AppView._merged.length, 1);
+  assert.equal(AppView._boardOrder.issues.length, 1);
+  assert.equal(AppView._govProposals.length, 1);
+  assert.deepEqual(Object.keys(AppView.voteState.bySession).sort(), ['1', '7'],
+    'the chat rows still see the Completed rows the load kept');
+});
+
+test('a partial run never answers for the whole board; a queued one widens instead', async () => {
+  const net = gatedFetch();
+  const AppView = makeAppView({ fetch: net.fetch });
+  AppView.appData = { slug: 'demo-app' };
+  AppView._devDataReady = true;
+  const first = AppView._loadDevData({ parts: new Set(['promoted']) });
+  const whole = AppView._loadDevData();
+  assert.notEqual(whole, first, 'the whole board queues behind a partial run rather than joining it');
+  const widened = AppView._loadDevData({ parts: new Set(['merged']) });
+  assert.equal(widened, whole, 'a not-yet-sent run takes the next caller in');
+  for (let i = 0; i < 50 && AppView._devDataInflight; i += 1) {
+    net.releaseAll();
+    await new Promise((r) => setImmediate(r));
+  }
+  await Promise.all([first, whole]);
+  assert.equal(AppView._devDataInflight, null);
 });
 
 // ── QA 2026-09-24 Q3: castVote says whether the vote landed ─────────────

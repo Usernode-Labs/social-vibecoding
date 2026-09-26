@@ -6291,7 +6291,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // proposal sat merge-blocked on "still running its tests" until a
           // sweep happened to heal it. Fire-and-forget; captureForSession
           // owns all failure handling and is _inFlight-guarded.
-          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: () => {}, trigger: 'manual-recheck' })
+          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: null, trigger: 'manual-recheck' })
             .catch((err) => log.warn('visuals', 'Deploy-staging capture failed (non-fatal)', {
               sessionId: session.id, err: err.message,
             }));
@@ -8898,9 +8898,10 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
             [session.id, 'Staging preview built',
               JSON.stringify({ stagingUrl: stagingResult.stagingUrl, changesReady: true, prNumber: null })]
           ).catch(() => {});
-          // Before/after visuals: best-effort, never throws; there is no live
-          // client to stream to on a resumed run, so the no-op send is fine.
-          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: () => {}, trigger: 'commit-push' })
+          // Before/after visuals: best-effort, never throws. There is no turn
+          // to stream to on a resumed run, so pass no `send`: the notifiers
+          // then publish to the bus and the global socket for open pages.
+          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: null, trigger: 'commit-push' })
             .catch((err) => log.warn('visuals', 'Resumed headless capture failed (non-fatal)', { sessionId: session.id, err: err.message }));
           dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}, and a staging preview was built. `
             + 'Headless mode: no PR was opened (it is created on a clone at propose time).'

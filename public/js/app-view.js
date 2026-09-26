@@ -5927,17 +5927,6 @@ const AppView = {
   },
 
 
-  // Re-pull live data for the dev card list. Called from the WS event
-  // handlers in app.js (vote_update / issue_update / session_update /
-  // lock_changed). The feed re-render preserves the open accordion
-  // card. The chat view only needs the vote snapshot refreshed; the
-  // session and settings views have their own refresh paths.
-  // #607: polling fallback while any loaded proposal's checks are in
-  // progress ('pending', or fresh-NULL with no verdict recorded yet). The
-  // WS checks_ready broadcasts are the primary update channel; this only
-  // covers missed pushes (disconnect, laptop waking from sleep). Called
-  // after every dev-data load, so the interval self-clears on the load
-  // that finds nothing in progress.
   // ── Live patches from WS events (no refetch) ─────────────────────────
   //
   // The checks_ready / behind_main / freshness / sync_status events already
@@ -5945,15 +5934,37 @@ const AppView = {
   // payload away and refetched five endpoints to learn what it had just been
   // told. Each helper finds the proposal's row in the cached lists, writes
   // the same keys the row would carry after a refetch, and repaints the head
-  // from the cache. A row the lists do not hold (a topic opened from beyond
-  // the cached pages) falls back to the refetch path.
+  // from the cache. A row the lists do not hold is not on this page, and
+  // nothing is fetched for it.
   _topicRowFor(sessionId) {
     const id = Number(sessionId);
     if (!Number.isFinite(id)) return null;
-    return (AppView._proposals || []).find((p) => p && Number(p.id) === id)
-      || (AppView._merged || []).find((p) => p && Number(p.id) === id)
+    const byId = (p) => p && Number(p.id) === id;
+    return (AppView._proposals || []).find(byId)
+      || (AppView._mySessions || []).find(byId)
+      || (AppView._sharedSessions || []).find(byId)
+      || (AppView._merged || []).find(byId)
       || (AppView._topicProposal && Number(AppView._topicProposal.id) === id ? AppView._topicProposal : null)
       || null;
+  },
+  // Which part of a board load a session's row came from, or null when the
+  // page does not hold it. `_sharedById` also covers the viewer's own shared
+  // rows, which `_sharedSessions` leaves out.
+  _whereHeld(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isFinite(id)) return null;
+    const byId = (p) => p && Number(p.id) === id;
+    if ((AppView._proposals || []).some(byId)) return 'promoted';
+    if ((AppView._mySessions || []).some(byId) || (AppView._sharedSessions || []).some(byId)
+        || (AppView._sharedById && AppView._sharedById[id])) return 'sessions';
+    if ((AppView._merged || []).some(byId)) return 'merged';
+    return null;
+  },
+  holdsSession(sessionId) {
+    const id = Number(sessionId);
+    if (AppView._whereHeld(id)) return true;
+    const t = AppView._devTopic;
+    return !!t && (t.kind === 'proposal' || t.kind === 'session') && Number(t.id) === id;
   },
   _repaintTopicIfShowing(sessionId) {
     const t = AppView._devTopic;
@@ -5962,39 +5973,56 @@ const AppView = {
     AppView._renderTopicHead();
   },
   patchTopicProposal(sessionId, patch) {
+    if (!patch) return false;
+    // A change's page merges its own read of the row OVER the cached one, so
+    // a patch the page does not hear would be painted over by that read's
+    // older values. It hears every patch.
+    AppView._forwardChangePatch(sessionId, patch);
     const row = AppView._topicRowFor(sessionId);
-    if (!row || !patch) return false;
+    if (!row) return false;
     for (const [k, v] of Object.entries(patch)) {
       if (v !== undefined) row[k] = v;
     }
     AppView._repaintTopicIfShowing(sessionId);
     return true;
   },
-  // checks_ready with checkState 'pending' carries phase/trigger/progress —
-  // patch and repaint. A final verdict carries no test_results, so that one
-  // still refetches, but through the 'checks' kind, which keeps the roster.
+  _forwardChangePatch(sessionId, patch) {
+    const clean = {};
+    for (const [k, v] of Object.entries(patch)) if (v !== undefined) clean[k] = v;
+    AppView._tellChangePage({ id: Number(sessionId), patch: clean });
+  },
+  // topic-head.tsx's ChangeDetail listens for this: an id re-reads, `{ id,
+  // row }` adopts a row, `{ id, patch }` merges one, 'all' re-reads every
+  // mounted page.
+  _tellChangePage(detail) {
+    if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function'
+        || typeof CustomEvent === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail }));
+  },
+  // checks_ready with checkState 'pending' carries phase/trigger/progress:
+  // patch and repaint, wherever the row is showing. A verdict carries no
+  // test list; App._liveRefresh asks for the one targeted read it needs, and
+  // only when this page holds the row (refreshDevData / _partsForLive).
   applyChecksEvent(data) {
     if (!data || data.sessionId == null) return;
-    const state = data.checkState || null;
-    if (state === 'pending') {
-      const patched = AppView.patchTopicProposal(data.sessionId, {
-        check_state: 'pending',
-        check_phase: data.checkPhase === undefined ? undefined : (data.checkPhase || null),
-        check_trigger: data.checkTrigger === undefined ? undefined : (data.checkTrigger || null),
-        checks_commit_sha: data.commitSha === undefined ? undefined : (data.commitSha || null),
-        checks_progress: data.progress === undefined ? undefined : (data.progress || null),
-        // A run that just started: the row's checked_at is when it started.
-        ...(data.progress ? {} : { checks_checked_at: new Date().toISOString() }),
-      });
-      if (patched) return;
-      // A progress tick for a row this page does not hold (another app's
-      // run, a topic beyond the cached pages) is nothing to refetch for:
-      // the numbers belong to a row that is not on screen, and a refetch a
-      // second for the length of someone else's run was the churn this
-      // replaces. The run's start and verdict events still fall through.
-      if (data.progress && typeof data.progress === 'object') return;
+    if ((data.checkState || null) !== 'pending') return;
+    const tick = !!(data.progress && typeof data.progress === 'object');
+    const held = AppView.patchTopicProposal(data.sessionId, {
+      check_state: 'pending',
+      check_phase: data.checkPhase === undefined ? undefined : (data.checkPhase || null),
+      check_trigger: data.checkTrigger === undefined ? undefined : (data.checkTrigger || null),
+      checks_commit_sha: data.commitSha === undefined ? undefined : (data.commitSha || null),
+      checks_progress: data.progress === undefined ? undefined : (data.progress || null),
+      // A run that just started: the row's checked_at is when it started.
+      ...(tick ? {} : { checks_checked_at: new Date().toISOString() }),
+    });
+    // A run starting moves the card's badge to "Checks running". The ticks
+    // after it are the page's (the ledger's bar); the board does not redraw
+    // every row once a second for them.
+    if (held && !tick && typeof App !== 'undefined' && App.currentTab === 'dev'
+        && App.currentSubTab === 'forum') {
+      AppView._repaintDevBodyKeepingPosition();
     }
-    AppView.refreshDevData('checks');
   },
   // Mirrors DevChat.applyBehindMainUpdate for the topic page's own row.
   applyBehindMainEvent(sessionId, behindMain) {
@@ -6028,64 +6056,56 @@ const AppView = {
     AppView.patchTopicProposal(data.sessionId, { resolving: running });
   },
 
-  _checksPollHandle: null,
-  _syncChecksPoll(proposals) {
-    const inProgress = Array.isArray(proposals) && proposals.some((pr) =>
-      pr && pr.status !== 'merged'
-      && (pr.check_state === 'pending' || (!pr.check_state && !pr.console_check_state)));
-    if (!inProgress) {
-      if (AppView._checksPollHandle) {
-        clearInterval(AppView._checksPollHandle);
-        AppView._checksPollHandle = null;
-      }
-      return;
-    }
-    if (AppView._checksPollHandle) return;
-    AppView._checksPollHandle = setInterval(() => {
-      // Leaving the dev tab (or the app view) ends the poll; a hidden tab
-      // just skips the tick and resumes when visible again.
-      if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') {
-        clearInterval(AppView._checksPollHandle);
-        AppView._checksPollHandle = null;
-        return;
-      }
-      if (document.hidden) return;
-      // 'checks-poll' is not 'vote': the roster survives the tick.
-      AppView.refreshDevData('checks-poll');
-    }, 20000);
-  },
+  // (#607's 20-second checks poll is gone. It stood in for checks_ready
+  // events that never reached the page: the server spread each event over
+  // its own envelope, so the socket router dropped every one. They arrive
+  // now, verdicts included, and a dropped socket re-reads the page on
+  // reconnect — App.resyncCurrentView.)
 
+  // Re-pull live data for the dev card list. Called by App._liveRefresh
+  // for the socket's events (a vote, a session changing, a checks verdict,
+  // an issue, the board order), once per burst, and directly by the
+  // controls that wrote something themselves.
+  //
+  // `live` (from App._liveRefresh) names what the burst was about:
+  //   { kinds: Set, ids: Set | null, merged: boolean }
+  // With it, a refresh reads only what those rows need (_partsForLive), and
+  // a proposal's page reads only that proposal (_refreshTopicLive). Without
+  // it (every direct caller), it reloads the board as it always did.
+  //
   // Returns the refresh's promise (or undefined when there is nothing on
   // screen to refresh), so castVote can tell when its post-vote read landed.
-  refreshDevData(kind) {
+  refreshDevData(kind, live = null) {
     if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return undefined;
-    // Every caller here (a session/vote/checks event over the WS, the 20s
-    // checks poll, a late-answer correction) is refreshing a board already
-    // on screen, so the service worker must fetch rather than answer from
-    // its boot lane — see App.refreshActiveScreen for the loop that caused.
+    // Every caller here (a session/vote/checks event over the WS, a
+    // late-answer correction) is refreshing a board already on screen, so
+    // the service worker must fetch rather than answer from its boot lane —
+    // see App.refreshActiveScreen for the loop that caused.
     App._announceRefreshIntent?.();
     // #2782: a vote refresh must read data written AFTER the vote. Joining a
-    // load already in flight — the 20s checks poll, another voter's WS
-    // refresh — hands it a snapshot taken before the vote was recorded, and
-    // both the WS refresh and the POST's own refresh used to repaint the
-    // pre-vote tally that way. `fresh` queues a new load behind it instead.
-    const opts = kind === 'vote' ? { fresh: true } : undefined;
+    // load already in flight — another voter's WS refresh — hands it a
+    // snapshot taken before the vote was recorded, and both the WS refresh
+    // and the POST's own refresh used to repaint the pre-vote tally that way.
+    // `fresh` queues a new load behind it instead.
+    const fresh = kind === 'vote' || !!(live && live.kinds && live.kinds.has('vote'));
+    const opts = fresh ? { fresh: true } : undefined;
     if (App.currentSubTab === 'chat') {
+      if (live && !AppView._liveTouchesVotes(live)) return Promise.resolve(true);
       return AppView.loadVoteState(AppView.appData.slug);
     }
     if (App.currentSubTab === 'topic') {
+      if (live) return AppView._refreshTopicLive(live);
       // Refresh the header card / roster in place; the mounted thread
       // is left alone (it receives live messages directly). The roster's
       // cache entry is dropped HERE rather than in `_renderTopicHead`,
       // which repaints far more often than the data changes — a vote
       // arriving over the WS is a refresh, a repaint is not.
       // Only a VOTE invalidates the roster. Every other refresh (a checks
-      // phase event, the 20s checks poll, a sync-status change) used to
-      // delete it too, so the head republished with `roster: {phase:
-      // 'loading'}` — "Loading votes…" — and then again when the roster
-      // refetch landed: two paints per event, the first one blank. Voters
-      // watched the tally flicker on a timer while nothing about it changed.
-      // The roster now stays on screen until a vote actually moves it.
+      // phase event, a sync-status change) used to delete it too, so the
+      // head republished with `roster: {phase: 'loading'}` — "Loading
+      // votes…" — and then again when the roster refetch landed: two paints
+      // per event, the first one blank. The roster now stays on screen until
+      // a vote actually moves it.
       if (kind === 'vote' && AppView._devTopic) AppView._invalidateVoteRoster(AppView._devTopic.id);
       // #2782: re-read the roster now rather than after the whole board load
       // below (seven requests, GitHub issues among them) — it is the one part
@@ -6103,11 +6123,104 @@ const AppView = {
         .then(() => AppView._renderTopicHead());
     }
     if (App.currentSubTab !== 'forum') return undefined;
+    const parts = live ? AppView._partsForLive(live) : null;
+    // The burst was about rows this board does not show.
+    if (parts && !parts.size) return Promise.resolve(true);
+    if (parts) return AppView._loadDevFeed({ ...(opts || {}), parts });
     // Session rows render inside the board/feed now, so the full-feed
     // reload below covers session_update events too (no separate strip).
     // A fresh run started first is the one the feed's own load then joins.
     if (opts) AppView._loadDevData(opts);
     return AppView._loadDevFeed();
+  },
+
+  // What a live burst moved, as board parts: a vote moves the proposals'
+  // tallies (and, on a merge, the Completed list); a verdict moves the one
+  // row's checks, wherever it lives. Anything else — a session appearing or
+  // leaving, an issue, the board order — is the whole board. Rows the page
+  // does not hold ask for nothing: that is someone else's work, on a board
+  // this viewer is not looking at.
+  _partsForLive(live) {
+    if (!live || !AppView._devDataReady || !live.ids || !live.ids.size) return null;
+    for (const k of live.kinds || []) if (k !== 'vote' && k !== 'checks') return null;
+    const parts = new Set();
+    for (const id of live.ids) {
+      const where = AppView._whereHeld(id);
+      if (where) parts.add(where);
+    }
+    if (live.merged) { parts.add('promoted'); parts.add('merged'); }
+    return parts;
+  },
+  _liveTouchesVotes(live) {
+    if (!live || !live.ids) return true;
+    for (const k of live.kinds || []) if (k !== 'checks') return true;
+    return false;
+  },
+
+  // A proposal's page, for a live burst: re-read that proposal alone, and
+  // only when the burst was about it. The board behind the page is not
+  // repainted (it reloads when the reader goes back to it), so a vote on
+  // some other row costs this page nothing.
+  //
+  // The row is handed to the page's ChangeDetail (topic-head.tsx) rather
+  // than re-read by it: the change page merges its own read OVER the cached
+  // row, so it has to be the one holding the new values.
+  _liveHandedOff: null,
+  async _refreshTopicLive(live) {
+    const t = AppView._devTopic;
+    if (!t) return true;
+    const id = Number(t.id);
+    const changePage = t.kind === 'proposal' || t.kind === 'session';
+    if (live.ids && !live.ids.has(id)) return true;
+    if (!changePage) {
+      // An issue or governance page: the board load is what refreshes it.
+      await AppView._loadDevData();
+      await AppView._refreshTopicOnDemandRow();
+      AppView._renderTopicHead();
+      return true;
+    }
+    const open = AppView._findTopicItem();
+    const review = !!open && ['promoted', 'merging', 'merged'].includes(open.status);
+    const voted = !!(live.kinds && live.kinds.has('vote'));
+    if (voted && review) AppView._invalidateVoteRoster(id);
+    (AppView._liveHandedOff = AppView._liveHandedOff || new Set()).add(id);
+    const row = await AppView._readTopicRow(id, review);
+    if (voted && review && open && ['promoted', 'merging'].includes((row && row.status) || open.status)) {
+      await AppView._loadVoteRoster(id);
+    }
+    if (row) {
+      // The cached row takes the new values too, so the head and the card
+      // agree, and the Workshop's own paint is right before its reload.
+      const held = AppView._topicRowFor(id);
+      if (held && held !== row) {
+        for (const [k, v] of Object.entries(row)) if (k in held) held[k] = v;
+        AppView._overlayPendingVote(held);
+      }
+      AppView._tellChangePage({ id, row });
+    } else {
+      AppView._tellChangePage(id);
+    }
+    AppView._renderTopicHead();
+    return true;
+  },
+  // The change page's own read (topic-head.tsx's readChangeDetail): a
+  // proposal's public row, or an in-flight session's details. Null on any
+  // failure, and the page keeps what it had.
+  async _readTopicRow(id, review) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return null;
+    const url = review ? `/api/apps/${slug}/proposals/${id}` : `/api/sessions/${id}/details`;
+    try {
+      const res = await fetch(`${url}${AppView._demoQS()}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const row = (review ? data.proposal : data.session) || null;
+      if (!row || Number(row.id) !== Number(id)) return null;
+      AppView._overlayPendingVote(row);
+      return row;
+    } catch {
+      return null;
+    }
   },
 
   // Fetch the vote snapshot (promoted + merged) that powers the inline
@@ -6138,9 +6251,6 @@ const AppView = {
       if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
         GroupChat.refreshVoteControls();
       }
-      // #607: keep the checks-in-progress polling fallback in sync on the
-      // chat sub-tab's vote-snapshot path too.
-      AppView._syncChecksPoll(promoted);
       return { promoted, merged, promotedData };
     } catch {
       return null;
@@ -6580,32 +6690,46 @@ const AppView = {
   // may have been sent before a write the caller needs to read back (a vote),
   // and it would answer with the state from before it. The new run queues
   // behind the old one on the pager, so they never race to publish.
+  //
+  // `opts.parts` (a Set of DEV_DATA_PARTS names) loads only those parts of the
+  // board and keeps the rest as they are: a live vote moves the proposals'
+  // tallies, not the issue list, the board order or the categories. Only a
+  // board that has loaded whole once takes a partial load; before that every
+  // call is a whole one.
   _loadDevData(opts = null) {
     if (!AppView.appData) return Promise.resolve(null);
     const slug = AppView.appData.slug;
     const pager = AppView._mergedPagerFor(slug);
-    // Join the run already going for this app rather than opening a second
-    // set of the same six requests beside it.
     const fresh = !!(opts && opts.fresh);
-    if (AppView._devDataInflight && AppView._devDataInflightFor === slug && !fresh) {
+    const parts = opts && opts.parts && AppView._devDataReady ? new Set(opts.parts) : null;
+    // Join the run already going for this app rather than opening a second
+    // set of the same requests beside it — when it covers what this caller
+    // needs. A partial run does not answer for the whole board.
+    if (AppView._devDataInflight && AppView._devDataInflightFor === slug && !fresh
+        && AppView._partsCover(AppView._devDataInflightParts, parts)) {
       return AppView._devDataInflight;
     }
-    // A fresh load still waiting in the queue has not sent a request yet, so
-    // it is as fresh as a new one would be: a burst of vote_update events
-    // coalesces onto it instead of queueing a run apiece.
+    // A load still waiting in the queue has not sent a request yet, so it is
+    // as fresh as a new one would be: a burst of vote_update events coalesces
+    // onto it instead of queueing a run apiece, widened to what each asks.
     const queued = AppView._devDataQueued;
-    if (fresh && queued && queued.slug === slug && !queued.started) return queued.run;
-    const entry = { slug, started: false, run: null };
+    if (queued && queued.slug === slug && !queued.started) {
+      queued.parts = AppView._partsUnion(queued.parts, parts);
+      if (AppView._devDataInflight === queued.run) AppView._devDataInflightParts = queued.parts;
+      return queued.run;
+    }
+    const entry = { slug, started: false, run: null, parts };
     const clear = () => {
       if (AppView._devDataInflight === run) {
         AppView._devDataInflight = null;
         AppView._devDataInflightFor = null;
+        AppView._devDataInflightParts = null;
       }
       if (AppView._devDataQueued === entry) AppView._devDataQueued = null;
     };
     const run = AppView._queueMergedOperation(pager, () => {
       entry.started = true;
-      return AppView._fetchDevData(slug);
+      return AppView._fetchDevData(slug, entry.parts);
     }).then(
       (ok) => { clear(); return ok; },
       (err) => { clear(); throw err; }
@@ -6614,43 +6738,63 @@ const AppView = {
     if (!entry.started) AppView._devDataQueued = entry;
     AppView._devDataInflight = run;
     AppView._devDataInflightFor = slug;
+    AppView._devDataInflightParts = entry.parts;
     return run;
+  },
+  // The parts a board load is made of. `null` everywhere below means all of
+  // them.
+  DEV_DATA_PARTS: ['issues', 'promoted', 'merged', 'order', 'sessions', 'categories'],
+  _devDataInflightParts: null,
+  _partsCover(have, want) {
+    if (!have) return true;
+    if (!want) return false;
+    for (const p of want) if (!have.has(p)) return false;
+    return true;
+  },
+  _partsUnion(a, b) {
+    if (!a || !b) return null;
+    return new Set([...a, ...b]);
   },
 
   // Publish one refreshed snapshot for the visit that requested it. Keep the
   // queue occupied until every request settles, including a failed refresh's
   // session/category requests, so they cannot overtake a later retry.
-  async _fetchDevData(slug) {
+  async _fetchDevData(slug, parts = null) {
     const pager = AppView._mergedPagerFor(slug);
+    // A part left out of a partial load resolves to KEEP, and its cache is
+    // left exactly as the last load wrote it.
+    const KEEP = { keep: true };
+    const want = (part) => !parts || parts.has(part);
+    const keep = (value) => value === KEEP;
     try {
       const results = await Promise.allSettled([
-        fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
+        want('issues') ? fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`) : KEEP,
         // Forward ?demo=1 here too so the staging mock GOVERNANCE rows
         // (stagingMockGovernance — rename / secret / close-issue cards)
         // actually reach the board. Server-side the append is gated on
         // IS_STAGING, so this is a no-op in production.
-        fetch(`/api/apps/${slug}/issues${AppView._demoQS()}`),
-        fetch(`/api/apps/${slug}/promoted${AppView._demoQS()}`),
+        want('issues') ? fetch(`/api/apps/${slug}/issues${AppView._demoQS()}`) : KEEP,
+        want('promoted') ? fetch(`/api/apps/${slug}/promoted${AppView._demoQS()}`) : KEEP,
         // Forward ?demo=1 to /merged too so the kanban "Done" column (and
         // the list's Completed block) populate in a staging ?demo=1 preview.
         // Server-side the demo append is gated on IS_STAGING, so this is a
         // no-op in production. votes.js stagingMockMerged() supplies the rows.
-        AppView._fetchMergedRange(pager),
+        want('merged') ? AppView._fetchMergedRange(pager) : KEEP,
         // #613: the manual drag-and-drop order overlay for the Issues + In
         // review columns. Forward ?demo=1 so a staging preview seeds a
         // visibly non-default order; a no-op in production. `.catch` keeps a
         // failed order fetch from sinking the whole board load — an absent
         // order just means the default (derived) sort, i.e. today's board.
-        fetch(`/api/apps/${slug}/board-order${AppView._demoQS()}`).catch(() => null),
+        want('order') ? fetch(`/api/apps/${slug}/board-order${AppView._demoQS()}`).catch(() => null) : KEEP,
         // Session caches (own + shared + archived) ride along in the same
         // parallel load; the helper stores them on AppView directly, so
         // there's no destructured slot for it.
-        AppView._refreshSessionCaches(slug, pager),
+        want('sessions') ? AppView._refreshSessionCaches(slug, pager) : KEEP,
         // #780: the app's category vocabulary (built-ins + custom), needed
         // before the first paint so custom chips get their label/colour and
         // the filter bar offers them. Stores onto AppView directly and
         // swallows failures, so no destructured slot and no board-load risk.
-        AppView._loadAppCategories(pager),
+        want('categories') ? AppView._loadAppCategories(pager) : KEEP,
       ]);
       if (!AppView._mergedPagerActive(pager)) return null;
       const failed = results.find((result) => result.status === 'rejected');
@@ -6659,21 +6803,24 @@ const AppView = {
       // #2261: the Issues column's answer is read defensively — a degraded
       // one must not repaint a board that already has a list on it as "no
       // open issues". See where _ghIssues is stored below.
-      const ghData = (ghRes && ghRes.ok) ? await ghRes.json().catch(() => null) : null;
-      const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
-      const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
+      const ghData = keep(ghRes) ? KEEP : (ghRes && ghRes.ok) ? await ghRes.json().catch(() => null) : null;
+      const issuesData = keep(issuesRes) ? KEEP : issuesRes.ok ? await issuesRes.json() : { issues: [] };
+      const promotedData = keep(promotedRes) ? KEEP : promotedRes.ok ? await promotedRes.json() : { promoted: [] };
       const mergedData = mergedRes;
       if (!mergedData || !AppView._mergedPagerActive(pager)) return null;
-      const merged = mergedData.merged || [];
+      const merged = keep(mergedData) ? (AppView._merged || []) : (mergedData.merged || []);
       // #613: manual card-order overlay per column. Shape { issues:[{type,ref}],
       // review:[{type,ref}] }. Tolerates a missing/failed fetch (older server
       // or transient error) by keeping the previous cache / defaulting empty.
-      const orderData = (orderRes && orderRes.ok) ? await orderRes.json().catch(() => null) : null;
+      const orderData = keep(orderRes) ? KEEP
+        : (orderRes && orderRes.ok) ? await orderRes.json().catch(() => null) : null;
       if (!AppView._mergedPagerActive(pager)) return null;
-      AppView._boardOrder = {
-        issues: (orderData && Array.isArray(orderData.issues)) ? orderData.issues : [],
-        review: (orderData && Array.isArray(orderData.review)) ? orderData.review : [],
-      };
+      if (!keep(orderData)) {
+        AppView._boardOrder = {
+          issues: (orderData && Array.isArray(orderData.issues)) ? orderData.issues : [],
+          review: (orderData && Array.isArray(orderData.review)) ? orderData.review : [],
+        };
+      }
       // #2261: a degraded /github-issues answer — the request failed
       // outright, its body did not parse, or the server could not read
       // GitHub and says so with `note` beside an empty list — keeps the
@@ -6687,9 +6834,11 @@ const AppView = {
       // note — still clears the board: that is GitHub saying there are
       // none. Nothing is kept before the first successful load, because
       // there is nothing to keep.
-      const ghIssues = (ghData && Array.isArray(ghData.issues)) ? ghData.issues : null;
+      const ghIssues = keep(ghData) ? null : (ghData && Array.isArray(ghData.issues)) ? ghData.issues : null;
       const ghDegraded = !ghIssues || (!ghIssues.length && !!ghData.note);
-      if (ghDegraded && AppView._devDataReady) {
+      if (keep(ghData)) {
+        // A partial load: the issue list is not what moved.
+      } else if (ghDegraded && AppView._devDataReady) {
         AppView._ghIssuesMeta = {
           ...(AppView._ghIssuesMeta || {}),
           note: (ghData && ghData.note) || 'fetch failed',
@@ -6708,17 +6857,20 @@ const AppView = {
       }
       // GitHub twins of open env-var proposals render as governance
       // cards only — keep their issue rows out of the feed (#131).
-      AppView._envIssueNumbers = new Set(
-        (issuesData.issues || [])
-          .filter((i) => i.kind === 'secret_change')
-          .map((i) => i.github_issue_number)
-          .filter(Boolean)
-      );
+      if (!keep(issuesData)) {
+        AppView._envIssueNumbers = new Set(
+          (issuesData.issues || [])
+            .filter((i) => i.kind === 'secret_change')
+            .map((i) => i.github_issue_number)
+            .filter(Boolean)
+        );
+      }
 
-      const promoted = promotedData.promoted || [];
-      const majority = promotedData.majority || 1;
-      const activeUsers = promotedData.activeUsers || 1;
-      const locked = !!promotedData.locked;
+      const keptCtx = AppView._proposalsCtx || {};
+      const promoted = keep(promotedData) ? (AppView._proposals || []) : (promotedData.promoted || []);
+      const majority = keep(promotedData) ? (keptCtx.majority || 1) : (promotedData.majority || 1);
+      const activeUsers = keep(promotedData) ? (keptCtx.activeUsers || 1) : (promotedData.activeUsers || 1);
+      const locked = keep(promotedData) ? !!keptCtx.locked : !!promotedData.locked;
       // #2782: a vote still on its way to the server survives a snapshot
       // that was read before it landed — on the board, the proposal page and
       // the chat's inline rows alike, which all read these row objects.
@@ -6745,10 +6897,12 @@ const AppView = {
       }
 
       AppView._proposals = promoted;
-      AppView._govProposals = (issuesData.issues || [])
-        .filter((i) => i.kind === 'secret_change' || i.kind === 'rename' || i.kind === 'close_issue'
-          || i.kind === 'maintenance_campaign' || i.kind === 'featured_illustration');
-      AppView._proposalsCtx = {
+      if (!keep(issuesData)) {
+        AppView._govProposals = (issuesData.issues || [])
+          .filter((i) => i.kind === 'secret_change' || i.kind === 'rename' || i.kind === 'close_issue'
+            || i.kind === 'maintenance_campaign' || i.kind === 'featured_illustration');
+      }
+      if (!keep(promotedData)) AppView._proposalsCtx = {
         majority,
         activeUsers,
         locked,
@@ -6776,6 +6930,7 @@ const AppView = {
         releaseStall: promotedData.releaseStall && typeof promotedData.releaseStall === 'object'
           ? promotedData.releaseStall : null,
       };
+      if (!keep(mergedData)) {
       AppView._merged = merged;
       AppView._mergedCtx = {
         majority,
@@ -6807,9 +6962,7 @@ const AppView = {
         && Number.isFinite(shipped.week) && Number.isFinite(shipped.prevWeek)
         ? { week: shipped.week, prevWeek: shipped.prevWeek }
         : null;
-      // #607: keep the checks-in-progress polling fallback in sync with
-      // what this load actually saw.
-      AppView._syncChecksPoll(promoted);
+      }
       // Every cache this function fills is now populated, so the surfaces may
       // state counts and emptiness as fact. Set on the success path ONLY: a
       // failed load leaves the placeholders up and _loadDevFeed paints its
@@ -6822,8 +6975,9 @@ const AppView = {
     }
   },
 
-  async _loadDevFeed() {
-    const ok = await AppView._loadDevData();
+  // `opts` is _loadDevData's: a live refresh passes the parts it moved.
+  async _loadDevFeed(opts = null) {
+    const ok = await AppView._loadDevData(opts);
     const body = document.getElementById('dev-body');
     if (!body) return;
     // Nothing was loaded because there was nothing to load YET. Leave the
@@ -6840,8 +6994,9 @@ const AppView = {
     AppView._repaintDevBodyKeepingPosition();
     // The themes ride in behind the board's own data: the Workshop paints
     // first from what it has (every item under "Everything on the board")
-    // and regroups when they land.
-    AppView._loadWorkshopThemes(App.currentApp);
+    // and regroups when they land. A partial live load moved rows the themes
+    // already place, so it leaves them be.
+    if (!(opts && opts.parts)) AppView._loadWorkshopThemes(App.currentApp);
   },
 
   // Preserve the visible Done card across asynchronous data publications.
@@ -19167,8 +19322,15 @@ const AppView = {
       }
       AppView._seenEpoch.delete(sessionId);
       // The overlay stays until the post-vote read has landed: a load queued
-      // ahead of it still publishes the pre-vote row first.
-      Promise.resolve(AppView.refreshDevData('vote')).then(settle, settle);
+      // ahead of it still publishes the pre-vote row first. The read joins
+      // the burst the vote's own broadcast (vote_update) opens, so a vote
+      // costs one refresh rather than one for the POST and one for the
+      // event: the server broadcasts before it answers, so the two land
+      // within the window of each other.
+      const refresh = typeof App !== 'undefined' && App._liveRefresh
+        ? App._liveRefresh('vote', sessionId, { appSlug: AppView.appData && AppView.appData.slug })
+        : AppView.refreshDevData('vote');
+      Promise.resolve(refresh).then(settle, settle);
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.

@@ -2493,9 +2493,7 @@ const App = {
             // #613: someone reordered a Dev-board column. refreshDevData
             // re-pulls the board (including the manual order fetched by
             // _loadDevData) and repaints, so every open board converges.
-            if (typeof AppView !== 'undefined' && AppView.refreshDevData) {
-              AppView.refreshDevData('board-order');
-            }
+            App._liveRefresh('board-order', null, { appSlug: data.appSlug || App.currentApp });
             break;
           case 'session_drafts_changed':
             // #940: another device of THIS user saved or trashed a draft.
@@ -2658,6 +2656,9 @@ const App = {
     // is the mounted one, so calling both is free.
     if (window.AdminConsole?.isOpen?.()) AdminConsole.loadStagingReap?.();
     App.loadVersion();
+    // A change's page re-reads its row on events, not on a timer, so a
+    // dropped socket is its cue too (topic-head.tsx's ChangeDetail).
+    window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: 'all' }));
     if (App.currentApp && typeof AppView !== 'undefined' && AppView.appData) {
       // Re-fetch tab-specific state. We don't blow away the DOM —
       // these helpers update in place — so scroll positions, drafts,
@@ -2808,14 +2809,9 @@ const App = {
     App._sessionStatusSeen[key] = nextStatus;
     SessionState.applyEvent(data);
     if (prevStatus === undefined || prevStatus === nextStatus) return;
-    if (App._sessionRowsTimer) return;
-    App._sessionRowsTimer = setTimeout(() => {
-      App._sessionRowsTimer = null;
-      App.refreshHomeProposals();
-      if (typeof AppView !== 'undefined' && AppView.refreshDevData) {
-        AppView.refreshDevData('session');
-      }
-    }, 500);
+    // One refresh per burst, shared with the vote and session events that
+    // travel with a lifecycle change (see _liveRefresh).
+    App._liveRefresh('session', data.sessionId, { appSlug: data.appSlug || null, home: true });
   },
 
   handleSessionUpdate(data) {
@@ -2867,13 +2863,9 @@ const App = {
         });
       }
     }
-    // Refresh proposals / inline chat vote state on the other dev sub-tabs
-    if (App.currentApp === data.appSlug && App.currentTab === 'dev'
-        && App.currentSubTab !== 'sessions') {
-      AppView.refreshDevData('session');
-    }
-    // The header cog's drawer tracks session status changes.
-    App.refreshHomeProposals();
+    // Refresh proposals / inline chat vote state on the other dev sub-tabs,
+    // and the drawer and Home, once for the whole burst (see _liveRefresh).
+    App._liveRefresh('session', data.sessionId, { appSlug: data.appSlug, home: true });
   },
 
   handleSessionEvent(data) {
@@ -2882,29 +2874,27 @@ const App = {
     // dev session the viewer happens to have focused — refresh the vote
     // panel + home strip globally before the currentSession early-return.
     if (data.event === 'checks_ready') {
-      // A run in flight reports once a second, to everyone, for as long as
-      // it runs (`progress` on a 'pending' event). Those ticks are for the
-      // row that is showing: they patch it in place and touch no fetch. The
-      // start-of-run and verdict events (no `progress`) keep the refreshes
-      // below, which is what the board and the home strip advance on.
+      // Every page hears every run on the platform: the event names no app.
+      // A run in flight reports once a second (`progress` on a 'pending'
+      // event); those ticks patch the row wherever it is showing and fetch
+      // nothing. A run starting patches too. A verdict carries no test list,
+      // so it asks for one targeted refresh, and only a page that holds the
+      // row does any work for it (AppView.applyChecksEvent, _liveRefresh).
       const progressTick = data.checkState === 'pending' && data.progress && typeof data.progress === 'object';
-      if (App.currentTab === 'dev' && App.currentSubTab !== 'sessions') {
-        // The event carries checkState / checkPhase / checkTrigger and, for
-        // a run in flight, `progress`. Patch the cached row and repaint from
-        // it; a final verdict (which needs test_results the event does not
-        // carry) refetches — through a kind that keeps the vote roster.
-        if (typeof AppView !== 'undefined' && AppView.applyChecksEvent) AppView.applyChecksEvent(data);
-        else if (!progressTick) AppView.refreshDevData('session');
-      }
+      if (typeof AppView !== 'undefined' && AppView.applyChecksEvent) AppView.applyChecksEvent(data);
       if (!progressTick) {
-        // The Underway board refresh above is intentionally skipped while the
-        // owner is inside a session. Refresh that focused row directly so its
-        // header advances Draft -> Checks running -> Checks passed/failed
-        // without waiting for a vote/version event or a manual reload.
+        // The owner's own session page: its header advances Draft -> Checks
+        // running -> Checks passed/failed. A no-op for any other session.
         if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
           DevChat.refreshCurrentSessionStatus(data.sessionId);
         }
-        App.refreshHomeProposals();
+        if (data.checkState !== 'pending') {
+          App._liveRefresh('checks', data.sessionId, { home: App._sessionIsMine(data.sessionId) });
+        } else if (App._sessionIsMine(data.sessionId)) {
+          // A run starting on your own work: the drawer's row says so. The
+          // row itself was patched above.
+          App._liveRefresh('checks', null, { home: true, dev: false });
+        }
       }
     }
     // #439: an on-demand preview rebuild (Preview-click → ensure-staging)
@@ -3351,9 +3341,7 @@ const App = {
   // Refresh the relevant dev sub-tab when another user creates, votes on,
   // or closes an issue / governance proposal so everyone sees it live.
   handleIssueUpdate(data) {
-    if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
-      AppView.refreshDevData('issue');
-    }
+    App._liveRefresh('issue', null, { appSlug: data.appSlug });
   },
 
   // The Workshop's grouping for the open app moved server-side (cards
@@ -3381,6 +3369,111 @@ const App = {
     }
   },
 
+  // ── Live refreshes: one per burst ────────────────────────────────────
+  //
+  // A single vote used to reload the whole Workshop four times in two
+  // seconds: the voter's POST, the vote_update it broadcasts, the
+  // session_update beside it and a checks event each started their own nine
+  // requests, and each repaint moved the rows under the reader. Every
+  // socket-driven refresh now asks HERE. The first event of a burst opens a
+  // short window, everything that lands inside it joins, and one refresh runs
+  // at the end carrying every session the burst named, so the Workshop can
+  // fetch just the part of the board those rows live in (or, on a proposal's
+  // page, just that proposal). A vote anywhere in the burst makes it a vote
+  // refresh: the one that must read past the write.
+  //
+  //   kind        'vote' | 'checks' | 'session' | 'issue' | 'board-order'
+  //   sessionIds  the rows the event is about; null when it names none
+  //   opts.appSlug  the app it is about; null when the event does not say
+  //                 (checks events), in which case only a page that holds
+  //                 the row does anything
+  //   opts.merged   a merge: the row moves to Completed
+  //   opts.home     the work drawer and Home track this event
+  //   opts.dev      false: nothing for the Workshop in it
+  //
+  // Returns a promise for the refresh (castVote holds its optimistic vote
+  // until the read after it lands).
+  LIVE_REFRESH_MS: 150,
+  _liveBurst: null,
+  _liveRefresh(kind, sessionIds, opts = {}) {
+    let b = App._liveBurst;
+    if (!b) {
+      b = { kinds: new Set(), ids: new Set(), unscoped: false, merged: false, home: false, dev: false, resolve: null };
+      b.promise = new Promise((resolve) => { b.resolve = resolve; });
+      App._liveBurst = b;
+      setTimeout(() => App._flushLiveRefresh(b), App.LIVE_REFRESH_MS);
+    }
+    const ids = sessionIds == null ? [] : [].concat(sessionIds);
+    const forThisApp = opts.appSlug == null || opts.appSlug === App.currentApp;
+    if (opts.dev !== false && forThisApp) {
+      b.dev = true;
+      b.kinds.add(kind);
+      if (!ids.length) b.unscoped = true;
+    }
+    for (const id of ids) {
+      const n = Number(id);
+      if (Number.isFinite(n)) b.ids.add(n);
+    }
+    if (opts.merged && forThisApp) b.merged = true;
+    if (opts.home) b.home = true;
+    return b.promise;
+  },
+  _flushLiveRefresh(b) {
+    if (App._liveBurst === b) App._liveBurst = null;
+    let out;
+    if (b.dev && typeof AppView !== 'undefined' && AppView.refreshDevData) {
+      const kind = b.kinds.has('vote') ? 'vote' : [...b.kinds][0];
+      try {
+        out = AppView.refreshDevData(kind, {
+          kinds: b.kinds, ids: b.unscoped ? null : b.ids, merged: b.merged,
+        });
+      } catch { out = undefined; }
+    }
+    // A change's page (topic-head.tsx's ChangeDetail) re-reads its row when
+    // told to, rather than every ten seconds. The Workshop's own refresh
+    // hands the open topic its row directly; every other mounted page for
+    // one of these rows (the owner's session, Messages) re-reads.
+    const handed = (typeof AppView !== 'undefined' && AppView._liveHandedOff) || null;
+    for (const id of b.ids) {
+      if (handed && handed.has(id)) continue;
+      window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: id }));
+    }
+    if (typeof AppView !== 'undefined' && AppView._liveHandedOff) AppView._liveHandedOff = null;
+    if (b.home) App._refreshHomeLive();
+    Promise.resolve(out).then(b.resolve, () => b.resolve(undefined));
+  },
+  // The drawer and Home for a live burst. Home's grid is one request for
+  // every app the viewer can see (670 KB on production), so a stream of
+  // bursts reloads it at most every few seconds, with the last one kept.
+  HOME_LIVE_MIN_GAP_MS: 4000,
+  _homeLiveAt: 0,
+  _homeLiveTimer: null,
+  _refreshHomeLive() {
+    if (window.Improve && Improve.onSessionStateChanged) Improve.onSessionStateChanged();
+    const homeScreen = document.getElementById('home-screen');
+    if (typeof Home === 'undefined' || !homeScreen || homeScreen.classList.contains('hidden')) return;
+    if (App._homeLiveTimer) return;
+    const wait = App._homeLiveAt + App.HOME_LIVE_MIN_GAP_MS - Date.now();
+    const run = () => {
+      App._homeLiveTimer = null;
+      App._homeLiveAt = Date.now();
+      const screen = document.getElementById('home-screen');
+      if (screen && !screen.classList.contains('hidden')) Home.load();
+    };
+    if (wait <= 0) run();
+    else App._homeLiveTimer = setTimeout(run, wait);
+  },
+  // Is this one of the viewer's own sessions, or a row on the page they are
+  // looking at? A checks event is broadcast to everyone on the platform, and
+  // only these are worth re-reading anything for.
+  _sessionIsMine(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isFinite(id)) return false;
+    if (typeof DevChat !== 'undefined' && DevChat.currentSession && Number(DevChat.currentSession.id) === id) return true;
+    if (window.Improve && Array.isArray(Improve._all) && Improve._all.some((s) => s && Number(s.id) === id)) return true;
+    return typeof AppView !== 'undefined' && !!AppView.holdsSession && AppView.holdsSession(id);
+  },
+
   // #1015: a self-app merge no longer latches any platform-wide chrome.
   // The "Platform updating… write actions are paused" banner (and its
   // fetch write-block, 2s version poll, stuck timer and forced reload)
@@ -3395,25 +3488,23 @@ const App = {
   // caught up by the drawer's stale-revision indicator
   // (renderPlatformVersionPill) or by pull-to-refresh (_refreshOrReload).
   handleVoteUpdate(data) {
-    // Refresh the proposals tab / inline chat vote state if we're in
-    // this app's Dev view.
-    if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
-      AppView.refreshDevData('vote');
-    }
+    // Refresh the proposals tab / inline chat vote state if we're in this
+    // app's Dev view, and the work drawer and Home, which track tallies:
+    // once for the burst this event arrives in, which usually also carries
+    // the voter's own POST (see _liveRefresh).
+    App._liveRefresh('vote', data.sessionId, { appSlug: data.appSlug, merged: !!data.merged, home: true });
     // #405: advance the OPEN dev session's header pill + change card live
     // (e.g. promoted → merging → merged) when this update is for the session
     // the user is currently looking at. No-op otherwise.
     if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
       DevChat.refreshCurrentSessionStatus(data.sessionId);
     }
-    // The header cog's drawer tracks tallies live.
-    App.refreshHomeProposals();
-    // If merged, refresh the app view
-    if (data.merged && App.currentApp === data.appSlug) {
-      if (App.currentTab === 'app') {
-        AppView.renderAppTab();
-      }
-      Home.load();
+    // If merged, refresh the app view. Home re-reads its grid only while it
+    // is showing (the burst's home refresh): an unconditional Home.load()
+    // here pulled the whole app list, 670 KB, onto a Workshop nobody had
+    // left.
+    if (data.merged && App.currentApp === data.appSlug && App.currentTab === 'app') {
+      AppView.renderAppTab();
     }
   },
 

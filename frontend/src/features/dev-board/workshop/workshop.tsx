@@ -81,7 +81,7 @@ import { AppWorkshopScope } from '../../workshop/workshop-chrome';
 import { CommunityCard } from './community-card';
 import { readAskStream } from './ask-stream';
 
-type SortKey = 'people' | 'activity' | 'open';
+export type SortKey = 'people' | 'activity' | 'open';
 type TabKey = 'status' | 'needs' | 'all';
 
 /**
@@ -533,6 +533,64 @@ function sortThemes(themes: WorkshopTheme[], key: SortKey): WorkshopTheme[] {
   if (key === 'activity') real.sort((a, b) => (b.lastActive - a.lastActive) || (b.people.length - a.people.length));
   if (key === 'open') real.sort((a, b) => (b.counts.open - a.counts.open) || (b.lastActive - a.lastActive));
   return real.concat(tail);
+}
+
+// THE ORDER HOLDS BETWEEN SORTS. The list was re-sorted on every refetch, so
+// a vote, a verdict or a new card anywhere on the board could move the theme
+// the reader was looking at — the largest layout shift measured on the
+// Workshop was a card dropping 255 px when a draft became a proposal and its
+// theme's counts moved. A chip press (or the first paint) sorts; a refetch
+// keeps every theme where it was, drops the ones that are gone and adds new
+// ones at the end, above "Not yet grouped".
+export type HeldThemeOrder = { key: SortKey; ids: string[] } | null;
+export function orderThemesStable(held: HeldThemeOrder, themes: WorkshopTheme[], key: SortKey): WorkshopTheme[] {
+  const sorted = sortThemes(themes, key);
+  if (!held || held.key !== key) return sorted;
+  const byId = new Map(themes.map((t) => [t.id, t]));
+  const kept = held.ids.map((id) => byId.get(id)).filter((t): t is WorkshopTheme => !!t);
+  const keptIds = new Set(kept.map((t) => t.id));
+  const all = kept.concat(sorted.filter((t) => !keptIds.has(t.id)));
+  return all.filter((t) => !t.ungrouped).concat(all.filter((t) => t.ungrouped));
+}
+function useStableThemeOrder(themes: WorkshopTheme[], key: SortKey): WorkshopTheme[] {
+  const held = useRef<HeldThemeOrder>(null);
+  return useMemo(() => {
+    const ordered = orderThemesStable(held.current, themes, key);
+    held.current = { key, ids: ordered.map((t) => t.id) };
+    return ordered;
+  }, [themes, key]);
+}
+
+// A chip press re-sorts, and the themes slide to their new places rather than
+// jumping there (FLIP: the positions are read on the press, before the
+// re-render, and each card animates from its old place to its new one).
+function useThemeReorderMotion(listRef: { current: HTMLElement | null }, themes: WorkshopTheme[]) {
+  const from = useRef<Map<string, number> | null>(null);
+  const capture = () => {
+    const list = listRef.current;
+    if (!list || typeof window === 'undefined'
+      || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
+    const tops = new Map<string, number>();
+    list.querySelectorAll<HTMLElement>(':scope > [data-ws-theme]').forEach((el) => {
+      tops.set(el.dataset.wsTheme || '', el.getBoundingClientRect().top);
+    });
+    from.current = tops;
+  };
+  useLayoutEffect(() => {
+    const tops = from.current;
+    from.current = null;
+    const list = listRef.current;
+    if (!tops || !list) return;
+    list.querySelectorAll<HTMLElement>(':scope > [data-ws-theme]').forEach((el) => {
+      const was = tops.get(el.dataset.wsTheme || '');
+      if (was == null || typeof el.animate !== 'function') return;
+      const dy = was - el.getBoundingClientRect().top;
+      if (Math.abs(dy) < 1) return;
+      el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }],
+        { duration: 260, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    });
+  }, [themes, listRef]);
+  return capture;
 }
 
 const SORTS: { key: SortKey; label: string }[] = [
@@ -2824,7 +2882,9 @@ export function DevWorkshop(): ReactNode {
   // ../actions-store.ts.
   const actions = useDevActions();
 
-  const themes = useMemo(() => sortThemes(v.themes, sortKey), [v.themes, sortKey]);
+  const themes = useStableThemeOrder(v.themes, sortKey);
+  const themesRef = useRef<HTMLDivElement | null>(null);
+  const captureThemeTops = useThemeReorderMotion(themesRef, themes);
   // The eyebrow over the theme list: the count, then whatever the grouping
   // itself has to report. Named categories only — "Not yet grouped" is a
   // holding pen, not one of them — and counted here so the label can agree
@@ -3589,14 +3649,14 @@ export function DevWorkshop(): ReactNode {
                   type="button"
                   className="dev-ws-chip"
                   aria-pressed={sortKey === s.key}
-                  onClick={() => setSortKey(s.key)}
+                  onClick={() => { if (s.key !== sortKey) captureThemeTops(); setSortKey(s.key); }}
                 >
                   {s.label}
                 </button>
               ))}
             </div>
           </div>
-          <div className="dev-ws-themes">
+          <div className="dev-ws-themes" ref={themesRef}>
             {themes.map((t) => (
               <ThemeCard
                 key={t.id}
