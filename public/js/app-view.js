@@ -20974,6 +20974,35 @@ const AppView = {
     }
   },
 
+  // The origin a frame was pointed at: its http(s) `src`, resolved. Null for
+  // a src-less, about:, data: or otherwise non-http(s) frame (#2514).
+  _frameOrigin(frame) {
+    const src = frame && typeof frame.getAttribute === 'function' ? frame.getAttribute('src') : '';
+    if (!src) return null;
+    try {
+      const base = typeof location !== 'undefined' ? location.href : undefined;
+      const url = new URL(src, base);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+      return url.origin;
+    } catch {
+      return null;
+    }
+  },
+
+  // A bridge request must come from the document the shell put in the frame,
+  // not merely from the frame (#2514). A WindowProxy outlives navigation, so
+  // `e.source` alone would keep answering an app frame after it was
+  // redirected or navigated somewhere else. Each handler keeps its own frame
+  // gate and adds this one: the posting origin must be the origin of the
+  // owned frame's src.
+  _fromOwnedFrameOrigin(e) {
+    const origin = e && typeof e.origin === 'string' ? e.origin : '';
+    if (!e || !e.source || !origin || origin === 'null') return false;
+    const id = AppView.ownedFrameFor(e.source);
+    if (!id) return false;
+    return AppView._frameOrigin(document.getElementById(id)) === origin;
+  },
+
   handleLocaleBridgeMessage(e) {
     const data = e.data;
     if (!data || !data.id || data.__usernode_locale !== 'get') return;
@@ -20985,6 +21014,7 @@ const AppView = {
     const fromApp = appIframe && e.source === appIframe.contentWindow;
     const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
     if (!fromApp && !fromStaging) return;
+    if (!AppView._fromOwnedFrameOrigin(e)) return;
 
     const locale = (typeof App !== 'undefined' && App.user) ? (App.user.locale || null) : null;
     AppView._replyToBridge(e, { __usernode_locale: 'response', id: data.id, value: { locale } });
@@ -20998,11 +21028,14 @@ const AppView = {
   notifyLocaleChanged(locale) {
     ['app-iframe', 'staging-iframe'].forEach((id) => {
       const iframe = document.getElementById(id);
-      if (iframe && iframe.contentWindow) {
+      // #2514: addressed to the origin the frame was pointed at, so a frame
+      // that has navigated elsewhere is not told the user's language.
+      const origin = AppView._frameOrigin(iframe);
+      if (iframe && iframe.contentWindow && origin) {
         try {
           iframe.contentWindow.postMessage(
             { __usernode_locale: 'changed', locale: locale || null },
-            '*'
+            origin
           );
         } catch {}
       }
@@ -21330,6 +21363,7 @@ const AppView = {
       return iframe && e.source === iframe.contentWindow;
     });
     if (!match) return;
+    if (!AppView._fromOwnedFrameOrigin(e)) return;
 
     const value = AppView.safeAreaForFrame(match) || AppView._zeroInsets();
     // Record it so the next broadcast doesn't re-post the same numbers.
@@ -21379,6 +21413,7 @@ const AppView = {
     // and the landing viewer is in it because an app runs there too (#1909).
     const frameId = AppView.ownedFrameFor(e.source);
     if (!frameId) return;
+    if (!AppView._fromOwnedFrameOrigin(e)) return;
 
     const reply = (value, error) => {
       AppView._replyToBridge(e, { __usernode_llm: 'response', id: data.id, value: value ?? null, error: error ?? null });
@@ -21538,6 +21573,7 @@ const AppView = {
     // said no" from "not available on this surface".
     const frameId = AppView.ownedFrameFor(e.source);
     if (!frameId) return;
+    if (!AppView._fromOwnedFrameOrigin(e)) return;
 
     const reply = (value, error) => {
       AppView._replyToBridge(e, { __usernode_permission: 'response', id: data.id, value: value ?? null, error: error ?? null });
@@ -21688,6 +21724,7 @@ const AppView = {
     const fromApp = appIframe && e.source === appIframe.contentWindow;
     const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
     if (!fromApp && !fromStaging) return;
+    if (!AppView._fromOwnedFrameOrigin(e)) return;
     const slug = AppView.appData?.slug;
     if (!slug) return;
 
@@ -21784,6 +21821,7 @@ const AppView = {
     const fromApp = appIframe && e.source === appIframe.contentWindow;
     const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
     if (!fromApp && !fromStaging) return;
+    if (!AppView._fromOwnedFrameOrigin(e)) return;
 
     const reply = (value, error) => {
       AppView._replyToBridge(e, { __usernode_directory: 'response', id: data.id, value: value ?? null, error: error ?? null });
