@@ -3,13 +3,15 @@
  * (communities, stage 5).
  *
  * A new account answers "What communities do you want to join?"
- * (../auth/communities-first-run.js), takes the tour, and lands on a Home
- * whose first thing is three steps in the community it joined first:
+ * (../auth/communities-first-run.js) and lands on a Home whose first thing
+ * is four steps, the last three in the community it joined first:
  *
- *   1. Say hi in <community>          a message of theirs in its chat
- *   2. Vote on what needs you, or Look around the Workshop when nothing
+ *   1. Take the 1-minute tour         the welcome tour (./tour), finished or
+ *                                     skipped on any device (#3240)
+ *   2. Say hi in <community>          a message of theirs in its chat
+ *   3. Vote on what needs you, or Look around the Workshop when nothing
  *      there is waiting on a vote
- *   3. Open <community> and try it, or for Homeroom (which has no app of its
+ *   4. Open <community> and try it, or for Homeroom (which has no app of its
  *      own to open) Find another community
  *
  * Each ticks off from what the person DID, which the server reads
@@ -17,6 +19,19 @@
  * a checkbox. The two visits that leave no row of their own (the Workshop,
  * Discover) are recorded when their row is pressed. The close button ends
  * the card for good, on every device.
+ *
+ * ── The tour is a row, with its own button ─────────────────────────────
+ *
+ * The tour used to start by itself right after the join screen, which said
+ * the same things a moment before (#3240). It is the card's first row now,
+ * and the only way a newcomer meets it, so until it is done the row carries
+ * a filled Start button rather than the chevron every other row has: the
+ * one filled control on Home, because nothing else will offer the tour
+ * again. The row itself is not a button (a button cannot hold one). Once
+ * the tour is done the row is an ordinary ticked row, and pressing it
+ * replays the tour. Either press asks for the tour the way Settings' Replay
+ * does (./tour/tour-request.ts), and the tour's own "done" landing on the
+ * account (`sv:tour-done`) reloads the card, which ticks the row.
  *
  * ── The island rules ───────────────────────────────────────────────────
  *
@@ -37,18 +52,21 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
-import { CheckIcon, XIcon } from '@/components/ui/icons';
+import { CheckIcon, PlayIcon, XIcon } from '@/components/ui/icons';
 
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
+import { TOUR_DONE_EVENT } from './tour/tour-done';
+import { requestTour } from './tour/tour-request';
 
 export interface GettingStartedStep {
-  id: 'say-hi' | 'vote' | 'explore';
+  id: 'tour' | 'say-hi' | 'vote' | 'explore';
   title: string;
   detail: string;
   done: boolean;
-  /** A hash route to go to, or null when `slug` names an app to open. */
+  /** A hash route to go to, or null when `slug` names an app to open (or it is the tour). */
   href: string | null;
   slug?: string;
 }
@@ -65,8 +83,9 @@ const SHOT = 'getting-started';
 export const SHOT_MODEL: GettingStartedModel = {
   show: true,
   done: 1,
-  total: 3,
+  total: 4,
   steps: [
+    { id: 'tour', title: 'Take the 1-minute tour', detail: 'See how Homeroom works.', done: false, href: null },
     { id: 'say-hi', title: 'Say hi in City garden', detail: 'Post in its chat.', done: true, href: '#messages' },
     { id: 'vote', title: 'Vote on what needs you', detail: '2 waiting in City garden', done: false, href: '#workshop' },
     { id: 'explore', title: 'Open City garden and try it', detail: 'Changes voted in ship here.', done: false, href: null, slug: 'city-garden' },
@@ -152,10 +171,13 @@ export function GettingStarted() {
     // (app.js _reconcileSession), with the server's showGettingStarted.
     document.addEventListener('sv:session', onChange);
     document.addEventListener('sv:communities-joined', onChange);
+    // The tour's "done" has reached the account: its row ticks.
+    document.addEventListener(TOUR_DONE_EVENT, onChange);
     return () => {
       document.removeEventListener('sv:authed', onChange);
       document.removeEventListener('sv:session', onChange);
       document.removeEventListener('sv:communities-joined', onChange);
+      document.removeEventListener(TOUR_DONE_EVENT, onChange);
     };
   }, [load]);
   const wasVisible = useRef(homeVisible);
@@ -174,6 +196,10 @@ export function GettingStarted() {
   };
 
   const open = (step: GettingStartedStep) => {
+    if (step.id === 'tour') {
+      requestTour();
+      return;
+    }
     const seen = seenKeyFor(step);
     if (seen && !step.done && shot() !== SHOT) void post('/api/me/getting-started/seen', { step: seen });
     const App = (window as unknown as { App?: { navigateToApp?: (slug: string) => void } }).App;
@@ -208,7 +234,33 @@ export function GettingStarted() {
           <div className="mx-4 mb-1 h-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800" aria-hidden="true">
             <div className="h-full rounded-full bg-violet-600" style={{ width: `${pct}%` }} />
           </div>
-          {model.steps.map((step) => (
+          {model.steps.map((step) => (step.id === 'tour' && !step.done ? (
+            <ListRow
+              key={step.id}
+              inset="none"
+              leading={<Tick done={false} />}
+              title={step.title}
+              subtitle={step.detail}
+              chevron={false}
+              trailing={(
+                <Button
+                  type="button"
+                  variant="pillAccent"
+                  size="sm"
+                  layout="iconRow"
+                  className="shrink-0"
+                  aria-label="Start the tour"
+                  data-getting-started-tour-start=""
+                  onClick={() => open(step)}
+                >
+                  <PlayIcon className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+                  Start
+                </Button>
+              )}
+              data-getting-started-step={step.id}
+              data-done="false"
+            />
+          ) : (
             <ListRow
               key={step.id}
               as="button"
@@ -221,7 +273,7 @@ export function GettingStarted() {
               data-done={String(step.done)}
               onClick={() => open(step)}
             />
-          ))}
+          )))}
         </GroupedList>
       ) : null}
     </section>

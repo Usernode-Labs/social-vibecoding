@@ -1,6 +1,6 @@
 /**
- * "Has this account finished the welcome tour?", answered by the account AND
- * by this browser (#3237).
+ * "Has this account finished the welcome tour?", kept by the account (#3237)
+ * and read by Home's Getting started card (#3240).
  *
  * The browser's flag (./tour-storage.ts) used to be the whole answer, and it
  * is a poor one on its own: another device, another browser, the phone app
@@ -11,50 +11,36 @@
  * `App.user` like every other field of the user, so the session snapshot
  * carries it too.
  *
- * Three rules, each a pure function here so the tests EXECUTE them:
+ * Since #3240 the tour no longer starts by itself, so nothing here decides
+ * whether it OPENS: the Getting started card's first row, "Take the 1-minute
+ * tour", ticks off from the account's answer (src/services/onboarding.js),
+ * and that is what the answer is for now. Two rules are left, each a pure
+ * function or a guarded write so the tests EXECUTE them:
  *
- *   * DONE is the account's answer OR the browser's. The one exception is a
- *     document that showed the join screen: that starts the tour over whatever
- *     either flag says (#3190). The join screen is itself the server's
- *     say-so. It shows for a new account, or for one an admin reset (Admin →
- *     Users → Reset first run), and the reset clears the account's flag with
- *     it (src/services/onboarding.js resetFirstRun).
  *   * BACKFILL. A browser that has the flag when the account does not copies
- *     it to the account, once, so nobody who finished the tour before the
- *     account kept the answer sees it again on their next device. Never
+ *     it to the account, once, so somebody who finished the tour before the
+ *     account kept the answer sees that row ticked on every device. Never
  *     while a join screen is still to come or was shown here, because that
- *     is an account whose tour is due again, and never against the session
- *     snapshot's user: a stale "not done" there could be an account an admin
- *     has just reset, and copying "done" over it would undo the reset on
- *     every device.
- *   * THE WRITE IS FIRE-AND-FORGET. A failure costs a repeat tour on some
- *     other device and nothing here: it never throws out of this module and
- *     never logs a console.error, which fails proposal checks on any route.
+ *     is an account an admin has reset (Admin → Users → Reset first run,
+ *     which clears the account's flag), and never against the session
+ *     snapshot's user: a stale "not done" there could be that reset account,
+ *     and copying "done" over it would undo the reset on every device.
+ *   * THE WRITE IS FIRE-AND-FORGET. A failure costs an unticked row and
+ *     nothing else: it never throws out of this module and never logs a
+ *     console.error, which fails proposal checks on any route. A write that
+ *     lands says so on `document` (`sv:tour-done`), which is how the card
+ *     on the same screen learns to tick the row without a reload.
  */
 
 export const TOUR_DONE_PATH = '/api/me/tour-done';
 
-/**
- * How long a boot from the session snapshot waits for its own read of the
- * session before it decides on the snapshot's user after all.
- */
-export const SESSION_WAIT_MS = 8_000;
-
 export interface TourDoneInputs {
-  /** The account's answer: `App.user.tourDone`, off the freshest user there is. */
+  /** The account's answer: `App.user.tourDone`. */
   serverDone: boolean;
   /** This browser's answer (./tour-storage.ts `readDone`). */
   localDone: boolean;
   /** Did this document show the join screen (CommunitiesFirstRun.shownHere)? */
   joinShownHere: boolean;
-}
-
-/** Is the tour finished for this viewer? */
-export function isTourDone({ serverDone, localDone, joinShownHere }: TourDoneInputs): boolean {
-  // A first run shown here restarts the tour, even over a "done" that is
-  // stale (a snapshot's) or this browser's own.
-  if (joinShownHere) return false;
-  return serverDone || localDone;
 }
 
 /** Should this browser's "done" be copied to the account? */
@@ -80,7 +66,6 @@ interface TourUser {
 interface AppHost {
   user?: TourUser | null;
   _sessionFromSnapshot?: boolean;
-  bootSession?: () => Promise<unknown>;
   saveSessionSnapshot?: (user: TourUser) => void;
 }
 
@@ -106,32 +91,6 @@ export function sessionVerified(userId: number | null): boolean {
 }
 
 /**
- * Resolves once the user the shell holds is the freshest there is.
- *
- * At once on a verified session. On a boot from the session snapshot, once
- * the boot's own read of /api/auth/me has answered (`App.bootSession()`):
- * with the server's user, which app.js has put on `App.user` by then, or with
- * "could not tell" (offline, a 500), where the snapshot IS the freshest user
- * there is. Capped, because a read that never settles must not keep the tour
- * from ever running.
- */
-export function whenSessionRead(): Promise<void> {
-  const host = appHost();
-  if (!host || host._sessionFromSnapshot !== true || typeof host.bootSession !== 'function') {
-    return Promise.resolve();
-  }
-  const read = host.bootSession;
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, SESSION_WAIT_MS);
-    const done = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    Promise.resolve().then(() => read.call(host)).then(done, done);
-  });
-}
-
-/**
  * Tell the account the tour is done: Finish, Skip, and the one-time backfill.
  * Resolves to whether the account has it. Never throws.
  */
@@ -153,7 +112,19 @@ export async function markDoneOnServer(userId: number | null): Promise<boolean> 
     return false;
   }
   rememberServerDone(userId);
+  announceDone();
   return true;
+}
+
+/** The event the Getting started card reloads on, so its tour row ticks. */
+export const TOUR_DONE_EVENT = 'sv:tour-done';
+
+function announceDone(): void {
+  try {
+    document.dispatchEvent(new CustomEvent(TOUR_DONE_EVENT));
+  } catch {
+    /* No document to tell (a test, a worker): the next load reads it. */
+  }
 }
 
 /**

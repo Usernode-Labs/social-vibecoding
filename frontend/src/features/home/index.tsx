@@ -184,13 +184,13 @@ export function HomeScreen() {
         {/*
             #1561's once-per-account explainer stood here, above everything,
             because it was the thing a first-time viewer needed before the
-            grid meant anything. #2255 replaced it with the eight-step
-            welcome tour, which says the same two things in its first step
-            and then goes on to POINT at the four places the banner could
-            only name. The tour is a fixed overlay mounted from Shell.tsx
-            (features/home/tour), not a block in this column, so nothing
-            takes its place here: with the tour finished or skipped, Home
-            opens on the widget strip and the grid.
+            grid meant anything. #2255 replaced it with the welcome tour,
+            which goes on to POINT at the places the banner could only name;
+            since #3240 it runs when asked, from the first row of the
+            Getting started card or from Settings. The tour is a fixed
+            overlay mounted from Shell.tsx (features/home/tour), not a block
+            in this column, so nothing takes its place here: Home opens on
+            the widget strip and the grid.
         */}
         {/*
             iOS in-app only: the "Homeroom widget" editing strip, mirroring

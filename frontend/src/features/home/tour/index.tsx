@@ -1,6 +1,6 @@
 /**
- * `#home-tour` — the eight-step welcome tour, replacing the `#home-welcome`
- * banner (#1561) that this change retires.
+ * `#home-tour` — the four-step welcome tour, which replaced the
+ * `#home-welcome` banner (#1561).
  *
  * The banner said the two things the launcher never says, in three lines, and
  * then went away for good. What it could not do is point: "send feedback from
@@ -9,32 +9,30 @@
  * the page, cuts a hole around the thing it is talking about, and puts the
  * sentence next to it.
  *
- * ── Real controls, all eight steps ─────────────────────────────────────
+ * ── Real controls, every step ─────────────────────────────────────────
  *
  * Nothing here is a drawing of the product. The Improve arc works because the
  * Improve row is reachable on Home: the app's own menu, behind the Homeroom
  * mark, targeting the platform's own self-hosted row for as long as Home is up
- * (`Home.publishImproveTarget`, #1367). So steps 3 to 5 are one interaction
+ * (`Home.publishImproveTarget`, #1367). So steps 2 to 4 are one interaction
  * rather than three descriptions:
  *
- *   * step 3 spotlights the MARK that opens that menu, asking the viewer to
+ *   * step 2 spotlights the MARK that opens that menu, asking the viewer to
  *     press it. The click is NOT intercepted: the tour subscribes to
  *     `appContextStore` and advances when `open` goes true, so what opens the
  *     panel is the product's own handler and the tour is only watching. Its
  *     Next opens the menu through `AppContext.open()` — the same path — and
- *     the same watcher advances it, so Next never lands on step 4 with the
+ *     the same watcher advances it, so Next never lands on step 3 with the
  *     menu shut;
- *   * step 4 spotlights `#improve-quick-actions`, the well holding Give
+ *   * step 3 spotlights `#improve-quick-actions`, the well holding Give
  *     feedback and New change INSIDE the menu the viewer just opened. It is
  *     DESCRIBED, not driven: the cut-out blocks the press the way the dim
  *     around it does, because each of them leaves the tour (a dialog, a new
  *     session) and a spotlight is not an instruction to press.
  *     ./tour-steps.ts carries the whole argument;
- *   * step 5 shuts the menu through `Improve.close()`, the controller's own
- *     close path and never a write into its DOM, then points at the
- *     Workshop tab, and the steps after it at Discover and at Home's
- *     Getting started card (communities, stage 5), which Next and Back step
- *     over when the card is not there (`optional`).
+ *   * step 4 shuts the menu through `Improve.close()`, the controller's own
+ *     close path and never a write into its DOM, then points at the Me tab,
+ *     whose screen holds Settings, where the tour can be replayed.
  *
  * ── The island rules, and how each is kept ────────────────────────────
  *
@@ -60,7 +58,7 @@
  * Nothing in `public/js/**` writes into this subtree, so the region is
  * React-owned end to end and may hold state (AGENTS.md).
  *
- * ── Following the target ───────────────────────────────────────────────
+ * ── Following the target, and jumping to the next one ─────────────────
  *
  * The hole is measured once per animation frame for as long as the overlay
  * is up, and written only when the numbers move. It used to be measured on a
@@ -72,13 +70,25 @@
  * the deploy note comes and goes. Every one of those changes the height of a
  * bottom-anchored, content-sized sheet, and the kit answers by holding the
  * top edge and springing the sheet to its new rest (native.js's watchSize),
- * so every row moves by exactly that much. A refresh that lands after the
- * window left the ring on the row's OLD position, over the panel's title
- * (the report behind this). None of those motions announces itself -- a
- * spring on a transform fires no event and no ResizeObserver -- so the only
- * signal that is always right is the next frame. One `getBoundingClientRect`
- * a frame, on one element, while a tour is on screen, is a cost nobody can
- * measure; a ring on the wrong row is not.
+ * so every row moves by exactly that much. None of those motions announces
+ * itself -- a spring on a transform fires no event and no ResizeObserver --
+ * so the only signal that is always right is the next frame.
+ *
+ * Between steps it JUMPS (#3240). The shades, the ring and the card used to
+ * carry a 200ms CSS transition, and the per-frame measure rewrote them every
+ * frame the target moved (the page's smooth scroll, the sheet's spring), so
+ * each write restarted the ease from wherever it had got to: the box chased
+ * the menu for over half a second, the four shades and the ring each ran
+ * their own curve and came apart (bright bands, a ring squashed to a pill),
+ * and the card said step 3 while the ring was still on step 2. Now nothing
+ * here animates. On a step change the card goes transparent and the previous
+ * hole stays where it was; the new target is measured every frame until it
+ * has held still for SETTLE_FRAMES frames, with no CSS transition still
+ * running on it or on anything it sits in (or SETTLE_CAP_MS has passed), and
+ * then the hole, the ring and the card are painted in one frame. After that
+ * the hole is glued to the target, frame by frame, with nothing to lag. A
+ * hole under MIN_HOLE (./spotlight.ts) is a target still arriving, not a
+ * target, so it is waited out rather than painted as a blue line.
  *
  * ── Where the card goes while the panel is open ────────────────────────
  *
@@ -91,13 +101,17 @@
  * rather than clear of the panel. ./spotlight.ts's `placeCardForPanel` is
  * both halves, and the fallback is a call to the ordinary `placeCard`.
  *
- * ── Why four shades and not one box-shadow ─────────────────────────────
+ * ── One shape dims; four shades block ─────────────────────────────────
  *
  * A `box-shadow` spread paints a dim but receives no pointer events, so it
- * cannot block a click, and step 3 needs exactly that split: the cut-out must
- * pass clicks through to the real Improve button while the dimmed area keeps
- * swallowing them. Four positioned panels around the hole are both the dim
- * and the blocker, and the hole is then genuinely a hole.
+ * cannot block a click, and the menu step needs exactly that split: the
+ * cut-out must pass clicks through to the real mark while the dimmed area
+ * keeps swallowing them. The four panels around the hole are the blockers,
+ * and the hole is then genuinely a hole. They used to be the dim as well,
+ * which gave a rounded ring square corners of undimmed page (#3240), so the
+ * dim is now the spotlight's own shadow, which follows its `rounded-xl`, and
+ * the four panels are transparent. With no hole to cut (a target that is not
+ * on screen) the top panel, which then covers the screen, takes the dim.
  *
  * ── z-index ────────────────────────────────────────────────────────────
  *
@@ -109,24 +123,16 @@
  *
  * ── When it opens, and when it gets out of the way ─────────────────────
  *
- * Once per account, on the first sign-in that reaches Home, and never in a
- * way that can surprise an automated capture:
- *
- *   * the viewer has to be known (`App.user`, resolved in an effect, because
- *     it is a classic-script global that is only populated after the session
- *     has been read);
- *   * ../../settings/terms-first-run.js has to be done with. Its `settled()`
- *     is the same promise ../../auth/username-first-run.js exposes and terms
- *     itself awaits, so awaiting terms covers both gates; and after it,
- *     ../../auth/communities-first-run.js, the join screen whose answer
- *     fills the Home this tour then describes;
- *   * `#home-screen` has to be on screen. The tour points at things on Home
- *     and never navigates the viewer anywhere;
- *   * and `?shot=`, `?demo=` and `?token=` routes are skipped outright. The
- *     first two are the deterministic capture routes ../../settings/terms-first-run.js
- *     also refuses; the third is the capture identity the platform's declared
- *     checks render under (src/services/visuals.js mints it), and an overlay
- *     over 695 checks is not a thing to discover later.
+ * Only when somebody asks (#3240). It used to open by itself on the first
+ * sign-in that reached Home, straight after "What communities do you want to
+ * join?", and the two screens said the same things back to back. Now the
+ * first row of Home's Getting started card, "Take the 1-minute tour"
+ * (../getting-started.tsx), and Settings' "Replay the tour" are the ways in,
+ * and both ask through ./tour-request.ts. That path ignores whether the
+ * tour was finished before and waits only for Home to be on screen, which is
+ * where every step points. Nothing opens it on the `?shot=`, `?demo=` and
+ * `?token=` routes except a press, so the platform's declared checks never
+ * meet the overlay.
  *
  * Once it is up it PAUSES rather than fights. Whenever Home leaves the screen,
  * or any kit surface that is not the Improve panel is presented (a dialog, a
@@ -135,17 +141,9 @@
  * open resumes at the Improve step instead, which is the one place in the arc
  * that stands on its own.
  *
- * "Once per account" means done when the account says so OR this browser
- * does (./tour-done.ts): Finish and Skip record it on both, and a browser
- * that finished the tour before the account kept the answer copies it there
- * once. On a boot from the session snapshot the user the shell starts with is
- * the one this device saw last time, so the tour decides on the server's user
- * once that read has answered, not on the snapshot's.
- *
- * Settings' "Replay the tour" clears this browser's flag and asks for the
- * tour again through ./tour-request.ts, which is the one path that ignores
- * all of the above except "Home has to be on screen". Finishing the replay
- * records "done" on both again.
+ * Finish and Skip record "done" in this browser and on the account
+ * (./tour-done.ts), which ticks the card's row. A browser that finished the
+ * tour before the account kept the answer copies it there once.
  *
  * ── A reload is not a restart ──────────────────────────────────────────
  *
@@ -157,8 +155,8 @@
  * session. Both land during the first seconds on Home, which is exactly when
  * the tour is up, and a tour that only remembered "finished" started over at
  * step 1 every time -- the "looping between the first and second step" that
- * was reported. The step now rides sessionStorage (./tour-storage.ts), the
- * auto-start resumes there (`resumeIndex`, ./tour-steps.ts), and the shell's
+ * was reported. The step now rides sessionStorage (./tour-storage.ts), a
+ * reloaded document resumes there (`resumeIndex`, ./tour-steps.ts), and the shell's
  * automatic reload treats a live `#home-tour` the way it treats a draft in a
  * textarea: not now (App._hasUnsavedShellInput).
  */
@@ -175,16 +173,14 @@ import { appContextStore } from '../../app-context/app-context-store.js';
 import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
 import {
-  CARD_GAP, cardWidth, findTarget, fitHole, padRect, placeCardForPanel, panelBox, shadeBoxes,
-  SPOTLIGHT_PAD, type Box,
+  BAR_PAD, bottomBarInset, CARD_GAP, cardWidth, findTarget, fitHole, fitHoleIn, padRect,
+  placeCardForPanel, panelBox, roundBox, shadeBoxes, SPOTLIGHT_PAD, usableHole, type Box,
 } from './spotlight';
-import {
-  isTourDone, markDoneOnServer, needsBackfill, serverDone, sessionVerified, whenSessionRead,
-} from './tour-done';
+import { markDoneOnServer, needsBackfill, serverDone, sessionVerified } from './tour-done';
 import { useTourRequest } from './tour-request';
 import {
   clampIndex, IMPROVE_STEP_INDEX, isLastStep, nextOpensMenu, resumeIndex, stepAt, stepCounter,
-  stepFrom, TOUR_LENGTH, type TourStep,
+  stepFrom, TOUR_LENGTH,
 } from './tour-steps';
 import {
   clearDone, clearStep, currentUserId, readDone, readStep, writeDone, writeStep,
@@ -193,8 +189,13 @@ import {
 /** How long to keep waiting for Home before giving up on this page load. */
 const HOME_WAIT_TRIES = 60;
 const HOME_WAIT_MS = 300;
-/** In the app, how long the tour waits for the first touch before starting anyway. */
-const FIRST_TOUCH_WAIT_MS = 6_000;
+/**
+ * A step's target is painted once its box has measured the same for this
+ * many frames in a row, or once SETTLE_CAP_MS has passed, whichever is first
+ * (#3240). The cap is the kit sheet's entrance spring with room to spare.
+ */
+const SETTLE_FRAMES = 2;
+const SETTLE_CAP_MS = 700;
 
 const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
@@ -230,18 +231,32 @@ const TOUR_OWNED_SURFACES = ['#apps-switcher-sheet'];
 
 // `pointer-events-none` on the root, re-enabled per child: that is what lets
 // the cut-out be a real hole while the shades around it still block.
+//
+// NO TRANSITIONS anywhere below (#3240): see "Following the target, and
+// jumping to the next one" in the header.
 const ROOT = 'hidden fixed inset-0 z-[9993] overflow-hidden pointer-events-none';
-const SHADE = 'absolute bg-zinc-950/60 dark:bg-zinc-950/75 pointer-events-auto '
-  + 'motion-safe:transition-all motion-safe:duration-200';
-// The cut-out's outline. No pointer-events utility in the rendered string: it
-// inherits `none` from the root, and a step that only DESCRIBES its target
-// adds `pointer-events-auto` through useClassToggle so the highlighted
-// control cannot be pressed there.
+// Transparent: the shades only BLOCK. The dim is the spotlight's shadow.
+const SHADE = 'absolute pointer-events-auto';
+// The dim the top shade takes when there is no hole to cut, and so covers
+// the whole screen by itself. Toggled a class at a time in the geometry
+// pass; each is a complete literal so Tailwind compiles it.
+const NO_HOLE_DIM = ['bg-zinc-950/60', 'dark:bg-zinc-950/75'] as const;
+// The cut-out: its outline (`ring-2`) and the dim around it (a shadow spread
+// far past every edge of the screen, clipped by the root's overflow), both
+// following the same `rounded-xl`, so the dim's corners are the ring's. The
+// shadow colour rides `shadow-zinc-950/60`; Tailwind swaps the arbitrary
+// shadow's own colour for it. No pointer-events utility in the rendered
+// string: it inherits `none` from the root, and a step that only DESCRIBES
+// its target adds `pointer-events-auto` through useClassToggle so the
+// highlighted control cannot be pressed there.
 const SPOT = 'hidden absolute rounded-xl ring-2 ring-violet-500 dark:ring-violet-400 '
-  + 'motion-safe:transition-all motion-safe:duration-200';
+  + 'shadow-[0_0_0_200vmax_black] shadow-zinc-950/60 dark:shadow-zinc-950/75';
 const CARD = 'absolute w-[340px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-zinc-200 '
   + 'dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-xl focus:outline-none '
-  + 'pointer-events-auto motion-safe:transition-[top,left] motion-safe:duration-200';
+  + 'pointer-events-auto';
+// The card while its step's target settles: laid out and measurable, and
+// still focusable, which `invisible` would not be.
+const CARD_SETTLING = 'opacity-0';
 
 /**
  * True on the routes that must render the same way every single time — and in
@@ -286,26 +301,7 @@ function whenHomeVisible(): Promise<boolean> {
   });
 }
 
-/**
- * Await the first-run steps that come before the tour: the terms gate (which
- * itself awaits the username step) and then "What communities do you want
- * to join?" (../../auth/communities-first-run.js). The tour talks about the
- * Home that last screen fills, so it starts only once it is answered.
- */
-async function whenFirstRunSettled(): Promise<void> {
-  type Gate = { settled?: () => Promise<void> };
-  const host = window as unknown as { TermsFirstRun?: Gate; CommunitiesFirstRun?: Gate };
-  for (const gate of [host.TermsFirstRun, host.CommunitiesFirstRun]) {
-    if (!gate || typeof gate.settled !== 'function') continue;
-    try {
-      await gate.settled();
-    } catch {
-      /* A broken gate must not keep the tour from ever running. */
-    }
-  }
-}
-
-/** An optional step is shown only when something it points at is there. */
+/** The join screen's gate (../../auth/communities-first-run.js). */
 type FirstRunGate = { applies?: () => boolean; shownHere?: () => boolean };
 function communitiesGate(): FirstRunGate | undefined {
   return (window as unknown as { CommunitiesFirstRun?: FirstRunGate }).CommunitiesFirstRun;
@@ -319,44 +315,6 @@ function firstRunPending(): boolean {
 /** Did this document show the join screen? */
 function firstRunShownHere(): boolean {
   try { return communitiesGate()?.shownHere?.() === true; } catch { return false; }
-}
-
-/**
- * Has this viewer finished the tour: the account's answer or this browser's,
- * unless a join screen shown here has started it over (./tour-done.ts).
- */
-function tourDoneFor(userId: number): boolean {
-  return isTourDone({
-    serverDone: serverDone(userId),
-    localDone: readDone(userId),
-    joinShownHere: firstRunShownHere(),
-  });
-}
-
-function targetPresent(step: TourStep): boolean {
-  return !!findTarget(step.targets);
-}
-
-/**
- * In the app, wait for the viewer's first touch on the page, or a few
- * seconds. Right after sign-in the phone can put its own dialog on top
- * (Samsung Pass offering to save the password), and a tour started under it
- * opens on a step nobody can read. That dialog does not take focus from the
- * page, so focus cannot tell; a touch on the page means the dialog is gone.
- */
-function whenUserSettled(): Promise<void> {
-  const native = (window as unknown as { usernode?: { isNative?: boolean } })
-    .usernode?.isNative === true;
-  if (!native) return Promise.resolve();
-  return new Promise((resolve) => {
-    const done = () => {
-      document.removeEventListener('pointerdown', done, true);
-      window.clearTimeout(timer);
-      resolve();
-    };
-    const timer = window.setTimeout(done, FIRST_TOUCH_WAIT_MS);
-    document.addEventListener('pointerdown', done, true);
-  });
 }
 
 /**
@@ -382,15 +340,30 @@ if (typeof window !== 'undefined') {
 
 /**
  * How much of the bottom of the screen the tab bar covers, for a target that
- * is NOT one of its tabs (QA 2026-09-24 Q30d); 0 with no bar on screen (the
- * desktop sidebar) or when the step points at a tab, which is in the bar.
+ * is NOT one of its tabs (QA 2026-09-24 Q30d); 0 with no bar on screen, when
+ * the step points at a tab, which is in the bar, or when the bar is not
+ * along the bottom at all: from 768px up it is the sidebar rail, and taking
+ * that for a bottom bar is what drew three steps as a blue line on a laptop
+ * (#3240, ./spotlight.ts `bottomBarInset`).
  */
 function tabBarInset(target: HTMLElement | null): number {
   const bar = document.getElementById('platform-tabs');
   if (!bar || (target && bar.contains(target))) return 0;
-  const rect = bar.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) return 0;
-  return Math.max(0, window.innerHeight - rect.top);
+  return bottomBarInset(bar.getBoundingClientRect(), { width: window.innerWidth, height: window.innerHeight });
+}
+
+/**
+ * The bar a target lives in, the header or the tab bar (or rail), if any
+ * (#3240). A target inside one keeps its hole inside that bar, is not
+ * clamped against it, and is never scrolled to: the bars do not scroll.
+ */
+function barOf(target: HTMLElement | null): HTMLElement | null {
+  if (!target) return null;
+  for (const id of ['platform-header', 'platform-tabs']) {
+    const bar = document.getElementById(id);
+    if (bar && bar.contains(target)) return bar;
+  }
+  return null;
 }
 
 /** Where the header ends, so a scroll can land a target just below it. */
@@ -416,12 +389,19 @@ function scrollerOf(el: HTMLElement): Element {
  * band (Challenges, on a phone) is lined up by its START instead, just below
  * the header: centring it pushed its heading off the top, leaving the card
  * nothing to sit under but the section's middle.
+ *
+ * At once, never smoothly (#3240): a smooth scroll moved the target under a
+ * box that was still easing towards it, and the step now paints only once
+ * its target has stopped moving, so a scroll that takes 400ms is 400ms of
+ * waiting. A target in the header or the tab bar is on screen already and
+ * is not scrolled at all: centring the mark used to move Home by 160px.
  */
-function bringIntoView(target: HTMLElement, reduced: boolean): void {
+function bringIntoView(target: HTMLElement): void {
+  if (barOf(target)) return;
   const rect = target.getBoundingClientRect();
   const top = headerBottom();
   const band = window.innerHeight - tabBarInset(target) - top;
-  const behavior: ScrollBehavior = reduced ? 'auto' : 'smooth';
+  const behavior: ScrollBehavior = 'auto';
   try {
     if (rect.height + SPOTLIGHT_PAD * 2 > band) {
       scrollerOf(target).scrollBy({ top: rect.top - (top + SPOTLIGHT_PAD + CARD_GAP), behavior });
@@ -439,6 +419,28 @@ function backToTopOfHome(): void {
   if (!home || home.classList.contains('hidden')) return;
   const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   home.scrollIntoView({ block: 'start', behavior: reduced ? 'auto' : 'smooth' });
+}
+
+/**
+ * Is a CSS transition or animation still moving the target, or a box it sits
+ * in (#3240)? The desktop menu scales in over 140ms with an ease-out, whose
+ * last frames move less than a pixel each, so two frames that measure the
+ * same are not proof it has stopped. Finite ones only: an endless spinner
+ * somewhere above the target would otherwise hold every step to the cap.
+ */
+function targetAnimating(target: HTMLElement | null): boolean {
+  if (!target || typeof document.getAnimations !== 'function') return false;
+  try {
+    return document.getAnimations().some((anim) => {
+      if (anim.playState !== 'running') return false;
+      const effect = anim.effect as KeyframeEffect | null;
+      const el = effect?.target;
+      if (!(el instanceof Element) || !el.contains(target)) return false;
+      return effect?.getComputedTiming().endTime !== Infinity;
+    });
+  } catch {
+    return false;
+  }
 }
 
 /** Is a kit surface other than the tour's own two presented right now? */
@@ -522,62 +524,50 @@ export function OnboardingTour() {
     setOpen(true);
   }, []);
 
-  // ── First sign-in ────────────────────────────────────────────────────
+  // ── A reload under a tour comes back to it ───────────────────────────
   //
-  // `started` is per document and one-way: neither the auto-start nor a
-  // replay may fire a second tour over the one on screen.
+  // `started` is per document and one-way: the resume below never fires a
+  // second tour over one a press has opened. The tour opens only when asked
+  // (#3240), so the one thing that opens it without a press is a document
+  // reloaded under a tour in progress: the step it had reached rides this
+  // page session (./tour-storage.ts), and the tour comes back there rather
+  // than vanishing. A tab that never had a tour has no step, and nothing
+  // opens.
   const started = useRef(false);
-  // Bumped when the join screen is answered. On a browser that has signed in
-  // before, the join screen arrives LATER than this effect's first run: the
-  // boot starts from the session snapshot, the screen waits for the
-  // confirmed session (app.js _reconcileSession), and by then this effect has
-  // already looked, seen a finished tour and stopped. The bump runs it again.
-  const [firstRunRev, setFirstRunRev] = useState(0);
-  useEffect(() => {
-    const bump = () => setFirstRunRev((n) => n + 1);
-    document.addEventListener('sv:communities-joined', bump);
-    return () => document.removeEventListener('sv:communities-joined', bump);
-  }, []);
   useEffect(() => {
     if (started.current || userId == null) return;
     if (isDeterministicRoute()) return;
-    // A finished tour stays finished, unless a join screen is coming or has
-    // just been answered here: see the restart below.
-    if (tourDoneFor(userId) && !firstRunPending()) return;
+    const saved = readStep(userId);
+    if (saved == null) return;
     let cancelled = false;
     void (async () => {
-      await whenFirstRunSettled();
-      if (cancelled || started.current) return;
-      // A FIRST RUN SHOWN HERE STARTS THE TOUR OVER. A new account's, or one
-      // an admin reset (Admin → Users → ⋯ → Reset first run): the join
-      // screen has just changed what Home holds. The reset cleared the
-      // account's "done"; this browser's is cleared here, so a browser that
-      // finished the tour for this account before does not skip the tour
-      // that describes the Home it now has. tourDoneFor() answers "not
-      // done" for the rest of this document whatever either flag says.
-      if (firstRunShownHere()) {
-        clearDone(userId);
-        clearStep(userId);
-      }
-      await whenUserSettled();
-      if (cancelled || started.current) return;
       const home = await whenHomeVisible();
       if (cancelled || started.current || !home) return;
-      // Decide on the freshest user there is. A boot from the session
-      // snapshot is still holding the user this device saw LAST time, whose
-      // "not done" may predate a tour finished on another device since.
-      await whenSessionRead();
-      if (cancelled || started.current) return;
-      // Re-read the flag: a replay, or another tab, may have answered while
-      // the gates above were still resolving.
-      if (tourDoneFor(userId)) return;
       started.current = true;
-      // At the step this page session had reached, if the document was
-      // reloaded under a tour in progress; from the top otherwise.
-      start(resumeIndex(readStep(userId)));
+      start(resumeIndex(saved));
     })();
     return () => { cancelled = true; };
-  }, [userId, start, firstRunRev]);
+  }, [userId, start]);
+
+  // ── A join screen shown here forgets this browser's "done" ───────────
+  //
+  // It shows for a new account, or for one an admin reset (Admin → Users →
+  // ⋯ → Reset first run), and the reset cleared the account's "done" so the
+  // card offers the tour again. This browser's copy goes with it, or the
+  // backfill below would write it straight back on the next load. Looked at
+  // again when the screen is answered, which on a snapshot boot is after the
+  // first look (app.js _reconcileSession).
+  useEffect(() => {
+    if (userId == null) return;
+    const forget = () => {
+      if (!firstRunShownHere()) return;
+      clearDone(userId);
+      clearStep(userId);
+    };
+    forget();
+    document.addEventListener('sv:communities-joined', forget);
+    return () => document.removeEventListener('sv:communities-joined', forget);
+  }, [userId]);
 
   // ── The account keeps the answer ─────────────────────────────────────
   //
@@ -615,13 +605,13 @@ export function OnboardingTour() {
     writeStep(userId, index);
   }, [open, index, userId]);
 
-  // ── Settings' "Replay the tour" ──────────────────────────────────────
+  // ── Asked for: Getting started's first row, or Settings' Replay ──────
   const request = useTourRequest();
   const seenRequest = useRef(0);
   useEffect(() => {
     if (request === seenRequest.current) return;
     seenRequest.current = request;
-    // Claim the document so the first-sign-in path cannot also fire.
+    // Claim the document so the resume cannot also fire.
     started.current = true;
     let cancelled = false;
     void (async () => {
@@ -673,7 +663,7 @@ export function OnboardingTour() {
   // THE PANEL MUST BE SHUT. The step's instruction is "press Improve" and it
   // ends on the panel OPENING, so arriving with it already up is a dead end:
   // there is no edge left to wait for. Whichever way the viewer got here —
-  // Back from step 4, or a panel opened through an earlier cut-out — it is
+  // Back from step 3, or a panel opened through an earlier cut-out — it is
   // shut again through the controller's own close path. That is also the
   // answer to what Back does with a still-open panel: it closes it, so the
   // step always presents the same way.
@@ -704,9 +694,10 @@ export function OnboardingTour() {
     if (panelOpenNow()) void Improve.close();
   }, [live, index]);
 
-  // Step 7 ends the arc by shutting the panel itself — and the app's menu with
-  // it, because the steps that carry `closesPanel` spotlight the header and a
-  // sheet drawn over the header hides the thing the cut-out is drawn around.
+  // Step 4 ends the arc by shutting the panel itself — and the app's menu with
+  // it, because the step that carries `closesPanel` spotlights a tab, and on a
+  // phone the menu's sheet is drawn over the tab bar, hiding the thing the
+  // cut-out is drawn around.
   useEffect(() => {
     if (!live) return;
     if (!stepAt(index).closesPanel) return;
@@ -735,7 +726,12 @@ export function OnboardingTour() {
   // writes only when the numbers have moved: the last geometry painted is
   // kept as one string, and a frame that measures the same thing touches
   // nothing.
+  //
+  // While a step SETTLES (#3240) it measures and does not write, except to
+  // dim the whole screen when nothing has been painted yet; see "Following
+  // the target, and jumping to the next one" in the header.
   const paintedRef = useRef('');
+  const settleRef = useRef<{ since: number; last: string; stable: number } | null>(null);
   const apply = useCallback(() => {
     const card = cardRef.current;
     const spot = spotRef.current;
@@ -745,10 +741,22 @@ export function OnboardingTour() {
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     // QA 2026-09-24 Q30d: the hole is fitted to where its ring can be seen,
     // inside the screen's edges and above the tab bar unless the target is
-    // a tab, and the card keeps above the bar by the same inset.
+    // a tab, and the card keeps above the bar by the same inset. #3240: and
+    // below the header unless the target is in it; a target that IS in a
+    // bar keeps its hole inside that bar, with a tab's padding kept small.
     const bottomInset = tabBarInset(target);
-    const hole = target ? fitHole(padRect(target.getBoundingClientRect()), viewport, bottomInset) : null;
-    const boxes = shadeBoxes(viewport, hole);
+    const bar = barOf(target);
+    let hole: Box | null = null;
+    if (target) {
+      const rect = roundBox(target.getBoundingClientRect());
+      if (bar) {
+        const inTabs = bar.id === 'platform-tabs';
+        hole = fitHoleIn(padRect(rect, inTabs ? BAR_PAD : SPOTLIGHT_PAD), roundBox(bar.getBoundingClientRect()));
+      } else {
+        hole = fitHole(padRect(rect), viewport, bottomInset, headerBottom());
+      }
+    }
+    const ready = usableHole(hole);
 
     // The card's width goes first because its height, measured next, depends
     // on it. Written only when it changes, so a steady frame touches nothing.
@@ -759,47 +767,95 @@ export function OnboardingTour() {
     // three panel steps consult it, so a closed panel's off-screen rect never
     // reaches the arithmetic.
     const panel = stepAt(indexRef.current).needsPanel && panelOpenNow() ? panelBox() : null;
-    const placed = placeCardForPanel(
-      viewport, { width, height: card.offsetHeight }, hole, panel, safeTopInset(), bottomInset,
+    const place = (at: Box | null) => placeCardForPanel(
+      viewport, { width, height: card.offsetHeight }, at, panel, safeTopInset(), bottomInset,
     );
 
-    const painted = JSON.stringify([hole, boxes, placed]);
+    const paint = (at: Box | null, around: Box[], cardAt: { top: number; left: number } | null) => {
+      // The class strings above are constants React writes once, so these
+      // toggles are the `useHiddenClass` contract spelled imperatively: the
+      // pass that measures is the pass that reveals.
+      spot.classList.toggle('hidden', !at);
+      if (at) {
+        spot.style.top = `${at.top}px`;
+        spot.style.left = `${at.left}px`;
+        spot.style.width = `${at.width}px`;
+        spot.style.height = `${at.height}px`;
+      }
+      around.forEach((box: Box, i: number) => {
+        const el = shades[i] as HTMLDivElement;
+        el.style.top = `${box.top}px`;
+        el.style.left = `${box.left}px`;
+        el.style.width = `${box.width}px`;
+        el.style.height = `${box.height}px`;
+      });
+      const top = shades[0] as HTMLDivElement;
+      for (const cls of NO_HOLE_DIM) top.classList.toggle(cls, !at);
+      if (cardAt) {
+        card.style.top = `${cardAt.top}px`;
+        card.style.left = `${cardAt.left}px`;
+      }
+      card.classList.toggle(CARD_SETTLING, !cardAt);
+    };
+
+    const settle = settleRef.current;
+    if (settle) {
+      const measured = JSON.stringify([hole, viewport]);
+      if (ready && measured === settle.last && !targetAnimating(target)) settle.stable += 1;
+      else {
+        settle.stable = 0;
+        settle.last = measured;
+      }
+      const timedOut = performance.now() - settle.since >= SETTLE_CAP_MS;
+      if (settle.stable < SETTLE_FRAMES && !timedOut) {
+        // Still arriving. The previous step's hole stays where it was; a tour
+        // that has painted nothing yet dims the whole screen meanwhile.
+        if (!paintedRef.current) paint(null, shadeBoxes(viewport, null), null);
+        return;
+      }
+      settleRef.current = null;
+      // The settled paint always writes, even where it matches the last one:
+      // it is also what brings the card back.
+      paintedRef.current = '';
+    }
+
+    const shown = ready ? hole : null;
+    const boxes = shadeBoxes(viewport, shown);
+    const placed = place(shown);
+    const painted = JSON.stringify([shown, boxes, placed]);
     if (painted === paintedRef.current) return;
     paintedRef.current = painted;
-
-    // The class strings above are constants React writes once, so this toggle
-    // is the `useHiddenClass` contract spelled imperatively: the pass that
-    // measures is the pass that reveals.
-    spot.classList.toggle('hidden', !hole);
-    if (hole) {
-      spot.style.top = `${hole.top}px`;
-      spot.style.left = `${hole.left}px`;
-      spot.style.width = `${hole.width}px`;
-      spot.style.height = `${hole.height}px`;
-    }
-    boxes.forEach((box: Box, i: number) => {
-      const el = shades[i] as HTMLDivElement;
-      el.style.top = `${box.top}px`;
-      el.style.left = `${box.left}px`;
-      el.style.width = `${box.width}px`;
-      el.style.height = `${box.height}px`;
-    });
-    card.style.top = `${placed.top}px`;
-    card.style.left = `${placed.left}px`;
+    paint(shown, boxes, placed);
   }, []);
 
+  // The step the last settle was started for, so a re-render that is not a
+  // step change (the Skip question, the panel's open state) re-measures
+  // without hiding the card again.
+  const settledForRef = useRef<number | null>(null);
   useIsomorphicLayoutEffect(() => {
-    if (!live) return;
+    if (!live) {
+      // Paused or closed: whatever comes back next settles from scratch.
+      settledForRef.current = null;
+      settleRef.current = null;
+      paintedRef.current = '';
+      return;
+    }
+    if (settledForRef.current !== index) {
+      settledForRef.current = index;
+      settleRef.current = { since: performance.now(), last: '', stable: 0 };
+      cardRef.current?.classList.add(CARD_SETTLING);
+    }
     // Forget what was painted last: the first pass after a state change, or
     // after a pause, always writes, even when the numbers happen to match.
-    paintedRef.current = '';
+    // Not while a step settles, whose first write is the settled one.
+    if (!settleRef.current) paintedRef.current = '';
     apply();
     // Then follow the target for as long as the overlay is up. A resize, a
     // scroll in #home-screen or in the panel's own body, the panel's CSS
     // slide, the kit sheet's spring and the sheet re-sizing under a list that
     // loads later all move the target; only the last two report nothing, and
     // the next frame is the one signal that is right for all of them. See
-    // "Following the target" in the header.
+    // "Following the target, and jumping to the next one" in the header.
     let frame = window.requestAnimationFrame(function follow() {
       apply();
       frame = window.requestAnimationFrame(follow);
@@ -810,14 +866,14 @@ export function OnboardingTour() {
   // Bring the step's target into view before pointing at it. Skipped for a
   // target inside the Improve panel: the panel is `position: fixed` and
   // already on screen, and scrolling the page under it would move Home for no
+  // reason. bringIntoView skips the header and the tab bar for the same
   // reason.
   useEffect(() => {
     if (!live || confirming) return;
     const target = findTarget(stepAt(index).targets);
     if (!target) return;
     if (document.getElementById('apps-switcher-sheet')?.contains(target)) return;
-    const reduced = !!window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-    bringIntoView(target, reduced);
+    bringIntoView(target);
   }, [live, index, confirming]);
 
   // ── Focus ────────────────────────────────────────────────────────────
@@ -852,12 +908,12 @@ export function OnboardingTour() {
     clearStep(userId);
     setConfirming(false);
     setOpen(false);
-    // The steps scrolled Home down to Challenges; hand the viewer back the
-    // top of the page they started on.
+    // The steps may have scrolled Home; hand the viewer back the top of the
+    // page they started on.
     backToTopOfHome();
   }, [userId]);
 
-  const goBack = useCallback(() => setIndex(stepFrom(indexRef.current, -1, targetPresent)), []);
+  const goBack = useCallback(() => setIndex(stepFrom(indexRef.current, -1)), []);
   const goNext = useCallback(() => {
     const at = indexRef.current;
     // The menu step's Next does what the mark does rather than moving the
@@ -866,7 +922,7 @@ export function OnboardingTour() {
     // into.
     if (nextOpensMenu(at)) void AppContext.open();
     else if (isLastStep(at)) finish();
-    else setIndex(stepFrom(at, 1, targetPresent));
+    else setIndex(stepFrom(at, 1));
   }, [finish]);
 
   useEffect(() => {
@@ -917,10 +973,11 @@ export function OnboardingTour() {
       aria-labelledby="home-tour-title"
     >
       {/*
-          The dim, as four panels around the cut-out rather than one shadow.
-          They are what BLOCKS, so the hole they leave is a real hole and the
-          Improve button inside it can be pressed on the step that asks for
-          it. With no target they collapse to a single full-screen shade.
+          Four transparent panels around the cut-out. They are what BLOCKS,
+          so the hole they leave is a real hole and the mark inside it can be
+          pressed on the step that asks for it. The dim is the spotlight's
+          own shadow; with no target the panels collapse to a single
+          full-screen shade, which takes the dim instead.
       */}
       <div ref={topRef} id="home-tour-shade-top" className={SHADE}></div>
       <div ref={rightRef} id="home-tour-shade-right" className={SHADE}></div>

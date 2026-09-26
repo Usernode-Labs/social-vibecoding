@@ -1,9 +1,10 @@
 /**
- * Settings → Welcome tour: the way back to the eight-step tour Home runs on
- * first sign-in (../../home/tour).
+ * Settings → Welcome tour: the way back to the four-step tour that Home's
+ * Getting started card offers a new account (../../home/tour, #3240).
  *
- * The tour's own Skip says "You can reopen this from Settings", so this
- * section is the other half of that sentence rather than a nicety. It is one
+ * The tour's own Skip says "You can reopen this from Settings", and the card
+ * can be closed for good, so this section is the other half of that sentence
+ * rather than a nicety. It is one
  * button: clear this browser's "finished" flag for this account, ask for the
  * tour again, and go to Home, which is where every step points. The request
  * opens the tour whatever the account's own "done" says
@@ -38,7 +39,7 @@ export function TourSection() {
     <div data-settings-section="tour" className="hidden">
       <div id="settings-tour-section">
         <SectionHeading title="Welcome tour">
-          The guided walk through Homeroom you were shown the first time you signed in.
+          A one-minute walk through your apps and the Homeroom menu.
         </SectionHeading>
         <Button
           id="settings-tour-replay"

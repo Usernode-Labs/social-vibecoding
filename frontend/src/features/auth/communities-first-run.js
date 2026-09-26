@@ -2,8 +2,8 @@
 //
 // The third first-run step, after "Choose your username"
 // (./username-first-run.js) and the terms (../settings/terms-first-run.js),
-// and before the welcome tour (../home/tour), which waits on this module's
-// `settled()`. A new account picks the communities it wants to be part of
+// and before Home's Getting started card, whose first row offers the welcome
+// tour (../home/tour, #3240). A new account picks the communities it wants to be part of
 // before it sees Home, so the Home it lands on already has them on it: each
 // one it joins is pinned there (services/communities.js `join`).
 //
@@ -71,7 +71,8 @@
     _settled: null,
 
     // Does this document have a join step to show? Read by the tour, which
-    // must not start under it.
+    // never copies this browser's "done" to an account whose join screen is
+    // still to come (an account an admin has reset).
     applies() {
       if (CommunitiesFirstRun._presented) return true;
       if (CommunitiesFirstRun._answered) return false;
@@ -81,9 +82,9 @@
 
     // Has THIS document shown the real join screen (never the ?shot=
     // fixture)? Read by the tour: a first run shown here, a new account's or
-    // one an admin reset (Admin → Users → ⋯ → Reset first run), restarts the
-    // tour even in a browser that finished it before, whatever this browser's
-    // or a stale copy of the account's "done" says.
+    // one an admin reset (Admin → Users → ⋯ → Reset first run), clears this
+    // browser's "done" for the tour, as the reset cleared the account's, so
+    // the Getting started card offers the tour again.
     shownHere() {
       return CommunitiesFirstRun._shownHere === true;
     },
