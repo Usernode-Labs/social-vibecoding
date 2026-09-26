@@ -1,12 +1,14 @@
 'use strict';
 
 // A new account's first run (communities, stage 5): the "What communities do
-// you want to join?" screen and the Getting started card on Home. Me-scoped,
-// so mounted behind authMiddleware like the other /api/me routes. The rules
-// live in src/services/onboarding.js; this file is the HTTP around them.
+// you want to join?" screen, the welcome tour's "done" and the Getting
+// started card on Home. Me-scoped, so mounted behind authMiddleware like the
+// other /api/me routes. The rules live in src/services/onboarding.js; this
+// file is the HTTP around them.
 //
 //   GET  /api/me/join-suggestions          what the join screen lists
 //   POST /api/me/communities               answer it: { join: [slug] }
+//   POST /api/me/tour-done                 the tour's Finish and Skip
 //   GET  /api/me/getting-started           the card's three steps
 //   POST /api/me/getting-started/seen      { step: 'workshop' | 'discover' }
 //   POST /api/me/getting-started/close     the card's close button
@@ -53,6 +55,16 @@ function onboardingRoutes(config) {
       res.json(result);
     } catch (err) {
       log.error('onboarding', 'join answer failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Read back as `tourDone` on /api/auth/me.
+  router.post('/api/me/tour-done', drainGuard, async (req, res) => {
+    try {
+      res.json(await onboarding.markTourDone(pool, req.user.id));
+    } catch (err) {
+      log.error('onboarding', 'tour done failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

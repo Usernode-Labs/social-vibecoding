@@ -7,6 +7,10 @@
 // routes (src/routes/onboarding.js) so the HTTP shapes are pinned too.
 // Skipped when no server is reachable, required when TEST_DATABASE_URL is
 // set, like tests/communities-postgres.test.js.
+//
+// The welcome tour's "done" (#3237) rides the same file: it is part of the
+// same first run, it is written through the same router, and Reset first run
+// clears it with the rest.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -227,8 +231,61 @@ test('the first run: join screen and Getting started, against the full schema', 
     assert.equal((await call('GET', '/api/me/getting-started')).data.show, false);
   });
 
+  // The welcome tour's "done", on the account rather than per browser
+  // (#3237). Through the REAL session middleware and the real /api/auth/me,
+  // not the stubbed viewer above, so the 401 and the field the tour reads
+  // are both what a browser gets.
+  await t.test('the welcome tour is done on the account: marked behind a session, read back on /api/auth/me', async () => {
+    const cookieParser = require('cookie-parser');
+    const { authMiddleware } = require('../src/middleware/auth');
+    const { authRoutes } = require('../src/routes/auth');
+    const token = crypto.randomBytes(24).toString('hex');
+    const expired = crypto.randomBytes(24).toString('hex');
+    await pool.query(
+      `INSERT INTO sessions (token, user_id, expires_at) VALUES
+         ($1, $2, NOW() + INTERVAL '1 day'), ($3, $2, NOW() - INTERVAL '1 hour')`,
+      [token, newbie.id, expired]);
+    const real = express();
+    real.use(express.json(), cookieParser());
+    real.use(authMiddleware({}));
+    real.use(authRoutes({}));
+    real.use(onboardingRoutes({ selfAppPublicVoting: true }));
+    const realListener = await new Promise((resolve) => { const s = real.listen(0, '127.0.0.1', () => resolve(s)); });
+    const realBase = `http://127.0.0.1:${realListener.address().port}`;
+    const as = (session) => ({
+      'Content-Type': 'application/json', ...(session ? { Cookie: `session=${session}` } : {}),
+    });
+    const markDone = (session) => fetch(`${realBase}/api/me/tour-done`, { method: 'POST', headers: as(session), body: '{}' });
+    const me = async () => (await (await fetch(`${realBase}/api/auth/me`, { headers: as(token) })).json()).user;
+    const doneAt = async () => (await pool.query('SELECT tour_done_at FROM users WHERE id = $1', [newbie.id])).rows[0].tour_done_at;
+    try {
+      for (const session of [null, 'not-a-session', expired]) {
+        assert.equal((await markDone(session)).status, 401, `no session (${session}), no write`);
+      }
+      assert.equal(await doneAt(), null, 'nothing was recorded by the refused calls');
+      assert.equal((await me()).tourDone, false, 'never finished anywhere: the tour runs, as before');
+
+      const res = await markDone(token);
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { ok: true });
+      const first = await doneAt();
+      assert.ok(first instanceof Date, 'Finish or Skip is kept on the account');
+      assert.equal((await me()).tourDone, true, 'so every other browser and device reads it');
+
+      // A replay finished later, or the one-time backfill from a browser that
+      // had the flag, lands on an account that already has it: no change.
+      assert.equal((await markDone(token)).status, 200);
+      assert.equal((await doneAt()).getTime(), first.getTime(), 'the first finish is the one kept');
+      const other = (await pool.query('SELECT tour_done_at FROM users WHERE id = $1', [grace.id])).rows[0];
+      assert.equal(other.tour_done_at, null, 'only the caller\'s own account');
+    } finally {
+      await new Promise((resolve) => realListener.close(resolve));
+    }
+  });
+
   // An admin's "Reset first run" (Admin → Users → ⋯). Continues from the
-  // newcomer above, who has answered, visited, closed the card and joined.
+  // newcomer above, who has answered, visited, closed the card, joined and
+  // finished the tour.
   await t.test('Reset first run brings the first run back and touches nothing the account owns', async () => {
     const onboarding = require('../src/services/onboarding');
     const membershipsBefore = (await pool.query(
@@ -236,14 +293,18 @@ test('the first run: join screen and Getting started, against the full schema', 
     const pinsBefore = (await pool.query(
       'SELECT app_id FROM app_favorites WHERE user_id = $1 AND NOT hidden ORDER BY app_id', [newbie.id])).rows;
 
+    assert.ok((await pool.query('SELECT tour_done_at FROM users WHERE id = $1', [newbie.id])).rows[0].tour_done_at,
+      'the tour was finished before the reset');
     assert.deepEqual(await onboarding.resetFirstRun(pool, newbie.id), { id: newbie.id, username: 'newbie' });
     const u = (await pool.query(
-      `SELECT needs_communities_choice, communities_onboarded_at, getting_started_closed_at, getting_started_seen
+      `SELECT needs_communities_choice, communities_onboarded_at, getting_started_closed_at, getting_started_seen,
+              tour_done_at
          FROM users WHERE id = $1`, [newbie.id])).rows[0];
     assert.deepEqual(u, {
       needs_communities_choice: true, communities_onboarded_at: null,
       getting_started_closed_at: null, getting_started_seen: null,
-    }, 'exactly a new account\'s first-run state');
+      tour_done_at: null,
+    }, 'exactly a new account\'s first-run state: the tour follows the join screen again, on every device');
     assert.deepEqual((await pool.query(
       'SELECT community_id FROM community_members WHERE user_id = $1 ORDER BY community_id', [newbie.id])).rows,
     membershipsBefore, 'still in everything it joined');

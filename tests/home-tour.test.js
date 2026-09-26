@@ -35,6 +35,11 @@
 //     client pass have to agree, so the overlay renders hidden with no
 //     measured geometry in it at all.
 //   - THE REPLAY. Settings clears the flag, asks, and navigates home.
+//   - DONE ON THE ACCOUNT (#3237). The server's answer OR the browser's; a
+//     browser that has the flag copies it to the account once; a join screen
+//     shown here starts the tour over whatever either says; a snapshot boot
+//     decides on the server's user. Executed against a stubbed App, fetch and
+//     storage, not grepped.
 //
 // Run with: node --test tests/home-tour.test.js
 'use strict';
@@ -695,9 +700,10 @@ test('the overlay keeps its step while it is up, resumes there, and clears it on
   assert.match(body, /start\(resumeIndex\(readStep\(userId\)\)\);/);
   const replay = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const request = useTourRequest();'));
   assert.match(replay.slice(0, replay.indexOf('}, [request, start]);')), /start\(\);/);
-  // Finish and Skip both go through finish(): done is written, the place is
-  // cleared, and neither can bring the tour back on the next reload.
-  assert.match(OVERLAY_SRC, /writeDone\(userId\);\s*clearStep\(userId\);/);
+  // Finish and Skip both go through finish(): done is written, here and on
+  // the account, the place is cleared, and neither can bring the tour back on
+  // the next reload.
+  assert.match(OVERLAY_SRC, /writeDone\(userId\);\s*(?:\/\/[^\n]*\n\s*)*void markDoneOnServer\(userId\);\s*clearStep\(userId\);/);
 });
 
 test("the shell's automatic reload waits for a tour in progress", () => {
@@ -785,7 +791,7 @@ test('the auto-start waits for the viewer, the first-run steps and Home', () => 
   const gates = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('async function whenFirstRunSettled()'));
   assert.match(gates.slice(0, gates.indexOf('\n}\n')),
     /for \(const gate of \[host\.TermsFirstRun, host\.CommunitiesFirstRun\]\)/);
-  assert.match(body, /if \(readDone\(userId\)\) return;/);
+  assert.match(body, /if \(tourDoneFor\(userId\)\) return;/);
   // Once per document: neither path may stack a second tour on the first.
   assert.match(body, /started\.current = true;/);
 });
@@ -866,4 +872,217 @@ test('the tour never reads or writes the challenge-based onboarding gate', () =>
   // Its first steps are the Getting started card's, which it points at
   // instead.
   assert.ok(!steps.TOUR_STEPS.some((s) => s.id === 'challenges'));
+});
+
+// ── done on the account (#3237), executed ──────────────────────────────
+
+/**
+ * tour-done.ts, bundled and run against a stubbed `window.App`, `fetch` and
+ * console. The rules are pure functions, so each scenario the request names
+ * is played through them the way the overlay plays it, with the overlay's own
+ * wiring pinned separately below.
+ */
+const doneApi = loadTsx(`${TOUR_DIR}/tour-done.ts`);
+
+function withShell({ user = { id: 7 }, fromSnapshot = false, bootSession, fetchImpl } = {}) {
+  const before = {
+    window: globalThis.window, fetch: globalThis.fetch, warn: console.warn, error: console.error,
+  };
+  const saved = [];
+  const posts = [];
+  const warnings = [];
+  const errors = [];
+  const App = {
+    user,
+    _sessionFromSnapshot: fromSnapshot,
+    saveSessionSnapshot: (u) => saved.push(JSON.parse(JSON.stringify(u))),
+  };
+  if (bootSession) App.bootSession = bootSession;
+  globalThis.window = { App };
+  globalThis.fetch = async (url, init) => {
+    posts.push({ url, method: init && init.method, credentials: init && init.credentials });
+    return fetchImpl ? fetchImpl(url, init) : { ok: true, status: 200 };
+  };
+  console.warn = (...args) => warnings.push(args);
+  console.error = (...args) => errors.push(args);
+  const restore = () => {
+    globalThis.window = before.window;
+    globalThis.fetch = before.fetch;
+    console.warn = before.warn;
+    console.error = before.error;
+  };
+  return { App, saved, posts, warnings, errors, restore };
+}
+
+test('done is the account\'s answer OR this browser\'s', () => {
+  const { isTourDone } = doneApi;
+  const none = { serverDone: false, localDone: false, joinShownHere: false };
+  assert.equal(isTourDone(none), false, 'never finished anywhere: the tour runs, as before');
+  assert.equal(isTourDone({ ...none, serverDone: true }), true,
+    'finished on another device: no tour in a browser that never saw it');
+  assert.equal(isTourDone({ ...none, localDone: true }), true,
+    'finished in this browser before the account kept it: still done');
+  assert.equal(isTourDone({ ...none, serverDone: true, localDone: true }), true);
+});
+
+test('a join screen shown here starts the tour over, whatever either flag says (#3190)', () => {
+  const { isTourDone, needsBackfill } = doneApi;
+  for (const serverDone of [false, true]) {
+    for (const localDone of [false, true]) {
+      assert.equal(isTourDone({ serverDone, localDone, joinShownHere: true }), false,
+        `server ${serverDone}, local ${localDone}: the answered join screen wins`);
+      assert.equal(needsBackfill({ serverDone, localDone, joinShownHere: true, joinPending: false }), false,
+        'and a reset account\'s "done" is never copied back to the account');
+    }
+  }
+});
+
+test('a browser with the flag copies it to the account, and only then', () => {
+  const { needsBackfill } = doneApi;
+  const base = { serverDone: false, localDone: true, joinShownHere: false, joinPending: false };
+  assert.equal(needsBackfill(base), true, 'finished here before this shipped: backfill');
+  assert.equal(needsBackfill({ ...base, serverDone: true }), false, 'the account already has it');
+  assert.equal(needsBackfill({ ...base, localDone: false }), false, 'nothing to copy');
+  assert.equal(needsBackfill({ ...base, joinPending: true }), false,
+    'a join screen still to come is a reset account: its tour is due again');
+});
+
+test('the account\'s answer is read off App.user, for this viewer only', () => {
+  const shell = withShell({ user: { id: 7, tourDone: true } });
+  try {
+    assert.equal(doneApi.serverDone(7), true);
+    assert.equal(doneApi.serverDone(8), false, 'another account\'s answer is not this one\'s');
+    assert.equal(doneApi.serverDone(null), false);
+    shell.App.user = { id: 7 };
+    assert.equal(doneApi.serverDone(7), false, 'a /me without the field (an older snapshot) is "not done"');
+    shell.App.user = null;
+    assert.equal(doneApi.serverDone(7), false);
+  } finally { shell.restore(); }
+});
+
+test('Finish and Skip record done on the account: one POST, and App.user and the snapshot learn it', async () => {
+  const shell = withShell({ user: { id: 7, username: 'ada' } });
+  try {
+    assert.equal(await doneApi.markDoneOnServer(7), true);
+    assert.deepEqual(shell.posts, [{ url: '/api/me/tour-done', method: 'POST', credentials: 'same-origin' }]);
+    assert.equal(doneApi.TOUR_DONE_PATH, '/api/me/tour-done');
+    assert.equal(shell.App.user.tourDone, true, 'this document knows at once');
+    assert.equal(shell.saved.length, 1, 'and the snapshot the next boot starts from carries it');
+    assert.equal(shell.saved[0].tourDone, true);
+    assert.equal(await doneApi.markDoneOnServer(null), false, 'no viewer, no write');
+    assert.equal(shell.posts.length, 1);
+  } finally { shell.restore(); }
+});
+
+test('a replay finished on a verified session sets done again, on the account too', async () => {
+  // Settings' Replay clears only this browser's flag and asks: the account's
+  // "done" does not stop it (the replay path never reads it), and finishing
+  // records it on both again.
+  const shell = withShell({ user: { id: 7, tourDone: true } });
+  try {
+    assert.equal(await doneApi.markDoneOnServer(7), true);
+    assert.equal(shell.posts.length, 1, 'the write is idempotent server-side, so it is simply sent');
+    assert.equal(shell.App.user.tourDone, true);
+  } finally { shell.restore(); }
+});
+
+test('a failed write never throws and never logs a console.error', async () => {
+  for (const fetchImpl of [
+    () => { throw new TypeError('Failed to fetch'); },
+    () => ({ ok: false, status: 503 }),
+    () => ({ ok: false, status: 401 }),
+  ]) {
+    const shell = withShell({ user: { id: 7 }, fetchImpl });
+    try {
+      assert.equal(await doneApi.markDoneOnServer(7), false);
+      assert.equal(shell.errors.length, 0, 'a console.error fails proposal checks on any route');
+      assert.equal(shell.warnings.length, 1, 'a warning at most');
+      assert.equal(shell.App.user.tourDone, undefined, 'nothing is claimed that the account does not have');
+      assert.equal(shell.saved.length, 0);
+    } finally { shell.restore(); }
+  }
+});
+
+test('a snapshot boot is not rewritten, and is not trusted to backfill', async () => {
+  const shell = withShell({ user: { id: 7 }, fromSnapshot: true });
+  try {
+    assert.equal(doneApi.sessionVerified(7), false,
+      'the snapshot\'s user may be an account an admin has since reset');
+    assert.equal(await doneApi.markDoneOnServer(7), true);
+    assert.equal(shell.App.user.tourDone, true);
+    assert.equal(shell.saved.length, 0, 'rewriting it would keep refreshing its age (app.js enterAuthed)');
+    shell.App._sessionFromSnapshot = false;
+    assert.equal(doneApi.sessionVerified(7), true, 'confirmed: now it is the server\'s user');
+    assert.equal(doneApi.sessionVerified(8), false, 'for this viewer only');
+  } finally { shell.restore(); }
+});
+
+test('a snapshot boot decides on the server\'s user once its own read has answered', async () => {
+  let answer;
+  const boot = new Promise((resolve) => { answer = resolve; });
+  const shell = withShell({ user: { id: 7 }, fromSnapshot: true, bootSession: () => boot });
+  try {
+    let read = false;
+    const waiting = doneApi.whenSessionRead().then(() => { read = true; });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(read, false, 'still waiting on /api/auth/me');
+    // Stale: this device last saw "not done", and the local flag agrees.
+    assert.equal(doneApi.isTourDone({ serverDone: doneApi.serverDone(7), localDone: false, joinShownHere: false }), false);
+    // app.js _reconcileSession puts the server's user on App.user, then
+    // publishes it: the tour was finished on another device since.
+    shell.App.user = { id: 7, tourDone: true };
+    shell.App._sessionFromSnapshot = false;
+    answer({ user: shell.App.user });
+    await waiting;
+    assert.equal(read, true);
+    assert.equal(doneApi.isTourDone({ serverDone: doneApi.serverDone(7), localDone: false, joinShownHere: false }), true,
+      'no tour: the freshest user says it is done');
+  } finally { shell.restore(); }
+});
+
+test('a verified session, and a shell with no session read at all, do not wait', async () => {
+  for (const opts of [{ fromSnapshot: false, bootSession: () => new Promise(() => {}) }, { fromSnapshot: true }]) {
+    const shell = withShell(opts);
+    try {
+      let read = false;
+      const waiting = doneApi.whenSessionRead().then(() => { read = true; });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(read, true);
+      await waiting;
+    } finally { shell.restore(); }
+  }
+  // And a read that never settles is capped rather than waited on forever.
+  assert.ok(doneApi.SESSION_WAIT_MS > 0 && doneApi.SESSION_WAIT_MS <= 10_000);
+  const DONE_SRC = read(`${TOUR_DIR}/tour-done.ts`);
+  assert.match(DONE_SRC, /const timer = setTimeout\(resolve, SESSION_WAIT_MS\);/);
+});
+
+test('the overlay decides with both answers, waits for the server\'s user, and backfills once', () => {
+  // Done for this viewer is the pure rule over the account, this browser and
+  // the join screen.
+  const fn = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('function tourDoneFor(userId: number): boolean {'));
+  assert.match(fn.slice(0, fn.indexOf('\n}')),
+    /return isTourDone\(\{\s*serverDone: serverDone\(userId\),\s*localDone: readDone\(userId\),\s*joinShownHere: firstRunShownHere\(\),\s*\}\);/);
+  // The auto-start decides after the session read, never before it.
+  const start = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('if (started.current || userId == null) return;'));
+  const body = start.slice(0, start.indexOf('}, [userId, start, firstRunRev]);'));
+  assert.match(body, /if \(tourDoneFor\(userId\) && !firstRunPending\(\)\) return;/);
+  assert.ok(body.indexOf('await whenHomeVisible()') < body.indexOf('await whenSessionRead()'));
+  assert.ok(body.indexOf('await whenSessionRead()') < body.lastIndexOf('if (tourDoneFor(userId)) return;'));
+  assert.ok(body.lastIndexOf('if (tourDoneFor(userId)) return;') < body.indexOf('started.current = true;'));
+  // The replay never asks whether the tour is done: it opens it now.
+  const replay = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const request = useTourRequest();'));
+  assert.doesNotMatch(replay.slice(0, replay.indexOf('}, [request, start]);')), /tourDoneFor|readDone|serverDone/);
+  // The backfill: verified sessions only, looked at again on sv:session, once.
+  const back = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const backfilledFor = useRef<number | null>(null);'));
+  const effect = back.slice(0, back.indexOf('}, [userId]);'));
+  assert.match(effect, /if \(userId == null \|\| isDeterministicRoute\(\)\) return;/,
+    'never on a capture route, where no POST may land');
+  assert.match(effect, /if \(backfilledFor\.current === userId \|\| !sessionVerified\(userId\)\) return;/);
+  assert.match(effect, /joinShownHere: firstRunShownHere\(\),\s*joinPending: firstRunPending\(\),/);
+  assert.match(effect, /backfilledFor\.current = userId;\s*void markDoneOnServer\(userId\);/);
+  assert.match(effect, /document\.addEventListener\('sv:session', check\);/);
+  assert.match(effect, /return \(\) => document\.removeEventListener\('sv:session', check\);/);
+  // The join screen's re-check is still wired, alongside it.
+  assert.match(OVERLAY_SRC, /document\.addEventListener\('sv:communities-joined', bump\);/);
 });

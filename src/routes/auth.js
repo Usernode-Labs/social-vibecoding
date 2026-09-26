@@ -671,6 +671,11 @@ function authRoutes(config) {
     // flag above: unreadable means no blocking step and no card.
     let needsCommunitiesChoice = false;
     let showGettingStarted = false;
+    // Has this account finished (or skipped) the welcome tour, on any
+    // device? The tour ORs it with its own per-browser flag, so the failure
+    // direction here is the one it had before the server kept it: the
+    // browser's answer alone.
+    let tourDone = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
@@ -679,6 +684,7 @@ function authRoutes(config) {
                 u.needs_communities_choice,
                 (u.communities_onboarded_at IS NOT NULL
                   AND u.getting_started_closed_at IS NULL) AS show_getting_started,
+                (u.tour_done_at IS NOT NULL) AS tour_done,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -707,6 +713,7 @@ function authRoutes(config) {
       needsUsernameChoice = rows[0]?.needs_username_choice === true;
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
       showGettingStarted = rows[0]?.show_getting_started === true;
+      tourDone = rows[0]?.tour_done === true;
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
@@ -790,6 +797,11 @@ function authRoutes(config) {
         // The Getting started card on Home: shown to an account that came
         // through the join screen, until it is closed.
         showGettingStarted,
+        // The welcome tour was finished or skipped on this account, on any
+        // device (POST /api/me/tour-done; cleared by Reset first run). The
+        // tour counts it done when this OR the browser's own flag says so
+        // (frontend/src/features/home/tour/tour-done.ts).
+        tourDone,
         hasApiKey,
         keyLast4,
         // In-chat venue availability: feature flag + beta eligibility + a

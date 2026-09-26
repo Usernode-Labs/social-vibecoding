@@ -135,9 +135,17 @@
  * open resumes at the Improve step instead, which is the one place in the arc
  * that stands on its own.
  *
- * Settings' "Replay the tour" clears the stored flag and asks for it again
- * through ./tour-request.ts, which is the one path that ignores all of the
- * above except "Home has to be on screen".
+ * "Once per account" means done when the account says so OR this browser
+ * does (./tour-done.ts): Finish and Skip record it on both, and a browser
+ * that finished the tour before the account kept the answer copies it there
+ * once. On a boot from the session snapshot the user the shell starts with is
+ * the one this device saw last time, so the tour decides on the server's user
+ * once that read has answered, not on the snapshot's.
+ *
+ * Settings' "Replay the tour" clears this browser's flag and asks for the
+ * tour again through ./tour-request.ts, which is the one path that ignores
+ * all of the above except "Home has to be on screen". Finishing the replay
+ * records "done" on both again.
  *
  * ── A reload is not a restart ──────────────────────────────────────────
  *
@@ -170,6 +178,9 @@ import {
   CARD_GAP, cardWidth, findTarget, fitHole, padRect, placeCardForPanel, panelBox, shadeBoxes,
   SPOTLIGHT_PAD, type Box,
 } from './spotlight';
+import {
+  isTourDone, markDoneOnServer, needsBackfill, serverDone, sessionVerified, whenSessionRead,
+} from './tour-done';
 import { useTourRequest } from './tour-request';
 import {
   clampIndex, IMPROVE_STEP_INDEX, isLastStep, nextOpensMenu, resumeIndex, stepAt, stepCounter,
@@ -308,6 +319,18 @@ function firstRunPending(): boolean {
 /** Did this document show the join screen? */
 function firstRunShownHere(): boolean {
   try { return communitiesGate()?.shownHere?.() === true; } catch { return false; }
+}
+
+/**
+ * Has this viewer finished the tour: the account's answer or this browser's,
+ * unless a join screen shown here has started it over (./tour-done.ts).
+ */
+function tourDoneFor(userId: number): boolean {
+  return isTourDone({
+    serverDone: serverDone(userId),
+    localDone: readDone(userId),
+    joinShownHere: firstRunShownHere(),
+  });
 }
 
 function targetPresent(step: TourStep): boolean {
@@ -520,16 +543,18 @@ export function OnboardingTour() {
     if (isDeterministicRoute()) return;
     // A finished tour stays finished, unless a join screen is coming or has
     // just been answered here: see the restart below.
-    if (readDone(userId) && !firstRunPending() && !firstRunShownHere()) return;
+    if (tourDoneFor(userId) && !firstRunPending()) return;
     let cancelled = false;
     void (async () => {
       await whenFirstRunSettled();
       if (cancelled || started.current) return;
       // A FIRST RUN SHOWN HERE STARTS THE TOUR OVER. A new account's, or one
       // an admin reset (Admin → Users → ⋯ → Reset first run): the join
-      // screen has just changed what Home holds, and "done" is kept per
-      // browser, so a browser that finished the tour for this account before
-      // would otherwise skip the tour that describes the Home it now has.
+      // screen has just changed what Home holds. The reset cleared the
+      // account's "done"; this browser's is cleared here, so a browser that
+      // finished the tour for this account before does not skip the tour
+      // that describes the Home it now has. tourDoneFor() answers "not
+      // done" for the rest of this document whatever either flag says.
       if (firstRunShownHere()) {
         clearDone(userId);
         clearStep(userId);
@@ -538,9 +563,14 @@ export function OnboardingTour() {
       if (cancelled || started.current) return;
       const home = await whenHomeVisible();
       if (cancelled || started.current || !home) return;
+      // Decide on the freshest user there is. A boot from the session
+      // snapshot is still holding the user this device saw LAST time, whose
+      // "not done" may predate a tour finished on another device since.
+      await whenSessionRead();
+      if (cancelled || started.current) return;
       // Re-read the flag: a replay, or another tab, may have answered while
       // the gates above were still resolving.
-      if (readDone(userId)) return;
+      if (tourDoneFor(userId)) return;
       started.current = true;
       // At the step this page session had reached, if the document was
       // reloaded under a tour in progress; from the top otherwise.
@@ -548,6 +578,32 @@ export function OnboardingTour() {
     })();
     return () => { cancelled = true; };
   }, [userId, start, firstRunRev]);
+
+  // ── The account keeps the answer ─────────────────────────────────────
+  //
+  // A browser that finished the tour before the account kept "done" copies
+  // its flag there, once, so the next device does not offer it again. Only
+  // against a VERIFIED user (./tour-done.ts says why), so a boot from the
+  // session snapshot looks again on `sv:session`, which app.js dispatches
+  // with the server's user once it has confirmed the session.
+  const backfilledFor = useRef<number | null>(null);
+  useEffect(() => {
+    if (userId == null || isDeterministicRoute()) return;
+    const check = () => {
+      if (backfilledFor.current === userId || !sessionVerified(userId)) return;
+      if (!needsBackfill({
+        serverDone: serverDone(userId),
+        localDone: readDone(userId),
+        joinShownHere: firstRunShownHere(),
+        joinPending: firstRunPending(),
+      })) return;
+      backfilledFor.current = userId;
+      void markDoneOnServer(userId);
+    };
+    check();
+    document.addEventListener('sv:session', check);
+    return () => document.removeEventListener('sv:session', check);
+  }, [userId]);
 
   // ── Where the viewer is, kept across a reload ────────────────────────
   //
@@ -789,6 +845,10 @@ export function OnboardingTour() {
 
   const finish = useCallback(() => {
     writeDone(userId);
+    // And on the account, so no other browser or device offers it again.
+    // Fire-and-forget: a write that fails costs a repeat tour elsewhere,
+    // never this one.
+    void markDoneOnServer(userId);
     clearStep(userId);
     setConfirming(false);
     setOpen(false);

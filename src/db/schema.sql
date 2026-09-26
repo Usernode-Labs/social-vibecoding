@@ -9890,6 +9890,14 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_closed_at TIMESTAMPTZ
 -- { "workshop": "<iso>", "discover": "<iso>" }. Written only while the card
 -- is showing, and read only by it.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;
+-- When this account finished (or skipped) the welcome tour
+-- (frontend/src/features/home/tour). Server state for the same reason as the
+-- card's close: "done" used to live only in the browser's storage, so every
+-- other device, a cleared or evicted storage, a private window and the move
+-- to a new domain all offered the tour again. The browser's own flag still
+-- counts, and a browser that has it copies it here once. Reset first run
+-- clears it, so the tour follows the join screen again on every device.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at TIMESTAMPTZ;
 
 -- ── Platform limit alerts ──────────────────────────────────────────────
 --
