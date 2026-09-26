@@ -221,20 +221,25 @@ function guardedRouter({ app, sessionUserId }) {
     async query(sql, params) {
       const text = String(sql);
       if (/FROM chat_sessions cs JOIN apps a ON a\.id = cs\.app_id/.test(text)) {
-        return { rows: [{ ...app, is_member: false, session_user_id: sessionUserId }] };
+        return { rows: [{ ...app, is_member: false }] };
+      }
+      if (/^SELECT user_id FROM chat_sessions WHERE id = \$1$/.test(text)) {
+        owners.push(params[0]);
+        return { rows: [{ user_id: sessionUserId }] };
       }
       if (/FROM app_collaborators/.test(text)) return { rows: [] };
       throw new Error(`unexpected query: ${text.slice(0, 80)}`);
     },
   };
   const reached = [];
+  const owners = [];
   const router = express.Router();
   router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
   router.post('/api/sessions/:id/promote', communities.requireSessionMembership(pool), (req, res) => {
     reached.push(req.user.id);
     res.json({ ok: true, prNumber: 7 });
   });
-  return { router, reached };
+  return { router, reached, owners };
 }
 const PRIVATE_COLLAB = { id: 9, slug: 'rss-reader-4113da', name: 'RSS reader', community_id: 48, collab_visibility: 'private', view_visibility: 'public' };
 const PUBLIC_COLLAB = { ...PRIVATE_COLLAB, collab_visibility: 'public' };
@@ -276,6 +281,22 @@ test('the exception is the bot\'s own session only, and only its in-process prom
     router.handle(req, res, () => resolve({ status: 404, body: null }));
   });
   assert.deepEqual(refused, { status: 404, body: { error: 'Session not found' } });
+
+  // An unmarked request never pays for the exception: the guards' own
+  // queries are unchanged (a golden transcript pins them) and the owner is
+  // never looked up.
+  const quiet = guardedRouter({ app: PUBLIC_COLLAB, sessionUserId: 5 });
+  await new Promise((resolve) => {
+    const url = '/api/sessions/5120/promote';
+    const req = { method: 'POST', url, originalUrl: url, baseUrl: '', path: url, headers: {}, query: {}, params: {}, body: {},
+      user: { id: 5, username: 'maya' }, get() {}, header() {} };
+    const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { resolve(b); return this; },
+      set() { return this; }, setHeader() {}, getHeader() {} };
+    quiet.router.handle(req, res, () => resolve(null));
+  });
+  assert.deepEqual(quiet.owners, [], 'no owner lookup for an ordinary request');
+  assert.match(read('src/services/app-access.js'),
+    /`SELECT a\.id, a\.collab_visibility, a\.view_visibility\n\s+FROM chat_sessions cs JOIN apps a ON a\.id = cs\.app_id\n\s+WHERE cs\.id = \$1`/);
 
   // Never an admin: the marker is the whole exception.
   const src = read('src/services/homeroom-bot-live.js');

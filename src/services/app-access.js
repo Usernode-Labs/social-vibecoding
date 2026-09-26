@@ -170,6 +170,15 @@ function isBotOwnProposal(user, sessionUserId) {
     && sessionUserId != null && Number(sessionUserId) === Number(user.id);
 }
 
+// The same, read from the session row. The owner is looked up only for a
+// request that carries the marker, so every other request's guard query is
+// exactly what it was: these guards run on every session route.
+async function isBotOwnSession(pool, user, sessionId) {
+  if (!user || user[HOMEROOM_BOT_PROPOSAL] !== true) return false;
+  const { rows } = await pool.query('SELECT user_id FROM chat_sessions WHERE id = $1', [sessionId]);
+  return isBotOwnProposal(user, rows[0]?.user_id);
+}
+
 // Express middleware factory for routers that address an app through a
 // chat-session id (/api/sessions/:id/...). Resolves session → app and
 // enforces view access on reads / collab access on writes; 404 on deny
@@ -182,13 +191,13 @@ function sessionCollabGuard(pool) {
     if (!Number.isFinite(id)) return next();
     try {
       const { rows } = await pool.query(
-        `SELECT a.id, a.collab_visibility, a.view_visibility, cs.user_id AS session_user_id
+        `SELECT a.id, a.collab_visibility, a.view_visibility
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1`,
         [id]
       );
       if (!rows.length) return next();
-      if (isBotOwnProposal(req.user, rows[0].session_user_id)) return next();
+      if (await isBotOwnSession(pool, req.user, id)) return next();
       if (!(await checkAppAccess(pool, rows[0], req.user, guardLevelFor(req)))) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -380,6 +389,7 @@ module.exports = {
   guardLevelFor,
   HOMEROOM_BOT_PROPOSAL,
   isBotOwnProposal,
+  isBotOwnSession,
   sessionCollabGuard,
   issueCollabGuard,
   getWsVisibility,
