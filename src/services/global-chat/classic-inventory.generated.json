@@ -4565,6 +4565,7 @@
       "mobileSupported": true,
       "classicPath": "#profile",
       "clientReferences": [
+        "frontend/src/features/dialogs/create-app.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
