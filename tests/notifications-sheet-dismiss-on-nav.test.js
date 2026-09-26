@@ -316,6 +316,18 @@ test('the session kinds the cog drawer showed route through the same handler', (
     'a session notification closes the drawer before navigation');
 });
 
+test('a session that stopped before finishing opens its change, like a finished one (#3181)', () => {
+  const { N, calls } = load({ touch: true });
+  N.items = [{ id: 9, kind: 'session_stalled', appSlug: 'demo-app', sessionId: 4, readAt: null }];
+  N.show();
+  N._onItemClick(9);
+
+  assert.deepEqual(navAndDismiss(calls), ['dismiss', 'nav'],
+    'the drawer closes before navigation');
+  assert.deepEqual(calls.find((c) => c[0] === 'nav'), ['nav', 'demo-app', 'dev'],
+    'to the app\'s Dev tab, where the change is continued');
+});
+
 test('the four session kinds are rendered rather than filtered out', () => {
   // They rendered ONLY in the cog before, so the merge had to drop the filter
   // or four notification kinds would have gone invisible everywhere — the one

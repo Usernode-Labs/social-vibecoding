@@ -115,6 +115,9 @@ test('every kind names itself the same way for every row of that kind', async ()
       'Shared by your agent', 'Messages layout'],
     [{ kind: 'session_done', sourceUsername: null, sessionTitle: 'Kanban filters' },
       'Session finished', 'Kanban filters'],
+    // #3181: the other way a turn ends.
+    [{ kind: 'session_stalled', sourceUsername: null, sessionTitle: 'Kanban filters' },
+      'Session stopped before finishing', 'Kanban filters'],
     [{ kind: 'stale_pr', sourceUsername: null, prTitle: 'Add a dark mode toggle' },
       'Needs votes', 'Add a dark mode toggle'],
     [{ kind: 'check_failed', sourceUsername: null, prTitle: 'Rework the board' },
@@ -135,6 +138,31 @@ test('every kind names itself the same way for every row of that kind', async ()
     assert.equal(l.label, label, `${n.kind} names its kind`);
     assert.equal(l.subject, subject, `${n.kind} names which one`);
   }
+});
+
+// #3181: the row the bell shows when a dev-session turn stopped before
+// finishing. The app is on the meta line, never in the label; the subject
+// falls back the way session_done's does; and an agent session's change says
+// who stopped, as its finished row says who finished.
+test('a session that stopped before finishing says so, and where', async () => {
+  const stalled = await lines({ kind: 'session_stalled', sourceUsername: null, sessionTitle: 'Kanban filters' });
+  assert.equal(stalled.label, 'Session stopped before finishing');
+  assert.equal(stalled.subject, 'Kanban filters');
+  assert.equal(stalled.meta, 'Notes · 4m ago', 'the app, and no actor: nobody did this');
+
+  const untitled = await lines({
+    kind: 'session_stalled', sourceUsername: null, sessionTitle: null, branchName: 'dev/ada-1',
+  });
+  assert.equal(untitled.subject, 'dev/ada-1', 'the same fallback ladder as session_done');
+
+  const agent = await lines({
+    kind: 'session_stalled', sourceUsername: null, sessionTitle: 'Kanban filters', agentSessionId: 9,
+  });
+  assert.equal(agent.label, 'The coding agent stopped before finishing');
+
+  const view = (await load())({ ...ROW, kind: 'session_stalled', sourceUsername: null });
+  assert.notEqual(view.icon, (await load())({ ...ROW, kind: 'session_done' }).icon,
+    'it does not wear the finished row\'s check mark');
 });
 
 test('a conversation row is named by its thread, not by the surface', async () => {
@@ -222,7 +250,7 @@ test('no row can reach the renderer with an empty kind line', async () => {
   // render a blank first line rather than fail, which is the kind of thing
   // that ships.
   const kinds = ['pr_proposed', 'stale_pr', 'check_failed', 'kudos', 'reaction',
-    'session_done', 'auto_solve_done', 'spec_shared', 'connector_submitted',
+    'session_done', 'session_stalled', 'auto_solve_done', 'spec_shared', 'connector_submitted',
     'agent_awaiting_input', 'collab_invite', 'approver_invite', 'mention',
     'reply', 'openrouter_key_created', 'openrouter_key_review',
     'conversation_message', 'conversation_invite', 'conversation_mention',

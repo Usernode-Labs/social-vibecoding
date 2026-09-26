@@ -112,18 +112,21 @@ function makeMockPool(initial = {}) {
       if (row) row.notify_on_done = false;
       return { rows: [], rowCount: row ? 1 : 0 };
     }
-    // createSessionDoneNotification / createAutoSolveDoneNotification:
-    // INSERT ... SELECT ... WHERE NOT EXISTS (unread dedup).
-    if (/INSERT INTO notifications[\s\S]*'session_done'[\s\S]*WHERE NOT EXISTS/i.test(s)) {
+    // createSessionDoneNotification / createSessionStalledNotification (#3181)
+    // / createAutoSolveDoneNotification:
+    // INSERT ... SELECT ... WHERE NOT EXISTS (unread dedup, per kind).
+    const turnEndInsert = s.match(/INSERT INTO notifications[\s\S]*'(session_done|session_stalled)'[\s\S]*WHERE NOT EXISTS/i);
+    if (turnEndInsert) {
+      const kind = turnEndInsert[1];
       const [userId, appId, sessionId] = params;
       const dup = state.notifications.find(
         (n) => n.user_id === userId && n.session_id === sessionId
-          && n.kind === 'session_done' && !n.read_at
+          && n.kind === kind && !n.read_at
       );
       if (dup) return { rows: [] };
       const row = {
         id: state.nextId++, user_id: userId, app_id: appId, session_id: sessionId,
-        source_user_id: null, kind: 'session_done', detail: null, read_at: null,
+        source_user_id: null, kind, detail: null, read_at: null,
         created_at: new Date().toISOString(),
       };
       state.notifications.push(row);
@@ -449,6 +452,45 @@ test('notifySessionDone: repeat while unread → dedup, no second insert/push', 
   }
 });
 
+// #3181: a turn that ended without finishing says so. Same arming clear, same
+// hydrate and WS push, same one-unread-per-session dedup; only the kind
+// differs, and it is a separate kind, so it neither swallows nor is swallowed
+// by an unread session_done for the same session.
+test('notifySessionStalled: clears the flag, inserts session_stalled, pushes WS, dedups', async () => {
+  const pool = makeMockPool({
+    sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: true }]],
+  });
+  const loaded = loadSessions(pool);
+  try {
+    await loaded.subject.notifySessionStalled(pool, 10);
+
+    assert.equal(pool.state.sessions.get(10).notify_on_done, false);
+    const rows = pool.state.notifications.filter((n) => n.kind === 'session_stalled');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].user_id, 1);
+    assert.equal(rows[0].session_id, 10);
+    assert.equal(rows[0].source_user_id, null, 'system-generated: nobody did this');
+    assert.equal(pool.state.notifications.filter((n) => n.kind === 'session_done').length, 0,
+      'a stalled turn is not also a finished one');
+
+    assert.equal(loaded.pushes.length, 1);
+    assert.equal(loaded.pushes[0].payload.type, 'notification_new');
+    assert.equal(loaded.pushes[0].payload.notification.kind, 'session_stalled');
+    assert.equal(loaded.pushes[0].payload.notification.sessionTitle, 'Add a feature');
+
+    await loaded.subject.notifySessionStalled(pool, 10);
+    assert.equal(pool.state.notifications.filter((n) => n.kind === 'session_stalled').length, 1,
+      'unread-dedup keeps it to one row');
+    assert.equal(loaded.pushes.length, 1, 'and one push');
+
+    // Its own kind: a later clean finish is still news.
+    await loaded.subject.notifySessionDone(pool, 10);
+    assert.equal(pool.state.notifications.filter((n) => n.kind === 'session_done').length, 1);
+  } finally {
+    loaded.restore();
+  }
+});
+
 test('notifyAutoSolveDone: always inserts with detail and pushes; dedup suppresses the push', async () => {
   const pool = makeMockPool({ sessions: [] });
   const loaded = loadSessions(pool);
@@ -503,6 +545,25 @@ test('createSessionDoneNotification: at most one UNREAD row per (user, session)'
   }
 });
 
+test('session_opened auto-dismiss also answers "stopped before finishing" (#3181)', async () => {
+  const pool = makeMockPool({
+    notifications: [
+      { id: 1, user_id: 1, app_id: 5, session_id: 10, kind: 'session_stalled', read_at: null },
+      { id: 2, user_id: 1, app_id: 5, session_id: 11, kind: 'session_stalled', read_at: null },
+    ],
+  });
+  const loaded = loadSessions(pool);
+  try {
+    const cleared = await loaded.notifications.markReadForAction(pool, 1, 'session_opened', 10);
+    assert.equal(cleared, 1);
+    assert.ok(pool.state.notifications.find((n) => n.id === 1).read_at);
+    assert.equal(pool.state.notifications.find((n) => n.id === 2).read_at, null,
+      'another session\'s row is untouched');
+  } finally {
+    loaded.restore();
+  }
+});
+
 test('session_opened auto-dismiss clears unread session_done scoped by session', async () => {
   const pool = makeMockPool({
     notifications: [
@@ -515,7 +576,7 @@ test('session_opened auto-dismiss clears unread session_done scoped by session',
   try {
     assert.deepEqual(
       loaded.notifications.ACTION_COMPLETIONS.session_opened,
-      { kinds: ['session_done'], scope: 'session_id' }
+      { kinds: ['session_done', 'session_stalled'], scope: 'session_id' }
     );
     const cleared = await loaded.notifications.markReadForAction(pool, 1, 'session_opened', 10);
     assert.equal(cleared, 1);

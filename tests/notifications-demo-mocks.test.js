@@ -1,9 +1,9 @@
 // Route tests for the staging (?demo=1) session-notification mocks and
 // the kind-scoped mark-all on POST /api/notifications/read.
 //
-// GET /api/notifications?demo=1 in staging injects seven unread mock rows
-// — one per session-related kind (session_done / auto_solve_done /
-// stale_pr / check_failed), a second session_done covering the #971
+// GET /api/notifications?demo=1 in staging injects unread mock rows
+// — one per session-related kind (session_done / session_stalled (#3181) /
+// auto_solve_done / stale_pr / check_failed), a second session_done covering the #971
 // untitled tail of the label ladder, and a consecutive PAIR of
 // `conversation_message` rows in one conversation (which the sheet collapses
 // into a single counted row) — so
@@ -93,8 +93,12 @@ function startServer(mod) {
 }
 
 const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_failed'];
+// #3181: the demo feed also carries a session that stopped before finishing,
+// the one way a preview can show that row. Kept out of SESSION_KINDS, which
+// the mark-read scoping test below sends as a request body.
+const DEMO_KINDS = [...SESSION_KINDS, 'session_stalled'];
 
-test('staging + ?demo=1: nine mock rows prepend, and only the unread ones bump unread', async () => {
+test('staging + ?demo=1: ten mock rows prepend, and only the unread ones bump unread', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const { server, port } = await startServer(mod);
@@ -104,10 +108,10 @@ test('staging + ?demo=1: nine mock rows prepend, and only the unread ones bump u
     const body = await res.json();
 
     const mocks = body.notifications.filter((n) => n.id >= 990000);
-    assert.equal(mocks.length, 9, 'exactly nine mock rows injected');
+    assert.equal(mocks.length, 10, 'exactly ten mock rows injected');
     assert.deepEqual(
       [...new Set(mocks.map((n) => n.kind))].sort(),
-      [...SESSION_KINDS, 'conversation_message'].sort(),
+      [...DEMO_KINDS, 'conversation_message'].sort(),
       'every session-related kind is covered, plus the message row'
     );
     assert.equal(
@@ -146,8 +150,8 @@ test('staging + ?demo=1: nine mock rows prepend, and only the unread ones bump u
     // "See more notifications" button: without it the button does not
     // render at all and the caught-up state is unreachable, so the two things
     // a reviewer is asked to look at are both invisible.
-    assert.equal(mocks.filter((n) => !n.readAt).length, 8,
-      'eight unread rows feed the badges');
+    assert.equal(mocks.filter((n) => !n.readAt).length, 9,
+      'nine unread rows feed the badges');
     const readMocks = mocks.filter((n) => n.readAt);
     assert.equal(readMocks.length, 1, 'exactly one already-read row');
     assert.match(readMocks[0].sessionTitle, /\[Mock\]/,
@@ -163,10 +167,10 @@ test('staging + ?demo=1: nine mock rows prepend, and only the unread ones bump u
     );
     // Real rows survive after the mocks; unread bumped by the UNREAD mock
     // count so the client's badge subtraction stays honest. Counting all
-    // nine would claim the read row as unread — inflating the badge by one
+    // ten would claim the read row as unread — inflating the badge by one
     // and leaving "Mark all read" enabled with nothing left to mark.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
-    assert.equal(body.unread, 2 + 8);
+    assert.equal(body.unread, 2 + 9);
   } finally {
     server.close();
   }
@@ -210,7 +214,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const rows = mod.stagingMockNotifications();
-  assert.equal(rows.length, 9);
+  assert.equal(rows.length, 10);
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     // `readAt` is null on every row EXCEPT the one that exists to be read —
@@ -270,6 +274,14 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
 
   const autoSolve = rows.find((r) => r.kind === 'auto_solve_done');
   assert.ok(autoSolve.headlessIssueNumber, 'auto-solve row points at an issue number');
+
+  // #3181: the stalled row names its session and points at it, like the
+  // finished one, so the row renders its title and opens the change.
+  const stalled = rows.find((r) => r.kind === 'session_stalled');
+  assert.ok(stalled, 'a stalled-session row is among the mocks');
+  assert.equal(stalled.readAt, null, 'unread, so the Unread tab shows it');
+  assert.match(stalled.sessionTitle, /^\[Mock\]/);
+  assert.ok(stalled.sessionId >= 990000, 'a routable mock session id');
 });
 
 // ── POST /api/notifications/read kind scoping ───────────────────────────

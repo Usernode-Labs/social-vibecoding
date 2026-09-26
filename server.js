@@ -2225,6 +2225,10 @@ async function restoreMissingQuickReplies(config) {
           text: recoveryPills.UNANSWERED_BREADCRUMB,
           quickReplies: pills || undefined,
         });
+        // #3181: the turn died before it could answer, which is a session
+        // that stopped before finishing. Once per breadcrumb: the check
+        // above skips a session this sweep already narrated.
+        await notifyTurnStalled(pool, session.id);
         breadcrumbs++;
         continue;
       }
@@ -2729,6 +2733,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
         text: recoveryPills.TURN_UNFINISHED_BREADCRUMB,
         quickReplies: killedPills || undefined,
       });
+      await notifyTurnStalled(pool, sessionId);
       worker.adoptWarmWorker(sessionId, containerName);
       return;
     }
@@ -2823,6 +2828,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
         }),
       ]
     ).catch(() => {});
+    await notifyTurnStalled(pool, sessionId);
   }
 
   // All running Kubernetes workers return above. A positively missing one
@@ -2978,6 +2984,8 @@ async function narrateDanglingTail({ config, pool, session, sessionId, broadcast
     type: 'session_event', sessionId, event: 'status',
     text, quickReplies: pills || undefined,
   });
+  // #3181: the resend breadcrumb is a turn that stopped before finishing.
+  if (!landed) await notifyTurnStalled(pool, sessionId);
   if (!landed) return;
   // recoverSessions' own sweep would eventually heal the preview, but it
   // runs before adoption on a cold boot — so heal it here too rather than
@@ -3006,6 +3014,16 @@ async function appendTerminalProgressLine(pool, sessionId, line) {
      )`,
     [JSON.stringify([line]), sessionId]
   ).catch(() => {});
+}
+
+// #3181: a turn the platform could not finish tells its owner, in the bell
+// and as a push, that the session stopped before finishing, instead of
+// leaving the breadcrumb for them to find whenever they next look. Called
+// beside every "didn't finish, send it again" breadcrumb (a worker lost to
+// a restart or an eviction, a failed replay, an orphan the watchdog reaps).
+// Never throws: notifySessionStalled swallows its own errors.
+async function notifyTurnStalled(pool, sessionId) {
+  await require('./src/routes/sessions').notifySessionStalled(pool, sessionId);
 }
 
 // Returns { outcome, summary } for the recovered turn:
@@ -4033,6 +4051,7 @@ async function resumeDetachedTurnInner({
       text: recoveryPills.TURN_UNFINISHED_BREADCRUMB,
       quickReplies: failedPills || undefined,
     });
+    await notifyTurnStalled(pool, sessionId);
     // Cleanup is deliberately last: if its durable clear needs a retry, the
     // retry scheduler can repeat only cleanup without duplicating narration.
     const cleanupArgs = turnCleanupArgs(activeTurn);
@@ -4148,6 +4167,10 @@ async function resumeDetachedTurnInner({
   let wrapUpOutcome = null;
   let wrapUpPillKind = null;
   let wrapUpSummary = null;
+  // #3181: the recovered turn ended on the failures a live turn marks
+  // turnError (a scout that wrote no spec, a push that never landed), so
+  // its notification says it stopped before finishing.
+  let recoveredStalled = false;
   let durableTailComplete = false;
   try {
     if (recoveryActiveTurn.mode === 'scout') {
@@ -4196,6 +4219,7 @@ async function resumeDetachedTurnInner({
         // #786: previously emit-only, so a recovered-but-empty scout turn
         // left no trace at all after a reload. Persist it (with retry
         // pills) so the state is visible and actionable.
+        recoveredStalled = true;
         const noSpecPills = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
         await pool.query(
           `INSERT INTO chat_session_messages (session_id, role, content, metadata)
@@ -4269,6 +4293,7 @@ async function resumeDetachedTurnInner({
         ? 'push_failed'
         : (recoveredNoChanges ? 'no_changes' : 'code');
       wrapUpSummary = summary;
+      recoveredStalled = finalizeOutcome === 'push_failed';
     }
 
     // #896: re-issue the Mayor's phase-2 wrap-up. It used to be skipped
@@ -4317,13 +4342,17 @@ async function resumeDetachedTurnInner({
     // armed regardless of the persisted notify_on_done flag: clear it
     // and always create the session_done notification (the WS push
     // reaches them if they have a tab open elsewhere in the app).
+    // #3181: session_stalled instead when the recovered turn failed.
     try {
       const notifications = require('./src/services/notifications');
       await pool.query(
         `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
         [sessionId]
       ).catch(() => {});
-      const created = await notifications.createSessionDoneNotification(pool, {
+      const create = recoveredStalled
+        ? notifications.createSessionStalledNotification
+        : notifications.createSessionDoneNotification;
+      const created = await create(pool, {
         userId: session.user_id, appId: session.app_id, sessionId,
       });
       if (created.length) await notifications.hydrateAndPush(pool, created[0]);
@@ -4743,14 +4772,19 @@ function startSessionAutoPauseSweeper(config) {
             quickReplies: reapPills || undefined,
           });
           // Same "the owner cannot have watched this finish" rationale as
-          // the recovered-turn notify block in resumeDetachedTurn.
+          // the recovered-turn notify block in resumeDetachedTurn. #3181: a
+          // reaped exec never finished, so it says so; a reaped tail whose
+          // commit landed is the work done, and stays session_done.
           try {
             const notifications = require('./src/services/notifications');
             await pool.query(
               `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
               [row.id]
             ).catch(() => {});
-            const created = await notifications.createSessionDoneNotification(pool, {
+            const create = reapCodeLanded
+              ? notifications.createSessionDoneNotification
+              : notifications.createSessionStalledNotification;
+            const created = await create(pool, {
               userId: row.user_id, appId: row.app_id, sessionId: row.id,
             });
             if (created.length) await notifications.hydrateAndPush(pool, created[0]);

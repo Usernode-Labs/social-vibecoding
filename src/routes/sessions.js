@@ -835,6 +835,20 @@ function extractSpecSnippet(content, title) {
 // longer gates creation. Called fire-and-forget from the chat handler's
 // done hook — never throws into the SSE path.
 async function notifySessionDone(pool, sessionId) {
+  return notifySessionTurnEnd(pool, sessionId, 'session_done');
+}
+
+// #3181: the turn ended WITHOUT finishing — an error, a timeout, a lost
+// worker — so the bell says "stopped before finishing" instead of "finished".
+// Same arming, dedup and push as session_done; only the kind differs. The
+// chat handler's done hook picks this one when the turn persisted a failure
+// row (turnError) and nobody pressed stop; the restart recovery, the
+// stale-turn watchdog and a system pause call it directly.
+async function notifySessionStalled(pool, sessionId) {
+  return notifySessionTurnEnd(pool, sessionId, 'session_stalled');
+}
+
+async function notifySessionTurnEnd(pool, sessionId, kind) {
   try {
     const { rows } = await pool.query(
       `UPDATE chat_sessions SET notify_on_done = FALSE
@@ -843,12 +857,15 @@ async function notifySessionDone(pool, sessionId) {
       [sessionId]
     );
     if (!rows.length) return;
-    const created = await notifications.createSessionDoneNotification(pool, {
+    const create = kind === 'session_stalled'
+      ? notifications.createSessionStalledNotification
+      : notifications.createSessionDoneNotification;
+    const created = await create(pool, {
       userId: rows[0].user_id, appId: rows[0].app_id, sessionId,
     });
     if (created.length) await notifications.hydrateAndPush(pool, created[0]);
   } catch (err) {
-    log.warn('sessions', 'session_done notify failed', { sessionId, err: err.message });
+    log.warn('sessions', `${kind} notify failed`, { sessionId, err: err.message });
   }
 }
 
@@ -12228,7 +12245,14 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
         msg = `${executionAgentName} exited with code ${result.exitCode}, so no changes were made.`;
       }
       if (msg) {
-        await sendStatus(msg, executionAgentMeta);
+        // #3181: a clean exit that changed nothing is an answer; a run that
+        // died (markerless: the worker or its process went away) or exited
+        // non-zero is a failure, and is marked as one like the scout's own
+        // markerless exit. That mark is also what tells the turn's done
+        // hook to say "stopped before finishing" rather than "finished".
+        await sendStatus(msg, result.exitCode === 0
+          ? executionAgentMeta
+          : turnFailure(executionAgentMeta));
         summaryParts.push(msg);
       }
     } else if (!result.pushOk && !(await healPush())) {
@@ -13083,6 +13107,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   invocationTelemetry,
   loadSessionSpec,
   notifySessionDone,
+  notifySessionStalled,
   runClaudeCodeTool,
   runScoutTool,
   safeAgentModelLabel,
@@ -13093,4 +13118,4 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { MAYOR_TURN_DEPS, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { MAYOR_TURN_DEPS, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

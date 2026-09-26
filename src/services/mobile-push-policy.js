@@ -210,6 +210,16 @@ function buildCopy(kind, context, now) {
         title: withApp('Your build is ready'),
         body: quoted && `${quoted} finished. Review it while it's fresh`,
       };
+    // #3181: the turn ended on an error, a timeout or a lost worker, or the
+    // platform paused the session mid-turn. The title says what happened and
+    // where; the body is the one thing to do about it.
+    case 'session_stalled':
+      return {
+        title: app
+          ? `Your session on ${truncate(app, TITLE_EMBED_MAX)} stopped before finishing`
+          : 'Your session stopped before finishing',
+        body: quoted ? `Open ${quoted} to continue` : 'Open it to continue',
+      };
     case 'auto_solve_done': {
       if (detail === 'question') {
         return {

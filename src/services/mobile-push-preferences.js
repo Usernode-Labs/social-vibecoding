@@ -46,8 +46,12 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // exactly what this category's own description already promises. A
     // connector user who wants session pushes wants these; one who turned them
     // off does not, and should not have to find a second switch.
+    // #3181: session_stalled is the other half of session_done (the turn
+    // stopped before finishing), so it rides the same switch, beside it.
+    // Kept in lockstep with the seed in db/schema.sql.
     kinds: Object.freeze([
-      'session_done', 'auto_solve_done', 'connector_submitted', 'agent_awaiting_input', 'test_alert',
+      'session_done', 'session_stalled', 'auto_solve_done', 'connector_submitted',
+      'agent_awaiting_input', 'test_alert',
     ]),
   }),
   Object.freeze({

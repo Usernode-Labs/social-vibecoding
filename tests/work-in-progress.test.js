@@ -254,7 +254,9 @@ test('an agent session\'s finished run opens the conversation from the bell and 
   assert.equal((notifications.match(/cs\.agent_session_id,/g) || []).length, 3, 'every notification read carries it');
   assert.match(notifications, /agentSessionId: isConversation \? null : \(row\.agent_session_id \|\| null\)/);
   const client = read('frontend/src/features/notifications/notifications.js');
-  assert.match(client, /item\.kind === 'session_done' && item\.agentSessionId[\s\S]{0,200}#messages\/agent\//);
+  // #3181: a change that stopped before finishing opens the same place.
+  assert.match(client, /const sessionTurnEnd = item\.kind === 'session_done' \|\| item\.kind === 'session_stalled';/);
+  assert.match(client, /sessionTurnEnd && item\.agentSessionId[\s\S]{0,200}#messages\/agent\//);
   assert.match(client, /n\.agentSessionId \? 'The coding agent finished' : 'Session finished'/);
   assert.match(read('public/js/dev-alerts.js'), /if \(info && info\.agentSessionId\) return `#messages\/agent\/\$\{info\.agentSessionId\}`;/);
   assert.equal(typeof require('../src/services/session-bus').subscriberCount, 'function');
@@ -265,7 +267,7 @@ test('opening the conversation answers its changes\' finished rows, however the 
   const calls = [];
   const pool = { async query(sql, params) { calls.push({ sql, params }); return { rowCount: 2 }; } };
   assert.equal(await markReadForAgentSession(pool, 4, 12), 2);
-  assert.match(calls[0].sql, /n\.kind = 'session_done' AND n\.read_at IS NULL\s+AND n\.session_id = cs\.id AND cs\.agent_session_id = \$2/);
+  assert.match(calls[0].sql, /n\.kind IN \('session_done', 'session_stalled'\) AND n\.read_at IS NULL\s+AND n\.session_id = cs\.id AND cs\.agent_session_id = \$2/);
   assert.deepEqual(calls[0].params, [4, 12]);
   assert.equal(await markReadForAgentSession(pool, 4, null), 0, 'nothing to answer without a conversation');
   const route = read('src/routes/agent-sessions.js');
