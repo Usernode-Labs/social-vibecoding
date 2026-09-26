@@ -1595,7 +1595,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     try {
       acted = await actOnVerdict({
         pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
-        seed, seedReadAt, postedAt, turnBudgetMs, model,
+        seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin: botUsername,
         deps: {
           github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
           activeWorkers, ...liveD,
@@ -1618,11 +1618,30 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
  */
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
-  seed, seedReadAt, postedAt, turnBudgetMs, model, deps,
+  seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin = null, deps,
 }) {
   const { github, ws } = deps;
+  // Whoever filed the issue is named on the answers that ask something of
+  // them, so they are notified (live.issuePoster). Looked up once, and only
+  // when such an answer is posted.
+  let poster;
+  const posterOnce = async () => {
+    if (poster === undefined) {
+      poster = await live.issuePoster(pool, { app, repo, issueNumber, issue, botLogin })
+        .catch((err) => {
+          log.warn('homeroom-bot', 'Could not find who filed the issue', { app: app.slug, issueNumber, err: err.message });
+          return null;
+        });
+      if (poster && bot.username && poster.toLowerCase() === String(bot.username).toLowerCase()) poster = null;
+    }
+    return poster;
+  };
   const say = async (kind, text, extra = {}) => {
-    const posted = await live.post({ pool, github, ws, app, repo, issueNumber, kind, runId, text, ...extra });
+    const mention = live.tagsPoster(kind) ? await posterOnce() : null;
+    const posted = await live.post({
+      pool, github, ws, app, repo, issueNumber, kind, runId, text, mention, senderId: bot.id,
+      notifications: deps.notifications || null, ...extra,
+    });
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
     return posted;
   };
