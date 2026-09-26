@@ -562,6 +562,7 @@ test('every kind renders subject, text and html with no leaked undefined', () =>
       provider: 'gmail', from: 'Homeroom <no-reply@x.invalid>',
       sentAt: '2026-01-01T00:00:00.000Z', reference: 'abcd1234',
     },
+    project_invite: { inviter: 'ada', project: 'Book club', url: 'https://x.invalid/waitlist' },
   };
   for (const kind of templates.KINDS) {
     const m = templates.buildMessage(kind, payloads[kind]);
@@ -1033,4 +1034,16 @@ test('admin_test has its own per-recipient throttle rule', () => {
     recipientHistory: [{ status: 'sent', created_at: new Date(now - 5000) }],
   });
   assert.equal(decision.allowed, false);
+});
+
+test('a project invite names who sent it and where, and links only to the waitlist', () => {
+  const m = templates.buildMessage('project_invite', { inviter: 'ada', project: 'Book club', url: 'https://onhomeroom.test/waitlist' });
+  assert.equal(m.subject, '@ada invited you to Book club on Homeroom');
+  assert.match(m.text, /@ada invited you to Book club, a group on Homeroom/);
+  assert.match(m.text, /Join the waitlist with this email address\. Once you are in, the invite will be waiting for you\./);
+  assert.match(m.text, /https:\/\/onhomeroom\.test\/waitlist/, 'the link is in the text part too');
+  assert.match(m.html, /Join the waitlist<\/a>/);
+  const bare = templates.buildMessage('project_invite', {});
+  assert.equal(bare.subject, 'Someone invited you to a project on Homeroom', 'renders with nothing to go on');
+  assert.doesNotMatch(bare.html, /<a /, 'and no button without a link');
 });

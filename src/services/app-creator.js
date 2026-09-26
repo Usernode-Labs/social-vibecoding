@@ -188,6 +188,21 @@ async function createApp(config, appRow) {
         log.warn('app-creator', 'Could not add connector scaffold to imported repo',
                  { appId, slug, repoUrl, error: err.message });
       }
+
+      // The create dialog's answers the repo's dapp.json does not already
+      // give (the one-line description, a non-default approval rule), into
+      // that file, before the clone below reads it. Non-fatal for the same
+      // reason as the scaffold: without them the import still works, and
+      // the repo's own file still decides.
+      try {
+        const added = await require('./import-manifest').commitCreateAnswers({
+          repoUrl, description: descriptionOf(appRow), governance: governanceOf(appRow),
+        });
+        if (added.length) log.info('app-creator', 'Committed create answers into imported dapp.json', { appId, slug, added });
+      } catch (err) {
+        log.warn('app-creator', 'Could not commit create answers into imported dapp.json',
+                 { appId, slug, repoUrl, error: err.message });
+      }
     }
 
     // 3. Clone (or write) the working tree that the shared deploy tail

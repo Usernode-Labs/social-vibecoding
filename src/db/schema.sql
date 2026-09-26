@@ -2961,6 +2961,30 @@ CREATE TABLE IF NOT EXISTS app_collaborators (
 );
 CREATE INDEX IF NOT EXISTS idx_app_collaborators_user ON app_collaborators(user_id, status);
 
+-- Invites into a project by EMAIL, for somebody who may not be on Homeroom
+-- yet (the create dialog's "Will invite" rows; services/email-invites.js).
+-- An address that already belongs to a confirmed account is invited as that
+-- account instead, straight into app_collaborators, and never lands here, so
+-- the creator's screen cannot tell who has an account. A row here waits
+-- for its address to be confirmed on an account (email sign-up, or adding
+-- it in Settings), which turns it into an ordinary pending collaborator
+-- invite and stamps claimed_at. The invited person joins the waitlist like
+-- anyone else; this grants no platform access.
+CREATE TABLE IF NOT EXISTS app_email_invites (
+  id          SERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  email       VARCHAR(255) NOT NULL,          -- lowercased
+  invited_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  claimed_at  TIMESTAMPTZ,
+  claimed_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE (app_id, email)
+);
+CREATE INDEX IF NOT EXISTS idx_app_email_invites_pending
+  ON app_email_invites (email) WHERE claimed_at IS NULL;
+-- Addresses people typed: personal data, not copied into staging.
+COMMENT ON TABLE app_email_invites IS 'staging:private';
+
 -- Backfill: every existing app's creator becomes a member. Idempotent.
 INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
   SELECT id, created_by, 'member', NOW() FROM apps WHERE created_by IS NOT NULL

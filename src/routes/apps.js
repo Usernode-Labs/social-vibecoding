@@ -31,6 +31,7 @@ const governance = require('../services/governance');
 const activeUsers = require('../services/active-users');
 const createOptions = require('../services/create-options');
 const collabInvites = require('../services/collab-invites');
+const emailInvites = require('../services/email-invites');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -1047,6 +1048,32 @@ function appRoutes(config) {
   // githubLookupLimiter (#2519): same shared installation quota as
   // repo-info above, plus step 1 is a side effect worth bounding on its
   // own. One bucket covers both routes.
+  // The four dapp.json fields that replace a create answer on an import's
+  // first deploy, read with the deploy's own readers: its name, description,
+  // visibility and approval rule. An unparseable file reads as {}, the way
+  // the deploy reader treats it.
+  async function readImportManifest(parsed) {
+    try {
+      const raw = await github.getFileContent(parsed.owner, parsed.repo, appManifest.MANIFEST_FILENAME);
+      if (raw == null) return {};
+      let json;
+      try { json = JSON.parse(raw); } catch { return {}; }
+      const governance = appManifest.readGovernance(json);
+      return {
+        name: appManifest.readName(json),
+        description: appManifest.readDescription(json),
+        visibility: appManifest.readVisibility(json),
+        governance: governance ? {
+          approvers: governance.approvers || 'anyone',
+          approvals: typeof governance.approvals === 'number' ? governance.approvals : null,
+        } : null,
+      };
+    } catch (err) {
+      log.warn('apps', 'Import dapp.json read failed', { repo: `${parsed.owner}/${parsed.repo}`, err: err.message });
+      return null;
+    }
+  }
+
   router.get('/api/github/verify-access', githubLookupLimiter, async (req, res) => {
     const parsed = github.parseGithubUrl(req.query.url || '');
     if (!parsed) return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
@@ -1068,6 +1095,10 @@ function appRoutes(config) {
       name: verify.name,
       description: verify.description,
       fullName: verify.fullName,
+      // What the repo's own dapp.json already says, so the dialog can say
+      // which answers it replaces. {} when there is no dapp.json; null when
+      // it could not be read, which the dialog says as well.
+      manifest: await readImportManifest(parsed),
     });
   });
 
@@ -1108,7 +1139,7 @@ function appRoutes(config) {
     if (options.error) {
       return res.status(400).json({ error: options.error });
     }
-    const { collabVisibility, viewVisibility, invitees, governance: rule, description } = options;
+    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description } = options;
 
     // Import-existing pre-flight: parse URL, accept any pending invite
     // for this exact repo, then verify Write access. Anything other
@@ -1266,6 +1297,17 @@ function appRoutes(config) {
         } catch (err) {
           log.warn('apps', 'Create-time invite failed', { appId: appRow.id, invitee: target.username, err: err.message });
         }
+      }
+      // Addresses: an account that already has one confirmed is invited as
+      // that account; anyone else gets a mail pointing at the waitlist, and
+      // the invite waits on their account (services/email-invites.js). The
+      // response counts them together, so it says nothing about who has an
+      // account.
+      if (inviteEmails.length) {
+        const byEmail = await emailInvites.inviteByEmail(pool, config, {
+          app: appRow, emails: inviteEmails, inviter: { id: req.user.id, username: req.user.username },
+        });
+        invited += byEmail.invited + byEmail.mailed;
       }
 
       log.info('apps', repoUrlNormalized ? 'App imported (pending)' : 'App created (pending)', {

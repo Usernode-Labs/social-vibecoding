@@ -3234,6 +3234,7 @@ html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-promoted {
    flush against siblings (segmented pills, theme mode pills, the Dev
    board's tab strip) — the scale makes adjacent cells appear to shift.
    Keep the brightness dim, drop the transform. */
+.create-kind-row:active,
 .create-mode-pill:active,
 .create-who-pill:active,
 .create-approver-pill:active,
@@ -12171,71 +12172,63 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
   overscroll-behavior-y: var(--create-modal-overscroll, auto);
 }
 
-/* ── The create dialog's choices (communities, stage 3) ───────────────
+/* ── The create dialog's choices (communities, stage 3; the rework) ────
    Every choice in #create-card is a white card (or a segment) that takes
    ONE selected look: the accent fill with white ink. The selection is keyed
-   off the CARD's data attributes — data-audience, data-mode, data-approvers,
-   data-approvals — so the component only flips an attribute (no per-button
-   class juggling, no race with the form-reset path). It must be the CARD, not
-   #create-modal: the native-kit modal adoption (frontend/src/lib/static-modal.ts)
-   lifts the card out of #create-modal while presented, so selectors rooted at
-   the modal stop matching.
+   off the CARD's data attributes — data-audience, data-kind, data-mode,
+   data-approvers, data-approvals — so the component only flips an attribute
+   (no per-button class juggling, no race with the form-reset path). It must
+   be the CARD, not #create-modal: the native-kit modal adoption
+   (frontend/src/lib/static-modal.ts) lifts the card out of #create-modal
+   while presented, so selectors rooted at the modal stop matching.
 
    THE FILL IS THE ACCENT THE CREATE BUTTON WEARS (#2566): Tailwind's
    violet-600, which tailwind.config.js remaps to the platform blue #0a6ee0.
-   It was the literal #7c3aed, the pre-reskin violet, which made the chosen
-   row purple beside a blue Create button: two colours for one meaning. A
-   literal, with no dark step, for the reason the button carries none: white
-   on #0a6ee0 is 4.9:1 in both themes, where the dark theme's lighter accent
-   would not carry white text. */
-#create-card :is(.create-who-pill, .create-mode-pill, .create-approver-pill, .create-approvals-pill) {
+   A literal, with no dark step, for the reason the button carries none:
+   white on #0a6ee0 is 4.9:1 in both themes, where the dark theme's lighter
+   accent would not carry white text. */
+#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-approver-pill, .create-approvals-pill) {
   color: var(--text-primary);
   cursor: pointer;
 }
 #create-card .create-approvals-pill { color: var(--text-muted); }
 #create-card .create-approvals-pill:hover { color: var(--text-primary); }
-#create-card :is(.create-who-pill, .create-mode-pill, .create-approver-pill) .create-choice-caption {
+#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-approver-pill) .create-choice-caption {
   color: var(--text-muted);
 }
-/* NOTHING IS CHOSEN WHILE A STEP IS BEING ASKED (request #3160). The first
-   two steps are questions whose answer moves you on: pressing a row IS the
-   answer, and the next step unfolds. A row that was already filled on arrival
-   ("Just me", "Start from scratch") read as a choice made for you, with a
-   Next button under it to press, so those two only wear the fill once their
-   step has moved on and collapsed to the row that was pressed. The approval
-   step starts unanswered too: the component leaves data-approvers and
-   data-approvals empty until a row is pressed, and Create waits for it. */
-#create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill[data-audience-pill="solo"],
-#create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill[data-audience-pill="invited"],
-#create-card:not([data-step="who"])[data-audience="open"]    .create-who-pill[data-audience-pill="open"],
-#create-card:is([data-step="details"], [data-step="approve"])[data-mode="new"]    .create-mode-pill[data-mode-pill="new"],
-#create-card:is([data-step="details"], [data-step="approve"])[data-mode="import"] .create-mode-pill[data-mode-pill="import"],
+/* A row that is there but cannot be pressed yet (Document, Video, a
+   template): it takes no fill and no pointer. */
+#create-card .create-soon-row { cursor: default; }
+/* NOTHING IS CHOSEN FOR THE PERSON, AND A ROW IS A SELECTION. Every answer
+   starts empty (the attributes are ""), so no row is filled on arrival.
+   Pressing a row fills it at once, on its own step, and Next (beside
+   Cancel on every step) moves on. */
+#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"],
+#create-card[data-audience="invited"]   .create-who-pill[data-audience-pill="invited"],
+#create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"],
+#create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"],
+#create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"],
+#create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"],
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"],
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"],
 #create-card[data-approvals="majority"] .create-approvals-pill[data-approvals-pill="majority"],
 #create-card[data-approvals="atLeast"]  .create-approvals-pill[data-approvals-pill="atLeast"] {
   background: #0a6ee0; /* violet-600, as tailwind.config.js compiles it */
   color: #ffffff;
-  cursor: default;
 }
 /* 0.9 on the fill: the caption is 12px, and full white would outweigh the
    title above it; 0.9 still clears AA on #0a6ee0. */
-#create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill[data-audience-pill="solo"] .create-choice-caption,
-#create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill[data-audience-pill="invited"] .create-choice-caption,
-#create-card:not([data-step="who"])[data-audience="open"]    .create-who-pill[data-audience-pill="open"] .create-choice-caption,
-#create-card:is([data-step="details"], [data-step="approve"])[data-mode="new"]    .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
-#create-card:is([data-step="details"], [data-step="approve"])[data-mode="import"] .create-mode-pill[data-mode-pill="import"] .create-choice-caption,
+#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"] .create-choice-caption,
+#create-card[data-audience="invited"]   .create-who-pill[data-audience-pill="invited"] .create-choice-caption,
+#create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"] .create-choice-caption,
+#create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"] .create-choice-caption,
+#create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
+#create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"] .create-choice-caption,
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"] .create-choice-caption,
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"] .create-choice-caption {
   color: inherit;
   opacity: 0.9;
 }
-/* "What are you making?": App is the one kind today, in the accent; the two
-   still to come are quiet and say "Soon". Chips, not choices: nothing here
-   is pressed. */
-#create-card .create-kind-pill { background: var(--dc-sheet-raise, #ffffff); color: var(--text-primary); }
-#create-card .create-kind-pill.create-kind-on { background: #0a6ee0; color: #ffffff; }
-#create-card .create-kind-pill.create-kind-soon { color: var(--text-muted); }
 
 /* The Members modal's visibility pills keep the recessed-track look they
    shared with the create dialog before #1910 restyled it; that dialog is
@@ -12257,79 +12250,79 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
   cursor: not-allowed;
 }
 
-/* Import-mode visibility gating.
-   The flow is: paste URL → click Check → on success, the name field
-   reveals so the user can confirm/edit it. data-import-state on
-   #create-card drives the reveal so the component only flips an
-   attribute, never toggles .hidden on each child. */
-#create-card[data-mode="new"] .create-import-block { display: none; }
+/* The repo URL and its check belong to "Import a GitHub repo" alone. */
+#create-card:not([data-mode="import"]) .create-import-block { display: none; }
 
-#create-card[data-mode="import"] #create-name-block { display: none; }
-#create-card[data-mode="import"][data-import-state="ok"] #create-name-block { display: block; }
-/* An import's own dapp.json says what it is: the name card is one row. */
-#create-card[data-mode="import"] .create-describe-row { display: none; }
+/* THE STEPS UNFOLD IN ONE CARD (#1911; six of them since the rework).
+   Every step's section ships on every step — the declared checks select on
+   the same ids whichever steps are showing — and #create-card[data-step] is
+   the FURTHEST step reached: everything up to it is on screen, the rest is
+   folded. Keyed on the CARD, like data-mode.
 
-/* THE STEPS UNFOLD IN ONE CARD (#1911; four of them since communities,
-   stage 3). Every step's section ships on every step — the declared checks
-   and the legacy lookups select on the same ids whichever steps are showing
-   — and #create-card[data-step] is the FURTHEST step reached: everything up
-   to it is on screen, the rest is folded. Keyed on the CARD, like data-mode.
-
-   The approval step belongs only to a group or a community made new: Just me
-   has nobody else to approve anything, and an imported repo's own dapp.json
-   decides. The footer follows data-final, which the component sets from the
-   same rule: Cancel always; Next until the last step for these answers,
-   then Create / Import (QA 2026-09-24 Q6: never two accent buttons at
-   once). */
-#create-card[data-step="who"]     [data-create-step="start"],
-#create-card[data-step="who"]     [data-create-step="details"],
-#create-card[data-step="who"]     [data-create-step="approve"],
-#create-card[data-step="start"]   [data-create-step="details"],
-#create-card[data-step="start"]   [data-create-step="approve"],
-#create-card[data-step="details"] [data-create-step="approve"],
-#create-card[data-audience="solo"] [data-create-step="approve"],
-#create-card[data-mode="import"]   [data-create-step="approve"] {
+   The invite step belongs to a group, and the approval step to a group or
+   a community: Just me has nobody else to approve anything. The footer
+   follows data-final, which the component sets from the same rule: Cancel
+   always; Next until the last step, then Create / Import (QA 2026-09-24 Q6:
+   never two accent buttons at once). Either stays dimmed until its step is
+   answered. */
+#create-card[data-step="who"]     :is([data-create-step="invite"], [data-create-step="kind"], [data-create-step="details"], [data-create-step="approve"], [data-create-step="start"]),
+#create-card[data-step="invite"]  :is([data-create-step="kind"], [data-create-step="details"], [data-create-step="approve"], [data-create-step="start"]),
+#create-card[data-step="kind"]    :is([data-create-step="details"], [data-create-step="approve"], [data-create-step="start"]),
+#create-card[data-step="details"] :is([data-create-step="approve"], [data-create-step="start"]),
+#create-card[data-step="approve"] [data-create-step="start"],
+#create-card:not([data-audience="invited"]) [data-create-step="invite"],
+#create-card:is([data-audience="solo"], [data-audience=""]) [data-create-step="approve"] {
   display: none;
 }
 #create-card[data-final="false"] #create-submit,
 #create-card[data-final="true"]  #create-next {
   display: none;
 }
-/* No Next on the two question steps (request #3160): pressing a row is the
-   answer and moves on by itself, so a Next under the rows only suggested it
-   did not. Cancel stays. Enter still advances (the form's submit handler). */
-#create-card:is([data-step="who"], [data-step="start"]) #create-next {
-  display: none;
-}
 
-/* A step COLLAPSES to its chosen row once the next one opens: the other rows
-   and the captions fold away, the chevron gives way to "Change", and
-   pressing the row reopens the choice. */
+/* A question step COLLAPSES to its chosen row once the card moves past it:
+   the other rows and the captions fold away, the chevron gives way to
+   "Change", and pressing the row reopens the step, its answer still
+   picked. The invite rows, the name and the approval answers stay as they
+   are, still editable. */
 #create-card[data-step="who"] [data-create-step="who"] .create-choice-change,
-#create-card:is([data-step="who"], [data-step="start"]) [data-create-step="start"] .create-choice-change {
+#create-card:is([data-step="who"], [data-step="invite"], [data-step="kind"]) [data-create-step="kind"] .create-choice-change {
   display: none;
 }
 #create-card:not([data-step="who"]) [data-create-step="who"] :is(.create-choice-chevron, .create-choice-caption),
 #create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill:not([data-audience-pill="solo"]),
 #create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill:not([data-audience-pill="invited"]),
 #create-card:not([data-step="who"])[data-audience="open"]    .create-who-pill:not([data-audience-pill="open"]),
-#create-card:is([data-step="details"], [data-step="approve"]) [data-create-step="start"] :is(.create-choice-chevron, .create-choice-caption, .create-kind-soon, .create-start-label),
-#create-card:is([data-step="details"], [data-step="approve"])[data-mode="new"]    .create-mode-pill[data-mode-pill="import"],
-#create-card:is([data-step="details"], [data-step="approve"])[data-mode="import"] .create-mode-pill[data-mode-pill="new"] {
+#create-card:is([data-step="details"], [data-step="approve"], [data-step="start"]) [data-create-step="kind"] :is(.create-choice-chevron, .create-choice-caption, .create-kind-soon) {
   display: none;
 }
 #create-card:not([data-step="who"]) .create-who-pill,
-#create-card:is([data-step="details"], [data-step="approve"]) .create-mode-pill {
+#create-card:is([data-step="details"], [data-step="approve"], [data-step="start"]) .create-kind-row {
   padding-top: 0.5rem;
   padding-bottom: 0.5rem;
 }
 
-/* A group names its people under its collapsed row; nobody else is asked. */
-#create-card .create-invite-block { display: none; }
-#create-card[data-audience="invited"]:not([data-step="who"]) .create-invite-block { display: block; }
-/* A group or a community imported: why there is no approval step. */
-#create-card .create-import-rule-note { display: none; }
-#create-card[data-mode="import"]:not([data-audience="solo"]) .create-import-rule-note { display: block; }
+/* The invite rows: one card, a hairline between rows (the GroupedList
+   recipe's inset sheet line). */
+#create-card .create-invite-list > * + * { box-shadow: inset 0 1px 0 var(--app-sheet-line); }
+#create-card .create-invitee-email { white-space: normal; overflow-wrap: break-word; }
+
+/* AN IMPORT'S DAPP.JSON WINS. Once the check has read it, each earlier
+   answer it replaces is dimmed and its heading says so; the notice under
+   the check names them (data-repo-sets lists them: name, desc, vis, gov). */
+#create-card .create-repo-sets-tag { display: none; font-weight: 500; color: var(--text-muted); }
+#create-card[data-step="start"][data-mode="import"][data-repo-sets~="vis"] [data-repo-tag="vis"],
+#create-card[data-step="start"][data-mode="import"][data-repo-sets~="gov"] [data-repo-tag="gov"],
+#create-card[data-step="start"][data-mode="import"]:is([data-repo-sets~="name"], [data-repo-sets~="desc"]) [data-repo-tag="details"] {
+  display: inline;
+}
+#create-card[data-step="start"][data-mode="import"][data-repo-sets~="name"] .create-name-row,
+#create-card[data-step="start"][data-mode="import"][data-repo-sets~="desc"] .create-describe-row,
+#create-card[data-step="start"][data-mode="import"][data-repo-sets~="gov"]  #create-approve-block,
+#create-card[data-step="start"][data-mode="import"][data-repo-sets~="vis"]  [data-create-step="who"] .create-who-pill {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 /* "At least N" is a follow-up under "People I pick", and the number only
    once it is chosen. */
 #create-card .create-approvals-block,
