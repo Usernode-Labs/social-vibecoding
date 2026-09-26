@@ -118,6 +118,32 @@ test('hosted app readiness waits for a successful document response', async () =
     { loaded: new Map([['real-app', 'https://real-app.onhomeroom.com']]) })) >= 0);
 });
 
+test('still-capture styling is limited to the platform document', () => {
+  const platform = 'https://app.onhomeroom.com';
+  const created = [];
+  const appended = [];
+  const document = {
+    documentElement: { appendChild: (node) => appended.push(node) },
+    createElement: (tag) => {
+      const node = { tag, dataset: {}, textContent: '' };
+      created.push(node);
+      return node;
+    },
+    addEventListener: () => { throw new Error('documentElement is already present'); },
+  };
+  assert.equal(replay.installCaptureStyle(platform, {
+    location: { origin: 'https://hosted-app.onhomeroom.com' }, document,
+  }), false);
+  assert.equal(created.length, 0, 'a hosted app frame is never modified');
+  assert.equal(replay.installCaptureStyle(platform, {
+    location: { origin: platform }, document,
+  }), true);
+  assert.equal(created.length, 1);
+  assert.equal(appended[0], created[0]);
+  assert.equal(created[0].dataset.usernodeEvidence, '1');
+  assert.match(created[0].textContent, /animation-duration:0s/);
+});
+
 test('relative point hover moves the pointer without clicking the surface', async () => {
   const moves = [];
   const surface = {
