@@ -176,7 +176,7 @@ import {
   stepFrom, TOUR_LENGTH, type TourStep,
 } from './tour-steps';
 import {
-  clearStep, currentUserId, readDone, readStep, writeDone, writeStep,
+  clearDone, clearStep, currentUserId, readDone, readStep, writeDone, writeStep,
 } from './tour-storage';
 
 /** How long to keep waiting for Home before giving up on this page load. */
@@ -295,6 +295,21 @@ async function whenFirstRunSettled(): Promise<void> {
 }
 
 /** An optional step is shown only when something it points at is there. */
+type FirstRunGate = { applies?: () => boolean; shownHere?: () => boolean };
+function communitiesGate(): FirstRunGate | undefined {
+  return (window as unknown as { CommunitiesFirstRun?: FirstRunGate }).CommunitiesFirstRun;
+}
+
+/** Is a join screen still to come in this document? */
+function firstRunPending(): boolean {
+  try { return communitiesGate()?.applies?.() === true; } catch { return false; }
+}
+
+/** Did this document show the join screen? */
+function firstRunShownHere(): boolean {
+  try { return communitiesGate()?.shownHere?.() === true; } catch { return false; }
+}
+
 function targetPresent(step: TourStep): boolean {
   return !!findTarget(step.targets);
 }
@@ -492,11 +507,22 @@ export function OnboardingTour() {
   useEffect(() => {
     if (started.current || userId == null) return;
     if (isDeterministicRoute()) return;
-    if (readDone(userId)) return;
+    // A finished tour stays finished, unless a join screen is coming: see
+    // the restart below.
+    if (readDone(userId) && !firstRunPending()) return;
     let cancelled = false;
     void (async () => {
       await whenFirstRunSettled();
       if (cancelled || started.current) return;
+      // A FIRST RUN SHOWN HERE STARTS THE TOUR OVER. A new account's, or one
+      // an admin reset (Admin → Users → ⋯ → Reset first run): the join
+      // screen has just changed what Home holds, and "done" is kept per
+      // browser, so a browser that finished the tour for this account before
+      // would otherwise skip the tour that describes the Home it now has.
+      if (firstRunShownHere()) {
+        clearDone(userId);
+        clearStep(userId);
+      }
       await whenUserSettled();
       if (cancelled || started.current) return;
       const home = await whenHomeVisible();

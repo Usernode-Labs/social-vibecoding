@@ -232,6 +232,29 @@ async function resetUserPassword(user: User) {
   }
 }
 
+/**
+ * "Reset first run": the account's next load shows the join screen, the tour
+ * and the Getting started card again, as for a new account (communities,
+ * stage 5; POST /api/admin/users/:id/reset-first-run). For trying
+ * onboarding on a test account, or on yourself. Nothing it owns changes.
+ */
+async function resetFirstRun(user: User) {
+  const ok = await console_()._confirm({
+    title: `Reset ${user.username}'s first run?`,
+    message: 'Next time they open Homeroom they see the join screen, the welcome tour and the Getting started card again, as if they had just signed up. Their communities, Home tiles, username and terms answer stay as they are.',
+    confirmLabel: 'Reset',
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/admin/users/${user.id}/reset-first-run`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { console_()._alert(data.error || `Reset failed (HTTP ${res.status})`); return; }
+    console_()._alert(`${data.username || user.username}'s first run is reset. It starts on their next page load.`);
+  } catch (err: any) {
+    console_()._alert(`Reset failed: ${err.message}`);
+  }
+}
+
 async function deleteUser(user: User): Promise<boolean> {
   const ok = await console_()._confirm({
     title: 'Delete user?',
@@ -267,6 +290,10 @@ function Kebab({ user, open, onToggle, onReload }: {
           onClick={() => { setOpen(false); resetUserPassword(user); }}
           className="admin-reset-pw-btn block w-full text-left px-3 py-2 text-sm text-violet-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-violet-400">
           Reset password</button>
+        <button type="button" data-reset-first-run-id={user.id}
+          onClick={() => { setOpen(false); resetFirstRun(user); }}
+          className="admin-reset-first-run-btn block w-full text-left px-3 py-2 text-sm text-violet-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-violet-400">
+          Reset first run</button>
         {/* Delete stays hidden for admins. */}
         {!user.is_admin ? (
           <button type="button" data-delete-id={user.id}

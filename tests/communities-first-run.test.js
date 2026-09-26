@@ -151,3 +151,39 @@ test('both screens have a declared check on their own screenshot state', () => {
   assert.match(card.expectSelector, /\[data-getting-started="1\/3"\]/);
   for (const t of [join, card]) assert.ok(t.expectSelector.length <= 256);
 });
+
+// ── Reset first run (admin) ────────────────────────────────────────────
+
+test('an admin can reset an account\'s first run, from the user menu', () => {
+  const ADMIN = read('src/routes/admin.js');
+  const route = ADMIN.slice(ADMIN.indexOf("router.post('/api/admin/users/:id/reset-first-run'"));
+  assert.ok(route.length > 0, 'the route exists');
+  assert.match(route.slice(0, 200), /requireAdminWrite/, 'full admins only, like Reset password');
+  assert.match(route.slice(0, 800), /const user = await onboarding\.resetFirstRun\(pool, userId\);/);
+  // It resets the first run and nothing the account owns.
+  const svc = read('src/services/onboarding.js');
+  const fn = svc.slice(svc.indexOf('async function resetFirstRun('), svc.indexOf('/** The card\'s close button. */'));
+  assert.match(fn, /SET needs_communities_choice = TRUE,\s*\n\s*communities_onboarded_at = NULL,\s*\n\s*getting_started_closed_at = NULL,\s*\n\s*getting_started_seen = NULL/);
+  assert.doesNotMatch(fn, /community_members|app_favorites|user_terms_consents|username =/,
+    'memberships, Home tiles, terms and the username stay');
+  // Beside Reset password in the row's ⋯ menu, behind a confirm.
+  const USERS = read('frontend/src/features/admin/admin-users.tsx');
+  assert.ok(USERS.indexOf('Reset password</button>') < USERS.indexOf('Reset first run</button>'));
+  assert.match(USERS, /className="admin-reset-first-run-btn /);
+  assert.match(USERS, /fetch\(`\/api\/admin\/users\/\$\{user\.id\}\/reset-first-run`, \{ method: 'POST' \}\)/);
+  assert.match(USERS, /title: `Reset \$\{user\.username\}'s first run\?`/);
+});
+
+test('a join screen shown in this browser starts the tour over', () => {
+  const TOUR = read('frontend/src/features/home/tour/index.tsx');
+  // The gate says so, and never for the ?shot= fixture.
+  assert.match(GATE, /shownHere\(\) \{\s*\n\s*return CommunitiesFirstRun\._shownHere === true;/);
+  assert.match(GATE, /if \(!\(opts && opts\.demo\)\) CommunitiesFirstRun\._shownHere = true;/);
+  // A finished tour waits for a pending join screen instead of giving up...
+  assert.match(TOUR, /if \(readDone\(userId\) && !firstRunPending\(\)\) return;/);
+  // ...and once it has been shown here, "done" is cleared before the re-read.
+  const start = TOUR.slice(TOUR.indexOf('if (started.current || userId == null) return;'));
+  const body = start.slice(0, start.indexOf('}, [userId, start]);'));
+  assert.match(body, /if \(firstRunShownHere\(\)\) \{\s*\n\s*clearDone\(userId\);\s*\n\s*clearStep\(userId\);\s*\n\s*\}/);
+  assert.ok(body.indexOf('clearDone(userId)') < body.lastIndexOf('if (readDone(userId)) return;'));
+});

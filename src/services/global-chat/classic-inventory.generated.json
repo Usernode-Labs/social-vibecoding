@@ -1061,6 +1061,25 @@
     },
     {
       "source": "src/routes/admin.js",
+      "method": "POST",
+      "path": "/api/admin/users/:id/reset-first-run",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.users.item.reset.first.run.1270e93f",
+      "domain": "admin",
+      "risk": "destructive",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-users.tsx",
+        "frontend/src/features/admin/admin-users.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
       "method": "GET",
       "path": "/api/admin/codes",
       "expression": null,

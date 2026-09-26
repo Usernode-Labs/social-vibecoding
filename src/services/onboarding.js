@@ -351,6 +351,31 @@ async function markSeen(pool, userId, what) {
   return { ok: true };
 }
 
+/**
+ * An admin's "Reset first run" (Admin → Users → ⋯): put an account back to a
+ * new account's first run, so its next load shows the join screen, then the
+ * tour (communities-first-run.js restarts it in the browser that shows the
+ * screen, because "done" is kept per browser), then the Getting started card.
+ *
+ * It resets the first run and nothing the account owns: its communities,
+ * Home tiles, username and terms answer stay as they are. The join screen
+ * shows what it is already in, ticked. Returns `{ id, username }`, or null
+ * when there is no such account.
+ */
+async function resetFirstRun(pool, userId) {
+  const { rows } = await pool.query(
+    `UPDATE users
+        SET needs_communities_choice = TRUE,
+            communities_onboarded_at = NULL,
+            getting_started_closed_at = NULL,
+            getting_started_seen = NULL
+      WHERE id = $1
+      RETURNING id, username`,
+    [userId]
+  );
+  return rows[0] || null;
+}
+
 /** The card's close button. */
 async function closeCard(pool, userId) {
   await pool.query(
@@ -372,4 +397,5 @@ module.exports = {
   gettingStarted,
   markSeen,
   closeCard,
+  resetFirstRun,
 };
