@@ -188,7 +188,7 @@ test('app.css unfolds the steps in place, keeps the approval step to a group or 
 test('every selected choice wears the Create button\'s accent', () => {
   const tw = read('tailwind.config.js');
   assert.match(tw, /600:'#0a6ee0'/, 'violet-600 is the platform blue');
-  const at = CSS.indexOf('#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"],');
+  const at = CSS.indexOf('#create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill[data-audience-pill="solo"],');
   assert.ok(at > 0);
   const rule = CSS.slice(at, CSS.indexOf('}', at));
   for (const sel of ['data-audience-pill="invited"', 'data-mode-pill="new"', 'data-mode-pill="import"',
@@ -201,6 +201,33 @@ test('every selected choice wears the Create button\'s accent', () => {
   assert.doesNotMatch(createBlock, /#7c3aed/, 'the pre-reskin violet is gone from the dialog');
   assert.doesNotMatch(createBlock, /background: var\(--text-primary\);\n  color: var\(--bg-primary\);/,
     'no selected state in the create dialog is the solid inversion');
+});
+
+// Request #3160: a question step starts with nothing chosen, and pressing a
+// row moves on without a Next. "Just me" and "Start from scratch" were filled
+// on arrival with a Next under them, which read as a choice already made and
+// a button still to press.
+test('a question step shows no choice until one is pressed, and has no Next', () => {
+  const at = CSS.indexOf('#create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill[data-audience-pill="solo"],');
+  const rule = CSS.slice(at, CSS.indexOf('}', at));
+  // The fill on the first two steps' rows waits for the step to move on.
+  for (const aud of ['solo', 'invited', 'open']) {
+    assert.ok(rule.includes(`#create-card:not([data-step="who"])[data-audience="${aud}"]`), aud);
+  }
+  for (const mode of ['new', 'import']) {
+    assert.match(rule, new RegExp(`#create-card:is\\(\\[data-step="details"\\], \\[data-step="approve"\\]\\)\\[data-mode="${mode}"\\]\\s+\\.create-mode-pill\\[data-mode-pill="${mode}"\\]`), mode);
+  }
+  assert.doesNotMatch(rule, /\n#create-card\[data-audience="(solo|invited|open)"\]\s+\.create-who-pill/,
+    'no audience row is filled while its step is being asked');
+  assert.doesNotMatch(rule, /\n#create-card\[data-mode="(new|import)"\]\s+\.create-mode-pill/,
+    'no start row is filled while its step is being asked');
+  // The approval step keeps its default: a setting confirmed with Create.
+  assert.ok(rule.includes('#create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"]'));
+  // No Next on either question step; Cancel stays.
+  assert.match(CSS, /#create-card:is\(\[data-step="who"\], \[data-step="start"\]\) #create-next \{\n  display: none;\n\}/);
+  // A press on a row is the answer: it sets it and unfolds the next step.
+  assert.match(SRC, /setAudience\(next\);\s*\n\s*setError\(''\);\s*\n\s*setStep\('start'\);/);
+  assert.match(SRC, /applyMode\(next\);\s*\n\s*setStep\('details'\);/);
 });
 
 test('the shot links land on the state they name, and each has a check', () => {

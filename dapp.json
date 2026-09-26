@@ -1254,13 +1254,13 @@
       "name": "Create an app is the launcher grid's last tile, not a section below Challenges (re-pointed: Create moved into the grid)",
       "path": "/?demo=1&shot=create-enabled",
       "expectSelector": "#home-body:not(:has(#home-create-section)) #home-apps-section #app-list > #home-create-tile.home-create-btn[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
-      "expectText": "Create an app"
+      "expectText": "New project"
     },
     {
       "name": "The Create an app tile is present but locked without app quota, still last in the grid (re-pointed: Create moved into the grid)",
       "path": "/?demo=1&shot=create-disabled",
       "expectSelector": "#app-list > #home-create-tile.home-create-btn[data-panel-slot=\"create\"][data-create-enabled=\"false\"]:last-child:not([disabled])",
-      "expectText": "Create an app"
+      "expectText": "New project"
     },
     {
       "name": "Discover is one flat lane: curated cards then popular, with no sub-group label",
@@ -1413,7 +1413,7 @@
       "expectText": "GitHub repo URL"
     },
     {
-      "name": "Create-project dialog opens on who it is for: Just me chosen, then A group and A community, with a step count (communities, stage 3)",
+      "name": "Create-project dialog opens on who it is for, nothing chosen yet: Just me, A group and A community, with a step count (communities, stage 3; request #3160)",
       "path": "/#create",
       "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-audience=\"solo\"] .create-who-pill[data-audience-pill=\"solo\"] + .create-who-pill[data-audience-pill=\"invited\"] + .create-who-pill[data-audience-pill=\"open\"]",
       "expectText": "Step 1 of 3"
@@ -3468,6 +3468,33 @@
       "path": "/?shot=choose-username",
       "expectSelector": ".un-modal [data-choose-username] p",
       "expectText": "Letters, numbers and underscores, 3 to 32 characters."
+    },
+    {
+      "id": "auth.join-communities-first-run",
+      "name": "After the username and terms, a new account picks the communities it joins, Homeroom first, and the button says how many (communities, stage 5)",
+      "path": "/?shot=join-communities",
+      "expectSelector": ".un-modal [data-join-communities] [data-join-community=\"homeroom\"][data-checked=\"true\"] ~ [data-join-community=\"city-garden\"][data-checked=\"false\"]",
+      "expectText": "Join 2 communities",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/auth/communities-first-run.js",
+        "src/services/onboarding.js",
+        "src/routes/onboarding.js",
+        "src/routes/auth.js"
+      ]
+    },
+    {
+      "id": "home.getting-started-card",
+      "name": "Home opens on a Getting started card whose three steps tick off from what the person did (communities, stage 5)",
+      "path": "/?shot=getting-started",
+      "expectSelector": "#home-getting-started:not(.hidden) [data-getting-started=\"1/3\"] [data-getting-started-step=\"say-hi\"][data-done=\"true\"] ~ [data-getting-started-step=\"vote\"][data-done=\"false\"]",
+      "expectText": "Getting started",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/home/getting-started.tsx",
+        "frontend/src/features/home/index.tsx",
+        "src/services/onboarding.js"
+      ]
     },
     {
       "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",

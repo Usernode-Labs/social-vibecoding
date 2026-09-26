@@ -9836,3 +9836,31 @@ BEGIN
       ON CONFLICT (key) DO NOTHING;
   END IF;
 END $$;
+
+-- ── Communities, stage 5: the first run ─────────────────────────────────
+--
+-- A new account picks the communities it wants to join (Homeroom first)
+-- after its username and the terms, then gets the tour, then a "Getting
+-- started" card on Home with three first steps (src/services/onboarding.js).
+--
+-- users.needs_communities_choice — this account has not been asked yet.
+-- A FLAG WRITTEN AT SIGN-UP, the shape needs_username_choice has, rather
+-- than "communities_onboarded_at IS NULL": every account that existed
+-- before this column reads FALSE by default, so nobody who already uses the
+-- platform is walked through a screen for newcomers, and neither are the
+-- accounts the boot seeds (capture identities, staging fixtures), which a
+-- NULL-means-new rule would have put behind a blocking step on every
+-- replay. No backfill, so nothing to guard with a marker row.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_communities_choice BOOLEAN NOT NULL DEFAULT FALSE;
+-- When the join screen was answered. Its one other reader is the Getting
+-- started card, which is for people who came through that screen: it shows
+-- while this is set and getting_started_closed_at is not.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS communities_onboarded_at TIMESTAMPTZ;
+-- The card's close button. Server state, like the join screen's answer, so
+-- a card closed on the phone is closed on the laptop too.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_closed_at TIMESTAMPTZ;
+-- The two places the card sends people that leave no row behind of their
+-- own (a visit to the Workshop, a visit to Discover), as
+-- { "workshop": "<iso>", "discover": "<iso>" }. Written only while the card
+-- is showing, and read only by it.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;

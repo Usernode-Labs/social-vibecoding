@@ -18,6 +18,7 @@
 const log = require('./logger');
 const notifications = require('./notifications');
 const events = require('./events');
+const appAccess = require('./app-access');
 
 // Hydrate freshly inserted notification rows into the serialize() wire shape
 // (the column set listForUser produces) and push them live.
@@ -87,4 +88,73 @@ async function sendInvite(pool, { app, target, inviterId }) {
   return { ok: true };
 }
 
-module.exports = { hydrateAndPush, sendInvite };
+/**
+ * Accept `user`'s pending invite into app `appId`. Two callers: the
+ * notification's Accept (POST /api/invites/:appId/accept) and the first-run
+ * join screen, where a new account ticks the group it was invited into
+ * (services/onboarding.js). Idempotent: accepting when already a member is
+ * `{ ok: true, alreadyMember: true }`, for two-tab races.
+ *
+ * Returns `{ ok: true, appSlug }` or `{ ok: false, status, error }`; the
+ * inviter's notification, the chat line and the event are best-effort.
+ */
+async function acceptInvite(pool, { appId, user }) {
+  const { rows: updated } = await pool.query(
+    `UPDATE app_collaborators
+        SET status = 'member', accepted_at = NOW()
+      WHERE app_id = $1 AND user_id = $2 AND status = 'invited'
+      RETURNING invited_by`,
+    [appId, user.id]
+  );
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id, slug, name FROM apps WHERE id = $1', [appId]
+  );
+  if (!appRows.length) return { ok: false, status: 404, error: 'App not found' };
+  const app = appRows[0];
+
+  if (!updated.length) {
+    // No pending invite: already a member (idempotent ok) or never
+    // invited (404 — don't disclose anything else).
+    const isMember = await appAccess.isCollaborator(pool, appId, user.id);
+    if (isMember) return { ok: true, appSlug: app.slug, alreadyMember: true };
+    return { ok: false, status: 404, error: 'Invite not found' };
+  }
+
+  await notifications.markInviteNotificationsRead(pool, user.id, appId).catch(() => {});
+  appAccess.invalidateVisibility(appId, app.slug);
+
+  const wsSvc = require('./ws');
+  try { wsSvc.pushNotificationToUser(user.id, { type: 'notifications_changed' }); } catch {}
+
+  // Tell the inviter their invite landed.
+  const inviterId = updated[0].invited_by;
+  if (inviterId && inviterId !== user.id) {
+    try {
+      const notifRows = await notifications.createCollabInviteAcceptedNotification(pool, {
+        appId,
+        recipientId: inviterId,
+        accepterId: user.id,
+      });
+      await hydrateAndPush(pool, notifRows);
+    } catch (err) {
+      log.warn('collab', 'accept notify failed', { err: err.message });
+    }
+  }
+
+  await wsSvc.sendSystemMessage(pool, appId,
+    `${user.username} joined as a collaborator`, 'system'
+  ).catch((err) => log.warn('collab', 'join chat msg failed', { err: err.message }));
+
+  events.record(pool, {
+    type: events.EVENT_TYPES.COLLAB_JOINED,
+    userId: user.id,
+    appId,
+    metadata: { invitedBy: inviterId || null },
+  });
+
+  log.info('collab', 'Invite accepted', { appId, userId: user.id });
+  return { ok: true, appSlug: app.slug };
+}
+
+module.exports = { acceptInvite, hydrateAndPush, sendInvite };

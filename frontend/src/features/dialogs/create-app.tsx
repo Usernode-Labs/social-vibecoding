@@ -987,7 +987,11 @@ export function CreateAppDialog() {
               unmounting (every id ships on every step). Cancel is always
               there; Next until the last step for these answers, then Create
               / Import. No Back: the earlier steps are still on screen, and
-              each collapsed row's "Change" reopens its choice.
+              each collapsed row's "Change" reopens its choice. And no Next
+              on the two question steps (request #3160): a row there is the
+              answer and moves on by itself, and nothing is filled until it
+              has been pressed (app.css, "Nothing is chosen while a step is
+              being asked").
           */}
           <div className="flex gap-2 pt-1">
             <button

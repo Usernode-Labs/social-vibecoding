@@ -140,7 +140,10 @@ const USERNAME_INSERT_ATTEMPTS = 3;
  *
  * `username` is a SUGGESTION, never the address. `needs_username_choice`
  * is TRUE, so the shell asks before Home and the person can replace it
- * with anything the platform's rules allow.
+ * with anything the platform's rules allow. `needs_communities_choice` is
+ * TRUE for the same reason one step later: a new account is asked which
+ * communities to join before its first Home (communities, stage 5;
+ * src/services/onboarding.js).
  *
  * The retry loop is not belt-and-braces. `suggestAvailableUsernameFromEmail`
  * reads the table and the INSERT writes it, so two people signing up from
@@ -160,8 +163,8 @@ async function insertEmailUser(client, email, passwordHash) {
       const { rows } = await client.query(
         `INSERT INTO users
            (username, password, email, email_confirmed, email_confirmed_at,
-            password_set, is_admin, needs_username_choice)
-         VALUES ($1, $2, $3, TRUE, NOW(), FALSE, FALSE, TRUE)
+            password_set, is_admin, needs_username_choice, needs_communities_choice)
+         VALUES ($1, $2, $3, TRUE, NOW(), FALSE, FALSE, TRUE, TRUE)
          RETURNING id, username, is_admin, password_set, needs_username_choice`,
         [candidate, passwordHash, email]
       );
