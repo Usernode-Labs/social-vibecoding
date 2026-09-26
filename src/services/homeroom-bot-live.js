@@ -141,6 +141,62 @@ function proposalLink(domain, appSlug, sessionId) {
   return `https://${domain}/#app/${encodeURIComponent(appSlug)}/dev/proposals/${Number(sessionId)}`;
 }
 
+// ── Who filed the issue ──────────────────────────────────────────────────
+//
+// An issue filed from Homeroom is authored on GitHub by the platform's bot
+// account, so GitHub notifies nobody when the Homeroom bot answers it, and a
+// system message in the issue's thread notifies nobody either. The answers
+// that ask something of the person who filed it name them in the thread and
+// put a mention in their notifications (see post).
+//
+// Found the way the issues route names an issue's creator
+// (routes/issues.js): the platform's own issue row, then the feedback
+// report, then the body's "**Source:**" line; for an issue opened on
+// GitHub, the Homeroom account linked to its author's GitHub login.
+
+// The kinds of post that ask something of the person who filed the issue.
+// Not "looking" (a notice, before anything is known) and not a held note
+// (nothing for them to do; the bot comes back on its own).
+const POSTER_KINDS = new Set(['question', 'person', 'empty', 'proposal', 'build_failed']);
+
+function tagsPoster(kind) {
+  return POSTER_KINDS.has(kind);
+}
+
+/** The Homeroom username of whoever filed the issue, or null. */
+async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = null }) {
+  const { rows } = await pool.query(
+    `SELECT username FROM (
+       SELECT u.username, 0 AS source_rank
+         FROM issues i JOIN users u ON u.id = i.created_by
+        WHERE i.app_id = $1 AND i.github_issue_number = $2
+       UNION ALL
+       SELECT u.username, 1 AS source_rank
+         FROM feedback_reports fr JOIN users u ON u.id = fr.user_id
+        WHERE fr.issue_owner = $3 AND fr.issue_repo = $4 AND fr.issue_number = $2
+     ) creators
+     ORDER BY source_rank
+     LIMIT 1`,
+    [app.id, issueNumber, repo.owner, repo.repo],
+  );
+  if (rows[0]?.username) return rows[0].username;
+  // Required lazily: the route module loads the route layer, and it
+  // requires the bot lazily in turn.
+  const fromSource = require('../routes/issues').creatorFromSourceLine(issue?.body);
+  // The legacy bare "usernode admin" line names nobody.
+  if (fromSource && fromSource !== 'admin') return fromSource;
+  const login = issue?.user || null;
+  if (!login || login.endsWith('[bot]') || login === 'usernode-bot'
+      || (botLogin && login.toLowerCase() === String(botLogin).toLowerCase())) {
+    return null;
+  }
+  const { rows: linked } = await pool.query(
+    'SELECT username FROM users WHERE LOWER(github_login) = LOWER($1) LIMIT 1',
+    [login],
+  );
+  return linked[0]?.username || null;
+}
+
 // ── Posting ──────────────────────────────────────────────────────────────
 
 /**
@@ -155,7 +211,7 @@ function proposalLink(domain, appSlug, sessionId) {
  */
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
-  msgType = 'system', metadata = null,
+  msgType = 'system', metadata = null, mention = null, senderId = null, notifications = null,
 }) {
   const { rows } = await pool.query(
     `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
@@ -173,10 +229,33 @@ async function post({
   } catch (err) {
     log.warn('homeroom-bot', 'GitHub comment failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
   }
+  // The person who filed the issue is named in the thread only. On GitHub a
+  // platform username is never written as an @mention (#723: it would
+  // notify whoever owns that handle there), and GitHub already notifies the
+  // author of an issue opened there about comments on it.
+  const threadText = mention ? `@${mention} ${text}` : text;
   try {
-    message = await ws.sendSystemMessage(pool, app.id, text, msgType, metadata, { type: 'issue', ref: issueNumber });
+    message = await ws.sendSystemMessage(pool, app.id, threadText, msgType, metadata, { type: 'issue', ref: issueNumber });
   } catch (err) {
     log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  }
+  // A system message fires no mention notifications of its own, so the
+  // mention row is written here, as the "needs a conversation" prompt does
+  // (conversation-prompt.js). Only for the poster: the content handed over
+  // is their handle alone, never the message, whose model-written text could
+  // name anybody.
+  let notified = 0;
+  if (mention && message?.id) {
+    try {
+      const notify = notifications || require('./notifications');
+      const rows = await notify.createMentionNotifications(pool, {
+        appId: app.id, chatMessageId: message.id, senderId, content: `@${mention}`,
+      });
+      await Promise.all(rows.map((row) => notify.hydrateAndPush(pool, row)));
+      notified = rows.length;
+    } catch (err) {
+      log.warn('homeroom-bot', 'Poster mention failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
   }
   await pool.query(
     `UPDATE homeroom_bot_posts SET github_comment_id = $2, thread_message_id = $3
@@ -185,6 +264,7 @@ async function post({
   ).catch(() => {});
   log.info('homeroom-bot', 'Posted on issue', {
     app: app.slug, issueNumber, kind, github: !!comment, thread: !!message,
+    ...(mention ? { mentioned: mention, notified } : {}),
   });
   return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!message };
 }
@@ -472,6 +552,8 @@ module.exports = {
   heldKind,
   lastPostKind,
   proposalLink,
+  tagsPoster,
+  issuePoster,
   post,
   advanceSeen,
   botUsernameOf,

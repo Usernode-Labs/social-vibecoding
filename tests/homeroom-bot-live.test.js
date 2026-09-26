@@ -172,6 +172,124 @@ test('a GitHub failure still posts in Homeroom, and never throws', async () => {
   assert.equal(out.githubCreatedAt, null, 'nothing to mark as seen');
 });
 
+// ── Naming the person who filed the issue ──────────────────────────────
+
+function notifyStub({ fails = false } = {}) {
+  const calls = { created: [], pushed: [] };
+  return {
+    calls,
+    async createMentionNotifications(_pool, args) {
+      if (fails) throw new Error('notifications down');
+      calls.created.push(args);
+      return [{ id: 31, user_id: 5 }];
+    },
+    async hydrateAndPush(_pool, row) { calls.pushed.push(row); },
+  };
+}
+
+test('a post that names the poster: @handle in the thread only, and one mention for them alone', async () => {
+  const h = postHarness();
+  const notifications = notifyStub();
+  const out = await live.post({
+    ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900,
+    text: 'Which feed? @alice said the sports one.', mention: 'evan', senderId: 77, notifications,
+  });
+  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true });
+  assert.equal(h.calls.messages[0].content, '@evan Which feed? @alice said the sports one.', 'named in the thread');
+  assert.equal(h.calls.comments[0].body, 'Which feed? @alice said the sports one.',
+    'never on GitHub: a platform username there would notify whoever owns it (#723)');
+  assert.deepEqual(notifications.calls.created, [{ appId: 9, chatMessageId: 777, senderId: 77, content: '@evan' }],
+    'the mention row is for the poster alone, not for every handle the model wrote');
+  assert.deepEqual(notifications.calls.pushed, [{ id: 31, user_id: 5 }], 'and it reaches their bell live');
+});
+
+test('no poster, no mention; a failed notification keeps the post', async () => {
+  const plain = postHarness();
+  const untouched = notifyStub();
+  await live.post({ ...plain, app: APP, repo: REPO, issueNumber: 12, kind: 'person', text: 'x', notifications: untouched });
+  assert.equal(plain.calls.messages[0].content, 'x');
+  assert.deepEqual(untouched.calls.created, []);
+
+  const h = postHarness();
+  const out = await live.post({
+    ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'person', text: 'x',
+    mention: 'evan', senderId: 77, notifications: notifyStub({ fails: true }),
+  });
+  assert.equal(out.thread, true);
+  assert.equal(out.github, true);
+});
+
+test('issuePoster: the platform\'s issue row, the feedback report, the Source line, then a linked GitHub account; never a bot', async () => {
+  const poster = async ({ creators = [], linked = [], body = '', user = null, botLogin = 'usernode-bot' }) => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql: String(sql), params });
+        if (/FROM issues i JOIN users u ON u\.id = i\.created_by/.test(sql)) return { rows: creators };
+        if (/LOWER\(github_login\) = LOWER\(\$1\)/.test(sql)) return { rows: linked };
+        return { rows: [] };
+      },
+    };
+    const name = await live.issuePoster(pool, { app: APP, repo: REPO, issueNumber: 24, issue: { body, user }, botLogin });
+    return { name, queries };
+  };
+
+  const first = await poster({ creators: [{ username: 'maya' }], body: '**Source:** Homeroom admin (evan)\n\nx' });
+  assert.equal(first.name, 'maya', 'the platform\'s own record wins over the body');
+  assert.match(first.queries[0].sql, /0 AS source_rank[\s\S]*FROM issues i[\s\S]*1 AS source_rank[\s\S]*FROM feedback_reports fr[\s\S]*ORDER BY source_rank/,
+    'the issues route\'s order: issue row, then feedback report');
+  assert.deepEqual(first.queries[0].params, [9, 24, 'usernode-bot', 'rss-reader']);
+
+  assert.equal((await poster({ body: '**Source:** Homeroom admin (evan)\n\nUse a darker colour.' })).name, 'evan',
+    'rss-reader #24: filed from Homeroom, authored on GitHub by the bot');
+
+  const linked = await poster({ body: 'plain', user: 'octocat', linked: [{ username: 'octo' }] });
+  assert.equal(linked.name, 'octo', 'opened on GitHub by someone with a linked Homeroom account');
+  assert.deepEqual(linked.queries.at(-1).params, ['octocat']);
+
+  assert.equal((await poster({ body: '**Source:** usernode admin\n\nx', user: 'octocat', linked: [{ username: 'octo' }] })).name, 'octo',
+    'the legacy bare admin line names nobody');
+  for (const user of ['usernode-bot', 'dependabot[bot]', 'Homeroom-Bot']) {
+    const r = await poster({ body: 'plain', user, botLogin: 'homeroom-bot', linked: [{ username: 'x' }] });
+    assert.equal(r.name, null, `${user} is not a person who filed anything`);
+    assert.ok(!r.queries.some((q) => /github_login/.test(q.sql)));
+  }
+  assert.equal((await poster({ body: 'plain', user: 'stranger' })).name, null, 'no linked account, nobody to notify here');
+});
+
+test('the answers that ask something of the poster name them; the notice and a held note do not; the bot never names itself', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
+  const realPoster = live.issuePoster;
+  t.after(() => { live.post = realPost; live.issuePoster = realPoster; });
+  const lookups = [];
+  let who = 'evan';
+  live.issuePoster = async (_pool, args) => { lookups.push(args); return who; };
+  live.post = async (args) => { h.posts.push({ kind: args.kind, mention: args.mention, senderId: args.senderId }); return {}; };
+
+  await act(h, { verdict: 'question', question: 'Which colour?' });
+  await act(h, { verdict: 'person', reason: 'Taste.' });
+  await act(h, { verdict: 'empty', reason: 'Nothing.' });
+  assert.deepEqual(h.posts.map((p) => [p.kind, p.mention, p.senderId]),
+    [['question', 'evan', 77], ['person', 'evan', 77], ['empty', 'evan', 77]]);
+  assert.equal(lookups.length, 3, 'one lookup per answer');
+  assert.equal(lookups[0].issueNumber, 12);
+
+  h.posts.length = 0;
+  lookups.length = 0;
+  await act(h, { verdict: 'question', question: 'x' }, { capSuppressed: 'question_tripwire' });
+  assert.deepEqual(h.posts.map((p) => [p.kind, p.mention]), [['held_question_tripwire', null]]);
+  assert.equal(lookups.length, 0, 'a held note looks nobody up');
+
+  h.posts.length = 0;
+  who = 'Homeroom_Bot';
+  await act(h, { verdict: 'person', reason: 'x' });
+  assert.equal(h.posts[0].mention, null, 'an issue the bot itself filed names nobody');
+
+  assert.ok(live.tagsPoster('proposal') && live.tagsPoster('build_failed'), 'a proposal or a failed build is theirs to know about too');
+  assert.ok(!live.tagsPoster('looking'));
+});
+
 test('what it says: the question with its default, notes that never close, a linked proposal', () => {
   const q = live.questionText({ question: 'Which feed should it refresh?', questionDefault: 'All of them' });
   assert.match(q, /Which feed should it refresh\?/);
