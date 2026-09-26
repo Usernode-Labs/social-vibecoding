@@ -402,7 +402,7 @@ test('beginLaunch mounts the app frame and its cover, and points it at the app i
 
   const iframe = dom.els.get('app-iframe');
   assert.ok(iframe, 'frame mounted');
-  assert.equal(iframe.src, 'https://notes.apps.example/?token=tok-1',
+  assert.equal(iframe.src, 'https://notes.apps.example/?token=tok-1&un-theme=light',
     'src assigned synchronously, with the app-scoped token');
   assert.equal(iframe.style.opacity, undefined, 'not revealed yet (opacity comes from the markup)');
   assert.match(dom.els.get('app-content').innerHTML, /style="opacity:0"/,
@@ -439,7 +439,7 @@ test('without a warm token the frame mounts src-less and is pointed at the app o
 
   release();
   await flush();
-  assert.equal(iframe.src, 'https://notes.apps.example/?token=tok-late');
+  assert.equal(iframe.src, 'https://notes.apps.example/?token=tok-late&un-theme=light');
   assert.equal(AppView._launchAdopt.src, iframe.src);
 });
 
@@ -583,7 +583,7 @@ test('a render whose src differs (deep link) rebuilds rather than adopting', () 
   AppView.pendingInnerPath = '/t/123';
   AppView.renderAppTab();
   assert.equal(content.htmlWrites, writesAfterLaunch + 1, 'rebuilt');
-  assert.match(dom.els.get('app-iframe').src, /\/t\/123\?token=tok-1$/, 'at the deep-linked path');
+  assert.match(dom.els.get('app-iframe').src, /\/t\/123\?token=tok-1&un-theme=light$/, 'at the deep-linked path');
 });
 
 test('the rebuilt frame keeps the sandbox/allow contract in one place', () => {
