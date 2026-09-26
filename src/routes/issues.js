@@ -825,7 +825,7 @@ function issueRoutes(config) {
          LEFT JOIN users u ON i.created_by = u.id
          WHERE i.app_id = $1 AND i.id = $2
            AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign',
-                          'featured_illustration')
+                          'featured_illustration', 'icon_change')
          LIMIT 1`,
         [appId, id, userId]
       );

@@ -47,19 +47,27 @@
  * with a chevron and no frame at all. That is the arrangement that reads as
  * "two buttons" without either of them having to shout.
  *
- * ── The artwork is a raster, deliberately ─────────────────────────────
+ * ── The artwork is inline source now, not a raster ─────────────────────
  *
- * @/components/ui/wordmark.tsx inlines the LOGOTYPE as paths because
- * `fill="currentColor"` lets one drawing take the ink of wherever it sits.
- * The mark is the opposite case: it is a two-colour lockup — a cream figure
- * on the brand's near-black tile — and a brand tile does not re-colour per
- * theme any more than an app's own icon does. So it is a file, next to the
- * landing's illustration, precached by the service worker because it is drawn
- * on every route. public/brand/README.md carries its provenance.
+ * This used to be `<img src="/brand/homeroom-mark.png">`, a two-colour
+ * lockup baked to pixels because "a brand tile does not re-colour per theme
+ * any more than an app's own icon does." The TILE is still true of that: it
+ * is drawn here as a plain `bg-black` square, unrelated to either theme. The
+ * ink stopped being true of it the day the mark's own colour became the
+ * platform accent (`violet-600` / `--accent`, `#0a6ee0`) rather than a fixed
+ * brand cream — a raster and a Tailwind config are two sources of truth for
+ * the same colour, and they will drift the next time the accent moves.
+ * `LogoMark` (@/components/ui/logo-mark.tsx) is `fill="currentColor"`, same
+ * convention as `Wordmark` above it, so `text-violet-600` here is the only
+ * place the colour is spelled. `public/brand/homeroom-mark.png` itself is
+ * unchanged and still committed — ../app-context/about-pane.tsx and
+ * ../profile/profile-view.tsx still draw it — only the header's own use is
+ * retired. public/brand/README.md carries the provenance.
  */
 
 import { useRef } from 'react';
 
+import { LogoMark } from '@/components/ui/logo-mark';
 import { ChevronDownIcon, SpinnerRingIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
@@ -151,30 +159,23 @@ export function PlatformMark() {
       }).AppContext?.toggle?.()}
     >
       {/*
-          `alt=""` and aria-hidden: the button's aria-label above is the only
-          producer of this control's accessible name, exactly as the chevron
-          below. A named image here would be read twice.
+          `aria-hidden` on the mark itself: the button's aria-label above is
+          the only producer of this control's accessible name, exactly as the
+          chevron below. A named glyph here would be read twice.
 
-          NO `loading="lazy"`. It is in the first screenful on every route,
-          and a lazy header logo is a hole at the top of a cold paint.
-
-          The rounded corner is the artwork's own — the file is a squircle
-          tile with its own radius — so `rounded-[7px]` here only clips the
-          box, it does not invent a shape. The hairline is what keeps a
+          The rounded corner is drawn, not clipped from a file — `bg-black
+          rounded-[7px]` is the whole tile now. The hairline is what keeps a
           near-black tile from disappearing into the dark bar behind it, and
           it is the same inset hairline .app-icon-tile draws for the same
           reason one screen down.
       */}
       <span className="relative shrink-0 inline-flex">
-        <img
-          src="/brand/homeroom-mark.png"
-          alt=""
-          aria-hidden="true"
-          draggable="false"
-          width={26}
-          height={26}
-          className="platform-mark-tile w-[26px] h-[26px] rounded-[7px] shrink-0"
-        />
+        <span
+          className="platform-mark-tile w-[26px] h-[26px] rounded-[7px] shrink-0
+                      inline-flex items-center justify-center bg-black"
+        >
+          <LogoMark aria-hidden="true" className="w-[18px] h-auto text-violet-600" />
+        </span>
         {/* Bottom-LEFT: an unsent feedback draft, waiting for a connection. */}
         <span
           ref={dotRef}

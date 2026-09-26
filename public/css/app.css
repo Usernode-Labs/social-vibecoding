@@ -18262,7 +18262,7 @@ html.un-ios {
   justify-content: center;
 }
 
-/* THE MARK'S TILE (#2718). The artwork is a near-black squircle, which is a
+/* THE MARK'S TILE (#2718). `bg-black` is a near-black squircle, which is a
    shade the dark bar behind it is also wearing — `bg-zinc-900` on
    #platform-header — so at 26px the tile's own edge disappears and the figure
    floats. The inset hairline is what draws it back, and it is the same
@@ -18272,9 +18272,6 @@ html.un-ios {
    is correct in both rather than two rules being correct in one each. */
 .platform-mark-tile {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
-  /* The file is 261px square drawn at 26: tell the decoder so, rather than
-     letting it pick. */
-  object-fit: cover;
 }
 
 
