@@ -20,7 +20,7 @@ const PROFILE = 'platform-member-agent-session-v1';
 // app-scoped iframe token before either isolated browser starts.
 const FULL_ADMIN_USER_ID = 2147483000;
 const FULL_ADMIN_USERNAME = 'usernode-evidence-full-admin';
-const FULL_ADMIN_PROFILE = 'platform-isolated-full-admin-v1';
+const FULL_ADMIN_PROFILE = 'platform-isolated-full-admin-self-member-v2';
 
 function assertEvidenceDatabase(databaseUrl, slug, runId, side) {
   const expected = dbManager.evidenceDbName(slug, runId, side);
@@ -70,48 +70,76 @@ async function canCopyMemberAgentSession({ databaseUrl, slug, runId, side }) {
   });
 }
 
+async function installFullAdminFixture(client, slug) {
+  const app = await client.query(
+    `SELECT id FROM apps WHERE slug = $1 FOR SHARE`,
+    [slug]
+  );
+  if (app.rowCount !== 1) {
+    throw new Error('The platform app is missing from the paired visual-evidence fixture.');
+  }
+  const appId = app.rows[0].id;
+  const conflict = await client.query(
+    `SELECT id, username FROM users
+      WHERE id = $1 OR username = $2
+      FOR UPDATE`,
+    [FULL_ADMIN_USER_ID, FULL_ADMIN_USERNAME]
+  );
+  if (conflict.rows.some((row) => Number(row.id) !== FULL_ADMIN_USER_ID
+      || row.username !== FULL_ADMIN_USERNAME)) {
+    throw new Error('The reserved visual-evidence full-admin identity conflicts with cloned data.');
+  }
+  if (conflict.rowCount === 0) {
+    await client.query(
+      `INSERT INTO users
+         (id, username, password, is_admin, admin_readonly, can_create_apps,
+          has_platform_access, platform_access_granted_at)
+       VALUES ($1, $2, '__evidence_not_a_login__', TRUE, FALSE, FALSE, TRUE, NOW())`,
+      [FULL_ADMIN_USER_ID, FULL_ADMIN_USERNAME]
+    );
+  } else {
+    await client.query(
+      `UPDATE users
+          SET is_admin = TRUE, admin_readonly = FALSE, can_create_apps = FALSE,
+              has_platform_access = TRUE,
+              platform_access_granted_at = COALESCE(platform_access_granted_at, NOW())
+        WHERE id = $1 AND username = $2`,
+      [FULL_ADMIN_USER_ID, FULL_ADMIN_USERNAME]
+    );
+  }
+  // App channels are membership-scoped even for a platform administrator.
+  // Make the isolated full-admin identity a real member of the self app so
+  // evidence can exercise the same channel rows a human app member sees.
+  // This row exists only in the paired disposable databases and is added
+  // symmetrically to base and head on every clean replay reset.
+  await client.query(
+    `INSERT INTO app_collaborators
+       (app_id, user_id, status, invited_by, accepted_at)
+     VALUES ($1, $2, 'member', NULL, NOW())
+     ON CONFLICT (app_id, user_id)
+     DO UPDATE SET status = 'member', invited_by = NULL,
+                   accepted_at = COALESCE(app_collaborators.accepted_at, NOW())`,
+    [appId, FULL_ADMIN_USER_ID]
+  );
+  return {
+    id: FULL_ADMIN_PROFILE,
+    persona: 'full_admin',
+    startPath: '/#admin',
+    path: '/#admin/users',
+    userId: FULL_ADMIN_USER_ID,
+    username: FULL_ADMIN_USERNAME,
+    appMembership: { appId, slug, status: 'member' },
+  };
+}
+
 async function ensureFullAdminIdentity({ databaseUrl, slug, runId, side }) {
   assertEvidenceDatabase(databaseUrl, slug, runId, side);
   return withClient(databaseUrl, async (client) => {
     await client.query('BEGIN');
     try {
-      const conflict = await client.query(
-        `SELECT id, username FROM users
-          WHERE id = $1 OR username = $2
-          FOR UPDATE`,
-        [FULL_ADMIN_USER_ID, FULL_ADMIN_USERNAME]
-      );
-      if (conflict.rows.some((row) => Number(row.id) !== FULL_ADMIN_USER_ID
-          || row.username !== FULL_ADMIN_USERNAME)) {
-        throw new Error('The reserved visual-evidence full-admin identity conflicts with cloned data.');
-      }
-      if (conflict.rowCount === 0) {
-        await client.query(
-          `INSERT INTO users
-             (id, username, password, is_admin, admin_readonly, can_create_apps,
-              has_platform_access, platform_access_granted_at)
-           VALUES ($1, $2, '__evidence_not_a_login__', TRUE, FALSE, FALSE, TRUE, NOW())`,
-          [FULL_ADMIN_USER_ID, FULL_ADMIN_USERNAME]
-        );
-      } else {
-        await client.query(
-          `UPDATE users
-              SET is_admin = TRUE, admin_readonly = FALSE, can_create_apps = FALSE,
-                  has_platform_access = TRUE,
-                  platform_access_granted_at = COALESCE(platform_access_granted_at, NOW())
-            WHERE id = $1 AND username = $2`,
-          [FULL_ADMIN_USER_ID, FULL_ADMIN_USERNAME]
-        );
-      }
+      const installed = await installFullAdminFixture(client, slug);
       await client.query('COMMIT');
-      return {
-        id: FULL_ADMIN_PROFILE,
-        persona: 'full_admin',
-        startPath: '/#admin',
-        path: '/#admin/users',
-        userId: FULL_ADMIN_USER_ID,
-        username: FULL_ADMIN_USERNAME,
-      };
+      return installed;
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
@@ -207,6 +235,7 @@ module.exports = {
   FULL_ADMIN_USER_ID,
   FULL_ADMIN_USERNAME,
   FULL_ADMIN_PROFILE,
+  installFullAdminFixture,
   ensureFullAdminIdentity,
   canCopyMemberAgentSession,
   copyMemberAgentSession,
