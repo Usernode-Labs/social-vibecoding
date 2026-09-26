@@ -2195,7 +2195,9 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   // it once had to pass on the way is the pill's now, #1886).
   const check = dapp.tests.find((t) => /#1887/.test(t.name));
   assert.ok(check, 'a declared check pins it');
-  assert.equal(check.path, '/?demo=1&shot=mine-session#app/usernode-2d5619/workshop');
+  // On the Workshop tab, where your own work lives since the page split into
+  // its hub and its Workshop.
+  assert.equal(check.path, '/?demo=1&shot=mine-session&ws=workshop#app/usernode-2d5619/workshop');
   assert.equal(check.expectSelector,
     '#dev-workshop [data-ws-lane="mine"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*="/dev/sessions/"]');
   assert.equal(check.expectText, '[Mock] Busy own session', 'the busy mock row, which the retargeted check always read');

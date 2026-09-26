@@ -2699,7 +2699,7 @@
     },
     {
       "name": "A card about your own session opens the card view, with the session a link inside it (#1887)",
-      "path": "/?demo=1&shot=mine-session#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&shot=mine-session&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop [data-ws-lane=\"mine\"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*=\"/dev/sessions/\"]",
       "expectText": "[Mock] Busy own session"
     },
@@ -4673,8 +4673,8 @@
       "expectSelector": "#gc-thread-form.gc-composer-card > .gc-composer-glyph ~ textarea ~ .gc-send[aria-label=\"Send\"]"
     },
     {
-      "name": "App Discussion is a sheet over the board strip, and its composer is the same card",
-      "path": "/?demo=1#app/usernode-2d5619/dev/chat",
+      "name": "A project's channel is a sheet over the board strip, and its composer is the same card (Homeroom's own is read-only history now, so this reads another project's)",
+      "path": "/?demo=1#app/staging-demo-app/dev/chat",
       "expectSelector": "#dev-chat-body > .dc-lift.dc-lift-session #gc-form.gc-composer-card .gc-send"
     },
     {
