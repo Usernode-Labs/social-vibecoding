@@ -64,6 +64,10 @@ function loadBridge({
   sharedStorage = null,
 } = {}) {
   const nativePosts = [];
+  // The top document's own <iframe> elements. The relay server only answers
+  // a window that is one of these frames' contentWindow AND whose origin is
+  // the origin that frame's src points at (#2503).
+  const iframes = [];
   const messageListeners = [];
   const windowListeners = {};
   const storage = sharedStorage || new Map();
@@ -131,6 +135,9 @@ function loadBridge({
       head: { appendChild() {} },
       body: { appendChild() {} },
       getElementById() { return null; },
+      getElementsByTagName(tag) {
+        return String(tag).toLowerCase() === 'iframe' ? iframes.slice() : [];
+      },
       addEventListener() {},
       createElement() {
         return {
@@ -216,6 +223,17 @@ function loadBridge({
     },
     dispatchMessage(event) {
       for (const listener of messageListeners) listener(event);
+    },
+    // Mount `contentWindow` as a direct child <iframe> of the top document
+    // whose src is `src` — the shape the shell gives a genuine app frame.
+    mountFrame(contentWindow, src = 'https://child.example/') {
+      const frame = {
+        contentWindow,
+        getAttribute(name) { return name === 'src' ? frame.src : null; },
+        src,
+      };
+      iframes.push(frame);
+      return frame;
     },
     dispatchWindow(type, event = {}) {
       for (const listener of windowListeners[type] || []) listener(event);
@@ -696,6 +714,7 @@ test('notification permission and navigation actions require the top-frame capab
     const child = {
       postMessage(value, origin) { childReplies.push({ value, origin }); },
     };
+    relayed.mountFrame(child);
     for (const method of methods) {
       relayed.dispatchMessage({
         source: child,
@@ -940,6 +959,7 @@ test('parent relay denies root methods and injects both claims for realm calls',
   const child = {
     postMessage(value, origin) { childReplies.push({ value, origin }); },
   };
+  loaded.mountFrame(child);
   const dispatch = (method, id) => loaded.dispatchMessage({
     source: child,
     origin: 'https://child.example',
@@ -984,6 +1004,7 @@ test('native realm gate rejects top-frame and iframe wallet calls until establis
   const child = {
     postMessage(value, origin) { childReplies.push({ value, origin }); },
   };
+  loaded.mountFrame(child);
   const relayWalletRead = (id) => loaded.dispatchMessage({
     source: child,
     origin: 'https://child.example',
@@ -1337,6 +1358,7 @@ test('trusted top frame records a dual-claim relayed child-app submission', asyn
   const child = {
     postMessage(value, origin) { childReplies.push({ value, origin }); },
   };
+  loaded.mountFrame(child);
 
   loaded.dispatchMessage({
     source: child,
@@ -1685,3 +1707,121 @@ test('web recovery is root-privileged and does not need an established realm ses
   assert.equal('realmSessionClaim' in post, false);
   assert.equal('sessionToken' in post, false);
 });
+
+// ── #2503: the top-frame relay answers only its own app frames ─────────
+//
+// Once a native realm session exists, a relayed request is forwarded with
+// the top frame's root capability and realm claim. So the relay must know
+// WHO is asking: the posting window has to be the contentWindow of one of
+// this document's own <iframe> elements, and the posting document has to be
+// on the origin that frame's src points at. A window proxy survives
+// navigation, so identity alone would hand the slot's authority to whatever
+// document the frame was navigated to.
+async function relayHarness() {
+  const loaded = loadBridge({ capabilities: [
+    'privilegedBridgeCapability', 'establishNativeSession',
+  ] });
+  await establishRealm(loaded);
+  const established = loaded.nativePosts.length;
+  const window = (label) => {
+    const replies = [];
+    return {
+      label,
+      replies,
+      postMessage(value, origin) { replies.push({ value, origin }); },
+    };
+  };
+  const send = (source, origin, data) => loaded.dispatchMessage({
+    source, origin, data,
+  });
+  const probe = (source, origin) => {
+    send(source, origin, { __usernode_relay: 'discover' });
+    send(source, origin, {
+      __usernode_relay: 'request',
+      id: 1,
+      method: 'getWalletState',
+      args: {},
+    });
+  };
+  return {
+    loaded,
+    window,
+    send,
+    probe,
+    forwarded: () => loaded.nativePosts.slice(established),
+  };
+}
+
+test('a window that is not one of the page\'s own frames gets no relay (#2503)',
+  async () => {
+    const h = await relayHarness();
+    const app = h.window('app');
+    h.loaded.mountFrame(app, 'https://child.example/');
+    // A third-party iframe nested INSIDE the app: its window.top is the
+    // shell, but it is not a frame of the shell's document.
+    const nested = h.window('nested');
+    h.probe(nested, 'https://evil.example');
+
+    assert.deepEqual(h.forwarded(), [],
+      'nothing reaches native on behalf of a foreign window');
+    assert.deepEqual(nested.replies, [],
+      'no discover-ack and no response: the relay does not exist for it');
+    assert.deepEqual(app.replies, []);
+  });
+
+test('a frame navigated off its app origin loses the relay (#2503)', async () => {
+  const h = await relayHarness();
+  const app = h.window('app');
+  h.loaded.mountFrame(app, 'https://child.example/path?token=t');
+  // Same WindowProxy, but the document inside it is now on another origin.
+  h.probe(app, 'https://evil.example');
+  // An opaque origin (sandboxed or data: document) is never an app origin.
+  h.probe(app, 'null');
+  h.probe(app, '');
+  h.probe(app, undefined);
+
+  assert.deepEqual(h.forwarded(), []);
+  assert.deepEqual(app.replies, []);
+});
+
+test('a frame with no http(s) src cannot borrow the relay (#2503)', async () => {
+  const h = await relayHarness();
+  const blank = h.window('blank');
+  h.loaded.mountFrame(blank, '');
+  const about = h.window('about');
+  h.loaded.mountFrame(about, 'about:blank');
+  const data = h.window('data');
+  h.loaded.mountFrame(data, 'data:text/html,<p>x</p>');
+  // about:blank / src-less frames inherit the embedder's origin.
+  h.probe(blank, 'https://social.example');
+  h.probe(about, 'https://social.example');
+  h.probe(data, 'null');
+
+  assert.deepEqual(h.forwarded(), []);
+  assert.deepEqual(blank.replies, []);
+  assert.deepEqual(about.replies, []);
+  assert.deepEqual(data.replies, []);
+});
+
+test('the page\'s own app frame keeps its relay, answered on its exact origin (#2503)',
+  async () => {
+    const h = await relayHarness();
+    const app = h.window('app');
+    h.loaded.mountFrame(app, 'https://child.example/deep/link?token=t');
+    h.probe(app, 'https://child.example');
+
+    assert.deepEqual(h.forwarded().map((post) => post.method),
+      ['getWalletState']);
+    assert.equal(app.replies.length, 2);
+    assert.equal(app.replies[0].value.__usernode_relay, 'discover-ack');
+    assert.deepEqual(JSON.parse(JSON.stringify(app.replies[1].value)), {
+      __usernode_relay: 'response',
+      id: 1,
+      value: { address: 'ut1-wallet' },
+      error: null,
+    });
+    for (const reply of app.replies) {
+      assert.equal(reply.origin, 'https://child.example',
+        'replies are addressed to the frame origin, never "*"');
+    }
+  });

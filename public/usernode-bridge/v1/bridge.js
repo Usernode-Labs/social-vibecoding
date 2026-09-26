@@ -642,12 +642,55 @@
   // its own copy of this bridge and is responsible for those decisions
   // in its own origin. The parent only relays raw Usernode.postMessage
   // payloads, which keeps cross-origin behaviour predictable.
+  //
+  // WHO may use it (#2503). A relayed request is forwarded with THIS frame's
+  // root capability and realm claim, so the relay answers only a window that
+  // is the contentWindow of one of this document's own <iframe> elements,
+  // AND only while the document inside that frame is on the origin the
+  // frame's src points at. The first rule shuts out any other window that
+  // can reach `window.top` (a third-party iframe nested inside an app, a
+  // popup, an opener). The second exists because a WindowProxy survives
+  // navigation: without it, a document the frame was navigated to would
+  // inherit the app's relay. Opaque ("null") origins, src-less frames and
+  // non-http(s) srcs never qualify. Anything else is dropped silently.
+  function relayFrameOrigin(source, origin) {
+    if (!source || typeof origin !== "string" || !origin || origin === "null") {
+      return null;
+    }
+    var frames;
+    try { frames = document.getElementsByTagName("iframe"); } catch (_) { return null; }
+    if (!frames) return null;
+    for (var i = 0; i < frames.length; i++) {
+      var frame = frames[i];
+      var win = null;
+      try { win = frame.contentWindow; } catch (_) { win = null; }
+      if (!win || win !== source) continue;
+      var src = "";
+      try { src = frame.getAttribute("src") || ""; } catch (_) { src = ""; }
+      if (!src) return null;
+      var expected;
+      try { expected = new URL(src, location.href); } catch (_) { return null; }
+      if (expected.protocol !== "https:" && expected.protocol !== "http:") {
+        return null;
+      }
+      return expected.origin === origin ? origin : null;
+    }
+    return null;
+  }
+
   if (_hasNativeChannel) {
     console.log(_BRIDGE_TAG, "native channel available, relay listener installed");
     window.addEventListener("message", function (e) {
       var data = e.data;
       if (!data || !e.source) return;
-      var origin = e.origin || "*";
+      if (data.__usernode_relay !== "discover" &&
+          data.__usernode_relay !== "request") return;
+      var origin = relayFrameOrigin(e.source, e.origin);
+      if (!origin) {
+        console.warn(_BRIDGE_TAG, "ignoring relay", data.__usernode_relay,
+          "from a window that is not an app frame of this page");
+        return;
+      }
       var source = e.source;
       if (data.__usernode_relay === "discover") {
         console.log(_BRIDGE_TAG, "← discover from", origin, "→ acking");
