@@ -149,6 +149,15 @@ test('waits, action counts, pointer ratios and scroll distances are bounded', ()
     id: 'point', stage: 'point', type: 'clickPoint', surface: { by: 'css', value: 'canvas.game' }, xRatio: 1.1, yRatio: 0.5,
   });
   assert.equal(evidence.safeParseReplayPlan(pointer).ok, false);
+  pointer.stories[0].replay.after.actions[pointer.stories[0].replay.after.actions.length - 1] = {
+    id: 'hover-edge', stage: 'point', type: 'hoverPoint',
+    surface: { by: 'css', value: '#app-view' }, xRatio: -0.01, yRatio: 0.5,
+  };
+  assert.equal(evidence.safeParseReplayPlan(pointer).ok, false);
+  pointer.stories[0].replay.after.actions[pointer.stories[0].replay.after.actions.length - 1] = {
+    id: 'hover-edge', stage: 'point', type: 'hoverViewport', xRatio: 0.005, yRatio: 1.01,
+  };
+  assert.equal(evidence.safeParseReplayPlan(pointer).ok, false);
 
   const scroll = plan();
   scroll.stories[0].replay.after.actions.push({ id: 'scroll', stage: 'scroll', type: 'scrollBy', x: 0, y: 2001 });
@@ -252,6 +261,18 @@ test('relative pointer provenance and semantic projection are derived from valid
   const semantic = evidence.semanticIntentFromPlan(pointer);
   assert.equal(Object.hasOwn(semantic.stories[0], 'replay'), false);
   assert.deepEqual(semantic, evidence.parseIntent(intent()));
+  const hovered = plan();
+  hovered.stories[0].replay.after.actions.push({
+    id: 'hover-edge', stage: 'rail', type: 'hoverPoint',
+    surface: { by: 'css', value: '#app-view' }, xRatio: 0.005, yRatio: 0.5,
+  });
+  assert.equal(evidence.parseReplayPlan(hovered).stories[0].replay.after.actions.at(-1).type, 'hoverPoint');
+  assert.equal(evidence.containsRelativePointer(hovered), true);
+  hovered.stories[0].replay.after.actions[hovered.stories[0].replay.after.actions.length - 1] = {
+    id: 'hover-edge', stage: 'rail', type: 'hoverViewport', xRatio: 0.005, yRatio: 0.5,
+  };
+  assert.equal(evidence.parseReplayPlan(hovered).stories[0].replay.after.actions.at(-1).type, 'hoverViewport');
+  assert.equal(evidence.containsRelativePointer(hovered), true);
 });
 
 test('hosted replays inherit every accepted semantic field and accepted story order', () => {

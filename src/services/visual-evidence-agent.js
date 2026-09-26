@@ -41,7 +41,7 @@ digits, hyphens, or underscores (for example, id:"open-menu", stage:"menu").
 An action has a unique id, a stage, and one supported
 type: navigate(path), click(target), fill(target,value), press(target?,key),
 select(target,value), check(target), uncheck(target), hover(target),
-drag(from,to), clickPoint(surface,xRatio,yRatio),
+drag(from,to), hoverViewport(xRatio,yRatio), hoverPoint(surface,xRatio,yRatio), clickPoint(surface,xRatio,yRatio),
 dragPoints(surface,from:{xRatio,yRatio},to:{xRatio,yRatio}),
 scrollIntoView(target), scrollBy(x,y), waitForHostedApp(slug,timeoutMs), or waitFor(exactly one of target, text,
 path, quietNetwork; optional timeoutMs up to 10000; target also accepts
@@ -67,14 +67,30 @@ clean passes. Unless the claim is about their exact value, assert a stable
 label or control structure you actually observed on both revisions instead
 of hard-coding a value from one exploratory visit.
 If a story opens a running app, choose a public app with a deployed commit in
-the actual app list. A staging demo card without a deployment is not an app
+the actual app list. evidence_get_context includes eligibleHostedAppSlugs
+from the paired app catalogs; these are candidate slugs, not proof that their
+documents and scripts load. Browse the All apps directory and search a
+candidate slug there. Do not conclude that no usable app exists after trying
+only the Home or demo cards, or one or two failing apps while other candidates
+remain. A staging demo card without a deployment is not an app
 runtime. After clicking the app tile, use waitForHostedApp with that app's
 exact slug before leaving the app view. This waits for a successful document
 response in Homeroom's managed app frame; seeing a tile or iframe element is
 not enough. Inspect the loaded frame and browser errors on both revisions;
 a document can load while its scripts or external resources fail. Choose an
 app that loads cleanly under the evidence browser's origin policy. If no real
-app runtime is available, report that as a blocker.
+app runtime is available, report the candidate slugs actually tried and their
+observed failures as a blocker.
+
+For pointer-only controls such as an invisible edge hover zone, use the
+declared viewport size and browser_mouse_move_xy to test a coordinate on both
+revisions. Confirm that the intended control appears in the browser snapshot
+before interacting with it; image interpretation is not required. For a
+viewport-fixed hotspot, encode the tested coordinate as hoverViewport with
+xRatio = x / viewport width and yRatio = y / viewport height. For a hotspot
+inside a visible element, hoverPoint instead uses fractions of one stable,
+unique, visible surface whose bounds you inspected. Do not substitute a
+guessed click or navigate away from the claimed flow.
 
 A target is exactly one of:
 {by:"testId",value}, {by:"role",role,name?,exact?},

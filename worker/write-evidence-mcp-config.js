@@ -17,7 +17,7 @@ const headOrigin = new URL(process.env.EVIDENCE_HEAD_ORIGIN).origin;
 const origins = browserAllowedOrigins(baseOrigin, headOrigin, hostedFile);
 const browserArgs = (persona) => [
   '/usr/local/bin/evidence-browser-observer.js', persona === 'read_only_admin' ? 'admin' : 'member',
-  '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox',
+  '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
   '--storage-state', path.join(stateDir, `${persona}.json`),
   '--allowed-origins', origins.join(';'),
   '--block-service-workers', '--image-responses', 'allow',

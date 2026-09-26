@@ -85,16 +85,17 @@ async function main() {
         await fs.chmod(target, 0o600);
       } finally { await context.close(); }
     }
-    const hostedOrigins = [...(memberCatalogs[0] || new Map())]
+    const hostedApps = [...(memberCatalogs[0] || new Map())]
       .filter(([origin, slug]) => memberCatalogs[1]?.get(origin) === slug)
-      .map(([origin]) => origin).sort();
+      .map(([origin, slug]) => ({ origin, slug }))
+      .sort((a, b) => a.slug.localeCompare(b.slug));
     const stagedHostedFile = `${hostedFile}.${process.pid}.tmp`;
     await fs.writeFile(stagedHostedFile, `${JSON.stringify({
-      version: 1, baseOrigin: origins[0], headOrigin: origins[1], origins: hostedOrigins,
+      version: 2, baseOrigin: origins[0], headOrigin: origins[1], apps: hostedApps,
     })}\n`, { mode: 0o600, flag: 'wx' });
     await fs.rename(stagedHostedFile, hostedFile);
     process.stdout.write(`__USERNODE_EVIDENCE_BROWSER__ ${JSON.stringify({
-      kind: 'hosted_app_allowlist', count: hostedOrigins.length,
+      kind: 'hosted_app_allowlist', count: hostedApps.length,
     })}\n`);
   } finally { await browser.close(); }
 }

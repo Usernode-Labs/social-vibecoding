@@ -26,7 +26,7 @@ const CONTROLLED_FAILURE_LABEL = 'Controlled test: deliberately block the declar
 const LOCATOR_KINDS = Object.freeze(['testId', 'role', 'label', 'placeholder', 'text', 'css']);
 const ACTION_TYPES = Object.freeze([
   'navigate', 'click', 'fill', 'press', 'select', 'check', 'uncheck',
-  'hover', 'drag', 'clickPoint', 'dragPoints', 'scrollIntoView', 'scrollBy',
+  'hover', 'drag', 'hoverViewport', 'hoverPoint', 'clickPoint', 'dragPoints', 'scrollIntoView', 'scrollBy',
   'waitFor', 'waitForHostedApp', 'requestFailure',
 ]);
 const ASSERTION_TYPES = Object.freeze([
@@ -223,6 +223,8 @@ const actionSchema = z.union([
   z.object({ ...actionBase, type: z.literal('uncheck'), target: locatorSchema }).strict(),
   z.object({ ...actionBase, type: z.literal('hover'), target: locatorSchema }).strict(),
   z.object({ ...actionBase, type: z.literal('drag'), from: locatorSchema, to: locatorSchema }).strict(),
+  z.object({ ...actionBase, type: z.literal('hoverViewport'), xRatio: pointerRatio, yRatio: pointerRatio }).strict(),
+  z.object({ ...actionBase, type: z.literal('hoverPoint'), surface: locatorSchema, xRatio: pointerRatio, yRatio: pointerRatio }).strict(),
   z.object({ ...actionBase, type: z.literal('clickPoint'), surface: locatorSchema, xRatio: pointerRatio, yRatio: pointerRatio }).strict(),
   z.object({
     ...actionBase,
@@ -538,7 +540,7 @@ function parseAuthorPlanSubmission(value, intent, revisions = null) {
 function containsRelativePointer(plan) {
   const parsed = parseReplayPlan(plan);
   return parsed.stories.some((story) => ['before', 'after'].some((side) =>
-    story.replay[side].actions.some((action) => action.type === 'clickPoint' || action.type === 'dragPoints')));
+    story.replay[side].actions.some((action) => ['hoverViewport', 'hoverPoint', 'clickPoint', 'dragPoints'].includes(action.type))));
 }
 
 module.exports = {

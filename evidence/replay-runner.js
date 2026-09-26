@@ -776,6 +776,22 @@ async function executeAction(page, action, origin, network, authToken = '', cont
       await (await resolveOne(page, action.from, `${action.id}.from`))
         .dragTo(await resolveOne(page, action.to, `${action.id}.to`), { timeout: planContract.MAX_WAIT_MS });
       break;
+    case 'hoverViewport': {
+      const viewport = page.viewportSize();
+      if (!viewport || viewport.width <= 0 || viewport.height <= 0) {
+        throw new ReplayFailure('viewport_unavailable', `${action.id} viewport is unavailable.`);
+      }
+      await page.mouse.move(
+        Math.min(viewport.width - 1, Math.round(viewport.width * action.xRatio)),
+        Math.min(viewport.height - 1, Math.round(viewport.height * action.yRatio)));
+      break;
+    }
+    case 'hoverPoint': {
+      const box = await (await resolveOne(page, action.surface, action.id)).boundingBox();
+      if (!box || box.width <= 0 || box.height <= 0) throw new ReplayFailure('surface_not_visible', `${action.id} surface is not visible.`);
+      await page.mouse.move(box.x + box.width * action.xRatio, box.y + box.height * action.yRatio);
+      break;
+    }
     case 'clickPoint': {
       const box = await (await resolveOne(page, action.surface, action.id)).boundingBox();
       if (!box || box.width <= 0 || box.height <= 0) throw new ReplayFailure('surface_not_visible', `${action.id} surface is not visible.`);

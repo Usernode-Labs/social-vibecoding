@@ -14,7 +14,7 @@ const REQUIRED_TOOLS = [
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
-  'browser_hover', 'browser_drag', 'browser_resize', 'browser_wait_for',
+  'browser_hover', 'browser_mouse_move_xy', 'browser_drag', 'browser_resize', 'browser_wait_for',
   'browser_console_messages', 'browser_network_requests', 'browser_tabs',
   'browser_close',
 ];
@@ -69,14 +69,22 @@ function verifyBrowser(server, navigationChecks = []) {
           if (!response.includes('Open tabs')) {
             return finish(new Error(`Browser MCP browser_tabs returned no tab listing: ${response.slice(0, 500)}`));
           }
+          phase = 'browser_mouse_move_xy';
+          child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: {
+            name: 'browser_mouse_move_xy', arguments: { element: 'browser viewport', x: 10, y: 10 },
+          } })}\n`);
+        } else if (message.id === 4) {
+          if (message.error || message.result?.isError) {
+            return finish(new Error(`Browser MCP coordinate hover failed: ${JSON.stringify(message.error || message.result).slice(0, 1200)}`));
+          }
           if (navigationChecks.length) {
             phase = 'browser_navigate';
-            child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: {
+            child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: {
               name: 'browser_navigate', arguments: { url: navigationChecks[0].url },
             } })}\n`);
           } else return finish(null, tools);
-        } else if (message.id >= 4 && message.id < 4 + navigationChecks.length) {
-          const index = message.id - 4;
+        } else if (message.id >= 5 && message.id < 5 + navigationChecks.length) {
+          const index = message.id - 5;
           const response = (message.result?.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
           if (message.error || message.result?.isError || !response.includes(navigationChecks[index].expectedText)
               || (navigationChecks[index].iframeText && !response.includes(navigationChecks[index].iframeText))) {
@@ -112,8 +120,8 @@ async function main() {
     const output = path.join(dir, 'mcp.json');
     const hostedFile = path.join(stateDir, 'hosted-origins.json');
     fs.writeFileSync(hostedFile, JSON.stringify({
-      version: 1, baseOrigin: 'http://base.example.invalid',
-      headOrigin: 'http://head.example.invalid', origins: [],
+      version: 2, baseOrigin: 'http://base.example.invalid',
+      headOrigin: 'http://head.example.invalid', apps: [],
     }));
     const diagnosticFile = path.join(dir, 'browser-diagnostics.log');
     fs.writeFileSync(diagnosticFile, '');

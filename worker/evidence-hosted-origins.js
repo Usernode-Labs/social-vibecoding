@@ -2,18 +2,21 @@
 
 // One policy for the planner browser and deterministic replay. An app tile is
 // not proof of a runtime: admit only public running apps with a deployed
-// revision, or a genuine local container in local development.
+// revision, or a genuine local container in local development. The paired
+// catalog also gives the planner candidate slugs without trusting page text
+// or implying that a candidate's runtime will load cleanly.
 const fs = require('node:fs');
 
 const MAX_CATALOG_APPS = 1000;
 const MAX_HOSTED_ORIGINS = 1000;
-const MAX_FILE_BYTES = 128 * 1024;
+const MAX_FILE_BYTES = 256 * 1024;
+const APP_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 function trustedHostedAppOrigins(apps, platformOrigin) {
   const origins = new Map();
   for (const app of Array.isArray(apps) ? apps.slice(0, MAX_CATALOG_APPS) : []) {
     if (app?.status !== 'running' || app?.view_visibility !== 'public'
-        || app?.self_hosted === true || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(String(app?.slug || ''))) continue;
+        || app?.self_hosted === true || !APP_SLUG_RE.test(String(app?.slug || ''))) continue;
     let url;
     try { url = new URL(app.url); } catch { continue; }
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
@@ -56,31 +59,46 @@ async function loadTrustedHostedAppOrigins(context, platformOrigin, report = nul
   return catalog;
 }
 
-function parseHostedOriginsFile(file, baseOrigin, headOrigin) {
+function parseHostedAppCatalog(file, baseOrigin, headOrigin) {
   if (!file) throw new Error('Evidence hosted-app catalog path is missing.');
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.size < 1 || stat.size > MAX_FILE_BYTES) {
     throw new Error('Evidence hosted-app catalog file is invalid.');
   }
   const value = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (!value || Object.keys(value).sort().join(',') !== 'baseOrigin,headOrigin,origins,version'
-      || value.version !== 1 || value.baseOrigin !== baseOrigin || value.headOrigin !== headOrigin
-      || !Array.isArray(value.origins) || value.origins.length > MAX_HOSTED_ORIGINS) {
+  if (!value || Object.keys(value).sort().join(',') !== 'apps,baseOrigin,headOrigin,version'
+      || value.version !== 2 || value.baseOrigin !== baseOrigin || value.headOrigin !== headOrigin
+      || !Array.isArray(value.apps) || value.apps.length > MAX_HOSTED_ORIGINS) {
     throw new Error('Evidence hosted-app catalog does not match this replay pair.');
   }
-  const seen = new Set();
-  for (const origin of value.origins) {
+  const origins = new Set();
+  const slugs = new Set();
+  for (const app of value.apps) {
+    if (!app || Object.keys(app).sort().join(',') !== 'origin,slug'
+        || !APP_SLUG_RE.test(String(app.slug || '')) || slugs.has(app.slug)) {
+      throw new Error('Evidence hosted-app catalog entry is invalid.');
+    }
+    const origin = app.origin;
     let url;
     try { url = new URL(origin); } catch { throw new Error('Evidence hosted-app origin is invalid.'); }
     if (typeof origin !== 'string' || !['http:', 'https:'].includes(url.protocol)
         || url.origin !== origin || url.username || url.password || url.pathname !== '/'
         || url.search || url.hash || origin === baseOrigin || origin === headOrigin
-        || seen.has(origin)) {
+        || origins.has(origin)) {
       throw new Error('Evidence hosted-app origin is invalid.');
     }
-    seen.add(origin);
+    origins.add(origin);
+    slugs.add(app.slug);
   }
-  return [...seen];
+  return value.apps;
+}
+
+function parseHostedOriginsFile(file, baseOrigin, headOrigin) {
+  return parseHostedAppCatalog(file, baseOrigin, headOrigin).map((app) => app.origin);
+}
+
+function hostedAppSlugs(file, baseOrigin, headOrigin) {
+  return parseHostedAppCatalog(file, baseOrigin, headOrigin).map((app) => app.slug);
 }
 
 function browserAllowedOrigins(baseOrigin, headOrigin, file) {
@@ -102,6 +120,8 @@ if (require.main === module) {
 module.exports = {
   trustedHostedAppOrigins,
   loadTrustedHostedAppOrigins,
+  parseHostedAppCatalog,
   parseHostedOriginsFile,
+  hostedAppSlugs,
   browserAllowedOrigins,
 };
