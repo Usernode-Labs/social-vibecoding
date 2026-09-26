@@ -48,7 +48,7 @@ test('the steps a set of answers walks: three for Just me or an import, four oth
     assert.match(SRC, new RegExp(`'${attr}': `), attr);
   }
   // Close puts every answer back.
-  assert.match(SRC, /formRef\.current\?\.reset\(\);[\s\S]*?setAudience\('solo'\);\s*setStep\('who'\);\s*setApprovers\('anyone'\);\s*setApprovals\('majority'\);/);
+  assert.match(SRC, /formRef\.current\?\.reset\(\);[\s\S]*?setAudience\('solo'\);\s*setStep\('who'\);\s*setApprovers\(null\);\s*setApprovals\(null\);/);
 });
 
 test('the wire body says who it is for, whom to invite and who approves', () => {
@@ -221,8 +221,18 @@ test('a question step shows no choice until one is pressed, and has no Next', ()
     'no audience row is filled while its step is being asked');
   assert.doesNotMatch(rule, /\n#create-card\[data-mode="(new|import)"\]\s+\.create-mode-pill/,
     'no start row is filled while its step is being asked');
-  // The approval step keeps its default: a setting confirmed with Create.
+  // The approval step starts unanswered too. Its fill is keyed on the
+  // answer, and the answer is empty until a row is pressed.
   assert.ok(rule.includes('#create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"]'));
+  assert.match(SRC, /useState<Approvers \| null>\(null\)/);
+  assert.match(SRC, /useState<Approvals \| null>\(null\)/);
+  assert.match(SRC, /'data-approvers': approvers \?\? '',/);
+  assert.match(SRC, /'data-approvals': approvals \?\? '',/);
+  // Create waits for the answer, and only ever on that step, so the
+  // prerendered button is unchanged.
+  assert.match(SRC, /const approvalMissing = step === 'approve' && isLast\s*\n\s*&& \(approvers == null \|\| \(approvers === 'invited' && approvals == null\)\);/);
+  assert.match(SRC, /disabled=\{quotaBlocksCreation \|\| submitting \|\| approvalMissing\}/);
+  assert.match(SRC, /if \(approvalMissing\) \{\s*\n\s*setError\(approvers == null \? 'Choose who approves changes\.' : 'Choose how many of them must say yes\.'\);/);
   // No Next on either question step; Cancel stays.
   assert.match(CSS, /#create-card:is\(\[data-step="who"\], \[data-step="start"\]\) #create-next \{\n  display: none;\n\}/);
   // A press on a row is the answer: it sets it and unfolds the next step.
@@ -289,7 +299,8 @@ test('Create sends one request at a time and shows it is busy', () => {
   assert.match(submit, /\} finally \{\s*submittingRef\.current = false;\s*setSubmitting\(false\);\s*\}/);
   assert.equal((submit.match(/fetch\('\/api\/apps'/g) || []).length, 1);
   const button = SRC.slice(SRC.indexOf('id="create-submit"'), SRC.indexOf('</Button>', SRC.indexOf('id="create-submit"')));
-  assert.match(button, /disabled=\{quotaBlocksCreation \|\| submitting\}/);
+  // (and, on the approval step, until it is answered)
+  assert.match(button, /disabled=\{quotaBlocksCreation \|\| submitting \|\| approvalMissing\}/);
   assert.match(button, /aria-busy=\{submitting \|\| undefined\}/, 'no aria-busy in the prerender');
   assert.match(button, /\{submitting \? <SpinnerArcIcon /);
   assert.match(button, /\(mode === 'import' \? 'Importing…' : 'Creating…'\)/);

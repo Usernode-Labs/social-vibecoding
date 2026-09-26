@@ -519,8 +519,11 @@ function authRoutes(config) {
         // services/cli-auth.js). Calling connect() directly turned every
         // valid registration into a 500 on those setups.
         ({ userId, codeId } = await withTransaction(pool, async (client) => {
+          // needs_communities_choice: an account made with a code is asked
+          // which communities to join, like an email sign-up (communities,
+          // stage 5; src/services/onboarding.js).
           const { rows: userRows } = await client.query(
-            'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id',
+            'INSERT INTO users (username, password, needs_communities_choice) VALUES ($1, $2, TRUE) RETURNING id',
             [username.trim(), hash]
           );
           const uid = userRows[0].id;
@@ -777,8 +780,9 @@ function authRoutes(config) {
         // renders exactly what it rendered before.
         needsUsernameChoice,
         // Communities, stage 5. TRUE until a new account has answered "What
-        // communities do you want to join?" (set at email sign-up, so no
-        // existing account ever reads TRUE). The web shell presents that
+        // communities do you want to join?" (set by every sign-up path:
+        // email, an activation code, a wallet; no existing account ever
+        // reads TRUE). The web shell presents that
         // screen after the username and terms steps
         // (frontend/src/features/auth/communities-first-run.js).
         needsCommunitiesChoice,
@@ -1701,9 +1705,12 @@ function authRoutes(config) {
       const linkToken = crypto.randomBytes(16).toString('hex');
       const linkExpiresAt = new Date(Date.now() + LINK_TOKEN_TTL_MS);
 
+      // needs_communities_choice: asked which communities to join, like
+      // every other new account (communities, stage 5).
       const { rows } = await pool.query(
-        `INSERT INTO users (username, password, usernode_pubkey, wallet_link_token, wallet_link_expires_at)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        `INSERT INTO users (username, password, usernode_pubkey, wallet_link_token, wallet_link_expires_at,
+                            needs_communities_choice)
+         VALUES ($1, $2, $3, $4, $5, TRUE) RETURNING id`,
         [username.trim(), hash, pubkey.trim(), linkToken, linkExpiresAt]
       );
       const userId = rows[0].id;

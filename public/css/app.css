@@ -12203,8 +12203,8 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
    ("Just me", "Start from scratch") read as a choice made for you, with a
    Next button under it to press, so those two only wear the fill once their
    step has moved on and collapsed to the row that was pressed. The approval
-   step keeps its default filled: it is a setting you confirm with Create,
-   not a question that moves you on. */
+   step starts unanswered too: the component leaves data-approvers and
+   data-approvals empty until a row is pressed, and Create waits for it. */
 #create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill[data-audience-pill="solo"],
 #create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill[data-audience-pill="invited"],
 #create-card:not([data-step="who"])[data-audience="open"]    .create-who-pill[data-audience-pill="open"],

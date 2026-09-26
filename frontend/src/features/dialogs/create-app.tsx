@@ -152,8 +152,8 @@ export function createBody(answers: {
   repoUrl?: string;
   audience: Audience;
   invitees?: string;
-  approvers: Approvers;
-  approvals: Approvals;
+  approvers: Approvers | null;
+  approvals: Approvals | null;
   approvalsN?: number;
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { name: answers.name, audience: answers.audience };
@@ -297,8 +297,11 @@ export function CreateAppDialog() {
   const [audience, setAudience] = useState<Audience>('solo');
   const [mode, setMode] = useState<Mode>('new');
   const [step, setStep] = useState<Step>('who');
-  const [approvers, setApprovers] = useState<Approvers>('anyone');
-  const [approvals, setApprovals] = useState<Approvals>('majority');
+  // Unanswered until pressed, like the first two steps (request #3160 and
+  // its follow-up): nothing in this dialog is chosen for the person. Create
+  // waits for an answer on the approval step (`approvalMissing` below).
+  const [approvers, setApprovers] = useState<Approvers | null>(null);
+  const [approvals, setApprovals] = useState<Approvals | null>(null);
   const [importState, setImportState] = useState<ImportState>('idle');
   const [status, setStatus] = useState<ImportStatus>(IDLE_STATUS);
   const [error, setError] = useState('');
@@ -320,6 +323,12 @@ export function CreateAppDialog() {
   const steps = stepsFor(audience, mode);
   const last = steps[steps.length - 1];
   const isLast = step === last;
+  // The approval step is answered once "Members vote" is pressed, or "People
+  // I pick" and then how many of them must say yes. Until then Create is
+  // dimmed. Only ever true ON that step, so the prerendered button (step
+  // "who") is exactly what it was.
+  const approvalMissing = step === 'approve' && isLast
+    && (approvers == null || (approvers === 'invited' && approvals == null));
 
   const dialog = useDialog('create', {
     onOpen: () => {
@@ -342,8 +351,8 @@ export function CreateAppDialog() {
       applyMode('new');
       setAudience('solo');
       setStep('who');
-      setApprovers('anyone');
-      setApprovals('majority');
+      setApprovers(null);
+      setApprovals(null);
       // Drop the progress view too, so the next open lands on the form.
       // The build carries on server-side either way — closing this is
       // dismissing a report, not cancelling anything.
@@ -548,6 +557,11 @@ export function CreateAppDialog() {
       setError('Give your project a name.');
       return;
     }
+    // Enter in a field can reach here with Create dimmed.
+    if (approvalMissing) {
+      setError(approvers == null ? 'Choose who approves changes.' : 'Choose how many of them must say yes.');
+      return;
+    }
 
     // Guard: in import mode, submit is gated behind a successful check. The
     // server runs the pre-flight again on POST anyway.
@@ -619,8 +633,9 @@ export function CreateAppDialog() {
     'data-import-state': importState,
     'data-step': step,
     'data-audience': audience,
-    'data-approvers': approvers,
-    'data-approvals': approvals,
+    // Empty until answered, so no approval row wears the fill on arrival.
+    'data-approvers': approvers ?? '',
+    'data-approvals': approvals ?? '',
     'data-final': isLast ? 'true' : 'false',
   };
 
@@ -906,7 +921,8 @@ export function CreateAppDialog() {
               pick starts with just the creator as approver, and under it
               "at least N yes votes" is the follow-up. Written into the new
               repository's dapp.json, so it can be voted on later like any
-              other rule there.
+              other rule there. Nothing is picked on arrival, and neither is
+              the follow-up once it shows: Create waits for the answers.
           */}
           <div data-create-step="approve" className="space-y-2" ref={step === 'approve' ? lastStepRef : undefined}>
             <p className={STEP_HEADING}>4. Who approves changes?</p>
@@ -991,7 +1007,8 @@ export function CreateAppDialog() {
               on the two question steps (request #3160): a row there is the
               answer and moves on by itself, and nothing is filled until it
               has been pressed (app.css, "Nothing is chosen while a step is
-              being asked").
+              being asked"). On the approval step Create is dimmed until it
+              is answered (`approvalMissing`).
           */}
           <div className="flex gap-2 pt-1">
             <button
@@ -1026,7 +1043,7 @@ export function CreateAppDialog() {
               size="pill"
               layout="flex"
               disabledStyle="block"
-              disabled={quotaBlocksCreation || submitting}
+              disabled={quotaBlocksCreation || submitting || approvalMissing}
               aria-busy={submitting || undefined}
             >
               {submitting ? <SpinnerArcIcon className="inline-block h-4 w-4 mr-2 -mt-0.5 align-middle animate-spin" aria-hidden="true" /> : null}

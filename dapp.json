@@ -3471,9 +3471,9 @@
     },
     {
       "id": "auth.join-communities-first-run",
-      "name": "After the username and terms, a new account picks the communities it joins, Homeroom first, and the button says how many (communities, stage 5)",
+      "name": "After the username and terms, a new account picks the communities it joins, Homeroom first, the button says how many, and Skip for now sits under it (communities, stage 5)",
       "path": "/?shot=join-communities",
-      "expectSelector": ".un-modal [data-join-communities] [data-join-community=\"homeroom\"][data-checked=\"true\"] ~ [data-join-community=\"city-garden\"][data-checked=\"false\"]",
+      "expectSelector": ".un-modal [data-join-communities]:has([data-join-community=\"homeroom\"][data-checked=\"true\"] ~ [data-join-community=\"city-garden\"][data-checked=\"false\"]) [data-join-communities-save][data-picked=\"2\"] + [data-join-communities-skip]",
       "expectText": "Join 2 communities",
       "visual": true,
       "impact": [
