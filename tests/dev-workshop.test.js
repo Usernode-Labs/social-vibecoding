@@ -5393,6 +5393,35 @@ test('the Needs-you card is marked voted only once the server has the vote (QA 2
   assert.match(castBody, /return true;/);
 });
 
+test('#3052: on a phone a card the viewer can vote on takes the swipe; an issue or a pairless row does not', () => {
+  // The vm the feed renders in has no matchMedia, so this is the layout
+  // below 700px: the one the gesture is for. (The wiring and the gesture's
+  // arithmetic are tests/workshop-swipe-vote.test.js.)
+  const AppView = makeAppView();
+  seed(AppView);
+  const opening = (html, kind) => (html.match(/<section class="dev-ws-item"[^>]*>/g) || [])
+    .filter((s) => s.includes(`data-ws-kind="${kind}"`));
+  const html = workshopHtml(AppView, 'needs');
+  assert.equal(opening(html, 'vote').length, 1);
+  assert.ok(opening(html, 'vote').every((s) => s.includes('data-ws-swipeable=""')),
+    'the proposal owed a vote is swipeable');
+  assert.equal(opening(html, 'claim').length, 2);
+  assert.ok(opening(html, 'claim').every((s) => !s.includes('data-ws-swipeable')),
+    'an issue\'s "Let\'s take it" is not a vote, so its card is not swiped');
+  // Its two hints, once each, hidden from assistive tech: the Vote sheet's
+  // buttons are the way to vote without a gesture.
+  assert.equal((html.match(/<span class="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Yes<\/span>/g) || []).length, 1);
+  assert.equal((html.match(/<span class="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">No<\/span>/g) || []).length, 1);
+
+  // A vote row with no Yes/No pair (a governance item's shape here) is not
+  // one the viewer can vote on from the card, so it takes no gesture either.
+  AppView._cardVoteButtonSpecs = () => [];
+  const bare = workshopHtml(AppView, 'needs');
+  assert.equal(opening(bare, 'vote').length, 1);
+  assert.ok(opening(bare, 'vote').every((s) => !s.includes('data-ws-swipeable')));
+  assert.ok(!bare.includes('dev-ws-swipe-hint'));
+});
+
 test('the ear re-measures on every render, or a grouping switch leaves it stale', () => {
   // A REAL BUG, reported from the preview. `useEarInset` had
   // `[bar, hostRef, earUp]` as its dependencies, none of which change when the

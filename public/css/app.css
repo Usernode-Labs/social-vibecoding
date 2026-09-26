@@ -16074,6 +16074,56 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-chip-blocked { background: var(--state-blocked-bg); color: var(--state-blocked); }
 .dev-ws-chip-info { background: var(--accent-tint); color: var(--accent-wash-ink); }
 
+/* ── Swipe to vote, on a phone (#3052) ─────────────────────────────────
+   workshop.tsx's `useSwipeVote` is the gesture; this is how it looks. A
+   card the viewer can vote on is `[data-ws-swipeable]`, and while a drag is
+   on it carries `--ws-swipe-x` (px, right is Yes), `--ws-swipe-p` (0 to 1,
+   how near the line) and `[data-ws-swipe]` naming the side. Both come off
+   once it is back at rest, so an untouched card has no transform.
+
+   `touch-action: pan-y` hands the vertical drag to the scroller, as ever,
+   and keeps the sideways one for the gesture. Anything narrower would take
+   the pan the feed pages on away from every touch that starts on a card,
+   the trap #1762 fell into on Home.
+
+   The hints are stamps half way down the card, on the side the card is
+   leaving from, where the title and summary are not: the text sits at the
+   top and the middle is the picture or air. Each is laid on the page
+   colour, so it reads the same over a dark capture as over the tint, and it
+   fades in with the drag, never past 0.9. Where motion is unwelcome the
+   card itself does not travel or spring: only the hint says what letting
+   go would do. */
+.dev-ws-swipe-hint {
+  position: absolute; top: 50%; z-index: 2;
+  padding: 3px 14px; border: 2px solid currentColor; border-radius: 12px;
+  font-size: 28px; font-weight: 800; line-height: 1.2; letter-spacing: .05em;
+  text-transform: uppercase;
+  background-color: var(--bg-primary);
+  opacity: 0; pointer-events: none;
+}
+.dev-ws-swipe-yes {
+  left: 20px; color: var(--state-ok);
+  background-image: linear-gradient(var(--state-ok-bg), var(--state-ok-bg));
+  transform: translateY(-50%) rotate(-10deg);
+}
+.dev-ws-swipe-no {
+  right: 90px; color: var(--state-blocked);
+  background-image: linear-gradient(var(--state-blocked-bg), var(--state-blocked-bg));
+  transform: translateY(-50%) rotate(10deg);
+}
+.dev-ws-item[data-ws-swipe="yes"] > .dev-ws-swipe-yes,
+.dev-ws-item[data-ws-swipe="no"] > .dev-ws-swipe-no { opacity: calc(var(--ws-swipe-p, 0) * .9); }
+@media (max-width: 699.98px) {
+  .dev-ws-needs-scroll { overflow-x: hidden; }
+  .dev-ws-item[data-ws-swipeable] { touch-action: pan-y; }
+  .dev-ws-item[data-ws-swiping] { user-select: none; -webkit-user-select: none; }
+}
+@media (max-width: 699.98px) and (prefers-reduced-motion: no-preference) {
+  .dev-ws-item[data-ws-swipe] { transform: translateX(var(--ws-swipe-x, 0px)); }
+  .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) { transition: transform .26s cubic-bezier(.2, .8, .2, 1); }
+  .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) > .dev-ws-swipe-hint { transition: opacity .2s ease; }
+}
+
 /* ── The picture: the two stills, cropped to what changed ──────────────
    The view is the box the still is placed in; the still keeps its natural
    size and is moved and scaled with a transform (workshop.tsx computes the
