@@ -26,7 +26,17 @@
  * rather than first: "we do not know when" is not "just now", and an agent
  * chat that has never been opened would otherwise lead the inbox.
  *
- * ── Two sections, Discord's (#2783) ────────────────────────────────────
+ * ── Channels live in their communities now ────────────────────────────
+ *
+ * Messages is PEOPLE AND AGENTS. The channels — #general and one per app —
+ * were a second section here (#2783, below), and they moved to the hub of
+ * the community each belongs to (features/dev-board/workshop/hub-cards.tsx);
+ * #general is the Homeroom community's. So the merge below draws the chats
+ * section alone, and the Channels filter is gone with the section. A
+ * channel keeps its address (`#messages/app/<slug>`, `#messages/<id>` for
+ * #general), and opening one lights Communities rather than Messages.
+ *
+ * ── Two sections, Discord's (#2783, retired) ──────────────────────────
  *
  * The clock still orders the TOP of the list — direct messages, group chats
  * and agents, which are the threads a person is IN — but the channels come
@@ -118,7 +128,6 @@ export type InboxFilter = 'all' | 'people' | 'channels' | 'agents';
 export const INBOX_FILTERS: ReadonlyArray<readonly [InboxFilter, string]> = [
   ['all', 'All'],
   ['people', 'People'],
-  ['channels', 'Channels'],
   ['agents', 'Agents'],
 ];
 
@@ -183,25 +192,12 @@ export function buildInbox(input: {
   filter: InboxFilter;
 }): InboxEntry[] {
   const chats: InboxEntry[] = [];
-  const rooms: InboxEntry[] = [];
-  const apps: InboxEntry[] = [];
-  const moreApps: InboxEntry[] = [];
   for (const item of input.conversations) {
-    if (item.kind === 'channel') {
-      if (admits(input.filter, 'channel')) {
-        rooms.push({ key: `channel:${item.id}`, kind: 'channel', section: 'channels', at: item.lastActivityAt });
-      }
-    } else if (admits(input.filter, 'person')) {
+    // #general is the Homeroom community's channel, drawn on its hub; and
+    // an app's channel (`input.discussions`) is drawn on its own hub.
+    if (item.kind === 'channel') continue;
+    if (admits(input.filter, 'person')) {
       chats.push({ key: `person:${item.id}`, kind: 'person', section: 'chats', at: item.lastActivityAt });
-    }
-  }
-  if (admits(input.filter, 'app')) {
-    for (const item of input.discussions) {
-      if (item.section === 'more') {
-        moreApps.push({ key: `app:${item.slug}`, kind: 'app', section: 'channels', at: item.lastAt, more: true });
-      } else {
-        apps.push({ key: `app:${item.slug}`, kind: 'app', section: 'channels', at: item.lastAt });
-      }
     }
   }
   if (admits(input.filter, 'agent')) {
@@ -227,5 +223,5 @@ export function buildInbox(input: {
   // Stable within a timestamp: `sort` is stable in every engine this ships
   // to, so two rows that happened in the same second keep the order their
   // own source gave them — which for conversations is the server's.
-  return [...chats.sort(byClock), ...rooms, ...apps.sort(byClock), ...moreApps.sort(byClock)];
+  return chats.sort(byClock);
 }

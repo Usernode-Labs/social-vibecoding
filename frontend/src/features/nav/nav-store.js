@@ -90,6 +90,9 @@ export const TAB_FOR_SCREEN = Object.freeze({
  *   prerendered document shows.
  * @property {number} messages  Unread conversations, for the Messages tab's
  *   badge. Zero renders no badge element at all, which is the prerender.
+ * @property {number} communities  Channels of your communities with unread
+ *   messages (#general among them, as Homeroom's), for the Communities tab's
+ *   badge. Written by the Messages store, which already loads both lists.
  * @property {string|null} viewer  The signed-in user's username, which the
  *   fifth tab shows in place of "Me" (#2760), or null while nobody is known.
  *   Null is the prerender: the document is built in Node with no session, so
@@ -120,6 +123,7 @@ const INITIAL = {
   screen: null,
   tab: null,
   messages: 0,
+  communities: 0,
   viewer: null,
   peek: false,
   peekOut: false,

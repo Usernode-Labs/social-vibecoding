@@ -50,13 +50,18 @@ test('the hero draws its identity before the read, and the rest only after it', 
   assert.doesNotMatch(pending, /data-ws-community=""|Join|data-ws-community-rule/,
     'nothing that depends on membership is drawn before it is known');
   const src = read(CARD);
-  assert.match(src, /useEffect\(\(\) => \{\s*setData\(null\);\s*void load\(\);/);
+  // ONE READ FOR THE HUB: the hero and the hub's cards share the community
+  // record, and each mount asks for a fresh copy unless one is on its way.
+  assert.match(src, /const data = useCommunity\(slug\);/);
+  assert.match(src, /if \(slug && !inflight\.has\(slug\)\) void reloadCommunity\(slug\);/);
 });
 
-test('the channel opens at its old address; Join asks under its button and joins through offerJoin', () => {
+test('the channel is a hub card at its old address; Join asks under its button and joins through offerJoin', () => {
   const src = read(CARD);
-  assert.match(src, /href=\{`#messages\/app\/\$\{encodeURIComponent\(slug\)\}`\}/,
-    'the channel is the same room Messages lists, at the same address');
+  const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
+  assert.doesNotMatch(src, /#messages\/app\//, 'the hero no longer carries a channel row');
+  assert.match(hub, /const href = channel\.href \|\| `#messages\/app\/\$\{encodeURIComponent\(slug\)\}`;/,
+    'the hub\'s channel card opens the same room, at the same address');
   assert.match(src, /await offerJoin\(\{ code: 'join_required', app: \{ slug, name: name \|\| data\.name \|\| slug \} \}\)/,
     'the button asks the question every refusal asks, through the same function');
   assert.match(src, /registerJoinAnchor\(slug, \{/,
@@ -77,14 +82,15 @@ test('the channel opens at its old address; Join asks under its button and joins
     'Invite (Members & approvals) is offered to exactly whom the "+" menu offers it');
 });
 
-test('the hero leads the status tab, above where the app is', () => {
+test('the hero leads the hub, above its channel, Needs you and members', () => {
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const tab = lander.indexOf("{tab === 'status' ? (");
   const hero = lander.indexOf('<CommunityCard\n          slug={slug}');
-  const dash = lander.indexOf('data-ws-dashboard=""');
-  const mine = lander.indexOf('data-ws-mine=""');
-  assert.ok(tab > 0 && hero > tab && dash > hero && mine > dash,
-    'first on the status tab, then the dashboard, then your own work');
+  const channel = lander.indexOf('<ChannelCard');
+  const needs = lander.indexOf('<NeedsCard');
+  const members = lander.indexOf('<MembersCard');
+  assert.ok(tab > 0 && hero > tab && channel > hero && needs > channel && members > needs,
+    'first on the hub, then the channel, what needs you, and who is here');
   assert.match(lander, /<CommunityCard\s+slug=\{slug\}\s+name=\{app\.name \|\| undefined\}\s+iconUrl=\{app\.iconUrl\}\s+iconEmoji=\{app\.iconEmoji\}/,
     'with the identity the header chip draws');
 });

@@ -3361,7 +3361,31 @@ function appRoutes(config) {
       // collab-private app but not talk in it gets no row for it rather
       // than a preview of a room they cannot enter.
       const canChat = await appAccess.checkAppAccess(pool, app, req.user, 'collab');
-      const channel = canChat ? await communities.channelSummary(pool, app.id, req.user?.id) : null;
+      // THE HOMEROOM COMMUNITY'S CHANNEL IS #general. The platform's own
+      // project talks in the platform's one channel, which every signed-in
+      // person can read; its old project discussion stays reachable as
+      // read-only history (`archive_href`). Any other project's channel is
+      // its own discussion, at its own address.
+      let channel = null;
+      if (app.slug === config.selfAppSlug) {
+        const general = await communities.generalChannelSummary(pool, req.user?.id);
+        if (general) {
+          const { conversation_id: conversationId, ...summary } = general;
+          channel = {
+            ...summary,
+            href: `#messages/${conversationId}`,
+            handle: 'general',
+            archive_href: `#messages/app/${encodeURIComponent(app.slug)}`,
+          };
+        }
+      } else if (canChat) {
+        channel = {
+          ...(await communities.channelSummary(pool, app.id, req.user?.id)),
+          href: `#messages/app/${encodeURIComponent(app.slug)}`,
+          handle: null,
+        };
+      }
+      const activity = await communities.activitySummary(pool, app.id);
       const gov = await governance.getGovernance(pool, app.id);
       const electorate = await governance.getElectorate(pool, app.id, gov);
       const required = gov.approvalsRequired != null
@@ -3376,6 +3400,7 @@ function appRoutes(config) {
         ...membership,
         members,
         channel,
+        activity,
         approval: {
           policy: gov.approverPolicy,
           approvals_required: gov.approvalsRequired,

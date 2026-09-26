@@ -45,11 +45,17 @@ export interface GeneralChatProps {
    */
   introAppName: string | null;
   readOnly: boolean;
+  /**
+   * What the read-only bar says, when it is not the usual "only
+   * collaborators can post": Homeroom's old project discussion, kept as
+   * history since #general became the Homeroom community's channel.
+   */
+  notice?: string | null;
   /** GC_MAX_MESSAGE_LEN, passed through so the module owns the number. */
   maxLength: number;
 }
 
-export function GeneralChat({ introAppName, readOnly, maxLength }: GeneralChatProps) {
+export function GeneralChat({ introAppName, readOnly, notice, maxLength }: GeneralChatProps) {
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-session">
       <div className="gc-tab-body flex-1 flex min-h-0">
@@ -83,8 +89,8 @@ export function GeneralChat({ introAppName, readOnly, maxLength }: GeneralChatPr
           */}
           <div className={`shrink-0 px-3 pt-1 pb-2 ${SAFE_BAR}`}>
             {readOnly ? (
-              <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center">
-                You&#39;re viewing this app&#39;s dev space read-only. Only collaborators can post.
+              <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center" data-gc-readonly-notice="">
+                {notice || 'You\u2019re viewing this app\u2019s dev space read-only. Only collaborators can post.'}
               </div>
             ) : (
               <>

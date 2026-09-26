@@ -7,6 +7,7 @@ const { getPool } = require('../db/pool');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const log = require('../services/logger');
 const conversations = require('../services/conversations');
+const communities = require('../services/communities');
 const messageBookmarks = require('../services/message-bookmarks');
 const attachments = require('../services/attachments');
 const {
@@ -617,6 +618,10 @@ function conversationRoutes(config) {
         const reply = demoThreadReply(req.user, id, conversations.strictId(threadRoot), req.body?.content);
         return reply ? res.status(201).json({ message: reply, demo: true }) : sendNotFound(res);
       }
+      // #general is the Homeroom community's channel: posting in it, a reply
+      // thread included, is for that community's members (reading is not).
+      const join = await communities.generalNeedsJoin(pool, id, req.user, config?.selfAppSlug);
+      if (join) return res.status(403).json(join);
       const result = await conversations.sendMessage(pool, req.user, id, req.body || {});
       if (result?.error) return sendMessageError(res, result.error);
       if (!result) return sendNotFound(res);

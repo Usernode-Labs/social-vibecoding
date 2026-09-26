@@ -98,7 +98,7 @@ async function goToApp(slug: string): Promise<void> {
  */
 function goToAllApps(): void {
   appScopeStore.set({ open: false });
-  window.location.hash = '#workshop';
+  window.location.hash = '#communities';
 }
 
 const CHIP = 'inline-flex items-center gap-2 max-w-full h-9 pl-2 pr-2.5 rounded-full '

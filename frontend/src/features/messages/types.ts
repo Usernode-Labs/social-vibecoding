@@ -224,6 +224,8 @@ export interface DiscussionContext {
   name: string;
   /** `can_collaborate === false` — the composer does not render. */
   readOnly: boolean;
+  /** Homeroom's old project discussion, kept read-only (#general is its channel now). */
+  archived?: boolean;
   /**
    * The app's artwork, for the pane header's tile when the inbox has no row
    * to take it from (a discussion opened from a link by a non-member). The

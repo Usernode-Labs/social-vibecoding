@@ -41,10 +41,11 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   assert.match(html, /id="platform-tabs-badge"/, 'the tab is what can carry a count');
   // The bar's order, pinned as a declared check. `+` rather than `~`: the
   // five tabs are adjacent siblings, with only the desktop rail's Recents
-  // (#2802) between Workshop and Me — it is never drawn on the phone's bar.
+  // (#2802) between Messages and Me — it is never drawn on the phone's bar.
+  // Communities (key `workshop`) sits in the middle, before Messages.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages'
-      + ' + #platform-tab-workshop + #platform-recents + #platform-tab-me'),
+    === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-workshop[href="#communities"]'
+      + ' + #platform-tab-messages + #platform-recents + #platform-tab-me'),
   'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   // Membership INSIDE the array literal. The previous form,
@@ -62,7 +63,7 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,1400}navigateToMessages/);
 });
 
-test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
+test('an app\'s channel keeps its address here, though it is listed on its hub', () => {
   // #2718 review. The row was listed in this inbox and addressed as
   // `#app/<slug>/dev/chat` — a different SCREEN ROOT — so a row in this list
   // opened a full-window takeover with the app view's own back slot instead
@@ -77,14 +78,15 @@ test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
   // #2813 added the agent thread as a third argument, last in precedence;
   // #2387 the thread/link extras as a fourth.
   assert.match(app, /navigateToMessages\(conversationId, appSlug, agent, extras\)/);
-  // The ROW points here, not at the app view.
-  assert.match(screen, /href=\{`#messages\/app\/\$\{encodeURIComponent\(discussion\.slug\)\}`\}/);
+  // The hub's channel card points here, not at the app view.
+  assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'),
+    /const href = channel\.href \|\| `#messages\/app\/\$\{encodeURIComponent\(slug\)\}`;/);
   // ONE THREAD IS OPEN: naming an app clears the conversation and the other
   // way round, so the pane never holds half of each.
   assert.match(store, /const nextSlug = nextId \? null : validSlug\(appSlug\);/);
   // The pane is a HOST for features/group-chat, not a second transcript.
   assert.match(screen, /function AppDiscussionThread/);
-  assert.match(screen, /renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly \}\)/);
+  assert.match(screen, /renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly, archived \}\)/);
   // …and it drops BOTH portals on the way out, the transcript's first.
   assert.match(screen, /unmountTranscript\?\.\(list\)[\s\S]{0,120}unmountGeneralChat\?\.\(el\)/);
   // The list collapses for a discussion exactly as it does for a thread.

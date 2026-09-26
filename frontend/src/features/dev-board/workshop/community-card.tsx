@@ -33,12 +33,9 @@
  *   so ("to merge", not "exactly") because opposition raises it and the
  *   quiet-week path can merge below it (services/active-users.js).
  *
- *   WHERE THEY TALK. The channel: the app's general discussion, the same
- *   room Messages lists under Channels (features/messages/inbox.ts), at the
- *   same address, `#messages/app/<slug>`. It is listed in both places for
- *   now: Messages is where people already look for it, and this is where a
- *   newcomer finds it. A viewer who may not talk here (a view-public,
- *   collab-private app) gets no row rather than a door that refuses them.
+ *   WHERE THEY TALK is no longer a row here. The channel has a card of its
+ *   own on the hub (./hub-cards.tsx), with its last messages, because it
+ *   lives on the hub now rather than in Messages.
  *
  * Joining is what lets you take part here. The button asks the question every
  * join_required refusal asks, through lib/join-required.ts's offerJoin, and
@@ -53,13 +50,12 @@
  * where nothing was asked for.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { CheckIcon, HashIcon, LockIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
+import { CheckIcon, LockIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
-import { agoStamp } from '../../../lib/timestamp';
 
 type Audience = 'open' | 'invited' | 'solo';
 
@@ -79,7 +75,17 @@ export type CommunityPayload = {
     last_at: string | null;
     last_by: string | null;
     unread_count: number;
+    /** The newest few messages, oldest first, for the hub's preview. */
+    recent?: Array<{ id: number; content: string; created_at: string; by: string | null }>;
+    /** Where Open goes: the app's channel, or #general for Homeroom's. */
+    href?: string;
+    /** `general` on Homeroom's own hub, whose channel #general is. */
+    handle?: string | null;
+    /** Homeroom's earlier project discussion, kept read-only. */
+    archive_href?: string | null;
   } | null;
+  /** Who has been around lately, for Members & activity. */
+  activity?: { active_week: number; shipped_month: number } | null;
   approval: {
     policy: 'anyone' | 'invited';
     approvals_required: number | null;
@@ -148,6 +154,42 @@ async function readCommunity(slug: string): Promise<CommunityPayload | null> {
   }
 }
 
+/*
+ * ONE READ FOR THE WHOLE HUB. The hero, the channel card and Members &
+ * activity all draw from GET /api/apps/:slug/community, so they share this
+ * cache rather than asking three times. Each consumer's mount asks for a
+ * fresh copy unless one is already on its way, and a failed read keeps the
+ * last good answer rather than blanking the page.
+ */
+const communities = new Map<string, CommunityPayload>();
+const inflight = new Map<string, Promise<void>>();
+const listeners = new Set<() => void>();
+
+export function reloadCommunity(slug: string): Promise<void> {
+  if (!slug) return Promise.resolve();
+  const pending = readCommunity(slug).then((next) => {
+    inflight.delete(slug);
+    if (next && next.slug === slug) {
+      communities.set(slug, next);
+      for (const listener of [...listeners]) listener();
+    }
+  });
+  inflight.set(slug, pending);
+  return pending;
+}
+
+export function useCommunity(slug: string): CommunityPayload | null {
+  const [, bump] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    listeners.add(bump);
+    return () => { listeners.delete(bump); };
+  }, []);
+  useEffect(() => {
+    if (slug && !inflight.has(slug)) void reloadCommunity(slug);
+  }, [slug]);
+  return slug ? communities.get(slug) || null : null;
+}
+
 export function CommunityCard({ slug, name, iconUrl, iconEmoji }: {
   slug: string;
   /** The app's identity as the page already knows it (improveStore), so the
@@ -156,7 +198,7 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji }: {
   iconUrl?: string | null;
   iconEmoji?: string | null;
 }) {
-  const [data, setData] = useState<CommunityPayload | null>(null);
+  const data = useCommunity(slug);
   const [busy, setBusy] = useState(false);
   // The open Join question, if one is: its answer goes back to whoever asked
   // (lib/join-required.ts's offerJoin), which does the joining.
@@ -165,15 +207,7 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji }: {
   const joinRef = useRef<HTMLButtonElement | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
 
-  const load = useCallback(async () => {
-    const next = slug ? await readCommunity(slug) : null;
-    setData((prev) => (next && next.slug === slug ? next : (prev && prev.slug === slug ? prev : null)));
-  }, [slug]);
-
-  useEffect(() => {
-    setData(null);
-    void load();
-  }, [load]);
+  const load = () => reloadCommunity(slug);
 
   // THE ANCHOR. While this card shows a Join button, the question for this
   // app is asked here. `visible` is what stops a card on a screen that is
@@ -267,8 +301,6 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji }: {
   // render, which is safe because this card has no server render — it is
   // null until its fetch has answered in the browser.
   const showsMembers = !!(window as any).AppView?._plusMenuShowsMembers?.();
-  const channel = data.channel;
-  const when = channel?.last_at ? agoStamp(channel.last_at) : null;
   const displayName = name || data.name || slug;
   const tileApp = { slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null };
 
@@ -377,30 +409,6 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji }: {
       <p className="dev-ws-hero-line" data-ws-community-rule="">
         {approvalLine(data.approval)}
       </p>
-      {channel ? (
-        <a
-          href={`#messages/app/${encodeURIComponent(slug)}`}
-          className="dev-ws-hero-channel"
-          data-ws-community-channel=""
-        >
-          <HashIcon className="w-4 h-4 shrink-0 text-zinc-500" aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate">
-            <span className="font-semibold">Channel</span>
-            <span className="text-zinc-500 dark:text-zinc-400">
-              {' · '}
-              {channel.last_message
-                ? `${channel.last_by ? `@${channel.last_by}: ` : ''}${channel.last_message}`
-                : 'No messages yet'}
-            </span>
-          </span>
-          {when ? <time className="shrink-0 text-xs text-zinc-500" dateTime={channel.last_at || undefined} title={when.title}>{when.text}</time> : null}
-          {channel.unread_count > 0 ? (
-            <span className="messages-unread" aria-label={`${channel.unread_count} unread`}>
-              {channel.unread_count > 99 ? '99+' : channel.unread_count}
-            </span>
-          ) : null}
-        </a>
-      ) : null}
     </section>
   );
 }

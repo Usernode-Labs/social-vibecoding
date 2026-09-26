@@ -340,7 +340,6 @@ const ADDED_IDS = {
   // #messages-filter-apps left this map in #2783: "Apps" became "Channels"
   // (#messages-filter-channels, below). It was only ever an ADDED id, so it
   // simply leaves, as #workshop-scope did.
-  'messages-filter-channels': '#2783: the Apps filter, renamed and widened. The inbox is sectioned the way Discord\'s is — the chats (people, groups and agents) on top, then the CHANNELS: #general, a platform-wide room every user is in, and one channel per app the viewer is a member of, including apps nobody has spoken in yet. This filter shows that second section alone. Membership rather than visibility is still the line: a public app you have never joined is something you can go and read, not a channel in your list.',
   'messages-filter-agents': '#2718: the viewer\'s agent chats, read from features/global-chat\'s own store rather than copied into this one — that list is already loaded, merged on every thread event and invalidated by the chat itself. Gated on the same two flags the Improve panel\'s list is, so a shell with the feature off shows no Agents rows.',
   'messages-new': '#2718, then #2778: the "+" at the filter strip\'s trailing end. #2718\'s review took it off the strip because ONE control saying "new" could only mean one of the kinds the inbox holds, and replaced it with a row of compose buttons under the strip (#messages-compose, retired below). #2778 brings it back as a CHOICE: pressing it opens a small popover — the vote picker\'s placement and dismissal, shared through lib/anchor-popover.ts and lib/popover-dismiss.ts — offering a direct message, a group chat or an agent chat, so it no longer has to guess. On touch the choice is the kit\'s action sheet. The popover (#messages-new-menu) renders only once pressed, so it is not in the prerendered document and not in this map.',
   // ── #2718: the Workshop gets a scope, three tabs and a plus ──────
@@ -926,6 +925,10 @@ const ADDED_IDS = {
   'side-panel-divider': '#2886: the divider between the running app and the panel, as a handle on the panel\'s left edge — a vertical `separator` that drags (or takes the arrow keys, Home and End) to share the window differently, keeping at least 320px of panel and 480px of app, remembers the chosen width on this device, and resets to the default on a double-click. Ships with no value: the width is read in an effect, never in the first render.',
   // ── The create dialog asks what the project is ──────────────────────
   'app-description': 'The create dialog\'s optional "What is it?" line, under Project name in the same card (#create-name-block). A project made new sends it as `description`, which the template writes into the new repository\'s dapp.json — the line the join screen, Discover and the project\'s page show. Hidden for an import (app.css), whose own dapp.json describes it.',
+  // The channels moved out of Messages onto their communities' hubs, so the
+  // Channels filter (#2783, added above as messages-filter-channels) is gone
+  // with the section it narrowed to; it was never in the baseline.
+  'platform-tabs-badge-communities': 'The Communities tab\'s quiet count: how many of your communities\' channels (#general, Homeroom\'s, among them) have unread messages. The channels live on each community\'s hub now rather than in Messages, so the count moved with them. Rendered always, hidden at zero, for the same reason as #platform-tabs-badge.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

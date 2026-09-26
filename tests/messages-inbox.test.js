@@ -45,7 +45,7 @@ const inbox = loadTsx('frontend/src/features/messages/inbox.ts');
 
 const at = (iso) => iso;
 
-test('one clock orders the chats, and the channels follow as their own section', () => {
+test('one clock orders the chats, and the channels are not listed here: they live on their hubs', () => {
   const merged = inbox.buildInbox({
     conversations: [
       { id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') },
@@ -58,11 +58,11 @@ test('one clock orders the chats, and the channels follow as their own section',
     agents: [{ id: 'a1', updatedAt: at('2026-01-01T00:00:00Z') }],
     filter: 'all',
   });
-  // A channel with newer activity does not jump over a DM: it is a room you
-  // visit, not a conversation waiting on you. #general leads the channels,
-  // then the apps newest first, and one nobody has spoken in sits last.
-  assert.deepEqual(merged.map((e) => e.key), ['person:1', 'agent:a1', 'channel:9', 'app:notes', 'app:quiet']);
-  assert.deepEqual(merged.map((e) => e.section), ['chats', 'chats', 'channels', 'channels', 'channels']);
+  // Messages is people and agents. #general is the Homeroom community's
+  // channel and each app's channel is its own community's, drawn on the
+  // hub (features/dev-board/workshop/hub-cards.tsx), so neither is a row.
+  assert.deepEqual(merged.map((e) => e.key), ['person:1', 'agent:a1']);
+  assert.deepEqual(merged.map((e) => e.section), ['chats', 'chats']);
 });
 
 test('a row with no timestamp sorts last, not first', () => {
@@ -89,25 +89,22 @@ test('an agent chat falls back to when it was created', () => {
 });
 
 test('each filter admits exactly its own kind, and All admits every one', () => {
-  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[0]), ['all', 'people', 'channels', 'agents']);
-  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[1]), ['All', 'People', 'Channels', 'Agents'],
-    '"Apps" is "Channels" now (#2783)');
-  for (const kind of ['person', 'channel', 'app', 'agent']) {
+  // The Channels filter went with the channels (they live on their hubs).
+  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[0]), ['all', 'people', 'agents']);
+  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[1]), ['All', 'People', 'Agents']);
+  for (const kind of ['person', 'agent']) {
     assert.equal(inbox.admits('all', kind), true, `all admits ${kind}`);
   }
   assert.equal(inbox.admits('people', 'person'), true);
   assert.equal(inbox.admits('people', 'app'), false);
   assert.equal(inbox.admits('people', 'channel'), false, '#general is not a person');
-  assert.equal(inbox.admits('channels', 'app'), true);
-  assert.equal(inbox.admits('channels', 'channel'), true);
-  assert.equal(inbox.admits('channels', 'person'), false);
   assert.equal(inbox.admits('agents', 'agent'), true);
   assert.equal(inbox.admits('agents', 'person'), false);
-  const channelsOnly = inbox.buildInbox({
+  const people = inbox.buildInbox({
     conversations: [{ id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') }, { id: 9, kind: 'channel', lastActivityAt: null }],
-    discussions: [{ slug: 'notes', lastAt: null }], agents: [], filter: 'channels',
+    discussions: [{ slug: 'notes', lastAt: null }], agents: [], filter: 'people',
   });
-  assert.deepEqual(channelsOnly.map((e) => e.key), ['channel:9', 'app:notes']);
+  assert.deepEqual(people.map((e) => e.key), ['person:1'], 'a channel is no one\'s person row');
 });
 
 test('agent chats are read, not copied', () => {
@@ -243,10 +240,11 @@ test('the route is registered after the workshop one', () => {
 
 test('the filter row ships in the prerendered document, with the plus at its end', () => {
   for (const id of ['messages-filters', 'messages-filter-all', 'messages-filter-people',
-    'messages-filter-channels', 'messages-filter-agents', 'messages-new']) {
+    'messages-filter-agents', 'messages-new']) {
     assert.ok(HTML.includes(`id="${id}"`), `#${id} is in the shipped shell`);
   }
-  for (const id of ['messages-filter-apps', 'messages-compose', 'messages-new-agent']) {
+  // The Channels filter left with the channels, which live on their hubs.
+  for (const id of ['messages-filter-apps', 'messages-filter-channels', 'messages-compose', 'messages-new-agent']) {
     assert.ok(!HTML.includes(`id="${id}"`), `#${id} is retired`);
   }
   assert.match(HTML, /id="messages-filter-agents"[^<]*>Agents<\/button><\/div><button[^>]*id="messages-new"/,
@@ -263,8 +261,9 @@ test('one row shape per kind; the channels are headed rather than pilled', () =>
   assert.doesNotMatch(SCREEN, /<KindPill kind="app" \/>/, 'a section heading says it once');
   assert.match(SCREEN, /<KindPill kind="agent" \/>/, 'an agent among the people still says so');
   assert.match(SCREEN, /chats: 'Chats',\s*channels: 'Channels',/);
-  assert.match(SCREEN, /sectionRuns\(shown, snap\.filter === 'all'\)/,
-    'a heading over each section, under All only');
+  // ONE LIST, unheaded: the channels moved to their hubs, which leaves the
+  // chats alone, and a lone "Chats" heading would label nothing.
+  assert.match(SCREEN, /sectionRuns\(shown, false\)/, 'no heading over the one list');
   assert.match(SCREEN, /<div key=\{`card-\$\{run\.section\}`\} className="messages-section-card" data-inbox-card=\{run\.section\}>/,
     'and each section\'s rows in a card of their own, so the last row of a section drops its separator');
   const e = (section, more) => ({ section, more });
@@ -426,7 +425,7 @@ test('an app channel opened in Messages mounts its chat after React commits, so 
   // effect, the portal could not flush and nothing typed there ever sent.
   const thread = SCREEN.slice(SCREEN.indexOf('function AppDiscussionThread'));
   const body = thread.slice(0, thread.indexOf('\n}\n'));
-  assert.match(body, /const timer = window\.setTimeout\(\(\) => \{\s*if \(live\) view\?\.renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly \}\);\s*\}, 0\);/);
+  assert.match(body, /const timer = window\.setTimeout\(\(\) => \{\s*if \(live\) view\?\.renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly, archived \}\);\s*\}, 0\);/);
   assert.match(body, /live = false;\s*window\.clearTimeout\(timer\);/);
 });
 
@@ -498,12 +497,12 @@ test('bug h: the discussion context carries the app artwork, for a header with n
     store.route(null, 'karaoke-77aa');
     await settle(); await settle(); await settle();
     assert.deepEqual({ ...context() }, {
-      slug: 'karaoke-77aa', name: 'Karaoke Night', readOnly: true, iconUrl: null, iconEmoji: '🎤',
+      slug: 'karaoke-77aa', name: 'Karaoke Night', archived: false, readOnly: true, iconUrl: null, iconEmoji: '🎤',
     });
     store.route(null, 'garden-12ab');
     await settle(); await settle(); await settle();
     assert.deepEqual({ ...context() }, {
-      slug: 'garden-12ab', name: 'Pixel Garden', readOnly: false, iconUrl: '/app-icons/31', iconEmoji: null,
+      slug: 'garden-12ab', name: 'Pixel Garden', archived: false, readOnly: false, iconUrl: '/app-icons/31', iconEmoji: null,
     });
   } finally {
     globalThis.window = saved.window;

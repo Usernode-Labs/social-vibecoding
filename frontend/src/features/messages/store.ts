@@ -123,7 +123,7 @@ function browserDemo(): boolean {
 function publish(next: Partial<InternalState>): void {
   state = { ...state, ...next, revision: state.revision + 1 };
   for (const listener of [...listeners]) listener();
-  if (next.conversations) syncTabBadge();
+  if (next.conversations || next.discussions) syncTabBadge();
 }
 
 /**
@@ -137,7 +137,31 @@ function publish(next: Partial<InternalState>): void {
  * common case — a reload with the same unread rows — notifies no one.
  */
 function syncTabBadge(): void {
-  navStore.set({ messages: state.conversations.filter((item) => item.unreadCount > 0).length });
+  // A CHANNEL IS A COMMUNITY'S, NOT MESSAGES'. #general is Homeroom's
+  // channel and every project's channel lives on its hub, so a channel with
+  // something unread counts on the Communities tab and Messages counts the
+  // people and group chats alone. Only your own communities' channels count
+  // there — the `more` rows are apps you were merely active in.
+  navStore.set({
+    messages: state.conversations
+      .filter((item) => item.kind !== 'channel' && item.unreadCount > 0).length,
+    communities: state.conversations.filter((item) => item.kind === 'channel' && item.unreadCount > 0).length
+      + state.discussions.filter((item) => item.section !== 'more' && (item.unreadCount || 0) > 0).length,
+  });
+}
+
+/**
+ * Unread messages in a project's channel, for its row on the Communities
+ * screen: the app's own discussion, or #general for Homeroom's own row
+ * (`selfHosted`), whose channel it is. Zero when nothing is known.
+ */
+export function channelUnread(slug: string, selfHosted = false): number {
+  if (selfHosted) {
+    const general = state.conversations.find((item) => item.kind === 'channel' && item.channelKey === 'general');
+    return general ? general.unreadCount || 0 : 0;
+  }
+  const row = state.discussions.find((item) => item.slug === slug);
+  return row ? row.unreadCount || 0 : 0;
 }
 
 function subscribe(listener: Listener): () => void {
@@ -704,7 +728,10 @@ export async function loadDiscussion(slug: string): Promise<void> {
       discussionContext: {
         slug: app.slug,
         name: app.name || app.slug,
-        readOnly: app.can_collaborate === false,
+        // Homeroom's own row: its old project discussion, read-only since
+        // #general became the Homeroom community's channel.
+        archived: app.self_hosted === true,
+        readOnly: app.can_collaborate === false || app.self_hosted === true,
         // The header tile's artwork when the inbox has no row for this app.
         // `/api/apps/:slug` sends the raw row, so the image is its
         // `icon_image_id` at the platform's own `/app-icons/<id>` address —
@@ -742,6 +769,10 @@ export function isOpen(): boolean {
 export function handleBack(): boolean {
   const onThread = !!state.route.conversationId || !!state.route.appSlug || !!state.route.agent;
   if (!state.route.open || !onThread || !isMobile()) return false;
+  // A CHANNEL is not a level of this list: it is its community's room, and
+  // its way back is that community's hub, which the header's arrow names
+  // (syncChrome). Declining leaves the press to follow it.
+  if (!state.route.threadRootId && channelHub()) return false;
   // #2387: on a phone a reply thread is a level of its own over the
   // conversation, so Back closes it first.
   if (state.route.threadRootId) {
@@ -767,9 +798,47 @@ export function isMobile(): boolean {
   catch { return false; }
 }
 
+/**
+ * The hub a CHANNEL on screen belongs to, or null when the route is not a
+ * channel. A project's channel (`#messages/app/<slug>`) is its own hub's;
+ * #general (a conversation of kind `channel`) is the Homeroom community's,
+ * whose slug the platform target knows once the shell has read it.
+ *
+ * Channels live in their communities now, not in Messages: they are not
+ * listed here, and one that is open lights the Communities tab and hangs off
+ * its hub rather than off this list.
+ */
+export function channelHub(): string | null {
+  if (state.route.appSlug) return `#app/${encodeURIComponent(state.route.appSlug)}/workshop`;
+  const id = state.route.conversationId;
+  if (!id) return null;
+  const row = state.active && state.active.id === id
+    ? state.active
+    : state.conversations.find((item) => item.id === id) || null;
+  if (!row || row.kind !== 'channel') return null;
+  const platform = (typeof window !== 'undefined'
+    ? (window as unknown as { PlatformTarget?: { slug?: () => string | null } }).PlatformTarget?.slug?.()
+    : null) || null;
+  return platform ? `#app/${encodeURIComponent(platform)}/workshop` : '#communities';
+}
+
 export function syncChrome(): void {
   const app = typeof window !== 'undefined' ? window.App : undefined;
   if (!app) return;
+  // WHICH TAB IS LIT follows what is open: a channel is its community's, so
+  // Communities; anything else here is Messages'. Only while this screen is
+  // the one on screen — the router lights the tab for every other.
+  const hub = channelHub();
+  if (navStore.get().screen === 'messages-screen') {
+    navStore.set({ tab: hub ? 'workshop' : 'messages' });
+  }
+  if (hub && !(isMobile() && state.route.threadRootId)) {
+    app.setBackIcon?.('arrow', hub);
+    app.setHeaderTitle?.(state.route.appSlug
+      ? state.discussionContext?.name || 'Channel'
+      : `#${chromeTitle(state.active)}`);
+    return;
+  }
   // A DISCUSSION IS A THREAD OF THIS SCREEN (#2718 review), so it answers the
   // chrome the same way: the list's chevron on a phone, nothing on a desktop
   // where the list is still beside it. It used to be a route into #app-view,

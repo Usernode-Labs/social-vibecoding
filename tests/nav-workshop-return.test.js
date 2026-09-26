@@ -215,7 +215,7 @@ test('a card that is gone falls back to the selector, quietly', async () => {
   assert.equal(r.App._abandonWorkshopResume(), true);
   assert.equal(r.App.currentApp, null);
   assert.equal(r.App._inWorkshop, true, 'on the selector');
-  assert.equal(r.context.location.hash, '#workshop');
+  assert.equal(r.context.location.hash, '#communities');
   assert.equal(r.storage.has(KEY), false);
   assert.deepEqual(r.errors, []);
   const view = read('public/js/app-view.js');
