@@ -52,6 +52,7 @@ function makeAppView(opts) {
   const published = [];
   const sandbox = {
     console,
+    URL,
     relTime: () => 'just now',
     escapeHtml: (s) => String(s == null ? '' : s),
     escapeAttr: (s) => String(s == null ? '' : s),
@@ -435,11 +436,24 @@ test('Not now resolves null', async () => {
 // These drive the real handler over the real dialog, so the assertion is
 // "the card is published", not "the source text still says so".
 
-/** An owned frame in the stub document, posting back into `posted`. */
-function ownedFrame(sandbox, id, posted) {
+const APP_ORIGIN = 'https://recipe-bot.example';
+
+/**
+ * An owned frame in the stub document, posting back into `posted`. The
+ * targetOrigin of every reply lands in `targets` (#2514).
+ */
+function ownedFrame(sandbox, id, posted, targets = []) {
   const frame = fakeNode();
   frame.id = id;
-  frame.contentWindow = { postMessage: (m) => posted.push(JSON.parse(JSON.stringify(m))) };
+  // The origin the shell pointed the frame at (#2514): requests are only
+  // answered while the posting document is on it.
+  frame.getAttribute = (name) => (name === 'src' ? `${APP_ORIGIN}/?token=t` : null);
+  frame.contentWindow = {
+    postMessage: (m, targetOrigin) => {
+      posted.push(JSON.parse(JSON.stringify(m)));
+      targets.push(targetOrigin);
+    },
+  };
   sandbox.document._byId[id] = frame;
   return frame;
 }
@@ -459,8 +473,8 @@ function stubBootstrap(sandbox, { status = 200, body = null } = {}) {
 }
 
 /** Post one `__usernode_llm` message and let the relay's awaits settle. */
-async function ask(AppView, source, type = 'request-access', id = 'llm-1') {
-  AppView.handleLlmBridgeMessage({ data: { __usernode_llm: type, id }, source });
+async function ask(AppView, source, type = 'request-access', id = 'llm-1', origin = APP_ORIGIN) {
+  AppView.handleLlmBridgeMessage({ data: { __usernode_llm: type, id }, source, origin });
   await new Promise((r) => setTimeout(r, 0));
 }
 
@@ -475,6 +489,44 @@ test('an app in the App tab gets the consent card, as it always has', async () =
   assert.equal(posted[0].__usernode_llm, 'ack', 'the bridge must stop its no-shell timer');
   assert.equal(published.at(-1).kind, 'consent');
   assert.match(lastView(published).intro, /spend from your daily AI budget/);
+});
+
+// #2514: the reply goes back to the origin that asked, captured when the
+// request arrived — never to '*', which would hand it to whatever document
+// the frame holds by the time the answer is ready.
+test('replies are addressed to the requesting origin, never to "*"', async () => {
+  const { AppView, sandbox } = makeAppView();
+  const posted = [];
+  const targets = [];
+  const frame = ownedFrame(sandbox, 'app-viewer-frame', posted, targets);
+  stubBootstrap(sandbox);
+  await ask(AppView, frame.contentWindow);
+  assert.deepEqual(posted.map((m) => m.__usernode_llm), ['ack', 'response']);
+  assert.deepEqual(targets, [APP_ORIGIN, APP_ORIGIN]);
+});
+
+test('an opaque-origin requester gets no reply rather than a "*" one', async () => {
+  const { AppView, sandbox } = makeAppView();
+  const posted = [];
+  const targets = [];
+  const frame = ownedFrame(sandbox, 'app-viewer-frame', posted, targets);
+  stubBootstrap(sandbox);
+  await ask(AppView, frame.contentWindow, 'request-access', 'llm-1', 'null');
+  await ask(AppView, frame.contentWindow, 'request-access', 'llm-2', '');
+  assert.deepEqual(posted, []);
+  assert.deepEqual(targets, []);
+});
+
+test('a frame navigated off its app origin is not answered at all', async () => {
+  const { AppView, published, sandbox } = makeAppView();
+  const posted = [];
+  const frame = ownedFrame(sandbox, 'app-iframe', posted);
+  stubBootstrap(sandbox);
+  AppView.appData = { slug: 'recipe-bot', name: 'RecipeBot', status: 'running' };
+  // The right WindowProxy, but the document inside it is on another origin.
+  await ask(AppView, frame.contentWindow, 'request-access', 'llm-1', 'https://evil.example');
+  assert.deepEqual(posted, [], 'no ack and no response');
+  assert.equal(published.length, 0, 'and no consent dialog is opened for it');
 });
 
 test('an app in the landing viewer gets the same card, not silence', async () => {

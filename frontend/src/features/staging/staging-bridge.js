@@ -22,6 +22,31 @@ import {
 } from './staging-store.js';
 
 /**
+ * Whether `src` may be loaded into the preview frame (#2514).
+ *
+ * The preview's URL carries the app-identity token, so it follows the App
+ * tab frame's rule (`AppView._isSafeAppIframeSrc` in public/js/app-view.js):
+ * an absolute http(s) URL on an origin that is NOT the platform's own. The
+ * platform origin would frame the shell inside itself with the token in its
+ * query string; a script, data or relative URL is never a preview. Fails
+ * closed when the platform origin cannot be read.
+ */
+export function isSafePreviewSrc(src) {
+  if (!src || typeof src !== 'string') return false;
+  const platformOrigin = typeof location !== 'undefined' && location ? location.origin : '';
+  if (!platformOrigin) return false;
+  try {
+    const target = new URL(src);
+    const platform = new URL(platformOrigin);
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
+    if (platform.protocol !== 'http:' && platform.protocol !== 'https:') return false;
+    return target.origin !== platform.origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Counts genuine `src` assignments on #staging-iframe.
  *
  * The identity test's core assertion: every state change that is NOT a
@@ -116,11 +141,12 @@ export const stagingBridge = {
   },
   /**
    * Point the preview at `src`. The ONLY way its `src` ever changes, and an
-   * imperative write by design — see staging-store.js.
+   * imperative write by design — see staging-store.js. Refuses any `src` that
+   * is not a separate http(s) origin (#2514, see isSafePreviewSrc).
    */
   setSrc(src) {
     const el = stagingRefs.iframe;
-    if (!el || !src) return false;
+    if (!el || !isSafePreviewSrc(src)) return false;
     navigations += 1;
     el.src = src;
     return true;

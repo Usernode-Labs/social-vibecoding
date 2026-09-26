@@ -34,6 +34,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+// The React bridge module runs in THIS realm (it is imported, not vm'd), and
+// its src guard compares against the platform's own origin — the same origin
+// the vm sandbox below reports for app-view.js.
+globalThis.location = { origin: 'https://platform.example', href: 'https://platform.example/' };
+
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const SRC = read('public/js/app-view.js');
@@ -314,6 +319,56 @@ test('a token refresh re-points the SAME element, and only for its own app', asy
   AppView.iframeTokenSlug = 'someone-elses-app';
   assert.equal(AppView.tokenForSlug('usernode-2d5619'), null,
     'a token minted for another app is never reused');
+});
+
+// ── #2514: the preview frame only ever navigates to a real preview origin ──
+//
+// The production app frame refuses anything but an absolute http(s) URL on
+// another origin (`_isSafeAppIframeSrc`). The preview's src carries the same
+// app-identity token, so it keeps the same rule on every path: the overlay
+// never mints a token for a bad address, and neither src writer navigates to
+// one — the platform's own origin would frame the shell inside itself with
+// the token in its query string.
+const UNSAFE_PREVIEW_URLS = [
+  'https://platform.example',
+  'https://platform.example/some/path',
+  'javascript:alert(1)',
+  'data:text/html,<p>x</p>',
+  '/relative/path',
+  '',
+];
+
+test('the overlay refuses a preview address that is not a separate http(s) origin', async () => {
+  for (const url of UNSAFE_PREVIEW_URLS) {
+    const h = await makeHarness();
+    const { AppView, iframe, bridge } = h;
+    let minted = 0;
+    AppView._mintToken = async () => { minted += 1; return 'tok-1'; };
+    const before = bridge.stats().navigations;
+    await AppView.swapToStaging(url, null, { verified: true });
+    assert.equal(iframe.loads, 0, `${JSON.stringify(url)}: no navigation`);
+    assert.equal(iframe.src, '', `${JSON.stringify(url)}: src stays empty`);
+    assert.equal(bridge.stats().navigations, before);
+    assert.equal(minted, 0, `${JSON.stringify(url)}: no token is minted for it`);
+  }
+});
+
+test('both preview src writers refuse an unsafe URL', async () => {
+  const h = await makeHarness();
+  const { AppView, iframe, bridge } = h;
+  const dom = AppView._stagingDom;
+  const domFrame = makeIframe();
+  dom._el = (id) => (id === 'staging-iframe' ? domFrame : null);
+  for (const url of UNSAFE_PREVIEW_URLS) {
+    assert.equal(bridge.setSrc(`${url}?token=t`), false, `React bridge: ${url}`);
+    assert.equal(dom.setSrc(`${url}?token=t`), false, `DOM adapter: ${url}`);
+  }
+  assert.equal(iframe.loads, 0);
+  assert.equal(domFrame.loads, 0);
+  assert.equal(bridge.setSrc('https://preview.example/?token=t'), true);
+  assert.equal(dom.setSrc('https://preview.example/?token=t'), true);
+  assert.equal(iframe.loads, 1, 'a real preview origin still navigates');
+  assert.equal(domFrame.loads, 1);
 });
 
 test('the bridge never hands out a frame it does not own', async () => {

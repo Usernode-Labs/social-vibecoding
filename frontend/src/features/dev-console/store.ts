@@ -53,6 +53,41 @@ export interface DevConsoleEntry {
 
 const MAX_ENTRIES = 500;
 
+// #2514: the frames an app runs in, the same list as the shell's
+// `AppView.SAFE_AREA_FRAME_IDS` (the App tab, the landing viewer and the
+// staging preview). Only the document inside one of them may write to the
+// console.
+const APP_FRAME_IDS = ['app-iframe', 'app-viewer-frame', 'staging-iframe'];
+
+/**
+ * Whether a console message was posted by the app document inside one of the
+ * shell's own app frames: the posting window must be that frame's
+ * contentWindow (not a third-party iframe nested inside the app, a popup, or
+ * the shell itself), and the posting document must be on the origin the
+ * frame's http(s) src points at, because a WindowProxy outlives navigation.
+ */
+function isFromAppFrame(event: { source?: unknown; origin?: unknown }): boolean {
+  const { source, origin } = event;
+  if (!source || typeof origin !== 'string' || !origin || origin === 'null') return false;
+  const d = doc();
+  if (!d) return false;
+  for (const id of APP_FRAME_IDS) {
+    const frame = d.getElementById(id) as HTMLIFrameElement | null;
+    if (!frame || frame.contentWindow !== source) continue;
+    const src = frame.getAttribute('src') || '';
+    if (!src) return false;
+    try {
+      const base = typeof location !== 'undefined' && location ? location.href : undefined;
+      const expected = new URL(src, base);
+      if (expected.protocol !== 'http:' && expected.protocol !== 'https:') return false;
+      return expected.origin === origin;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 export class DevConsoleStore {
   readonly SENTINEL = '__usernodeDevConsole';
 
@@ -191,9 +226,10 @@ export class DevConsoleStore {
 
   // ── Receiving ────────────────────────────────────────────────────────
 
-  _onMessage(event: { data?: unknown }): void {
+  _onMessage(event: { data?: unknown; source?: unknown; origin?: unknown }): void {
     const data = event.data as Record<string, unknown> | null | undefined;
     if (!data || data.sentinel !== this.SENTINEL) return;
+    if (!isFromAppFrame(event)) return;
 
     const entry: DevConsoleEntry = {
       level: (data.level as string) || 'log',
