@@ -924,7 +924,7 @@ export function CreateAppDialog() {
                 import's own dapp.json describes it; app.css hides the row).
                 Written into the new repository's dapp.json, where people
                 read it on the join screen, in Discover and on its page. */}
-            <div className={ROW + ' create-describe-row border-t border-zinc-200 dark:border-zinc-700'}>
+            <div className={ROW + ' create-describe-row shadow-[inset_0_1px_0_var(--app-sheet-line)]'}>
               <label htmlFor="app-description" className={LABEL}>
                 What is it? (optional)
               </label>
