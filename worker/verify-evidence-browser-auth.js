@@ -10,6 +10,7 @@ const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
+const { hostedAppSlugs } = require('./evidence-hosted-origins');
 const { promisify } = require('node:util');
 const { verifyBrowser } = require('./verify-evidence-browser-mcp');
 
@@ -133,6 +134,9 @@ async function main() {
     });
     if (!bootstrap.stdout.includes('"kind":"hosted_app_allowlist","count":1')) {
       throw new Error(`Evidence bootstrap omitted the public deployed app: ${bootstrap.stdout.slice(-1000)}`);
+    }
+    if (JSON.stringify(hostedAppSlugs(hostedFile, origins[0], origins[1])) !== '["frame-test"]') {
+      throw new Error('Evidence bootstrap did not expose the paired deployed app slug.');
     }
     const proxyPort = Number(fs.readFileSync(ready, 'utf8').trim());
     if ((await proxyRequest(proxyPort, `${hostedOrigin}/frame`)).status !== 200

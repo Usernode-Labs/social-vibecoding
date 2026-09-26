@@ -20,7 +20,7 @@ const TOOLS = new Set([
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
-  'browser_hover', 'browser_drag', 'browser_resize', 'browser_wait_for',
+  'browser_hover', 'browser_mouse_move_xy', 'browser_drag', 'browser_resize', 'browser_wait_for',
   'browser_console_messages', 'browser_network_requests', 'browser_tabs',
   'browser_close',
 ]);

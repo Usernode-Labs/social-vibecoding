@@ -9,6 +9,7 @@
 const { McpServer } = require('/usr/local/lib/node_modules/@modelcontextprotocol/sdk/dist/cjs/server/mcp.js');
 const { StdioServerTransport } = require('/usr/local/lib/node_modules/@modelcontextprotocol/sdk/dist/cjs/server/stdio.js');
 const { z } = require('/usr/local/lib/node_modules/zod');
+const { hostedAppSlugs } = require('./evidence-hosted-origins');
 
 const platform = String(process.env.PLATFORM_URL || '').replace(/\/$/, '');
 const runId = String(process.env.EVIDENCE_RUN_ID || '');
@@ -65,11 +66,18 @@ const server = new McpServer(
 );
 
 server.registerTool('evidence_get_context', {
-  description: 'Read sanitized intent, provenance labels, changed-file summary, personas, viewports, and the two allowed origins for this evidence run.',
+  description: 'Read sanitized intent, provenance labels, changed-file summary, personas, viewports, paired origins, and deployed public app candidate slugs for this evidence run.',
   inputSchema: {},
   annotations: { ...annotations, readOnlyHint: true },
 }, async () => {
-  try { return resultContent((await request('/context')).context); }
+  try {
+    const context = (await request('/context')).context;
+    const origins = context?.origins;
+    if (!origins?.base || !origins?.head) throw new Error('Evidence context has no paired origins.');
+    const eligibleHostedAppSlugs = hostedAppSlugs(process.env.EVIDENCE_HOSTED_ORIGINS_FILE,
+      new URL(origins.base).origin, new URL(origins.head).origin);
+    return resultContent({ ...context, eligibleHostedAppSlugs });
+  }
   catch (error) { return toolError(error); }
 });
 

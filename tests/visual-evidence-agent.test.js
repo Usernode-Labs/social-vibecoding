@@ -142,6 +142,10 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.match(agent.replayPlanGuide(), /wait for its observed marker to appear,\s+then wait for it to become hidden/i);
   assert.match(agent.promptFor({ repair: true }), /retaining the original checkpoint assertions unchanged/i);
   assert.match(agent.replayPlanGuide(), /waitFor text matches a visible substring/);
+  assert.match(agent.replayPlanGuide(), /eligibleHostedAppSlugs/);
+  assert.match(agent.replayPlanGuide(), /browser_mouse_move_xy/);
+  assert.match(agent.replayPlanGuide(), /hoverViewport with/);
+  assert.match(agent.replayPlanGuide(), /image interpretation is not required/);
 });
 
 test('a second hosted dispatch receives an explicit repair task through the normal worker', async () => {

@@ -118,6 +118,38 @@ test('hosted app readiness waits for a successful document response', async () =
     { loaded: new Map([['real-app', 'https://real-app.onhomeroom.com']]) })) >= 0);
 });
 
+test('relative point hover moves the pointer without clicking the surface', async () => {
+  const moves = [];
+  const surface = {
+    first: () => ({ waitFor: async () => {} }),
+    count: async () => 1,
+    nth: () => ({ isVisible: async () => true }),
+    boundingBox: async () => ({ x: 30, y: 80, width: 1200, height: 640 }),
+  };
+  const page = {
+    locator: () => surface,
+    mouse: { move: async (...args) => moves.push(args), click: async () => { throw new Error('Unexpected click'); } },
+  };
+  await replay.executeAction(page, {
+    id: 'hover-edge', stage: 'rail', type: 'hoverPoint',
+    surface: { by: 'css', value: '#app-view' }, xRatio: 0.005, yRatio: 0.5,
+  }, '', null);
+  assert.deepEqual(moves, [[36, 400]]);
+});
+
+test('viewport hover replays the observed coordinate without requiring a visible locator', async () => {
+  const moves = [];
+  const page = {
+    viewportSize: () => ({ width: 1440, height: 900 }),
+    mouse: { move: async (...args) => moves.push(args) },
+  };
+  await replay.executeAction(page, {
+    id: 'hover-edge', stage: 'rail', type: 'hoverViewport',
+    xRatio: 8 / 1440, yRatio: 450 / 900,
+  }, '', null);
+  assert.deepEqual(moves, [[8, 450]]);
+});
+
 test('only Chromium resource errors for deliberately failed exact requests are expected', () => {
   const generated = { message: 'Failed to load resource: net::ERR_FAILED' };
   const appError = { message: 'Could not load account data' };

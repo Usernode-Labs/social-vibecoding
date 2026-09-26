@@ -9,7 +9,7 @@ const path = require('node:path');
 
 const workerDir = path.join(__dirname, '..', 'worker');
 const read = (name) => fs.readFileSync(path.join(workerDir, name), 'utf8');
-const { browserAllowedOrigins } = require('../worker/evidence-hosted-origins');
+const { browserAllowedOrigins, hostedAppSlugs } = require('../worker/evidence-hosted-origins');
 
 test('planner origin list rejects stale or malformed hosted-app catalogs', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-origins-test-'));
@@ -18,17 +18,24 @@ test('planner origin list rejects stale or malformed hosted-app catalogs', () =>
   const head = 'http://head.example.invalid';
   try {
     fs.writeFileSync(file, JSON.stringify({
-      version: 1, baseOrigin: base, headOrigin: head,
-      origins: ['https://app.example.invalid'],
+      version: 2, baseOrigin: base, headOrigin: head,
+      apps: [{ origin: 'https://app.example.invalid', slug: 'real-app' }],
     }));
     assert.deepEqual(browserAllowedOrigins(base, head, file), [base, head, 'https://app.example.invalid']);
+    assert.deepEqual(hostedAppSlugs(file, base, head), ['real-app']);
     assert.throws(() => browserAllowedOrigins(base, head, ''), /path is missing/);
     assert.throws(() => browserAllowedOrigins(head, base, file), /does not match/);
     fs.writeFileSync(file, JSON.stringify({
-      version: 1, baseOrigin: base, headOrigin: head,
-      origins: ['http://127.0.0.1:3000/path'],
+      version: 2, baseOrigin: base, headOrigin: head,
+      apps: [{ origin: 'http://127.0.0.1:3000/path', slug: 'real-app' }],
     }));
     assert.throws(() => browserAllowedOrigins(base, head, file), /origin is invalid/);
+    fs.writeFileSync(file, JSON.stringify({
+      version: 2, baseOrigin: base, headOrigin: head,
+      apps: [{ origin: 'https://app.example.invalid', slug: 'real-app' },
+        { origin: 'https://other.example.invalid', slug: 'real-app' }],
+    }));
+    assert.throws(() => hostedAppSlugs(file, base, head), /catalog entry is invalid/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -57,9 +64,9 @@ test('both evidence backends launch Playwright through the content-free timing o
     const output = path.join(dir, 'mcp.json');
     const hostedFile = path.join(dir, 'hosted-origins.json');
     fs.writeFileSync(hostedFile, JSON.stringify({
-      version: 1, baseOrigin: 'http://base.example.invalid',
+      version: 2, baseOrigin: 'http://base.example.invalid',
       headOrigin: 'http://head.example.invalid',
-      origins: ['https://hosted.example.invalid'],
+      apps: [{ origin: 'https://hosted.example.invalid', slug: 'hosted-app' }],
     }));
     execFileSync(process.execPath, [path.join(workerDir, 'write-evidence-mcp-config.js'), output], {
       env: {
@@ -81,12 +88,16 @@ test('both evidence backends launch Playwright through the content-free timing o
       assert.ok(config.mcpServers[server].args.includes(path.join(dir, 'state', state)));
       assert.ok(config.mcpServers[server].args.includes('http://base.example.invalid;http://head.example.invalid;https://hosted.example.invalid'));
       assert.ok(config.mcpServers[server].args.includes('--no-sandbox'));
+      assert.ok(config.mcpServers[server].args.includes('--caps'));
+      assert.ok(config.mcpServers[server].args.includes('vision'));
     }
     assert.equal((codexRunner.match(/"--no-sandbox"/g) || []).length, 3);
     assert.match(read('worker-run.sh'), /"--browser", "chromium", "--headless", "--isolated", "--no-sandbox"/);
     assert.match(claudeRunner, /EVIDENCE_HOSTED_ORIGINS_FILE/);
     assert.match(codexRunner, /EVIDENCE_HOSTED_ORIGINS_FILE/);
+    assert.match(codexRunner, /env_vars = \[[^\n]*"EVIDENCE_HOSTED_ORIGINS_FILE"/);
     assert.match(codexRunner, /evidence-hosted-origins\.js/);
+    assert.equal((codexRunner.match(/"browser_mouse_move_xy"/g) || []).length, 2);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
