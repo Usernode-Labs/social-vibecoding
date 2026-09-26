@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
-const { createServer, HTML } = require('../evidence/hosted-app-fixture');
+const { createServer, HTML, NONCE } = require('../evidence/hosted-app-fixture');
 
 test('the evidence hosted app is self-contained, healthy, and does not reflect launch credentials', async () => {
   const server = createServer();
@@ -20,7 +20,15 @@ test('the evidence hosted app is self-contained, healthy, and does not reflect l
     });
     const body = await page.text();
     assert.equal(page.status, 200);
-    assert.match(page.headers.get('content-security-policy'), /default-src 'none'/);
+    const csp = page.headers.get('content-security-policy');
+    const directives = Object.fromEntries(csp.split(';').map((part) => {
+      const value = part.trim();
+      const name = value.split(/\s+/, 1)[0];
+      return [name, value];
+    }));
+    assert.equal(directives['default-src'], "default-src 'none'");
+    assert.equal(directives['style-src'], `style-src 'nonce-${NONCE}'`);
+    assert.equal(directives['style-src-attr'], "style-src-attr 'unsafe-inline'");
     assert.equal(page.headers.get('referrer-policy'), 'origin');
     assert.match(body, /Hosted app frame/);
     assert.match(body, /\/usernode-bridge\/v1\/bridge\.js/);
