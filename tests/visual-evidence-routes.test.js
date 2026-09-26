@@ -127,6 +127,11 @@ test('run diagnostics are private to the author or app manager, available live, 
     failure_code: 'assertion_failed', failure_reason: 'Sort was not visible.',
     trace_summary: {
       heartbeat: { processId: 'a'.repeat(16), poolWaiting: 3 },
+      idleWait: { version: 1, outcome: 'timeout', waitClass: 'evidence_recovery',
+        recoveryReason: 'evidence_turn', normalLimitMs: 120000, recoveryLimitMs: 240000,
+        waitedMs: 240000, polls: 481, activeTurnPresent: true,
+        activeTurnMode: 'evidence', activeTurnPhase: 'cleanup_pending',
+        workerInFlight: false, workerMode: null },
       replayPasses: [{ pass: 1, durationMs: 20 }], replayRuntime: 'kubernetes', agentAttempts: 1,
       agentDispatches: [{ requestedBackend: 'codex_openrouter', requestedModel: 'glm-4', backend: 'claude_code', model: 'claude-sonnet', fallbackReason: 'model_without_tools', outcome: 'completed' }],
       agentActivity: { budgetMs: 240000, events: [{ atMs: 1200, kind: 'agent_deadline' }] },
@@ -193,6 +198,8 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.equal(diagnostics.replayPlan.stories[0].id, fixtures.plan().stories[0].id);
   assert.deepEqual(diagnostics.trace.replayPasses, [{ pass: 1, durationMs: 20 }]);
   assert.equal(diagnostics.trace.heartbeat.poolWaiting, 3);
+  assert.equal(diagnostics.trace.idleWait.waitClass, 'evidence_recovery');
+  assert.equal(diagnostics.trace.idleWait.activeTurnPhase, 'cleanup_pending');
   assert.match(diagnostics.observer.processId, /^[0-9a-f]{16}$/);
   assert.equal(diagnostics.observer.ownsRun, false);
   assert.equal(diagnostics.observer.heartbeatWrite, null);
