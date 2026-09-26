@@ -3216,14 +3216,14 @@ const AppView = {
     if (subTab === 'chat') {
       // The app's name stays the chip's label and the subtitle qualifies it —
       // replacing the name here was the chip forgetting which app it was in.
-      App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Discussion');
-      // A LEVEL INSIDE MESSAGES (#2718 review). This thread is a row in the
-      // Messages inbox, beside the people and the agent chats — which is why
-      // the Workshop stopped offering it — so the Messages tab is what lights
-      // for it (App._syncPlatformTabs) and #messages is what it hangs off.
-      // The reset above publishes 'none', which is right for the Workshop and
-      // the board; this thread has somewhere to go up TO, and said nothing.
-      App.setBackIcon?.('arrow', '#messages');
+      App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Channel');
+      // A LEVEL INSIDE THE PROJECT'S HUB. This was a row in the Messages
+      // inbox (#2718 review) and hung off #messages; the channels live on
+      // each community's hub now, so the Communities tab is what lights for
+      // it (App._syncPlatformTabs, App._isChannelThread) and the hub is what
+      // it hangs off. The reset above publishes 'none', which is right for
+      // the hub and the board; this thread has somewhere to go up TO.
+      App.setBackIcon?.('arrow', App._hubHref?.(App.currentApp) || '#communities');
       AppView._renderChatSubView(content);
       return;
     }
@@ -3291,7 +3291,9 @@ const AppView = {
     // app's own artwork, and a menu of the others — so the bar spending its
     // width on the same name made the two read as a breadcrumb with a
     // repeated segment. The bar names the SECTION, the chip names the scope.
-    App.setHeaderTitle?.('Workshop');
+    // COMMUNITIES since the tab was renamed: the page is a community's hub
+    // and its Workshop, both inside the Communities section.
+    App.setHeaderTitle?.('Communities');
 
     // THE APP'S RECORD MAY NOT BE HERE — the #2879 case, on the board. A
     // failed or superseded GET /api/apps/<slug> leaves AppView.appData empty
@@ -6284,10 +6286,17 @@ const AppView = {
     if (!content) return;
     // The app this mount is ABOUT. AppView.appData is the app view's answer
     // and the default; a caller that named one owns its own.
+    // HOMEROOM'S OLD PROJECT DISCUSSION IS ARCHIVED: the platform's own
+    // project talks in #general now, the Homeroom community's channel, and
+    // this room is kept read-only as history (the server refuses a post in
+    // its main stream too — services/communities.js channelArchived).
+    const archived = (ctx && ctx.slug)
+      ? !!ctx.archived
+      : !!(AppView.appData && AppView.appData.self_hosted);
     const app = (ctx && ctx.slug)
-      ? { slug: ctx.slug, name: ctx.name || ctx.slug, readOnly: !!ctx.readOnly }
+      ? { slug: ctx.slug, name: ctx.name || ctx.slug, readOnly: !!ctx.readOnly || archived }
       : (AppView.appData
-        ? { slug: AppView.appData.slug, name: AppView.appData.name, readOnly: !!AppView.readOnly }
+        ? { slug: AppView.appData.slug, name: AppView.appData.name, readOnly: !!AppView.readOnly || archived }
         : null);
 
     // (#3) First-arrival framing: name what Group Chat is for. Group chat
@@ -6322,6 +6331,9 @@ const AppView = {
     AppView._reactGroupChat()?.mountGeneralChat(content, {
       introAppName,
       readOnly: !!(app && app.readOnly),
+      notice: archived
+        ? 'This was Homeroom\u2019s project discussion. It is read-only now: Homeroom\u2019s channel is #general.'
+        : null,
       maxLength: typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000,
     });
 
@@ -7493,11 +7505,12 @@ const AppView = {
   // they are placed here, by the issue they link.
 
   WORKSHOP_SEEN_KEY: 'workshopSeen',
-  // The lander's three tabs. A query param reaches one directly (`?ws=needs`)
-  // because the platform's own rule is that a screen only reachable by
-  // interacting needs a URL: the declared checks select against it and the
-  // proposal screenshots are shot from it.
-  WORKSHOP_TABS: ['status', 'needs', 'all'],
+  // The lander's two tabs, the hub (`status`) and the Workshop, and the two
+  // pages under them, Needs you and All items. A query param reaches each
+  // directly (`?ws=needs`) because the platform's own rule is that a screen
+  // only reachable by interacting needs a URL: the declared checks select
+  // against it and the proposal screenshots are shot from it.
+  WORKSHOP_TABS: ['status', 'workshop', 'needs', 'all'],
   _workshopModels() {
     const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
     if (!src || typeof src !== 'object') return { list: [], selected: null };
@@ -7552,6 +7565,8 @@ const AppView = {
     if (url) return url;
     try {
       const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
+      // A remembered page (Needs you, All items) reopens as itself, with its
+      // way back to the tab it hangs off above it.
       if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1) return stored;
       // A viewer who last left the Dev screen on the Board gets the tab those
       // columns live in, for the same reason _getWorkshopGroup gives them the

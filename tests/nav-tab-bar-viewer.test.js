@@ -74,7 +74,7 @@ test('once somebody is signed in, the tab is their username', () => {
 test('only the fifth tab changes', () => {
   const html = render('evan');
   for (const [key, label] of [['home', 'Home'], ['discover', 'Discover'],
-    ['messages', 'Messages'], ['workshop', 'Workshop']]) {
+    ['messages', 'Messages'], ['workshop', 'Communities']]) {
     const at = html.indexOf(`id="platform-tab-${key}"`);
     const tab = html.slice(html.lastIndexOf('<a', at), html.indexOf('</a>', at));
     assert.match(tab, new RegExp(`class="platform-tab-label">${label}<`), `${key} keeps its word`);

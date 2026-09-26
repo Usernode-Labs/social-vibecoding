@@ -48,9 +48,11 @@ import { Button } from '@/components/ui/button';
 import {
   ArrowUpIcon,
   BallotIcon,
+  BoardIcon,
   ChatBubbleTailIcon,
   CheckIcon,
   ChevronDownIcon,
+  ChevronLeftIcon,
   ChevronRightIcon,
   ChevronUpIcon,
   EllipsisHorizontalIcon,
@@ -60,6 +62,7 @@ import {
   SparklesIcon,
   SpeechCheckIcon,
   Squares2X2Icon,
+  UserGroupIcon,
 } from '@/components/ui/icons';
 
 import { agoStamp } from '../../../lib/timestamp';
@@ -78,7 +81,8 @@ import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { AppWorkshopScope } from '../../workshop/workshop-chrome';
-import { CommunityCard } from './community-card';
+import { CommunityCard, useCommunity } from './community-card';
+import { ChannelCard, MembersCard, NeedsCard } from './hub-cards';
 import { readAskStream } from './ask-stream';
 import {
   commitDistance,
@@ -91,7 +95,7 @@ import {
 } from './swipe-vote';
 
 export type SortKey = 'people' | 'activity' | 'open';
-type TabKey = 'status' | 'needs' | 'all';
+type TabKey = 'status' | 'workshop' | 'needs' | 'all';
 
 /**
  * "Since your last visit", as a length rather than a disclosure.
@@ -118,31 +122,40 @@ const SINCE_FIRST = 3;
 const SINCE_STEP = 3;
 
 /**
- * The lander's three tabs, in the order a person needs them: where the app
- * is, what it needs from you, everything there is. The bar sits at the
- * BOTTOM — this is a phone screen first, and the three destinations are
- * navigation, not a control acting on what is above them.
+ * The lander's two tabs: the project's HUB and its WORKSHOP.
  *
- * EACH CARRIES A GLYPH, AND KEEPS ITS WORDS. A bottom rail is scanned, not
- * read, and three same-weight phrases gave the eye nothing to aim at; the
- * label stays under the glyph because none of the three is conventional
- * enough to stand alone, and dropping it would cost the tab its accessible
- * name as well.
+ * The hub is the community's page — who it is for, its channel, what needs
+ * you, who is here, what moved since your last visit. The Workshop is what
+ * is being built — your own work in full, and All items. They sit at the TOP
+ * of the page, as one segmented control (the prototype's "Community hub |
+ * Workshop"), with the "+" after them.
  *
- * Why these three. The newspaper is the week as written, which is what the
- * status tab is — a digest, not a dashboard. The grid is everything, in
- * whichever grouping you pick. The bubble-with-a-tick is drawn for this bar
- * (see icons.tsx): a plain bubble reads as "messages", which is the wrong
- * destination, and a bare tick reads as the state after you have answered
- * rather than the asking. `BoardIcon` was the other candidate for status and
- * lost twice — it is the Kanban glyph, so it collides with All items' own
- * By-stage pane, and its 4-unit-wide bars close up at this size.
+ * NEEDS YOU AND ALL ITEMS ARE PAGES, NOT TABS. They were the second and third
+ * tabs; now each opens from its card — Needs you from the hub, All items
+ * from the Workshop — and the tab it belongs to stays lit while it is up,
+ * with a way back above it. Their `?ws=` deep links still land on them.
+ *
+ * The hub's label says what kind of hub it is — Community hub, Group hub,
+ * or plain Hub for a project that is just yours — once the community record
+ * has said; plain Hub until then.
  */
 const TABS: { key: TabKey; label: string; Icon: typeof NewspaperIcon }[] = [
-  { key: 'status', label: 'Current status', Icon: NewspaperIcon },
-  { key: 'needs', label: 'Needs you', Icon: SpeechCheckIcon },
-  { key: 'all', label: 'All items', Icon: Squares2X2Icon },
+  { key: 'status', label: 'Hub', Icon: UserGroupIcon },
+  { key: 'workshop', label: 'Workshop', Icon: BoardIcon },
 ];
+
+/** The hub tab's label for a community's audience. */
+export function hubLabel(audience: string | null | undefined): string {
+  if (audience === 'open') return 'Community hub';
+  if (audience === 'invited') return 'Group hub';
+  return 'Hub';
+}
+
+/** Which of the two tabs is lit while `tab` is up: a page lights its parent. */
+export function litTab(tab: TabKey): 'status' | 'workshop' {
+  if (tab === 'needs' || tab === 'status') return 'status';
+  return 'workshop';
+}
 
 // The shared ago ladder (#1808) — this file used to carry its own, with a
 // 90-second "just now" and a 48-hour bucket that read "36h ago" where every
@@ -3059,6 +3072,21 @@ function useTabMarker(
   return box;
 }
 
+/**
+ * The way back from a page to the tab it belongs to: Needs you to the hub,
+ * All items to the Workshop. A row above the page rather than a chevron in
+ * the header, because the header's slot is the project's own (see
+ * App._backSlotFor), and this is a level inside one tab of it.
+ */
+function PageBack({ label, onBack }: { label: string; onBack: () => void }): ReactNode {
+  return (
+    <button type="button" className="dev-ws-page-back un-touch-target" data-ws-page-back="" onClick={onBack}>
+      <ChevronLeftIcon className="w-4 h-4" aria-hidden="true" />
+      {label}
+    </button>
+  );
+}
+
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
   // THE OPEN APP'S NAME AND ARTWORK, for the scope chip below. The same
@@ -3112,7 +3140,16 @@ export function DevWorkshop(): ReactNode {
   // then.
   const [bar, setBar] = useState<HTMLElement | null>(null);
   const [tab, setTab] = useState<TabKey>(() => v.tab || 'status');
-  const markerBox = useTabMarker(bar, tab);
+  const lit = litTab(tab);
+  const markerBox = useTabMarker(bar, lit);
+  // Moving between the tabs and the two pages under them, remembered the way
+  // a tab press always was (AppView._setWorkshopTab), and back to the top:
+  // a page opened from a card lower down should start at its own head.
+  const openTab = (next: TabKey) => {
+    setTab(next);
+    callAppView('_setWorkshopTab', next);
+    try { window.scrollTo?.({ top: 0 }); } catch { /* no window to scroll */ }
+  };
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
   // not do. The seed runs against whatever the store holds AT MOUNT, and that
   // is EMPTY_WORKSHOP_VIEW: the module publishes `_workshopView()` after its
@@ -3132,12 +3169,6 @@ export function DevWorkshop(): ReactNode {
     deepTabApplied.current = true;
     setTab(v.tab);
   }, [v.tab]);
-  // "N more of yours" reveals them HERE. It used to set a board filter and
-  // navigate, which left the lander and changed the view mode to read a list
-  // the strip was already showing the top of. The vote and free-to-take
-  // lanes had the same toggle and no longer need one: they are paged decks
-  // now (RowPager), which hold every row without a reveal.
-  const [allMine, setAllMine] = useState(false);
   // Which pane is under the tabs. Lives in a module-global store rather than
   // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
   // the kanban view model only when the stage pane is up. See
@@ -3243,6 +3274,10 @@ export function DevWorkshop(): ReactNode {
     callAppView('_wireFeedComments', host);
     callAppView('_fillKudosHosts', host);
   }, [openSig, v]);
+
+  // The project's community record — the hero, the hub's cards and the hub
+  // tab's own label all read it. Before the loading return: it is a hook.
+  const community = useCommunity(v.slug || '');
 
   if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
@@ -3360,8 +3395,8 @@ export function DevWorkshop(): ReactNode {
               role="tab"
               className="dev-ws-tab"
               data-ws-tab-btn={t.key}
-              aria-selected={tab === t.key}
-              onClick={() => { setTab(t.key); callAppView('_setWorkshopTab', t.key); }}
+              aria-selected={lit === t.key}
+              onClick={() => openTab(t.key)}
             >
               {/* The glyph is decoration over a label that is already there, so
                   it is hidden from the accessibility tree rather than given a
@@ -3370,16 +3405,17 @@ export function DevWorkshop(): ReactNode {
                   variant on purpose, and every other `.dev-ws-*` measurement
                   lives in app.css beside its neighbours. */}
               <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
-              <span className="dev-ws-tab-label">{t.label}</span>
+              <span className="dev-ws-tab-label">{t.key === 'status' ? hubLabel(community?.audience) : t.label}</span>
               {/* #2915: A SEARCH OR FILTER IS WAITING ON ALL ITEMS. They
-                  narrow that tab alone, so from the other two a search the
+                  narrow that page alone, so from anywhere else a search the
                   viewer typed there is out of sight, and this dot is what
-                  says it is still on. Drawn on whichever tab is up, since it
-                  is about All items rather than about where you are.
+                  says it is still on. All items is a page under Workshop
+                  now, so the dot rides the Workshop tab, and leaves while
+                  All items itself is up.
                   The dot is decoration; the words are for a screen reader,
                   and they join the tab's name ("All items (filtered)") so
                   the visible label still leads it. */}
-              {t.key === 'all' && v.meta.filtered ? (
+              {t.key === 'workshop' && v.meta.filtered && tab !== 'all' ? (
                 <>
                   <span className="dev-ws-tab-dot" data-ws-tab-filtered="" aria-hidden="true" />
                   <span className="sr-only"> (filtered)</span>
@@ -3443,8 +3479,7 @@ export function DevWorkshop(): ReactNode {
           FIRST ON THE PAGE. A person arriving from Discover or a shared link
           met four numbers about the code before the thing's own name; the
           page now leads with identity, the way a profile does, and the
-          dashboard follows. Its channel row is the same room Messages lists
-          under Channels. See ./community-card.tsx. */}
+          hub's own cards follow. See ./community-card.tsx. */}
       {slug ? (
         <CommunityCard
           slug={slug}
@@ -3467,6 +3502,84 @@ export function DevWorkshop(): ReactNode {
         />
       ) : null}
 
+      {/* ── The hub's own cards: the channel, what needs you, who is here ──
+          The channel lives on the hub now (Messages is people and agents),
+          then the Needs-you queue's head, then members and activity; Since
+          your last visit stays at the foot. See ./hub-cards.tsx. */}
+      {slug ? <ChannelCard slug={slug} name={app.name || slug} data={community} /> : null}
+      <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} />
+      <MembersCard data={community} />
+
+      </>
+      ) : null}
+
+      {/* ── THE WORKSHOP TAB: your work in full, then the board's summary ──
+          What the group is building, beside the hub: the viewer's own work
+          in flight first and in full, then All items' numbers and its one
+          line, whose head opens All items itself. */}
+      {tab === 'workshop' ? (
+      <>
+      {/* ── Yours, first ──
+          The first question a returning member has is about their OWN work,
+          and the lander answered every other one before it: what the app is
+          doing, what the group needs, what nobody has picked up. A
+          half-finished session of theirs was somewhere down inside a theme,
+          under a heading about the theme. */}
+      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
+        <section className="dev-ws-strip" data-ws-mine="">
+          <div className="dev-ws-head">
+            <span className="dev-ws-head-title">What you are working on</span>
+            {v.mine.count ? <span className="dev-ws-head-n">{v.mine.count}</span> : null}
+          </div>
+          <div className="dev-ws-lane" data-ws-lane="mine">
+            {/* #2182: the strip does not leave when the viewer has nothing
+                underway. It says so instead, so the pane keeps one shape
+                and the place your work will appear is always the same.
+
+                The way in is NEW CHANGE, by the name the Homeroom menu
+                gives it. This said "start something from the + button",
+                and the "+" has no propose row — starting a change is that
+                menu's New change, an owner decision (#2740 review) — so
+                the line sent a viewer to a menu that could not do what it
+                promised. A read-only viewer has neither door, so is told
+                the fact and nothing to press — and so is a viewer under the
+                start-here banner, whose New change is at the top of this
+                very tab and whose board has no open item to pick up. */}
+            {!v.mine.rows.length ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
+                {actions.readOnly || startHere
+                  ? 'You have no work going on.'
+                  : 'You have no work going on. Pick up an open item below, or start a change with New change in the Homeroom menu.'}
+              </p>
+            ) : null}
+            {/* IN FULL on the Workshop tab: the whole of your own work is
+                what this tab leads with, so nothing of it waits behind a
+                reveal. */}
+            {v.mine.rows.map((row) => (row.t === 'card' ? (
+              <CardRowView
+                key={row.key}
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.mine === row.key}
+                onToggle={() => toggleRow('mine', row.key)}
+              />
+            ) : null))}
+            {/* THE SAME CONTROL AS THE OTHER TWO. This was a left-aligned
+                grey pill (`gc-vote-btn`) while "Show past week" and "Show
+                older" — which do the identical thing one pane up and one
+                pane down — were centred muted text with a caret. Three
+                spellings of one gesture. It is `.dev-ws-reveal` now, and the
+                caret turns over when there is nothing left to reveal, which
+                is what that class already does for the since list.
+                Its hit area is `touch-target-32`, not the kit's 44px one the
+                other two carry (QA 2026-09-24 Q19): it sits 4px under the
+                last row, and a 44px box would take that row's bottom edge. */}
+
+          </div>
+        </section>
+      ) : null}
+
       {/* ── One pane: where the app is, and what moved while you were away ──
           These were two strips asking one question. The description leads —
           the app says what it is about the way a theme does — and the personal
@@ -3484,7 +3597,16 @@ export function DevWorkshop(): ReactNode {
               in it. Every section on this tab wears this now, so the only
               thing that distinguishes them is what they hold. */}
           <div className="dev-ws-head">
-            <span className="dev-ws-head-title">Where the app is</span>
+            <span className="dev-ws-head-title">All items</span>
+            <button
+              type="button"
+              className="dev-ws-hub-open dev-ws-head-end un-touch-target"
+              data-ws-all-open=""
+              onClick={() => openTab('all')}
+            >
+              See all
+              <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
           </div>
           <DashTiles d={v.dashboard} />
           {/* THE LEAD PARAGRAPH. It was the first card of the week walk,
@@ -3609,83 +3731,11 @@ export function DevWorkshop(): ReactNode {
               from it; what goes is this screen's copy of the door. */}
         </section>
       ) : null}
-
-
-      {/* ── Yours, first ──
-          The first question a returning member has is about their OWN work,
-          and the lander answered every other one before it: what the app is
-          doing, what the group needs, what nobody has picked up. A
-          half-finished session of theirs was somewhere down inside a theme,
-          under a heading about the theme. */}
-      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
-        <section className="dev-ws-strip" data-ws-mine="">
-          <div className="dev-ws-head">
-            <span className="dev-ws-head-title">What you are working on</span>
-            {v.mine.count ? <span className="dev-ws-head-n">{v.mine.count}</span> : null}
-          </div>
-          <div className="dev-ws-lane" data-ws-lane="mine">
-            {/* #2182: the strip does not leave when the viewer has nothing
-                underway. It says so instead, so the pane keeps one shape
-                and the place your work will appear is always the same.
-
-                The way in is NEW CHANGE, by the name the Homeroom menu
-                gives it. This said "start something from the + button",
-                and the "+" has no propose row — starting a change is that
-                menu's New change, an owner decision (#2740 review) — so
-                the line sent a viewer to a menu that could not do what it
-                promised. A read-only viewer has neither door, so is told
-                the fact and nothing to press — and so is a viewer under the
-                start-here banner, whose New change is at the top of this
-                very tab and whose board has no open item to pick up. */}
-            {!v.mine.rows.length ? (
-              <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
-                {actions.readOnly || startHere
-                  ? 'You have no work going on.'
-                  : 'You have no work going on. Pick up an open item below, or start a change with New change in the Homeroom menu.'}
-              </p>
-            ) : null}
-            {(allMine ? v.mine.rows : v.mine.rows.slice(0, v.mine.shown)).map((row) => (row.t === 'card' ? (
-              <CardRowView
-                key={row.key}
-                row={row}
-                slug={slug}
-                canPost={canPost}
-                open={openRows.mine === row.key}
-                onToggle={() => toggleRow('mine', row.key)}
-              />
-            ) : null))}
-            {/* THE SAME CONTROL AS THE OTHER TWO. This was a left-aligned
-                grey pill (`gc-vote-btn`) while "Show past week" and "Show
-                older" — which do the identical thing one pane up and one
-                pane down — were centred muted text with a caret. Three
-                spellings of one gesture. It is `.dev-ws-reveal` now, and the
-                caret turns over when there is nothing left to reveal, which
-                is what that class already does for the since list.
-                Its hit area is `touch-target-32`, not the kit's 44px one the
-                other two carry (QA 2026-09-24 Q19): it sits 4px under the
-                last row, and a 44px box would take that row's bottom edge. */}
-            {v.mine.rows.length > v.mine.shown ? (
-              <button
-                type="button"
-                className="dev-ws-reveal dev-ws-mine-more touch-target-32"
-                aria-expanded={allMine}
-                data-ws-mine-more=""
-                onClick={() => setAllMine(!allMine)}
-              >
-                {/* No flip class: `.dev-ws-reveal[aria-expanded="true"]`
-                    already turns the caret over, and this button carries
-                    that attribute. */}
-                <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                {allMine ? 'Show fewer' : `${v.mine.count - v.mine.shown} more of yours`}
-              </button>
-            ) : null}
-          </div>
-        </section>
+      </>
       ) : null}
 
-      {/* The general discussion had its own section here, then a row at the
-          foot of the dashboard pane, and now neither (#2718 review): it is a
-          row in Messages, which is the platform's one inbox. */}
+      {tab === 'status' ? (
+      <>
       {/* ── What moved while you were away ──
           SHOWN, not offered. It was one collapsed line — the label, the count
           and a caret — on the reasoning that most visits do not need the
@@ -3809,6 +3859,13 @@ export function DevWorkshop(): ReactNode {
       </>
       ) : null}
 
+      {tab === 'needs' || tab === 'all' ? (
+        <PageBack
+          label={tab === 'needs' ? hubLabel(community?.audience) : 'Workshop'}
+          onBack={() => openTab(tab === 'needs' ? 'status' : 'workshop')}
+        />
+      ) : null}
+
       {tab === 'needs' ? (
         <NeedsFeed
           rows={v.queue}
@@ -3816,7 +3873,7 @@ export function DevWorkshop(): ReactNode {
           models={v.models}
           slug={slug}
           canPost={canPost}
-          onDone={() => { setTab('status'); callAppView('_setWorkshopTab', 'status'); }}
+          onDone={() => openTab('status')}
         />
       ) : null}
 

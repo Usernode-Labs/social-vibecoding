@@ -230,8 +230,12 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       assert.equal(got.body.audience_label, 'Community');
       assert.deepEqual(got.body.members.map((m) => m.username), [owner.username]);
       assert.deepEqual(got.body.approval, { policy: 'anyone', approvals_required: null, electorate: 1, required: 1 });
-      assert.deepEqual(got.body.channel, { last_message: null, last_at: null, last_by: null, unread_count: 0 },
-        'a collab-public app: the channel row is offered');
+      assert.deepEqual(got.body.channel, {
+        last_message: null, last_at: null, last_by: null, unread_count: 0,
+        recent: [], href: `#messages/app/${a.slug}`, handle: null,
+      }, 'a collab-public app: its channel is offered, with its last few messages and its address');
+      assert.deepEqual(got.body.activity, { active_week: 0, shipped_month: 0 },
+        'and Members & activity\'s two numbers');
 
       got = await call('POST', `/api/apps/${a.slug}/membership`, { joined: 'yes' });
       assert.equal(got.status, 400, 'joined must be a boolean');
@@ -343,5 +347,68 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await communities.leave(pool, a, regular.id);
     await pool.query(schema);
     assert.ok(!(await members(a.id)).some((m) => m.user_id === regular.id), 'the marker keeps a leaver out');
+  });
+  await t.test('#general is the Homeroom community\'s channel: members post, everyone reads; its old channel is archived', async () => {
+    const owner = await user();
+    const member = await user();
+    const boss = await user({ isAdmin: true });
+    const self = await app({ createdBy: owner.id, selfHosted: true });
+    // Everyone let onto the platform joins Homeroom's community on the way
+    // in (join_platform_community), so the outsider is one who left it.
+    const outsider = await user();
+    await communities.leave(pool, self, outsider.id);
+    const other = await app({ createdBy: owner.id });
+    await communities.join(pool, self, member.id);
+    const { rows: room } = await pool.query(`SELECT id FROM conversations WHERE channel_key = 'general'`);
+    const general = room[0].id;
+    const asUser = (u) => ({ id: u.id, username: u.username, isAdmin: !!u.is_admin });
+
+    // POSTING needs the Homeroom community; an admin passes, as everywhere.
+    const refused = await communities.generalNeedsJoin(pool, general, asUser(outsider), self.slug);
+    assert.equal(refused && refused.code, 'join_required');
+    assert.equal(refused.app.slug, self.slug, 'the Join it offers is Homeroom\'s');
+    assert.equal(await communities.generalNeedsJoin(pool, general, asUser(member), self.slug), null);
+    assert.equal(await communities.generalNeedsJoin(pool, general, asUser(boss), self.slug), null);
+    // Only #general: a group conversation is nobody's community channel.
+    const { rows: group } = await pool.query(
+      `INSERT INTO conversations (kind, title) VALUES ('group', 'Friends') RETURNING id`);
+    assert.equal(await communities.generalNeedsJoin(pool, group[0].id, asUser(outsider), self.slug), null);
+
+    // THE OLD CHANNEL is the platform row's, and only its.
+    assert.equal(await communities.channelArchived(pool, self.id), true);
+    assert.equal(await communities.channelArchived(pool, other.id), false);
+
+    // The hub's preview: the newest three, oldest first, and unread behind
+    // the reader's cursor (none for someone who never opened the room).
+    await pool.query(
+      `INSERT INTO conversation_members (conversation_id, user_id, role, status, last_read_message_id)
+       VALUES ($1, $2, 'member', 'member', NULL)`, [general, member.id]);
+    for (const text of ['one', 'two', 'three', 'four']) {
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content) VALUES ($1, $2, $3)`,
+        [general, owner.id, text]);
+    }
+    const summary = await communities.generalChannelSummary(pool, member.id);
+    assert.equal(summary.conversation_id, general);
+    assert.deepEqual(summary.recent.map((m) => m.content), ['two', 'three', 'four']);
+    assert.equal(summary.recent[2].by, owner.username);
+    assert.equal(summary.last_message, 'four');
+    assert.equal(summary.unread_count, 4);
+    assert.equal((await communities.generalChannelSummary(pool, outsider.id)).unread_count, 0);
+
+    // An app's own channel carries the same preview.
+    for (const text of ['hello', 'there']) {
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content) VALUES ($1, $2, $3)`, [other.id, member.id, text]);
+    }
+    const chan = await communities.channelSummary(pool, other.id, owner.id);
+    assert.deepEqual(chan.recent.map((m) => [m.content, m.by]), [['hello', member.username], ['there', member.username]]);
+
+    // Members & activity: who did something this week, what shipped this month.
+    const { rows: s } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, merged_at) VALUES ($1, $2, 'merged', NOW()) RETURNING id`,
+      [other.id, owner.id]);
+    await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s[0].id, boss.id]);
+    assert.deepEqual(await communities.activitySummary(pool, other.id), { active_week: 3, shipped_month: 1 });
   });
 });

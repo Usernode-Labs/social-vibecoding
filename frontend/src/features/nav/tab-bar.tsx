@@ -66,11 +66,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import {
-  BoardIcon,
   ChatIcon,
   CogIcon,
   HomeIcon,
   SearchIcon,
+  UserGroupIcon,
   UserIcon,
 } from '@/components/ui/icons';
 
@@ -84,12 +84,21 @@ import { RecentsList } from './recents-list';
 /**
  * The five tabs, in order.
  *
- * WHY THESE FIVE, and why in this order: the bar reads left to right as
- * distance from you. Home is the launcher, Discover is everyone else's apps,
- * Messages and Workshop are the two things that can be WAITING for you (the
- * conversation and the change), and Me is your own account. Challenges,
+ * WHY THESE FIVE, and why in this order: Home is the launcher, Discover is
+ * everyone else's projects, Communities is the ones you are in, Messages is
+ * the people and agents you talk to, and Me is your own account. Challenges,
  * Settings, Wallet, Validator and Admin are all reached from Me, which is
  * why five is enough — a sixth tab would be a section nobody visits daily.
+ *
+ * COMMUNITIES SITS IN THE MIDDLE. It was the fourth tab, "Workshop", beside
+ * Messages; the product is centred on communities now, and each one's
+ * channel lives on its own hub rather than in Messages, so the tab that holds
+ * them is the one most visits go through and takes the centre seat. Its key
+ * is still `workshop`: the key names the screen (`#workshop-screen`) and the
+ * declared checks select on `#platform-tab-workshop`, while the words a
+ * person sees are Communities and `#communities` (AGENTS.md, "Communities
+ * own projects"). Inside a project, "Workshop" is the build tab beside its
+ * hub — the one place that word is shown now.
  *
  * Discover keeps the magnifier rather than taking a grid glyph: it is the
  * same row the app menu spelled `#switcher-row-discover` with a
@@ -108,8 +117,8 @@ const TABS = [
     Icon: HomeIcon,
   },
   { key: 'discover' as const, label: 'Discover', href: '#apps', Icon: SearchIcon },
+  { key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon },
   { key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon },
-  { key: 'workshop' as const, label: 'Workshop', href: '#workshop', Icon: BoardIcon },
   // "Me" is the label only until somebody is signed in: from then on this tab
   // is named after them (#2760) — see tabLabel below.
   { key: 'me' as const, label: 'Me', href: '#profile', Icon: UserIcon },
@@ -131,7 +140,7 @@ const TABS = [
  * hydration, so the name arrives as an update — exactly how the lit tab does.
  *
  * THE ACCESSIBLE NAME KEEPS SAYING WHAT THE TAB IS. A bare username among
- * Home, Discover, Messages and Workshop would be read out as a person rather
+ * Home, Discover, Communities and Messages would be read out as a person rather
  * than a place, so the label names both, and it starts with the visible text
  * so a voice command that says what is on screen still finds it. Long names
  * are cut by app.css with an ellipsis; usernames are at most 32 characters
@@ -199,15 +208,19 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * The TEXT is React's, and it is empty at zero, so the prerender and the
  * first client render agree on an empty hidden span.
  */
-function TabBadge({ count }: { count: number }) {
+function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversations' }: {
+  count: number;
+  id?: string;
+  label?: string;
+}) {
   const ref = useRef<HTMLSpanElement | null>(null);
   useHiddenClass(ref, count <= 0);
   return (
     <span
       ref={ref}
-      id="platform-tabs-badge"
+      id={id}
       className="platform-tab-badge hidden"
-      aria-label="Unread conversations"
+      aria-label={label}
     >
       {count > 0 ? (count > 99 ? '99+' : String(count)) : ''}
     </span>
@@ -468,7 +481,7 @@ export function PlatformTabs() {
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
   const visible = useVisibility('platform-tabs', true);
-  const { tab, messages, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
+  const { tab, messages, communities, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -561,7 +574,7 @@ export function PlatformTabs() {
         } : undefined}
       />
       {TABS.flatMap(({ key, label, href, Icon }) => [
-        // RECENTS SIT BETWEEN THE SECTIONS AND YOU (#2802): after Workshop,
+        // RECENTS SIT BETWEEN THE SECTIONS AND YOU (#2802): after Messages,
         // before Me at the rail's foot, which is where the Resume strip it
         // replaces sat. Desktop only; app.css keeps it off the phone's bar.
         key === 'me' ? <RecentsList key="recents" /> : null,
@@ -607,6 +620,16 @@ export function PlatformTabs() {
                 declared check keeps finding it inside the Messages tab.
             */}
             {key === 'messages' ? <TabBadge count={messages} /> : null}
+            {/*
+                THE CHANNELS' COUNT, on Communities. A project's channel lives
+                on its hub now, not in Messages, so "something was said in a
+                room you are in" is counted where the room is: how many of
+                your communities' channels have unread messages (#general is
+                Homeroom's). The same quiet grey disc, for the same reason.
+            */}
+            {key === 'workshop' ? (
+              <TabBadge count={communities} id="platform-tabs-badge-communities" label="Channels with unread messages" />
+            ) : null}
           </span>
           <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
         </a>,

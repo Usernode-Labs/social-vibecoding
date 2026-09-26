@@ -629,17 +629,16 @@ test('coming back from an app re-reveals the screen', () => {
     'entering an app must not clear _inWorkshop — the way back reads it');
 });
 
-test('#workshop is a route of its own', () => {
-  assert.match(appJs, /if \(parts\[0\] === 'workshop'\) \{[\s\S]*?App\.navigateToWorkshop\(\);/,
-    'restoreFromHash resolves it, so a bookmark and a cold boot both land here');
+test('#communities is a route of its own, and #workshop still lands there', () => {
+  assert.match(appJs, /if \(parts\[0\] === 'communities' \|\| parts\[0\] === 'workshop'\) \{[\s\S]*?App\.navigateToWorkshop\(\);/,
+    'restoreFromHash resolves both, so an old bookmark and a cold boot land here');
   assert.match(appJs, /navigateToWorkshop\(\) \{/);
   assert.match(appJs, /_exitWorkshop\(\) \{[\s\S]*?App\._inWorkshop = false;/);
-  assert.match(appJs, /App\.setHeaderTitle\('Workshop'\)/);
-  // THE DOOR IS A TAB (#2718). It was a menu row between Home and Discover,
-  // on the rule that the app chip's menu listed every destination; the bar
-  // carries them now, and Workshop is the fourth of five.
+  assert.match(appJs, /App\.setHeaderTitle\('Communities'\)/);
+  // THE DOOR IS A TAB (#2718), the middle one of five since the rename: the
+  // screen is Communities to the people who use it, and keeps its key.
   const html = read('public/index.html');
-  assert.match(html, /id="platform-tab-workshop"[^>]*href="#workshop"/,
+  assert.match(html, /id="platform-tab-workshop"[^>]*href="#communities"/,
     'the unscoped screen is a tab');
   // The app menu keeps the SCOPED entrance — the link-out every mini-app host
   // in the study draws under a mini-app — as a plain "Go to workshop" row
@@ -778,8 +777,8 @@ test('the app\'s own Workshop wears the same scope chip, read from the other end
   // THE PANEL'S "All apps" ROW IS THE WAY BACK UP — from an app's Workshop.
   // On the all-apps screen itself (#3051, `scope === null`) it only closes.
   assert.match(chrome, /onClose\(\);\n\s*if \(scope === null\) return;\n\s*goToAllApps\(\);/);
-  assert.match(chrome, /function goToAllApps\(\): void \{[\s\S]{0,200}window\.location\.hash = '#workshop';/,
-    'a hash assignment, so the rail\'s Workshop tab and this are one route');
+  assert.match(chrome, /function goToAllApps\(\): void \{[\s\S]{0,200}window\.location\.hash = '#communities';/,
+    'a hash assignment, so the rail\'s Communities tab and this are one route');
   // The app you are already in closes the panel and goes nowhere: a row that
   // re-navigated to the current route would throw this screen's scroll
   // position and its open windows away to arrive where it started.

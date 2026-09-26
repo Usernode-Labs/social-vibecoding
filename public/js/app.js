@@ -4030,8 +4030,9 @@ const App = {
         App.navigateToProfile(parts[1] ? decodeURIComponent(parts[1]) : null);
         return;
       }
-      if (parts[0] === 'workshop') {
-        // The Workshop screen (#workshop): the viewer's apps with their two
+      if (parts[0] === 'communities' || parts[0] === 'workshop') {
+        // The Communities screen (#communities; #workshop is its old name and
+        // still lands here): the viewer's communities with their two
         // Workshop numbers. No gate beyond the anonymous-shell branch above —
         // the counts endpoint is me-scoped server-side and answers 401 to a
         // caller with no session. No second segment: the drill-in is the
@@ -4933,7 +4934,7 @@ const App = {
   _abandonWorkshopResume() {
     if (!App._resumingWorkshop || App._resumingWorkshop !== location.pathname) return false;
     App._forgetWorkshopView();
-    try { history.replaceState(null, '', App._rootUrl('#workshop')); } catch (_) { return false; }
+    try { history.replaceState(null, '', App._rootUrl('#communities')); } catch (_) { return false; }
     App.restoreFromHash();
     return true;
   },
@@ -5061,8 +5062,22 @@ const App = {
   // One predicate, because the tab that lights and the back slot's glyph are
   // two answers to the same question and have to agree.
   _isMessagesThread() {
-    return App.currentTab === 'dev'
-      && (App.currentSubTab === 'chat' || App.currentSubTab === 'sessions');
+    return App.currentTab === 'dev' && App.currentSubTab === 'sessions';
+  },
+
+  // The project's CHANNEL at `/app/<slug>/dev/chat`: a level inside the
+  // project's hub, not a thread of Messages. It was one (#2718 review) while
+  // the channels were listed in Messages; they live on each community's hub
+  // now, so it lights Communities and its chevron goes back up to the hub.
+  _isChannelThread() {
+    return App.currentTab === 'dev' && App.currentSubTab === 'chat';
+  },
+
+  // The address of a project's hub, the page its channel hangs off. A HASH,
+  // because the back button follows its href only when it is one (the
+  // #back-btn listener below); `#app/<slug>/workshop` is the same route.
+  _hubHref(slug) {
+    return slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#communities';
   },
 
   // The screen root _showOnlyScreen last revealed, or null before the first
@@ -5589,7 +5604,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('workshop-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Workshop');
+      App.setHeaderTitle('Communities');
       // Nothing in the left slot: the Workshop is a tab root, and its tab is
       // on screen beside it. _showOnlyScreen publishes that from App._BACK_SLOT
       // — see the table for why a root shows no glyph at all.
@@ -6788,6 +6803,8 @@ const App = {
       // header resolves its destination from the session's captured origin
       // first (features/header/platform-header.tsx), and Messages otherwise.
       if (App._isMessagesThread()) return ['arrow', '#messages'];
+      // THE CHANNEL hangs off its project's hub (see _isChannelThread).
+      if (App._isChannelThread()) return ['arrow', App._hubHref(App.currentApp)];
       // AN APP'S WORKSHOP IS NOT AN APP TO STEP OUT OF — any app's (#2740
       // review), not only the platform's own (#2799). The ✕ is the RUNNING
       // app's control; on the `dev` tab #app-view is the platform's Workshop

@@ -637,6 +637,27 @@ async function handleMessage(pool, client, msg) {
       return { ok: false, code: 'join_required' };
     }
   }
+  // HOMEROOM'S OLD CHANNEL IS READ-ONLY. The platform's own project talks
+  // in #general now (the Homeroom community's channel), and this discussion
+  // is kept as history: its main stream and its reply threads take no new
+  // post. A proposal's or a request's own thread is not the channel and
+  // stays open. Answered, like the join refusal, so the composer can say so.
+  if (msg.type === 'chat' && (!msg.thread || msg.thread.type === 'message')) {
+    let archived = false;
+    try {
+      archived = await communities.channelArchived(pool, client.appId);
+    } catch (err) {
+      log.warn('ws', 'channel archive check failed', { appId: client.appId, err: err.message });
+    }
+    if (archived) {
+      try {
+        if (client.ws && client.ws.readyState === 1) {
+          client.ws.send(JSON.stringify({ type: 'error', code: 'channel_moved', message: communities.CHANNEL_MOVED }));
+        }
+      } catch { /* a closed socket has nobody to tell */ }
+      return { ok: false, code: 'channel_moved' };
+    }
+  }
   switch (msg.type) {
     case 'chat': {
       // #694: optional file attachments, uploaded beforehand via

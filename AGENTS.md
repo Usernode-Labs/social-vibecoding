@@ -208,14 +208,21 @@ remaining live-proposal boundary.
 
 ## Communities own projects — name them the way the screen does
 
-- **Internally the container is a `community`; on screen it never is.** Every
-  app belongs to exactly one community (`apps.community_id`, the
-  "Communities" block at the end of `src/db/schema.sql`,
+- **Internally the container is a `community`; on screen it is named by its
+  audience.** Every app belongs to exactly one community (`apps.community_id`,
+  the "Communities" block at the end of `src/db/schema.sql`,
   `src/services/communities.js`), and a community is what people join.
   People see it by its audience — **Just you** (`solo`), **Group**
   (`invited`) or **Community** (`open`) — and what it owns are **projects**.
   Use "project" in user-facing copy where the app is the thing being built;
   keep "app" where it is the thing being used (the App tab, Discover).
+- **The middle tab is Communities.** It lists every community you are in
+  (Communities, Groups, Just you) at `#communities` (`#workshop` still routes
+  there; the tab's key and ids keep `workshop`). A project's page opens on
+  its **hub** (its channel, Needs you, members and activity, Since your last
+  visit) beside its **Workshop** (what you are working on, All items). A
+  project's channel lives on its hub, not in Messages, and #general is the
+  Homeroom community's channel; Messages is people and agents.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember.

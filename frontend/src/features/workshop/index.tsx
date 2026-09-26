@@ -91,6 +91,7 @@ import { AppsLoadError } from '../apps/load-error';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { channelUnread, useMessagesSnapshot } from '../messages/store';
 import { AllAppsScope } from './workshop-chrome';
 import { workshopStore } from './workshop-store.js';
 
@@ -110,6 +111,8 @@ type WorkshopRow = {
   audience?: Audience | string;
   member_count?: number;
   last_active_at?: string | null;
+  /** Homeroom's own row: its channel is #general. */
+  self_hosted?: boolean;
   /** A ?demo=1 fixture row (see orderRows). */
   demo?: boolean;
   working: number;
@@ -411,7 +414,7 @@ function ItemPane({ rows, items, itemsError, section, emptyText, heading }: {
 }): ReactNode {
   const NOTE = 'px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400';
   if (itemsError) {
-    return <p className={NOTE} data-workshop-items-error="">Couldn't load these items. Each app's own Workshop still has them.</p>;
+    return <p className={NOTE} data-workshop-items-error="">Couldn't load these items. Each project's own Workshop still has them.</p>;
   }
   if (!rows || !items) {
     if (heading) return null;
@@ -516,6 +519,12 @@ export function StatusLine({ working, needs }: { working: number; needs: number 
 function AppRow({ row }: { row: WorkshopRow }) {
   const fact = rowSubtitle(row);
   const busy = row.working > 0 || row.needs > 0;
+  // THE CHANNEL'S UNREAD, on the row that opens it. A project's channel
+  // lives on its hub, not in Messages, so "something was said" is shown
+  // where the room is — read from the Messages store, which loads both the
+  // channels and #general on every signed-in page for the tab badges.
+  useMessagesSnapshot();
+  const unread = channelUnread(row.slug, !!row.self_hosted);
   return (
     <ListRow
       as="a"
@@ -538,6 +547,11 @@ function AppRow({ row }: { row: WorkshopRow }) {
         </div>
       )}
       title={row.name || row.slug}
+      trailing={unread > 0 ? (
+        <span className="messages-unread" data-workshop-unread={String(unread)} aria-label={`${unread} unread in the channel`}>
+          {unread > 99 ? '99+' : unread}
+        </span>
+      ) : null}
       // THE STATUS LEADS THE SECOND LINE, then the quiet fact after it, so a
       // narrow screen truncates the fact and never the part that changes.
       // The status spans are always here (see StatusLine) so the checks'
@@ -740,7 +754,7 @@ export function WorkshopScreen() {
             onToggle={(next) => workshopStore.set({ scopeOpen: next })}
           />
           <Tabs value={state.tab} onValueChange={(v) => workshopController.setTab(v as TabKey)}>
-            <TabsList className={SECTION_TABS_LIST_BASE} aria-label="Workshop sections">
+            <TabsList className={SECTION_TABS_LIST_BASE} aria-label="Communities sections">
               <TabsTrigger
                 id="workshop-tab-status"
                 type="button"
@@ -838,7 +852,7 @@ export function WorkshopScreen() {
               ? (
                 <GroupedList tone="plane">
                   <AppsLoadError
-                    title="Couldn't load your workshop"
+                    title="Couldn't load your communities"
                     onRetry={() => { void workshopController.reload(); }}
                   />
                 </GroupedList>

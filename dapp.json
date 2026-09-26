@@ -2124,13 +2124,13 @@
       "expectText": "Submitted features"
     },
     {
-      "name": "The Dev tab lands on the Workshop, which leads with its number tiles",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "name": "A project's Workshop tab holds All items' number tiles",
+      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] ~ [data-ws-dash-cell=\"shipped\"] > b"
     },
     {
       "name": "Workshop: What you are working on stays on screen when it is empty, and says so (#2182)",
-      "path": "/?demo=1&shot=mine-empty#app/usernode-2d5619/dev",
+      "path": "/?demo=1&shot=mine-empty&ws=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body #dev-workshop [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
       "expectText": "You have no work going on."
     },
@@ -2366,15 +2366,15 @@
       "expectSelector": "#dev-workshop:has(#dev-actions > #dev-kanban-filterbar:last-child) [data-ws-tabs] > .dev-ws-tabtrack > .dev-ws-tablist[role=\"tablist\"] + .dev-ws-plus > #dev-plus-btn"
     },
     {
-      "name": "An app's Workshop ends its tab strip with the + on Current status too (prototype wsTabs)",
+      "name": "A project's page opens on its hub, lit, with what needs you on it; its two tabs, hub and Workshop, end with the + (prototype wsTabs)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": ".dev-ws[data-ws-tab=\"status\"] > [data-ws-tabs] .dev-ws-tablist:has(> [data-ws-tab-btn=\"status\"] + [data-ws-tab-btn=\"needs\"] + [data-ws-tab-btn=\"all\"]:last-child) + .dev-ws-plus:last-child > #dev-plus-btn + #dev-plus-menu"
+      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:has(.dev-ws-tabbody > [data-ws-hub-needs]) > [data-ws-tabs] .dev-ws-tablist:has(> [data-ws-tab-btn=\"status\"][aria-selected=\"true\"] + [data-ws-tab-btn=\"workshop\"]:last-child) + .dev-ws-plus:last-child > #dev-plus-btn"
     },
     {
-      "name": "The Dev screen says Workshop once, with no subtitle beside it (#2718 review)",
+      "name": "The Dev screen names its section, Communities, once, with no subtitle beside it (#2718 review)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#header-title:not(:has(#header-subtitle))",
-      "expectText": "Workshop"
+      "expectText": "Communities"
     },
     {
       "name": "A retired ?view=feed deep link resolves onto the Workshop",
@@ -2403,8 +2403,8 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban .dev-kanban-col .dev-ws-rowwrap > .dev-ws-row[role=\"button\"][aria-expanded=\"false\"][data-issue-row]"
     },
     {
-      "name": "#app/<slug>/workshop is the card area grouped by theme, not the general chat, and it leads with the open summary card and the step back",
-      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "name": "A project's Workshop tab leads All items with its one line on what the open work is about",
+      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-open-line]",
       "expectText": "Staging demo: one line on what the open issues and waiting proposals are about."
     },
@@ -2457,15 +2457,15 @@
       "expectText": "Nothing here matches the current search and filters."
     },
     {
-      "name": "Workshop: the All items search leaves Current status whole, with no 'nothing matches' note (#2915)",
-      "path": "/?demo=1&ws=status&q=nothing-matches-this#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"]:not(:has([data-ws-empty])) .dev-ws-tabbody > [data-ws-dashboard]",
-      "expectText": "Where the app is"
+      "name": "Workshop: the All items search leaves the Workshop tab's numbers whole, with no 'nothing matches' note (#2915)",
+      "path": "/?demo=1&ws=workshop&q=nothing-matches-this#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])) .dev-ws-tabbody > [data-ws-dashboard]",
+      "expectText": "All items"
     },
     {
-      "name": "Workshop: a dot on the All items tab says its search is still on, seen from Current status (#2915)",
+      "name": "Workshop: a dot on the Workshop tab says All items' search is still on, seen from the hub (#2915)",
       "path": "/?demo=1&ws=status&q=nothing-matches-this#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-tab-btn=\"all\"][aria-selected=\"false\"] > [data-ws-tab-filtered]"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-tab-btn=\"workshop\"][aria-selected=\"false\"] > [data-ws-tab-filtered]"
     },
     {
       "name": "Dev board: the search reads issue bodies, not only titles (#2089)",
@@ -2517,9 +2517,10 @@
       "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #app-menu-row-about"
     },
     {
-      "name": "The Workshop's Current status no longer carries the app's general discussion (#2718 review), and on a desktop the header over it names the app with no second icon beside the scope chip (#2768)",
+      "name": "Homeroom's hub carries its channel, #general, with the way in and its old discussion read-only; on a desktop the header names the section and the scope chip the app (#2768)",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "body:has(#dev-workshop #dev-ws-scope-chip):has(#header-title > span > span:first-child > #header-title-name) #dev-body #dev-workshop:not(:has([data-discussion-row]))"
+      "expectSelector": "body:has(#dev-workshop #dev-ws-scope-chip):has(#header-title > span > span:first-child > #header-title-name) #dev-workshop section[data-ws-channel][data-ws-channel-handle=\"general\"] a[data-ws-channel-archive]",
+      "expectText": "Earlier project discussion"
     },
     {
       "name": "The Workshop does not draw the discussion card too — one fact, one shape per view",
@@ -2698,7 +2699,7 @@
     },
     {
       "name": "A card about your own session opens the card view, with the session a link inside it (#1887)",
-      "path": "/?demo=1&shot=mine-session#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&shot=mine-session&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop [data-ws-lane=\"mine\"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*=\"/dev/sessions/\"]",
       "expectText": "[Mock] Busy own session"
     },
@@ -2988,9 +2989,9 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The menu's destination order: platform, then you (#1443)",
+      "name": "The bar's destination order: Home, Discover, Communities in the middle, Messages, then you (#1443)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-tab-workshop + #platform-recents + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-workshop[href=\"#communities\"] + #platform-tab-messages + #platform-recents + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -3049,11 +3050,10 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-message:not(.messages-message-bubble) .messages-message-head time"
     },
     {
-      "id": "messages.channels",
-      "name": "#2783: the Messages list is sectioned Discord-style — chats on top, then a Channels heading led by #general",
+      "id": "messages.inbox",
+      "name": "Messages is people and agents: one list, with no Channels section — a community's channel is on its hub",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) h3.messages-section-head[data-inbox-section=\"chats\"] ~ h3.messages-section-head[data-inbox-section=\"channels\"] + .messages-section-card > a.messages-channel-row[data-inbox-channel=\"general\"][href=\"#messages/910004\"]",
-      "expectText": "Channels",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll:not(:has([data-inbox-card=\"channels\"])):not(:has(h3.messages-section-head)) > .messages-section-card[data-inbox-card=\"chats\"]",
       "visual": true,
       "impact": [
         "frontend/src/features/messages/**",
@@ -3063,10 +3063,10 @@
       ]
     },
     {
-      "name": "#2783: the filter strip reads All, People, Channels, Agents — Apps is Channels now",
+      "name": "The filter strip reads All, People, Agents — the Channels filter left with the channels",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-filters .messages-filter-track > #messages-filter-all + #messages-filter-people + #messages-filter-channels + #messages-filter-agents",
-      "expectText": "Channels"
+      "expectSelector": "#messages-filters .messages-filter-track:not(:has(#messages-filter-channels)) > #messages-filter-all + #messages-filter-people + #messages-filter-agents",
+      "expectText": "Agents"
     },
     {
       "name": "#2778: new message is a plus to the right of the filters, and it opens a menu rather than a dialog",
@@ -4673,8 +4673,8 @@
       "expectSelector": "#gc-thread-form.gc-composer-card > .gc-composer-glyph ~ textarea ~ .gc-send[aria-label=\"Send\"]"
     },
     {
-      "name": "App Discussion is a sheet over the board strip, and its composer is the same card",
-      "path": "/?demo=1#app/usernode-2d5619/dev/chat",
+      "name": "A project's channel is a sheet over the board strip, and its composer is the same card (Homeroom's own is read-only history now, so this reads another project's)",
+      "path": "/?demo=1#app/staging-demo-app/dev/chat",
       "expectSelector": "#dev-chat-body > .dc-lift.dc-lift-session #gc-form.gc-composer-card .gc-send"
     },
     {
@@ -5167,9 +5167,9 @@
       "expectSelector": "html:not(.in-side-panel) body:has(#platform-side-panel.hidden):has(#platform-header:not(.hidden)):has(#platform-tabs:not(.hidden)) #messages-screen:not(.hidden)"
     },
     {
-      "name": "#2802: the desktop rail's Recents sits between Workshop and Me, labelled by its heading",
+      "name": "#2802: the desktop rail's Recents sits between Messages and Me, labelled by its heading",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-recents[role=\"group\"][aria-labelledby=\"platform-recents-head\"] > h2#platform-recents-head"
+      "expectSelector": "#platform-tabs #platform-tab-messages + #platform-recents[role=\"group\"][aria-labelledby=\"platform-recents-head\"] > h2#platform-recents-head"
     },
     {
       "name": "#2800: Me is the rail's last row, straight after Recents, so the thin rule the rail draws above Me sits between them",
@@ -5243,9 +5243,9 @@
       "expectText": "Message deleted"
     },
     {
-      "name": "#2387 follow-up: an app's channel ends its header with the same Full width control",
+      "name": "An app's channel opens full width, with no list beside it and no toggle for one",
       "path": "/?demo=1#messages/app/staging-demo-app",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-discussion[data-discussion-app=\"staging-demo-app\"] > .messages-thread-header > .messages-list-toggle:last-child[aria-label=\"Full width\"][aria-pressed=\"false\"]"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.messages-list-collapsed .messages-thread-discussion[data-discussion-app=\"staging-demo-app\"] > .messages-thread-header:not(:has(.messages-list-toggle))"
     },
     {
       "name": "#2387 follow-up: a dev session's pane carries Full width too, after Open full view",
@@ -5277,10 +5277,9 @@
       "expectText": "3 replies in thread"
     },
     {
-      "name": "#2967: the channels you are not in fold under “Show N more”",
-      "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll button#messages-more-channels.messages-more-channels[aria-expanded=\"false\"]",
-      "expectText": "more"
+      "name": "An open channel belongs to its community: it lights Communities, and its arrow goes back to the project's hub",
+      "path": "/?demo=1#messages/app/staging-demo-app",
+      "expectSelector": "body:has(#platform-tabs #platform-tab-workshop[aria-current=\"page\"]):has(#back-btn[href=\"#app/staging-demo-app/workshop\"]) #messages-screen:not(.hidden)"
     },
     {
       "name": "#2779 follow-up: \"Open app\" is offered on an ordinary app's chat and never on the platform's own",

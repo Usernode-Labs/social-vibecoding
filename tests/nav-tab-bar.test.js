@@ -94,7 +94,7 @@ test('Home is the one tab addressed as a path, so a modified click opens a tab',
   assert.match(html, /id="platform-tab-home"[^>]*href="\/"/);
   for (const [key, href] of [
     ['discover', '#apps'], ['messages', '#messages'],
-    ['workshop', '#workshop'], ['me', '#profile'],
+    ['workshop', '#communities'], ['me', '#profile'],
   ]) {
     assert.match(html, new RegExp(`id="platform-tab-${key}"[^>]*href="${href.replace('#', '\\#')}"`));
   }
@@ -650,26 +650,30 @@ test('the Messages tab cannot be dead, whatever the flag says', () => {
     /if \(App\._inMessages && App\._isScreenVisible\('messages-screen'\) && messages\?\.isOpen\?\.\(\)\)/);
 });
 
-test('an app\'s discussion belongs to Messages, and says so', () => {
-  // `dev/chat` is the app's general chat, and it is a row in the Messages
-  // inbox — which is why the Workshop's Current status stopped offering it.
-  // Lighting Workshop there put the reader in a section they had not been
-  // in, and the way out it offered led to the Workshop rather than to the
-  // list they opened the thread from.
+test('an app\'s channel belongs to its community, and a change to Messages', () => {
+  // `dev/chat` is the project's CHANNEL. It was a row in the Messages inbox
+  // (#2718 review) and lit Messages; the channels live on each community's
+  // hub now, so it lights Communities and its chevron goes up to the hub. A
+  // dev session is still an agent conversation (#2770), a thread of Messages.
   assert.match(read('public/js/app.js'),
     /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : 'workshop'\)/);
   const appJs = read('public/js/app.js');
   const pred = appJs.slice(appJs.indexOf('  _isMessagesThread() {'));
   assert.match(pred.slice(0, pred.indexOf('\n  },')),
-    /App\.currentTab === 'dev'\s*&& \(App\.currentSubTab === 'chat' \|\| App\.currentSubTab === 'sessions'\)/,
-    'the discussion and a dev session (#2770) are both threads of Messages');
+    /return App\.currentTab === 'dev' && App\.currentSubTab === 'sessions';/,
+    'a dev session alone is a thread of Messages');
+  assert.match(appJs, /_isChannelThread\(\) \{\s*return App\.currentTab === 'dev' && App\.currentSubTab === 'chat';/);
   assert.match(appJs, /if \(App\._isMessagesThread\(\)\) return \['arrow', '#messages'\];/,
     'and the back slot agrees with the tab that lights');
+  assert.match(appJs, /if \(App\._isChannelThread\(\)\) return \['arrow', App\._hubHref\(App\.currentApp\)\];/,
+    'the channel\'s way up is its hub');
+  assert.match(appJs, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#communities';/,
+    'a hash, because the back button follows only a hash');
   const appView = read('public/js/app-view.js');
   const branch = appView.slice(appView.indexOf("if (subTab === 'chat') {"));
   assert.match(branch.slice(0, branch.indexOf('\n    }')),
-    /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
-    'a level inside Messages shows the way up to it');
+    /App\.setBackIcon\?\.\('arrow', App\._hubHref\?\.\(App\.currentApp\) \|\| '#communities'\);/,
+    'a level inside the hub shows the way up to it');
   // A CHANGE IS AN AGENT CONVERSATION (#2770): its screen hangs off Messages
   // the same way, rather than off the board it used to point at.
   const session = appView.slice(appView.indexOf("if (subTab === 'sessions' && ref) {"));
