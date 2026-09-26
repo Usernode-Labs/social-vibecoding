@@ -50,6 +50,13 @@ test('only a new account is asked: a flag set at sign-up, false for everyone bef
   assert.match(AUTH, /\(u\.communities_onboarded_at IS NOT NULL\s*\n\s*AND u\.getting_started_closed_at IS NULL\) AS show_getting_started/);
   assert.match(AUTH, /\n\s*needsCommunitiesChoice,\n/);
   assert.match(AUTH, /\n\s*showGettingStarted,\n/);
+  // And whether the welcome tour is done on this account (#3237), next to
+  // them, failing toward "not done" (the browser's own flag still counts).
+  assert.match(SCHEMA, /ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at TIMESTAMPTZ;/);
+  assert.match(AUTH, /let tourDone = false;/);
+  assert.match(AUTH, /\(u\.tour_done_at IS NOT NULL\) AS tour_done,/);
+  assert.match(AUTH, /tourDone = rows\[0\]\?\.tour_done === true;/);
+  assert.match(AUTH, /\n\s*tourDone,\n/);
 });
 
 // ── the join screen ────────────────────────────────────────────────────
@@ -168,7 +175,8 @@ test('an admin can reset an account\'s first run, from the user menu', () => {
   // It resets the first run and nothing the account owns.
   const svc = read('src/services/onboarding.js');
   const fn = svc.slice(svc.indexOf('async function resetFirstRun('), svc.indexOf('/** The card\'s close button. */'));
-  assert.match(fn, /SET needs_communities_choice = TRUE,\s*\n\s*communities_onboarded_at = NULL,\s*\n\s*getting_started_closed_at = NULL,\s*\n\s*getting_started_seen = NULL/);
+  assert.match(fn, /SET needs_communities_choice = TRUE,\s*\n\s*communities_onboarded_at = NULL,\s*\n\s*getting_started_closed_at = NULL,\s*\n\s*getting_started_seen = NULL,\s*\n\s*tour_done_at = NULL\n/,
+    'and the tour, which the account keeps now (#3237), so it follows the join screen on every device');
   assert.doesNotMatch(fn, /community_members|app_favorites|user_terms_consents|username =/,
     'memberships, Home tiles, terms and the username stay');
   // Beside Reset password in the row's ⋯ menu, behind a confirm.
@@ -181,16 +189,22 @@ test('an admin can reset an account\'s first run, from the user menu', () => {
 
 test('a join screen shown in this browser starts the tour over', () => {
   const TOUR = read('frontend/src/features/home/tour/index.tsx');
+  const DONE = read('frontend/src/features/home/tour/tour-done.ts');
   // The gate says so, and never for the ?shot= fixture.
   assert.match(GATE, /shownHere\(\) \{\s*\n\s*return CommunitiesFirstRun\._shownHere === true;/);
   assert.match(GATE, /if \(!\(opts && opts\.demo\)\) CommunitiesFirstRun\._shownHere = true;/);
-  // A finished tour waits for a pending join screen instead of giving up...
-  assert.match(TOUR, /if \(readDone\(userId\) && !firstRunPending\(\) && !firstRunShownHere\(\)\) return;/);
-  // ...and once it has been shown here, "done" is cleared before the re-read.
+  // A finished tour waits for a pending join screen instead of giving up.
+  // "Finished" is the account's answer or this browser's (#3237), and a join
+  // screen shown here is never finished, whatever either says...
+  assert.match(TOUR, /if \(tourDoneFor\(userId\) && !firstRunPending\(\)\) return;/);
+  assert.match(TOUR, /joinShownHere: firstRunShownHere\(\),/);
+  assert.match(DONE, /if \(joinShownHere\) return false;\s*\n\s*return serverDone \|\| localDone;/);
+  // ...and once it has been shown here, this browser's "done" is cleared
+  // before the re-read (the reset cleared the account's).
   const start = TOUR.slice(TOUR.indexOf('if (started.current || userId == null) return;'));
   const body = start.slice(0, start.indexOf('}, [userId, start, firstRunRev]);'));
   assert.match(body, /if \(firstRunShownHere\(\)\) \{\s*\n\s*clearDone\(userId\);\s*\n\s*clearStep\(userId\);\s*\n\s*\}/);
-  assert.ok(body.indexOf('clearDone(userId)') < body.lastIndexOf('if (readDone(userId)) return;'));
+  assert.ok(body.indexOf('clearDone(userId)') < body.lastIndexOf('if (tourDoneFor(userId)) return;'));
 });
 
 // A browser that has signed in before boots from the session snapshot, and

@@ -1,5 +1,11 @@
 /**
- * "Has this account finished the welcome tour?", answered without the server.
+ * "Has this account finished the welcome tour?", as THIS BROWSER remembers it.
+ *
+ * The account keeps the answer too (./tour-done.ts), and the tour is done
+ * when either says so; this is the browser's half. It still matters: it is
+ * what a browser that finished the tour before the account kept the answer
+ * copies to the account, and it answers on a session the server has not
+ * confirmed yet.
  *
  * Lifted verbatim in shape from the `#home-welcome` banner this tour replaces
  * (#1561), and for the reason its header comment gave: the platform publishes
@@ -48,7 +54,12 @@ export function writeDone(userId: number | null): void {
   }
 }
 
-/** Settings' "Replay the tour" clears the flag so the next Home start runs. */
+/**
+ * Settings' "Replay the tour" clears this browser's flag, and a join screen
+ * shown in this document does too. Neither touches the account's: the replay
+ * leaves it set until the replay finishes, and the reset that brings a join
+ * screen back has already cleared it.
+ */
 export function clearDone(userId: number | null): void {
   const key = keyFor(userId);
   if (!key) return;
