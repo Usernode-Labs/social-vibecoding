@@ -95,9 +95,9 @@ function platformLimitCopy(detail) {
   if (limit === 'apps') {
     return level === 'full'
       ? { title: 'App limit reached',
-        body: `${used} of ${cap} apps are in use. New apps are refused until an admin raises MAX_APPS or removes one` }
+        body: `${used} of ${cap} apps are in use. New apps are refused until the limit is raised in Admin \u2192 Limits` }
       : { title: 'Nearing the app limit',
-        body: `${used} of ${cap} apps are in use. Raise MAX_APPS in Platform variables before new apps are refused` };
+        body: `${used} of ${cap} apps are in use. Raise the limit in Admin \u2192 Limits before new apps are refused` };
   }
   return level === 'full'
     ? { title: 'Session limit reached',

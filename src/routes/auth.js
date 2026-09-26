@@ -1,4 +1,5 @@
 const appAllowance = require('../services/app-allowance');
+const appLimit = require('../services/app-limit');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const https = require('https');
@@ -646,7 +647,7 @@ function authRoutes(config) {
       requestedAt: null,
     };
     try {
-      allowance = await appAllowance.read(pool, req.user, { maxApps: config.maxApps });
+      allowance = await appAllowance.read(pool, req.user, { maxApps: await appLimit.effective(pool, config) });
     } catch (err) {
       log.warn('auth', 'App allowance lookup failed', { message: err.message });
     }
