@@ -1310,6 +1310,13 @@ const TopochainChallenges = {
     return !!(c.card_preview && c.card_preview.illustration === 'block-production');
   },
 
+  // Whether a list row is the feedback challenge ("Send useful feedback"),
+  // whose count is made of the viewer's own reports (#3186). No metric names
+  // it, so the artwork does, the last clue _isBlockProduction takes too.
+  _isFeedback(c) {
+    return !!(c && c.card_preview && c.card_preview.illustration === 'useful-feedback');
+  },
+
   _renderDetailOverlay() {
     if (!TopochainChallenges._detailChallenge) return;
     TopochainChallenges._store?.set({ detail: TopochainChallenges.detailView() });
@@ -1409,6 +1416,11 @@ const TopochainChallenges = {
       // The card's line under the rail, under the page's rail too.
       cadence: TopochainChallenges._cadenceOf(challenge),
       cta: TopochainChallenges.ctaView(dm, challenge),
+      // #3186: on the feedback challenge, the way to what the viewer sent
+      // and which of it counted, beside the count that says how many did.
+      // A flag, not an href: the page's one computed href stays the guarded
+      // CTA, and this link's address is a constant in the pane.
+      feedbackLink: TopochainChallenges._isFeedback(challenge),
       description: dm.description ? str(dm.description) : null,
       requirements: dm.requirements ? str(dm.requirements) : null,
       scoring: dm.reward_logic ? str(dm.reward_logic) : null,

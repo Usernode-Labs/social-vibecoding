@@ -629,10 +629,18 @@
       "expectSelector": "#profile-screen:not(.hidden) #profile-identity-card:has(#profile-edit-btn) + #profile-stats > [data-profile-stat=\"merged\"] + [data-profile-stat=\"kudos\"] + [data-profile-stat=\"challenges\"]"
     },
     {
-      "name": "Me: the \"More\" list is the prototype's three rows: Challenges & standings, Kudos, Settings",
-      "path": "/?demo=1#profile",
-      "expectText": "Challenges & standings",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-more #profile-row-challenges[href=\"#leaderboard/challenges\"] + #profile-row-kudos[href=\"#leaderboard/kudos\"] + #profile-row-settings[href=\"#settings\"]"
+      "id": "profile.feedback-list",
+      "name": "Me: the \"More\" list is Challenges & standings, Kudos, Your feedback and Settings, and Your feedback lists what you sent with its status (#3186)",
+      "path": "/?demo=1#profile?feedback",
+      "expectText": "Counted",
+      "expectSelector": "body:has(#profile-feedback-sheet a[data-feedback-status=\"received\"] ~ a[data-feedback-status=\"counted\"]) #profile-more #profile-row-challenges + #profile-row-kudos + #profile-row-feedback[href=\"#profile?feedback\"] + #profile-row-settings",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/profile/feedback-sheet.tsx",
+        "frontend/src/features/profile/account-panel.tsx",
+        "frontend/src/features/profile/profile-store.js",
+        "src/routes/feedback.js"
+      ]
     },
     {
       "name": "Me: Your contributions lists merged proposals, each opening its proposal, and See all",
@@ -715,9 +723,9 @@
       "expectText": "Congratulations on your first feedback!"
     },
     {
-      "name": "First feedback offers an editable fix and this app's board (#1583)",
+      "name": "First feedback offers an editable fix, this app's board and Your feedback (#1583, #3186)",
       "path": "/?shot=feedback-first#app/usernode-2d5619/dev",
-      "expectSelector": "#feedback-first-success:not(.hidden):has(#feedback-first-fix:not(:disabled)) #feedback-first-board:not(:disabled)",
+      "expectSelector": "#feedback-first-success:not(.hidden):has(#feedback-first-fix:not(:disabled)) #feedback-first-board:not(:disabled) + #feedback-first-mine",
       "expectText": "Try a fix yourself"
     },
     {
@@ -2484,7 +2492,7 @@
     {
       "name": "A Needs-you item leads with its title, then the sentence a voter reads, then the caption with who and when",
       "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] > .dev-ws-item-title + .dev-ws-item-summary ~ .dev-ws-item-caption > .dev-ws-item-by"
+      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"]:not([data-ws-swipeable]) > .dev-ws-item-title + .dev-ws-item-summary ~ .dev-ws-item-caption > .dev-ws-item-by"
     },
     {
       "name": "The Needs-you feed's rail offers Ask, which opens the question box about the item in front of you",

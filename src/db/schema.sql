@@ -1375,6 +1375,16 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS local_agent_label TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_handoff_event_idx
   ON chat_session_messages(session_id, (metadata->>'handoffEventId'))
   WHERE metadata ? 'handoffEventId';
+
+-- #3177: the optional id a client sends with a dev-chat message
+-- (POST /api/sessions/:id/chat `client_message_id`), so a retry after a
+-- dropped stream finds the message it already sent instead of starting a
+-- second turn. Same shape and rule as conversation_messages.idempotency_key:
+-- one per session, and rows sent without one are never constrained.
+ALTER TABLE chat_session_messages ADD COLUMN IF NOT EXISTS client_message_id VARCHAR(64);
+CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_client_message_idx
+  ON chat_session_messages (session_id, client_message_id)
+  WHERE client_message_id IS NOT NULL;
 -- source = 'maintenance' marks proposals opened by a fleet maintenance
 -- campaign (services/fleet-maintenance.js): platform-authored PRs fanned
 -- out to child apps after a maintenance_campaign governance vote passes.
