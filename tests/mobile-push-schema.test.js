@@ -109,7 +109,8 @@ test('closed database kind registry matches the reviewed service mapping and def
   // 31 → 33: #2387's two — conversation_thread_reply (under messages) and
   // thread_reply (an app-chat reply-thread reply, direct_interactions).
   // 33 → 34: #3181's session_stalled (developer_sessions).
-  assert.equal(new Set(rows.map((row) => row.kind)).size, 34);
+  // 34 → 35: platform_limit (server-wide cap alerts, app_alerts).
+  assert.equal(new Set(rows.map((row) => row.kind)).size, 35);
   assert.match(schema, /DELETE FROM mobile_push_kind_categories[\s\S]*kind NOT IN/,
     'stale policy rows cannot silently keep a removed kind push-enabled');
 });
