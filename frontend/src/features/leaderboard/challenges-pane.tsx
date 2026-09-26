@@ -171,6 +171,8 @@ type DetailView = {
   counted: boolean;
   cadence: string | null;
   cta: CtaView | null;
+  // #3186: the Me screen's "Your feedback", on the feedback challenge only.
+  feedbackLink?: boolean;
   description: string | null;
   requirements: string | null;
   scoring: string | null;
@@ -238,6 +240,9 @@ const WELL = 'flex h-56 w-full items-center justify-center rounded-2xl bg-[var(-
 // its sections sit flush on the screen's own surface.
 const CTA_LINK = 'flex h-12 w-full items-center justify-center rounded-[0.875rem] bg-violet-600 px-4 '
   + 'text-[0.9375rem] font-semibold text-white transition-colors hover:bg-violet-500';
+// #3186: the quieter link under the action, in the "See all" ink Me uses.
+const FEEDBACK_LINK = 'self-center inline-flex min-h-[44px] items-center px-3 text-sm font-medium '
+  + 'text-violet-700 hover:underline dark:text-violet-400';
 
 const OVERLAY = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
 // Split either side of the max-width, so the profile panel still renders its
@@ -570,6 +575,14 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
       />
       <ProgressCadence size="lg" text={view.cadence} />
       {view.cta ? <Cta view={view.cta} /> : null}
+      {/* #3186: the feedback challenge's count is the viewer's own reports;
+          this is where each one is listed with whether it counted, by the
+          address Profile.open() honours. A constant, so it needs no guard. */}
+      {view.feedbackLink ? (
+        <a id="tc-se-feedback-mine" href="#profile?feedback" className={FEEDBACK_LINK}>
+          See your feedback
+        </a>
+      ) : null}
       {view.description ? <p className={PROSE}>{view.description}</p> : null}
       {view.requirements ? <PageSection heading="Requirements">{view.requirements}</PageSection> : null}
       {view.scoring ? <PageSection heading="Scoring">{view.scoring}</PageSection> : null}
