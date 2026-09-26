@@ -15,6 +15,17 @@ test('Kubernetes platform image contains PostgreSQL tools but no Docker CLI', ()
     'runAsNonRoot cannot verify a symbolic image user before startup');
 });
 
+test('Kubernetes hosted-app evidence image declares a numeric non-root user', () => {
+  const dockerfile = read('capture/Dockerfile');
+  // The evidence fixture deliberately runs this image through
+  // deployApplication(), whose pod security context sets runAsNonRoot without
+  // runAsUser. Kubernetes cannot resolve a symbolic image user such as
+  // `node` before startup, even when that account is non-root in /etc/passwd.
+  assert.match(dockerfile, /^USER 1000:1000$/m);
+  assert.doesNotMatch(dockerfile, /^USER node$/m,
+    'the hosted-app fixture must satisfy the same numeric-user contract as ordinary app images');
+});
+
 test('Kubernetes platform image builds and contains the generated shell assets', () => {
   const dockerfile = read('Dockerfile.kubernetes');
   assert.match(dockerfile, /FROM node:22-alpine AS asset-deps/);

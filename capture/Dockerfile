@@ -28,7 +28,12 @@ COPY worker/evidence-hosted-origins.js /worker/evidence-hosted-origins.js
 COPY worker/evidence-hosted-app-contract.js /worker/evidence-hosted-app-contract.js
 COPY src/services/visual-evidence-plan.js /app/visual-evidence-plan.js
 
-USER node
+# This image also serves the short-lived hosted-app evidence fixture through
+# the ordinary Kubernetes app runtime. That runtime enforces runAsNonRoot
+# without assigning a UID, so kubelet must be able to verify a numeric image
+# user before the container starts. UID/GID 1000 are the official node
+# image's node account, preserving the same files and permissions as before.
+USER 1000:1000
 
 # One-shot: reads BEFORE_URL / AFTER_URL (either may be empty) from env,
 # emits sentinel-framed base64 artifacts on stdout, exits 0. The platform
