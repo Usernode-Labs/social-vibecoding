@@ -58,6 +58,35 @@ test('a waiting email invite becomes a project invite when its address is confir
     assert.deepEqual(mailed, ['sam@example.com']);
   });
 
+  await t.test('joining the waitlist with an invited address records the invite, at the first join only', async () => {
+    const waitlist = require('../src/services/waitlist');
+    const { rows: [garden] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, status) VALUES ('Garden', 'garden', $1, 'running') RETURNING id, slug, name`,
+      [newcomer.id]
+    );
+    // A second, later invite to the same address: the earlier one is recorded.
+    await emailInvites.inviteByEmail(pool, {}, { app: garden, emails: ['sam@example.com'], inviter: newcomer });
+    await waitlist.joinWaitlist(pool, { email: 'sam@example.com' });
+    await waitlist.joinWaitlist(pool, { email: 'stranger@example.com' });
+    // Invited only after joining: a re-join does not attribute the row.
+    await emailInvites.inviteByEmail(pool, {}, { app: garden, emails: ['stranger@example.com'], inviter: newcomer });
+    await waitlist.joinWaitlist(pool, { email: 'stranger@example.com' });
+    const { rows } = await pool.query(
+      `SELECT w.email, a.slug, u.username AS inviter
+         FROM waitlist_signups w
+         LEFT JOIN app_email_invites i ON i.id = w.project_invite_id
+         LEFT JOIN apps a ON a.id = i.app_id
+         LEFT JOIN users u ON u.id = i.invited_by
+        ORDER BY w.email`
+    );
+    assert.deepEqual(rows, [
+      { email: 'sam@example.com', slug: 'book-club', inviter: 'maker' },
+      { email: 'stranger@example.com', slug: null, inviter: null },
+    ]);
+    // The claim below is about Book club's invite alone.
+    await pool.query('DELETE FROM app_email_invites WHERE app_id = $1', [garden.id]);
+  });
+
   await t.test('confirming the address on an account turns it into a pending invite, once', async () => {
     const claimed = await emailInvites.claimEmailInvites(pool, { userId: newcomer.id, email: 'SAM@example.com' });
     assert.equal(claimed, 1);

@@ -8119,6 +8119,24 @@ CREATE INDEX IF NOT EXISTS idx_waitlist_signups_invited_by
   ON waitlist_signups (invited_by);
 COMMENT ON COLUMN waitlist_signups.invite_code IS 'staging:private';
 
+-- `project_invite_id` is the project invite that brought a signup in: the
+-- pending `app_email_invites` row for the address when it first joined,
+-- earliest first (that mail is the one certain to have gone out; later ones
+-- can be throttled). Joining it back gives the project (`app_id`) and who
+-- typed the address (`invited_by`). Like `invited_by` above, it is set only
+-- by the INSERT, so a re-join never re-attributes a row.
+--
+-- Deliberately NOT a foreign key. `app_email_invites` is staging:private,
+-- and the staging clone TRUNCATEs every table holding a key into a private
+-- one (db-manager's TRUNCATE … CASCADE closure), which would empty the whole
+-- waitlist in every preview. Invite ids are never reused, so an id whose
+-- invite was deleted (its project, or its inviter's account, went) joins
+-- to nothing rather than to someone else's.
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS project_invite_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_waitlist_signups_project_invite
+  ON waitlist_signups (project_invite_id) WHERE project_invite_id IS NOT NULL;
+COMMENT ON COLUMN waitlist_signups.project_invite_id IS 'staging:private';
+
 -- ── Proposal freshness (#1442) ─────────────────────────────────────────
 --
 -- Three numbers a voter reads off a promoted proposal — how far behind main
