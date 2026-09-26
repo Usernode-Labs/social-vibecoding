@@ -396,7 +396,7 @@ test('a tall target is scrolled to its start, not centred past it', () => {
 
 test('the tour waits for focus in the app and hands Home back at its top', () => {
   const start = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('if (started.current || userId == null) return;'));
-  const body = start.slice(0, start.indexOf('}, [userId, start]);'));
+  const body = start.slice(0, start.indexOf('}, [userId, start, firstRunRev]);'));
   assert.match(body, /await whenFirstRunSettled\(\);[\s\S]*await whenUserSettled\(\);[\s\S]*await whenHomeVisible\(\);/);
   assert.match(OVERLAY_SRC, /FIRST_TOUCH_WAIT_MS/, 'the wait is bounded');
   assert.match(OVERLAY_SRC, /--platform-safe-top/, 'the status bar is measured from the shell token');
@@ -691,7 +691,7 @@ test('the overlay keeps its step while it is up, resumes there, and clears it on
   assert.match(OVERLAY_SRC, /if \(!open \|\| userId == null\) return;\s*writeStep\(userId, index\);\s*\}, \[open, index, userId\]\);/);
   // The auto-start is the one path that resumes; a replay starts from the top.
   const start = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('if (started.current || userId == null) return;'));
-  const body = start.slice(0, start.indexOf('}, [userId, start]);'));
+  const body = start.slice(0, start.indexOf('}, [userId, start, firstRunRev]);'));
   assert.match(body, /start\(resumeIndex\(readStep\(userId\)\)\);/);
   const replay = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const request = useTourRequest();'));
   assert.match(replay.slice(0, replay.indexOf('}, [request, start]);')), /start\(\);/);
@@ -776,7 +776,7 @@ test('nothing opens the tour on a deterministic capture route', () => {
 
 test('the auto-start waits for the viewer, the first-run steps and Home', () => {
   const start = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('if (started.current || userId == null) return;'));
-  const body = start.slice(0, start.indexOf('}, [userId, start]);'));
+  const body = start.slice(0, start.indexOf('}, [userId, start, firstRunRev]);'));
   assert.ok(body.indexOf('await whenFirstRunSettled()') >= 0, 'it waits on the first run');
   assert.ok(body.indexOf('await whenFirstRunSettled()') < body.indexOf('await whenHomeVisible()'),
     'the first run first, then Home');

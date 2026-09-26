@@ -504,12 +504,23 @@ export function OnboardingTour() {
   // `started` is per document and one-way: neither the auto-start nor a
   // replay may fire a second tour over the one on screen.
   const started = useRef(false);
+  // Bumped when the join screen is answered. On a browser that has signed in
+  // before, the join screen arrives LATER than this effect's first run: the
+  // boot starts from the session snapshot, the screen waits for the
+  // confirmed session (app.js _reconcileSession), and by then this effect has
+  // already looked, seen a finished tour and stopped. The bump runs it again.
+  const [firstRunRev, setFirstRunRev] = useState(0);
+  useEffect(() => {
+    const bump = () => setFirstRunRev((n) => n + 1);
+    document.addEventListener('sv:communities-joined', bump);
+    return () => document.removeEventListener('sv:communities-joined', bump);
+  }, []);
   useEffect(() => {
     if (started.current || userId == null) return;
     if (isDeterministicRoute()) return;
-    // A finished tour stays finished, unless a join screen is coming: see
-    // the restart below.
-    if (readDone(userId) && !firstRunPending()) return;
+    // A finished tour stays finished, unless a join screen is coming or has
+    // just been answered here: see the restart below.
+    if (readDone(userId) && !firstRunPending() && !firstRunShownHere()) return;
     let cancelled = false;
     void (async () => {
       await whenFirstRunSettled();
@@ -536,7 +547,7 @@ export function OnboardingTour() {
       start(resumeIndex(readStep(userId)));
     })();
     return () => { cancelled = true; };
-  }, [userId, start]);
+  }, [userId, start, firstRunRev]);
 
   // ── Where the viewer is, kept across a reload ────────────────────────
   //

@@ -119,6 +119,15 @@
       if (terms && typeof terms.settled === 'function') {
         try { await terms.settled(); } catch (_) { /* a broken gate must not block this one */ }
       }
+      // After a snapshot boot, app.js's _reconcileSession re-offers the terms
+      // ask and then this one, once the session is confirmed. settled() had
+      // already resolved for the skipped boot check by then, so wait for
+      // that second ask to finish as well: never two sheets at once. Capped,
+      // so a terms sheet left open for ten minutes does not hold this for
+      // good.
+      for (let i = 0; terms && (terms._inFlight || terms._presented) && i < 2400; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
     },
 
     async maybePrompt() {
