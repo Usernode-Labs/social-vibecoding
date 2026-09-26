@@ -116,3 +116,33 @@ export function isSafeAppFrameSrc(src, platformOrigin) {
     return false;
   }
 }
+
+/**
+ * #3257: is `a` the same frame document as `b`? The shell writes the
+ * platform's resolved theme into every frame URL as `un-theme`, for the
+ * app's pre-paint read, and tells a running app about later changes over
+ * the bridge instead. So a theme toggle changes the URL a render WOULD
+ * build without changing the document the frame holds, and comparing the
+ * raw strings would reload the user's app on the next App → Dev → App.
+ * The comparison ignores that one parameter and nothing else.
+ *
+ * public/js/app-view.js carries the same function as AppView.sameFrameSrc
+ * (a classic script cannot import this); tests/app-theme-forwarding.test.js
+ * runs both against one table.
+ */
+export const FRAME_THEME_PARAM = 'un-theme';
+
+export function sameFrameSrc(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const strip = (src) => {
+    try {
+      const url = new URL(src);
+      url.searchParams.delete(FRAME_THEME_PARAM);
+      return url.toString();
+    } catch {
+      return src;
+    }
+  };
+  return strip(a) === strip(b);
+}

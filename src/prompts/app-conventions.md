@@ -2061,6 +2061,58 @@ Notes:
   the forwarded properties to work (it is still required for bare `env()`
   to work standalone).
 
+## The platform's light/dark theme inside the app frame
+
+Viewers choose Light, Dark or System in the platform's own settings.
+**`prefers-color-scheme` inside your frame cannot see that choice**: in a
+cross-origin iframe it follows the operating system, not the page around
+it. So an app that only reads the media query shows light to a viewer who
+picked Dark on a light-mode OS, and a staging preview does the same.
+
+The platform forwards the **resolved** theme (`light` or `dark`, never
+`system`). The hosted bridge publishes it; no app-side plumbing beyond the
+bridge `<script>`:
+
+- **`usernode.theme`** is `"light"`, `"dark"`, or `null` when the app is
+  opened standalone (outside the platform). It is set synchronously when the
+  bridge loads, from the frame URL's `?un-theme=` parameter, so a bootstrap
+  script placed *after* the bridge tag can read it before first paint.
+- **`usernode:theme-changed`** is a `CustomEvent` on `window` whose `detail`
+  is `{ theme }`. It fires when the viewer changes the platform theme while
+  your app is open. The app is never reloaded for it.
+
+The bridge only reports the value. Your app decides what dark means (a
+`.dark` class on `<html>` for Tailwind's `dark:` variant and the
+usernode-native kit, your own tokens, and so on). Recommended wiring, with
+the OS preference as the standalone fallback:
+
+```html
+<script src="/usernode-bridge/v1/bridge.js"></script>
+<script>
+  (function () {
+    var media = window.matchMedia('(prefers-color-scheme: dark)');
+    function applyTheme() {
+      var theme = (window.usernode && window.usernode.theme)
+        || (media.matches ? 'dark' : 'light');
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      document.documentElement.style.colorScheme = theme;
+    }
+    applyTheme();
+    window.addEventListener('usernode:theme-changed', applyTheme);
+    media.addEventListener('change', applyTheme);
+  })();
+</script>
+```
+
+Notes:
+
+- Read `usernode.theme`, not `?un-theme=` directly: the URL keeps the value
+  the frame loaded with, and the bridge keeps `usernode.theme` current.
+- `un-theme` is namespaced so it never collides with a query parameter your
+  app uses itself. Do not strip it or depend on its position in the URL.
+- An app that offers its own light/dark picker may keep it. Treat the
+  platform theme as the default until the viewer picks something in your app.
+
 ## Staying loaded in the background
 
 The shell keeps the last few apps a viewer opened **loaded but hidden**, so

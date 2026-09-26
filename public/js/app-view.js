@@ -1591,6 +1591,8 @@ const AppView = {
     }
     const token = AppView.tokenForSlug(AppView.appData && AppView.appData.slug);
     if (token) url.searchParams.set('token', token);
+    // #3257: the platform's resolved theme, for the app's pre-paint read.
+    url.searchParams.set(AppView.THEME_PARAM, AppView.resolvedTheme());
     const src = url.toString();
     return AppView._isSafeAppIframeSrc(src) ? src : null;
   },
@@ -2751,7 +2753,7 @@ const AppView = {
     const adopts = !!adopt
       && adopt.launchId === AppView._launchId
       && adopt.slug === appData.slug
-      && adopt.src === iframeSrc
+      && AppView.sameFrameSrc(adopt.src, iframeSrc)
       && frame.hasFrame();
 
     // #1085 chunk H generalises that one-shot into a standing rule: if the
@@ -20304,10 +20306,15 @@ const AppView = {
       // testing deep link), so without this flag a reviewer can see an empty
       // production-shaped screen and conclude that the submitted UI did not
       // land.  Keep this self-app-only: apps built on the platform own their
-      // own query-string semantics and must continue to receive an untouched
-      // preview URL. The URL API preserves an existing path/hash/query.
+      // own query-string semantics and must receive their preview URL with
+      // nothing added but the platform's own namespaced parameters (`token`,
+      // and `un-theme` below). The URL API preserves an existing path/hash/query.
       if (selfHosted) url.searchParams.set('demo', '1');
       url.searchParams.set('token', token);
+      // #3257: namespaced, like `token`, so it cannot collide with a query
+      // parameter the app gives meaning to (the platform's own shell pins its
+      // theme from a bare `?theme=`, which a preview must not do).
+      url.searchParams.set(AppView.THEME_PARAM, AppView.resolvedTheme());
       return url.toString();
     };
     const jump = !!(opts && opts.jump) && !!safePath;
@@ -20682,7 +20689,7 @@ const AppView = {
           // only if it isn't already pointing there, so re-opening the
           // panel doesn't reload the iframe.
           const target = buildSrc(t.path);
-          if (pending.src !== target) {
+          if (!AppView.sameFrameSrc(pending.src, target)) {
             pending.src = target;
             const frame = staging.frame();
             if (frame && frame.src) staging.setSrc(target);
@@ -21457,6 +21464,93 @@ const AppView = {
         '*'
       );
     } catch {}
+  },
+
+  // ── Platform theme forwarding (issue #3257) ────────────────────────
+  //
+  // WHY THIS EXISTS. An app in a cross-origin frame cannot see the viewer's
+  // Light/Dark choice: `prefers-color-scheme` inside the frame follows the
+  // OS, not the page embedding it (measured in Chromium 141: toggling the
+  // shell's `color-scheme` never moved the frame's media query, at load or
+  // live). So a viewer who picked Dark on a light-mode OS got light apps and
+  // light previews. The shell forwards the RESOLVED theme instead, the same
+  // two ways it forwards safe-area insets and the locale:
+  //
+  //   - `?un-theme=light|dark` on the app frame and staging preview URLs,
+  //     so an app's pre-paint bootstrap can read it with no flash;
+  //   - a `__usernode_theme` message family: the bridge asks once at load
+  //     (`get` → `response`), and the shell pushes `changed` on every theme
+  //     change (the drawer, an OS flip in System mode, another tab). Never a
+  //     src rewrite: that would reload the app mid-use.
+  //
+  // The bridge turns both into `usernode.theme` and a
+  // `usernode:theme-changed` event. It reports; it never restyles the app.
+  THEME_PARAM: 'un-theme',
+
+  // The legacy copy of sameFrameSrc in
+  // frontend/src/features/app-frame/app-frame-policy.js: a render compares
+  // the url it would build with the one the frame holds, and a theme toggle
+  // in between changes only `un-theme`, which the bridge already delivered.
+  // Comparing raw strings would reload the app. tests/app-theme-forwarding
+  // runs both copies against one table.
+  sameFrameSrc(a, b) {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    const strip = (src) => {
+      try {
+        const url = new URL(src);
+        url.searchParams.delete(AppView.THEME_PARAM);
+        return url.toString();
+      } catch {
+        return src;
+      }
+    };
+    return strip(a) === strip(b);
+  },
+
+  resolvedTheme() {
+    try {
+      return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+    } catch {
+      return 'light';
+    }
+  },
+
+  // The owned frames by id, plus the parked ones a kept app keeps alive
+  // (#2902): those have no id, and a theme change while an app is parked
+  // must still reach it, since nothing reloads it on resume.
+  _themeFrames() {
+    if (typeof document === 'undefined') return [];
+    const frames = new Set();
+    AppView.SAFE_AREA_FRAME_IDS.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) frames.add(el);
+    });
+    document.querySelectorAll('.app-launch-host iframe').forEach((el) => frames.add(el));
+    return [...frames];
+  },
+
+  handleThemeBridgeMessage(e) {
+    const data = e.data;
+    if (!data || !data.id || data.__usernode_theme !== 'get') return;
+    const frame = AppView._themeFrames().find((el) => e.source === el.contentWindow);
+    if (!frame) return;
+    try {
+      e.source.postMessage(
+        { __usernode_theme: 'response', id: data.id, value: { theme: AppView.resolvedTheme() } },
+        '*'
+      );
+    } catch {}
+  },
+
+  broadcastTheme() {
+    const theme = AppView.resolvedTheme();
+    AppView._themeFrames().forEach((el) => {
+      if (!el.contentWindow) return;
+      try {
+        el.contentWindow.postMessage({ __usernode_theme: 'changed', value: { theme } }, '*');
+      } catch {}
+    });
   },
 
   // #1581: WebKit exposes the IFRAME ELEMENT's background during a child
@@ -22254,8 +22348,16 @@ if (typeof window !== 'undefined') {
     try { AppView.handleLocaleBridgeMessage(e); } catch {}
     // #970: the bridge's startup request for this frame's safe-area insets.
     try { AppView.handleSafeAreaBridgeMessage(e); } catch {}
+    // #3257: the bridge's startup request for the platform's theme.
+    try { AppView.handleThemeBridgeMessage(e); } catch {}
     try { AppView.handleBackgroundBridgeMessage(e); } catch {}
   });
+
+  // #3257: Theme.onChange fires after the new theme is on <html>, for the
+  // drawer's segments, an OS flip in System mode and another tab's write.
+  if (window.Theme && typeof window.Theme.onChange === 'function') {
+    window.Theme.onChange(() => AppView.broadcastTheme());
+  }
 
   // #970: anything that can change a frame's rect relative to the page's
   // safe area re-broadcasts. Rotation and window resizes change the insets
