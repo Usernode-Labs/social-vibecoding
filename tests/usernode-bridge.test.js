@@ -185,6 +185,25 @@ test('directory calls reject rather than fall back when there is no shell', () =
   assert.match(block, /if \(e\.source !== window\.parent\) return;/);
 });
 
+// #2514: every shell answer to a bridge request is addressed to the origin
+// that asked. A '*' reply is delivered to whatever document the frame holds
+// when the answer is ready, which after a navigation is not the app.
+test('shell bridge replies go to the requesting origin, never to "*"', () => {
+  const shell = fs.readFileSync(path.join(root, 'public', 'js', 'app-view.js'), 'utf8');
+  assert.doesNotMatch(shell, /e\.source\.postMessage\(/,
+    'reply through AppView._replyToBridge, which carries the request origin');
+  const helper = shell.slice(
+    shell.indexOf('  _replyToBridge(e, message) {'),
+    shell.indexOf('  _replyToBridge(e, message) {') + 600
+  );
+  assert.match(helper, /e\.source\.postMessage|source\.postMessage\(message, origin\)/);
+  assert.doesNotMatch(helper, /'\*'/);
+  for (const family of ['locale', 'safe_area', 'llm', 'permission', 'storage', 'directory']) {
+    assert.match(shell, new RegExp(`_replyToBridge\\(e, \\{ __usernode_${family}: 'response'`),
+      `the ${family} family answers through the helper`);
+  }
+});
+
 test('shell side handles the same directory message family', () => {
   const shell = fs.readFileSync(path.join(root, 'public', 'js', 'app-view.js'), 'utf8');
   assert.match(shell, /handleDirectoryBridgeMessage/);

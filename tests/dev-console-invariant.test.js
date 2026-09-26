@@ -20,11 +20,32 @@ const { DevConsoleStore } = require(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-console', 'store.ts'),
 );
 
+// #2514: the receiver only accepts a message posted by the document inside
+// one of the shell's own app frames, on the origin that frame was pointed at.
+// A stub document holding the App tab's frame stands in for the shell.
+const APP_ORIGIN = 'http://app.example';
+const APP_WINDOW = { name: 'app-iframe window' };
+const APP_FRAME = {
+  id: 'app-iframe',
+  contentWindow: APP_WINDOW,
+  src: `${APP_ORIGIN}/?token=t`,
+  getAttribute(name) { return name === 'src' ? this.src : null; },
+};
+const shellFrames = { 'app-iframe': APP_FRAME };
+globalThis.document = {
+  getElementById(id) { return shellFrames[id] || null; },
+};
+globalThis.location = { href: 'https://platform.example/', origin: 'https://platform.example' };
+
 // A fresh receiver per test. The module also exports a singleton and installs
 // it as window.DevConsole in a browser, but the class is what the behaviour
 // lives on — and instantiating it keeps the tests independent.
 function loadDevConsole() {
-  return new DevConsoleStore();
+  const store = new DevConsoleStore();
+  // Every message below comes from the app frame unless a test says otherwise.
+  const receive = store._onMessage;
+  store._onMessage = (event) => receive({ source: APP_WINDOW, origin: APP_ORIGIN, ...event });
+  return store;
 }
 
 test('an invariant-failure message is stored and bumps the error badge', () => {
@@ -151,4 +172,54 @@ test('setMode normalises anything that is not MODE_ALWAYS', () => {
   DevConsole.setMode('true');
   assert.equal(DevConsole.getMode(), 'errors-only',
     'a truthy string from an older caller must not read as "always"');
+});
+
+// ── #2514: only the shell's own app frames may write to the console ────
+
+const LOG = { sentinel: '__usernodeDevConsole', level: 'error', args: ['spoof'], ts: 1 };
+
+test('a window that is not one of the shell\'s app frames cannot log', () => {
+  const DevConsole = new DevConsoleStore();
+  // A third-party iframe nested inside the app, a popup, or no source at all.
+  DevConsole._onMessage({ data: LOG, source: { name: 'nested' }, origin: 'https://evil.example' });
+  DevConsole._onMessage({ data: LOG, source: { name: 'nested' }, origin: APP_ORIGIN });
+  DevConsole._onMessage({ data: LOG, origin: APP_ORIGIN });
+  DevConsole._onMessage({ data: LOG, source: null, origin: APP_ORIGIN });
+  assert.equal(DevConsole.entries.length, 0);
+  assert.equal(DevConsole.unseenErrors, 0, 'and nothing badges');
+});
+
+test('an app frame navigated off its app origin cannot log', () => {
+  const DevConsole = new DevConsoleStore();
+  DevConsole._onMessage({ data: LOG, source: APP_WINDOW, origin: 'https://evil.example' });
+  DevConsole._onMessage({ data: LOG, source: APP_WINDOW, origin: 'null' });
+  DevConsole._onMessage({ data: LOG, source: APP_WINDOW, origin: '' });
+  assert.equal(DevConsole.entries.length, 0);
+});
+
+test('every shell app frame, on its own origin, still logs', () => {
+  const extra = {
+    'staging-iframe': { name: 'staging window', origin: 'https://preview.example' },
+    'app-viewer-frame': { name: 'viewer window', origin: 'https://viewer.example' },
+  };
+  for (const [id, win] of Object.entries(extra)) {
+    shellFrames[id] = {
+      id,
+      contentWindow: win,
+      src: `${win.origin}/deep?token=t`,
+      getAttribute(name) { return name === 'src' ? this.src : null; },
+    };
+  }
+  try {
+    const DevConsole = new DevConsoleStore();
+    DevConsole._onMessage({ data: LOG, source: APP_WINDOW, origin: APP_ORIGIN });
+    for (const win of Object.values(extra)) {
+      DevConsole._onMessage({ data: LOG, source: win, origin: win.origin });
+    }
+    assert.equal(DevConsole.entries.length, 3);
+    assert.equal(DevConsole.unseenErrors, 3);
+  } finally {
+    delete shellFrames['staging-iframe'];
+    delete shellFrames['app-viewer-frame'];
+  }
 });

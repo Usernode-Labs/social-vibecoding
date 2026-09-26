@@ -109,6 +109,8 @@ function makeAppViewHarness({ fetchImpl, wideViewport = true, withSlot = true } 
     alert: () => {},
     escapeHtml: (s) => String(s == null ? '' : s),
     resolveDevHost: (u) => u,
+    // The preview src guard (#2514) compares against the platform's origin.
+    location: { origin: 'https://platform.example', hostname: 'platform.example', href: 'https://platform.example/' },
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener() {},
     removeEventListener() {},

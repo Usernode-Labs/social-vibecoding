@@ -20117,6 +20117,18 @@ const AppView = {
     staging.clearSrc();
     const loadId = ++AppView._stagingLoadId;
     const current = () => loadId === AppView._stagingLoadId && AppView._stagingSameApp(opts, slug);
+
+    // #2514: a preview is always a separate http(s) origin. Anything else
+    // (the platform's own origin, a script or data URL, a relative path) is
+    // refused BEFORE a token is minted for it, so the app-identity token is
+    // never written into a URL the shell would not frame.
+    if (!AppView._isSafeAppIframeSrc(resolved)) {
+      AppView._setStagingLoader(true, {
+        title: 'This preview address is not valid',
+        sub: 'It does not point to a separate preview site, so it was not opened.',
+      });
+      return;
+    }
     AppView._setStagingLoader(true, { title: 'Signing in to the preview…', sub: '' });
 
     // Join the app's in-flight mint (or its fresh cache entry). Capture this
@@ -20676,9 +20688,11 @@ const AppView = {
       if (title !== undefined) el.title = title || '';
     },
     frame() { return this._el('staging-iframe'); },
+    // #2514: the same rule as the App tab's frame (`_isSafeAppIframeSrc`),
+    // because this src carries the same app-identity token.
     setSrc(src) {
       const el = this.frame();
-      if (!el || !src) return false;
+      if (!el || !AppView._isSafeAppIframeSrc(src)) return false;
       el.src = src;
       return true;
     },
@@ -20938,6 +20952,28 @@ const AppView = {
   // when unset). Read-only and instant — no dialog, no ack stage.
   // Wired via the top-level message listener at the bottom of this file.
 
+  // ── Where a bridge reply goes (#2514) ──────────────────────────────
+  //
+  // Every answer to a bridge request is addressed to the ORIGIN that asked,
+  // captured from the request event, never to '*'. The request handlers gate
+  // on the frame (`e.source`), but a WindowProxy outlives navigation: by the
+  // time an async answer (a directory lookup, a file URL, an AI grant) is
+  // ready, the frame may hold another document, and '*' would hand it the
+  // reply. With the requester's origin the browser drops the message instead.
+  // An opaque ("null") or missing origin cannot be addressed at all, so it
+  // gets no reply rather than a '*' one: fail closed.
+  _replyToBridge(e, message) {
+    const origin = e && typeof e.origin === 'string' ? e.origin : '';
+    const source = e && e.source;
+    if (!source || !origin || origin === 'null') return false;
+    try {
+      source.postMessage(message, origin);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
   handleLocaleBridgeMessage(e) {
     const data = e.data;
     if (!data || !data.id || data.__usernode_locale !== 'get') return;
@@ -20951,12 +20987,7 @@ const AppView = {
     if (!fromApp && !fromStaging) return;
 
     const locale = (typeof App !== 'undefined' && App.user) ? (App.user.locale || null) : null;
-    try {
-      e.source.postMessage(
-        { __usernode_locale: 'response', id: data.id, value: { locale } },
-        '*'
-      );
-    } catch {}
+    AppView._replyToBridge(e, { __usernode_locale: 'response', id: data.id, value: { locale } });
   },
 
   // Push a locale change into any open app/staging iframe so the bridge
@@ -21303,12 +21334,7 @@ const AppView = {
     const value = AppView.safeAreaForFrame(match) || AppView._zeroInsets();
     // Record it so the next broadcast doesn't re-post the same numbers.
     AppView._safeAreaSent[match] = `${value.top},${value.right},${value.bottom},${value.left}`;
-    try {
-      e.source.postMessage(
-        { __usernode_safe_area: 'response', id: data.id, value },
-        '*'
-      );
-    } catch {}
+    AppView._replyToBridge(e, { __usernode_safe_area: 'response', id: data.id, value });
   },
 
   // #1581: WebKit exposes the IFRAME ELEMENT's background during a child
@@ -21355,19 +21381,14 @@ const AppView = {
     if (!frameId) return;
 
     const reply = (value, error) => {
-      try {
-        e.source.postMessage(
-          { __usernode_llm: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
-        );
-      } catch {}
+      AppView._replyToBridge(e, { __usernode_llm: 'response', id: data.id, value: value ?? null, error: error ?? null });
     };
     // Ack immediately so the bridge stops its "no shell here" timer —
     // the user may take minutes on the dialog below. Before anything that
     // can decline to answer, too: the shell has RECOGNISED this request, so
     // every path from here owes the app a reply rather than the silence that
     // leaves it waiting out the bridge's 15s "there is no shell" timeout.
-    try { e.source.postMessage({ __usernode_llm: 'ack', id: data.id }, '*'); } catch {}
+    AppView._replyToBridge(e, { __usernode_llm: 'ack', id: data.id });
 
     const slug = AppView.appSlugForFrame(frameId);
     if (!slug) {
@@ -21519,19 +21540,14 @@ const AppView = {
     if (!frameId) return;
 
     const reply = (value, error) => {
-      try {
-        e.source.postMessage(
-          { __usernode_permission: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
-        );
-      } catch {}
+      AppView._replyToBridge(e, { __usernode_permission: 'response', id: data.id, value: value ?? null, error: error ?? null });
     };
     // Ack before anything that can decline to answer: the shell has
     // RECOGNISED this request, so every path from here owes the app a reply
     // rather than the silence that leaves it waiting out the bridge's 15s
     // "there is no shell" timeout. The user may sit on the dialog for
     // minutes.
-    try { e.source.postMessage({ __usernode_permission: 'ack', id: data.id }, '*'); } catch {}
+    AppView._replyToBridge(e, { __usernode_permission: 'ack', id: data.id });
 
     const slug = AppView.appSlugForFrame(frameId);
     if (!slug) {
@@ -21676,16 +21692,11 @@ const AppView = {
     if (!slug) return;
 
     const reply = (value, error) => {
-      try {
-        e.source.postMessage(
-          { __usernode_storage: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
-        );
-      } catch {}
+      AppView._replyToBridge(e, { __usernode_storage: 'response', id: data.id, value: value ?? null, error: error ?? null });
     };
     // Ack immediately so the bridge stops its "no shell here" timer —
     // a multi-MB upload POST can take a while on a slow link.
-    try { e.source.postMessage({ __usernode_storage: 'ack', id: data.id }, '*'); } catch {}
+    AppView._replyToBridge(e, { __usernode_storage: 'ack', id: data.id });
 
     try {
       if (type === 'upload') {
@@ -21775,14 +21786,9 @@ const AppView = {
     if (!fromApp && !fromStaging) return;
 
     const reply = (value, error) => {
-      try {
-        e.source.postMessage(
-          { __usernode_directory: 'response', id: data.id, value: value ?? null, error: error ?? null },
-          '*'
-        );
-      } catch {}
+      AppView._replyToBridge(e, { __usernode_directory: 'response', id: data.id, value: value ?? null, error: error ?? null });
     };
-    try { e.source.postMessage({ __usernode_directory: 'ack', id: data.id }, '*'); } catch {}
+    AppView._replyToBridge(e, { __usernode_directory: 'ack', id: data.id });
 
     try {
       let url;
