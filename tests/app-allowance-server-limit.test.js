@@ -86,10 +86,12 @@ test('/api/auth/me seeds the panel with the server capacity', async () => {
   }
 });
 
-test('the allowance routes pass MAX_APPS through', () => {
+test('the allowance routes pass the effective app limit through', () => {
+  // The admin's setting when one is stored, else MAX_APPS
+  // (services/app-limit.js) — the same cap the create route refuses with.
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/routes/apps.js'), 'utf8');
-  assert.match(src, /appAllowance\.read\(pool, req\.user, \{ maxApps: config\.maxApps \}\)/);
-  assert.match(src, /appAllowance\.requestMore\(pool, req\.user, \{ maxApps: config\.maxApps \}\)/);
+  assert.match(src, /appAllowance\.read\(pool, req\.user, \{ maxApps: await appLimit\.effective\(pool, config\) \}\)/);
+  assert.match(src, /appAllowance\.requestMore\(pool, req\.user, \{ maxApps: await appLimit\.effective\(pool, config\) \}\)/);
 });
 
 // ── The store ─────────────────────────────────────────────────────

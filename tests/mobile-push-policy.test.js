@@ -410,11 +410,11 @@ test('platform limit alerts name the cap, how full it is, and the lever', () => 
   }).notification;
   assert.deepEqual(copy('apps_warn:40:50'), {
     title: 'Nearing the app limit',
-    body: '40 of 50 apps are in use. Raise MAX_APPS in Platform variables before new apps are refused',
+    body: '40 of 50 apps are in use. Raise the limit in Admin \u2192 Limits before new apps are refused',
   });
   assert.deepEqual(copy('apps_full:50:50'), {
     title: 'App limit reached',
-    body: '50 of 50 apps are in use. New apps are refused until an admin raises MAX_APPS or removes one',
+    body: '50 of 50 apps are in use. New apps are refused until the limit is raised in Admin \u2192 Limits',
   });
   assert.deepEqual(copy('sessions_warn:60:75'), {
     title: 'Nearing the session limit',

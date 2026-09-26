@@ -7525,9 +7525,15 @@ async function seedStagingCapReached(pool, config) {
 async function seedStagingAppCapApps(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
-  // How close to the cap to fill. One below MAX_APPS so a tester can
-  // create exactly one app to hit the wall, without pre-tripping it.
-  const target = Math.max(0, (config.maxApps || 30) - 1);
+  // How close to the cap to fill. One below the cap so a tester can
+  // create exactly one app to hit the wall, without pre-tripping it. The
+  // cap is the one the create route enforces (services/app-limit.js): a
+  // preview clones production's platform_settings, so an app limit an
+  // admin set there applies here too, and filling to MAX_APPS instead would
+  // leave the wall out of reach.
+  const cap = (await require('../services/app-limit').effective(pool, config))
+    || config.maxApps || 30;
+  const target = Math.max(0, cap - 1);
   if (target <= 0) {
     log.info('db', 'Staging app-cap fixtures skipped (cap disabled or <= 1)');
     return;

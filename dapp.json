@@ -93,7 +93,7 @@
       "key": "MAX_APPS",
       "group": "Scaling",
       "default": "50",
-      "description": "Ceiling on live (non-errored) apps across the whole server. Past it, everyone but full admins is refused with \"This server is at its app limit\". 0 or less turns the cap off. Full admins are alerted as it nears the ceiling (PLATFORM_LIMIT_WARN_PERCENT)."
+      "description": "Default ceiling on live (non-errored) apps across the whole server. Past it, everyone but full admins is refused with \"This server is at its app limit\". Full admins can override it without a deploy in Admin → Limits, which is the only lever on the Kubernetes deploy. 0 or less switches the cap off entirely, that override included."
     },
     {
       "key": "PLATFORM_LIMIT_WARN_PERCENT",
@@ -3966,7 +3966,8 @@
     {
       "name": "The admin console's Limits section offers the Anthropic credit balance fields (#555)",
       "path": "/#admin/limits",
-      "expectSelector": "#admin-credit-balance"
+      "expectSelector": "#admin-section-content:has(#admin-app-limit #admin-app-limit-usage) #admin-credit-balance",
+      "expectText": "How many live apps the whole server allows"
     },
     {
       "name": "Model costs lists each model's note beside what its changes actually cost (#2570)",

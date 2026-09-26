@@ -1185,6 +1185,48 @@
     {
       "source": "src/routes/admin.js",
       "method": "GET",
+      "path": "/api/admin/app-limit",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.app.limit.23137ca4",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-limits.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "PUT",
+      "path": "/api/admin/app-limit",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.put.admin.app.limit.2e9d07c8",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-limits.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "GET",
       "path": "/api/admin/model-costs",
       "expression": null,
       "status": "mapped",

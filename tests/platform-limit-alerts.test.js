@@ -137,7 +137,7 @@ test('the detail token round-trips and fits the 32-character column', () => {
 
 // ─── 2. evaluate() against a recording pool ─────────────────────────────
 
-function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null } = {}) {
+function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null, setting = null } = {}) {
   const state = { level, queries: [], updates: [] };
   return {
     state,
@@ -150,6 +150,10 @@ function fakePool({ apps = 0, sessions = 0, level = 'ok', countError = null } = 
         return { rows: [{ n: apps }] };
       }
       if (/FROM chat_sessions/.test(sql)) return { rows: [{ n: sessions }] };
+      // services/app-limit.js: the admin's app limit, when one is stored.
+      if (/FROM platform_settings s/.test(sql)) {
+        return { rows: setting == null ? [] : [{ value: String(setting), updated_at: null, updated_by: 'ada' }] };
+      }
       if (/^INSERT INTO platform_limit_alerts/.test(sql)) return { rows: [] };
       if (/^SELECT level FROM platform_limit_alerts .* FOR UPDATE$/.test(sql)) {
         return { rows: [{ level: state.level }] };
@@ -239,6 +243,30 @@ test('each cap counts exactly what its enforcing route counts', async () => {
     'the apps route still counts the same way');
 });
 
+test('the apps cap is the admin\'s setting when one is stored, as the create route enforces', async () => {
+  // MAX_APPS says 50, the admin raised it to 80: 45 live apps is nowhere
+  // near the line any more, and the alert must agree with the refusal.
+  const raised = fakePool({ apps: 45, setting: 80 });
+  const out = await limits.evaluate(raised, CONFIG, 'apps', recorder().deps);
+  assert.equal(out.cap, 80);
+  assert.equal(out.level, 'ok');
+  // ...and a lowered one alerts on the lowered line.
+  const lowered = fakePool({ apps: 20, setting: 20 });
+  const { calls, deps } = recorder();
+  const down = await limits.evaluate(lowered, CONFIG, 'apps', deps);
+  assert.equal(down.notified, 'full');
+  assert.deepEqual(calls.create, [{ detail: 'apps_full:20:20' }]);
+});
+
+test('MAX_APPS=0 switches the apps cap off, the admin\'s setting included', async () => {
+  const pool = fakePool({ apps: 900, setting: 10 });
+  const out = await limits.evaluate(pool, { maxApps: 0 }, 'apps', recorder().deps);
+  assert.equal(out.level, 'ok');
+  assert.equal(out.cap, 0);
+  assert.ok(!pool.state.queries.some((q) => /platform_settings/.test(q.sql)),
+    'the setting is not even read when the deploy switched the cap off');
+});
+
 test('a cap that is off records ok and pages nobody', async () => {
   const pool = fakePool({ apps: 900, level: 'full' });
   const { calls, deps } = recorder();
@@ -246,6 +274,7 @@ test('a cap that is off records ok and pages nobody', async () => {
   assert.equal(out.level, 'ok');
   assert.deepEqual(calls.create, []);
   assert.deepEqual(pool.state.updates[0], ['apps', 'ok', 900, null, false]);
+  assert.equal(out.cap, 0);
 });
 
 test('the sweep checks every cap and one failure does not stop the other', async () => {

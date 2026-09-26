@@ -257,13 +257,13 @@ test('platform limit rows say which cap, how full, and what happens next', async
   const near = await lines({ kind: 'platform_limit', detail: 'apps_warn:40:50',
     appName: null, sourceUsername: null });
   assert.equal(near.label, 'Nearing the app limit');
-  assert.match(near.subject, /^40 of 50 apps in use\. +Raise MAX_APPS before new apps are refused\.$/);
+  assert.match(near.subject, /^40 of 50 apps in use\. +Raise the app limit in Admin → Limits before new apps are refused\.$/);
   assert.equal(near.meta, 'Admin · 4m ago');
 
   const full = await lines({ kind: 'platform_limit', detail: 'apps_full:50:50',
     appName: null, sourceUsername: null });
   assert.equal(full.label, 'App limit reached');
-  assert.match(full.subject, /^50 of 50 apps in use\. +New apps are refused until MAX_APPS is raised/);
+  assert.match(full.subject, /^50 of 50 apps in use\. +New apps are refused until the app limit is raised in Admin → Limits/);
 
   const sessions = await lines({ kind: 'platform_limit', detail: 'sessions_warn:60:75',
     appName: null, sourceUsername: null });

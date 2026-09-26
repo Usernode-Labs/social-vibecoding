@@ -481,7 +481,10 @@ function load() {
     // Hard cap on non-errored apps per server. Protects against runaway
     // container / DB creation chewing through host resources. Admins bypass
     // the cap; errored rows don't count (they hold ~no resources and users
-    // can delete them to free a slot). See src/routes/apps.js.
+    // can delete them to free a slot). See src/routes/apps.js. This is the
+    // DEFAULT: an admin's setting in Admin → Limits overrides it, and every
+    // reader resolves the cap through services/app-limit.js, never this
+    // field directly. <= 0 switches the cap off, the setting included.
     maxApps: parseInt(process.env.MAX_APPS || '50', 10),
     // Concurrency caps on dev sessions. A "session" holds (or can lazily
     // spawn) a warm worker container + optional staging container, so

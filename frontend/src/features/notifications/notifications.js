@@ -789,22 +789,18 @@ const Notifications = {
       }
       return;
     }
-    // A platform limit opens where it is raised. MAX_APPS lives in the
-    // platform's Platform variables panel, opened over the current screen
-    // like the create dialog does; the session cap opens Health & status,
-    // whose capacity meter shows the load behind it. Either falls back to
-    // Health & status when the panel or the platform's slug is unavailable.
+    // A platform limit opens where it is raised. The app limit is set in
+    // Admin → Limits (services/app-limit.js), which works on every deploy;
+    // the session cap opens Health & status, whose capacity meter shows the
+    // load behind it (MAX_GLOBAL_SESSIONS itself is deploy configuration).
     if (item.kind === 'platform_limit') {
       Notifications._dismissSheetForNav();
       const limit = parsePlatformLimitDetail(item.detail);
-      const selfSlug = typeof window !== 'undefined' && window.PlatformTarget?.slug
-        ? window.PlatformTarget.slug() : null;
-      if (limit?.limit === 'apps' && selfSlug && typeof window.Secrets?.open === 'function') {
-        window.Secrets.open(selfSlug);
-      } else if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
-        App.navigateToAdminConsole('status');
+      const section = limit?.limit === 'apps' ? 'limits' : 'status';
+      if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
+        App.navigateToAdminConsole(section);
       } else {
-        window.location.hash = '#admin/status';
+        window.location.hash = `#admin/${section}`;
       }
       return;
     }
@@ -2005,8 +2001,8 @@ function rowView(n) {
     const noun = limit.limit === 'apps' ? 'apps' : 'coding sessions';
     const full = limit.level === 'full';
     const consequence = limit.limit === 'apps'
-      ? (full ? ' New apps are refused until MAX_APPS is raised or an app is removed.'
-        : ' Raise MAX_APPS before new apps are refused.')
+      ? (full ? ' New apps are refused until the app limit is raised in Admin \u2192 Limits or an app is removed.'
+        : ' Raise the app limit in Admin \u2192 Limits before new apps are refused.')
       : (full ? ' New sessions pause idle ones, or wait, until MAX_GLOBAL_SESSIONS is raised.'
         : ' At the limit, idle sessions are paused to make room.');
     return {
