@@ -2304,15 +2304,96 @@ test('the work order presents every submit shape, in order of preference', async
   assert.match(order, /pr_open_failed/);
   assert.match(order, /compareUrl/);
   assert.match(order, new RegExp(`git format-patch ${BASE_SHA}\\.\\.HEAD --stdout`));
-  assert.match(order, /You do NOT need GitHub write access/i);
+  assert.match(order, /needs NO fork and NO GitHub\s+write access/);
   assert.match(order, /insufficient_scope/);
   assert.match(order, /github_not_linked/);
   assert.match(order, /IF THE USERNODE TOOLS ARE NOT AVAILABLE/);
-  // The push comes before the submit, and the patch after both.
-  assert.ok(order.indexOf('git push -u origin HEAD') < order.indexOf('SUBMIT IT YOURSELF'));
-  assert.ok(order.indexOf('SUBMIT IT YOURSELF') < order.indexOf('git format-patch'));
+  // #2460: the patch is the first submit shape and the pushed branch the
+  // second. The full ordering is pinned in its own test below.
+  assert.ok(order.indexOf('SUBMIT IT YOURSELF AS A PATCH') < order.indexOf('git format-patch'));
+  assert.ok(order.indexOf('git format-patch') < order.indexOf('git push -u origin HEAD'));
   // The connector reaches Homeroom even though the sandbox cannot.
   assert.match(order, /connector traffic goes out through Claude's own infrastructure/);
+});
+
+// #2460 — a missing fork or a refused push must not block an ordinary small
+// change. The patch needs neither, so it is the first submit shape for new
+// work and the pushed branch is the second, used when the patch cannot carry
+// the change. Pinned by position, not just presence: the old order carried
+// every one of these words too, with the patch as the last-resort step 4.
+test('#2460: a new change is submitted as a patch first, and a pushed branch is the second path', () => {
+  const order = fullOrder();
+  const done = order.slice(order.indexOf('WHEN YOU ARE DONE'));
+  const patchStep = done.indexOf('1. SUBMIT IT YOURSELF AS A PATCH');
+  const pushStep = done.indexOf('2. PUSH A BRANCH INSTEAD');
+  const prStep = done.indexOf('3. IF submit_work ANSWERS `pr_open_failed`');
+  assert.ok(patchStep > 0, 'step 1 is the patch');
+  assert.ok(pushStep > patchStep, 'step 2 is the branch');
+  assert.ok(prStep > pushStep);
+  const formatPatch = done.indexOf(`git format-patch ${BASE_SHA}..HEAD --stdout`);
+  const push = done.indexOf('git push -u origin HEAD');
+  assert.ok(formatPatch > patchStep && formatPatch < pushStep, 'the export command sits in step 1');
+  assert.ok(push > pushStep && push < prStep, 'the push command sits in step 2, and only there');
+  assert.equal(order.split('git push -u origin HEAD').length - 1, 1);
+
+  const step1 = done.slice(patchStep, pushStep);
+  assert.match(step1, /needs NO fork and NO GitHub\n {3}write access/);
+  assert.match(step1, /taskId 31, `patch` set to that output/);
+  assert.match(step1, /applies\n {3}the patch at that exact commit in the app's own repository/);
+  assert.doesNotMatch(step1, /git push/);
+
+  // Step 2 says when, and that it is the same call with `branch`.
+  const step2 = done.slice(pushStep, prStep);
+  assert.match(step2, /over about 250 KB/);
+  assert.match(step2, /too large or as\n {3}changing too many files/);
+  assert.match(step2, /already lives on a branch you\n {3}pushed for this task/);
+  assert.match(step2, /with `branch` set to that\n {3}name in place of `patch`/);
+  // The patch is no longer a fallback for a refused push.
+  assert.doesNotMatch(order, /IF THE PUSH IS REFUSED AT ALL/);
+
+  // Step 4 reads the patch refusals; `.github/` is never a reason to push.
+  const step4 = done.slice(done.indexOf('4. IF submit_work ANSWERS `patch_did_not_apply`'), done.indexOf('5. ON A CONNECTOR ERROR'));
+  assert.match(step4, new RegExp(`git log --oneline ${BASE_SHA}\\.\\.HEAD`));
+  assert.match(step4, /If it still does not apply, push a branch as in step 2\./);
+  assert.match(step4, /`\.github\/` is not: CI\s+workflow files are out of scope/);
+
+  // Fixing a failing check on a patched proposal is a revision: a branch,
+  // with proposalId, never a second patch.
+  const step7 = done.slice(done.indexOf('7. THEN CHECK THE CHECKS'));
+  assert.match(step7, /If you submitted a BRANCH,\n {3}push again to the SAME branch/);
+  assert.match(step7, /If you submitted a PATCH, its branch\n {3}is in the app's repository, which only Homeroom writes/);
+  assert.match(step7, /`branch\.headSha` in `get_proposal`/);
+  assert.match(step7, /with `proposalId` set to the proposal id and `branch` set to that name/);
+  assert.match(step7, /never a second patch/);
+
+  // The RULES and the fork step no longer make a fork a precondition.
+  assert.match(order, /- Commit locally on top of the starting commit\. If you push at all, push to\n {2}a branch on YOUR FORK and nothing else\./);
+  assert.doesNotMatch(order, /Commit and push to a branch on YOUR FORK, and nothing else/);
+  assert.match(order, /A fork is needed only for the branch path/);
+  assert.match(order, /Or clone https:\/\/github\.com\/usernode-bot\/recipe-box instead: a patch needs no fork\./);
+  assert.match(order, /A patch carries no branch name at all/);
+  const missing = fullOrder({ forkStatus: 'missing' });
+  assert.match(missing, /A fork is only needed to push a branch\. If you cannot make one, that does\nnot block the work/);
+  assert.ok(missing.indexOf('A fork is only needed') < missing.indexOf('THEN, in every case:'));
+});
+
+test('#2460: an update and a task-less work order keep the branch as their first step', () => {
+  // An update cannot take a patch (it would open a second proposal) and a
+  // work order with no task has no recorded base to apply one at, so both
+  // still lead with the push and say nothing of the patch-first wording.
+  const orders = {
+    update: fullOrder({ targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' } }),
+    session: fullOrder({ targetProposal: { id: 512, targetKind: 'session', branchHome: 'app_repo' } }),
+    noTask: fullOrder({ taskId: undefined }),
+  };
+  for (const [kind, order] of Object.entries(orders)) {
+    assert.match(order, /WHEN YOU ARE DONE\n\n1\. PUSH\. Any branch name\.\n {4}git push -u origin HEAD/, `${kind}: step 1 is the push`);
+    assert.doesNotMatch(order, /SUBMIT IT YOURSELF AS A PATCH|git format-patch/, `${kind}: no patch step`);
+    assert.doesNotMatch(order, /A fork is needed only|a patch needs no fork|A patch carries no branch name/, `${kind}: no patch-first rules`);
+    assert.match(order, /Commit and push to a branch on YOUR FORK, and nothing else/, `${kind}: the push rule stands`);
+  }
+  const forkHome = fullOrder({ targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'user_fork' } });
+  assert.match(forkHome, /1\. PUSH, to usernode\/recipe-box-issue-4-abc123 — the branch this proposal follows\./);
 });
 
 test('the work order tells an agent with no Homeroom tools what that means and how to finish', async () => {
@@ -2331,10 +2412,10 @@ test('the work order tells an agent with no Homeroom tools what that means and h
   assert.match(assistant, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom\n {3}connector was never added to the Claude or ChatGPT account this session\n {3}runs in/);
   assert.match(assistant, /a second account does not inherit the\n {3}first one's/);
   assert.match(assistant, /Push the branch anyway; the work is not lost/);
-  assert.match(assistant, /retry `submit_work` as in step 2/);
+  assert.match(assistant, /retry `submit_work` as in step 1/);
   // Started by a chat assistant: hand it back, patch included.
   assert.match(assistant, /Otherwise hand it back: print the branch name you pushed/);
-  assert.match(assistant, /save the patch from step 4 to a `\.patch` file/);
+  assert.match(assistant, /save the patch from step 1 to a `\.patch` file/);
   assert.match(assistant, /If they started from the Homeroom tab instead/);
   assert.doesNotMatch(assistant, /Otherwise finish from Homeroom/);
   // The URL appears in both places.
@@ -2462,7 +2543,7 @@ test('the PLATFORM RULES appendix comes LAST, after everything load-bearing', as
   // A host model that truncates should cost background guidance, never the
   // base commit, the push commands or the task id.
   const rulesAt = order.indexOf('PLATFORM RULES');
-  for (const essential of [BASE_SHA, 'git push -u origin HEAD', 'Homeroom task id', 'submit_work']) {
+  for (const essential of [BASE_SHA, 'git format-patch', 'git push -u origin HEAD', 'Homeroom task id', 'submit_work']) {
     assert.ok(order.indexOf(essential) < rulesAt, `${essential} survives a truncation`);
   }
   // And the hosted-asset warning sits immediately above it.
@@ -2527,7 +2608,10 @@ test('submit_work advertises every shape it accepts', () => {
     TOOLS_SRC.indexOf("registerTool('start_platform_build'")
   );
   assert.match(block, /a pushed branch, a patch, or an open PR/);
-  assert.match(block, /NO GitHub write access is needed/);
+  assert.match(block, /NO fork or GitHub write access is needed/);
+  // #2460: the patch is shape (1), the default for a new change.
+  assert.match(block, /\(1\) `taskId` plus `patch`, the DEFAULT for a new change/);
+  assert.match(block, /\(2\) `taskId` plus the `branch` you pushed/);
   // Four since #1054 added the update shape. The count is asserted because a
   // shape the description does not enumerate is a shape the model does not
   // know it has — the schema alone has never been enough.

@@ -182,7 +182,8 @@ test('the description is named as the technical half, so the two do not blur', (
 // ── What an agent actually reads ───────────────────────────────────────
 
 test('the work order asks for both halves at the moment of submitting', () => {
-  const i = TASKS_SRC.indexOf('2. SUBMIT IT YOURSELF');
+  // Step 1 since #2460, when the patch became the default submit shape.
+  const i = TASKS_SRC.indexOf('1. SUBMIT IT YOURSELF AS A PATCH');
   assert.ok(i > 0);
   const step = TASKS_SRC.slice(i, i + 2200);
   assert.match(step, /`summary` is the USER-FACING half/);

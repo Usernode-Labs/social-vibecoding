@@ -1688,7 +1688,7 @@ test('prepare_work chooses self-execution before handoff', () => {
   assert.match(desc, /do not relay `guidance` or send the user elsewhere/);
   assert.match(body, /FIRST inspect the tools available in THIS conversation/);
   assert.match(body, /do not render guidance and do not send/);
-  assert.match(body, /branch or patch you produced/);
+  assert.match(body, /patch \(or branch\) you produced/);
   assert.match(body, /Only if this conversation lacks code-editing tools/);
 });
 

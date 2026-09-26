@@ -590,6 +590,31 @@ function buildWorkOrder({
     ...connectorsPage,
   ];
 
+  const hasTask = Number.isInteger(Number(taskId)) && Number(taskId) > 0;
+  const taskRef = hasTask ? String(Number(taskId)) : null;
+  // ── UPDATE mode (#1054) ──────────────────────────────────────────────
+  //
+  // The same work order, revising a proposal that is ALREADY up for a vote
+  // rather than opening a new one. Four things change, and they are the four
+  // an agent gets wrong if they are left implied: the starting commit is the
+  // PROPOSAL's head and not the app's main branch, the submission carries a
+  // proposalId instead of asking for a new pull request, the patch fallback
+  // does not exist on this path, and submitting CLEARS the votes the proposal
+  // has already collected.
+  const update = targetProposal && Number(targetProposal.id) > 0 ? targetProposal : null;
+  const updateRef = update ? String(Number(update.id)) : null;
+  const forkIsHome = !!(update && update.branchHome === 'user_fork');
+  // #1071. The same continuation, against a session that is still being built
+  // rather than a proposal up for a vote. Everything mechanical is identical —
+  // same bot-owned branch, same fetch-from-upstream setup, same submit_work
+  // call with a proposalId — and every sentence about VOTES is wrong, because
+  // nobody has cast one. An imported PR is never active or paused, so a
+  // session target is always the bot-owned case.
+  const continuing = !!(update && update.targetKind === 'session');
+  // #2460: a new piece of work with a task goes in as a patch by default,
+  // and a pushed branch is its second path. See the closing decision tree.
+  const patchFirst = hasTask && !update;
+
   // The fork step, and only when there is a fork to make. The one-click
   // GitHub page comes FIRST: an agent with no `gh` is exactly the reader who
   // needs it, and it used to be a footnote below the command it replaces.
@@ -635,6 +660,16 @@ function buildWorkOrder({
       '',
       'GitHub creates forks asynchronously. If the clone below reports 404, wait a',
       'few seconds and run it again.',
+      // #2460: the fork is for pushing a branch, which is the second path
+      // for new work. A missing fork must not read as a blocker for it.
+      ...(patchFirst
+        ? [
+          '',
+          'A fork is only needed to push a branch. If you cannot make one, that does',
+          `not block the work: clone ${upstreamUrl} instead and`,
+          'send the change as a patch, as step 1 under WHEN YOU ARE DONE describes.',
+        ]
+        : []),
       '',
       'THEN, in every case:'
     );
@@ -737,31 +772,12 @@ function buildWorkOrder({
     setup.push(
       '',
       'If the clone fails because the fork is not actually there, it can be made in',
-      `one click: open ${forkPageUrl} and press "Create fork", then run the block again.`
+      `one click: open ${forkPageUrl} and press "Create fork", then run the block again.`,
+      ...(patchFirst
+        ? [`Or clone ${upstreamUrl} instead: a patch needs no fork.`]
+        : [])
     );
   }
-
-  const hasTask = Number.isInteger(Number(taskId)) && Number(taskId) > 0;
-  const taskRef = hasTask ? String(Number(taskId)) : null;
-  // ── UPDATE mode (#1054) ──────────────────────────────────────────────
-  //
-  // The same work order, revising a proposal that is ALREADY up for a vote
-  // rather than opening a new one. Four things change, and they are the four
-  // an agent gets wrong if they are left implied: the starting commit is the
-  // PROPOSAL's head and not the app's main branch, the submission carries a
-  // proposalId instead of asking for a new pull request, the patch fallback
-  // does not exist on this path, and submitting CLEARS the votes the proposal
-  // has already collected.
-  const update = targetProposal && Number(targetProposal.id) > 0 ? targetProposal : null;
-  const updateRef = update ? String(Number(update.id)) : null;
-  const forkIsHome = !!(update && update.branchHome === 'user_fork');
-  // #1071. The same continuation, against a session that is still being built
-  // rather than a proposal up for a vote. Everything mechanical is identical —
-  // same bot-owned branch, same fetch-from-upstream setup, same submit_work
-  // call with a proposalId — and every sentence about VOTES is wrong, because
-  // nobody has cast one. An imported PR is never active or paused, so a
-  // session target is always the bot-owned case.
-  const continuing = !!(update && update.targetKind === 'session');
 
   // The clone block above cuts a NEW branch from the base commit, which is
   // right for new work and wrong twice over for an update: the branch may
@@ -868,6 +884,9 @@ function buildWorkOrder({
         '  (a SUGGESTION — any branch name is accepted. If your harness already made',
         '   a branch at the right commit, keep it. All that matters is that you name',
         '   the branch you actually pushed when you submit.)',
+        ...(patchFirst
+          ? ['  (A patch carries no branch name at all; this matters only if you push.)']
+          : []),
       ]),
     ...(continuing
       ? [
@@ -901,12 +920,25 @@ function buildWorkOrder({
     ...setup,
     '',
     'RULES',
-    '- Commit and push to a branch on YOUR FORK, and nothing else. Do not push to',
-    '  the upstream repository — you do not have access to it, and Homeroom opens',
-    '  the pull request for you.',
-    '- Create the fork yourself if you do not have one:',
-    '  Homeroom has no write access to your GitHub account and will not make it',
-    '  for you.',
+    ...(patchFirst
+      ? [
+        '- Commit locally on top of the starting commit. If you push at all, push to',
+        '  a branch on YOUR FORK and nothing else. Do not push to the upstream',
+        '  repository — you do not have access to it, and Homeroom opens the pull',
+        '  request for you.',
+        '- A fork is needed only for the branch path. If you take it and have no',
+        '  fork, create it yourself:',
+        '  Homeroom has no write access to your GitHub account and will not make it',
+        '  for you.',
+      ]
+      : [
+        '- Commit and push to a branch on YOUR FORK, and nothing else. Do not push to',
+        '  the upstream repository — you do not have access to it, and Homeroom opens',
+        '  the pull request for you.',
+        '- Create the fork yourself if you do not have one:',
+        '  Homeroom has no write access to your GitHub account and will not make it',
+        '  for you.',
+      ]),
     '- Any branch name works. A branch name that differs from the suggestion above',
     '  is never a reason to rewrite, rebase or redo a commit you have already',
     '  finished — just report the name you pushed.',
@@ -1036,16 +1068,33 @@ function buildWorkOrder({
   );
 
   // ── The closing decision tree ────────────────────────────────────────
+  //
+  // #2460: a NEW piece of work with a task is submitted as a patch by
+  // default, and a pushed branch is the second path. The patch needs no
+  // fork and no GitHub write access — the two things that stopped most real
+  // runs at the push — and Homeroom applies it at the recorded base commit in
+  // the app's own repository, under the same bounds as ever (size, file
+  // count, `.github/**`). The branch stays first wherever a patch cannot do
+  // the job: an UPDATE (a patch opens a second proposal) and a work order
+  // with no task (a patch needs the task's base commit). `patchFirst` is
+  // decided above, where the RULES and the fork step read it too.
+  const pushCommands = [
+    `${CMD}git push -u origin HEAD`,
+    `${CMD}git rev-parse --abbrev-ref HEAD`,
+    '   The second command prints the branch name you just pushed. You need it.',
+  ];
   lines.push(
     '',
     'WHEN YOU ARE DONE',
     '',
-    forkIsHome
-      ? `1. PUSH, to ${branch} — the branch this proposal follows.`
-      : '1. PUSH. Any branch name.',
-    `${CMD}git push -u origin HEAD`,
-    `${CMD}git rev-parse --abbrev-ref HEAD`,
-    '   The second command prints the branch name you just pushed. You need it.'
+    ...(patchFirst
+      ? []
+      : [
+        forkIsHome
+          ? `1. PUSH, to ${branch} — the branch this proposal follows.`
+          : '1. PUSH. Any branch name.',
+        ...pushCommands,
+      ])
   );
 
   if (hasTask && update) {
@@ -1186,13 +1235,17 @@ function buildWorkOrder({
     );
   } else if (hasTask) {
     lines.push(
-      '',
-      '2. SUBMIT IT YOURSELF, through the Homeroom connector. Call `submit_work`',
-      `   with taskId ${taskRef}, branch set to the name you actually pushed,`,
-      `   agent "${agentValue}", source "work_order", and a short title, plus`,
-      '   BOTH pieces of prose described next. It answers with a link to the new',
-      '   proposal — give that link to the user and tell them it is up for the',
-      '   group\'s vote.',
+      '1. SUBMIT IT YOURSELF AS A PATCH, through the Homeroom connector. This is',
+      '   the default for an ordinary change, and it needs NO fork and NO GitHub',
+      '   write access. Commit your work on top of the starting commit, then',
+      '   export every commit since it:',
+      `${CMD}git format-patch ${baseSha}..HEAD --stdout`,
+      `   Call \`submit_work\` with taskId ${taskRef}, \`patch\` set to that output`,
+      `   exactly as printed, agent "${agentValue}", source "work_order", and a`,
+      '   short title, plus BOTH pieces of prose described next. Homeroom applies',
+      '   the patch at that exact commit in the app\'s own repository and opens the',
+      '   pull request itself. It answers with a link to the new proposal — give',
+      '   that link to the user and tell them it is up for the group\'s vote.',
       // The two-audience rule, at the moment it is acted on. An agent that
       // sends only `description` produces a proposal whose About sheet shows
       // a non-technical voter nothing but the diff explained in developer
@@ -1265,20 +1318,30 @@ function buildWorkOrder({
       '   connector traffic goes out through Claude\'s own infrastructure, not',
       '   through your container.',
       '',
+      '2. PUSH A BRANCH INSTEAD only when a patch cannot carry the change: the',
+      '   patch is over about 250 KB, `submit_work` refused it as too large or as',
+      '   changing too many files, or this work already lives on a branch you',
+      '   pushed for this task. Push to YOUR FORK, under any branch name:',
+      ...pushCommands,
+      '   Then call `submit_work` exactly as in step 1, with `branch` set to that',
+      '   name in place of `patch`. If the push is refused, the remedy above is',
+      '   the fix.',
+      '',
       '3. IF submit_work ANSWERS `pr_open_failed`, relay GitHub\'s status and the',
       '   field it named word for word, and give the user the `compareUrl` the',
       '   error returns — it opens a pre-filled pull request they can create in',
       '   one click. When they give you the pull request number, call `submit_work`',
       `   again with slug "${appSlug}" and prNumber set to it.`,
       '',
-      '4. IF THE PUSH IS REFUSED AT ALL and the remedy above does not clear it,',
-      '   send the change as a patch instead — you do NOT need GitHub write access',
-      '   for this:',
-      `${CMD}git format-patch ${baseSha}..HEAD --stdout`,
-      `   then call \`submit_work\` with taskId ${taskRef} and that text as`,
-      '   `patch`. Homeroom applies it at that exact commit in the app\'s own',
-      '   repository and opens the pull request itself. Patches over about 250 KB',
-      '   are refused — push a branch for anything that large.',
+      '4. IF submit_work ANSWERS `patch_did_not_apply`, your commits do not sit',
+      '   directly on the starting commit. This should list only your own work:',
+      `${CMD}git log --oneline ${baseSha}..HEAD`,
+      '   If it does not, rebase onto that commit, export the patch again and',
+      '   resubmit. If it still does not apply, push a branch as in step 2.',
+      '   `patch_too_large`, or `patch_rejected` for the number of files, is step',
+      '   2 as well. A `patch_rejected` for a file under `.github/` is not: CI',
+      '   workflow files are out of scope (see RULES), so drop that change rather',
+      '   than pushing it.',
       '',
       '5. ON A CONNECTOR ERROR, relay it plainly rather than giving up:',
       '   `insufficient_scope` — ask the user to reconnect Homeroom and approve',
@@ -1291,7 +1354,7 @@ function buildWorkOrder({
       '   runs in — it is per account, so a second account does not inherit the',
       '   first one\'s. Push the branch anyway; the work is not lost.',
       ...noToolsRemedy,
-      '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
+      '   Once they have, retry `submit_work` as in step 1 — in a fresh session',
       '   if the tools still do not appear in this one.',
       // How the hand-off started decides who finishes it without a
       // connector: the browser walkthrough polls for the pushed branch and
@@ -1307,7 +1370,7 @@ function buildWorkOrder({
         ]
         : [
           '   Otherwise hand it back: print the branch name you pushed and, in case',
-          '   the push was refused, save the patch from step 4 to a `.patch` file, and',
+          '   the push was refused, save the patch from step 1 to a `.patch` file, and',
           '   tell the user to give both to the assistant that started this — it',
           '   finishes the same way. If they started from the Homeroom tab instead,',
           '   that tab checks for the pushed branch and its Submit button does it.',
@@ -1323,10 +1386,18 @@ function buildWorkOrder({
       `   passing cannot merge however the vote goes. Call \`get_proposal\` with the`,
       '   proposal id `submit_work` returned — it reports `checks` with the state,',
       '   the number of tests and the names of the failing ones. If any are failing,',
-      '   fix them and push again to the SAME branch: the proposal follows your',
-      '   branch, so a new commit re-runs the checks by itself. Do not call',
-      '   `submit_work` again and do not call `prepare_work` — the pull request',
-      '   already exists, and a second submission would duplicate it.',
+      '   fix them on the proposal that already exists. If you submitted a BRANCH,',
+      '   push again to the SAME branch: the proposal follows your branch, so a new',
+      '   commit re-runs the checks by itself. If you submitted a PATCH, its branch',
+      '   is in the app\'s repository, which only Homeroom writes: fetch the',
+      '   proposal\'s head (`branch.headSha` in `get_proposal`), commit the fix on',
+      '   top of it, push that to a branch on your fork, and call `submit_work`',
+      '   with `proposalId` set to the proposal id and `branch` set to that name.',
+      '   A revision is always a branch, never a second patch, and `get_proposal`\'s',
+      '   `nextStep` names the same call. Do not call',
+      '   `submit_work` again without `proposalId` and do not call `prepare_work` —',
+      '   the pull request already exists, and a second submission would duplicate',
+      '   it.',
       '   `get_proposal` also reports `visualEvidence`. For a user-visible',
       '   change, verify that your structured claim and flow were accepted and',
       '   wait for `verified`; `failed` includes a specific recovery reason.',
@@ -3107,9 +3178,9 @@ async function submitWorkLocked(deps, params) {
           + 'Call prepare_work first — it returns the taskId AND the base commit your branch has to start '
           + 'from — then submit with taskId + the branch you pushed. The branch you already pushed is fine '
           + 'as it is; nothing needs rebuilding.'
-        : 'Nothing to submit. Any of these works: taskId + the branch you pushed; taskId + patch (if GitHub '
-          + 'refused the push — Homeroom applies it and opens the pull request itself, no GitHub write access '
-          + 'needed); slug + prNumber for a pull request that is already open; or slug + branch, which '
+        : 'Nothing to submit. Any of these works: taskId + patch (the default for a new change — Homeroom '
+          + 'applies it and opens the pull request itself, no fork and no GitHub write access needed); taskId + '
+          + 'the branch you pushed; slug + prNumber for a pull request that is already open; or slug + branch, which '
           + 'recovers an open task whose id you lost. The taskId is printed in the work order you were given, '
           + 'and it belongs to the user\'s Homeroom account — you can submit it yourself.'
     );
