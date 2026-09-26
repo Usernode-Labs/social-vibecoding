@@ -38,20 +38,23 @@
 //     policy applies to. No script-src policy is set here: the shell still
 //     carries inline scripts/handlers, so that is a separate, staged change.
 //
-// Scope. The centrally hosted app assets (/usernode-bridge, /usernode-native,
-// /usernode-tailwind) are fetched on every hosted APP's own origin through
-// Caddy. They get nosniff (their types are exact) but not the CSP or the
-// referrer policy, so nothing the platform decides reaches into an app's
-// documents. A route that needs its own CSP (the sandboxed chat and
-// conversation attachments, the CLI/MCP approval pages, report snapshots)
-// sets it with res.set/res.setHeader after this runs, which REPLACES the
-// header — so those keep exactly the policy they had.
+// Scope. Every response Express sends, with no path exemptions. That
+// includes the centrally hosted app assets (/usernode-bridge,
+// /usernode-native, /usernode-tailwind) that Caddy fetches for each hosted
+// APP's origin, and it changes nothing for those apps: frame-ancestors only
+// governs documents, a script's Referrer-Policy is ignored, and a
+// stylesheet's is the browsers' default anyway. An exemption by request
+// PREFIX would also be a hole: `/usernode-bridge/<anything missing>` falls
+// through to the SPA catch-all and would serve the full shell document with
+// no framing policy. (On Kubernetes those prefixes go to
+// scripts/serve-platform-assets.js instead, which sends nosniff itself.)
+//
+// A route that needs its own CSP (the sandboxed chat and conversation
+// attachments, the CLI/MCP approval pages, report snapshots) sets it with
+// res.set/res.setHeader after this runs, which REPLACES the header — so those
+// keep exactly the policy they had.
 
 const REFERRER_POLICY = 'strict-origin-when-cross-origin';
-
-// Paths served on hosted apps' origins. `/usernode-bridge` (no slash) also
-// covers the legacy root-level /usernode-bridge.js.
-const APP_ORIGIN_ASSET_PREFIXES = ['/usernode-bridge', '/usernode-native/', '/usernode-tailwind/'];
 
 // A bare DNS hostname (optionally with a port). Anything else — a wildcard,
 // a scheme, whitespace, a `;` — is refused rather than spliced into a header
@@ -68,18 +71,12 @@ function frameAncestorsPolicy({ platformDomain, localDev } = {}) {
   return `frame-ancestors ${sources.join(' ')}`;
 }
 
-function isAppOriginAsset(reqPath) {
-  return APP_ORIGIN_ASSET_PREFIXES.some((prefix) => reqPath.startsWith(prefix));
-}
-
 function securityHeaders(options = {}) {
   const csp = frameAncestorsPolicy(options);
-  return function securityHeadersMiddleware(req, res, next) {
+  return function securityHeadersMiddleware(_req, res, next) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    if (!isAppOriginAsset(req.path)) {
-      res.setHeader('Referrer-Policy', REFERRER_POLICY);
-      res.setHeader('Content-Security-Policy', csp);
-    }
+    res.setHeader('Referrer-Policy', REFERRER_POLICY);
+    res.setHeader('Content-Security-Policy', csp);
     next();
   };
 }
@@ -87,7 +84,5 @@ function securityHeaders(options = {}) {
 module.exports = {
   securityHeaders,
   frameAncestorsPolicy,
-  isAppOriginAsset,
   REFERRER_POLICY,
-  APP_ORIGIN_ASSET_PREFIXES,
 };

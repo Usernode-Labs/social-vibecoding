@@ -114,6 +114,9 @@ const server = http.createServer((req, res) => {
     const type = TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream';
     const headers = {
       'Content-Type': type,
+      // #2507: every type above is exact, so browsers need never sniff —
+      // the same header the Docker lane's Express middleware sends.
+      'X-Content-Type-Options': 'nosniff',
       ETag: etag,
       'Last-Modified': stat.mtime.toUTCString(),
       // Public, immutable-by-commit static assets. Same-origin once an app

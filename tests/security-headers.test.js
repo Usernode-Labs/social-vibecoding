@@ -18,10 +18,12 @@
 //      pages (/__app_unavailable, the access gate) render inside the app
 //      iframe. A plain 'self' or X-Frame-Options: SAMEORIGIN would blank
 //      all of those, which is why there is deliberately NO X-Frame-Options.
-//   3. The centrally hosted app assets (/usernode-bridge, /usernode-native,
-//      /usernode-tailwind) are served on every APP's own origin, so they get
-//      nosniff (their types are exact) but not the platform's CSP or
-//      referrer policy — those would reach into a hosted app's documents.
+//   3. There is NO path exemption, including for the centrally hosted app
+//      assets (/usernode-bridge, /usernode-native, /usernode-tailwind): the
+//      headers change nothing for a script or stylesheet, while exempting by
+//      prefix let `/usernode-bridge/<missing>` fall through to the SPA
+//      catch-all and serve the shell with no framing policy (caught in
+//      review). The Kubernetes asset server sends nosniff itself.
 //   4. A route that sets its own CSP (the sandboxed chat attachment, the CLI
 //      approval page) keeps it: the middleware runs first and the route's
 //      own `res.set` replaces the header.
@@ -124,7 +126,7 @@ test('the framing allow-list is self + the platform origin, never a wildcard', (
   assert.doesNotMatch(frameAncestorsPolicy(PROD), /\*/);
 });
 
-test('hosted app assets get nosniff only — no platform CSP or referrer policy on app origins', async () => {
+test('hosted app asset paths are not exempt — a missing one falling back to the shell is still protected', async () => {
   for (const reqPath of [
     '/usernode-bridge/v1/bridge.js',
     '/usernode-native/v1/native.css',
@@ -134,9 +136,23 @@ test('hosted app assets get nosniff only — no platform CSP or referrer policy 
     const res = await get(buildApp(PROD), reqPath);
     assert.equal(res.status, 200, reqPath);
     assert.equal(res.headers['x-content-type-options'], 'nosniff', reqPath);
-    assert.equal(res.headers['content-security-policy'], undefined, reqPath);
-    assert.equal(res.headers['referrer-policy'], undefined, reqPath);
   }
+  // These miss every asset route and reach the SPA catch-all as HTML.
+  for (const reqPath of ['/usernode-bridge/nope', '/usernode-bridgex', '/usernode-native/v9/x', '/usernode-tailwind/']) {
+    const res = await get(buildApp(PROD), reqPath, { Accept: 'text/html' });
+    assert.equal(res.status, 200, reqPath);
+    assert.match(res.headers['content-type'], /^text\/html/, reqPath);
+    assert.equal(res.headers['content-security-policy'],
+      "frame-ancestors 'self' https://my.onhomeroom.com", reqPath);
+    assert.equal(res.headers['referrer-policy'], REFERRER_POLICY, reqPath);
+  }
+});
+
+test('the Kubernetes hosted-asset server sends nosniff on the files it serves', () => {
+  const src = fs.readFileSync(path.join(root, 'scripts', 'serve-platform-assets.js'), 'utf8');
+  const headersBlock = /const headers = \{[\s\S]*?\};/.exec(src);
+  assert.ok(headersBlock, 'serve-platform-assets.js builds a headers object for served files');
+  assert.match(headersBlock[0], /'X-Content-Type-Options': 'nosniff'/);
 });
 
 test('a route that sets its own CSP keeps it', async () => {
