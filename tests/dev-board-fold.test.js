@@ -1318,6 +1318,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the next proposal to add a check folds into an existing one or raises
   // the cap, as tests/lib/check-cap.js says.
   //
+  // 820 → 820: #3186 folded rather than added. Me's "Your feedback" list is
+  // the Me route with `?feedback` on the fragment, so the "More" list check
+  // was REWRITTEN in place to open it (id profile.feedback-list): it still
+  // pins the rows in order, the new one included, and now pins the list's
+  // received and counted rows under a body:has(). The first-feedback check
+  // pins the moment's new "See your feedback" beside the board button.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
   checkCap.assertPinned(DAPP.tests.length, 820);
