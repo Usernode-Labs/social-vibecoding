@@ -9110,7 +9110,7 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_runs (
   error            TEXT,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT homeroom_bot_runs_verdict_check
-    CHECK (verdict IN ('question', 'ready', 'person', 'empty', 'failed')),
+    CHECK (verdict IN ('question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise')),
   CONSTRAINT homeroom_bot_runs_rating_check
     CHECK (rating IS NULL OR rating IN ('yes', 'no'))
 );
@@ -9123,14 +9123,17 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_runs (
 -- widen one constraint on this table.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS budget_stop TEXT;
 
--- #2737: 'empty' joins the verdicts on a database that predates it. The
--- CREATE TABLE above already names it, so this is only for an existing
--- deployment; widening a CHECK can never reject a row already stored.
+-- #2737: 'empty' joins the verdicts on a database that predates it, and
+-- #3264 adds a follow-up's 'answer' and 'revise' (its "ask" is a 'question'
+-- and its hand-off a 'person'; a follow-up row is one with a
+-- proposal_session_id whose verdict is not 'ready'). The CREATE TABLE above
+-- already names them, so this is only for an existing deployment; widening
+-- a CHECK can never reject a row already stored.
 DO $$
 BEGIN
   ALTER TABLE homeroom_bot_runs DROP CONSTRAINT IF EXISTS homeroom_bot_runs_verdict_check;
   ALTER TABLE homeroom_bot_runs ADD CONSTRAINT homeroom_bot_runs_verdict_check
-    CHECK (verdict IN ('question', 'ready', 'person', 'empty', 'failed'));
+    CHECK (verdict IN ('question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'));
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_issue

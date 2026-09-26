@@ -453,3 +453,22 @@ test('the live list is set from the dashboard, and a proposal the bot opened is 
   assert.match(tsx, /href=\{`#app\/\$\{encodeURIComponent\(run\.app_slug\)\}\/dev\/proposals\/\$\{Number\(run\.proposal_session_id\)\}`\}/);
   assert.match(tsx, /className=\{AdminUI\.btn\.link\}/);
 });
+
+test('the ledger, the dashboard and the filter agree on every verdict, follow-ups included (#3264)', () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  const table = tsx.slice(tsx.indexOf('const VERDICT_LABEL'), tsx.indexOf('};', tsx.indexOf('const VERDICT_LABEL')));
+  const labelled = [...table.matchAll(/^\s+(\w+): '/gm)].map((m) => m[1]).sort();
+  const schema = read('src/db/schema.sql');
+  const checks = [...schema.matchAll(/CHECK \(verdict IN \(([^)]*)\)\)/g)].map((m) => m[1]);
+  assert.equal(checks.length, 2, 'the CREATE TABLE and the widening on boot');
+  for (const list of checks) {
+    const allowed = [...list.matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
+    assert.deepEqual(allowed, labelled, 'a verdict the ledger can hold is one the dashboard can show');
+  }
+  for (const v of ['answer', 'revise']) {
+    assert.match(tsx, new RegExp(`<option value="${v}">`), `${v} can be filtered to`);
+  }
+  const admin = read('src/routes/admin.js');
+  assert.match(admin, /\['question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'\]\.includes\(q\.verdict\)/);
+  assert.match(tsx, /isFollowUp\(run\) \? <span className=\{`\$\{AdminUI\.badge\.outline\} ml-1`\}>follow-up<\/span>/);
+});

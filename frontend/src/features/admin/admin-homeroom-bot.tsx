@@ -71,7 +71,8 @@ interface Run {
   id: number;
   issue_number: number;
   mode: string;
-  verdict: 'question' | 'ready' | 'person' | 'empty' | 'failed';
+  // #3264: 'answer' and 'revise' are follow-ups on the bot's own proposal.
+  verdict: 'question' | 'ready' | 'person' | 'empty' | 'failed' | 'answer' | 'revise';
   determined: boolean | null;
   missing_fact: string | null;
   question: string | null;
@@ -161,6 +162,8 @@ const VERDICT_LABEL: Record<Run['verdict'], string> = {
   person: 'Needs a person',
   empty: 'Nothing to build',
   failed: 'Failed',
+  answer: 'Answered',
+  revise: 'Revised its proposal',
 };
 
 const VERDICT_BADGE: Record<Run['verdict'], string> = {
@@ -169,7 +172,22 @@ const VERDICT_BADGE: Record<Run['verdict'], string> = {
   person: AdminUI.badge.secondary,
   empty: AdminUI.badge.outline,
   failed: AdminUI.badge.destructive,
+  answer: AdminUI.badge.secondary,
+  revise: AdminUI.badge.success,
 };
+
+/** #3264: a run that followed up on a proposal the bot had already opened. */
+function isFollowUp(run: Run): boolean {
+  return !!run.proposal_session_id && run.verdict !== 'ready';
+}
+
+function ProposalLink({ run, children }: { run: Run; children: string }) {
+  return (
+    <a className={AdminUI.btn.link} href={`#app/${encodeURIComponent(run.app_slug)}/dev/proposals/${Number(run.proposal_session_id)}`}>
+      {children}
+    </a>
+  );
+}
 
 const CAP_LABEL: Record<string, string> = {
   proposals_per_app: 'would be held: 2 bot proposals already open on this app',
@@ -199,6 +217,36 @@ function VerdictBody({ run }: { run: Run }) {
               opened as a proposal
             </a>
             .
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+  // #3264: what it answered on its own proposal, and what it changed there.
+  if (run.verdict === 'answer') {
+    return (
+      <div className="space-y-1">
+        <p className="text-sm whitespace-pre-line">{run.reason || '(no reply recorded)'}</p>
+        {run.proposal_session_id ? (
+          <p className={AdminUI.muted}>
+            {'Replied about '}
+            <ProposalLink run={run}>its proposal</ProposalLink>
+            .
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+  if (run.verdict === 'revise') {
+    return (
+      <div className="space-y-1">
+        <p className="text-sm whitespace-pre-line">{run.build_note || run.reason || '(no summary recorded)'}</p>
+        {run.build_note && run.reason ? <p className={`${AdminUI.muted} whitespace-pre-line`}>{run.reason}</p> : null}
+        {run.proposal_session_id ? (
+          <p className={AdminUI.muted}>
+            {'Pushed to '}
+            <ProposalLink run={run}>its proposal</ProposalLink>
+            {', which cleared its votes and re-ran its checks.'}
           </p>
         ) : null}
       </div>
@@ -704,6 +752,8 @@ function HomeroomBotSection() {
               <option value="ready">Ready to build</option>
               <option value="empty">Nothing to build</option>
               <option value="person">Needs a person</option>
+              <option value="answer">Answered (follow-up)</option>
+              <option value="revise">Revised its proposal</option>
               <option value="failed">Failed</option>
               <option value="budget">Stopped on budget</option>
             </select>
@@ -763,6 +813,7 @@ function HomeroomBotSection() {
                           {run.budget_stop ? `Stopped: ${run.budget_stop}` : VERDICT_LABEL[run.verdict]}
                         </span>
                         {run.cap_suppressed ? <span className={`${AdminUI.badge.outline} ml-1`}>held</span> : null}
+                        {isFollowUp(run) ? <span className={`${AdminUI.badge.outline} ml-1`}>follow-up</span> : null}
                         <span className={`${AdminUI.muted} ml-2`}>{isOpen ? 'hide' : 'show'}</span>
                       </button>
                     </td>
