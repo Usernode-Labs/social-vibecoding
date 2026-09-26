@@ -26,11 +26,22 @@ test('run diagnostics retain bounded recovery and controlled-failure counts', ()
     status: 200, recoveredRequestCount: 1 }, 2);
   const side = orchestrator.replayProgressEvent({ type: 'side_finished',
     controlledFailureHits: 1, expectedFailureConsoleCount: 1,
-    recoveredNetworkChanges: 0 }, 2);
+    expectedSandboxWarnings: 1, recoveredNetworkChanges: 0 }, 2);
+  const stability = orchestrator.replayProgressEvent({ type: 'checkpoint_stability',
+    mode: 'static', sampleCount: 3, networkQuiet: false,
+    networkWaitMs: 3000, captureWaitMs: 4900,
+    samples: [{ settleMs: 150, screenshotMs: 1550, hashMs: 40, distance: null },
+      { settleMs: 150, screenshotMs: 1540, hashMs: 40, distance: 1 },
+      { settleMs: 150, screenshotMs: 1550, hashMs: 40, distance: 0 }],
+  }, 2);
   assert.equal(navigation.recoveredRequestCount, 1);
   assert.equal(side.controlledFailureHits, 1);
   assert.equal(side.expectedFailureConsoleCount, 1);
+  assert.equal(side.expectedSandboxWarnings, 1);
   assert.equal(side.recoveredNetworkChanges, 0);
+  assert.equal(stability.sampleCount, 3);
+  assert.deepEqual(stability.samples.map((sample) => sample.distance), [undefined, 1, 0]);
+  assert.equal(stability.captureWaitMs, 4900);
 });
 
 const RUN_ID = '1'.repeat(32);
@@ -544,6 +555,43 @@ test('unrelated browser errors never become a route-data repair', async () => {
   await assert.rejects(execute(fixture), { code: 'browser_diagnostics' });
   assert.equal(fixture.calls.dispatches, 1);
   assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 0);
+});
+
+test('only a loaded hosted app with blocked embedded requests may be replaced in a repair', () => {
+  const plan = fixtures.plan();
+  const story = plan.stories[0];
+  story.replay.before.actions.push({ id: 'wait-app', stage: 'open',
+    type: 'waitForHostedApp', slug: 'real-app', timeoutMs: 1000 });
+  const failure = { code: 'browser_diagnostics', detail: {
+    phase: 'browser_diagnostics', storyId: story.id, hostedAppSlugs: ['real-app'],
+    browserDiagnostics: {
+      httpErrors: [], consoleErrors: [], pageErrors: [{ message: 'App script failed' }],
+      failedRequests: [], blockedRequests: [{ origin: 'https://outside.example', embedded: true }],
+    },
+  } };
+  assert.equal(orchestrator.replayRepairKind(failure, plan), 'hosted_app');
+  assert.equal(orchestrator.replayRepairKind({ ...failure,
+    detail: { ...failure.detail, hostedAppSlugs: [] } }, plan), null);
+  assert.equal(orchestrator.replayRepairKind({ ...failure,
+    detail: { ...failure.detail, browserDiagnostics: {
+      ...failure.detail.browserDiagnostics,
+      blockedRequests: [{ origin: 'https://outside.example', embedded: false }],
+    } } }, plan), null);
+  assert.equal(orchestrator.replayRepairKind({ ...failure,
+    detail: { ...failure.detail, browserDiagnostics: {
+      ...failure.detail.browserDiagnostics,
+      blockedRequests: [], pageErrors: [{ message: 'App script failed', sourceKind: 'hosted_app' }],
+    } } }, plan), 'hosted_app');
+});
+
+test('an actually changing static checkpoint can get a bounded observed-state repair', () => {
+  const plan = fixtures.plan();
+  const failure = { code: 'unstable_checkpoint', detail: {
+    phase: 'capture_checkpoint', storyId: plan.stories[0].id, sampleCount: 4,
+  } };
+  assert.equal(orchestrator.replayRepairKind(failure, plan), 'static_timing');
+  assert.equal(orchestrator.replayRepairKind({ ...failure,
+    detail: { ...failure.detail, sampleCount: 2 } }, plan), null);
 });
 
 test('a missing readiness locator gets one correction turn and fresh replay passes', async () => {
