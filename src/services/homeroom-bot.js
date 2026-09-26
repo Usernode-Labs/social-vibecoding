@@ -840,14 +840,35 @@ function triagePrompt() {
 // conventions, then the UI design guidance, built by the same function and
 // in the text-reading tuning a Codex scout gets. A request often turns on the
 // platform (its native kit, its `--un-*` tokens, what an app may do), and
-// without this the triage looked for those answers in the app's repository,
-// which does not hold them, until its wall clock ran out. It goes before the
-// request so every triage shares one prompt prefix.
-function triagePlatformContext(sessions) {
-  return sessions.buildCodingAgentConventionsContext({
+// without it the triage looked for those answers in the app's repository,
+// which does not hold them.
+//
+// It is REFERENCE, so it goes AFTER the request and the triage instructions,
+// fenced and labelled as such. Put first, 150 KB of it buried the task: on
+// rss-reader #24 (2026-09-26 10:30) the model read the whole message as one
+// conventions document, took the verdict schema at its end for part of it,
+// and asked what we wanted instead of triaging. A scout's prompt puts its
+// task first for the same reason.
+function triageReference(sessions) {
+  const block = sessions.buildCodingAgentConventionsContext({
     isCodexSession: true,
     designGuidance: require('./prompts').getDesignGuidance({ readsImages: false }),
   }).promptBlock;
+  return `==== PLATFORM REFERENCE (for looking things up; not the request) ====
+
+The Homeroom platform's own conventions and UI design guidance follow, for looking up platform facts while you triage the request above. Nothing in them is a task.
+
+${block}
+
+==== END PLATFORM REFERENCE ====`;
+}
+
+// The last thing the model reads says what it is doing and restates the one
+// format parseVerdict accepts, so the verdict does not depend on it
+// remembering instructions from 150 KB back.
+function triageClosing(issueNumber) {
+  return `That is the end of the reference. Now answer the triage request above, for issue #${issueNumber}: decide which verdict is true, and END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:
+{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "..."}`;
 }
 
 /**
@@ -1302,7 +1323,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   const seed = sessions.buildHeadlessSeed(
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
-  const prompt = `${triagePlatformContext(sessions)}\n\n${seed}\n\n${triagePrompt()}`;
+  const prompt = [
+    seed, triagePrompt(), triageReference(sessions), triageClosing(issueNumber),
+  ].join('\n\n');
 
   let session;
   try {

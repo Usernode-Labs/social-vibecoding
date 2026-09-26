@@ -1220,8 +1220,9 @@ test('the triage prompt asks about what is not in the repository instead of sear
 
 test('the triage prompt sends platform questions to the conventions it carries, not to the repository', () => {
   const prompt = read('src/prompts/homeroom-bot-triage.md');
-  assert.match(prompt, /The platform conventions and UI design guidance at the top are the Homeroom platform's own rules for every app on it/);
-  assert.match(prompt, /They are the same document an app's notes tell an agent to fetch, so do not fetch it\./,
+  assert.match(prompt, /After these instructions comes a PLATFORM REFERENCE: the Homeroom platform's own conventions and UI design guidance/);
+  assert.match(prompt, /It is reference to look things up in, not part of the request\./);
+  assert.match(prompt, /It is the same document an app's notes tell an agent to fetch, so do not fetch it\./,
     'the app\'s notes send an agent to the platform site for this document');
   assert.match(prompt, /A question about the platform is answered there, not in the app's repository/);
 });
@@ -1336,11 +1337,14 @@ test('runTriage: an issue carrying the bot\'s own GitHub comment triages instead
   assert.match(prompt, /\[alice, 2026-09-25, github\] Darker, like the platform\./, 'a person\'s comment is not');
 });
 
-test('runTriage: the prompt carries a scout\'s platform conventions and design guidance, ahead of the request', async () => {
+test('runTriage: the request comes first; the platform conventions follow as fenced reference (#24)', async () => {
   // A request often turns on the platform, and the app's repository does not
-  // hold the platform's rules. The triage gets the block an agent-chat Codex
-  // scout gets, from the same function, before the request so every triage
-  // shares one prompt prefix.
+  // hold the platform's rules, so the triage carries the block an agent-chat
+  // Codex scout gets, from the same function. It carries it as REFERENCE,
+  // after the request and the instructions: put first, on rss-reader #24
+  // (2026-09-26 10:30) the model read the whole message as one conventions
+  // document, took the verdict schema at its end for part of it, and asked
+  // what we wanted instead of triaging.
   const { pool, deps, calls } = triageHarness({
     verdictText: '```json\n{"verdict":"ready","determined":true,"missing_fact":"none","build_note":"x"}\n```',
   });
@@ -1350,8 +1354,7 @@ test('runTriage: the prompt carries a scout\'s platform conventions and design g
   assert.match(calls.context[0].designGuidance, /==== UI DESIGN/);
   assert.match(calls.context[0].designGuidance, /you read text, not images/, 'the text-reading self-check a Codex scout gets');
   const stubbed = calls.exec[0].opts.prompt;
-  assert.ok(stubbed.startsWith('==== PLATFORM CONVENTIONS (stub) ====\n\nPlease work on GitHub issue #12'),
-    'the context comes first, then the request');
+  assert.ok(stubbed.startsWith('Please work on GitHub issue #12'), 'the request comes first');
 
   const real = triageHarness({
     verdictText: '```json\n{"verdict":"ready","determined":true,"missing_fact":"none","build_note":"x"}\n```',
@@ -1360,11 +1363,26 @@ test('runTriage: the prompt carries a scout\'s platform conventions and design g
   await bot.runTriage(real.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: real.deps });
   const prompt = real.calls.exec[0].opts.prompt;
   const at = (re) => prompt.search(re);
-  assert.equal(at(/==== PLATFORM CONVENTIONS \(authoritative\) ====/), 0);
-  assert.ok(at(/### Theming — override `--un-\*` variables/) > 0, 'the whole conventions document, not a pointer to it');
-  assert.ok(at(/==== END PLATFORM CONVENTIONS ====/) < at(/==== UI DESIGN/));
-  assert.ok(at(/==== END UI DESIGN ====/) < at(/Please work on GitHub issue #12/));
-  assert.ok(at(/Please work on GitHub issue #12/) < at(/You are the Homeroom bot, triaging ONE request/));
+  const order = [
+    /^Please work on GitHub issue #12/,
+    /You are the Homeroom bot, triaging ONE request/,
+    /"verdict": "question" \| "empty" \| "ready" \| "person",\n/,
+    /==== PLATFORM REFERENCE \(for looking things up; not the request\) ====/,
+    /==== PLATFORM CONVENTIONS \(authoritative\) ====/,
+    /### Theming — override `--un-\*` variables/,
+    /==== END PLATFORM CONVENTIONS ====/,
+    /==== UI DESIGN/,
+    /==== END UI DESIGN ====/,
+    /==== END PLATFORM REFERENCE ====/,
+    /That is the end of the reference\. Now answer the triage request above, for issue #12/,
+  ].map((re) => [re, at(re)]);
+  for (const [re, where] of order) assert.ok(where >= 0, `present: ${re}`);
+  for (let i = 1; i < order.length; i += 1) {
+    assert.ok(order[i - 1][1] < order[i][1], `${order[i - 1][0]} before ${order[i][0]}`);
+  }
+  assert.match(prompt, /Nothing in them is a task\./);
+  // The last thing the model reads is the one format parseVerdict accepts.
+  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}$/);
 });
 
 test('the bot\'s GitHub login resolves to a string, or to null when it cannot be read', async () => {
