@@ -181,7 +181,8 @@ type AnswerFor<Q extends Question> = Q extends 'who' ? Audience : Q extends 'sta
  *     answer and stays put, because creating is always a press of its own.
  *   - On a later step the question's row has collapsed to the chosen answer;
  *     pressing it reopens the question (the answers are kept, so the next
- *     press, same or different, moves on again). Ignored within
+ *     press moves on again; a DIFFERENT answer clears the answers that
+ *     depend on it). Ignored within
  *     REOPEN_GUARD_MS of an advance: that is the second half of a double click.
  *   - A question further on than the card has unfolded is hidden, and cannot
  *     be answered.
@@ -204,9 +205,18 @@ export function answerChoice<Q extends Question>(
     if (msSinceAdvance < REOPEN_GUARD_MS) return state;
     return { ...state, step: question };
   }
-  return question === 'who'
-    ? { ...state, audience: value as Audience, step: 'start' }
-    : { ...state, mode: value as Mode, step: 'details' };
+  // A CHANGED answer re-asks what depends on it, so a revisited question is
+  // never shown already answered from a different path: a new audience
+  // clears how to begin and who approves, a new way to begin clears who
+  // approves. The same answer pressed again keeps everything after it.
+  if (question === 'who') {
+    return value === state.audience
+      ? { ...state, step: 'start' }
+      : { ...state, audience: value as Audience, mode: null, approvers: null, step: 'start' };
+  }
+  return value === state.mode
+    ? { ...state, step: 'details' }
+    : { ...state, mode: value as Mode, approvers: null, step: 'details' };
 }
 
 /**

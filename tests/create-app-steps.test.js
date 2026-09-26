@@ -338,12 +338,21 @@ test('#3160: a single choice advances by itself, a collapsed row reopens its que
   // Back: pressing a collapsed row reopens that question and keeps the answers.
   const back = answerChoice(s, 'who', 'open', later);
   assert.deepEqual({ ...back }, { step: 'who', audience: 'open', mode: 'import', approvers: null });
-  // ...and a different answer there moves on again, with the new answer.
+  // The same answer again moves on and keeps what came after it...
+  assert.deepEqual({ ...answerChoice(back, 'who', 'open', later) }, { ...s, step: 'start' });
+  // ...a different one moves on too, and re-asks what depended on it, so the
+  // revisited question is not shown pre-answered from the old path.
   const changed = answerChoice(back, 'who', 'invited', later);
-  assert.deepEqual({ ...changed }, { step: 'start', audience: 'invited', mode: 'import', approvers: null });
-  const reopenStart = answerChoice(s, 'start', 'import', later);
+  assert.deepEqual({ ...changed }, { step: 'start', audience: 'invited', mode: null, approvers: null });
+  const full = { step: 'approve', audience: 'open', mode: 'new', approvers: 'invited' };
+  const reopenStart = answerChoice(full, 'start', 'new', later);
   assert.equal(reopenStart.step, 'start');
-  assert.equal(answerChoice(reopenStart, 'start', 'new', later).mode, 'new');
+  assert.deepEqual({ ...answerChoice(reopenStart, 'start', 'new', later) }, { ...full, step: 'details' }, 'same way to begin keeps who approves');
+  assert.deepEqual({ ...answerChoice(reopenStart, 'start', 'import', later) },
+    { step: 'details', audience: 'open', mode: 'import', approvers: null }, 'a new way to begin clears who approves');
+  const reopenWho = answerChoice(full, 'who', 'open', later);
+  assert.deepEqual({ ...answerChoice(reopenWho, 'who', 'solo', later) },
+    { step: 'start', audience: 'solo', mode: null, approvers: null }, 'a new audience clears everything after it');
 
   // A hidden later question cannot be answered from an earlier step.
   assert.equal(answerChoice(NO_ANSWERS, 'start', 'new', later), NO_ANSWERS);
