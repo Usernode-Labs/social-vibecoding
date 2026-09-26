@@ -620,6 +620,18 @@ function buildWorkOrder({
   // needs it, and it used to be a footnote below the command it replaces.
   const setup = [];
   if (forkStatus !== 'ready') {
+    // #2460: the fork is for pushing a branch, which is the second path for
+    // new work. Said before the fork step, so a missing fork never reads as
+    // a blocker for it.
+    if (patchFirst) {
+      setup.push(
+        'A fork is only needed to push a branch. If you cannot make one, that does',
+        `not block the work: clone ${upstreamUrl} instead and`,
+        'send the change as a patch, as step 1 under WHEN YOU ARE DONE describes.',
+        'Otherwise:',
+        ''
+      );
+    }
     if (forkStatus === 'name_conflict') {
       setup.push(
         'FIRST, make the fork. Your GitHub account already has a repository with the',
@@ -660,16 +672,6 @@ function buildWorkOrder({
       '',
       'GitHub creates forks asynchronously. If the clone below reports 404, wait a',
       'few seconds and run it again.',
-      // #2460: the fork is for pushing a branch, which is the second path
-      // for new work. A missing fork must not read as a blocker for it.
-      ...(patchFirst
-        ? [
-          '',
-          'A fork is only needed to push a branch. If you cannot make one, that does',
-          `not block the work: clone ${upstreamUrl} instead and`,
-          'send the change as a patch, as step 1 under WHEN YOU ARE DONE describes.',
-        ]
-        : []),
       '',
       'THEN, in every case:'
     );
@@ -1239,7 +1241,7 @@ function buildWorkOrder({
       '   the default for an ordinary change, and it needs NO fork and NO GitHub',
       '   write access. Commit your work on top of the starting commit, then',
       '   export every commit since it:',
-      `${CMD}git format-patch ${baseSha}..HEAD --stdout`,
+      `${CMD}git format-patch --no-cover-letter ${baseSha}..HEAD --stdout`,
       `   Call \`submit_work\` with taskId ${taskRef}, \`patch\` set to that output`,
       `   exactly as printed, agent "${agentValue}", source "work_order", and a`,
       '   short title, plus BOTH pieces of prose described next. Homeroom applies',
@@ -1320,8 +1322,10 @@ function buildWorkOrder({
       '',
       '2. PUSH A BRANCH INSTEAD only when a patch cannot carry the change: the',
       '   patch is over about 250 KB, `submit_work` refused it as too large or as',
-      '   changing too many files, or this work already lives on a branch you',
-      '   pushed for this task. Push to YOUR FORK, under any branch name:',
+      '   changing too many files, this work already lives on a branch you',
+      '   pushed for this task, or you were asked to share unfinished work with',
+      '   `share: true`, which takes a branch only. Push to YOUR FORK, under any',
+      '   branch name:',
       ...pushCommands,
       '   Then call `submit_work` exactly as in step 1, with `branch` set to that',
       '   name in place of `patch`. If the push is refused, the remedy above is',
@@ -1339,9 +1343,10 @@ function buildWorkOrder({
       '   If it does not, rebase onto that commit, export the patch again and',
       '   resubmit. If it still does not apply, push a branch as in step 2.',
       '   `patch_too_large`, or `patch_rejected` for the number of files, is step',
-      '   2 as well. A `patch_rejected` for a file under `.github/` is not: CI',
-      '   workflow files are out of scope (see RULES), so drop that change rather',
-      '   than pushing it.',
+      '   2 as well. A `patch_rejected` for a file under `.github/` means a patch',
+      '   cannot carry that file at all: a CI workflow change is out of scope (see',
+      '   RULES), so drop it rather than pushing it; anything else there goes as',
+      '   a branch, step 2.',
       '',
       '5. ON A CONNECTOR ERROR, relay it plainly rather than giving up:',
       '   `insufficient_scope` — ask the user to reconnect Homeroom and approve',
@@ -1352,7 +1357,8 @@ function buildWorkOrder({
       '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom',
       '   connector was never added to the Claude or ChatGPT account this session',
       '   runs in — it is per account, so a second account does not inherit the',
-      '   first one\'s. Push the branch anyway; the work is not lost.',
+      '   first one\'s. Push the branch anyway if you can, and keep the patch from',
+      '   step 1; the work is not lost.',
       ...noToolsRemedy,
       '   Once they have, retry `submit_work` as in step 1 — in a fresh session',
       '   if the tools still do not appear in this one.',

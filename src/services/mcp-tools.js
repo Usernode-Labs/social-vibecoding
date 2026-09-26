@@ -3561,7 +3561,7 @@ function registerTools(server, ctx) {
         + 'returned — no re-wrapping, tidying, summarising, retyping the commit id or appended correction. '
         + 'Add no steps of your own. If a paste needs redoing, re-render this result rather than calling '
         + 'prepare_work again. The receiving coding agent submits through its own Homeroom connector; if '
-        + 'the user later says it could not submit, call submit_work with the id above and its branch.',
+        + 'the user later says it could not submit, call submit_work with the id above and its patch or branch.',
     });
   });
 

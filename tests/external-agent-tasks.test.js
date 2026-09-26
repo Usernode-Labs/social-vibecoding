@@ -2303,7 +2303,9 @@ test('the work order presents every submit shape, in order of preference', async
   assert.ok(svc.AGENTS.includes('claude-code'));
   assert.match(order, /pr_open_failed/);
   assert.match(order, /compareUrl/);
-  assert.match(order, new RegExp(`git format-patch ${BASE_SHA}\\.\\.HEAD --stdout`));
+  // --no-cover-letter: a configured format.coverLetter would put an empty
+  // first mail in the mbox, and `git am` stops on it.
+  assert.match(order, new RegExp(`git format-patch --no-cover-letter ${BASE_SHA}\\.\\.HEAD --stdout`));
   assert.match(order, /needs NO fork and NO GitHub\s+write access/);
   assert.match(order, /insufficient_scope/);
   assert.match(order, /github_not_linked/);
@@ -2330,7 +2332,7 @@ test('#2460: a new change is submitted as a patch first, and a pushed branch is 
   assert.ok(patchStep > 0, 'step 1 is the patch');
   assert.ok(pushStep > patchStep, 'step 2 is the branch');
   assert.ok(prStep > pushStep);
-  const formatPatch = done.indexOf(`git format-patch ${BASE_SHA}..HEAD --stdout`);
+  const formatPatch = done.indexOf(`git format-patch --no-cover-letter ${BASE_SHA}..HEAD --stdout`);
   const push = done.indexOf('git push -u origin HEAD');
   assert.ok(formatPatch > patchStep && formatPatch < pushStep, 'the export command sits in step 1');
   assert.ok(push > pushStep && push < prStep, 'the push command sits in step 2, and only there');
@@ -2348,6 +2350,8 @@ test('#2460: a new change is submitted as a patch first, and a pushed branch is 
   assert.match(step2, /too large or as\n {3}changing too many files/);
   assert.match(step2, /already lives on a branch you\n {3}pushed for this task/);
   assert.match(step2, /with `branch` set to that\n {3}name in place of `patch`/);
+  // share: true takes a branch only, so sharing unfinished work is a step 2 case.
+  assert.match(step2, /share unfinished work with\n {3}`share: true`, which takes a branch only/);
   // The patch is no longer a fallback for a refused push.
   assert.doesNotMatch(order, /IF THE PUSH IS REFUSED AT ALL/);
 
@@ -2355,7 +2359,8 @@ test('#2460: a new change is submitted as a patch first, and a pushed branch is 
   const step4 = done.slice(done.indexOf('4. IF submit_work ANSWERS `patch_did_not_apply`'), done.indexOf('5. ON A CONNECTOR ERROR'));
   assert.match(step4, new RegExp(`git log --oneline ${BASE_SHA}\\.\\.HEAD`));
   assert.match(step4, /If it still does not apply, push a branch as in step 2\./);
-  assert.match(step4, /`\.github\/` is not: CI\s+workflow files are out of scope/);
+  assert.match(step4, /a CI workflow change is out of scope/);
+  assert.match(step4, /anything else there goes as\s+a branch, step 2/);
 
   // Fixing a failing check on a patched proposal is a revision: a branch,
   // with proposalId, never a second patch.
@@ -2372,9 +2377,14 @@ test('#2460: a new change is submitted as a patch first, and a pushed branch is 
   assert.match(order, /A fork is needed only for the branch path/);
   assert.match(order, /Or clone https:\/\/github\.com\/usernode-bot\/recipe-box instead: a patch needs no fork\./);
   assert.match(order, /A patch carries no branch name at all/);
-  const missing = fullOrder({ forkStatus: 'missing' });
-  assert.match(missing, /A fork is only needed to push a branch\. If you cannot make one, that does\nnot block the work/);
-  assert.ok(missing.indexOf('A fork is only needed') < missing.indexOf('THEN, in every case:'));
+  // Said BEFORE the fork step, for every fork state that has one, so "FIRST,
+  // make the fork" is never the first thing a patch-first reader meets.
+  for (const status of ['missing', 'unknown', 'name_conflict']) {
+    const order = fullOrder({ forkStatus: status });
+    const setup = order.slice(order.indexOf('\nSETUP\n'));
+    assert.match(setup, /^\nSETUP\nA fork is only needed to push a branch\. If you cannot make one, that does\nnot block the work/, `${status}: the note leads SETUP`);
+    assert.ok(setup.indexOf('A fork is only needed') < setup.indexOf('FIRST,'), `${status}: before the fork step`);
+  }
 });
 
 test('#2460: an update and a task-less work order keep the branch as their first step', () => {
@@ -2411,7 +2421,7 @@ test('the work order tells an agent with no Homeroom tools what that means and h
   // And under WHEN YOU ARE DONE.
   assert.match(assistant, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom\n {3}connector was never added to the Claude or ChatGPT account this session\n {3}runs in/);
   assert.match(assistant, /a second account does not inherit the\n {3}first one's/);
-  assert.match(assistant, /Push the branch anyway; the work is not lost/);
+  assert.match(assistant, /Push the branch anyway if you can, and keep the patch from\n {3}step 1; the work is not lost/);
   assert.match(assistant, /retry `submit_work` as in step 1/);
   // Started by a chat assistant: hand it back, patch included.
   assert.match(assistant, /Otherwise hand it back: print the branch name you pushed/);
