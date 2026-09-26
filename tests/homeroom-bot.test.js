@@ -1197,10 +1197,39 @@ test('the triage prompt ends with the JSON contract parseVerdict reads', () => {
   assert.match(prompt, /never an `empty`/);
 });
 
+test('the triage prompt asks about what is not in the repository instead of searching for it', () => {
+  // rss-reader #24, 2026-09-25: "a dark colour closer to the platform's
+  // background". The model hunted the app's repository for the platform's
+  // colour: 183 reads, over 50 of the same lines of index.html, 15 fresh
+  // starts, no words and no verdict, until the 20-minute wall clock.
+  const prompt = read('src/prompts/homeroom-bot-triage.md');
+  assert.match(prompt, /It depends on something that neither this repository nor the platform conventions answer: a value of the Homeroom platform the conventions do not state/,
+    'what the platform leaves unstated, other services and taste are reasons to ask');
+  assert.match(prompt, /"darker", "nicer", "like the platform"/);
+  assert.match(prompt, /Nothing you can read answers these, so do not search for them\. Ask\./);
+  assert.match(prompt, /If one or two targeted searches for the obvious names do not find it, it is not in the repository: ask instead of searching further\./,
+    '"the repository can answer it" has a limit');
+  assert.match(prompt, /Do not read a file or line range you have already read/);
+  assert.match(prompt, /List or search the whole repository at most once/);
+  assert.match(prompt, /still unsure after about ten reads, you have your answer: it is a `question`/);
+  assert.match(prompt, /a turn that ends without the JSON block below has decided nothing/);
+  // The counter-rules still stand, so it does not over-ask what the code says.
+  assert.match(prompt, /Never ask something the repository or the platform conventions can answer/);
+  assert.match(prompt, /Never ask when a sensible default exists/);
+});
+
+test('the triage prompt sends platform questions to the conventions it carries, not to the repository', () => {
+  const prompt = read('src/prompts/homeroom-bot-triage.md');
+  assert.match(prompt, /The platform conventions and UI design guidance at the top are the Homeroom platform's own rules for every app on it/);
+  assert.match(prompt, /They are the same document an app's notes tell an agent to fetch, so do not fetch it\./,
+    'the app\'s notes send an agent to the platform site for this document');
+  assert.match(prompt, /A question about the platform is answered there, not in the app's repository/);
+});
+
 // ── runTriage with every dependency injected ─────────────────────────────
 
 function triageHarness({ verdictText, routed = null, budgetError = null, sessionId = 501, result = null } = {}) {
-  const calls = { queries: [], exec: [], spend: [], ensured: [] };
+  const calls = { queries: [], exec: [], spend: [], ensured: [], context: [] };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
@@ -1237,6 +1266,10 @@ function triageHarness({ verdictText, routed = null, budgetError = null, session
     managedOpenRouter: { async usesIncludedKey() { return true; } },
     sessions: {
       buildHeadlessSeed: (n, issue) => `Please work on GitHub issue #${n}: "${issue.title}".`,
+      buildCodingAgentConventionsContext(opts) {
+        calls.context.push(opts);
+        return { promptBlock: '==== PLATFORM CONVENTIONS (stub) ====', systemPrompt: null };
+      },
       async runCodexAttemptLoop({ dispatchOnce, mode, telemetryComponent, resumeThreadId }) {
         calls.loop = { mode, telemetryComponent, resumeThreadId };
         if (routed) return routed;
@@ -1301,6 +1334,37 @@ test('runTriage: an issue carrying the bot\'s own GitHub comment triages instead
   assert.match(prompt, /\[bot — earlier proposal questions, 2026-09-25, github\] Homeroom bot is looking at this request\./,
     'its own comment is recognised as the bot\'s');
   assert.match(prompt, /\[alice, 2026-09-25, github\] Darker, like the platform\./, 'a person\'s comment is not');
+});
+
+test('runTriage: the prompt carries a scout\'s platform conventions and design guidance, ahead of the request', async () => {
+  // A request often turns on the platform, and the app's repository does not
+  // hold the platform's rules. The triage gets the block an agent-chat Codex
+  // scout gets, from the same function, before the request so every triage
+  // shares one prompt prefix.
+  const { pool, deps, calls } = triageHarness({
+    verdictText: '```json\n{"verdict":"ready","determined":true,"missing_fact":"none","build_note":"x"}\n```',
+  });
+  await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  assert.equal(calls.context.length, 1);
+  assert.equal(calls.context[0].isCodexSession, true, 'inline, as a Codex scout carries it');
+  assert.match(calls.context[0].designGuidance, /==== UI DESIGN/);
+  assert.match(calls.context[0].designGuidance, /you read text, not images/, 'the text-reading self-check a Codex scout gets');
+  const stubbed = calls.exec[0].opts.prompt;
+  assert.ok(stubbed.startsWith('==== PLATFORM CONVENTIONS (stub) ====\n\nPlease work on GitHub issue #12'),
+    'the context comes first, then the request');
+
+  const real = triageHarness({
+    verdictText: '```json\n{"verdict":"ready","determined":true,"missing_fact":"none","build_note":"x"}\n```',
+  });
+  real.deps.sessions.buildCodingAgentConventionsContext = require('../src/routes/sessions').buildCodingAgentConventionsContext;
+  await bot.runTriage(real.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: real.deps });
+  const prompt = real.calls.exec[0].opts.prompt;
+  const at = (re) => prompt.search(re);
+  assert.equal(at(/==== PLATFORM CONVENTIONS \(authoritative\) ====/), 0);
+  assert.ok(at(/### Theming — override `--un-\*` variables/) > 0, 'the whole conventions document, not a pointer to it');
+  assert.ok(at(/==== END PLATFORM CONVENTIONS ====/) < at(/==== UI DESIGN/));
+  assert.ok(at(/==== END UI DESIGN ====/) < at(/Please work on GitHub issue #12/));
+  assert.ok(at(/Please work on GitHub issue #12/) < at(/You are the Homeroom bot, triaging ONE request/));
 });
 
 test('the bot\'s GitHub login resolves to a string, or to null when it cannot be read', async () => {

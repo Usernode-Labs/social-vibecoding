@@ -836,6 +836,20 @@ function triagePrompt() {
   return triagePromptCache;
 }
 
+// The platform context an agent-chat scout turn carries: the platform
+// conventions, then the UI design guidance, built by the same function and
+// in the text-reading tuning a Codex scout gets. A request often turns on the
+// platform (its native kit, its `--un-*` tokens, what an app may do), and
+// without this the triage looked for those answers in the app's repository,
+// which does not hold them, until its wall clock ran out. It goes before the
+// request so every triage shares one prompt prefix.
+function triagePlatformContext(sessions) {
+  return sessions.buildCodingAgentConventionsContext({
+    isCodexSession: true,
+    designGuidance: require('./prompts').getDesignGuidance({ readsImages: false }),
+  }).promptBlock;
+}
+
 /**
  * The bot's one dev session per app, created on first use. `paused` at
  * rest and `active` only while a turn runs; is_headless FALSE and an empty
@@ -1288,7 +1302,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   const seed = sessions.buildHeadlessSeed(
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
-  const prompt = `${seed}\n\n${triagePrompt()}`;
+  const prompt = `${triagePlatformContext(sessions)}\n\n${seed}\n\n${triagePrompt()}`;
 
   let session;
   try {
