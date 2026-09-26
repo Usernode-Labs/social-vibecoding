@@ -69,13 +69,22 @@ function iconUrl(row) {
   return row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null;
 }
 
-// What the join screen says under a community's name.
+// The longest description the join screen shows under a name: two lines on
+// a phone. dapp.json's own field has no limit of its own.
+const DETAIL_MAX = 100;
+
+// What the join screen says under a community's name. Homeroom says what
+// joining it means; an invite says who sent it; anything else says what it
+// is, in its own words: dapp.json's top-level `description`, the line
+// Homeroom's About pane already shows (routes/platform-about.js), which a
+// community sets and changes by a voted change like any other line there.
+// Nothing at all when it has none. "Community · N members" was the same
+// words on every row, and the count said little about what the thing is.
 function suggestionDetail(row) {
-  if (row.self_hosted) return 'Build the platform you are using';
+  if (row.self_hosted) return 'Contribute to the Homeroom platform';
   if (row.invited_by) return `Invited by @${row.invited_by}`;
-  const label = communities.AUDIENCE_LABELS[row.audience] || communities.AUDIENCE_LABELS.open;
-  const n = Number(row.member_count) || 0;
-  return n ? `${label} · ${n} ${n === 1 ? 'member' : 'members'}` : label;
+  const text = typeof row.description === 'string' ? row.description.replace(/\s+/g, ' ').trim() : '';
+  return text.length > DETAIL_MAX ? `${text.slice(0, DETAIL_MAX - 1).trimEnd()}…` : text;
 }
 
 /**
@@ -92,6 +101,7 @@ async function joinSuggestions(pool, userId, { showSelfHosted = false } = {}) {
             ${communities.audienceSql('a', members)} AS audience,
             EXISTS (SELECT 1 FROM community_members me
                      WHERE me.community_id = a.community_id AND me.user_id = $1) AS is_member,
+            a.manifest_snapshot->>'description' AS description,
             inv.invited_by
        FROM apps a
        LEFT JOIN (
