@@ -158,7 +158,6 @@ async function migrate(config) {
   await seedStagingSpendDistribution(pool);
   await seedStagingCapReached(pool, config);
   await seedStagingAppCapApps(pool, config);
-  await seedStagingPlatformLimitAlert(pool, config);
   await seedStagingSystemTokenUsage(pool);
   await seedStagingDashboardAdminSplit(pool);
   await seedStagingAnalyticsCharts(pool);
@@ -7570,40 +7569,6 @@ async function seedStagingAppCapApps(pool, config) {
   log.info('db', 'Staging app-cap fixtures seeded', {
     target, liveBefore: live, inserted,
   });
-}
-
-// One unread "Nearing the app limit" alert for the first full admin, so a
-// preview's bell shows the platform_limit row a reviewer can open. A preview
-// never sends the real one: services/platform-limit-alerts.js records the
-// level there but skips notifying, because the users are a production clone.
-// The figures match the app-cap fixtures above (cap − 10 of cap) rather than
-// the preview's live count, which those fixtures move. Idempotent: skipped
-// once that admin holds any apps_warn alert, read or not, so reading it does
-// not bring a fresh one back on the next boot. A no-op outside staging.
-async function seedStagingPlatformLimitAlert(pool, config) {
-  if (process.env.USERNODE_ENV !== 'staging') return;
-  const cap = Number(config.maxApps) > 0 ? Math.floor(Number(config.maxApps)) : 50;
-  const detail = `apps_warn:${Math.max(0, cap - 10)}:${cap}`;
-  const { rows } = await pool.query(
-    `WITH target AS (
-       SELECT id FROM users
-        WHERE is_admin = TRUE AND admin_readonly = FALSE
-        ORDER BY id ASC
-        LIMIT 1
-     )
-     INSERT INTO notifications (user_id, source_user_id, kind, detail, created_at)
-     SELECT target.id, NULL, 'platform_limit', $1, NOW() - INTERVAL '6 minutes'
-       FROM target
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications existing
-         WHERE existing.user_id = target.id
-           AND existing.kind = 'platform_limit'
-           AND split_part(existing.detail, ':', 1) = 'apps_warn'
-      )
-     RETURNING id`,
-    [detail]
-  );
-  log.info('db', 'Staging platform-limit alert fixture', { detail, inserted: rows.length });
 }
 
 // #361: seed ~30 days of system-token spend so the dashboard's Daily

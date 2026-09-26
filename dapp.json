@@ -2825,7 +2825,8 @@
     {
       "name": "The Notifications sheet renders notification rows (Streamlined Concept)",
       "path": "/?demo=1#notifications",
-      "expectSelector": "#notifications-sheet[data-open] [data-notif-id]"
+      "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"]) [data-notif-id]",
+      "expectText": "40 of 50 apps in use."
     },
     {
       "name": "A notification row says what kind it is, then which one, then where it came from",
