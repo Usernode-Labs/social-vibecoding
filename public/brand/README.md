@@ -15,15 +15,23 @@ card, the home header's app chip at 20px — with no dark variant, no second
 file and no second request. Its own header explains the split. This note is
 here so someone looking for the logo in the obvious place finds it.
 
-`homeroom-mark.png` is the THIRD mark and the one this table's second
-paragraph did not anticipate: the square brand tile — the cream figure on the
-near-black squircle — as opposed to the logotype. #2718 put it in the header
-as the button that opens the platform's menu, on every route. It is a file
-rather than inlined source for the reason the logotype is the opposite: a
-two-colour lockup does not re-colour per theme any more than an app's own icon
-does, so there is nothing for `currentColor` to buy and a raster is the honest
-shape for it. `public/sw.js` precaches it, because a missing header logo is a
-hole at the top of every screen.
+`homeroom-mark.png` is the THIRD mark, and it is no longer what draws the
+header. #2718 put it there as the button that opens the platform's menu, on
+every route, reasoning that a two-colour lockup does not re-colour per theme
+any more than an app's own icon does — so there was nothing for
+`currentColor` to buy and a raster was the honest shape for it. That stopped
+being true once the mark's own ink became the platform accent
+(`violet-600` / `--accent`, `#0a6ee0`, replacing the earlier cream `#fffeea`)
+rather than a fixed brand colour: a raster and a Tailwind config are two
+sources of truth for the same colour, and a header that draws from both would
+drift the next time the accent moves. The header now draws
+`frontend/@/components/ui/logo-mark.tsx` instead — the same `MARK_PATHS` two
+path strings `scripts/generate-pwa-icons.js` already carried for the PWA icon
+set, copied verbatim and inlined as SOURCE with `fill="currentColor"`,
+exactly the `Wordmark` convention above — and `platform-mark.tsx` tints it
+`text-violet-600` at its call site. This file itself is unchanged and still
+committed at its original cream ink: `about-pane.tsx` and `profile-view.tsx`
+still draw it, so `public/sw.js` still precaches it for them.
 
 `homeroom-logotype-black.png` (below) is the one exception to "no image tooling
 at all": email HTML has no `currentColor` and no inline SVG support worth

@@ -196,7 +196,7 @@ test('CEILING: the Homeroom mark is exactly the 28px row', () => {
   // cost only, so the 28px ceiling above is untouched either way.
   assert.match(tag, /\bgap-0\.5\b/,
     'the tile and its chevron are spaced, not fused');
-  const tile = html.match(/<img[^>]*class="platform-mark-tile[^"]*"/)[0];
+  const tile = html.match(/<span[^>]*class="platform-mark-tile[^"]*"/)[0];
   assert.match(tile, /(?:^|\s)h-\[26px\](?:\s|$)/,
     'the artwork is 26px, so it fits the row with a pixel to spare');
 });

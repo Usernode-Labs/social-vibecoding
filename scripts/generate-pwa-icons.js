@@ -41,7 +41,7 @@ const path = require('path');
 const zlib = require('zlib');
 
 const TILE = [0x00, 0x00, 0x00]; // black, the tile
-const INK = [0xff, 0xfe, 0xea];  // brand cream, the mark
+const INK = [0x0a, 0x6e, 0xe0];  // violet-600 / --accent, the mark
 
 // Figma node 1246:182's own frame: the mark's bounding box, in its units.
 const MARK_W = 377.327;
