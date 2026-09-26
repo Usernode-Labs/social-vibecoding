@@ -50,6 +50,68 @@ export function TourSection() {
           It starts again on your home screen.
         </p>
       </div>
+
+      <div id="settings-tour-guide" className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+        <SectionHeading title="Guide to Homeroom">
+          The tour shows you where things are. This is what to do once you're there, from your first day to your fiftieth.
+        </SectionHeading>
+
+        <div className="space-y-5 text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed">
+          <div>
+            <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Home</h4>
+            <p className="mt-1">
+              Home is a feed of activity across the projects you belong to: new posts, proposals up for a vote, and changes that just merged. It's the launcher, not a project itself, so the fastest way back to something you're building is to open it from here rather than hunting for it elsewhere.
+            </p>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Creating and finding projects</h4>
+            <p className="mt-1">
+              Discover lists every public project on Homeroom. Open one to use it, or to see what people are building and proposing there.
+            </p>
+            <p className="mt-1">
+              To start your own, tap the create button and describe what you want. You'll pick who it's for first: Just me (only you can see it), A group (private to people you invite), or A community (anyone can find it, join, and build). Whichever you choose, Homeroom gives it its own app and its own database, and you can open it up or narrow it later from its page.
+            </p>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Group chat and dev sessions</h4>
+            <p className="mt-1">
+              Every project has a group chat: the place people discuss it, ask questions, and share what they're trying next. Anyone in the project can post there.
+            </p>
+            <p className="mt-1">
+              When you're ready to build, you start a dev session: a private, one-on-one conversation with the Mayor (Homeroom's coding assistant) focused on the exact change you want. You describe the feature or fix in plain language, and the Mayor asks anything it needs before it starts. A dev session keeps its own transcript, its own branch, and its own proposal, so several people can each be building something different on the same project at once without stepping on each other.
+            </p>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">The spec and build flow</h4>
+            <p className="mt-1">
+              A dev session works in two stages. First comes the spec: a plain-language description of what will be built, which the Mayor writes and you review and adjust until it says what you actually want. Nothing is coded yet at this stage, so it's the cheap place to change your mind.
+            </p>
+            <p className="mt-1">
+              Once you approve the spec, the build turn writes the actual code, opens a preview you can try, and runs Homeroom's automated checks against it. If a check fails, the Mayor fixes it and runs the checks again. When you're happy with the preview, the change is ready to propose.
+            </p>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Proposing changes and voting</h4>
+            <p className="mt-1">
+              A finished build becomes a proposal: a specific, reviewable change to a project, sitting on Workshop next to a preview of it and its checks. Anyone who belongs to the project can open the proposal, try the preview, and vote for or against it. A proposal whose checks haven't passed can't merge, whatever the vote says.
+            </p>
+            <p className="mt-1">
+              Once enough people vote yes, the change merges and goes live for everyone using the project. Workshop is where you'll find anything waiting on your vote, marked as needing you.
+            </p>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Settings</h4>
+            <p className="mt-1">
+              This screen, along with the rest of Settings, is where you manage your account: your profile, notifications, appearance, and the experimental features above. It's also where you can come back to replay this tour any time, using the button above.
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
