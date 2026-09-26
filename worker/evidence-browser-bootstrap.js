@@ -80,7 +80,7 @@ async function main() {
               process.stdout.write(`__USERNODE_EVIDENCE_BROWSER__ ${JSON.stringify({
                 kind: 'hosted_app_catalog', side, ...result,
               })}\n`);
-            }));
+            }, process.env.EVIDENCE_RUN_ID));
           }
         }
         const target = path.join(outputDir, `${persona}.json`);

@@ -107,6 +107,25 @@ test('runContainer: succeeds on the first try without any rm when there is no co
   }
 });
 
+test('runContainer: appends an explicit command after the image', async () => {
+  const { docker, calls, restore } = loadDockerWithExecFile((_cmd, args) => {
+    if (args[0] === 'run') return { stdout: 'fixturecontainer\n' };
+    return { stdout: '' };
+  });
+  try {
+    await docker.runContainer('usernode-app-fixture', {
+      image: 'capture@sha256:abc', port: 3000,
+      command: ['node', '/app/evidence-hosted-app-fixture.js'],
+    });
+    const run = calls.find((call) => call.args[0] === 'run');
+    assert.deepEqual(run.args.slice(-3), [
+      'capture@sha256:abc', 'node', '/app/evidence-hosted-app-fixture.js',
+    ]);
+  } finally {
+    restore();
+  }
+});
+
 test('runContainer: a non-conflict run error is not retried and propagates', async () => {
   let runAttempts = 0;
   const { docker, restore } = loadDockerWithExecFile((cmd, args) => {

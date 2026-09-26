@@ -9,7 +9,26 @@ const path = require('node:path');
 
 const workerDir = path.join(__dirname, '..', 'worker');
 const read = (name) => fs.readFileSync(path.join(workerDir, name), 'utf8');
-const { browserAllowedOrigins, hostedAppSlugs } = require('../worker/evidence-hosted-origins');
+const { browserAllowedOrigins, hostedAppSlugs, trustedHostedAppOrigins } = require('../worker/evidence-hosted-origins');
+const hostedContract = require('../worker/evidence-hosted-app-contract');
+
+test('only the platform-owned hosted app for this exact run enters the evidence catalog', () => {
+  const runId = 'b'.repeat(32);
+  const slug = hostedContract.hostedAppSlug(runId);
+  const fixture = {
+    id: hostedContract.HOSTED_APP_ID,
+    slug,
+    status: 'running',
+    view_visibility: 'public',
+    self_hosted: false,
+    url: `https://${slug}.apps.example.invalid`,
+    manifest_snapshot: hostedContract.hostedAppManifest(runId),
+  };
+  assert.deepEqual([...trustedHostedAppOrigins([fixture], 'https://platform.example.invalid', runId)],
+    [[fixture.url, slug]]);
+  assert.equal(trustedHostedAppOrigins([fixture], 'https://platform.example.invalid', 'c'.repeat(32)).size, 0);
+  assert.equal(trustedHostedAppOrigins([{ ...fixture, id: 42 }], 'https://platform.example.invalid', runId).size, 0);
+});
 
 test('planner origin list rejects stale or malformed hosted-app catalogs', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-origins-test-'));

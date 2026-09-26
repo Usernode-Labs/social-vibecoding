@@ -78,6 +78,78 @@ function evidenceCapacityEnv(config, app) {
   return app?.slug === config?.selfAppSlug ? { MAX_APPS: '0' } : {};
 }
 
+function hostedFixtureApp(runId) {
+  return {
+    id: evidenceFixtures.HOSTED_APP_ID,
+    slug: evidenceFixtures.hostedAppSlug(runId),
+    name: 'Homeroom evidence app',
+  };
+}
+
+async function hostedFixtureImageRef(config) {
+  if (applicationRuntime.mode(config) === 'kubernetes') {
+    const imageRef = config?.kubernetes?.captureImage;
+    if (!imageRef?.includes('@sha256:')) {
+      throw new VisualEvidenceEnvironmentError(
+        'missing_evidence_fixture_image',
+        'The hosted-app evidence fixture requires the immutable capture image.'
+      );
+    }
+    return imageRef;
+  }
+  const visuals = require('./visuals');
+  await visuals.ensureCaptureImage();
+  return visuals.CAPTURE_IMAGE;
+}
+
+async function ensureHostedFixtureRuntime(config, pair, { onProgress = null } = {}) {
+  const app = hostedFixtureApp(pair.runId);
+  const ref = applicationRuntime.productionRef(config, app);
+  pair.hostedFixtureRef = ref;
+  if (pair.hostedFixtureDeployment
+      && await applicationRuntime.probeHealth(config, ref, { timeoutMs: 3_000 })) {
+    return pair.hostedFixtureDeployment;
+  }
+  if (pair.hostedFixtureDeployment) {
+    await applicationRuntime.remove(config, ref).catch(() => {});
+    pair.hostedFixtureDeployment = null;
+  }
+  onProgress?.({ stage: 'deploy_hosted_app_fixture' });
+  const imageRef = await hostedFixtureImageRef(config);
+  const imageDigest = await immutableImageDigest(config, imageRef);
+  if (pair.hostedFixtureImageDigest && pair.hostedFixtureImageDigest !== imageDigest) {
+    throw new VisualEvidenceEnvironmentError(
+      'evidence_fixture_mismatch',
+      'The hosted-app evidence fixture image changed during the run.'
+    );
+  }
+  pair.hostedFixtureImageDigest = imageDigest;
+  try {
+    pair.hostedFixtureDeployment = await applicationRuntime.deploy(config, {
+      app,
+      environment: 'production',
+      sessionId: pair.sessionId,
+      imageRef,
+      dockerName: ref.runtimeName,
+      runtimeName: ref.runtimeName,
+      internalOnly: false,
+      command: ['node', '/app/evidence-hosted-app-fixture.js'],
+      env: { NODE_ENV: 'production', PORT: '3000' },
+      port: 3000,
+      memory: '256m',
+      cpus: '0.5',
+      labels: {
+        [EVIDENCE_LABEL]: pair.runId,
+        [EVIDENCE_SIDE_LABEL]: 'hosted-app',
+      },
+    });
+    return pair.hostedFixtureDeployment;
+  } catch (error) {
+    await applicationRuntime.remove(config, ref).catch(() => {});
+    throw error;
+  }
+}
+
 async function git(args, options = {}) {
   return docker.execFileAsync('git', args, { timeout: options.timeout || 120_000, maxBuffer: 4 * 1024 * 1024 });
 }
@@ -231,6 +303,9 @@ async function preparePair(config, { pool = getPool(config), run, session, app, 
       fixtureProfileSet: false,
       fixtureProfile: null,
       availableFixtures: [],
+      hostedFixtureRef: null,
+      hostedFixtureDeployment: null,
+      hostedFixtureImageDigest: null,
       sides: {
         base: {
           sha: baseSha, checkout: baseCheckout.dir, env: baseEnv,
@@ -341,6 +416,12 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
         evidenceFixtures.ensureFullAdminIdentity(fixtureInputs[side])));
       fixtureProfiles.push(evidenceFixtures.FULL_ADMIN_PROFILE);
       availableFixtures.push(admins[0]);
+      await ensureHostedFixtureRuntime(config, pair, { onProgress });
+      onProgress?.({ stage: 'seed_hosted_app_fixture' });
+      const hostedApps = await allSettledValues(['base', 'head'].map((side) =>
+        evidenceFixtures.ensureHostedAppFixture(fixtureInputs[side])));
+      fixtureProfiles.push(`${evidenceFixtures.HOSTED_APP_PROFILE}@${pair.hostedFixtureImageDigest}`);
+      availableFixtures.push(hostedApps[0]);
       onProgress?.({ stage: 'inspect_evidence_fixtures' });
       const ready = await allSettledValues(['base', 'head'].map((side) =>
         evidenceFixtures.canCopyMemberAgentSession(fixtureInputs[side])));
@@ -391,6 +472,11 @@ async function cleanupPair(config, pair) {
   const errors = [];
   const stopped = await stopPair(config, pair).catch((err) => ({ errors: [err] }));
   errors.push(...(stopped.errors || []));
+  if (pair.hostedFixtureRef) {
+    await applicationRuntime.remove(config, pair.hostedFixtureRef)
+      .catch((err) => errors.push(err));
+    pair.hostedFixtureDeployment = null;
+  }
   for (const side of ['base', 'head']) {
     const dbName = pair.sides?.[side]?.dbName;
     if (dbName) await dbManager.dropDatabase(dbName, { strict: true }).catch((err) => errors.push(err));
@@ -418,6 +504,9 @@ module.exports = {
   runtimeName,
   dockerImageName,
   evidenceCapacityEnv,
+  hostedFixtureApp,
+  hostedFixtureImageRef,
+  ensureHostedFixtureRuntime,
   checkoutExactRevision,
   resolvedStagingEnv,
   buildRevision,

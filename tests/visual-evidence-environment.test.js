@@ -63,6 +63,7 @@ test('each paired reset serializes clones and adds the same member fixture to bo
     remove: runtime.remove, deploy: runtime.deploy, appOrigin: runtime.appOrigin,
     clone: dbManager.cloneFromPreparedSource, connectionUrl: dbManager.connectionUrl,
     fullAdmin: fixtures.ensureFullAdminIdentity,
+    hostedApp: fixtures.ensureHostedAppFixture,
     inspect: fixtures.canCopyMemberAgentSession, copy: fixtures.copyMemberAgentSession,
   };
   const runId = '2'.repeat(32);
@@ -102,26 +103,41 @@ test('each paired reset serializes clones and adds the same member fixture to bo
       appMembership: { appId: 42, slug, status: 'member' }, side,
     });
     fixtures.canCopyMemberAgentSession = async () => true;
+    fixtures.ensureHostedAppFixture = async () => ({
+      id: fixtures.HOSTED_APP_PROFILE, persona: 'member', startPath: '/#apps',
+      path: `/app/${fixtures.hostedAppSlug(runId)}`,
+      appSlug: fixtures.hostedAppSlug(runId),
+    });
     fixtures.copyMemberAgentSession = async ({ side }) => ({ id: fixtures.PROFILE,
       persona: 'member', path: '/#messages/agent/990899', side });
     const progress = [];
-    const deployment = await environment.resetPair({ selfAppSlug: slug }, pair,
+    const captureDigest = `capture@sha256:${'c'.repeat(64)}`;
+    const deployment = await environment.resetPair({
+      selfAppSlug: slug,
+      appRuntime: 'kubernetes',
+      kubernetes: { captureImage: captureDigest, appDomain: 'apps.example.invalid', platformDomain: 'example.invalid' },
+    }, pair,
       { onProgress: (event) => progress.push(event.stage) });
     assert.deepEqual(order, [pair.sides.base.dbName, pair.sides.head.dbName]);
     assert.deepEqual(progress.slice(0, 6), [
       'clone_base', 'clone_base_copy_template', 'clone_base_scrub_private',
       'clone_head', 'clone_head_copy_template', 'clone_head_scrub_private',
     ]);
-    assert.equal(deployment.availableFixtures.length, 2);
+    assert.equal(deployment.availableFixtures.length, 3);
     assert.equal(deployment.availableFixtures[0].persona, 'full_admin');
     assert.deepEqual(deployment.availableFixtures[0].appMembership,
       { appId: 42, slug, status: 'member' });
-    assert.equal(deployment.availableFixtures[1].persona, 'member');
-    assert.equal(deployedEnvs.length, 2);
-    assert.ok(deployedEnvs.every((env) => env.MAX_APPS === '0'));
+    assert.equal(deployment.availableFixtures[1].appSlug, fixtures.hostedAppSlug(runId));
+    assert.equal(deployment.availableFixtures[2].persona, 'member');
+    const pairedEnvs = deployedEnvs.filter((env) => env.DATABASE_URL);
+    assert.equal(pairedEnvs.length, 2);
+    assert.ok(pairedEnvs.every((env) => env.MAX_APPS === '0'));
     assert.ok(progress.includes('seed_evidence_identities'));
+    assert.ok(progress.includes('deploy_hosted_app_fixture'));
+    assert.ok(progress.includes('seed_hosted_app_fixture'));
     assert.equal(deployment.fixtureFingerprint, crypto.createHash('sha256')
-      .update(`source-fingerprint\n${fixtures.FULL_ADMIN_PROFILE}+${fixtures.PROFILE}`).digest('hex'));
+      .update(`source-fingerprint\n${fixtures.FULL_ADMIN_PROFILE}`
+        + `+${fixtures.HOSTED_APP_PROFILE}@${captureDigest}+${fixtures.PROFILE}`).digest('hex'));
   } finally {
     runtime.remove = original.remove;
     runtime.deploy = original.deploy;
@@ -129,7 +145,42 @@ test('each paired reset serializes clones and adds the same member fixture to bo
     dbManager.cloneFromPreparedSource = original.clone;
     dbManager.connectionUrl = original.connectionUrl;
     fixtures.ensureFullAdminIdentity = original.fullAdmin;
+    fixtures.ensureHostedAppFixture = original.hostedApp;
     fixtures.canCopyMemberAgentSession = original.inspect;
     fixtures.copyMemberAgentSession = original.copy;
+  }
+});
+
+test('paired cleanup removes the hosted app runtime with both exact revisions', async () => {
+  const original = {
+    remove: runtime.remove,
+    drop: dbManager.dropDatabase,
+    release: dbManager.releasePreparedCloneSource,
+  };
+  const removed = [];
+  try {
+    runtime.remove = async (_config, ref) => { removed.push(ref.runtimeName); };
+    dbManager.dropDatabase = async () => {};
+    dbManager.releasePreparedCloneSource = async () => {};
+    const pair = {
+      runId: 'f'.repeat(32),
+      sides: {
+        base: { runtimeName: 'evidence-base', dbName: 'fixture-base' },
+        head: { runtimeName: 'evidence-head', dbName: 'fixture-head' },
+      },
+      hostedFixtureRef: { runtimeKind: 'kubernetes', runtimeName: 'evidence-hosted-app' },
+      hostedFixtureDeployment: { runtimeName: 'evidence-hosted-app' },
+      preparedSource: { fingerprint: 'fixture' },
+    };
+    const result = await environment.cleanupPair({ appRuntime: 'kubernetes' }, pair);
+    assert.equal(result.cleaned, true);
+    assert.deepEqual(removed.sort(), [
+      'evidence-base', 'evidence-head', 'evidence-hosted-app',
+    ]);
+    assert.equal(pair.hostedFixtureDeployment, null);
+  } finally {
+    runtime.remove = original.remove;
+    dbManager.dropDatabase = original.drop;
+    dbManager.releasePreparedCloneSource = original.release;
   }
 });

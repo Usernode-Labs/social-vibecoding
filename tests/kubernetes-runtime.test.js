@@ -247,6 +247,7 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     app: { id: 7, slug: 'demo' }, environment: 'production',
     imageRef: 'ghcr.io/example/social-apps/demo@sha256:deadbeef',
     env: { DATABASE_URL: 'postgres://redacted', PORT: '3000' },
+    command: ['node', '/app/evidence-hosted-app-fixture.js'],
     labels: { 'usernode.env.fp': '0123456789abcdef', 'app.kubernetes.io/managed-by': 'cannot-override-owner' },
   });
   // The app's own four resources — everything except the shared backend.
@@ -266,6 +267,8 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
   assert.deepEqual(deployment.spec.selector.matchLabels, { 'social.usernode.io/runtime-name': result.runtimeName });
   assert.equal((await kubernetes.inspectApplication(config(), result.runtimeName)).labels['usernode.env.fp'], '0123456789abcdef');
   assert.equal(deployment.spec.template.spec.containers[0].image, 'ghcr.io/example/social-apps/demo@sha256:deadbeef');
+  assert.deepEqual(deployment.spec.template.spec.containers[0].command,
+    ['node', '/app/evidence-hosted-app-fixture.js']);
   assert.equal(deployment.spec.template.spec.serviceAccountName, 'social-generated-app');
   assert.equal(
     deployment.spec.template.metadata.annotations['social.usernode.io/env-checksum'],

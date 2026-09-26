@@ -288,8 +288,11 @@ function containerHostname(name) {
 
 async function runContainerInner(name, {
   image, env = {}, port, memory = APP_MEMORY, cpus = APP_CPUS, labels = {},
-  aliases = [],
+  aliases = [], command = [],
 }) {
+  if (!Array.isArray(command) || command.some((part) => typeof part !== 'string' || !part)) {
+    throw new Error('Container command must be an array of non-empty strings');
+  }
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   // Labels are metadata the platform can read back off a LIVE container
   // without knowing anything about how it was built — the one channel that
@@ -342,6 +345,7 @@ async function runContainerInner(name, {
     ...labelArgs,
     ...envArgs,
     image,
+    ...command,
   ];
 
   try {
