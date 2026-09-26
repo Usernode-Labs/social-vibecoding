@@ -12266,6 +12266,8 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 
 #create-card[data-mode="import"] #create-name-block { display: none; }
 #create-card[data-mode="import"][data-import-state="ok"] #create-name-block { display: block; }
+/* An import's own dapp.json says what it is: the name card is one row. */
+#create-card[data-mode="import"] .create-describe-row { display: none; }
 
 /* THE STEPS UNFOLD IN ONE CARD (#1911; four of them since communities,
    stage 3). Every step's section ships on every step — the declared checks
