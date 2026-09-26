@@ -73,6 +73,7 @@ const controller = () => (window as {
     _toOnboarding(eventId: number): void;
     _moreBreakdown(): void;
     requestBlockProduction(): void;
+    retryBpState(): void;
     openWallet(): void;
     closeChallengeDetail(): void;
     _backFromDetail(): void;
@@ -155,13 +156,13 @@ type CtaView =
   | { kind: 'text'; label: string };
 
 // The block-production challenge's step for THIS viewer (#2493), shaped by
-// TopochainChallenges.blockProductionStep. Null on every other challenge, and
-// when the viewer's state could not be read (the page keeps the organiser's
-// CTA then).
+// TopochainChallenges.blockProductionStep. Null on every other challenge,
+// which keep the organiser's CTA.
 type BlockProductionView =
   | { step: 'checking' }
   | { step: 'locked' | 'pending'; title: string; text: string }
   | { step: 'request'; title: string; text: string; action: { label: string; pending: boolean } }
+  | { step: 'error'; title: string; text: string; action: { label: string } }
   | {
     step: 'account';
     title: string;
@@ -510,6 +511,12 @@ function BlockProductionStep({ view }: { view: BlockProductionView }): ReactNode
           type="button" id="tc-bp-request" className={BP_BUTTON}
           disabled={view.action.pending}
           onClick={() => controller()?.requestBlockProduction()}
+        >{view.action.label}</button>
+      ) : null}
+      {view.step === 'error' ? (
+        <button
+          type="button" id="tc-bp-retry" className={BP_BUTTON}
+          onClick={() => controller()?.retryBpState()}
         >{view.action.label}</button>
       ) : null}
     </section>

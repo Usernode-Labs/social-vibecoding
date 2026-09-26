@@ -107,10 +107,12 @@ const TopochainChallenges = {
   _mine: new Map(),
   // The viewer's block-production queue state from GET /challenges-api/bp/
   // state, read when a block-production challenge's page opens (#2493).
-  // `undefined` is loading, `null` could not be read (the page falls back to
-  // the organiser's CTA), otherwise { has_platform_access, bp_requested,
-  // bp_released }.
+  // `undefined` is loading, `null` could not be read (the page offers a
+  // retry), otherwise { has_platform_access, bp_requested, bp_released }.
+  // `_bpSeq` fences each read, so a slow answer from an earlier open of the
+  // same page cannot overwrite a newer one.
   _bpState: undefined,
+  _bpSeq: 0,
   _bpRequesting: false,
   _onboarding: null,
   // The challenge groups the viewer opened or closed on this visit, as group
@@ -1311,14 +1313,18 @@ const TopochainChallenges = {
   // `true`, as everywhere else); `android` needs it too, because the kit's
   // platform skin is a user-agent guess that says 'android' for Chrome on an
   // Android phone, which cannot produce blocks. `wallet` is the app's wallet
-  // row being offered (WalletSheet sets `_visible` for every native top frame
-  // once it has initialised), whose sheet is where delegation is managed.
+  // app's wallet sheet being able to manage delegation: the row is offered
+  // (`_visible`, every native top frame) AND the bridge has `manageStaking`
+  // (`_stakingSupported`, v4+), so the button never opens a sheet with no
+  // delegation controls in it. The sheet itself handles a wallet whose setup
+  // is still running (its Retry).
   _bpEnv() {
     const w = typeof window !== 'undefined' ? window : {};
     const native = !!(w.usernode && w.usernode.isNative === true);
     const android = native && !!(w.unNative && w.unNative.platform === 'android');
-    const wallet = native && !!(w.WalletSheet && w.WalletSheet._visible === true
-      && typeof w.WalletSheet.openFromRow === 'function');
+    const ws = w.WalletSheet;
+    const wallet = native && !!(ws && ws._visible === true && ws._stakingSupported === true
+      && typeof ws.openFromRow === 'function');
     return { native, android, wallet };
   },
 
@@ -1326,7 +1332,14 @@ const TopochainChallenges = {
   blockProductionStep(state, env, requesting = false) {
     const e = env || {};
     if (state === undefined) return { step: 'checking' };
-    if (!state) return { step: 'unavailable' };
+    if (!state) {
+      return {
+        step: 'error',
+        title: 'Could not check your block-production status',
+        text: 'Check your connection and try again.',
+        action: { label: 'Try again' },
+      };
+    }
     if (state.bp_released) {
       const onDevice = e.native && e.android ? {
         title: 'Or produce blocks on this phone',
@@ -1338,7 +1351,7 @@ const TopochainChallenges = {
       } : null;
       return {
         step: 'account',
-        title: 'Your wallet is ready',
+        title: 'Choose how to produce blocks',
         delegation: {
           title: 'Delegate (recommended)',
           text: 'Your stake is delegated to Homeroom\'s block-production server, so nothing'
@@ -1351,7 +1364,7 @@ const TopochainChallenges = {
         action: e.wallet ? { label: 'Manage delegation' } : null,
         appNote: e.wallet ? null
           : (e.native
-            ? 'Delegation is managed from your wallet in the Homeroom app once it has finished setting up.'
+            ? 'Delegation is managed from the wallet in the Homeroom app. If it is not offered there yet, update the app.'
             : 'Delegation is managed from your wallet in the Homeroom app. Open this challenge there.'),
       };
     }
@@ -1381,13 +1394,15 @@ const TopochainChallenges = {
 
   async _loadBpState() {
     const challenge = TopochainChallenges._detailChallenge;
+    const seq = ++TopochainChallenges._bpSeq;
     let next = null;
     try {
       const res = await window.fetch('/challenges-api/bp/state', { credentials: 'same-origin' });
       const body = res && res.ok ? await res.json() : null;
       next = body && body.success !== false && body.data ? body.data : null;
     } catch { next = null; }
-    if (TopochainChallenges._detailChallenge !== challenge) return; // page closed/changed
+    // Page closed or changed, or a newer read (a reopen, a retry) is in flight.
+    if (TopochainChallenges._detailChallenge !== challenge || seq !== TopochainChallenges._bpSeq) return;
     TopochainChallenges._bpState = next;
     TopochainChallenges._renderDetailOverlay();
   },
@@ -1424,6 +1439,13 @@ const TopochainChallenges = {
       TopochainChallenges._bpRequesting = false;
       TopochainChallenges._renderDetailOverlay();
     }
+  },
+
+  // The error step's button.
+  retryBpState() {
+    TopochainChallenges._bpState = undefined;
+    TopochainChallenges._renderDetailOverlay();
+    TopochainChallenges._loadBpState();
   },
 
   // The account step's button: the app's wallet sheet, whose block-production
@@ -1535,9 +1557,9 @@ const TopochainChallenges = {
       fill: rail.fill,
       counted: !!rail.counted,
       // A block-production challenge draws the viewer's step instead of the
-      // organiser's link, unless the step could not be read.
-      blockProduction: bpStep && bpStep.step !== 'unavailable' ? bpStep : null,
-      cta: bpStep && bpStep.step !== 'unavailable' ? null : TopochainChallenges.ctaView(dm, challenge),
+      // organiser's link, which could only ever name one destination.
+      blockProduction: bpStep,
+      cta: bpStep ? null : TopochainChallenges.ctaView(dm, challenge),
       description: dm.description ? str(dm.description) : null,
       requirements: dm.requirements ? str(dm.requirements) : null,
       scoring: dm.reward_logic ? str(dm.reward_logic) : null,

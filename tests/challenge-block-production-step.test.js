@@ -11,7 +11,8 @@
 //
 // So the page now reads GET /challenges-api/bp/state (the same session-authed
 // state Settings' block-production card reads) and draws a step instead of the
-// generic link. Platform is a presentation hint only: the request and the
+// generic link — including when that read fails, which offers a retry rather
+// than the link that led nowhere. Platform is a presentation hint only: the request and the
 // delegation screen are enforced server-side / natively exactly as before.
 //
 // Behavioural: the shipped topochain-challenges.js runs in a vm (see
@@ -140,7 +141,9 @@ test('has a wallet: delegation is the default, on-device only in the Android app
 
 test('loading and failure', () => {
   assert.equal(step(undefined, WEB).step, 'checking');
-  assert.equal(step(null, WEB).step, 'unavailable');
+  const err = step(null, WEB);
+  assert.equal(err.step, 'error', 'a failed read offers a retry, not the organiser link');
+  assert.equal(err.action.label, 'Try again');
 });
 
 test('the environment: only the native Android app counts as Android', () => {
@@ -152,8 +155,13 @@ test('the environment: only the native Android app counts as Android', () => {
     { native: true, android: false, wallet: false }, 'iOS app, wallet row not offered');
   assert.deepEqual(env({
     unNative: { platform: 'android' }, usernode: { isNative: true },
-    WalletSheet: { _visible: true, openFromRow() {} },
+    WalletSheet: { _visible: true, _stakingSupported: true, openFromRow() {} },
   }), { native: true, android: true, wallet: true }, 'Android app with its wallet');
+  assert.deepEqual(env({
+    unNative: { platform: 'android' }, usernode: { isNative: true },
+    WalletSheet: { _visible: true, _stakingSupported: false, openFromRow() {} },
+  }), { native: true, android: true, wallet: false },
+  'an app without manageStaking gets no Manage delegation button');
   assert.deepEqual(env({ unNative: { platform: 'android' }, usernode: { isNative: 'yes' } }),
     { native: false, android: false, wallet: false }, 'isNative must be exactly true');
 });
@@ -173,17 +181,38 @@ test('the detail view carries the step in place of the generic link, only for bl
   assert.equal(v.blockProduction.step, 'request');
   assert.equal(v.cta, null);
 
-  // The state could not be read: fall back to the organiser's link.
+  // The state could not be read: a retry, still never the Settings link.
   T._bpState = null;
   v = plain(T.detailView());
-  assert.equal(v.blockProduction, null);
-  assert.equal(v.cta.href, '#settings/usernode');
+  assert.equal(v.blockProduction.step, 'error');
+  assert.equal(v.cta, null);
 
   T._detailChallenge = SHARE;
   T._bpState = { has_platform_access: true, bp_requested: false, bp_released: false };
   v = plain(T.detailView());
   assert.equal(v.blockProduction, null, 'any other challenge keeps its own CTA');
   assert.equal(v.cta.href, '#settings/alerts');
+});
+
+test('a slow read from an earlier open never overwrites a newer one', async () => {
+  const { TC: T, sandbox } = loadModule();
+  const pending = [];
+  sandbox.window.fetch = (url) => new Promise((resolve) => pending.push({ url, resolve }));
+  const answer = (data) => ({ ok: true, json: async () => ({ success: true, data }) });
+  T._challenges = [BLOCKS];
+  T._grouped = () => false;
+  T._detailChallenge = BLOCKS;
+  const first = T._loadBpState();
+  T.retryBpState(); // a retry (or a reopen) starts a fresh read
+  assert.equal(T._bpState, undefined, 'the retry shows the checking step');
+  assert.equal(pending.length, 2);
+  assert.equal(pending[0].url, '/challenges-api/bp/state');
+  pending[1].resolve(answer({ has_platform_access: true, bp_requested: true, bp_released: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  pending[0].resolve(answer({ has_platform_access: true, bp_requested: false, bp_released: false }));
+  await first;
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(T._bpState.bp_released, true, 'the newer answer stands');
 });
 
 test('requesting posts to the existing endpoint, then shows the pending step', async () => {
@@ -238,6 +267,10 @@ test('the page renders each step', () => {
   assert.match(request, /data-bp-step="request"/);
   assert.match(request, /<button[^>]*id="tc-bp-request"[^>]*>Request a wallet<\/button>/);
   assert.doesNotMatch(request, /settings\/usernode/);
+
+  const err = render(step(null, WEB));
+  assert.match(err, /data-bp-step="error"/);
+  assert.match(err, /<button[^>]*id="tc-bp-retry"[^>]*>Try again<\/button>/);
 
   const android = render(step(released, ANDROID_APP));
   assert.match(android, /data-bp-step="account"/);
