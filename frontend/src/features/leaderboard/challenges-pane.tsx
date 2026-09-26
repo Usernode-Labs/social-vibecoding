@@ -46,6 +46,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { Alert } from '@/components/ui/alert';
 import { SectionHeading } from '@/components/ui/field';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
@@ -71,6 +72,9 @@ const controller = () => (window as {
     _toggleGroup(key: string): void;
     _toOnboarding(eventId: number): void;
     _moreBreakdown(): void;
+    requestBlockProduction(): void;
+    retryBpState(): void;
+    openWallet(): void;
     closeChallengeDetail(): void;
     _backFromDetail(): void;
     handleBack(): boolean;
@@ -151,6 +155,24 @@ type CtaView =
   | { kind: 'route'; href: string; label: string }
   | { kind: 'text'; label: string };
 
+// The block-production challenge's step for THIS viewer (#2493), shaped by
+// TopochainChallenges.blockProductionStep. Null on every other challenge,
+// which keep the organiser's CTA.
+type BlockProductionView =
+  | { step: 'checking' }
+  | { step: 'locked' | 'pending'; title: string; text: string }
+  | { step: 'request'; title: string; text: string; action: { label: string; pending: boolean } }
+  | { step: 'error'; title: string; text: string; action: { label: string } }
+  | {
+    step: 'account';
+    title: string;
+    delegation: { title: string; text: string };
+    onDevice: { title: string; text: string; warning: string } | null;
+    onDeviceNote: string | null;
+    action: { label: string } | null;
+    appNote: string | null;
+  };
+
 type DetailView = {
   key: string;
   eyebrow: string | null;
@@ -167,6 +189,7 @@ type DetailView = {
   fill: number | null;
   counted: boolean;
   cta: CtaView | null;
+  blockProduction?: BlockProductionView | null;
   description: string | null;
   requirements: string | null;
   scoring: string | null;
@@ -436,6 +459,70 @@ function Cta({ view }: { view: CtaView }): ReactNode {
   );
 }
 
+// The block-production step's boxes: the plain card the wallet sheet's
+// block-production section draws, and its title/body type.
+const BP_CARD = 'rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm';
+const BP_TITLE = 'text-base font-semibold text-zinc-900 dark:text-zinc-100';
+const BP_TEXT = 'mt-1 text-sm text-zinc-500 dark:text-zinc-400';
+const BP_BUTTON = `${CTA_LINK} disabled:cursor-wait`;
+
+function BlockProductionStep({ view }: { view: BlockProductionView }): ReactNode {
+  if (view.step === 'checking') {
+    return (
+      <p data-bp-step="checking" className={PROSE}>Checking your block-production status…</p>
+    );
+  }
+  if (view.step === 'account') {
+    return (
+      <section data-bp-step="account" className="flex flex-col gap-3">
+        <SectionHeading className="mb-0" title={view.title} />
+        <div data-bp-option="delegate" className={BP_CARD}>
+          <div className={BP_TITLE}>{view.delegation.title}</div>
+          <div className={BP_TEXT}>{view.delegation.text}</div>
+        </div>
+        {view.onDevice ? (
+          <div data-bp-option="on-device" className={BP_CARD}>
+            <div className={BP_TITLE}>{view.onDevice.title}</div>
+            <div className={BP_TEXT}>{view.onDevice.text}</div>
+            <Alert variant="notice" density="compact" className="mt-2" data-bp-warning="on-device">
+              {view.onDevice.warning}
+            </Alert>
+          </div>
+        ) : null}
+        {view.onDeviceNote ? <p className={PROSE}>{view.onDeviceNote}</p> : null}
+        {view.action ? (
+          <button
+            type="button" id="tc-bp-manage" className={BP_BUTTON}
+            onClick={() => controller()?.openWallet()}
+          >{view.action.label}</button>
+        ) : null}
+        {view.appNote ? <p className={PROSE}>{view.appNote}</p> : null}
+      </section>
+    );
+  }
+  return (
+    <section data-bp-step={view.step} className="flex flex-col gap-3">
+      <div className={BP_CARD}>
+        <div className={BP_TITLE}>{view.title}</div>
+        <div className={BP_TEXT}>{view.text}</div>
+      </div>
+      {view.step === 'request' ? (
+        <button
+          type="button" id="tc-bp-request" className={BP_BUTTON}
+          disabled={view.action.pending}
+          onClick={() => controller()?.requestBlockProduction()}
+        >{view.action.label}</button>
+      ) : null}
+      {view.step === 'error' ? (
+        <button
+          type="button" id="tc-bp-retry" className={BP_BUTTON}
+          onClick={() => controller()?.retryBpState()}
+        >{view.action.label}</button>
+      ) : null}
+    </section>
+  );
+}
+
 /**
  * The participant list's loading state, at the ENTRY row's own geometry.
  *
@@ -563,6 +650,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         name={view.goal}
         counted={view.counted}
       />
+      {view.blockProduction ? <BlockProductionStep view={view.blockProduction} /> : null}
       {view.cta ? <Cta view={view.cta} /> : null}
       {view.description ? <p className={PROSE}>{view.description}</p> : null}
       {view.requirements ? <PageSection heading="Requirements">{view.requirements}</PageSection> : null}
