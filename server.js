@@ -143,6 +143,7 @@ const platformJwt = require('./src/services/platform-jwt');
 const { getPool } = require('./src/db/pool');
 const { createLeadership, withMigrationLock } = require('./src/services/leadership');
 const { publicApiCors } = require('./src/middleware/public-cors');
+const { securityHeaders } = require('./src/middleware/security-headers');
 const { trustedProxyClientIp } = require('./src/services/client-ip');
 const { currentVotePredicateSql } = require('./src/services/pr-vote-revision');
 
@@ -157,6 +158,17 @@ let startupDiagnostics = null;
 // address without a proxy hostname. Direct child/worker calls carry no
 // forwarding header and therefore retain their real socket address.
 app.set('trust proxy', false);
+
+// #2507: baseline security headers on every platform response — nosniff,
+// strict-origin-when-cross-origin, and a frame-ancestors CSP that admits the
+// platform's own origin (it frames its staging previews and app-origin
+// fallback pages) and nothing else. Mounted first so every early answer
+// below carries it too; the hosted-app asset prefixes and routes that set
+// their own CSP are handled inside — see src/middleware/security-headers.js.
+app.use(securityHeaders({
+  platformDomain: process.env.USERNODE_DOMAIN,
+  localDev: process.env.USERNODE_LOCAL_DEV === '1',
+}));
 app.use(trustedProxyClientIp({
   hostname: config.trustedProxyHost,
   trustDirectPeer: config.appRuntime === 'kubernetes',
