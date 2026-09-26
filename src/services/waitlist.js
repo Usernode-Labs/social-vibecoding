@@ -60,12 +60,20 @@ async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode
   // means an existing row can never be re-parented by someone
   // re-submitting with a different code. There is deliberately no
   // separate UPDATE path.
+  // The same holds for a project invite: an address someone typed into the
+  // create dialog (services/email-invites.js) that has not been claimed yet
+  // is stamped with its earliest such invite, so the signup records which
+  // project and who invited it (schema.sql, project_invite_id).
   // RETURNING submitted_at, so a first join can report its own status
   // block without a second round trip. ON CONFLICT DO NOTHING returns no
   // row, which is still exactly how a re-join is detected.
   const { rows } = await pool.query(
-    `INSERT INTO waitlist_signups (email, ip, answers, more_token, invited_by)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO waitlist_signups (email, ip, answers, more_token, invited_by, project_invite_id)
+     VALUES ($1, $2, $3, $4, $5,
+       (SELECT id FROM app_email_invites
+         WHERE email = $1::varchar AND claimed_at IS NULL
+         ORDER BY created_at ASC, id ASC
+         LIMIT 1))
      ON CONFLICT (email) DO NOTHING
      RETURNING submitted_at`,
     [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy]
