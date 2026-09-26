@@ -2764,7 +2764,7 @@ function useTabMarker(
     const ro = new ResizeObserver(() => measure(false));
     ro.observe(bar);
     // ...AND THE TAB LIST, which can resize while the bar does not: on a phone
-    // the "+" shares the pill with it, so the "+" arriving or leaving (it is
+    // the "+" shares the row with it, so the "+" arriving or leaving (it is
     // hidden for a read-only viewer of the self-hosted app) moves every tab
     // inside a bar of unchanged size, and an observer on the bar alone would
     // leave the marker where the tabs used to be.
@@ -3001,12 +3001,13 @@ export function DevWorkshop(): ReactNode {
      rendered here and nowhere else on this surface, which is what keeps
      `#dev-plus-btn` / `#dev-plus-menu` unique for `_wirePlusMenu`.
 
-     It is the strip's last item, INSIDE the pill: on a phone the nav itself
-     is the full-width pill and the "+" takes a 40px cell at its end; above
-     700px the track is the pill and the "+" is its last segment. Either way
-     it is drawn on the tabs' own metrics and ink (app.css
-     `.dev-ws-plus-btn`), so it reads as part of the bar rather than as the
-     violet floating action it was.
+     It is the strip's last item, on the pill's row but in a circle of its
+     own a small gap after it (#2934), so it reads as a button rather than as
+     a fourth tab. The pill's material is drawn by the tab list and by the
+     "+"'s wrapper, not by the nav or the track, which is what opens the gap
+     without moving a node. At both widths it is drawn on the tabs' own
+     metrics and ink (app.css `.dev-ws-plus-btn`), so it reads as part of the
+     strip rather than as the violet floating action it was.
 
      WHY THE TAB LIST MOVED IN A LEVEL. The nav carried `role="tablist"`, and
      a tab list owns tabs: a menu button inside it is announced as a fourth
@@ -3056,19 +3057,18 @@ export function DevWorkshop(): ReactNode {
           />
           {/* The TRACK, separate from the nav, and `display: contents` on a
               phone so the bar there is what it was: the nav itself is the
-              pill, edge to edge, with the tab list and the "+" its two items.
+              row, edge to edge, with the tab list and the "+" its two items.
 
               Above 700px the two have different jobs. The nav is the POSITIONING
               box — it inherits the 760px reading column and its centring, which
               is what keeps the strip anchored to the same left edge whether the
               pane beside it is the 760px category list or the full-bleed board.
-              The track is the pill, and it hugs its three labels and the "+": a
-              segmented control spanning the reading column would read as a
-              header bar rather than as a control, which is the same reason
-              @/components/ui/tabs.tsx makes SECTION_TABS_LIST `inline-flex`.
-              Because the "+" is INSIDE the track, the ear's measured inset
-              (useEarInset reads the track's right edge) clears it with no
-              change of its own. */}
+              The track hugs the pill and the "+": a segmented control spanning
+              the reading column would read as a header bar rather than as a
+              control, which is the same reason @/components/ui/tabs.tsx makes
+              SECTION_TABS_LIST `inline-flex`. Because the "+" is INSIDE the
+              track, the ear's measured inset (useEarInset reads the track's
+              right edge) clears it with no change of its own. */}
           <div className="dev-ws-tabtrack">
           {/* The tab list: the three tabs and nothing else — a real box at
               both widths, so the role never sits on a `display: contents`
