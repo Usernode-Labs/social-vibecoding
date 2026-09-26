@@ -216,11 +216,14 @@ remaining live-proposal boundary.
   (`invited`) or **Community** (`open`) — and what it owns are **projects**.
   Use "project" in user-facing copy where the app is the thing being built;
   keep "app" where it is the thing being used (the App tab, Discover).
-- **The middle tab is Communities.** It lists every community you are in
+- **Communities is the fourth tab, beside you; Messages is in the middle.**
+  It lists every community you are in
   (Communities, Groups, Just you) at `#communities` (`#workshop` still routes
   there; the tab's key and ids keep `workshop`). A project's page opens on
-  its **hub** (its channel, Needs you, members and activity, Since your last
-  visit) beside its **Workshop** (what you are working on, All items). A
+  its **hub** (a hero with who is here and a 14-day trend, then its channel,
+  Needs you, and Since your last visit) beside its **Workshop** (what you are
+  working on, All items). The Communities screen's Needs you is one feed of
+  every decision owed across your projects (`GET /api/workshop/needs-feed`). A
   project's channel lives on its hub, not in Messages, and #general is the
   Homeroom community's channel; Messages is people and agents. Homeroom's own
   proposal and merge lines post into #general as Homeroom's line

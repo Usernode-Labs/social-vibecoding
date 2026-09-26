@@ -82,15 +82,15 @@ test('the channel is a hub card at its old address; Join asks under its button a
     'Invite (Members & approvals) is offered to exactly whom the "+" menu offers it');
 });
 
-test('the hero leads the hub, above its channel, Needs you and members', () => {
+test('the hero leads the hub, above its channel and Needs you; who is here is the hero\'s (#3268)', () => {
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const tab = lander.indexOf("{tab === 'status' ? (");
   const hero = lander.indexOf('<CommunityCard\n          slug={slug}');
   const channel = lander.indexOf('<ChannelCard');
   const needs = lander.indexOf('<NeedsCard');
-  const members = lander.indexOf('<MembersCard');
-  assert.ok(tab > 0 && hero > tab && channel > hero && needs > channel && members > needs,
-    'first on the hub, then the channel, what needs you, and who is here');
+  assert.ok(tab > 0 && hero > tab && channel > hero && needs > channel,
+    'first on the hub, then the channel and what needs you');
+  assert.doesNotMatch(lander, /<MembersCard/, 'no separate Members & activity card');
   assert.match(lander, /<CommunityCard\s+slug=\{slug\}\s+name=\{app\.name \|\| undefined\}\s+iconUrl=\{app\.iconUrl\}\s+iconEmoji=\{app\.iconEmoji\}/,
     'with the identity the header chip draws');
 });

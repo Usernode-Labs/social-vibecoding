@@ -57,9 +57,9 @@ const community = (over = {}) => ({
   ...over,
 });
 
-test('the bar reads Home, Discover, Communities, Messages, you — Communities in the middle', () => {
+test('the bar reads Home, Discover, Messages, Communities, you — Messages in the middle', () => {
   const order = [...TABS.matchAll(/\{ key: '([a-z]+)' as const, label: '([A-Za-z]+)'/g)].map((m) => [m[1], m[2]]);
-  assert.deepEqual(order.map((o) => o[0]), ['discover', 'workshop', 'messages', 'me'],
+  assert.deepEqual(order.map((o) => o[0]), ['discover', 'messages', 'workshop', 'me'],
     'after Home, whose entry is written across lines');
   assert.deepEqual(order.find((o) => o[0] === 'workshop'), ['workshop', 'Communities'],
     'the key stays `workshop`; the word is Communities');
@@ -80,13 +80,13 @@ test('a project page is its hub and its Workshop; Needs you and All items are pa
   assert.deepEqual(['status', 'needs', 'workshop', 'all'].map(litTab), ['status', 'status', 'workshop', 'workshop'],
     'a page lights the tab it hangs off');
   assert.match(LANDER, /const TABS: \{ key: TabKey; label: string; Icon: typeof NewspaperIcon \}\[\] = \[\s*\{ key: 'status', label: 'Hub', Icon: UserGroupIcon \},\s*\{ key: 'workshop', label: 'Workshop', Icon: BoardIcon \},\s*\];/);
-  // The hub's order, as agreed: hero, the channel, Needs you, members and
-  // activity, and Since your last visit at the foot.
+  // The hub's order, as agreed: the hero (which carries who is here since
+  // #3268), the channel, Needs you, and Since your last visit at the foot.
   const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("));
   const at = (s) => hub.indexOf(s);
-  assert.ok(at('<CommunityCard') < at('<ChannelCard') && at('<ChannelCard') < at('<NeedsCard')
-    && at('<NeedsCard') < at('<MembersCard'), 'hero, channel, Needs you, members');
-  assert.ok(LANDER.lastIndexOf('data-ws-since=""') > LANDER.indexOf('<MembersCard'), 'Since your last visit last');
+  assert.ok(at('<CommunityCard') < at('<ChannelCard') && at('<ChannelCard') < at('<NeedsCard'),
+    'hero, channel, Needs you');
+  assert.ok(LANDER.lastIndexOf('data-ws-since=""') > LANDER.indexOf('<NeedsCard'), 'Since your last visit last');
   // The Workshop tab: your own work, then All items' numbers with See all.
   const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("));
   assert.ok(ws.indexOf('data-ws-mine=""') < ws.indexOf('data-ws-dashboard=""'));
@@ -132,8 +132,8 @@ test('the hub\'s channel card shows the last messages, what is new, and the way 
   assert.equal(renderToHtml(createElement(ChannelCard, { slug: 'garden', name: 'Garden', data: community({ channel: null }) })), '');
 });
 
-test('Needs you opens the queue; members and activity count who is here', () => {
-  const { NeedsCard, MembersCard } = loadTsx(HUB);
+test('Needs you opens the queue and counts the votes owed', () => {
+  const { NeedsCard } = loadTsx(HUB);
   const row = (key, title, who) => ({ t: 'card', key, card: { title: { text: title } }, who, kind: 'vote' });
   const needs = renderToHtml(createElement(NeedsCard, {
     queue: [row('a', 'Dark mode', 'ada'), row('b', 'Tags', 'lin'), row('c', 'Export', 'kai')],
@@ -149,13 +149,9 @@ test('Needs you opens the queue; members and activity count who is here', () => 
   assert.match(none, /data-ws-hub-needs-open="" disabled=""/);
   assert.match(none, /Nothing is waiting on you\./);
 
-  const members = renderToHtml(createElement(MembersCard, { data: community({ member_count: 12 }) }));
-  assert.match(members, /Members &amp; activity/);
-  const cells = [...members.matchAll(/data-ws-members-cell="([a-z]+)"><b>(\d+)<\/b>/g)].map((m) => [m[1], Number(m[2])]);
-  assert.deepEqual(cells, [['members', 12], ['active', 4], ['shipped', 3]]);
-  assert.match(members, /class="dev-ws-hub-more">\+10</, 'two faces drawn, ten more counted');
-  assert.equal(renderToHtml(createElement(MembersCard, { data: community({ audience: 'solo' }) })), '',
-    'a project that is just yours has nobody else to count');
+  // Members & activity is the hero's since #3268: pinned in
+  // tests/community-hub-details.test.js.
+  assert.equal(loadTsx(HUB).MembersCard, undefined, 'no separate Members & activity card');
 });
 
 test('an open channel lights Communities and hangs off its hub; Messages lists people and agents', () => {
