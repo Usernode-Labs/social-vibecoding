@@ -194,6 +194,12 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // count glyphs are the same pair the app's own Workshop tab uses, which is
   // the point: the number on a row and the pane it counts wear one mark.
   const expected = [
+    // ── The create dialog's rework took four paths OUT of this list ──
+    //
+    // "What are you making?" became rows like "Who is it for?", each with
+    // its glyph, and the dialog prerenders every step: AppWindowIcon (two
+    // paths) on App, NewspaperIcon on Document and PlayIcon on Video are now
+    // in the static document.
     // ── #2718 moved paths across this line, in both directions ───────
     //
     // OUT OF IT, because the navigation change draws them unconditionally:
@@ -250,7 +256,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M16.5 6.5a2.12 2.12 0 0 1 3 3L9 20l-4 1 1-4z',
     'M17 21v-8H7v8',
     'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',
-    'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
     'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z',
     'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6',
     'M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859',
@@ -264,16 +269,13 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
     'M4 5a8 3 0 1 0 16 0 8 3 0 1 0-16 0',
     'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6',
-    'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
     // THE GRID left this list again with #3051. #2759 had put it behind state
     // when the all-apps Workshop's scope chip went; the owner brought that
     // chip back as "All apps", and it draws the grid unconditionally.
     'M4 6h16M4 12h16M4 18h16',
-    'M4 9.5h16',
     'M4.5 12.75l6 6 9-13.5',
     'M5 13l4 4L19 7',
     'M5 15l7-7 7 7',
-    'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
     'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
     // HashIcon (#2802): a channel's glyph in the desktop rail's Recents,

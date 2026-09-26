@@ -192,26 +192,40 @@ test('the first run: join screen and Getting started, against the full schema', 
     let card = (await call('GET', '/api/me/getting-started')).data;
     assert.equal(card.show, true);
     assert.equal(card.community.slug, 'book-club', 'the first one joined on the screen, in its order');
-    assert.deepEqual(card.steps.map((s) => s.id), ['say-hi', 'vote', 'explore']);
-    assert.equal(card.steps[0].title, 'Say hi in Book club');
-    assert.equal(card.steps[0].href, '#messages/app/book-club');
-    assert.equal(card.steps[1].title, 'Look around the Workshop', 'nothing is waiting on a vote yet');
-    assert.equal(card.steps[2].title, 'Open Book club and try it');
+    // The tour first (#3240): the card is where it is offered now.
+    assert.deepEqual(card.steps.map((s) => s.id), ['tour', 'say-hi', 'vote', 'explore']);
+    assert.deepEqual(card.steps[0], {
+      id: 'tour', title: 'Take the 1-minute tour', detail: 'See how Homeroom works.', done: false, href: null,
+    });
+    assert.equal(card.steps[1].title, 'Say hi in Book club');
+    assert.equal(card.steps[1].href, '#messages/app/book-club');
+    assert.equal(card.steps[2].title, 'Look around the Workshop', 'nothing is waiting on a vote yet');
+    assert.equal(card.steps[3].title, 'Open Book club and try it');
     assert.equal(card.done, 0);
+    assert.equal(card.total, 4);
 
     // Something waiting on a vote changes the second step's words.
     const { rows: s } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'promoted') RETURNING id`, [club.id, grace.id]);
     card = (await call('GET', '/api/me/getting-started')).data;
-    assert.equal(card.steps[1].title, 'Vote on what needs you');
-    assert.equal(card.steps[1].detail, '1 waiting in Book club');
+    assert.equal(card.steps[2].title, 'Vote on what needs you');
+    assert.equal(card.steps[2].detail, '1 waiting in Book club');
 
     await pool.query(`INSERT INTO chat_messages (app_id, user_id, content) VALUES ($1, $2, 'hi all')`, [club.id, newbie.id]);
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s[0].id, newbie.id]);
     await pool.query(`INSERT INTO app_activity (app_id, user_id, seconds_spent) VALUES ($1, $2, 30)`, [club.id, newbie.id]);
     card = (await call('GET', '/api/me/getting-started')).data;
-    assert.deepEqual(card.steps.map((x) => x.done), [true, true, true]);
+    assert.deepEqual(card.steps.map((x) => x.done), [false, true, true, true]);
     assert.equal(card.done, 3);
+
+    // The tour row ticks from the account's own "done" (#3237), on any
+    // device. Put back afterwards: the tour's own test below starts from an
+    // account that has never finished it.
+    await pool.query('UPDATE users SET tour_done_at = NOW() WHERE id = $1', [newbie.id]);
+    card = (await call('GET', '/api/me/getting-started')).data;
+    assert.equal(card.steps[0].done, true);
+    assert.equal(card.done, 4);
+    await pool.query('UPDATE users SET tour_done_at = NULL WHERE id = $1', [newbie.id]);
   });
 
   await t.test('a visit the card asked for is recorded, and only while it shows', async () => {
@@ -263,7 +277,7 @@ test('the first run: join screen and Getting started, against the full schema', 
         assert.equal((await markDone(session)).status, 401, `no session (${session}), no write`);
       }
       assert.equal(await doneAt(), null, 'nothing was recorded by the refused calls');
-      assert.equal((await me()).tourDone, false, 'never finished anywhere: the tour runs, as before');
+      assert.equal((await me()).tourDone, false, 'never finished anywhere: the card offers it');
 
       const res = await markDone(token);
       assert.equal(res.status, 200);

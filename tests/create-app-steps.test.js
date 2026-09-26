@@ -1,18 +1,23 @@
 // The create dialog is steps that UNFOLD in one card (#1911), not one page of
-// every choice. Since communities, stage 3, it asks who a project is FOR
-// before anything else:
+// every choice. Since the rework (drawn and agreed as a clickable mock first)
+// it asks six questions, each a step of its own:
 //
-//   who      Just me (preselected), A group, A community; a group's invitees
-//   start    what you are making (an App; Document and Video "Soon"), then
-//            from scratch or from a GitHub repo (the old mode pills, as rows)
-//   details  the name; for an import, the repo URL and its check first
-//   approve  who approves changes — a group or a community made new only
+//   who      Just me, A group, A community
+//   invite   a group only: one row per person, a @username or an email
+//   kind     App; Document and Video there, dimmed, saying Soon
+//   details  the name and the optional "What is it?"
+//   approve  who approves changes — a group or a community only
+//   start    LAST: from scratch, from a template (Soon), or from a GitHub
+//            repo, whose check also reads its dapp.json
 //
-// `data-step` is the furthest step reached; every section ships on every
-// step and app.css folds and unfolds them off #create-card[data-step] and
-// [data-final]. This pins the component's wiring, the wire body, the CSS,
-// the shot links and the checks at source level, and renders the dialog to
-// prove the prerendered document starts on the first step with every id.
+// Nothing is chosen for the person: every answer starts empty, pressing a
+// row selects it, and Next — beside Cancel on every step — stays dimmed until
+// the step is answered. `data-step` is the furthest step reached; every
+// section ships on every step and app.css folds and unfolds them off
+// #create-card[data-step] and [data-final]. This pins the component's
+// wiring, the wire body, the repo notice, the CSS, the shot links and the
+// checks at source level, and renders the dialog to prove the prerendered
+// document starts on the first step with every id.
 //
 // Run with: node --test tests/create-app-steps.test.js
 
@@ -31,269 +36,246 @@ const DAPP = JSON.parse(read('dapp.json'));
 const { shellMarkup } = require('./lib/shell-markup');
 const { loadTsx } = require('./lib/render-tsx');
 
-test('the steps a set of answers walks: three for Just me or an import, four otherwise', () => {
-  const { stepsFor } = loadTsx('frontend/src/features/dialogs/create-app.tsx');
-  assert.deepEqual([...stepsFor('solo', 'new')], ['who', 'start', 'details']);
-  assert.deepEqual([...stepsFor('invited', 'new')], ['who', 'start', 'details', 'approve']);
-  assert.deepEqual([...stepsFor('open', 'new')], ['who', 'start', 'details', 'approve']);
-  assert.deepEqual([...stepsFor('open', 'import')], ['who', 'start', 'details'],
-    'an imported repo\'s own dapp.json decides who approves');
-  assert.match(SRC, /useState<Audience>\('solo'\)/, 'Just me is preselected');
-  assert.match(SRC, /useState<Step>\('who'\)/, 'the initial state is the prerendered one');
+const mod = () => loadTsx('frontend/src/features/dialogs/create-app.tsx');
+
+test('the steps a set of answers walks: four for Just me, five for a community, six for a group', () => {
+  const { stepsFor } = mod();
+  assert.deepEqual([...stepsFor(null)], ['who', 'kind', 'details', 'start'], 'unanswered counts as Just me');
+  assert.deepEqual([...stepsFor('solo')], ['who', 'kind', 'details', 'start']);
+  assert.deepEqual([...stepsFor('open')], ['who', 'kind', 'details', 'approve', 'start']);
+  assert.deepEqual([...stepsFor('invited')], ['who', 'invite', 'kind', 'details', 'approve', 'start']);
+  // Every answer starts empty, and the step is the first.
+  for (const [what, re] of [
+    ['audience', /useState<Audience \| null>\(null\)/],
+    ['kind', /useState<Kind \| null>\(null\)/],
+    ['start', /useState<Mode \| null>\(null\)/],
+    ['approvers', /useState<Approvers \| null>\(null\)/],
+    ['approvals', /useState<Approvals \| null>\(null\)/],
+    ['people', /useState<Invitee\[\]>\(\[\]\)/],
+    ['step', /useState<Step>\('who'\)/],
+  ]) assert.match(SRC, re, what);
   // Every answer rides on the root AND the card: the kit lifts the card out
-  // of the root while presented.
+  // of the root while presented. Each is "" until answered.
   assert.match(SRC, /id="create-modal"\s+ref=\{dialog\.rootRef\}\s+\{\.\.\.answers\}/);
   assert.match(SRC, /id="create-card"\s+\{\.\.\.answers\}/);
-  for (const attr of ['data-mode', 'data-import-state', 'data-step', 'data-audience', 'data-approvers', 'data-approvals', 'data-final']) {
+  for (const attr of ['data-mode', 'data-import-state', 'data-step', 'data-audience', 'data-kind', 'data-approvers',
+    'data-approvals', 'data-final', 'data-repo-sets']) {
     assert.match(SRC, new RegExp(`'${attr}': `), attr);
   }
-  // Close puts every answer back.
-  assert.match(SRC, /formRef\.current\?\.reset\(\);[\s\S]*?setAudience\('solo'\);\s*setStep\('who'\);\s*setApprovers\(null\);\s*setApprovals\(null\);/);
+  assert.match(SRC, /'data-audience': audience \?\? ''/);
+  assert.match(SRC, /'data-mode': mode \?\? ''/);
+  // Close puts every answer back to empty.
+  assert.match(SRC, /formRef\.current\?\.reset\(\);[\s\S]*?applyMode\(null\);\s*setAudience\(null\);\s*setPeople\(\[\]\);\s*setKind\(null\);[\s\S]*?setStep\('who'\);\s*setApprovers\(null\);\s*setApprovals\(null\);/);
 });
 
-test('the wire body says who it is for, whom to invite and who approves', () => {
-  const { createBody } = loadTsx('frontend/src/features/dialogs/create-app.tsx');
-  const base = { name: 'Book club', mode: 'new', approvers: 'anyone', approvals: 'majority' };
-  assert.deepEqual(createBody({ ...base, audience: 'solo', invitees: '@ada' }),
-    { name: 'Book club', audience: 'solo' }, 'Just me sends no invitees, whatever the hidden field holds');
-  assert.deepEqual(createBody({ ...base, audience: 'invited', invitees: ' @ada, grace  @lin,' }),
-    { name: 'Book club', audience: 'invited', invitees: ['ada', 'grace', 'lin'] });
-  assert.deepEqual(createBody({ ...base, audience: 'open', approvers: 'invited' }),
-    { name: 'Book club', audience: 'open', governance: { approvers: 'invited', approvals: 'default' } });
-  assert.deepEqual(createBody({ ...base, audience: 'open', approvers: 'invited', approvals: 'atLeast', approvalsN: 3 }).governance,
-    { approvers: 'invited', approvals: { atLeast: 3 } }, 'at least N is a follow-up under People I pick');
-  assert.equal(createBody({ ...base, audience: 'open', approvals: 'atLeast', approvalsN: 3 }).governance, undefined,
-    'members vote is the default rule, which sends nothing');
-  assert.equal(createBody({ ...base, audience: 'solo', approvers: 'invited' }).governance, undefined,
-    'Just me has no approval step');
-  assert.deepEqual(createBody({ ...base, mode: 'import', repoUrl: 'https://github.com/o/r', audience: 'open', approvers: 'invited' }),
-    { name: 'Book club', audience: 'open', repoUrl: 'https://github.com/o/r' }, 'an import sends no rule');
-  assert.equal(createBody({ ...base, audience: 'open', approvers: 'invited', approvals: 'atLeast', approvalsN: 99 }).governance.approvals,
-    'default', 'an out-of-range number falls back rather than being refused by the server');
-  assert.equal(createBody({ ...base, audience: 'open', description: '  Swap seeds \n and plan  ' }).description,
-    'Swap seeds and plan', 'What is it? is one tidied line');
-  assert.equal(createBody({ ...base, audience: 'open', description: '   ' }).description, undefined, 'blank sends nothing');
-  assert.equal(createBody({ ...base, mode: 'import', repoUrl: 'https://github.com/o/r', audience: 'open', description: 'Ours' }).description,
-    undefined, 'an import\'s own dapp.json describes it');
-  const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  const stepIndex'));
-  assert.match(submit, /const body = createBody\(\{/);
-  assert.match(submit, /body: JSON\.stringify\(body\)/);
-});
-
-test('the first step is who it is for, in the Workshop\'s words, and a choice advances', () => {
-  const who = SRC.slice(SRC.indexOf('data-create-step="who"'), SRC.indexOf('data-create-step="start"'));
-  assert.match(who, /1\. Who is it for\?/);
-  assert.match(SRC, /\{ key: 'solo', title: 'Just me',/);
-  assert.match(SRC, /\{ key: 'invited', title: 'A group',/);
-  assert.match(SRC, /\{ key: 'open', title: 'A community',/);
-  assert.match(who, /data-audience-pill=\{choice\.key\}/);
-  assert.match(who, /onClick=\{\(\) => chooseAudience\(choice\.key\)\}/);
-  assert.match(SRC, /function chooseAudience\(next: Audience\) \{\s*if \(step !== 'who'\) \{\s*setError\(''\);\s*setStep\('who'\);\s*return;\s*\}\s*setAudience\(next\);\s*setError\(''\);\s*setStep\('start'\);/);
-  // A group names its people under its collapsed row.
-  assert.match(who, /id="create-invite-block"/);
-  assert.match(who, /id="create-invitees"/);
-  assert.match(who, /Invite people/);
-});
-
-test('the second step is what you are making, then how to begin', () => {
-  const start = SRC.slice(SRC.indexOf('data-create-step="start"'), SRC.indexOf('data-create-step="details"'));
-  assert.match(start, /2\. What are you making\?/);
-  assert.match(start, /data-kind-pill="app"/);
-  assert.match(start, /data-kind-pill="doc" aria-disabled="true"/);
-  assert.match(start, /data-kind-pill="video" aria-disabled="true"/);
-  assert.equal((start.match(/>Soon</g) || []).length, 2, 'the two coming kinds say so');
-  assert.match(start, /data-mode-pill="new"/);
-  assert.match(start, /data-mode-pill="import"/);
-  assert.equal((start.match(/className=\{CHOICE\}/g) || []).length, 2);
-  assert.match(SRC, /const CHOICE = 'create-mode-pill ' \+ CHOICE_BASE;/, 'the same class the mode pills carried');
-  assert.match(SRC, /function choose\(next: Mode\) \{[\s\S]*?applyMode\(next\);\s*setStep\('details'\);/);
-  assert.match(start, /Start from scratch/);
-  assert.match(start, /Import a GitHub repo/);
-});
-
-test('Next on a choice step advances the selected answer without validating hidden details', () => {
-  const source = SRC.slice(SRC.indexOf('function next() {'), SRC.indexOf('/** One entry point keeps every mirror of the mode in sync. */'));
-  const hiddenName = { get current() { throw new Error('The name field is still hidden'); } };
-  for (const [stepName, arg] of [['who', 'open'], ['start', 'import']]) {
-    const calls = [];
-    const next = new Function('step', 'audience', 'mode', 'chooseAudience', 'choose', 'nameRef', `${source}; return next;`)(
-      stepName, 'open', 'import', (a) => calls.push(['who', a]), (m) => calls.push(['start', m]), hiddenName,
-    );
-    next();
-    assert.deepEqual(calls, [[stepName, arg]], 'Next uses the same transition as the selected choice');
-  }
-});
-
-test('the details step keeps the import block and the name card, and runs the guards one step early', () => {
-  const details = SRC.slice(SRC.indexOf('data-create-step="details"'), SRC.indexOf('data-create-step="approve"'));
-  assert.ok(details.indexOf('id="create-import-block"') < details.indexOf('id="create-name-block"'));
-  assert.match(details, /id="import-url"/);
-  assert.match(details, /id="import-check"/);
-  assert.match(details, /id="app-name"/);
-  assert.match(details, /Project name/);
-  assert.ok(details.indexOf('id="app-name"') < details.indexOf('id="app-description"'),
-    'What is it? sits under the name, in the same card');
-  assert.match(details, /What is it\? \(optional\)/);
-  assert.match(details, /maxLength=\{100\}/);
-  assert.match(details, /create-describe-row/);
-  assert.match(CSS, /#create-card\[data-mode="import"\] \.create-describe-row \{ display: none; \}/,
-    'an import has no What is it? row');
-  assert.match(details, /create-import-rule-note/, 'an import says why there is no approval step');
+test('a row selects, and Next beside Cancel moves on once the step is answered', () => {
+  const answered = SRC.slice(SRC.indexOf('function answered(which: Step)'), SRC.indexOf('const stepAnswered'));
+  assert.match(answered, /case 'who': return audience != null;/);
+  assert.match(answered, /case 'invite': return people\.length > 0;/);
+  assert.match(answered, /case 'kind': return kind != null;/);
+  assert.match(answered, /case 'details': return name\.trim\(\)\.length > 0;/);
+  assert.match(answered, /case 'approve': return approvers != null && \(approvers !== 'invited' \|\| approvals != null\);/);
+  assert.match(answered, /case 'start': return mode != null && \(mode !== 'import' \|\| importState === 'ok'\);/);
+  // On its own step a row only selects; a collapsed row reopens its step.
+  assert.match(SRC, /function chooseAudience\(next: Audience\) \{\s*setError\(''\);\s*if \(step !== 'who'\) \{ setStep\('who'\); return; \}\s*setAudience\(next\);\s*\}/);
+  assert.match(SRC, /function chooseKind\(next: Kind\) \{\s*setError\(''\);\s*if \(step !== 'kind'\) \{ setStep\('kind'\); return; \}\s*setKind\(next\);\s*\}/);
+  // Next walks the list, and only when answered.
   const next = SRC.slice(SRC.indexOf('function next() {'), SRC.indexOf('/** One entry point'));
-  assert.match(next, /Paste a GitHub repo URL first\./);
-  assert.match(next, /Click "Check" to verify bot access first\./);
+  assert.match(next, /if \(!stepAnswered\) \{/);
+  assert.match(next, /const to = steps\[steps\.indexOf\(step\) \+ 1\];/);
   assert.match(next, /Give your project a name\./);
-  assert.match(next, /if \(!isLast\) \{\s*setStep\('approve'\);\s*reveal\(\);\s*\}/);
-  assert.match(SRC, /if \(!isLast\) \{\s*next\(\);\s*return;\s*\}/, 'submit before the last step never POSTs');
+  // Both footer buttons wait for the answer.
+  const footer = SRC.slice(SRC.indexOf('id="create-cancel"'));
+  assert.ok(footer.indexOf('id="create-next"') > 0 && footer.indexOf('id="create-next"') < footer.indexOf('id="create-submit"'),
+    'Cancel, then Next, then Create');
+  assert.match(footer, /id="create-next"[\s\S]{0,200}disabled=\{quotaBlocksCreation \|\| !stepAnswered\}/);
+  assert.match(footer, /id="create-submit"[\s\S]{0,220}disabled=\{quotaBlocksCreation \|\| submitting \|\| !stepAnswered\}/);
+  // Enter before the last step advances; only the last step creates.
+  assert.match(SRC, /if \(!isLast\) \{\s*next\(\);\s*return;\s*\}/);
   assert.doesNotMatch(SRC, /id="create-back"/, 'no Back: the earlier steps stay on screen');
 });
 
-test('the last step for a group or a community is who approves, with at least N under People I pick', () => {
-  const approve = SRC.slice(SRC.indexOf('data-create-step="approve"'), SRC.indexOf('id="create-error"'));
-  assert.match(approve, /4\. Who approves changes\?/);
-  assert.match(approve, /id="create-approve-block"/);
-  assert.ok(approve.indexOf('data-approver-pill="anyone"') < approve.indexOf('data-approver-pill="invited"'));
-  assert.match(approve, /Members vote/);
-  assert.match(approve, /People I pick/);
-  assert.match(approve, /Starts with just you\./);
-  assert.match(approve, /data-approvals-pill="majority"/);
-  assert.match(approve, /data-approvals-pill="atLeast"/);
-  assert.match(approve, /id="create-approvals-n"[\s\S]*?min=\{1\}[\s\S]*?max=\{50\}[\s\S]*?defaultValue="1"/);
-  for (const id of ['create-cancel', 'create-next', 'create-submit']) {
-    assert.match(SRC, new RegExp(`id="${id}"`), `${id} ships`);
-  }
+test('the wire body: who it is for, the people and addresses, and what an import leaves to its repo', () => {
+  const { createBody } = mod();
+  const base = { name: 'Book club', mode: 'new', approvers: 'anyone', approvals: null };
+  const ada = { kind: 'user', username: 'ada' };
+  const sam = { kind: 'email', email: 'sam@example.com' };
+  assert.deepEqual(createBody({ ...base, audience: 'solo', invitees: [ada] }),
+    { name: 'Book club', audience: 'solo' }, 'Just me sends no invitees, whatever the rows hold');
+  assert.deepEqual(createBody({ ...base, audience: 'invited', invitees: [ada, sam] }),
+    { name: 'Book club', audience: 'invited', invitees: ['ada'], inviteEmails: ['sam@example.com'] });
+  assert.deepEqual(createBody({ ...base, audience: 'open', approvers: 'invited', approvals: 'majority' }).governance,
+    { approvers: 'invited', approvals: 'default' });
+  assert.deepEqual(createBody({ ...base, audience: 'open', approvers: 'invited', approvals: 'atLeast', approvalsN: 3 }).governance,
+    { approvers: 'invited', approvals: { atLeast: 3 } });
+  assert.equal(createBody({ ...base, audience: 'open' }).governance, undefined, 'members vote sends nothing');
+  assert.equal(createBody({ ...base, audience: 'open', description: '  Swap seeds \n and plan  ' }).description, 'Swap seeds and plan');
+  assert.equal(createBody({ ...base, audience: 'open', description: '   ' }).description, undefined, 'blank sends nothing');
+  // An import sends the line and the rule only where its dapp.json has none.
+  const imp = { ...base, mode: 'import', repoUrl: 'https://github.com/o/r', audience: 'open', approvers: 'invited', approvals: 'majority', description: 'Ours' };
+  assert.deepEqual(createBody({ ...imp, repo: {} }),
+    { name: 'Book club', audience: 'open', repoUrl: 'https://github.com/o/r', description: 'Ours', governance: { approvers: 'invited', approvals: 'default' } });
+  assert.deepEqual(createBody({ ...imp, repo: { description: 'Theirs', governance: { approvers: 'anyone', approvals: null } } }),
+    { name: 'Book club', audience: 'open', repoUrl: 'https://github.com/o/r' });
+  const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  const stepIndex'));
+  assert.match(submit, /const body = createBody\(\{/);
+  assert.match(submit, /invitees: people,/);
+  assert.match(submit, /repo,\s*\}\);/);
+  assert.match(submit, /body: JSON\.stringify\(body\)/);
 });
 
-test('app.css unfolds the steps in place, keeps the approval step to a group or a community, and shapes the footer', () => {
-  const folds = [
-    '#create-card[data-step="who"]     [data-create-step="start"]',
-    '#create-card[data-step="who"]     [data-create-step="details"]',
-    '#create-card[data-step="who"]     [data-create-step="approve"]',
-    '#create-card[data-step="start"]   [data-create-step="details"]',
-    '#create-card[data-step="start"]   [data-create-step="approve"]',
-    '#create-card[data-step="details"] [data-create-step="approve"]',
-    '#create-card[data-audience="solo"] [data-create-step="approve"]',
-    '#create-card[data-mode="import"]   [data-create-step="approve"]',
-  ];
-  const at = CSS.indexOf(folds[0]);
-  assert.ok(at > 0);
-  const block = CSS.slice(at, CSS.indexOf('}', at));
-  for (const f of folds) assert.ok(block.includes(f), f);
-  assert.match(block, /display: none;/);
-  assert.doesNotMatch(CSS, /#create-card \[data-create-step\] \{ display: none; \}/, 'no step is hidden by default');
-  // QA 2026-09-24 Q6: never two accent buttons at once.
-  assert.match(CSS, /#create-card\[data-final="false"\] #create-submit,\n#create-card\[data-final="true"\]  #create-next \{\n  display: none;\n\}/);
-  assert.match(SRC, /'data-final': isLast \? 'true' : 'false'/);
-  assert.doesNotMatch(CSS, /#create-cancel \{ display: none; \}/, 'Cancel is always there');
-  // The invite field is a group's alone; the number is a follow-up.
-  assert.match(CSS, /#create-card\[data-audience="invited"\]:not\(\[data-step="who"\]\) \.create-invite-block \{ display: block; \}/);
-  assert.match(CSS, /#create-card\[data-approvers="invited"\] \.create-approvals-block \{ display: block; \}/);
-  assert.match(CSS, /#create-card\[data-approvers="invited"\]\[data-approvals="atLeast"\] \.create-approvals-n-block \{ display: block; \}/);
-  // The name card's import gating stays.
-  assert.match(CSS, /#create-card\[data-mode="import"\]\[data-import-state="ok"\] #create-name-block \{ display: block; \}/);
+test('an import names each earlier answer its repo’s dapp.json replaces', () => {
+  const { repoOverrides } = mod();
+  const answers = { name: 'Book club', description: '', audience: 'invited', approvers: 'anyone', approvals: null };
+  const repo = {
+    name: 'Book Club',
+    description: 'Pick a book, read it together, talk about it.',
+    visibility: { build: 'private', view: 'public' },
+    governance: { approvers: 'invited', approvals: 2 },
+  };
+  const all = repoOverrides(repo, answers);
+  assert.deepEqual(all.map((o) => o.key), ['name', 'desc', 'vis', 'gov']);
+  assert.deepEqual(all.find((o) => o.key === 'gov'),
+    { key: 'gov', label: 'Who approves changes', repo: 'People I pick, at least 2 yes', yours: 'Members vote' });
+  assert.equal(all.find((o) => o.key === 'desc').yours, 'left blank');
+  assert.equal(all.find((o) => o.key === 'vis').repo, 'Anyone can see it; only people invited can build');
+  // Only real differences.
+  assert.deepEqual(repoOverrides({}, answers), [], 'a repo that sets nothing replaces nothing');
+  assert.deepEqual(repoOverrides(null, answers), []);
+  assert.deepEqual(repoOverrides({ visibility: { build: 'private', view: 'private' } }, answers), [],
+    'a private repo does not clash with a group');
+  assert.equal(repoOverrides({ visibility: { build: 'private', view: 'private' } }, { ...answers, audience: 'open' }).length, 1);
+  assert.deepEqual(repoOverrides({ name: 'Book club' }, answers), [], 'the same name is not a change');
+  assert.deepEqual(repoOverrides({ governance: { approvers: 'invited', approvals: 2 } }, { ...answers, audience: 'solo' }), [],
+    'Just me was never asked who approves');
+  // The notice, and what the card says for app.css.
+  assert.match(SRC, /This repo already sets some of this/);
+  assert.match(SRC, /You chose: \$\{o\.yours\}/);
+  assert.match(SRC, /Nothing in this repo’s dapp\.json changes your answers\. They’re written into it when it’s imported\./);
+  assert.match(SRC, /Couldn’t read this repo’s dapp\.json\./);
+  assert.match(SRC, /'data-repo-sets': overrides\.map\(\(o\) => o\.key\)\.join\(' '\)/);
+  assert.match(SRC, /setRepo\(manifest && typeof manifest === 'object' \? manifest : \{\}\);\s*setRepoUnread\(manifest === null\);/);
 });
 
-// #2566, and the design pass: the selected choice wears the accent the
-// dialog's own Create button carries — Tailwind's violet-600, which
-// tailwind.config.js compiles to the platform blue #0a6ee0. It was the
-// literal #7c3aed, the pre-reskin violet: a purple row beside a blue button.
-test('every selected choice wears the Create button\'s accent', () => {
-  const tw = read('tailwind.config.js');
-  assert.match(tw, /600:'#0a6ee0'/, 'violet-600 is the platform blue');
-  const at = CSS.indexOf('#create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill[data-audience-pill="solo"],');
-  assert.ok(at > 0);
-  const rule = CSS.slice(at, CSS.indexOf('}', at));
-  for (const sel of ['data-audience-pill="invited"', 'data-mode-pill="new"', 'data-mode-pill="import"',
-    'data-approver-pill="anyone"', 'data-approver-pill="invited"', 'data-approvals-pill="majority"', 'data-approvals-pill="atLeast"']) {
-    assert.ok(rule.includes(sel), sel);
-  }
-  assert.match(rule, /background: #0a6ee0; \/\* violet-600, as tailwind\.config\.js compiles it \*\/\n  color: #ffffff;/);
-  const createBlock = CSS.slice(CSS.indexOf("/* ── The create dialog's choices"), CSS.indexOf('.members-vis-pill {'))
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.doesNotMatch(createBlock, /#7c3aed/, 'the pre-reskin violet is gone from the dialog');
-  assert.doesNotMatch(createBlock, /background: var\(--text-primary\);\n  color: var\(--bg-primary\);/,
-    'no selected state in the create dialog is the solid inversion');
+test('the invite step: one row per person, suggestions from the user search, an email marked Will invite', () => {
+  const rows = SRC.slice(SRC.indexOf('function InviteRows('), SRC.indexOf('/* ── The repo notice'));
+  assert.match(SRC, /fetch\(`\/api\/users\/search\?scope=messages&q=\$\{encodeURIComponent\(q\)\}`/,
+    'friends first, without you or anyone blocked');
+  assert.match(rows, /id="create-invite-block"/);
+  assert.match(rows, /id="create-invitees"/);
+  assert.match(rows, /placeholder="@username or email"/);
+  assert.match(rows, /Will invite/);
+  assert.match(rows, /Add another person/);
+  assert.match(rows, /No one on Homeroom is called @\$\{name\}\. Check the spelling, or invite them by email\./);
+  assert.match(rows, /That email is already on the list\./);
+  assert.match(rows, /onMouseDown=\{\(e\) => \{ e\.preventDefault\(\); add\(/, 'a pick lands before the blur folds the list');
+  assert.match(rows, /disabled=\{full\}/, `no more than the server takes`);
+  assert.match(SRC, /export const MAX_INVITEES = 20;/);
+  // No focus is moved onto "Add another person" after adding somebody: that
+  // drew a stray focus ring in the mock.
+  assert.doesNotMatch(rows, /add[\s\S]{0,80}\.focus\(\)[\s\S]{0,40}create-invitee-add/);
+  const { EMAIL_RE } = mod();
+  assert.ok(EMAIL_RE.test('sam@example.com'));
+  assert.ok(!EMAIL_RE.test('sam@example'));
+  assert.ok(!EMAIL_RE.test('@sam'));
 });
 
-// Request #3160: a question step starts with nothing chosen, and pressing a
-// row moves on without a Next. "Just me" and "Start from scratch" were filled
-// on arrival with a Next under them, which read as a choice already made and
-// a button still to press.
-test('a question step shows no choice until one is pressed, and has no Next', () => {
-  const at = CSS.indexOf('#create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill[data-audience-pill="solo"],');
-  const rule = CSS.slice(at, CSS.indexOf('}', at));
-  // The fill on the first two steps' rows waits for the step to move on.
-  for (const aud of ['solo', 'invited', 'open']) {
-    assert.ok(rule.includes(`#create-card:not([data-step="who"])[data-audience="${aud}"]`), aud);
+test('the kind step and the last step: rows, with what is not ready yet dimmed and saying Soon', () => {
+  const kind = SRC.slice(SRC.indexOf('data-create-step="kind"'), SRC.indexOf('data-create-step="details"'));
+  assert.match(kind, /data-kind-pill="app"/);
+  assert.match(kind, /Something you build and use together\./);
+  assert.match(kind, /data-kind-pill="doc" aria-disabled="true"/);
+  assert.match(kind, /Pages you write and edit together\./);
+  assert.match(kind, /data-kind-pill="video" aria-disabled="true"/);
+  assert.match(kind, /A video you make together, from script to cut\./);
+  const start = SRC.slice(SRC.indexOf('data-create-step="start"'), SRC.indexOf('id="create-error"'));
+  assert.ok(start.indexOf('data-mode-pill="new"') < start.indexOf('data-mode-pill="template"')
+    && start.indexOf('data-mode-pill="template"') < start.indexOf('data-mode-pill="import"')
+    && start.indexOf('data-mode-pill="import"') < start.indexOf('id="create-import-block"'),
+    'scratch, template, repo, then the repo check under them');
+  assert.match(start, /Start from scratch/);
+  assert.match(start, /Start from a template/);
+  assert.match(start, /Import a GitHub repo/);
+  assert.match(SRC, /\{`\$\{numberOf\('start'\)\}\. How do you want to start\?`\}/);
+  assert.match(SRC, />\s*A majority\s*</, '"Most of them" reads "A majority"');
+  assert.doesNotMatch(SRC, /Most of them/);
+});
+
+test('app.css unfolds the steps in place, keeps each step to the answers it belongs to, and shapes the footer', () => {
+  const rule = (sel) => new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  for (const sel of [
+    '#create-card[data-step="who"]     :is([data-create-step="invite"], [data-create-step="kind"], [data-create-step="details"], [data-create-step="approve"], [data-create-step="start"])',
+    '#create-card[data-step="invite"]  :is([data-create-step="kind"], [data-create-step="details"], [data-create-step="approve"], [data-create-step="start"])',
+    '#create-card[data-step="kind"]    :is([data-create-step="details"], [data-create-step="approve"], [data-create-step="start"])',
+    '#create-card[data-step="details"] :is([data-create-step="approve"], [data-create-step="start"])',
+    '#create-card[data-step="approve"] [data-create-step="start"]',
+    '#create-card:not([data-audience="invited"]) [data-create-step="invite"]',
+    '#create-card:is([data-audience="solo"], [data-audience=""]) [data-create-step="approve"]',
+    '#create-card[data-final="false"] #create-submit',
+    '#create-card[data-final="true"]  #create-next',
+    '#create-card:not([data-mode="import"]) .create-import-block { display: none; }',
+  ]) assert.match(CSS, rule(sel), sel);
+  assert.doesNotMatch(CSS, /\[data-step="start"\]\) #create-next \{\s*display: none/, 'Next is never hidden on a question step now');
+  // A question step collapses to its chosen row once the card moves past it.
+  assert.match(CSS, rule('#create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill:not([data-audience-pill="invited"])'));
+  assert.match(CSS, rule('#create-card:is([data-step="details"], [data-step="approve"], [data-step="start"]) [data-create-step="kind"] :is(.create-choice-chevron, .create-choice-caption, .create-kind-soon)'));
+  // What an import's dapp.json replaces is dimmed and tagged.
+  assert.match(CSS, rule('#create-card[data-step="start"][data-mode="import"][data-repo-sets~="gov"]  #create-approve-block'));
+  assert.match(CSS, rule('#create-card[data-step="start"][data-mode="import"][data-repo-sets~="vis"] [data-repo-tag="vis"]'));
+});
+
+test('every selected choice wears the Create button\'s accent, the moment it is pressed', () => {
+  const fill = CSS.slice(CSS.indexOf('#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"],'));
+  const block = fill.slice(0, fill.indexOf('}') + 1);
+  for (const sel of ['.create-who-pill[data-audience-pill="open"]', '.create-kind-row[data-kind-pill="app"]',
+    '.create-mode-pill[data-mode-pill="import"]', '.create-approver-pill[data-approver-pill="invited"]',
+    '.create-approvals-pill[data-approvals-pill="atLeast"]']) {
+    assert.ok(block.includes(sel), sel);
   }
-  for (const mode of ['new', 'import']) {
-    assert.match(rule, new RegExp(`#create-card:is\\(\\[data-step="details"\\], \\[data-step="approve"\\]\\)\\[data-mode="${mode}"\\]\\s+\\.create-mode-pill\\[data-mode-pill="${mode}"\\]`), mode);
-  }
-  assert.doesNotMatch(rule, /\n#create-card\[data-audience="(solo|invited|open)"\]\s+\.create-who-pill/,
-    'no audience row is filled while its step is being asked');
-  assert.doesNotMatch(rule, /\n#create-card\[data-mode="(new|import)"\]\s+\.create-mode-pill/,
-    'no start row is filled while its step is being asked');
-  // The approval step starts unanswered too. Its fill is keyed on the
-  // answer, and the answer is empty until a row is pressed.
-  assert.ok(rule.includes('#create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"]'));
-  assert.match(SRC, /useState<Approvers \| null>\(null\)/);
-  assert.match(SRC, /useState<Approvals \| null>\(null\)/);
-  assert.match(SRC, /'data-approvers': approvers \?\? '',/);
-  assert.match(SRC, /'data-approvals': approvals \?\? '',/);
-  // Create waits for the answer, and only ever on that step, so the
-  // prerendered button is unchanged.
-  assert.match(SRC, /const approvalMissing = step === 'approve' && isLast\s*\n\s*&& \(approvers == null \|\| \(approvers === 'invited' && approvals == null\)\);/);
-  assert.match(SRC, /disabled=\{quotaBlocksCreation \|\| submitting \|\| approvalMissing\}/);
-  assert.match(SRC, /if \(approvalMissing\) \{\s*\n\s*setError\(approvers == null \? 'Choose who approves changes\.' : 'Choose how many of them must say yes\.'\);/);
-  // No Next on either question step; Cancel stays.
-  assert.match(CSS, /#create-card:is\(\[data-step="who"\], \[data-step="start"\]\) #create-next \{\n  display: none;\n\}/);
-  // A press on a row is the answer: it sets it and unfolds the next step.
-  assert.match(SRC, /setAudience\(next\);\s*\n\s*setError\(''\);\s*\n\s*setStep\('start'\);/);
-  assert.match(SRC, /applyMode\(next\);\s*\n\s*setStep\('details'\);/);
+  assert.match(block, /background: #0a6ee0;/);
+  assert.doesNotMatch(block, /:not\(\[data-step="who"\]\)/, 'a row fills on its own step now');
 });
 
 test('the shot links land on the state they name, and each has a check', () => {
-  assert.match(SRC, /if \(shot === 'create-import'\) return \{ \.\.\.open, mode: 'import', step: 'details' \};/);
-  assert.match(SRC, /if \(shot === 'create-details'\) return \{ \.\.\.open, step: 'details' \};/);
-  assert.match(SRC, /if \(shot === 'create-group'\) return \{ \.\.\.open, step: 'start', audience: 'invited' \};/);
-  assert.match(SRC, /if \(shot === 'create-approve' \|\| shot === 'create-access'\) return \{ \.\.\.open, step: 'approve', audience: 'open' \};/);
+  assert.match(SRC, /if \(shot === 'create-group'\) return \{ \.\.\.open, step: 'invite', audience: 'invited' \};/);
+  assert.match(SRC, /if \(shot === 'create-details'\) return \{ \.\.\.open, step: 'details', audience: 'solo', kind: 'app' \};/);
+  assert.match(SRC, /if \(shot === 'create-approve' \|\| shot === 'create-access'\) return \{ \.\.\.named, step: 'approve', audience: 'open' \};/);
+  assert.match(SRC, /if \(shot === 'create-import'\) return \{ \.\.\.named, step: 'start', audience: 'solo', mode: 'import' \};/);
   const byPath = new Map(DAPP.tests.map((t) => [t.path, t]));
-  const first = DAPP.tests.find((t) => t.path === '/#create' && /Step 1 of 3/.test(t.expectText || ''));
+  const first = DAPP.tests.find((t) => t.path === '/#create' && /Step 1 of 4/.test(t.expectText || ''));
   assert.ok(first, 'a check reads the step count on a cold open');
-  assert.match(first.expectSelector, /\[data-step="who"\]\[data-audience="solo"\]/);
+  assert.match(first.expectSelector, /\[data-step="who"\]\[data-audience=""\]:has\(#create-cancel \+ #create-next:disabled\)/);
   const details = byPath.get('/?shot=create-details#create');
-  assert.match(details.expectSelector, /\[data-step="details"\] #create-name-block/);
+  assert.match(details.expectSelector, /\[data-step="details"\]\[data-kind="app"\]/);
   assert.equal(details.expectText, 'Project name');
   const approve = byPath.get('/?shot=create-approve#create');
-  assert.ok(approve, 'the approval step has its own check');
-  assert.match(approve.expectSelector, /\[data-step="approve"\]\[data-audience="open"\]\[data-final="true"\] #create-approve-block/);
+  assert.match(approve.expectSelector, /\[data-step="approve"\]\[data-audience="open"\]\[data-final="false"\] #create-approve-block/);
   assert.equal(approve.expectText, 'Who approves changes?');
   const group = byPath.get('/?shot=create-group#create');
-  assert.ok(group && /#create-invite-block #create-invitees/.test(group.expectSelector), 'the invite field has a check');
+  assert.match(group.expectSelector, /\[data-step="invite"\] \[data-create-step="invite"\] #create-invite-block #create-invitees/);
+  assert.equal(group.expectText, 'Who do you want to invite?');
   const imp = byPath.get('/?shot=create-import#create');
-  assert.ok(imp && /data-mode="import"/.test(imp.expectSelector), 'the import shot still lands on the import view');
+  assert.match(imp.expectSelector, /\[data-mode-pill="new"\] \+ \[data-mode-pill="template"\] \+ \[data-mode-pill="import"\] \+ #create-import-block/);
   assert.equal(byPath.get('/?shot=create-access#create'), undefined, 'the retired step has no check left');
-  for (const t of DAPP.tests.filter((t) => t.path === '/#create')) {
-    assert.doesNotMatch(t.expectText || '', /Who approves|Project name|Invite people/, t.name);
-  }
 });
 
-test('the prerendered document starts on the first step with every id in place', () => {
+test('the prerendered document starts on the first step, nothing chosen, with every id in place', () => {
   const html = shellMarkup();
   const card = html.slice(html.indexOf('id="create-card"'), html.indexOf('id="rename-modal"'));
   assert.match(card, /data-step="who"/);
-  assert.match(card, /data-audience="solo"/);
+  assert.match(card, /data-audience=""/);
+  assert.match(card, /data-mode=""/);
   assert.match(card, /data-final="false"/);
-  for (const step of ['who', 'start', 'details', 'approve']) {
+  for (const step of ['who', 'invite', 'kind', 'details', 'approve', 'start']) {
     assert.match(card, new RegExp(`data-create-step="${step}"`), step);
   }
-  assert.match(card, /Step 1 of 3/);
+  assert.match(card, /Step 1 of 4/);
   for (const id of ['create-step-indicator', 'create-invite-block', 'create-invitees', 'create-import-block',
     'create-name-block', 'create-approve-block', 'create-approvals-n', 'create-cancel', 'create-next',
-    'create-submit', 'import-url', 'app-name']) {
+    'create-submit', 'import-url', 'app-name', 'app-description']) {
     assert.match(card, new RegExp(`id="${id}"`), id);
   }
-  assert.doesNotMatch(card, /id="create-visibility-block"|id="create-vis-hint"/, 'the visibility rails are retired');
+  assert.match(card, /<button[^>]*id="create-next"[^>]*disabled=""/, 'Next is dimmed until the first answer');
   assert.match(card, />New project</);
 });
 
@@ -311,11 +293,9 @@ test('Create sends one request at a time and shows it is busy', () => {
   assert.match(submit, /\} finally \{\s*submittingRef\.current = false;\s*setSubmitting\(false\);\s*\}/);
   assert.equal((submit.match(/fetch\('\/api\/apps'/g) || []).length, 1);
   const button = SRC.slice(SRC.indexOf('id="create-submit"'), SRC.indexOf('</Button>', SRC.indexOf('id="create-submit"')));
-  // (and, on the approval step, until it is answered)
-  assert.match(button, /disabled=\{quotaBlocksCreation \|\| submitting \|\| approvalMissing\}/);
   assert.match(button, /aria-busy=\{submitting \|\| undefined\}/, 'no aria-busy in the prerender');
   assert.match(button, /\{submitting \? <SpinnerArcIcon /);
-  assert.match(button, /\(mode === 'import' \? 'Importing…' : 'Creating…'\)/);
+  assert.match(button, /\(importing \? 'Importing…' : 'Creating…'\)/);
   assert.match(SRC, /const \[submitting, setSubmitting\] = useState\(false\);/, 'starts idle, as prerendered');
 });
 

@@ -662,6 +662,23 @@ function readName(parsed) {
   return raw;
 }
 
+// The top-level `description`: one line about what the app IS, which the
+// join screen, Discover, the project page and the PWA manifest read off the
+// stored manifest snapshot. Whitespace collapses to single spaces and the
+// line is capped at MAX_DESCRIPTION_LENGTH (the longest any surface shows);
+// anything else resolves to null. Never throws.
+//
+// read() used to leave it out, and every deploy snapshots read()'s output
+// over `apps.manifest_snapshot`, so a description written into dapp.json
+// never reached any of those surfaces: the first deploy dropped it.
+const MAX_DESCRIPTION_LENGTH = 280;
+function readDescription(parsed) {
+  if (typeof parsed?.description !== 'string') return null;
+  const text = parsed.description.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return text.length > MAX_DESCRIPTION_LENGTH ? text.slice(0, MAX_DESCRIPTION_LENGTH).trimEnd() : text;
+}
+
 // Allowed values for the optional top-level `visibility` block (issue
 // #124). `build` maps to apps.collab_visibility, `view` to
 // apps.view_visibility — same value set as the DB columns.
@@ -1033,9 +1050,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   let parsed;
@@ -1043,7 +1060,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   const platformEnv = readPlatformEnv(parsed);
@@ -1094,6 +1111,7 @@ function read(cloneDir) {
 
   return {
     name: readName(parsed),
+    description: readDescription(parsed),
     secrets,
     llm: readLlm(parsed),
     permissions: readPermissions(parsed),
@@ -1861,6 +1879,8 @@ async function reconcilePlatformEnv(pool, appId, entries) {
 module.exports = {
   read,
   readName,
+  readDescription,
+  MAX_DESCRIPTION_LENGTH,
   readLlm,
   readVisibility,
   readGovernance,

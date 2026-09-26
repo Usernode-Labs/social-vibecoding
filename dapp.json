@@ -1409,9 +1409,9 @@
       "expectText": "STAGING_DEMO_PROPOSED"
     },
     {
-      "name": "Create-app modal opens in 'new' mode with the state on the presented card (#748), titled New project (communities, stage 3)",
+      "name": "Create-app modal opens on its first step with nothing chosen, the state on the presented card (#748), titled New project",
       "path": "/#create",
-      "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-import-state=\"idle\"]",
+      "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-mode=\"\"][data-import-state=\"idle\"]",
       "expectText": "New project"
     },
     {
@@ -1421,34 +1421,34 @@
       "expectText": "1 of 2 app slots used"
     },
     {
-      "name": "Create-app dialog wears the pane styling: a rounded white name card on the details step (#1910, #1911)",
+      "name": "Create-app dialog wears the pane styling: a rounded white name card on the name step, under the App row the kind step collapsed to (#1910, #1911)",
       "path": "/?shot=create-details#create",
-      "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-step=\"details\"] #create-name-block.rounded-2xl.bg-white #app-name.bg-transparent",
+      "expectSelector": ".un-modal #create-card[data-step=\"details\"][data-kind=\"app\"]:has([data-create-step=\"kind\"] .create-kind-row[data-kind-pill=\"app\"]) #create-name-block.rounded-2xl.bg-white #app-name.bg-transparent",
       "expectText": "Project name"
     },
     {
-      "name": "Create-app dialog lands on the import view through ?shot=create-import, with the repo URL field and Check pill in one white card (#1910)",
+      "name": "Create-app dialog's last step offers from scratch, a template (soon) or a GitHub repo, and the repo URL field and Check pill open under it in one white card (#1910)",
       "path": "/?shot=create-import#create",
-      "expectSelector": ".un-modal #create-card[data-mode=\"import\"][data-import-state=\"idle\"] #create-import-block .rounded-2xl.bg-white #import-check.rounded-full",
+      "expectSelector": "#create-card[data-step=\"start\"][data-mode=\"import\"][data-import-state=\"idle\"] [data-mode-pill=\"new\"] + [data-mode-pill=\"template\"] + [data-mode-pill=\"import\"] + #create-import-block .rounded-2xl.bg-white #import-check.rounded-full",
       "expectText": "GitHub repo URL"
     },
     {
-      "name": "Create-project dialog opens on who it is for, nothing chosen yet: Just me, A group and A community, with a step count (communities, stage 3; request #3160)",
+      "name": "Create-project dialog opens on who it is for, nothing chosen yet and Next dimmed beside Cancel: Just me, A group and A community, with a step count (communities, stage 3; the rework)",
       "path": "/#create",
-      "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-audience=\"solo\"] .create-who-pill[data-audience-pill=\"solo\"] + .create-who-pill[data-audience-pill=\"invited\"] + .create-who-pill[data-audience-pill=\"open\"]",
-      "expectText": "Step 1 of 3"
+      "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-audience=\"\"]:has(#create-cancel + #create-next:disabled) .create-who-pill[data-audience-pill=\"solo\"] + .create-who-pill[data-audience-pill=\"invited\"] + .create-who-pill[data-audience-pill=\"open\"]",
+      "expectText": "Step 1 of 4"
     },
     {
-      "name": "A community's create dialog ends on who approves changes: members vote, or people you pick (communities, stage 3)",
+      "name": "A community's create dialog asks who approves changes before how to start: members vote, or people you pick (communities, stage 3)",
       "path": "/?shot=create-approve#create",
-      "expectSelector": ".un-modal #create-card[data-step=\"approve\"][data-audience=\"open\"][data-final=\"true\"] #create-approve-block .create-approver-pill[data-approver-pill=\"anyone\"] + .create-approver-pill[data-approver-pill=\"invited\"]",
+      "expectSelector": ".un-modal #create-card[data-step=\"approve\"][data-audience=\"open\"][data-final=\"false\"] #create-approve-block .create-approver-pill[data-approver-pill=\"anyone\"] + .create-approver-pill[data-approver-pill=\"invited\"]",
       "expectText": "Who approves changes?"
     },
     {
-      "name": "A group names its people when it is created: the invite field under the chosen row (communities, stage 3)",
+      "name": "A group names its people when it is created, on a step of its own: one row per person, typed as @username or an email (communities, stage 3; the rework)",
       "path": "/?shot=create-group#create",
-      "expectSelector": ".un-modal #create-card[data-audience=\"invited\"][data-step=\"start\"] [data-create-step=\"who\"] #create-invite-block #create-invitees",
-      "expectText": "Invite people"
+      "expectSelector": ".un-modal #create-card[data-audience=\"invited\"][data-step=\"invite\"] [data-create-step=\"invite\"] #create-invite-block #create-invitees",
+      "expectText": "Who do you want to invite?"
     },
     {
       "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",
@@ -3506,10 +3506,10 @@
     },
     {
       "id": "home.getting-started-card",
-      "name": "Home opens on a Getting started card whose three steps tick off from what the person did (communities, stage 5)",
+      "name": "Home opens on a Getting started card that offers the tour first, then three steps that tick off from what the person did (communities, stage 5; #3240)",
       "path": "/?shot=getting-started",
-      "expectSelector": "#home-getting-started:not(.hidden) [data-getting-started=\"1/3\"] [data-getting-started-step=\"say-hi\"][data-done=\"true\"] ~ [data-getting-started-step=\"vote\"][data-done=\"false\"]",
-      "expectText": "Getting started",
+      "expectSelector": "#home-getting-started:not(.hidden) [data-getting-started=\"1/4\"] [data-getting-started-step=\"tour\"][data-done=\"false\"] ~ [data-getting-started-step=\"say-hi\"][data-done=\"true\"] ~ [data-getting-started-step=\"vote\"]",
+      "expectText": "Take the 1-minute tour",
       "visual": true,
       "impact": [
         "frontend/src/features/home/getting-started.tsx",

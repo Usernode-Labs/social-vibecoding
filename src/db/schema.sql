@@ -2961,6 +2961,30 @@ CREATE TABLE IF NOT EXISTS app_collaborators (
 );
 CREATE INDEX IF NOT EXISTS idx_app_collaborators_user ON app_collaborators(user_id, status);
 
+-- Invites into a project by EMAIL, for somebody who may not be on Homeroom
+-- yet (the create dialog's "Will invite" rows; services/email-invites.js).
+-- An address that already belongs to a confirmed account is invited as that
+-- account instead, straight into app_collaborators, and never lands here, so
+-- the creator's screen cannot tell who has an account. A row here waits
+-- for its address to be confirmed on an account (email sign-up, or adding
+-- it in Settings), which turns it into an ordinary pending collaborator
+-- invite and stamps claimed_at. The invited person joins the waitlist like
+-- anyone else; this grants no platform access.
+CREATE TABLE IF NOT EXISTS app_email_invites (
+  id          SERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  email       VARCHAR(255) NOT NULL,          -- lowercased
+  invited_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  claimed_at  TIMESTAMPTZ,
+  claimed_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE (app_id, email)
+);
+CREATE INDEX IF NOT EXISTS idx_app_email_invites_pending
+  ON app_email_invites (email) WHERE claimed_at IS NULL;
+-- Addresses people typed: personal data, not copied into staging.
+COMMENT ON TABLE app_email_invites IS 'staging:private';
+
 -- Backfill: every existing app's creator becomes a member. Idempotent.
 INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
   SELECT id, created_by, 'member', NOW() FROM apps WHERE created_by IS NOT NULL
@@ -8094,6 +8118,24 @@ ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS invited_by BIGINT
 CREATE INDEX IF NOT EXISTS idx_waitlist_signups_invited_by
   ON waitlist_signups (invited_by);
 COMMENT ON COLUMN waitlist_signups.invite_code IS 'staging:private';
+
+-- `project_invite_id` is the project invite that brought a signup in: the
+-- pending `app_email_invites` row for the address when it first joined,
+-- earliest first (that mail is the one certain to have gone out; later ones
+-- can be throttled). Joining it back gives the project (`app_id`) and who
+-- typed the address (`invited_by`). Like `invited_by` above, it is set only
+-- by the INSERT, so a re-join never re-attributes a row.
+--
+-- Deliberately NOT a foreign key. `app_email_invites` is staging:private,
+-- and the staging clone TRUNCATEs every table holding a key into a private
+-- one (db-manager's TRUNCATE … CASCADE closure), which would empty the whole
+-- waitlist in every preview. Invite ids are never reused, so an id whose
+-- invite was deleted (its project, or its inviter's account, went) joins
+-- to nothing rather than to someone else's.
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS project_invite_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_waitlist_signups_project_invite
+  ON waitlist_signups (project_invite_id) WHERE project_invite_id IS NOT NULL;
+COMMENT ON COLUMN waitlist_signups.project_invite_id IS 'staging:private';
 
 -- ── Proposal freshness (#1442) ─────────────────────────────────────────
 --

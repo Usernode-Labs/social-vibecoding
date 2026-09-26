@@ -335,6 +335,12 @@ async function verifyCode(pool, rawEmail, rawCode, { createSession } = {}) {
   if (result.created) {
     await waitlist.linkUserByEmail(pool, { userId: result.userId, email });
   }
+  // The code proved this mailbox, on a new account or an unconfirmed one:
+  // any project invites waiting on the address become this account's.
+  // Best-effort, and it never throws.
+  if (result.next === 'set-password') {
+    await require('./email-invites').claimEmailInvites(pool, { userId: result.userId, email });
+  }
   if (result.next === 'set-password') {
     result.waitlisted = await isWaitlisted(pool, result.userId);
   }

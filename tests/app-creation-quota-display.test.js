@@ -124,7 +124,9 @@ test('the create dialog loads and renders the quota without reset copy', () => {
     'the dialog reads the independent current allowance endpoint');
   assert.match(source, /id="create-app-quota"/);
   assert.match(shared, /`\$\{quota\.used\} of \$\{quota\.limit\} app/);
-  assert.match(source, /disabled=\{quotaBlocksCreation\}/,
+  // Next is also dimmed until its step is answered (the create dialog's
+  // rework); the quota still dims it on its own.
+  assert.match(source, /id="create-next"[\s\S]{0,200}disabled=\{quotaBlocksCreation \|\| !stepAnswered\}/,
     'the visible at-limit dialog must not offer a submit the server will refuse');
   assert.match(source, /disabledStyle="block"/,
     'the disabled submit must look unavailable, not only reject clicks');

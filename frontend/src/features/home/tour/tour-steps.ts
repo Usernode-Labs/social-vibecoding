@@ -1,5 +1,5 @@
 /**
- * The eight steps of the welcome tour, as data.
+ * The four steps of the welcome tour, as data.
  *
  * Kept as a plain table with no React in it so the order, the wording, the
  * anchoring and the interaction rules can be asserted without rendering
@@ -56,9 +56,9 @@
  * argument that pressing a control is a thing a viewer may do while the tour
  * is pointing at it. In use it is the other way round: every one of them
  * LEAVES the tour. Feedback presents a kit dialog, New change starts a
- * session, and Workshop navigates off Home — so a viewer four steps into an
- * eight step tour, following a spotlight that reads as an instruction, lands
- * somewhere else with the tour paused behind them. ./index.tsx's pause and
+ * session, and a tab navigates off Home — so a viewer partway through the
+ * tour, following a spotlight that reads as an instruction, lands somewhere
+ * else with the tour paused behind them. ./index.tsx's pause and
  * fallback rules recover from that, which is not the same as it being a good
  * thing to invite.
  *
@@ -74,8 +74,7 @@
  * A step points at an element that may or may not be on screen, so each one
  * names candidates in preference order and ./spotlight.ts takes the first
  * that is in the document, unhidden and has a box. A step whose list resolves
- * to nothing still runs: the screen dims whole and the card centres, which is
- * what step 1 wants anyway.
+ * to nothing still runs: the screen dims whole and the card centres.
  */
 
 export interface TourStep {
@@ -95,42 +94,31 @@ export interface TourStep {
   needsPanel?: boolean;
   /** Shut the Improve panel and the app's menu on the way in. */
   closesPanel?: boolean;
-  /**
-   * Next and Back step over it when none of its targets is on screen. For
-   * the Getting started card, which only an account that came through the
-   * join screen has: a replay from Settings, a year later, has no card to
-   * point at, and a step describing one that is not there is worse than no
-   * step.
-   */
-  optional?: boolean;
 }
 
 /*
- * ── Communities, stage 5: the tour a new account gets after joining ─────
+ * ── #3240: four stops, and only when asked ─────────────────────────────
  *
- * It runs after "What communities do you want to join?"
- * (../../auth/communities-first-run.js), so it can talk about the Home that
- * screen just filled: the shortcuts to what they joined, the menu inside
- * every app, where their communities are listed, where to find more, and
- * the three first steps on top of Home. Create is no longer a step of its
- * own (the Your apps step names the tile that ends the grid), and neither
- * are Challenges, whose onboarding the Getting started card now does.
+ * The tour used to start by itself right after "What communities do you want
+ * to join?" (../../auth/communities-first-run.js), and the two said the same
+ * things back to back: a welcome, then Discover, then where communities live.
+ * It starts only when asked now, from the first row of Home's Getting started
+ * card (../getting-started.tsx) or from Settings, and it keeps the four stops
+ * nothing else on the first run covers: the shortcuts on Home, the mark that
+ * opens the menu inside every app, the two actions in that menu, and where to
+ * find the tour again. Welcome, Workshop, Discover and Getting started left:
+ * the join screen and the card already say each of them, and the card is the
+ * thing the viewer has just pressed.
  */
 export const TOUR_STEPS: readonly TourStep[] = [
   {
-    id: 'welcome',
-    title: 'Welcome to Homeroom',
-    body: 'Every community here builds its own app. Changes ship when the community votes them in.',
-    targets: [],
-  },
-  {
-    // The launcher grid, which the join screen has just put the person's
-    // communities on. `#home-apps-section` is the fallback for a tour that
-    // starts before the grid has painted.
+    // The Your apps section, heading and grid together, so the card never
+    // sits on the heading the step is about. `#app-list` is the fallback
+    // for a section that has not rendered its box yet.
     id: 'apps',
     title: 'Your apps',
     body: 'Shortcuts to the apps you use. A small mark says where each one lives: people for a group, a lock for one that is just yours. The last tile starts a new project.',
-    targets: ['#app-list', '#home-apps-section'],
+    targets: ['#home-apps-section', '#app-list'],
   },
   {
     // ONE STEP, WHERE THERE WERE TWO (#2718 review). The arc was "press the
@@ -140,8 +128,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     //
     // The step still ends on the menu opening, whoever opens it: the
     // viewer's press on the mark, or Next, which opens the menu the same
-    // way rather than skipping past it — step 4 points INSIDE the menu, so
-    // a Next that only moved the counter would land on nothing.
+    // way rather than skipping past it — the next step points INSIDE the
+    // menu, so a Next that only moved the counter would land on nothing.
     id: 'app-menu',
     title: 'The Homeroom menu',
     body: 'Inside any app, this mark opens its menu. Tap it, or tap Next to open it.',
@@ -150,8 +138,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     advanceOn: 'menu-open',
   },
   {
-    // Give feedback and New change, as ONE step now: they sit side by side
-    // in the menu's action well (`#improve-quick-actions`,
+    // Give feedback and New change, as ONE step: they sit side by side in
+    // the menu's action well (`#improve-quick-actions`,
     // ../../improve/actions.tsx), so one cut-out draws around both and one
     // sentence says what each is for.
     id: 'menu-actions',
@@ -162,30 +150,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
   },
   {
     // THE STEP THAT LEAVES THE MENU: the step before it points inside the
-    // menu, and the tab this one points at is behind it.
-    id: 'workshop',
-    title: 'Your communities',
-    body: 'Workshop lists every community and group you are in, and your own projects, with what needs you in each.',
-    targets: ['#platform-tab-workshop'],
-    closesPanel: true,
-  },
-  {
-    // The tab, where the directory is. Home's Discover section is the
-    // fallback. Keeps `closesPanel` for the arc that never opened the menu.
-    id: 'discover',
-    title: 'Discover',
-    body: 'Find more communities to join. Joining one puts it on Home.',
-    targets: ['#platform-tab-discover', '#home-discover-section'],
-    closesPanel: true,
-  },
-  {
-    id: 'getting-started',
-    title: 'Getting started',
-    body: 'Three first steps to take part. They tick off as you go, and you can close the card when you are done.',
-    targets: ['#home-getting-started'],
-    optional: true,
-  },
-  {
+    // menu, and the tab this one points at is behind it on a phone.
+    //
     // `#app-switcher-btn` until #2718, which retired the chip. Settings is a
     // row of the Profile screen the Me tab lands on, so the tab is where this
     // step points — the control that gets you there, rather than the sheet
@@ -196,6 +162,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     title: 'Replay this any time',
     body: 'You can replay this tour any time from Settings, on your profile.',
     targets: ['#platform-tab-me'],
+    closesPanel: true,
   },
 ];
 
@@ -224,14 +191,10 @@ export function clampIndex(index: number): number {
 
 /**
  * The step Next (`dir` 1) or Back (`dir` -1) lands on from `at`: the
- * neighbour, stepping over an `optional` step whose target `present` says is
- * not on screen. With nowhere to go, it stays where it is.
+ * neighbour, or where it is when there is nowhere to go.
  */
-export function stepFrom(at: number, dir: 1 | -1, present: (step: TourStep) => boolean): number {
-  for (let i = clampIndex(at) + dir; i >= 0 && i < TOUR_LENGTH; i += dir) {
-    if (!TOUR_STEPS[i].optional || present(TOUR_STEPS[i])) return i;
-  }
-  return clampIndex(at);
+export function stepFrom(at: number, dir: 1 | -1): number {
+  return clampIndex(clampIndex(at) + dir);
 }
 
 /**
@@ -261,7 +224,7 @@ export function nextOpensMenu(index: number): boolean {
   return stepAt(index).advanceOn === 'menu-open';
 }
 
-/** The counter the card prints, e.g. "3 of 8". */
+/** The counter the card prints, e.g. "3 of 4". */
 export function stepCounter(index: number): string {
   return `${clampIndex(index) + 1} of ${TOUR_LENGTH}`;
 }
