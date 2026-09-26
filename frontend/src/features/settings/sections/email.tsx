@@ -92,7 +92,7 @@ function EmailForm() {
       </SectionHeading>
       {!account && !error ? <p role="status">Loading account email…</p> : null}
       {account ? <>
-        <div className="rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 break-words">
+        <div data-account-email-summary className="rounded-2xl border-l-4 border-l-violet-600 bg-violet-50 dark:bg-violet-950/40 px-4 py-3 break-words">
           <p>{account.email || 'No email linked'}</p>
           {account.email ? <p className="text-sm text-zinc-500 dark:text-zinc-400">
             {account.verified ? 'Verified' : 'Not verified. Verify it below.'}

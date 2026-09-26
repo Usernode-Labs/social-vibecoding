@@ -586,7 +586,7 @@
       "name": "Account email and recovery is discoverable in Settings (#1841)",
       "path": "/#settings/email",
       "expectText": "Email & recovery",
-      "expectSelector": "[data-settings-section=\"email\"]:not(.hidden) [data-account-email-form]",
+      "expectSelector": "[data-settings-section=\"email\"]:not(.hidden) [data-account-email-form] [data-account-email-summary]",
       "allowConsoleErrors": false
     },
     {
