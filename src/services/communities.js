@@ -273,7 +273,14 @@ function requireSessionMembership(pool) {
       `SELECT ${GATE_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
       [id, req.user?.id || null]
     );
-    return rows[0] || null;
+    const row = rows[0] || null;
+    // The Homeroom bot proposing what it built on an app in its live list
+    // (app-access.isBotOwnSession): an admin's listing is its standing
+    // there, not membership. Only a request carrying the marker is asked,
+    // and for it there is no app to refuse.
+    if (row && req.user?.[appAccess.HOMEROOM_BOT_PROPOSAL]
+        && await appAccess.isBotOwnSession(pool, req.user, id)) return null;
+    return row;
   }, 'session');
 }
 

@@ -352,7 +352,13 @@ function promoteAsBot({ config, bot, sessionId, router = null }) {
     const req = {
       method: 'POST', url, originalUrl: url, baseUrl: '', path: url,
       headers: {}, query: {}, params: {}, body: {}, cookies: {},
-      user: { id: bot.id, username: bot.username, is_admin: false, is_synthetic: true },
+      // The marker app-access and the membership gate honour for the bot's
+      // own session only: it proposes on apps in its live list whether or
+      // not it is a collaborator or member there. Never an admin.
+      user: {
+        id: bot.id, username: bot.username, is_admin: false, is_synthetic: true,
+        [require('./app-access').HOMEROOM_BOT_PROPOSAL]: true,
+      },
       get() { return undefined; },
       header() { return undefined; },
     };
