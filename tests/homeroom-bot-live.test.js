@@ -207,6 +207,82 @@ test('promoteAsBot dispatches into the router as the bot and returns what the ro
   assert.equal((await live.promoteAsBot({ config: {}, bot: BOT, sessionId: 1, router: empty })).status, 404);
 });
 
+// ── Proposing on an app it is not part of (rss-reader #24) ─────────────
+
+// The real guards the votes router runs before Propose, over one session
+// row. rss-reader is collab-private and the bot is neither a collaborator
+// nor a member: its #24 build (session 5119) was refused "Session not found"
+// by the collaborator guard. A public-collab app would have refused it
+// join_required at the membership gate instead.
+function guardedRouter({ app, sessionUserId }) {
+  const appAccess = require('../src/services/app-access');
+  const communities = require('../src/services/communities');
+  const pool = {
+    async query(sql, params) {
+      const text = String(sql);
+      if (/FROM chat_sessions cs JOIN apps a ON a\.id = cs\.app_id/.test(text)) {
+        return { rows: [{ ...app, is_member: false, session_user_id: sessionUserId }] };
+      }
+      if (/FROM app_collaborators/.test(text)) return { rows: [] };
+      throw new Error(`unexpected query: ${text.slice(0, 80)}`);
+    },
+  };
+  const reached = [];
+  const router = express.Router();
+  router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
+  router.post('/api/sessions/:id/promote', communities.requireSessionMembership(pool), (req, res) => {
+    reached.push(req.user.id);
+    res.json({ ok: true, prNumber: 7 });
+  });
+  return { router, reached };
+}
+const PRIVATE_COLLAB = { id: 9, slug: 'rss-reader-4113da', name: 'RSS reader', community_id: 48, collab_visibility: 'private', view_visibility: 'public' };
+const PUBLIC_COLLAB = { ...PRIVATE_COLLAB, collab_visibility: 'public' };
+
+test('the bot proposes its own build on an app it is not a collaborator or member of', async () => {
+  for (const app of [PRIVATE_COLLAB, PUBLIC_COLLAB]) {
+    const { router, reached } = guardedRouter({ app, sessionUserId: BOT.id });
+    const out = await live.promoteAsBot({ config: {}, bot: BOT, sessionId: 5119, router });
+    assert.deepEqual(out, { status: 200, body: { ok: true, prNumber: 7 } }, `${app.collab_visibility} collab`);
+    assert.deepEqual(reached, [77]);
+  }
+});
+
+test('the exception is the bot\'s own session only, and only its in-process promote', async () => {
+  // Somebody else's change: the walls stand, even for the bot.
+  const other = guardedRouter({ app: PRIVATE_COLLAB, sessionUserId: 5 });
+  assert.deepEqual(await live.promoteAsBot({ config: {}, bot: BOT, sessionId: 5120, router: other.router }),
+    { status: 404, body: { error: 'Session not found' } });
+  assert.deepEqual(other.reached, []);
+
+  // The same user without the marker, as an HTTP request would be.
+  const appAccess = require('../src/services/app-access');
+  const plain = { id: BOT.id, username: BOT.username, is_synthetic: true, HOMEROOM_BOT_PROPOSAL: true };
+  assert.equal(appAccess.isBotOwnProposal(plain, BOT.id), false, 'a string key is not the marker');
+  const marked = { id: BOT.id, [appAccess.HOMEROOM_BOT_PROPOSAL]: true };
+  assert.equal(appAccess.isBotOwnProposal(marked, BOT.id), true);
+  assert.equal(appAccess.isBotOwnProposal(marked, 5), false, 'not someone else\'s session');
+  assert.equal(appAccess.isBotOwnProposal(marked, null), false);
+  assert.equal(appAccess.isBotOwnProposal(null, BOT.id), false);
+
+  // Through the real guards without the marker: refused as before.
+  const { router } = guardedRouter({ app: PRIVATE_COLLAB, sessionUserId: BOT.id });
+  const refused = await new Promise((resolve) => {
+    const url = '/api/sessions/5119/promote';
+    const req = { method: 'POST', url, originalUrl: url, baseUrl: '', path: url, headers: {}, query: {}, params: {}, body: {},
+      user: plain, get() {}, header() {} };
+    const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { resolve({ status: this.statusCode, body: b }); return this; },
+      set() { return this; }, setHeader() {}, getHeader() {} };
+    router.handle(req, res, () => resolve({ status: 404, body: null }));
+  });
+  assert.deepEqual(refused, { status: 404, body: { error: 'Session not found' } });
+
+  // Never an admin: the marker is the whole exception.
+  const src = read('src/services/homeroom-bot-live.js');
+  assert.match(src, /id: bot\.id, username: bot\.username, is_admin: false, is_synthetic: true,\n\s*\[require\('\.\/app-access'\)\.HOMEROOM_BOT_PROPOSAL\]: true,/);
+  assert.doesNotMatch(src, /isAdmin: true/);
+});
+
 test('the route it dispatches into is the real Propose handler, and the bot must own the session', () => {
   const votes = read('src/routes/votes.js');
   assert.match(votes, /router\.post\('\/api\/sessions\/:id\/promote', drainGuard,/);

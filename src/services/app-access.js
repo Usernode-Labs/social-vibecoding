@@ -154,6 +154,22 @@ function guardLevelFor(req) {
   return req.method === 'GET' || req.method === 'HEAD' ? 'view' : 'collab';
 }
 
+// The Homeroom bot puts what it built up for a vote on the apps in its live
+// list whether or not it is a collaborator or a member there: an admin
+// putting an app in that list is the permission. Its promote runs
+// in-process as a synthetic request (homeroom-bot-live.promoteAsBot), and
+// that request alone carries this marker. It is a Symbol, so nothing a
+// client sends can set it: req.user is built by the auth middleware, and no
+// header, body or token becomes a Symbol-keyed property.
+const HOMEROOM_BOT_PROPOSAL = Symbol('homeroom-bot-proposal');
+
+// Only for the bot's OWN session. The marker lets the bot past the access
+// walls to propose what it built, never to act on anybody else's change.
+function isBotOwnProposal(user, sessionUserId) {
+  return !!user && user[HOMEROOM_BOT_PROPOSAL] === true
+    && sessionUserId != null && Number(sessionUserId) === Number(user.id);
+}
+
 // Express middleware factory for routers that address an app through a
 // chat-session id (/api/sessions/:id/...). Resolves session → app and
 // enforces view access on reads / collab access on writes; 404 on deny
@@ -166,12 +182,13 @@ function sessionCollabGuard(pool) {
     if (!Number.isFinite(id)) return next();
     try {
       const { rows } = await pool.query(
-        `SELECT a.id, a.collab_visibility, a.view_visibility
+        `SELECT a.id, a.collab_visibility, a.view_visibility, cs.user_id AS session_user_id
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1`,
         [id]
       );
       if (!rows.length) return next();
+      if (isBotOwnProposal(req.user, rows[0].session_user_id)) return next();
       if (!(await checkAppAccess(pool, rows[0], req.user, guardLevelFor(req)))) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -361,6 +378,8 @@ module.exports = {
   checkAppAccess,
   getAppForUser,
   guardLevelFor,
+  HOMEROOM_BOT_PROPOSAL,
+  isBotOwnProposal,
   sessionCollabGuard,
   issueCollabGuard,
   getWsVisibility,
