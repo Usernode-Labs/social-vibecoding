@@ -19866,7 +19866,7 @@ const AppView = {
   // so testing paths for those screens need the older normalization. Mirror
   // the server-side helper in src/services/visuals.js; leave app paths, '/',
   // already-'/#...' paths, and standalone server pages untouched.
-  _SELF_APP_HASH_ROUTES: ['leaderboard', 'group-chat', 'individual-chat', 'admin', 'messages'],
+  _SELF_APP_HASH_ROUTES: ['leaderboard', 'group-chat', 'individual-chat', 'admin', 'messages', 'routes'],
   _selfAppHashPath(p) {
     const path = typeof p === 'string' ? p : null;
     if (!path || !path.startsWith('/') || path.startsWith('/#')) return path;

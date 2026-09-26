@@ -224,6 +224,7 @@ test('the self-app hash routes dapp.json targets are the ones visuals.js normali
   // knows about, or be a genuinely standalone server page.
   const HASH_ROUTES = new Set([
     'app', 'apps', 'leaderboard', 'group-chat', 'individual-chat', 'create', 'admin',
+    'messages', 'routes',
   ]);
   // Real server-rendered pages and static assets, which pass through untouched.
   // /reports/ is the public report share link (routes/report-snapshots.js,

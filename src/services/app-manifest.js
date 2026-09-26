@@ -270,6 +270,16 @@ const MANIFEST_FILENAME = 'dapp.json';
 // the 2x margin by ~238s, so neither the deadline nor RUN_TIMEOUT_MS moves.
 // The step buys 29 slots over the 811 declared here.
 //
+// 840 → 860 (#routes, the Routes screen): the runs you record, their own
+// map, and the two honest degradations. Four checks are declared, already
+// folded from five with :has() — the demo list and its privacy line are one
+// route and one selector, so the line rides the list's check instead of
+// taking a slot — and they put the merged manifest at 822 against the 820
+// floor. Fourteenth crossing, same arithmetic: 860 checks at ~3.9s over the
+// pool of 16 is ~210s, and the unchanged 650s TESTS_DEADLINE_MS still clears
+// the 2x margin by ~440s, so neither the deadline nor RUN_TIMEOUT_MS moves.
+// The step buys 38 slots over the 822 declared here.
+//
 // THE RULE AT THE FLOOR, stated once because three guards enforce it and on
 // #4868 they gave opposite advice. Fold first: a check that can share a
 // route with an existing one joins that check's expectSelector with :has()
@@ -281,7 +291,7 @@ const MANIFEST_FILENAME = 'dapp.json';
 // feature is not held behind a second vote because main already sat at the
 // floor. Never delete a check to make room. tests/lib/check-cap.js puts
 // the same words in the failing guards' messages.
-const MAX_DECLARED_TESTS = 840;
+const MAX_DECLARED_TESTS = 860;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

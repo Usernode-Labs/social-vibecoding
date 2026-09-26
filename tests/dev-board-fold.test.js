@@ -1307,12 +1307,23 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // cold open reads the first step (who it is for) instead of the start
   // step, the details card reads "Project name", and the retired access
   // step's check pins the approval step (?shot=create-approve) instead.
-  // 818 leaves 22 slots against MAX_DECLARED_TESTS (840), clear of the
-  // 20-slot floor.
+  // 818 → 822: +4 (#routes): the Routes screen, reached from Me → More →
+  // Routes. Four checks cover it, folded from five: the demo list and its
+  // privacy line are one route, so the line rides the list's check in a
+  // `:has()` selector rather than taking a slot. They are the seeded list at
+  // /?demo=1#routes, one seeded run's own page at /?demo=1#routes/900101, the
+  // run recorded with no location at /?demo=1#routes/900102, and the
+  // production-shaped empty state at the UNSEEDED /#routes (the ?demo=1
+  // injection is a no-op outside staging, so the plain route is what a real
+  // account sees).
+  //
+  // 822 leaves 38 slots against MAX_DECLARED_TESTS (860), clear of the
+  // 20-slot floor. The ceiling moved 840 → 860 in the same change, with its
+  // arithmetic in the note above it (src/services/app-manifest.js).
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 818);
+  checkCap.assertPinned(DAPP.tests.length, 822);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

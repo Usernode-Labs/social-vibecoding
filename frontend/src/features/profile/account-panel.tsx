@@ -40,7 +40,7 @@ import { type ReactNode } from 'react';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
-import { CogIcon, ThumbsUpIcon, TrophyIcon } from '@/components/ui/icons';
+import { CogIcon, MapPinIcon, ThumbsUpIcon, TrophyIcon } from '@/components/ui/icons';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { walletSheetStore } from '../header/wallet-sheet-store';
@@ -85,6 +85,16 @@ export function MorePanel({ rows }: { rows: { challenges: string | null; kudos: 
           title="Kudos"
           titleClassName={TITLE}
           subtitle={rows.kudos || 'Kudos on your proposals'}
+          subtitleClassName={SUBTITLE}
+        />
+        <ListRow
+          as="a"
+          id="profile-row-routes"
+          href="#routes"
+          leading={<IconTile size="sm"><MapPinIcon /></IconTile>}
+          title="Routes"
+          titleClassName={TITLE}
+          subtitle="The runs you recorded, and the path you took"
           subtitleClassName={SUBTITLE}
         />
         <ListRow

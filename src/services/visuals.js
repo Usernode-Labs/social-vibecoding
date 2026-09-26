@@ -303,6 +303,7 @@ function withToken(url, token) {
 // the pathname. The first path segment is matched exactly, not by prefix.
 const SELF_APP_HASH_ROUTES = new Set([
   'apps', 'leaderboard', 'group-chat', 'individual-chat', 'create', 'admin', 'messages',
+  'routes',
 ]);
 function selfAppHashPath(p) {
   const path = typeof p === 'string' ? p : '/';

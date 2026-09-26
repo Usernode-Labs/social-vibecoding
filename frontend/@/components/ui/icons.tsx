@@ -409,6 +409,17 @@ export const PlayIcon = stroked(
 );
 export const ChevronUpIcon = stroked('ChevronUpIcon', 'M5 15l7-7 7 7');
 
+/**
+ * Where you ran (#routes): Heroicons v2 outline "map pin". Two paths, the
+ * ring and the teardrop — the glyph on the Routes row of the Me screen and
+ * the empty card's own invitation. Drawn by the same `stroked` factory as
+ * the rest of the set, so its stroke rhythm matches the rows beside it.
+ */
+export const MapPinIcon = stroked('MapPinIcon', [
+  'M15 10.5a3 3 0 11-6 0 3 3 0 016 0z',
+  'M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z',
+]);
+
 export const ThumbsUpIcon = stroked(
   'ThumbsUpIcon',
   'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',

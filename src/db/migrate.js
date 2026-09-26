@@ -14,6 +14,10 @@ const { reindexAfterHostMove } = require('./reindex-after-host-move');
 // Read by seedStagingPlatformMail's at-the-ceiling fixture, so the number
 // of seeded sends tracks the rule instead of restating it.
 const mailRateLimit = require('../services/mail/rate-limit');
+// #routes: the run fixtures reuse the service's OWN trace generator and
+// distance sum, so a seeded run's numbers are the numbers the app would
+// compute for that trace rather than a second arithmetic that can drift.
+const runRouteSvc = require('../services/run-routes');
 
 async function migrate(config) {
   const startedAt = Date.now();
@@ -173,6 +177,10 @@ async function migrate(config) {
   // seed's 900001 / 900002 fixture accounts).
   await seedStagingProfileCustomization(pool, config);
   await seedStagingPlatformMail(pool);
+  // #routes: both tables are new AND staging:private, so a staging clone has
+  // the schema and no rows. Without this the preview of an account that has
+  // never recorded a run is an empty list, which is honest and unreviewable.
+  await seedStagingRunRoutes(pool);
   finishPhase('stagingFixturesMs');
   await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);
@@ -188,6 +196,9 @@ async function migrate(config) {
   await migrateWaitlistCountryCodes(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
+  // #routes: a run started and never finished is kept out of the list and
+  // swept after a day, so a failed recording does not leave a phantom row.
+  await sweepUnfinishedRunRoutes(pool);
   await migrateAppDbsToPerRole(pool, config);
   finishPhase('maintenanceMs');
   timings.totalMs = Date.now() - startedAt;
@@ -13304,6 +13315,75 @@ async function seedStagingPlatformMail(pool) {
   }
 }
 
+/**
+ * The Routes fixtures (#routes).
+ *
+ * Three runs owned by the canonical fake identity `staging-demo-user`
+ * (id 900001, created by seedStagingDemoUser) — NEVER by whoever opened the
+ * preview, which is the seed rule that bites hardest: the visitor is the
+ * account every code path checks against, and attributing a run to them
+ * would hand the preview a credential production does not have.
+ *
+ * Run 2 HAS NO POINTS on purpose. It is the run recorded with no location,
+ * which is the degraded state a preview that cannot grant GPS has to be
+ * able to show.
+ *
+ * Idempotent: the ids are fixed and every insert is ON CONFLICT DO NOTHING,
+ * so the block re-runs on every boot of a staging container without
+ * stacking a second copy. A fixture failure never stops a boot, the same
+ * contract every other staging seed keeps.
+ */
+async function seedStagingRunRoutes(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const OWNER = 900001;
+  try {
+    for (const demo of runRouteSvc.DEMO_RUNS) {
+      const points = runRouteSvc.demoDetail(demo.id).points;
+      const summary = runRouteSvc.summarize(points);
+      await pool.query(
+        `INSERT INTO run_routes
+           (id, user_id, started_at, finished_at, duration_seconds,
+            distance_meters, point_count, has_location)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (id) DO NOTHING`,
+        [demo.id, OWNER, demo.started_at, demo.finished_at,
+          runRouteSvc.durationSeconds(demo.started_at, demo.finished_at),
+          summary.distanceMeters, summary.pointCount, summary.hasLocation]
+      );
+      for (const point of points) {
+        await pool.query(
+          `INSERT INTO run_route_points
+             (route_id, seq, lat, lng, recorded_at, accuracy_m, altitude_m, speed_mps)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (route_id, seq) DO NOTHING`,
+          [demo.id, point.seq, point.lat, point.lng, point.recorded_at,
+            point.accuracy_m, point.altitude_m, point.speed_mps]
+        );
+      }
+    }
+    // The ids are explicit, so the sequence has to be told where it is:
+    // without this the next real run the demo user's neighbour inserts
+    // would collide with a fixture id.
+    await pool.query(
+      `SELECT setval(pg_get_serial_sequence('run_routes', 'id'),
+                     GREATEST((SELECT MAX(id) FROM run_routes), 1))`
+    );
+    log.info('migrate', 'Staging run-route fixtures seeded', { runs: runRouteSvc.DEMO_RUNS.length });
+  } catch (err) {
+    log.warn('migrate', 'Staging run-route seed skipped', { message: err.message });
+  }
+}
+
+/** Sweep runs that were started and never finished (#routes). */
+async function sweepUnfinishedRunRoutes(pool) {
+  try {
+    const removed = await runRouteSvc.sweepUnfinished(pool);
+    if (removed) log.info('migrate', 'Swept unfinished run routes', { removed });
+  } catch (err) {
+    log.warn('migrate', 'Run-route sweep skipped', { message: err.message });
+  }
+}
+
 // seedStagingTopochain is exported alongside migrate() solely so
 // tests/topochain-staging-seed.test.js can invoke it directly against a
 // mock pool (idempotency/param-flow behaviour, not just a source-text
@@ -13316,4 +13396,5 @@ module.exports = {
   backfillProposalIssuerAssignments,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
+  seedStagingRunRoutes, sweepUnfinishedRunRoutes,
 };

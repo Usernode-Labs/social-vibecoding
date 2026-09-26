@@ -9836,3 +9836,58 @@ BEGIN
       ON CONFLICT (key) DO NOTHING;
   END IF;
 END $$;
+
+-- ── Run routes (#routes) ────────────────────────────────────────────────
+-- A run you recorded: the trace of where you went, kept privately for you.
+-- The Routes screen (frontend/src/features/routes/) starts a run, appends
+-- location fixes as they arrive and finalizes it; the API is
+-- src/routes/run-routes.js. BOTH TABLES ARE PRIVATE: a stranger reading
+-- every row of a staging clone would learn where a person ran, which is
+-- personal information beyond a public username. Nothing public may
+-- foreign-key into them, and nothing does.
+--
+-- `distance_meters` and `point_count` are DERIVED from the stored points
+-- server-side on finish (great-circle sum over successive fixes, with an
+-- accuracy filter), so the number is reproducible from the rows rather
+-- than trusted from the client. `has_location` is false for a run recorded
+-- with no location at all: the timer and the duration are still real, the
+-- map is simply empty.
+CREATE TABLE IF NOT EXISTS run_routes (
+  id                BIGSERIAL PRIMARY KEY,
+  user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  started_at        TIMESTAMPTZ NOT NULL,
+  finished_at       TIMESTAMPTZ,
+  duration_seconds  INTEGER,
+  distance_meters   INTEGER,
+  point_count       INTEGER NOT NULL DEFAULT 0,
+  has_location      BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- The list's one query: the viewer's own runs, newest first. Every read of
+-- this table is scoped by user_id, so the index leads with it.
+CREATE INDEX IF NOT EXISTS run_routes_user_started_idx
+  ON run_routes (user_id, started_at DESC);
+
+-- The fixes themselves, in the order they were recorded. `seq` is the
+-- client's running number and the unique pair is what makes an append
+-- idempotent: a batch re-sent after a reload lands on the same rows
+-- instead of doubling the trace.
+CREATE TABLE IF NOT EXISTS run_route_points (
+  id           BIGSERIAL PRIMARY KEY,
+  route_id     BIGINT NOT NULL REFERENCES run_routes(id) ON DELETE CASCADE,
+  seq          INTEGER NOT NULL,
+  lat          DOUBLE PRECISION NOT NULL,
+  lng          DOUBLE PRECISION NOT NULL,
+  recorded_at  TIMESTAMPTZ NOT NULL,
+  accuracy_m   REAL,
+  altitude_m   REAL,
+  speed_mps    REAL,
+  UNIQUE (route_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS run_route_points_route_seq_idx
+  ON run_route_points (route_id, seq);
+
+COMMENT ON TABLE run_routes IS 'staging:private';
+COMMENT ON TABLE run_route_points IS 'staging:private';

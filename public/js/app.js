@@ -93,6 +93,10 @@ const App = {
   _inGlobalChat: false,
   // Agent sessions (#2779): one conversation with the Mayor at #agent/<id>.
   _inAgentSession: false,
+  // Routes (#routes): the runs you recorded, at #routes and #routes/<id>.
+  // React-owned like the Workshop's; this flag coordinates the classic
+  // router only.
+  _inRoutes: false,
 
   // Chromeless full-screen mode (/app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -3829,6 +3833,7 @@ const App = {
         else if (App._inAgentSession) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
         else if (App._inWorkshop) App.navigateHome();
+        else if (App._inRoutes) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -3856,7 +3861,7 @@ const App = {
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings || App._inBrowse
           || App._inGlobalChat || App._inAgentSession
-          || App._inMessages || App._inWorkshop) {
+          || App._inMessages || App._inWorkshop || App._inRoutes) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -3915,6 +3920,17 @@ const App = {
       if (parts[0] === 'profile') {
         App.setChromeless(false);
         App.navigateToProfile(parts[1] ? decodeURIComponent(parts[1]) : null);
+        return;
+      }
+      if (parts[0] === 'routes') {
+        // The Routes screen (#routes): the runs you recorded, kept privately
+        // for you. An optional second segment (#routes/<id>) deep-links one
+        // run's own page, so a run is a real address rather than a state the
+        // screen happens to be in. No gate beyond the anonymous-shell branch
+        // above — the API is me-scoped server-side and answers 401 to a
+        // caller with no session.
+        App.setChromeless(false);
+        App.navigateToRoutes(parts[1] ? Number(parts[1]) : null);
         return;
       }
       if (parts[0] === 'workshop') {
@@ -4300,6 +4316,7 @@ const App = {
         if (App._inSettings) App._exitSettings();
             if (App._inBrowse) App._exitBrowse();
             if (App._inWorkshop) App._exitWorkshop();
+    if (App._inRoutes) App._exitRoutes();
         App._showOnlyScreen('home-screen');
         App.setHeaderTitle('Homeroom');
         // Home has no Improve target: clear whatever screen published one, or
@@ -4513,8 +4530,8 @@ const App = {
   // two visible roots split the viewport 50/50 — see the #764 note on
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
-    'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
-    'settings-screen', 'messages-screen', 'global-chat-screen',
+    'workshop-screen', 'routes-screen', 'leaderboard-screen', 'profile-screen',
+    'admin-screen', 'settings-screen', 'messages-screen', 'global-chat-screen',
     'agent-session-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
@@ -4582,6 +4599,8 @@ const App = {
     // Here rather than in those six: a flag that says "this screen is the one
     // showing" belongs to the function that decides which screen is showing.
     if (revealId !== 'messages-screen' && App._inMessages) App._exitMessages();
+    // The Routes visit ends the same way and at the same choke point.
+    if (revealId !== 'routes-screen' && App._inRoutes) App._exitRoutes();
     // Publish the final root state directly. Showing a house and then hiding
     // it in a per-screen callback shifts the shared title slot unnecessarily.
     //
@@ -5006,6 +5025,9 @@ const App = {
     // features/workshop/index.tsx takes useVisibilityHiddenClass, so it has to
     // be listed here or the class gets the two owners the note above describes.
     'workshop-screen',
+    // Routes (#routes), the same arrangement as the Workshop's: the island
+    // owns #routes-screen's `hidden` through useVisibilityHiddenClass.
+    'routes-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on
@@ -5175,6 +5197,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inRoutes) App._exitRoutes();
     // Screen reveal + chrome, all inside the transition callback so the
     // outgoing page is snapshotted as it actually looked (#979).
     const screen = document.getElementById('leaderboard-screen');
@@ -5327,6 +5350,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inRoutes) App._exitRoutes();
     const screen = document.getElementById('profile-screen');
     App._inProfile = true;
     // Loads into the still-hidden root BEFORE the transition, as the Workshop
@@ -5401,6 +5425,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inRoutes) App._exitRoutes();
     const screen = document.getElementById('browse-screen');
     App._inBrowse = true;
     // Renders into the still-hidden screen; `chrome: false` holds back its
@@ -5487,6 +5512,60 @@ const App = {
   _exitWorkshop() {
     App._inWorkshop = false;
     window.UsernodeReact?.workshop?.close?.();
+  },
+
+  // ── Routes (#routes) ────────────────────────────────────────────────
+  //
+  // The runs you recorded, reached from Me → More → Routes. A tab-subpage
+  // rather than a root: it belongs to the Me tab and its corner shows the
+  // chevron back to #profile (App._BACK_SLOT), the same slot Settings and
+  // the Leaderboard wear.
+  //
+  // `id` is the optional second segment (#routes/<id>): one run's own page.
+  // The list and the page are the SAME screen root, so this is a level
+  // inside the screen, not a screen swap — which is why the re-entry guard
+  // hands a second call to the controller instead of replaying the
+  // transition (the same idiom as navigateToLeaderboard, and load-bearing
+  // for the entry animation: a fragment navigation fires popstate AND
+  // hashchange, and the second run's mutations would land before the
+  // outgoing page was captured).
+  navigateToRoutes(id) {
+    const runId = App._numericSegment(id) || null;
+    if (App._inRoutes && App._isScreenVisible('routes-screen')) {
+      if (window.UsernodeReact?.routes?.isOpen?.()) {
+        window.UsernodeReact.routes.route(runId);
+        return;
+      }
+    }
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    if (App._inMessages) App._exitMessages();
+    if (App._inWorkshop) App._exitWorkshop();
+    if (App._inRoutes) App._exitRoutes();
+    const screen = document.getElementById('routes-screen');
+    App._inRoutes = true;
+    // Loads into the still-hidden root, exactly as the Workshop does: the
+    // island renders nothing remote until these fetches land, so the screen
+    // is revealed empty and fills.
+    window.UsernodeReact?.routes?.open?.();
+    window.UsernodeReact?.routes?.route?.(runId);
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('routes-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle('Routes');
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  _exitRoutes() {
+    App._inRoutes = false;
+    window.UsernodeReact?.routes?.close?.();
   },
 
   // ── The ✕: back to the page the app was opened from ─────────────────
@@ -5717,6 +5796,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inRoutes) App._exitRoutes();
     const screen = document.getElementById('admin-screen');
     App._inAdmin = true;
     // Renders into the still-hidden screen; `chrome: false` holds its
@@ -5766,6 +5846,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inRoutes) App._exitRoutes();
     const screen = document.getElementById('settings-screen');
     App._inSettings = true;
     // Renders every section into the still-hidden screen — invisible, so
@@ -5827,6 +5908,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inRoutes) App._exitRoutes();
     const screen = document.getElementById('messages-screen');
     App._inMessages = true;
     // Route the still-hidden island first. It renders no remote data until its
@@ -5908,6 +5990,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inRoutes) App._exitRoutes();
     if (App._inMessages) App._exitMessages();
     const screen = document.getElementById('global-chat-screen');
     App._inGlobalChat = true;
@@ -5947,6 +6030,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inRoutes) App._exitRoutes();
     if (App._inMessages) App._exitMessages();
     const screen = document.getElementById('agent-session-screen');
     App._inAgentSession = true;
@@ -6530,6 +6614,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inRoutes) App._exitRoutes();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
     // hides the app view and clears its content — exactly once on
@@ -6640,6 +6725,7 @@ const App = {
     'app-view': ['close'],
     'global-chat-screen': ['arrow', '#messages'],
     'agent-session-screen': ['arrow', '#messages'],
+    'routes-screen': ['arrow', '#profile'],
     'leaderboard-screen': ['arrow', '#profile'],
     'settings-screen': ['arrow', '#profile'],
     'admin-screen': ['arrow', '#profile'],
@@ -7250,6 +7336,7 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'chat': return 'global-chat-screen';
     case 'agent': return 'agent-session-screen';
     case 'leaderboard': return 'leaderboard-screen';
+    case 'routes': return 'routes-screen';
     default: return null;                    // #notifications is a sheet over home
   }
 };

@@ -52,9 +52,13 @@ const nativeJs = fs.readFileSync(
 // other root has.
 // #agent-session-screen (#2779) is a root with the same navigate/exit pair
 // as Global Chat's: one conversation with the Mayor at #agent/<id>.
+// #routes-screen (#routes) joins them: the runs you recorded, at #routes and
+// #routes/<id>, replacing the screen you were on rather than presenting over
+// it, so it takes the navigate/exit pair like every other root.
 const SCREEN_ROOTS = ['app-view', 'home-screen', 'browse-screen',
   'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
-  'settings-screen', 'messages-screen', 'global-chat-screen', 'agent-session-screen'];
+  'settings-screen', 'messages-screen', 'global-chat-screen',
+  'agent-session-screen', 'routes-screen'];
 
 const NAVIGATIONS = [
   { fn: 'navigateToLeaderboard', reveal: 'leaderboard-screen' },
@@ -66,10 +70,12 @@ const NAVIGATIONS = [
   { fn: 'navigateToGlobalChat', reveal: 'global-chat-screen' },
   { fn: 'navigateToAgentSession', reveal: 'agent-session-screen' },
   { fn: 'navigateToWorkshop', reveal: 'workshop-screen' },
+  { fn: 'navigateToRoutes', reveal: 'routes-screen' },
 ];
 
 const EXITS = ['_exitLeaderboard', '_exitProfile', '_exitBrowse',
-  '_exitAdminConsole', '_exitSettings', '_exitMessages', '_exitGlobalChat', '_exitAgentSession', '_exitWorkshop'];
+  '_exitAdminConsole', '_exitSettings', '_exitMessages', '_exitGlobalChat',
+  '_exitAgentSession', '_exitWorkshop', '_exitRoutes'];
 
 // The body of a top-level App method, from its two-space-indented
 // definition to the closing `},` at the same indent.

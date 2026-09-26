@@ -294,6 +294,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js",
@@ -328,6 +329,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
@@ -2434,6 +2436,7 @@
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
@@ -2539,6 +2542,7 @@
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
@@ -3842,6 +3846,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
@@ -3982,6 +3987,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js",
@@ -4010,6 +4016,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
@@ -4745,6 +4752,7 @@
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
@@ -4771,6 +4779,7 @@
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
@@ -6014,6 +6023,7 @@
         "frontend/src/features/dialogs/feedback-controller.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js",
@@ -6041,6 +6051,7 @@
         "frontend/src/features/friends/api.ts",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
@@ -6394,6 +6405,7 @@
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
@@ -6420,6 +6432,7 @@
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
@@ -6445,6 +6458,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
@@ -7572,6 +7586,7 @@
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/notifications/notifications.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"
@@ -8415,6 +8430,130 @@
       "reason": "public immutable share document"
     },
     {
+      "source": "src/routes/run-routes.js",
+      "method": "GET",
+      "path": "/api/routes",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.routes.e0656ec5",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/admin/topochain/api-tester.tsx",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-chat/dev-chat.js",
+        "frontend/src/features/home/home-panels.js",
+        "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
+        "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/run-routes.js",
+      "method": "POST",
+      "path": "/api/routes",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.routes.be83aefe",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/admin/topochain/api-tester.tsx",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-chat/dev-chat.js",
+        "frontend/src/features/home/home-panels.js",
+        "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
+        "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/run-routes.js",
+      "method": "GET",
+      "path": "/api/routes/:id",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.routes.item.902f9c65",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/routes/api.ts"
+      ]
+    },
+    {
+      "source": "src/routes/run-routes.js",
+      "method": "POST",
+      "path": "/api/routes/:id/points",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.routes.item.points.c57f90bc",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/routes/api.ts"
+      ]
+    },
+    {
+      "source": "src/routes/run-routes.js",
+      "method": "POST",
+      "path": "/api/routes/:id/finish",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.routes.item.finish.6da65fdc",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/routes/api.ts"
+      ]
+    },
+    {
+      "source": "src/routes/run-routes.js",
+      "method": "DELETE",
+      "path": "/api/routes/:id",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.delete.routes.item.de02832a",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/routes/api.ts"
+      ]
+    },
+    {
       "source": "src/routes/sessions.js",
       "method": "PATCH",
       "path": "/api/sessions/:id/linked-issues",
@@ -9235,6 +9374,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/settings/settings.js",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
@@ -9622,6 +9762,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/home/home-panels.js",
         "frontend/src/features/home/home.js",
+        "frontend/src/features/routes/api.ts",
         "frontend/src/features/workshop/index.tsx",
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js"

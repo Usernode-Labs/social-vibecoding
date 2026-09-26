@@ -87,6 +87,7 @@ import { SidePanel } from './features/side-panel';
 import { GlobalChatScreen } from './features/global-chat';
 import { AgentSessionScreen } from './features/agent-session';
 import { WorkshopScreen } from './features/workshop';
+import { RoutesScreen } from './features/routes';
 import { NotificationsIsland } from './features/notifications';
 import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
@@ -191,6 +192,23 @@ export function Shell() {
           App.REACT_SCREEN_IDS).
       */}
       <Island name="WorkshopScreen"><WorkshopScreen /></Island>
+      {/*
+          Routes screen (#routes): the runs you have recorded, kept privately
+          for you. A single Start run / Finish run control at the head, then
+          your runs as rows; tapping one opens its own page at #routes/<id>,
+          where the completed path is drawn on a card by the shell's own
+          self-drawn map (@/components/ui/route-map.tsx — no third-party map,
+          because the shell loads no cross-origin assets and precaches
+          everything).
+
+          A fully React-owned sibling screen like #workshop-screen: no
+          `public/js/**` module writes inside this root. It ships hidden and
+          EMPTY — the rows arrive from GET /api/routes in the controller's
+          open() — so the prerender and the hydration agree. Mounted by
+          App.navigateToRoutes, which shows it through the visibility store
+          (#routes-screen is in App.REACT_SCREEN_IDS).
+      */}
+      <Island name="RoutesScreen"><RoutesScreen /></Island>
       {/*
           Leaderboard screen (hidden by default): the one place the group's
           shared progress lives — the Topochain standings, the Kudos

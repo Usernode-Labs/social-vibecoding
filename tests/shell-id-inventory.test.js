@@ -444,6 +444,23 @@ const ADDED_IDS = {
   'workshop-screen': 'The Workshop SCREEN root (#workshop), a React-owned sibling of #messages-screen: every app in the viewer\'s "Your apps", with how many items that app\'s own Workshop page holds for them. Ships hidden and EMPTY — the rows arrive from GET /api/apps + GET /api/workshop/counts in the controller\'s open() — so the prerender and the first client render agree.',
   'workshop-list': 'That screen\'s card of rows — a <GroupedList> from @/components/ui/grouped-list, the widget language\'s primary content shape, so the id sits on the primitive rather than on a hand-rolled div. It carries no rows in the prerender, like #browse-list beside it; a row is a <ListRow as="a"> with `[data-workshop-app="<slug>"]` carrying `[data-workshop-working]` and `[data-workshop-needs]`, which is what the declared checks select on.',
   'workshop-empty': 'Its nothing-to-show state, for an account with no apps. #2445 made it a CARD rather than the grey caption line it shipped as — a <ListRow as="a" href="#apps"> reading as an invitation to the directory, the way Home\'s Discover block\'s own empty card does (#1913): title over subtitle with the row\'s disclosure chevron. THE ID IS ON A WRAPPER <div>, NOT ON THAT ANCHOR, and that is load-bearing in two directions. dapp.json selects `#workshop-empty.hidden`, so the id and the `hidden` class toggle stay together on one element and visibility is never conditional rendering; and a SECOND declared check selects `#workshop-list a[data-workshop-app]:first-of-type`, which an `<a id="workshop-empty">` sibling of the rows silently steals — `:first-of-type` is structural and `display: none` does not exempt it. That shipped once and failed on the next run; the wrapper is the fix. Ships `hidden`, and stays hidden while the list is still loading — the skeleton rows are that state, and an empty list that reads as "you have no apps" before the fetch lands is the bug this distinction prevents. It is the list\'s FIRST child, not its last: GroupedList\'s row separator is `[&:not(:last-child)]:after:*` on the row, so a note after the rows would leave the last one drawing a hairline under nothing.',
+  // ── The Routes screen (#routes) ────────────────────────────────────
+  // The runs you recorded, kept privately for you: one Start run / Finish run
+  // control at the head, then your runs as rows; a row opens that run's own
+  // page at #routes/<id>, where the path is drawn on a card by the shell's own
+  // self-drawn map. A React-owned sibling of #workshop-screen, shipping hidden
+  // and EMPTY — the rows arrive from GET /api/routes in the controller's
+  // open() — so the prerender and the first client render agree.
+  'routes-screen': 'The Routes SCREEN root (#routes). Hidden and empty in the shipped document, like #workshop-screen beside it: the list is a fetch, never a first render.',
+  'routes-list': 'That screen\'s card of rows, a <GroupedList> from @/components/ui/grouped-list, so the id sits on the primitive rather than on a hand-rolled div. Carries no rows in the prerender; a row is a <ListRow as="a" href="#routes/<id>"> with `[data-run-row="<id>"]`, which is what the declared checks select on.',
+  'routes-empty': 'Its nothing-recorded-yet state. The id is on a WRAPPER <div> and NOT on an anchor, for the reason #workshop-empty\'s note gives: a second declared check selects `#routes-list a[data-run-row]:first-of-type`, and `:first-of-type` is structural, so an anchor sibling of the rows would silently steal it. Ships `hidden`, and stays hidden while the list is still loading.',
+  'routes-record-btn': 'The screen\'s one primary action: Start run, and Finish run while a run is in progress. A <Button> from the shell\'s own primitive in both states, carrying `[data-routes-record="start"|"finish"]` for the checks.',
+  'routes-privacy': 'The line under the header: only you can see your runs. The feature\'s hard rule, stated on the screen rather than left to a policy page.',
+  // NOT declared here, because they are not in the shipped document: the
+  // live line, the location note, the run page's three stats and its delete
+  // button all render behind state (a run in progress, a run opened). The
+  // inventory test requires every ADDED_IDS key to be really present, and a
+  // runtime-only id is not a new id the prerender gained.
   'app-settings-modal': '#2158: dedicated app settings and danger zone.',
   'app-delete-name': '#2158: named confirmation before app deletion.',
   // ── #2304: access is an app setting ──────────────────────────────

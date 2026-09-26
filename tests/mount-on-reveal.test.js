@@ -176,8 +176,17 @@ test('the prerendered document is a fraction of what it was', () => {
   // dialog has always prerendered every step (its ids are the declared
   // checks' anchors). About 55 elements. Still far under the 681 the two
   // mount-on-reveal interiors alone were, which is what this guards.
+  //
+  // 1075 → 1115 with the Routes screen (#routes): 40 elements, and the same
+  // 40 its sibling the Workshop screen ships — a header line, the one primary
+  // button, a section label, the card, its hidden empty state and the three
+  // loading rows. A screen's first render is the document, so the rows and
+  // the trace are fetched in an effect, never during render; that is the rule
+  // this bound protects, and it is why the count is the chassis and not the
+  // data. Measured 1084, and the 31 above it is the same headroom the
+  // communities bump left.
   const html = read('public/index.html');
   const elements = (html.match(/<[a-zA-Z]/g) || []).length;
-  assert.ok(elements < 1075,
+  assert.ok(elements < 1115,
     `public/index.html carries ${elements} elements; the two mount-on-reveal interiors alone were 681`);
 });

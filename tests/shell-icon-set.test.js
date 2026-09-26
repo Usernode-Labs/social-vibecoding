@@ -48,14 +48,23 @@ const WORDMARK = read('frontend/@/components/ui/wordmark.tsx');
 const HTML = shellMarkup();
 const PKG = JSON.parse(read('frontend/package.json'));
 
-/** Every single-quoted string in the module that looks like SVG path data. */
+/**
+ * Every single-quoted string in the module that looks like SVG path data.
+ *
+ * A path begins with a moveto, and its next character is a COORDINATE: a
+ * digit or a minus sign. The looser `/'M[^']*'/` this used to be also
+ * matched a component NAME that happens to start with M — MapPinIcon (#routes)
+ * was the first one — which put a name in the glyph inventory and made it
+ * read as a path that had stopped prerendering. Requiring the coordinate is
+ * what keeps the read to path data.
+ */
 function modulePaths() {
-  return new Set(ICONS.match(/'M[^'\\\n]*'/g).map((s) => s.slice(1, -1)));
+  return new Set(ICONS.match(/'M[0-9-][^'\\\n]*'/g).map((s) => s.slice(1, -1)));
 }
 
 /** The same read, over the wordmark primitive — see the note beside WORDMARK. */
 function wordmarkPaths() {
-  return new Set(WORDMARK.match(/'M[^'\\\n]*'/g).map((s) => s.slice(1, -1)));
+  return new Set(WORDMARK.match(/'M[0-9-][^'\\\n]*'/g).map((s) => s.slice(1, -1)));
 }
 
 /** Every `<svg>` opening tag in a source file, brace- and quote-aware. */
@@ -273,7 +282,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M4.5 12.75l6 6 9-13.5',
     'M5 13l4 4L19 7',
     'M5 15l7-7 7 7',
-    'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
+    // PlayIcon LEFT this list with the Routes screen (#routes): its Start
+    // run button is the screen's one primary action and it draws the play
+    // mark unconditionally, in the cold document as well as after a reveal.
+    // The Needs-you feed's rail was the last surface that held it back.
     'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
     // HashIcon (#2802): a channel's glyph in the desktop rail's Recents,
