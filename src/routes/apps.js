@@ -3345,7 +3345,7 @@ function appRoutes(config) {
     try {
       const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
       const { rows: appRows } = await pool.query(
-        `SELECT ${appAccess.ACCESS_COLUMNS}, name,
+        `SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url,
                 LEFT(manifest_snapshot->>'description', 280) AS description
            FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
         [req.params.slug, showSelfHosted]
@@ -3374,6 +3374,9 @@ function appRoutes(config) {
           channel = {
             ...summary,
             href: `#messages/${conversationId}`,
+            // Where the hub's composer posts: the room's own write route,
+            // which gates it on Homeroom membership (generalNeedsJoin).
+            post_url: `/api/conversations/${conversationId}/messages`,
             handle: 'general',
             archive_href: `#messages/app/${encodeURIComponent(app.slug)}`,
           };
@@ -3382,10 +3385,23 @@ function appRoutes(config) {
         channel = {
           ...(await communities.channelSummary(pool, app.id, req.user?.id)),
           href: `#messages/app/${encodeURIComponent(app.slug)}`,
+          // The app chat's REST write path, the one CLI and MCP clients use:
+          // the same handler as the browser's socket, membership-gated.
+          post_url: `/api/apps/${encodeURIComponent(app.slug)}/messages`,
           handle: null,
         };
       }
       const activity = await communities.activitySummary(pool, app.id);
+      // WHO IT IS FOR, AS SOMETHING TO CHANGE. Opening a project up (or
+      // closing it to a group) is the visibility PR the settings dialog
+      // opens, offered on the hero to the people POST /visibility-pr lets
+      // open it: the creator, an app admin or a platform admin, on an app
+      // with a repository, never the platform's own. One in flight at a
+      // time, and the hero points at it rather than offering a second.
+      const canManage = !app.self_hosted && !!app.repo_url
+        && await appAdmins.canManageApp(pool, app, req.user);
+      const pendingAudience = canManage || membership?.is_member
+        ? await renamePr.findVisibilityPr(pool, app.id) : null;
       const gov = await governance.getGovernance(pool, app.id);
       const electorate = await governance.getElectorate(pool, app.id, gov);
       const required = gov.approvalsRequired != null
@@ -3401,6 +3417,12 @@ function appRoutes(config) {
         members,
         channel,
         activity,
+        can_manage: !!canManage,
+        audience_change: pendingAudience ? {
+          session_id: pendingAudience.id,
+          pr_number: pendingAudience.pr_number,
+          title: pendingAudience.pr_title || null,
+        } : null,
         approval: {
           policy: gov.approverPolicy,
           approvals_required: gov.approvalsRequired,

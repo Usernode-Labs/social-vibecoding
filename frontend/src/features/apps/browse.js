@@ -779,22 +779,29 @@ const Browse = {
   // cmd/middle-click is intercepted instead — NavLink.wireModified takes this
   // as its hrefFor, and it repeats the same guards openRow applies so an inert
   // row stays inert under a modifier too.
+  //
+  // THE ROW OPENS THE PROJECT'S HUB (the communities prototype). What a
+  // person browsing wants first is what it is, who it is for and Join, which
+  // is the hub's hero, with its channel and what it is working on under it —
+  // not a store page one level short of that. The address is the one
+  // App._hubHref builds (`#app/<slug>/workshop`, which opens on the hub),
+  // spelled here so the controller stays testable without App. The About
+  // page (#apps/<slug>) stays: Home's card menu opens it, links to it still
+  // work, and ?shot=browse-detail still drills into it for the captures.
   rowHref(view) {
     if (!view || view.demo || !view.slug) return null;
-    return `#apps/${encodeURIComponent(view.slug)}`;
+    return `#app/${encodeURIComponent(view.slug)}/workshop`;
   },
 
   openRow(view) {
     const href = Browse.rowHref(view);
     if (!href) return;
-    // Back from here means up to this list.
-    Browse.noteDetailOrigin('list');
     location.hash = href;
   },
 
-  // #931: a row tap lands on the detail page, not in the app, so this is a
-  // warm-up for the "Open" button one screen later — by then the token is
-  // minted and the connection to the app's origin is open.
+  // #931: a warm-up for opening the app from its page one screen later — by
+  // then the token is minted and the connection to the app's origin is
+  // open. The hub is a screen short of the app, as the About page was.
   warmRow(view) {
     if (!view || view.demo || !view.slug) return;
     try { App.prewarmApp(view.slug); } catch (err) { /* ignore */ }

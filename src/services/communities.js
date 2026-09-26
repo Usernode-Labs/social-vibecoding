@@ -441,6 +441,7 @@ async function generalChannelSummary(pool, userId) {
         WHERE cm.conversation_id = $1 AND cm.user_id = $2 AND cm.status = 'member'
           AND m.id > COALESCE(cm.last_read_message_id, 0)
           AND m.thread_root_id IS NULL AND m.deleted_at IS NULL
+          AND m.msg_type = 'message'
           AND m.sender_id IS DISTINCT FROM $2
           AND NOT EXISTS (
             SELECT 1 FROM user_blocks blocked
@@ -465,6 +466,30 @@ async function generalChannelSummary(pool, userId) {
 // week (said something in the channel, started a change, or voted on one),
 // and how many changes shipped in the last thirty days.
 async function activitySummary(pool, appId) {
+  // THE TREND: people active on each of the last fourteen days, oldest
+  // first, the same three kinds of taking part as the week's count. Days
+  // with nobody are zero rather than missing, so the bars keep their places.
+  const { rows: days } = await pool.query(
+    `SELECT to_char(d.day, 'YYYY-MM-DD') AS day, COUNT(DISTINCT who.user_id)::int AS n
+       FROM generate_series(CURRENT_DATE - 13, CURRENT_DATE, INTERVAL '1 day') AS d(day)
+       LEFT JOIN (
+         SELECT m.user_id, m.created_at::date AS day FROM chat_messages m
+          WHERE m.app_id = $1 AND m.user_id IS NOT NULL
+            AND m.created_at >= CURRENT_DATE - 13
+         UNION
+         SELECT s.user_id, s.created_at::date FROM chat_sessions s
+          WHERE s.app_id = $1 AND s.user_id IS NOT NULL
+            AND s.created_at >= CURRENT_DATE - 13
+         UNION
+         SELECT v.user_id, v.created_at::date FROM pr_votes v
+           JOIN chat_sessions s ON s.id = v.session_id
+          WHERE s.app_id = $1 AND v.user_id IS NOT NULL
+            AND v.created_at >= CURRENT_DATE - 13
+       ) who ON who.day = d.day::date
+      GROUP BY d.day
+      ORDER BY d.day`,
+    [appId]
+  );
   const { rows } = await pool.query(
     `SELECT
        (SELECT COUNT(DISTINCT who.user_id)::int FROM (
@@ -489,6 +514,7 @@ async function activitySummary(pool, appId) {
   return {
     active_week: rows[0]?.active_week || 0,
     shipped_month: rows[0]?.shipped_month || 0,
+    daily: days.map((d) => ({ day: d.day, n: d.n })),
   };
 }
 

@@ -2885,6 +2885,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/community-card.tsx",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",

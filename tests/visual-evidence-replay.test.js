@@ -812,6 +812,17 @@ test('capture image contains the separate evidence runtime and its pinned depend
   assert.match(visuals, /capture\/Dockerfile/);
 });
 
+test('capture image sets its sans-serif in Inter, not a fallback face', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'capture/Dockerfile'), 'utf8');
+  assert.match(dockerfile, /\bfonts-inter\b/, 'the face is installed');
+  assert.match(dockerfile, /COPY capture\/fonts\.conf \/etc\/fonts\/local\.conf/, 'and preferred');
+  const conf = fs.readFileSync(path.join(__dirname, '..', 'capture/fonts.conf'), 'utf8');
+  for (const generic of ['sans-serif', 'system-ui']) {
+    assert.match(conf, new RegExp(`<family>${generic}</family>\\s*<prefer><family>Inter</family></prefer>`),
+      `${generic} prefers Inter`);
+  }
+});
+
 test('image transforms share one explicitly-owned scratch context', () => {
   const runner = fs.readFileSync(path.join(__dirname, '..', 'evidence/replay-runner.js'), 'utf8');
   assert.doesNotMatch(runner, /browser\.newPage\(/);

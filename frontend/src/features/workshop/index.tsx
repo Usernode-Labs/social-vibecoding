@@ -82,10 +82,7 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
   BallotIcon, HandRaisedIcon, LockIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
 } from '@/components/ui/icons';
-import {
-  SECTION_TABS_LIST_BASE, SECTION_TAB_ACTIVE, SECTION_TAB_BASE, SECTION_TAB_INACTIVE,
-  Tabs, TabsList, TabsTrigger,
-} from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
 import { agoStamp } from '../../lib/timestamp';
@@ -754,15 +751,21 @@ export function WorkshopScreen() {
             onToggle={(next) => workshopStore.set({ scopeOpen: next })}
           />
           <Tabs value={state.tab} onValueChange={(v) => workshopController.setTab(v as TabKey)}>
-            <TabsList className={SECTION_TABS_LIST_BASE} aria-label="Communities sections">
+            {/* THE PROJECT PAGE'S STRIP, NOT THE BLACK PILL. A community's
+                own page switches Hub and Workshop on a raised track with the
+                selected tab lit (app.css .dev-ws-tablist / .dev-ws-tab), and
+                the screen that lists those communities switches its two
+                views the same way, so "where you are" is one look across
+                the tab. See .workshop-scope-tabs in app.css. */}
+            <TabsList className="workshop-scope-tabs" aria-label="Communities sections">
               <TabsTrigger
                 id="workshop-tab-status"
                 type="button"
                 value="status"
                 data-workshop-tab="status"
-                className={SECTION_TAB_BASE}
-                activeClassName={SECTION_TAB_ACTIVE}
-                inactiveClassName={SECTION_TAB_INACTIVE}
+                className="workshop-scope-tab"
+                activeClassName="workshop-scope-tab-on"
+                inactiveClassName=""
               >
                 Current status
               </TabsTrigger>
@@ -771,9 +774,9 @@ export function WorkshopScreen() {
                 type="button"
                 value="needs"
                 data-workshop-tab="needs"
-                className={SECTION_TAB_BASE}
-                activeClassName={SECTION_TAB_ACTIVE}
-                inactiveClassName={SECTION_TAB_INACTIVE}
+                className="workshop-scope-tab"
+                activeClassName="workshop-scope-tab-on"
+                inactiveClassName=""
               >
                 Needs you
               </TabsTrigger>

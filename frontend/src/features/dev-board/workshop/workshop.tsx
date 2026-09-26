@@ -3278,6 +3278,8 @@ export function DevWorkshop(): ReactNode {
   // The project's community record — the hero, the hub's cards and the hub
   // tab's own label all read it. Before the loading return: it is a hook.
   const community = useCommunity(v.slug || '');
+  // Looking in rather than taking part: the hub says "Recently" to them.
+  const outsider = !!community && !community.is_member;
 
   if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
@@ -3770,7 +3772,12 @@ export function DevWorkshop(): ReactNode {
               Clear was dead, because new rows were the only thing it gated
               on. It is live while there is a walk below the line too. */}
           <div className="dev-ws-since-head" data-ws-since-head="">
-            <span className="dev-ws-since-label">Since your last visit</span>
+            {/* "RECENTLY" FOR SOMEONE WHO HAS NOT JOINED. "Your last visit"
+                is a member's phrase: a person looking in from Discover reads
+                it as a claim about them. The rows are the same, measured from
+                the same per-viewer line, so Clear stays and does what it
+                does. */}
+            <span className="dev-ws-since-label">{outsider ? 'Recently' : 'Since your last visit'}</span>
             {/* THE WHOLE POPULATION, not the page of it that is drawn.
                 `rows` is capped at WORKSHOP_SINCE_MAX, so on a busy week the
                 head said 30 over a list the reader could keep revealing. */}

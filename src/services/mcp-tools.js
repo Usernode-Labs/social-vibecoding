@@ -294,6 +294,18 @@ function platformError(result, fallbackCode = 'platform_error') {
   const message = (result.body && (result.body.error || result.body.message))
     || `Homeroom returned HTTP ${result.status}.`;
   if (result.status === 401) return toolError('not_connected', 'This connector is no longer authorized. Reconnect Homeroom in your chat product settings.');
+  // A MEMBERSHIP REFUSAL IS NOT A SCOPE PROBLEM. Taking part in a project is
+  // for its community's members (services/communities.js), and the route
+  // says so with `join_required` and the app it is about. Kept as its own
+  // code, with the app, so the Mayor's confirmation card can offer Join in
+  // place of a sentence, and an outside assistant is not told to reconnect
+  // a connector that is working.
+  if (result.status === 403 && result.body && result.body.code === 'join_required') {
+    const app = result.body.app && typeof result.body.app === 'object'
+      ? { slug: result.body.app.slug || null, name: result.body.app.name || null }
+      : null;
+    return toolError('join_required', message, app ? { app } : {});
+  }
   if (result.status === 403) return toolError('insufficient_scope', message);
   if (result.status === 404) return toolError('no_access', 'That app or proposal does not exist, or you do not have access to it.');
   if (result.status === 429) {

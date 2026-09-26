@@ -28,6 +28,11 @@ export interface CardView {
   rows: Array<[string, string]>;
   status: AgentActionStatus;
   outcome: string | null;
+  /**
+   * The project a membership refusal named (`join_required`), so the card
+   * offers Join where it would otherwise only say it did not go through.
+   */
+  join: { slug: string; name: string } | null;
 }
 
 export type TranscriptItem =
@@ -173,7 +178,20 @@ export function cardView(card: AgentCard, actions: Map<string, AgentAction>, now
     rows: cardRows(card.input),
     status,
     outcome: actionOutcome(action),
+    join: status === 'failed' ? joinFor(action) : null,
   };
+}
+
+/** The app a `join_required` refusal names, off the stored tool result. */
+export function joinFor(action: AgentAction | undefined): { slug: string; name: string } | null {
+  const result = action && action.result;
+  if (!result) return null;
+  const structured = (result.structured || {}) as { code?: unknown; app?: { slug?: unknown; name?: unknown } | null };
+  if (result.code !== 'join_required' && structured.code !== 'join_required') return null;
+  const slug = structured.app && typeof structured.app.slug === 'string' ? structured.app.slug : '';
+  if (!slug) return null;
+  const name = typeof structured.app?.name === 'string' && structured.app.name ? structured.app.name : slug;
+  return { slug, name };
 }
 
 // The server's stand-in for a message that was only files (attachments.js

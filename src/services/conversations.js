@@ -400,14 +400,17 @@ async function hydrateMessages(db, user, rows) {
     // removed when it was deleted; the empty values here are the contract
     // even for a report-retained attachment the moderation queue still holds.
     const deleted = !!row.deleted_at;
+    // A platform event (postChannelEvent) has no sender: Homeroom said it.
+    const system = row.msg_type === 'system';
     return {
       id: row.id,
       conversationId: row.conversation_id,
       sender: {
         id: row.sender_id || 0,
-        username: row.sender_username || 'Deleted user',
+        username: system ? 'Homeroom' : (row.sender_username || 'Deleted user'),
         avatarUrl: row.sender_avatar_id ? `/avatars/${row.sender_avatar_id}` : null,
       },
+      ...(system ? { system: true } : {}),
       content: deleted ? '' : row.content,
       createdAt: row.created_at,
       editedAt: deleted ? null : row.edited_at,
@@ -442,7 +445,7 @@ async function hydrateMessages(db, user, rows) {
 
 const MESSAGE_SELECT = `
   SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at, m.edited_at,
-         m.deleted_at, m.thread_root_id,
+         m.deleted_at, m.thread_root_id, m.msg_type,
          su.username AS sender_username, sua.id AS sender_avatar_id,
          rm.id AS reply_id, rm.sender_id AS reply_sender_id, rm.content AS reply_content,
          rm.deleted_at AS reply_deleted_at,
@@ -680,6 +683,7 @@ async function countUnread(db, conversationId, userId, cursor) {
     `SELECT COUNT(*)::int AS count FROM conversation_messages m
       WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0)
         AND m.thread_root_id IS NULL AND m.deleted_at IS NULL
+        AND m.msg_type = 'message'
         AND m.sender_id IS DISTINCT FROM $3
         AND NOT EXISTS (SELECT 1 FROM user_blocks b
                          WHERE b.blocker_id = $3 AND b.blocked_user_id = m.sender_id)`,
@@ -1401,6 +1405,60 @@ async function sendMessage(pool, user, conversationId, input) {
   return { ...result, message: await getMessage(pool, user, conversationId, result.messageId) };
 }
 
+/**
+ * A platform event in a channel: the Homeroom community's proposals being
+ * put up for a vote and merged, posted into #general (its channel) rather
+ * than into the project discussion it used to have, which is read-only now
+ * (services/communities.js channelArchived; services/ws.js
+ * sendSystemMessage routes them here).
+ *
+ * WHAT IT IS NOT is a message from a person, so it keeps none of a person's
+ * consequences: no sender (the row says Homeroom), no notifications (a
+ * channel is everybody, and a title that happens to hold an @name must not
+ * ring that person), no read cursor moved, and not counted as unread
+ * (countUnread and the hub's summaries count `msg_type = 'message'`). It
+ * can carry one proposal card, written directly because the sharing check
+ * is a PERSON's access; the card is still hydrated per viewer, so it shows
+ * only to someone who may see the proposal.
+ *
+ * Returns the new row with the channel's member ids for the live push, or
+ * null when there is no such channel.
+ */
+async function postChannelEvent(pool, { channelKey = 'general', content, metadata = null, proposal = null } = {}) {
+  const text = String(content || '').trim().slice(0, MAX_MESSAGE_LENGTH);
+  if (!text) return null;
+  return transaction(pool, async (db) => {
+    const { rows: room } = await db.query(
+      `SELECT id FROM conversations
+        WHERE kind = 'channel' AND channel_key = $1 AND status = 'active'
+        LIMIT 1`,
+      [channelKey]
+    );
+    if (!room[0]) return null;
+    const conversationId = room[0].id;
+    const { rows } = await db.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, msg_type, metadata)
+       VALUES ($1, NULL, $2, 'system', $3::jsonb)
+       RETURNING id, created_at`,
+      [conversationId, text, JSON.stringify(metadata || {})]
+    );
+    const messageId = rows[0].id;
+    const sessionId = proposal && strictId(proposal.sessionId);
+    const appId = proposal && strictId(proposal.appId);
+    if (sessionId && appId) {
+      await db.query(
+        `INSERT INTO conversation_message_objects
+           (message_id, position, object_type, app_id, object_ref, object_version)
+         VALUES ($1, 0, 'code_proposal', $2, $3, NULL)`,
+        [messageId, appId, sessionId]
+      );
+    }
+    await db.query(`UPDATE conversations SET updated_at = NOW() WHERE id = $1`, [conversationId]);
+    const memberIds = await activeMemberIds(db, conversationId);
+    return { conversationId, messageId, createdAt: rows[0].created_at, memberIds };
+  });
+}
+
 async function editMessage(pool, user, conversationId, messageId, rawContent) {
   const content = normalizeContent(rawContent);
   if (content == null) return null;
@@ -1912,6 +1970,7 @@ module.exports = {
   mentionsUsername,
   ensureChannelMemberships,
   sendMessage,
+  postChannelEvent,
   editMessage,
   deleteMessage,
   toggleReaction,

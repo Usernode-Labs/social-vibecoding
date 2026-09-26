@@ -808,22 +808,21 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   assert.doesNotMatch(listTag, /divide-/,
     'the phone hairline is .browse-row + .browse-row in app.css');
 
-  // Phone: the rows sit in ONE PANE with the search bar above them (#1919):
-  // the search bar is the pane's head and this container is its body. The
-  // surface — the frosted sheet fill, the hairline ring, the 22px radius —
-  // is `browse-pane-*` in app.css beside the row rules, NOT utilities on the
-  // tag (it used to be `max-md:rounded-2xl max-md:bg-white`, a plain white
-  // card under a wallpaper-coloured bar). The hairline between rows is INSET
-  // to the text column, so it stops short of the pane's corner radius. It is
-  // a pseudo-element rather than `border-top` — a border cannot be inset —
-  // which is also what frees the md+ block below to own the `border`
-  // shorthand outright.
-  assert.match(listTag, /browse-pane-body/, 'phone: the rows sit in the pane body');
+  // Phone: the rows sit in a CARD, with the search, the chips and Sort on
+  // the ground above it (the communities prototype; #1919 made the bar the
+  // card's head). The surface — the sheet fill, the hairline ring, the 22px
+  // radius — is `browse-pane-*` in app.css beside the row rules, NOT
+  // utilities on the tag (it used to be `max-md:rounded-2xl max-md:bg-white`).
+  // The hairline between rows is INSET to the text column, so it stops short
+  // of the card's corner radius. It is a pseudo-element rather than
+  // `border-top` — a border cannot be inset — which is also what frees the
+  // md+ block below to own the `border` shorthand outright.
+  assert.match(listTag, /browse-pane-body/, 'phone: the rows sit in the card');
   assert.doesNotMatch(listTag, /max-md:/, 'phone: the surface is app.css, not utilities');
   const barTag = INDEX.match(/<div id="browse-search-bar"[^>]*>/)[0];
-  assert.match(barTag, /browse-pane-head/, 'phone: the search bar is the pane head');
+  assert.match(barTag, /browse-pane-head/, 'phone: the search bar keeps its part name');
   assert.match(barTag, /md:bg-\[color:var\(--home-ground\)\]/,
-    'md+: the bar keeps the wallpaper fill; the pane is a phone treatment');
+    'md+: the bar keeps the wallpaper fill');
   const css = read('public/css/app.css');
   assert.match(css, /\.browse-row \+ \.browse-row::before \{/,
     'phone: a hairline between consecutive rows');
@@ -836,29 +835,27 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   assert.ok(browseStart > -1 && browseEnd > browseStart,
     'the Browse-owned CSS section must remain identifiable');
   const browseCss = css.slice(browseStart, browseEnd);
-  // The pane (#1919): the Workshop's working-pane recipe — --dc-sheet-fill
-  // over --dc-frost, an --app-sheet-line ring, 22px corners — split across
-  // the two sibling parts, head over body, below md only. Page-scoped
-  // classes, so the Workshop's pane and this one can move independently.
+  // Below md only. The head is ON THE GROUND: no fill, no ring, and not
+  // pinned (a pinned head needs a fill, which would band the wallpaper). The
+  // body (or the empty note in its place) is a whole card: sheet fill over
+  // --dc-frost, an --app-sheet-line ring, 22px corners all round.
   const paneBlock = browseCss.slice(browseCss.indexOf('@media (max-width: 767px)'));
-  assert.ok(paneBlock.length > 0, 'phone: the pane block sits in the Browse-owned section');
+  assert.ok(paneBlock.length > 0, 'phone: the card block sits in the Browse-owned section');
+  const head = paneBlock.match(/#browse-screen \.browse-pane-head \{[^}]*\}/);
+  assert.ok(head, 'phone: the head has its own rule');
+  assert.match(head[0], /position: static;/, 'phone: the controls scroll with the list');
+  assert.match(head[0], /background: transparent;/, 'phone: the controls sit on the ground');
+  assert.doesNotMatch(head[0], /border|radius|frost/, 'phone: the controls are not in the card');
   assert.match(paneBlock,
-    /#browse-screen \.browse-pane-head,\s*\n\s*#browse-screen \.browse-pane-body,\s*\n\s*#browse-screen \.browse-pane-note \{[\s\S]*?background-color: var\(--dc-sheet-fill\);[\s\S]*?backdrop-filter: var\(--dc-frost\);[\s\S]*?border: 1px solid var\(--app-sheet-line\);/,
-    'phone: head, body and note share one frosted fill and one ring');
-  assert.match(paneBlock,
-    /#browse-screen \.browse-pane-head \{[\s\S]*?border-bottom: 0;[\s\S]*?border-radius: 22px 22px 0 0;/,
-    'phone: the head carries the top of the ring');
-  assert.match(paneBlock,
-    /#browse-screen \.browse-pane-body,\s*\n\s*#browse-screen \.browse-pane-note \{[\s\S]*?border-top: 0;[\s\S]*?border-radius: 0 0 22px 22px;/,
-    'phone: the body (or the empty note) closes it');
+    /#browse-screen \.browse-pane-body,\s*\n\s*#browse-screen \.browse-pane-note \{[\s\S]*?background-color: var\(--dc-sheet-fill\);[\s\S]*?backdrop-filter: var\(--dc-frost\);[\s\S]*?border: 1px solid var\(--app-sheet-line\);[\s\S]*?border-radius: 22px;/,
+    'phone: the list (or the empty note) is one whole card');
   assert.match(paneBlock, /\.browse-pane-body:empty \{ display: none; \}/,
-    'phone: an empty list collapses so the note can be the body');
-  // No blur on any platform (app.css "No glass, on any platform"): the list
-  // scrolls under the pinned head, so on a phone the pane is solid, all
-  // three parts together so they stay one colour, the same on every platform.
+    'phone: an empty list collapses so the note can be the card');
+  // No blur on any platform (app.css "No glass, on any platform"): the card
+  // and the note go solid together, the same on every platform.
   assert.match(paneBlock,
-    /@media \(max-width: 767px\) \{\s*#browse-screen \.browse-pane-head,\s*#browse-screen \.browse-pane-body,\s*#browse-screen \.browse-pane-note \{ background-color: var\(--dc-sheet-solid\); \}\s*\}/,
-    'phone: head, body and note go solid together, the same on every platform');
+    /@media \(max-width: 767px\) \{\s*#browse-screen \.browse-pane-body,\s*#browse-screen \.browse-pane-note \{ background-color: var\(--dc-sheet-solid\); \}\s*\}/,
+    'phone: the card and the note go solid together, the same on every platform');
   assert.doesNotMatch(browseCss, /@supports not \(\(backdrop-filter/,
     'no per-platform glass fallback is left in the Browse section');
   const mdBlock = browseCss.slice(browseCss.indexOf('@media (min-width: 768px)'));
@@ -1274,13 +1271,16 @@ test('the origin defaults to the list for a deep link, and never leaks', () => {
   assert.equal(Browse._pendingOrigin, null);
 });
 
-test('a browse row tap declares the list as its origin; the home menu declares home', () => {
-  // Both call sites note the origin BEFORE writing the hash — the
-  // hashchange lands in a later task, so the note is always in place.
+test('a browse row tap opens the project hub; the home menu opens About and declares home', () => {
+  // The row goes to the project's hub (the communities prototype), not to
+  // the About page, so it notes no About origin: the hub is not a level of
+  // Discover.
   const tap = BROWSE_SRC.slice(BROWSE_SRC.indexOf('openRow(view) {'),
     BROWSE_SRC.indexOf('warmRow(view) {'));
-  assert.match(tap, /noteDetailOrigin\('list'\)/);
-  assert.ok(tap.indexOf("noteDetailOrigin('list')") < tap.indexOf('location.hash'));
+  assert.doesNotMatch(tap, /noteDetailOrigin/);
+  assert.match(BROWSE_SRC, /rowHref\(view\) \{[\s\S]*?return `#app\/\$\{encodeURIComponent\(view\.slug\)\}\/workshop`;/);
+  // Home's menu still drills into About and notes the origin BEFORE writing
+  // the hash — the hashchange lands in a later task.
   // And the #1036 modified-click href repeats openRow's guard, so a demo row
   // stays inert under cmd/middle-click too.
   assert.match(BROWSE_SRC, /rowHref\(view\) \{[\s\S]*?view\.demo/);
