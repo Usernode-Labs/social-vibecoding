@@ -14,9 +14,10 @@
  *
  * ── Who is asked ────────────────────────────────────────────────────────
  *
- * `users.needs_communities_choice`, set TRUE by email sign-up (the path
- * every new account takes) and FALSE for everyone else, including every
- * account that existed before the column: the join screen is for newcomers,
+ * `users.needs_communities_choice`, set TRUE wherever an account is made by
+ * a person signing up (email, an activation code, a wallet) and FALSE for
+ * everyone else, including every account that existed before the column and
+ * every account the boot seeds: the join screen is for newcomers,
  * and a member who has been here a year has already found their
  * communities. See the note beside the column in src/db/schema.sql.
  *
@@ -27,9 +28,14 @@
  * users_join_platform_community trigger), so it arrives ticked; unticking it
  * is how a newcomer says "not this one", and answering leaves it. Then any
  * group the person has been invited into, which is the reason somebody
- * signs up more often than not. Then the open communities with the most
- * members. Solo projects and view-private apps are never offered: nobody can
- * join those from outside.
+ * signs up more often than not. Then the communities an admin has featured
+ * (featured_apps, in its order: the same curated set Discover leads with),
+ * and after them the open communities with the most members. Solo projects
+ * and view-private apps are never offered: nobody can join those from
+ * outside.
+ *
+ * "Skip for now" is an answer too: it joins and leaves nothing, and the
+ * screen does not come back. Discover is where to join later.
  *
  * ── The card ───────────────────────────────────────────────────────────
  *
@@ -94,13 +100,16 @@ async function joinSuggestions(pool, userId, { showSelfHosted = false } = {}) {
            LEFT JOIN users u ON u.id = c.invited_by
           WHERE c.user_id = $1 AND c.status = 'invited'
        ) inv ON inv.app_id = a.id
+       LEFT JOIN featured_apps fa ON fa.app_id = a.id
       WHERE a.community_id IS NOT NULL
         AND (
           (a.self_hosted AND $2::boolean)
           OR (NOT a.self_hosted AND inv.app_id IS NOT NULL)
           OR (NOT a.self_hosted AND a.status = 'running' AND a.view_visibility = 'public')
         )
-      ORDER BY a.self_hosted DESC, (inv.app_id IS NOT NULL) DESC, member_count DESC, a.id ASC
+      ORDER BY a.self_hosted DESC, (inv.app_id IS NOT NULL) DESC,
+               (fa.app_id IS NOT NULL) DESC, fa.sort_order ASC NULLS LAST,
+               member_count DESC, a.id ASC
       LIMIT $3`,
     [userId, !!showSelfHosted, SUGGESTION_LIMIT]
   );
@@ -143,12 +152,16 @@ function parseJoin(raw) {
  * `acceptInvite(appId)` is injected: the invite path lives with the
  * collaborator routes (services/collab-invites.js) and needs the caller.
  *
+ * `{ skip: true }` is "Skip for now": the answer is recorded and nothing is
+ * joined or left.
+ *
  * Returns `{ ok, joined: [slug], left: [slug] }`, or `{ ok: false, status,
  * error }`. A second answer is a 409 with `alreadyDone`, like the username
  * step's.
  */
 async function answerJoin(pool, user, body, { showSelfHosted = false, acceptInvite } = {}) {
-  const parsed = parseJoin(body && body.join);
+  const skip = !!(body && body.skip === true);
+  const parsed = skip ? { slugs: [] } : parseJoin(body && body.join);
   if (parsed.error) return { ok: false, status: 400, error: parsed.error };
 
   const { rows: flag } = await pool.query(
@@ -192,8 +205,9 @@ async function answerJoin(pool, user, body, { showSelfHosted = false, acceptInvi
 
   // Homeroom unticked: the person is in it by default, and this screen is
   // where they said no.
+  // Not on a skip: "not now" leaves everything as it was, Homeroom included.
   const self = offered.find((c) => c.self_hosted);
-  if (self && self.is_member && !parsed.slugs.includes(self.slug)) {
+  if (!skip && self && self.is_member && !parsed.slugs.includes(self.slug)) {
     const { rows: selfRows } = await pool.query(
       'SELECT id, slug, created_by FROM apps WHERE slug = $1', [self.slug]);
     if (selfRows[0]) {

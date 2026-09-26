@@ -40,6 +40,11 @@ test('only a new account is asked: a flag set at sign-up, false for everyone bef
   // rule would have put behind a blocking step.
   assert.doesNotMatch(SCHEMA, /UPDATE users\s+SET needs_communities_choice/);
   assert.match(SIGNUP, /needs_username_choice, needs_communities_choice\)\s*\n\s*VALUES \(\$1, \$2, \$3, TRUE, NOW\(\), FALSE, FALSE, TRUE, TRUE\)/);
+  // Every path a PERSON signs up through asks, not only email: the
+  // activation-code route and wallet registration set the same flag.
+  assert.match(AUTH, /'INSERT INTO users \(username, password, needs_communities_choice\) VALUES \(\$1, \$2, TRUE\) RETURNING id'/);
+  assert.match(AUTH, /wallet_link_token, wallet_link_expires_at,\s*\n\s*needs_communities_choice\)\s*\n\s*VALUES \(\$1, \$2, \$3, \$4, \$5, TRUE\)/);
+  assert.equal((AUTH.match(/INSERT INTO users/g) || []).length, 2, 'no third sign-up path that forgets it');
   // /api/auth/me carries both flags, failing toward no step and no card.
   assert.match(AUTH, /let needsCommunitiesChoice = false;\s*\n\s*let showGettingStarted = false;/);
   assert.match(AUTH, /\(u\.communities_onboarded_at IS NOT NULL\s*\n\s*AND u\.getting_started_closed_at IS NULL\) AS show_getting_started/);
@@ -71,7 +76,7 @@ test('it never lands on a capture route, and has one screenshot state of its own
   assert.match(GATE, /if \(opts && opts\.demo\) \{ status\.textContent = ''; return; \}/);
 });
 
-test('one exit, the answer, and the button says what it will do', () => {
+test('one filled button that says what it will do, and a quiet Skip for now', () => {
   assert.match(GATE, /PlatformUI\.modal\(\{ contentEl: panel, dismissible: false \}\)/);
   assert.match(GATE, /n === 0 \? 'Pick at least one'/);
   assert.match(GATE, /`Join \$\{n\} \$\{n === 1 \? 'community' : 'communities'\}`/);
@@ -79,6 +84,11 @@ test('one exit, the answer, and the button says what it will do', () => {
   assert.match(GATE, /'You can join or leave any time from Discover\.'/);
   // In the screen's order, so the first one ticked is the card's.
   assert.match(GATE, /join: list\.map\(\(c\) => c\.slug\)\.filter\(\(s\) => picked\.has\(s\)\)/);
+  // Skip is an answer: it posts `{ skip: true }` through the same path.
+  assert.match(GATE, /'Skip for now'\);\s*\n\s*skip\.type = 'button';\s*\n\s*skip\.setAttribute\('data-join-communities-skip', ''\);/);
+  assert.match(GATE, /skip\.addEventListener\('click', \(\) => \{ void answer\(\{ skip: true \}\); \}\);/);
+  assert.ok(GATE.indexOf("panel.appendChild(save);") < GATE.indexOf("panel.appendChild(skip);"),
+    'under the Join button, not beside it');
   // Home re-reads its pins and the card appears.
   assert.match(GATE, /new CustomEvent\('sv:communities-joined'/);
   assert.match(GATE, /window\.App\.user\.showGettingStarted = true;/);
@@ -134,6 +144,8 @@ test('both screens have a declared check on their own screenshot state', () => {
   assert.equal(join.path, '/?shot=join-communities');
   assert.equal(join.expectText, 'Join 2 communities');
   assert.equal(join.visual, true);
+  assert.match(join.expectSelector, /\[data-join-communities-save\]\[data-picked="2"\] \+ \[data-join-communities-skip\]$/,
+    'the Skip sits right under the Join button');
   const card = DAPP.tests.find((t) => t.id === 'home.getting-started-card');
   assert.equal(card.path, '/?shot=getting-started');
   assert.match(card.expectSelector, /\[data-getting-started="1\/3"\]/);

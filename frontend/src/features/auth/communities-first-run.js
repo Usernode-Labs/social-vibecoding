@@ -9,10 +9,10 @@
 //
 // ── What decides whether to ask ────────────────────────────────────────
 //
-// `App.user.needsCommunitiesChoice` from /api/auth/me, which email sign-up
-// sets and answering clears (src/services/onboarding.js). Every account that
-// existed before this step reads false, so nobody who already uses the
-// platform is walked through it.
+// `App.user.needsCommunitiesChoice` from /api/auth/me, which every sign-up
+// path sets (email, an activation code, a wallet) and answering clears
+// (src/services/onboarding.js). Every account that existed before this step
+// reads false, so nobody who already uses the platform is walked through it.
 //
 // ── What it shows ──────────────────────────────────────────────────────
 //
@@ -266,9 +266,21 @@
       save.setAttribute('data-join-communities-save', '');
       panel.appendChild(save);
 
+      // "Skip for now": quiet, under the one filled button. It is an answer
+      // too: the server records it, joins and leaves nothing, and the screen
+      // does not come back. The subtitle already says where joining lives.
+      const skip = el('button',
+        'w-full mt-1 py-2 text-sm font-medium text-zinc-500 hover:text-zinc-800 ' +
+        'dark:text-zinc-400 dark:hover:text-zinc-100 disabled:opacity-50',
+        'Skip for now');
+      skip.type = 'button';
+      skip.setAttribute('data-join-communities-skip', '');
+      panel.appendChild(skip);
+
       let busy = false;
       function paintButton() {
         const n = picked.size;
+        skip.disabled = busy;
         save.disabled = busy || n === 0;
         save.textContent = n === 0 ? 'Pick at least one'
           : `Join ${n} ${n === 1 ? 'community' : 'communities'}`;
@@ -285,8 +297,10 @@
         CommunitiesFirstRun._resolve();
       };
 
-      save.addEventListener('click', async () => {
-        if (!picked.size || busy) return;
+      // Both buttons answer through here: Join with what is ticked, Skip
+      // with `{ skip: true }`.
+      const answer = async (payload) => {
+        if (busy) return;
         if (opts && opts.demo) { status.textContent = ''; return; }
         busy = true;
         paintButton();
@@ -296,9 +310,7 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
-            // In the listed order, so the first one ticked below Homeroom is
-            // the one the Getting started card is about.
-            body: JSON.stringify({ join: list.map((c) => c.slug).filter((s) => picked.has(s)) }),
+            body: JSON.stringify(payload),
           });
           const body = await res.json().catch(() => ({}));
           if (!res.ok && !body.alreadyDone) {
@@ -329,7 +341,15 @@
           busy = false;
           paintButton();
         }
+      };
+
+      save.addEventListener('click', () => {
+        if (!picked.size) return;
+        // In the listed order, so the first one ticked below Homeroom is the
+        // one the Getting started card is about.
+        void answer({ join: list.map((c) => c.slug).filter((s) => picked.has(s)) });
       });
+      skip.addEventListener('click', () => { void answer({ skip: true }); });
 
       if (window.PlatformUI && typeof PlatformUI.modal === 'function') {
         sheet = PlatformUI.modal({ contentEl: panel, dismissible: false });

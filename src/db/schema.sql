@@ -9844,6 +9844,8 @@ END $$;
 -- started" card on Home with three first steps (src/services/onboarding.js).
 --
 -- users.needs_communities_choice — this account has not been asked yet.
+-- Set TRUE by every path a person signs up through (email, an activation
+-- code, a wallet).
 -- A FLAG WRITTEN AT SIGN-UP, the shape needs_username_choice has, rather
 -- than "communities_onboarded_at IS NULL": every account that existed
 -- before this column reads FALSE by default, so nobody who already uses the

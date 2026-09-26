@@ -40,10 +40,11 @@ test('the first run: join screen and Getting started, against the full schema', 
 
   const { rows: people } = await pool.query(
     `INSERT INTO users (username, password, has_platform_access, needs_communities_choice) VALUES
-       ('newbie', 'x', TRUE, TRUE), ('grace', 'x', TRUE, FALSE), ('old_hand', 'x', TRUE, FALSE)
+       ('newbie', 'x', TRUE, TRUE), ('grace', 'x', TRUE, FALSE), ('old_hand', 'x', TRUE, FALSE),
+       ('skipper', 'x', TRUE, TRUE)
      RETURNING id, username`
   );
-  const [newbie, grace, oldHand] = people;
+  const [newbie, grace, oldHand, skipper] = people;
   const app = async (n, fields) => {
     const { rows } = await pool.query(
       `INSERT INTO apps (name, slug, created_by, self_hosted, status, view_visibility, collab_visibility)
@@ -63,6 +64,9 @@ test('the first run: join screen and Getting started, against the full schema', 
   const club = await app('Book club', { slug: 'book-club', view: 'private', collab: 'private' });
   const diary = await app('Diary', { slug: 'diary', view: 'private', collab: 'private' });
   const broken = await app('Broken', { slug: 'broken', status: 'error' });
+  // The smallest open community, but one an admin has featured.
+  const chess = await app('Chess club', { slug: 'chess-club' });
+  await pool.query('INSERT INTO featured_apps (app_id, sort_order) VALUES ($1, 0)', [chess.id]);
   // Members, so the open communities sort by size: the garden is bigger.
   await pool.query(
     `INSERT INTO community_members (community_id, user_id, source) VALUES ($1, $3, 'joined'), ($2, $3, 'joined'), ($1, $4, 'joined')`,
@@ -95,11 +99,13 @@ test('the first run: join screen and Getting started, against the full schema', 
     await admin.end();
   });
 
-  await t.test('the join screen lists Homeroom, then the invite, then open communities by size', async () => {
+  await t.test('the join screen lists Homeroom, the invite, what is featured, then open communities by size', async () => {
     const res = await call('GET', '/api/me/join-suggestions');
     assert.equal(res.status, 200);
     const list = res.data.communities;
-    assert.deepEqual(list.map((c) => c.slug), ['homeroom', 'book-club', 'city-garden', 'pickup-soccer']);
+    assert.deepEqual(list.map((c) => c.slug), ['homeroom', 'book-club', 'chess-club', 'city-garden', 'pickup-soccer'],
+      'the featured community leads the open ones, however small');
+    list.splice(2, 1);
     assert.equal(list[0].detail, 'Build the platform you are using');
     assert.equal(list[0].checked, true, 'already in Homeroom, so it arrives ticked');
     assert.equal(list[1].detail, 'Invited by @grace');
@@ -140,6 +146,24 @@ test('the first run: join screen and Getting started, against the full schema', 
       'SELECT needs_communities_choice, communities_onboarded_at FROM users WHERE id = $1', [newbie.id])).rows[0];
     assert.equal(u.needs_communities_choice, false);
     assert.ok(u.communities_onboarded_at);
+  });
+
+  await t.test('Skip for now records the answer and joins or leaves nothing', async () => {
+    viewer = { id: skipper.id, username: skipper.username, isAdmin: false };
+    try {
+      assert.equal(await inCommunity(homeroom, skipper.id), true);
+      const res = await call('POST', '/api/me/communities', { skip: true });
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      assert.deepEqual([res.data.joined, res.data.left], [[], []]);
+      assert.equal(await inCommunity(homeroom, skipper.id), true, 'a skip keeps Homeroom');
+      const u = (await pool.query(
+        'SELECT needs_communities_choice, communities_onboarded_at FROM users WHERE id = $1', [skipper.id])).rows[0];
+      assert.equal(u.needs_communities_choice, false, 'the screen does not come back');
+      assert.ok(u.communities_onboarded_at);
+      assert.equal((await call('POST', '/api/me/communities', { skip: true })).status, 409);
+    } finally {
+      viewer = { id: newbie.id, username: newbie.username, isAdmin: false };
+    }
   });
 
   await t.test('a second answer is refused, and so is a bad body', async () => {
