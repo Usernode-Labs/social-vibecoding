@@ -105,7 +105,15 @@ test('the hub\'s channel card shows the last messages, what is new, and the way 
   assert.match(html, /<a href="#messages\/app\/garden" class="dev-ws-hub-open un-touch-target" data-ws-channel-open="">Open/);
   const lines = [...html.matchAll(/class="dev-ws-hub-msg-text">([^<]*)</g)].map((m) => m[1]);
   assert.deepEqual(lines, ['Who has seeds?', 'See you Sunday'], 'oldest first, as a transcript reads');
-  assert.match(html, /<a href="#messages\/app\/garden" class="dev-ws-hub-compose" data-ws-channel-compose="">Message Garden…<\/a>/);
+  // The composer posts from here, to the room's own write route.
+  assert.doesNotMatch(html, /data-ws-channel-compose/, 'no write route, no composer');
+  const withPost = renderToHtml(createElement(ChannelCard, {
+    slug: 'garden', name: 'Garden',
+    data: community({ channel: { ...community().channel, post_url: '/api/apps/garden/messages' } }),
+  }));
+  assert.match(withPost, /<form class="dev-ws-hub-compose" data-ws-channel-compose=""><input type="text" class="dev-ws-hub-compose-input" data-ws-channel-input="" aria-label="Message Garden" placeholder="Message Garden…"/);
+  assert.match(withPost, /<button type="submit" class="dev-ws-hub-compose-send" data-ws-channel-send="" aria-label="Send" disabled="">/,
+    'nothing to send yet');
   assert.doesNotMatch(html, /data-ws-channel-archive/, 'no archive on an ordinary project');
   // Homeroom's: #general, with its old discussion one tap away, read-only.
   const homeroom = renderToHtml(createElement(ChannelCard, {
@@ -132,7 +140,7 @@ test('Needs you opens the queue; members and activity count who is here', () => 
     canPost: true,
     onOpen: () => {},
   }));
-  assert.match(needs, /<span class="dev-ws-head-title">Needs you<\/span><span class="dev-ws-head-n">3<\/span>/);
+  assert.match(needs, /<span class="dev-ws-head-title">Needs you<\/span><span class="dev-ws-head-n">3 to vote<\/span>/);
   assert.match(needs, /<span class="dev-ws-hub-needs-title">Dark mode<\/span><span class="dev-ws-hub-needs-sub">from @ada · and 2 more<\/span>/);
   assert.doesNotMatch(needs, /Join to vote/);
   const outsider = renderToHtml(createElement(NeedsCard, { queue: [row('a', 'Dark mode', 'ada')], canPost: false, onOpen: () => {} }));

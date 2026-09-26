@@ -75,6 +75,12 @@ export interface ConversationMessage {
    * sender and its thread, with no words, files, cards or reactions left.
    */
   deleted?: boolean;
+  /**
+   * A platform event rather than a person's message: in #general, the
+   * Homeroom community's proposals going up for a vote and merging
+   * (services/conversations.js postChannelEvent). Its sender reads Homeroom.
+   */
+  system?: boolean;
   /** A reply inside a thread: the id of the message the thread hangs off. */
   threadRootId?: number | null;
   /**

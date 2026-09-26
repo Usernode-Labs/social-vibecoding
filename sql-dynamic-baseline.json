@@ -159,6 +159,13 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
+      "fingerprint": "186bdc9221b3dd99e2f1",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted "
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
       "fingerprint": "3ebf0a6fda28d39ecee9",
       "count": 1,
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS} FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
@@ -183,13 +190,6 @@
       "fingerprint": "7b1ff9cff45031446175",
       "count": 1,
       "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
-    },
-    {
-      "source": "src/routes/apps.js",
-      "kind": "structural-template",
-      "fingerprint": "c803ef2d58849531c800",
-      "count": 1,
-      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boo"
     },
     {
       "source": "src/routes/chat.js",

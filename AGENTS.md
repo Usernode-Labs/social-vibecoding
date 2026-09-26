@@ -222,10 +222,16 @@ remaining live-proposal boundary.
   its **hub** (its channel, Needs you, members and activity, Since your last
   visit) beside its **Workshop** (what you are working on, All items). A
   project's channel lives on its hub, not in Messages, and #general is the
-  Homeroom community's channel; Messages is people and agents.
+  Homeroom community's channel; Messages is people and agents. Homeroom's own
+  proposal and merge lines post into #general as Homeroom's line
+  (`ws.sendSystemMessage` routes them; `conversations.postChannelEvent`),
+  never as a person's message: no notification, not counted as unread.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
-  stored copy is one the visibility reconcile would have to remember.
+  stored copy is one the visibility reconcile would have to remember. So a
+  project GROWS by the same two levers: Invite makes Just you a Group, and
+  the hero's "Open it up" / "Make it a group" opens the visibility PR
+  (`POST /api/apps/:slug/visibility-pr`), which applies once it merges.
 - **Communities and apps are one-to-one today.** A community with a single
   project is drawn as that project — its name, icon and page — and nothing
   should render a separate "community" layer for it. The table is bare on
@@ -247,7 +253,9 @@ remaining live-proposal boundary.
   answers with a `join_required` frame). Mount the matching gate on any new
   write route of that kind; the client's fetch wrapper
   (`frontend/src/lib/join-required.ts`) turns the 403 into a Join prompt and
-  a retry, so no caller handles it by hand. The collab guard in
+  a retry, so no caller handles it by hand. A Mayor or connector tool keeps
+  the code (`mcp-tools.platformError` answers `join_required` with the app),
+  and the Mayor's refused card offers Join itself. The collab guard in
   `app-access.js` still decides who may be there at all; admins pass.
   Collaborators, Home pins and platform access join by trigger — write those
   rows, not `community_members`, unless the action is literally Join or

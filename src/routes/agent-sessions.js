@@ -613,7 +613,12 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       const outcome = await actions.confirmAction(pool, {
         config, user: req.user, agentSessionId: id, actionId: req.params.actionId,
       });
-      const followUp = await startFollowUp({ user: req.user, agentSessionId: id, outcome }).catch((err) => {
+      // A membership refusal is answered by the card itself, which offers
+      // Join (features/agent-session): the Mayor explaining it in prose
+      // under a Join button would say the same thing twice. Joining then
+      // asks the Mayor to try again, which is the turn this one would be.
+      const joinRequired = outcome && outcome.result && outcome.result.code === 'join_required';
+      const followUp = joinRequired ? null : await startFollowUp({ user: req.user, agentSessionId: id, outcome }).catch((err) => {
         log.warn('agent-sessions', 'Follow-up turn did not start', { agentSessionId: id, err: err.message });
         return null;
       });

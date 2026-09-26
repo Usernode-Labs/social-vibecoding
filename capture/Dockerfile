@@ -6,10 +6,17 @@ FROM node:22-bookworm-slim
 # over — Puppeteer's page.screencast() shells out to it to encode the
 # webm recording, and capture.js invokes it directly for the GIF
 # transcode (palettegen/paletteuse).
+#
+# Inter is the capture's sans-serif (capture/fonts.conf says why): the
+# platform sets its text in the reader's system face, which this image does
+# not have, and the Liberation/DejaVu fallback made every capture look like
+# a different product from the one on a phone.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium ffmpeg ca-certificates \
-    fonts-liberation fonts-noto-color-emoji \
+    fonts-inter fonts-liberation fonts-noto-color-emoji \
   && rm -rf /var/lib/apt/lists/*
+COPY capture/fonts.conf /etc/fonts/local.conf
+RUN fc-cache -f
 
 WORKDIR /app
 

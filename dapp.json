@@ -2366,9 +2366,9 @@
       "expectSelector": "#dev-workshop:has(#dev-actions > #dev-kanban-filterbar:last-child) [data-ws-tabs] > .dev-ws-tabtrack > .dev-ws-tablist[role=\"tablist\"] + .dev-ws-plus > #dev-plus-btn"
     },
     {
-      "name": "A project's page opens on its hub, lit, with what needs you on it; its two tabs, hub and Workshop, end with the + (prototype wsTabs)",
+      "name": "A project's page opens on its hub, lit, with the votes you owe and a 14-day trend on it; its two tabs are hub and Workshop (prototype wsTabs)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:has(.dev-ws-tabbody > [data-ws-hub-needs]) > [data-ws-tabs] .dev-ws-tablist:has(> [data-ws-tab-btn=\"status\"][aria-selected=\"true\"] + [data-ws-tab-btn=\"workshop\"]:last-child) + .dev-ws-plus:last-child > #dev-plus-btn"
+      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:has(.dev-ws-tabbody > [data-ws-hub-needs-votes]):has([data-ws-members-trend]) > [data-ws-tabs] .dev-ws-tablist:has(> [data-ws-tab-btn=\"status\"][aria-selected=\"true\"] + [data-ws-tab-btn=\"workshop\"]:last-child)"
     },
     {
       "name": "The Dev screen names its section, Communities, once, with no subtitle beside it (#2718 review)",
@@ -2517,9 +2517,9 @@
       "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #app-menu-row-about"
     },
     {
-      "name": "Homeroom's hub carries its channel, #general, with the way in and its old discussion read-only; on a desktop the header names the section and the scope chip the app (#2768)",
+      "name": "Homeroom's hub carries its channel, #general, with a composer that posts there and its old discussion read-only; on a desktop the header names the app (#2768)",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "body:has(#dev-workshop #dev-ws-scope-chip):has(#header-title > span > span:first-child > #header-title-name) #dev-workshop section[data-ws-channel][data-ws-channel-handle=\"general\"] a[data-ws-channel-archive]",
+      "expectSelector": "body:has(#dev-workshop #dev-ws-scope-chip):has(#header-title-name) #dev-workshop section[data-ws-channel][data-ws-channel-handle=\"general\"]:has(form[data-ws-channel-compose] > input[placeholder=\"Message #general…\"]) a[data-ws-channel-archive]",
       "expectText": "Earlier project discussion"
     },
     {
@@ -3181,9 +3181,9 @@
       ]
     },
     {
-      "name": "#2905: an app's chat in Messages draws no report or block text links in its rows",
+      "name": "#2905: an app's chat in Messages draws no report or block text links in its rows, under a header with the app's own icon",
       "path": "/?demo=1#messages/app/usernode-2d5619",
-      "expectSelector": "#messages-screen:not(.hidden):has(a.messages-channel-row[data-inbox-app=\"usernode-2d5619\"] .app-icon-tile[data-icon=\"image\"] img) #gc-messages:has(.gc-msg):not(:has(.gc-msg button[aria-label=\"Report message\"])):not(:has(.gc-msg button.text-red-600))",
+      "expectSelector": "#messages-screen:not(.hidden):has(header.messages-thread-header .app-icon-tile[data-icon=\"image\"] img) #gc-messages:has(.gc-msg):not(:has(.gc-msg button[aria-label=\"Report message\"])):not(:has(.gc-msg button.text-red-600))",
       "impact": [
         "frontend/src/features/group-chat/**",
         "public/css/app.css"
@@ -3248,9 +3248,9 @@
       "expectText": "Just you"
     },
     {
-      "name": "The Workshop screen draws no empty-state line while it has rows, and leads with the All apps chip over its Current status and Needs you tabs (#3051, reverses #2759)",
+      "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All apps chip over its Current status and Needs you tabs, lit like a project page's (#3051)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-scope[aria-controls=\"workshop-scope-picker\"] ~ div > #workshop-tab-status[aria-current=\"page\"] + #workshop-tab-needs):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
+      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-scope[aria-controls=\"workshop-scope-picker\"] ~ div > #workshop-tab-status.workshop-scope-tab-on[aria-current=\"page\"] + #workshop-tab-needs):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
     },
     {
       "name": "The Workshop's Needs you tab lists the votes waiting on you item by item, under each of your apps (#3051)",
@@ -4473,7 +4473,7 @@
       "expectText": "Staging demo app — letter tile"
     },
     {
-      "name": "The all-apps directory is one pane: the search head over the list body, with the rows inside it (#1919)",
+      "name": "Discover's search and filters sit over the list's card, with the rows inside the card (communities prototype; #1919)",
       "path": "/#apps",
       "expectSelector": "#browse-screen > #browse-search-bar.browse-pane-head:not(.hidden) + #browse-list-level > #browse-list.browse-pane-body .browse-row",
       "expectText": "Sort"

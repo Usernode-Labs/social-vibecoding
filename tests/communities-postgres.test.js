@@ -233,9 +233,15 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       assert.deepEqual(got.body.channel, {
         last_message: null, last_at: null, last_by: null, unread_count: 0,
         recent: [], href: `#messages/app/${a.slug}`, handle: null,
-      }, 'a collab-public app: its channel is offered, with its last few messages and its address');
-      assert.deepEqual(got.body.activity, { active_week: 0, shipped_month: 0 },
+        post_url: `/api/apps/${a.slug}/messages`,
+      }, 'a collab-public app: its channel is offered, with its last few messages, its address and where the hub posts');
+      const { daily, ...counts } = got.body.activity;
+      assert.deepEqual(counts, { active_week: 0, shipped_month: 0 },
         'and Members & activity\'s two numbers');
+      assert.equal(daily.length, 14, 'and its fourteen days');
+      assert.ok(daily.every((d) => d.n === 0 && /^\d{4}-\d{2}-\d{2}$/.test(d.day)));
+      assert.equal(got.body.can_manage, false, 'a viewer cannot propose who it is for');
+      assert.equal(got.body.audience_change, null);
 
       got = await call('POST', `/api/apps/${a.slug}/membership`, { joined: 'yes' });
       assert.equal(got.status, 400, 'joined must be a boolean');
@@ -256,6 +262,23 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       as = owner;
       got = await call('POST', `/api/apps/${a.slug}/membership`, { joined: false });
       assert.equal(got.status, 409, 'the creator cannot leave');
+
+      // WHO IT IS FOR, AS SOMETHING TO CHANGE: offered to whoever the
+      // visibility PR route lets open one, on an app with a repository.
+      got = await call('GET', `/api/apps/${a.slug}/community`);
+      assert.equal(got.body.can_manage, false, 'no repository, no proposal to open');
+      await pool.query(`UPDATE apps SET repo_url = 'https://github.com/o/r' WHERE id = $1`, [a.id]);
+      got = await call('GET', `/api/apps/${a.slug}/community`);
+      assert.equal(got.body.can_manage, true, 'the creator may propose it');
+      assert.equal(got.body.audience_change, null);
+      const { rows: pending } = await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, status, branch_name, pr_number, pr_title)
+         VALUES ($1, $2, 'promoted', 'visibility/x', 7, 'Make this app private (collaborators only)') RETURNING id`,
+        [a.id, owner.id]);
+      got = await call('GET', `/api/apps/${a.slug}/community`);
+      assert.deepEqual(got.body.audience_change,
+        { session_id: pending[0].id, pr_number: 7, title: 'Make this app private (collaborators only)' },
+        'one up for a vote is pointed at, not offered again');
 
       const hidden = await app({ createdBy: owner.id, view: 'private', collab: 'private' });
       as = viewer;
@@ -409,6 +432,63 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       `INSERT INTO chat_sessions (app_id, user_id, status, merged_at) VALUES ($1, $2, 'merged', NOW()) RETURNING id`,
       [other.id, owner.id]);
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s[0].id, boss.id]);
-    assert.deepEqual(await communities.activitySummary(pool, other.id), { active_week: 3, shipped_month: 1 });
+    const { daily, ...counts } = await communities.activitySummary(pool, other.id);
+    assert.deepEqual(counts, { active_week: 3, shipped_month: 1 });
+    // The trend: fourteen days, oldest first, today last, each the number of
+    // different people who said something, started a change or voted.
+    assert.equal(daily.length, 14);
+    assert.deepEqual(daily.slice(0, 13).map((d) => d.n), Array(13).fill(0));
+    assert.equal(daily[13].n, 3, 'today: the member who talked, the owner who started, the admin who voted');
+    const { rows: [{ today }] } = await pool.query(`SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today`);
+    assert.equal(daily[13].day, today);
+
+    // THE PLATFORM'S EVENTS GO TO #general. A vote announcement or a merge
+    // line for Homeroom's own app is Homeroom's line in #general, with the
+    // proposal's card, and not a row in the read-only old channel.
+    const conversations = require('../src/services/conversations');
+    const ws = require('../src/services/ws');
+    const { rows: prop } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title) VALUES ($1, $2, 'promoted', 41, 'Dark mode') RETURNING id`,
+      [self.id, owner.id]);
+    const before = (await pool.query('SELECT COUNT(*)::int AS n FROM chat_messages WHERE app_id = $1', [self.id])).rows[0].n;
+    await ws.sendSystemMessage(pool, self.id, `${owner.username} promoted PR #41: Dark mode for voting`, 'vote',
+      { vote: { sessionId: prop[0].id, prNumber: 41 } });
+    await ws.sendSystemMessage(pool, self.id, 'Dark mode merged (PR #41) and will be live in a few minutes.', 'system',
+      { merged: { sessionId: prop[0].id, prNumber: 41, title: 'Dark mode' } });
+    // Its own thread keeps its copy, and a row the channel never drew stays put.
+    await ws.sendSystemMessage(pool, self.id, 'thread copy', 'vote',
+      { vote: { sessionId: prop[0].id, prNumber: 41 } }, { type: 'session', ref: prop[0].id });
+    await ws.sendSystemMessage(pool, self.id, 'an undrawn row', 'system', null);
+    const after = (await pool.query('SELECT COUNT(*)::int AS n FROM chat_messages WHERE app_id = $1', [self.id])).rows[0].n;
+    assert.equal(after - before, 2, 'only the thread copy and the undrawn row reach the old room');
+    const { rows: events } = await pool.query(
+      `SELECT m.id, m.sender_id, m.msg_type, m.content, o.object_type, o.object_ref, o.app_id
+         FROM conversation_messages m
+         LEFT JOIN conversation_message_objects o ON o.message_id = m.id
+        WHERE m.conversation_id = $1 AND m.msg_type = 'system' ORDER BY m.id`, [general]);
+    assert.deepEqual(events.map((e) => [e.sender_id, e.object_type, e.object_ref, e.app_id]), [
+      [null, 'code_proposal', prop[0].id, self.id],
+      [null, 'code_proposal', prop[0].id, self.id],
+    ]);
+    assert.match(events[0].content, /promoted PR #41: Dark mode for voting/);
+    // Not a person's message: it rings nobody and counts as nobody's unread.
+    assert.equal((await communities.generalChannelSummary(pool, member.id)).unread_count, 4,
+      'the four messages from before, not the two events');
+    assert.deepEqual((await communities.generalChannelSummary(pool, member.id)).recent.map((m) => m.content),
+      ['two', 'three', 'four'], 'and the hub\'s preview is people talking');
+    const { rows: rung } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM notifications WHERE conversation_message_id = ANY($1::int[])`,
+      [events.map((e) => e.id)]);
+    assert.equal(rung[0].n, 0);
+    // Drawn as Homeroom's, with the proposal's card for someone who may see it.
+    const shown = await conversations.getMessage(pool, asUser(boss), general, events[0].id);
+    assert.equal(shown.system, true);
+    assert.equal(shown.sender.username, 'Homeroom');
+    assert.equal(shown.objects.length, 1);
+    // Another app's events stay in its own room.
+    const otherBefore = (await pool.query('SELECT COUNT(*)::int AS n FROM chat_messages WHERE app_id = $1', [other.id])).rows[0].n;
+    await ws.sendSystemMessage(pool, other.id, 'promoted PR #2', 'vote', { vote: { sessionId: s[0].id, prNumber: 2 } });
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM chat_messages WHERE app_id = $1', [other.id])).rows[0].n,
+      otherBefore + 1);
   });
 });

@@ -27,6 +27,16 @@
  *   & approvals, where the roster, invites and approvers are managed, for
  *   exactly whom the "+" menu offers it. This hero lists; it does not manage.
  *
+ *   OPEN IT UP. Who a project is for can grow after it exists: Invite
+ *   makes a Just-you project a Group, and "Open it up" makes it a
+ *   Community (or "Make it a group" takes a Community back). That is the
+ *   visibility change the settings dialog proposes, POST
+ *   /api/apps/:slug/visibility-pr, offered to the same people the route
+ *   lets open it (`can_manage`). It is a PROPOSAL, not a switch: dapp.json
+ *   says who a project is for, so the change is voted in like any other
+ *   line of it and applies once it merges. While one is up, the hero says
+ *   so and links to it instead of offering a second.
+ *
  *   HOW A CHANGE GETS IN. The approval rule, read from the server rather
  *   than restated here (GET /api/apps/:slug/community, `approval`): the
  *   headline number an unopposed change needs. It is a headline and it says
@@ -53,7 +63,7 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { CheckIcon, LockIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon, LockIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 
@@ -83,9 +93,21 @@ export type CommunityPayload = {
     handle?: string | null;
     /** Homeroom's earlier project discussion, kept read-only. */
     archive_href?: string | null;
+    /** Where the hub's composer sends: the room's own write route. */
+    post_url?: string | null;
   } | null;
-  /** Who has been around lately, for Members & activity. */
-  activity?: { active_week: number; shipped_month: number } | null;
+  /** Who has been around lately, for Members & activity: two counts and
+      the last fourteen days, oldest first, as people-per-day. */
+  activity?: {
+    active_week: number;
+    shipped_month: number;
+    daily?: Array<{ day: string; n: number }>;
+  } | null;
+  /** Whether this viewer may propose who the project is for (the creator,
+      an app admin or a platform admin; never the platform's own app). */
+  can_manage?: boolean;
+  /** An audience change already up for a vote, if one is. */
+  audience_change?: { session_id: number; pr_number: number | null; title: string | null } | null;
   approval: {
     policy: 'anyone' | 'invited';
     approvals_required: number | null;
@@ -117,6 +139,18 @@ export function approvalLine(approval: CommunityPayload['approval'] | null | und
 export function audienceLine(p: Pick<CommunityPayload, 'audience' | 'audience_label' | 'member_count'>): string {
   if (p.audience === 'solo') return p.audience_label || 'Just you';
   return `${p.audience_label} · ${plural(Number(p.member_count) || 0, 'member', 'members')}`;
+}
+
+/**
+ * The pending audience change in the hero's words. The PR's title is the
+ * settings dialog's ("Make this app public"); the hero says what it means
+ * for who the project is for.
+ */
+export function audienceChangeLine(title: string | null | undefined): string {
+  const t = String(title || '');
+  if (/ public$/.test(t)) return 'Opening it up to a community is up for a vote';
+  if (/private \(collaborators only\)$/.test(t)) return 'Making it a group is up for a vote';
+  return 'A change to who it is for is up for a vote';
 }
 
 function AudienceGlyph({ audience }: { audience: Audience }) {
@@ -188,6 +222,118 @@ export function useCommunity(slug: string): CommunityPayload | null {
     if (slug && !inflight.has(slug)) void reloadCommunity(slug);
   }, [slug]);
   return slug ? communities.get(slug) || null : null;
+}
+
+/**
+ * "Open it up" / "Make it a group": the audience change as a question under
+ * its button, the Join popup's shape. The answer opens the visibility PR;
+ * the hero then re-reads and shows it as up for a vote.
+ */
+function AudienceChange({ slug, name, audience, onOpened }: {
+  slug: string;
+  name: string;
+  audience: Audience;
+  onOpened: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const popRef = useRef<HTMLDivElement | null>(null);
+  const toGroup = audience === 'open';
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onDown = (e: Event) => {
+      const t = e.target as Node | null;
+      if (t && (popRef.current?.contains(t) || btnRef.current?.contains(t))) return;
+      setOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [open]);
+
+  const propose = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/visibility-pr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(toGroup
+          ? { collabVisibility: 'private', viewVisibility: 'private' }
+          : { collabVisibility: 'public', viewVisibility: 'public' }),
+      });
+      // 409: one is already up. Either way the answer is on the hero now.
+      if (!res.ok && res.status !== 409) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body && body.error) || 'That did not go through. Try again.');
+      }
+      setOpen(false);
+      onOpened();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That did not go through. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const label = toGroup ? 'Make it a group' : 'Open it up';
+  return (
+    <span className="dev-ws-join-anchor">
+      <Button
+        ref={btnRef}
+        type="button"
+        variant="pillNeutral"
+        size="sm"
+        ink="neutral"
+        data-ws-community-audience-change={toGroup ? 'invited' : 'open'}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => { setError(''); setOpen((v) => !v); }}
+      >
+        {label}
+      </Button>
+      {open ? (
+        <div
+          ref={popRef}
+          className="dev-ws-join-pop"
+          role="dialog"
+          aria-label={toGroup ? `Make ${name} a group?` : `Open ${name} to a community?`}
+          data-ws-audience-pop=""
+        >
+          <p className="dev-ws-ask-q">{toGroup ? `Make ${name} a group?` : `Open ${name} to a community?`}</p>
+          <p className="dev-ws-vote-sub">
+            {toGroup
+              ? 'Only people who are invited can see it and build it. Members vote on this first, and it applies once it merges.'
+              : 'Anyone can find it on Discover, join, and propose changes. Members vote on this first, and it applies once it merges.'}
+          </p>
+          {error ? <p className="dev-ws-audience-error" role="alert" data-ws-audience-error="">{error}</p> : null}
+          <div className="dev-ws-answer-row">
+            <button
+              type="button"
+              className="dev-ws-answer-btn dev-ws-answer-join"
+              data-ws-audience-answer="propose"
+              autoFocus
+              disabled={busy}
+              onClick={() => { void propose(); }}
+            >
+              {toGroup ? 'Propose making it a group' : 'Propose opening it up'}
+            </button>
+          </div>
+          <button type="button" className="dev-ws-vote-later" data-ws-audience-answer="later" onClick={() => setOpen(false)}>
+            Not now
+          </button>
+        </div>
+      ) : null}
+    </span>
+  );
 }
 
 export function CommunityCard({ slug, name, iconUrl, iconEmoji }: {
@@ -402,7 +548,20 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji }: {
             Invite
           </Button>
         ) : null}
+        {data.can_manage && !data.audience_change ? (
+          <AudienceChange slug={slug} name={displayName} audience={data.audience} onOpened={() => { void load(); }} />
+        ) : null}
       </div>
+      {data.audience_change ? (
+        <a
+          className="dev-ws-hero-line dev-ws-hero-pending"
+          href={`#app/${encodeURIComponent(slug)}/dev/proposals/${data.audience_change.session_id}`}
+          data-ws-community-audience-pending={String(data.audience_change.session_id)}
+        >
+          {audienceChangeLine(data.audience_change.title)}
+          <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+        </a>
+      ) : null}
       {data.description ? (
         <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
       ) : null}

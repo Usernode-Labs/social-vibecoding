@@ -380,6 +380,60 @@ function SessionMenu({ session }: { session: AgentSession | null }) {
 
 // ── Transcript pieces ──────────────────────────────────────────────────
 
+/**
+ * A card the platform refused because the viewer is not a member of the
+ * project (`join_required`): the refusal is a question, so the card asks it.
+ * The button IS the answer — it joins (Home.setMembership, the one join
+ * path) and then asks the Mayor to try again, which prepares a fresh card;
+ * a refused card is never confirmed a second time.
+ */
+function JoinToRetry({ card, join }: { card: CardView; join: { slug: string; name: string } }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'joined' | 'failed'>('idle');
+  const onJoin = async () => {
+    if (state === 'busy' || state === 'joined') return;
+    setState('busy');
+    const home = (window as any).Home;
+    let ok = false;
+    try {
+      ok = typeof home?.setMembership === 'function'
+        && !!(await home.setMembership(join.slug, true, undefined, { name: join.name }));
+    } catch {
+      ok = false;
+    }
+    if (!ok) { setState('failed'); return; }
+    setState('joined');
+    void sendAgentMessage(`I joined ${join.name}. Please try "${card.title}" again.`);
+  };
+  return (
+    <div className="mt-3 flex flex-col gap-2" data-agent-session-join={join.slug}>
+      <p className="text-sm text-zinc-700 dark:text-zinc-300">
+        Only members of {join.name} can do this. Join it, and the Mayor will try again.
+      </p>
+      {state === 'joined' ? (
+        <p className="inline-flex items-center gap-1.5 text-sm font-semibold text-zinc-600 dark:text-zinc-300" data-agent-session-joined="">
+          <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" /> Joined. Asked the Mayor to try again.
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            data-agent-session-join-btn=""
+            layout="iconRow"
+            variant="pillAccent"
+            disabledStyle="dim"
+            disabled={state === 'busy'}
+            onClick={() => { void onJoin(); }}
+          >
+            {state === 'busy' ? <SpinnerArcIcon className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+            Join {join.name}
+          </Button>
+          {state === 'failed' ? <span className="text-sm text-red-700 dark:text-red-300">That did not work. Try again.</span> : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Card({ card, live = false }: { card: CardView; live?: boolean }) {
   const decidingId = useAgentSessionSelector((s) => s.deciding);
   const deciding = decidingId === card.id;
@@ -438,7 +492,9 @@ function Card({ card, live = false }: { card: CardView; live?: boolean }) {
           <CheckIcon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> Confirmed{card.outcome ? ` · ${card.outcome}` : ''}
         </p>
       ) : null}
-      {card.status === 'failed' ? (
+      {card.status === 'failed' && card.join ? (
+        <JoinToRetry card={card} join={card.join} />
+      ) : card.status === 'failed' ? (
         <p className="mt-3 text-sm font-semibold text-red-700 dark:text-red-300">Did not go through{card.outcome ? `: ${card.outcome}` : '.'}</p>
       ) : null}
       {card.status === 'dismissed' ? <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">Dismissed. Nothing was changed.</p> : null}

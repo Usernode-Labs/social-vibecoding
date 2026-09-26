@@ -1543,10 +1543,23 @@ test('tools reach the platform over loopback with the caller’s own token', () 
   assert.doesNotMatch(SRC, /api\.github\.com/);
 });
 
+test('a membership refusal keeps its code and the app, not a scope error', () => {
+  const err = tools.platformError({
+    ok: false, status: 403,
+    body: { code: 'join_required', error: 'Join Tiny to take part.', app: { slug: 'tiny', name: 'Tiny', extra: 'x' } },
+  });
+  assert.equal(err.structuredContent.code, 'join_required');
+  assert.equal(err.structuredContent.message, 'Join Tiny to take part.');
+  assert.deepEqual(err.structuredContent.app, { slug: 'tiny', name: 'Tiny' });
+  // Any other 403 is still the scope error it always was.
+  assert.equal(tools.platformError({ ok: false, status: 403, body: { error: 'nope' } }).structuredContent.code, 'insufficient_scope');
+});
+
 test('platform failures pass the platform’s own wording through', () => {
   const cases = [
     [{ ok: false, status: 401, body: {} }, 'not_connected'],
     [{ ok: false, status: 403, body: { error: 'insufficient_scope' } }, 'insufficient_scope'],
+    [{ ok: false, status: 403, body: { code: 'join_required', error: 'Join Tiny to take part.', app: { slug: 'tiny', name: 'Tiny' } } }, 'join_required'],
     [{ ok: false, status: 404, body: {} }, 'no_access'],
     [{ ok: false, status: 429, body: { code: 'budget_exceeded', error: 'Daily limit reached ($20.00).' } }, 'budget_exceeded'],
     [{ ok: false, status: 429, body: { error: 'You already have 5 PRs up for vote.' } }, 'at_capacity'],
