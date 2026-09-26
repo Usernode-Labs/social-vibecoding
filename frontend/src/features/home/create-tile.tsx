@@ -1,5 +1,6 @@
 /**
- * "Create an app" — the launcher grid's trailing tile.
+ * "New project" (it said "Create an app" until communities, stage 4) — the
+ * launcher grid's trailing tile.
  *
  * ── Why it is a tile at the end of Your apps ───────────────────────────
  *
@@ -82,7 +83,10 @@ const LABEL_ON = 'home-create-label app-card-title text-zinc-500 group-hover:tex
   + 'dark:text-zinc-400 dark:group-hover:text-violet-400';
 const LABEL_OFF = 'home-create-label app-card-title text-zinc-400 dark:text-zinc-500';
 
-export const CREATE_TILE_LABEL = 'Create an app';
+// "New project" since communities, stage 4: the create dialog it opens is
+// titled "New project" (stage 3), and what it makes is a project for someone
+// (Just you, a group or a community), not only an app to use.
+export const CREATE_TILE_LABEL = 'New project';
 
 export function CreateTile({ view, style }: { view: CreateTileView; style?: string }) {
   const node = useRef<HTMLButtonElement | null>(null);
@@ -114,7 +118,7 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
       // section it replaces. `data-create-enabled` is the quota state.
       data-panel-slot="create"
       data-create-enabled={String(on)}
-      title={on ? 'Create a new app' : locked}
+      title={on ? 'Start a new project' : locked}
       {...(on ? null : { 'aria-label': locked })}
       onClick={() => {
         // Both states open the same dialog. At the limit its quota row

@@ -1100,7 +1100,9 @@ export function CreateAppDialog() {
               / Import — except beside the single-choice rows, where a press
               on a row advances and app.css hides Next (#3160). No Back: the
               earlier steps are still on screen, and each collapsed row's
-              "Change" reopens its choice.
+              "Change" reopens its choice, and nothing is filled until it has
+              been pressed (app.css, "Nothing is chosen while a step is being
+              asked").
           */}
           <div className="flex gap-2 pt-1">
             <button

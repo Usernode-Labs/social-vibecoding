@@ -89,6 +89,7 @@ import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
 import { AppsMore } from './apps-more';
+import { GettingStarted } from './getting-started';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
 import { WidgetStrip } from './widget-strip';
@@ -201,6 +202,14 @@ export function HomeScreen() {
             component took over from Home._wireWidgetStrip and what it left
             there.
         */}
+        {/*
+            GETTING STARTED (communities, stage 5): three first steps for an
+            account that has just come through "What communities do you want
+            to join?", on top of everything until it is closed. Ships empty
+            and hidden, like the widget strip below it: whether to draw it is
+            known only after the session is read (./getting-started.tsx).
+        */}
+        <GettingStarted />
         <WidgetStrip />
         {/*
             ── AREA 1 of 4: YOUR APPS ─────────────────────────────────

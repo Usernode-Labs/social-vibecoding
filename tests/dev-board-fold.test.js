@@ -1310,9 +1310,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 818 leaves 22 slots against MAX_DECLARED_TESTS (840), clear of the
   // 20-slot floor.
   //
+  // 818 → 820: +2 (communities, stage 5): a new account's first run. The
+  // join screen ("What communities do you want to join?", ?shot=join-
+  // communities) and Home's Getting started card (?shot=getting-started),
+  // two new routes with nothing already declared on them to fold into.
+  // 820 leaves exactly the 20-slot floor against MAX_DECLARED_TESTS (840):
+  // the next proposal to add a check folds into an existing one or raises
+  // the cap, as tests/lib/check-cap.js says.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 818);
+  checkCap.assertPinned(DAPP.tests.length, 820);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

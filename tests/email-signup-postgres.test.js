@@ -24,6 +24,8 @@ const DDL = `
     has_platform_access BOOLEAN NOT NULL DEFAULT FALSE,
     platform_access_granted_at TIMESTAMPTZ,
     needs_username_choice BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Communities, stage 5: the join screen's flag, set by the same INSERT.
+    needs_communities_choice BOOLEAN NOT NULL DEFAULT FALSE,
     -- chooseFirstUsername stamps it (QA 2026-09-24 Q12's handle choice).
     updated_at TIMESTAMPTZ
   );
@@ -243,11 +245,13 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
       assert.notEqual(body.user.username, 'new.user@example.com');
       assert.equal('token' in body, false);
       const createdRow = (await pool.query(
-        'SELECT username, email, needs_username_choice FROM users WHERE email = $1',
+        'SELECT username, email, needs_username_choice, needs_communities_choice FROM users WHERE email = $1',
         ['new.user@example.com'],
       )).rows[0];
       assert.equal(createdRow.username, 'newuser');
       assert.equal(createdRow.needs_username_choice, true);
+      assert.equal(createdRow.needs_communities_choice, true,
+        'a new account is asked which communities to join, after its username');
       const sessionCookie = cookieValue(complete.headers, 'session');
       assert.match(sessionCookie, /^[0-9a-f]{64}$/);
       assert.match(complete.headers.get('set-cookie'), /HttpOnly/i);

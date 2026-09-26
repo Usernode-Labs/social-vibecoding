@@ -12197,11 +12197,19 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card :is(.create-who-pill, .create-mode-pill, .create-approver-pill) .create-choice-caption {
   color: var(--text-muted);
 }
-#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"],
-#create-card[data-audience="invited"]   .create-who-pill[data-audience-pill="invited"],
-#create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"],
-#create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"],
-#create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"],
+/* NOTHING IS CHOSEN WHILE A STEP IS BEING ASKED (request #3160). The first
+   two steps are questions whose answer moves you on: pressing a row IS the
+   answer, and the next step unfolds. A row that was already filled on arrival
+   ("Just me", "Start from scratch") read as a choice made for you, with a
+   Next button under it to press, so those two only wear the fill once their
+   step has moved on and collapsed to the row that was pressed. The approval
+   step keeps its default filled: it is a setting you confirm with Create,
+   not a question that moves you on. */
+#create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill[data-audience-pill="solo"],
+#create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill[data-audience-pill="invited"],
+#create-card:not([data-step="who"])[data-audience="open"]    .create-who-pill[data-audience-pill="open"],
+#create-card:is([data-step="details"], [data-step="approve"])[data-mode="new"]    .create-mode-pill[data-mode-pill="new"],
+#create-card:is([data-step="details"], [data-step="approve"])[data-mode="import"] .create-mode-pill[data-mode-pill="import"],
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"],
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"],
 #create-card[data-approvals="majority"] .create-approvals-pill[data-approvals-pill="majority"],
@@ -12212,11 +12220,11 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 }
 /* 0.9 on the fill: the caption is 12px, and full white would outweigh the
    title above it; 0.9 still clears AA on #0a6ee0. */
-#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"] .create-choice-caption,
-#create-card[data-audience="invited"]   .create-who-pill[data-audience-pill="invited"] .create-choice-caption,
-#create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"] .create-choice-caption,
-#create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
-#create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"] .create-choice-caption,
+#create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill[data-audience-pill="solo"] .create-choice-caption,
+#create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill[data-audience-pill="invited"] .create-choice-caption,
+#create-card:not([data-step="who"])[data-audience="open"]    .create-who-pill[data-audience-pill="open"] .create-choice-caption,
+#create-card:is([data-step="details"], [data-step="approve"])[data-mode="new"]    .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
+#create-card:is([data-step="details"], [data-step="approve"])[data-mode="import"] .create-mode-pill[data-mode-pill="import"] .create-choice-caption,
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"] .create-choice-caption,
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"] .create-choice-caption {
   color: inherit;
@@ -12288,7 +12296,8 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 /* #3160: a press on a single-choice row IS the answer and unfolds the next
    step, so the first two steps have no Next beside their rows: a Next pill
    there read as "pick, then press Next". It returns on the details step,
-   where there is free text to leave. */
+   where there is free text to leave. Cancel stays; Enter still advances
+   (the form's submit handler). */
 #create-card:is([data-step="who"], [data-step="start"]) #create-next {
   display: none;
 }
