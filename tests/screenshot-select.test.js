@@ -750,3 +750,21 @@ test('start(): a refusal the viewer did not choose is a failure, not "declined" 
     await assert.rejects(api.start(), (err) => err.code === code, name);
   }
 });
+
+test('start(): a play() that rejects still fails the capture and ends the share', async () => {
+  const video = { ...silentVideo(), play: () => Promise.reject(new Error('play refused')) };
+  const { api, stopped } = loadBrowserScreenshotSelect({
+    getDisplayMedia: async (_opts, stream) => stream,
+    video,
+  });
+  await assert.rejects(api.start(), /play refused/);
+  assert.deepEqual(stopped, ['video']);
+});
+
+test('no capture path awaits video.play() without a bound (#3011)', () => {
+  // Registration re-plays a paused or re-attached video too; any of these
+  // waiting on a share that sends nothing is the same hang.
+  const src = fs.readFileSync(SRC, 'utf8');
+  assert.doesNotMatch(src, /await\s+video\.play\(\)/);
+  assert.equal((src.match(/settleWithin\(video\.play\(\)/g) || []).length, 3);
+});

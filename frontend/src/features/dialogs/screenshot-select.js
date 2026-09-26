@@ -580,7 +580,12 @@
 
   // How long the capture video gets to start (play()) and then to report a
   // frame size (loadedmetadata) before the share counts as sending nothing.
-  const FIRST_FRAME_TIMEOUTS_MS = { play: 3000, metadata: 1500 };
+  // Generous on purpose: a slow capturer that does deliver must not be cut
+  // off, and before this bound existed a share with no frame after play()
+  // plus the metadata wait already failed, only later. `resume` bounds the
+  // re-plays inside registration (a paused or re-attached video), which
+  // proceed to grab whatever is there once it passes.
+  const FIRST_FRAME_TIMEOUTS_MS = { play: 8000, metadata: 1500, resume: 1500 };
 
   const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // mirrors the server cap
   const SUPPORTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg'];
@@ -1029,7 +1034,7 @@
           return registerFromFrames(async () => {
             if (!first) await waitFrames(video, 1);
             first = false;
-            if (video.paused) { try { await video.play(); } catch { /* grab what is there */ } }
+            if (video.paused) { try { await settleWithin(video.play(), FIRST_FRAME_TIMEOUTS_MS.resume); } catch { /* grab what is there */ } }
             const reg = grabFrame(video);
             return reg && reg.ctx.getImageData(0, 0, reg.width, reg.height);
           }, markerCssCenters(viewportW, viewportH));
@@ -1042,7 +1047,7 @@
           console.warn('[screenshot] capture video not advancing, re-attaching:', solved.reason);
           video.srcObject = null;
           video.srcObject = stream;
-          try { await video.play(); } catch { /* the grab below reports it */ }
+          try { await settleWithin(video.play(), FIRST_FRAME_TIMEOUTS_MS.resume); } catch { /* the grab below reports it */ }
           await waitFrames(video, 2);
           solved = await register();
         }
