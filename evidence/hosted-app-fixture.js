@@ -113,7 +113,13 @@ function createServer() {
     res.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
-      'content-security-policy': `default-src 'none'; script-src 'self' 'nonce-${NONCE}'; style-src 'nonce-${NONCE}'; frame-ancestors *; base-uri 'none'; form-action 'none'`,
+      // The bridge publishes safe-area and keyboard insets as CSS custom
+      // properties on <html>. Permit that narrow style-attribute contract
+      // while keeping every <style> element protected by this fixture's
+      // nonce. Without style-src-attr, Chromium reports the bridge's normal
+      // setProperty calls as CSP violations and evidence replay rejects an
+      // otherwise healthy app frame.
+      'content-security-policy': `default-src 'none'; script-src 'self' 'nonce-${NONCE}'; style-src 'nonce-${NONCE}'; style-src-attr 'unsafe-inline'; frame-ancestors *; base-uri 'none'; form-action 'none'`,
       // The bridge uses only the parent's origin. Never expose the path or
       // token-bearing query, but keep the origin so replies can be fenced.
       'referrer-policy': 'origin',
