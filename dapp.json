@@ -3181,9 +3181,9 @@
       ]
     },
     {
-      "name": "#2905: an app's chat in Messages draws no report or block text links in its rows",
+      "name": "#2905: an app's chat in Messages draws no report or block text links in its rows, under a header with the app's own icon",
       "path": "/?demo=1#messages/app/usernode-2d5619",
-      "expectSelector": "#messages-screen:not(.hidden):has(a.messages-channel-row[data-inbox-app=\"usernode-2d5619\"] .app-icon-tile[data-icon=\"image\"] img) #gc-messages:has(.gc-msg):not(:has(.gc-msg button[aria-label=\"Report message\"])):not(:has(.gc-msg button.text-red-600))",
+      "expectSelector": "#messages-screen:not(.hidden):has(header.messages-thread-header .app-icon-tile[data-icon=\"image\"] img) #gc-messages:has(.gc-msg):not(:has(.gc-msg button[aria-label=\"Report message\"])):not(:has(.gc-msg button.text-red-600))",
       "impact": [
         "frontend/src/features/group-chat/**",
         "public/css/app.css"
