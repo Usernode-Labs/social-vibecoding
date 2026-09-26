@@ -152,7 +152,7 @@ test('a vertical drag is released to the scroll and never moves the card or vote
   t.up(touch(260, 190));
   assert.deepEqual(commits, []);
   assert.ok(frames.every((f) => f === null), 'nothing but resets');
-  assert.equal(t.consumeClick(), false, 'a tap after a scroll is left alone');
+  assert.equal(t.consumeClick(1000), false, 'a tap after a scroll is left alone');
 });
 
 test('a sideways drag past the distance votes once; short of it, the card springs back', () => {
@@ -162,18 +162,31 @@ test('a sideways drag past the distance votes once; short of it, the card spring
   assert.equal(r.t.move(touch(70, 302)), true, 'captured once it is clearly sideways');
   r.t.move(touch(50 + d + 5, 305));
   assert.equal(r.frames[r.frames.length - 1].armed, true);
-  r.t.up(touch(50 + d + 5, 305));
+  r.t.up(touch(50 + d + 5, 305), 1000);
   assert.deepEqual(r.commits, ['yes']);
   assert.equal(r.frames[r.frames.length - 1], null, 'and the card comes back to rest');
-  assert.equal(r.t.consumeClick(), true, 'the click that ends a drag is not a tap on the title');
-  assert.equal(r.t.consumeClick(), false, 'once');
+  // The implicit capture ends after the release; that is not a lost gesture.
+  r.t.lost(1);
+  assert.equal(r.t.consumeClick(1020), true, 'the click that ends a drag is not a tap on the title');
+  assert.equal(r.t.consumeClick(1030), false, 'once');
   // A touch drag often ends with no click at all: the leftover must not eat
-  // the next real tap, from a finger or a mouse.
+  // the next real tap, from a finger or a mouse...
   r.t.down(touch(50, 300));
   r.t.move(touch(80, 300));
-  r.t.up(touch(80, 300));
+  r.t.up(touch(80, 300), 2000);
   r.t.down(touch(50, 300, { pointerType: 'mouse' }));
-  assert.equal(r.t.consumeClick(), false, 'a new press clears it');
+  assert.equal(r.t.consumeClick(2050), false, 'a new press clears it');
+  // ...nor a click with no press before it (a screen reader's activation).
+  r.t.down(touch(50, 300));
+  r.t.move(touch(80, 300));
+  r.t.up(touch(80, 300), 3000);
+  assert.equal(r.t.consumeClick(3000 + S.SWIPE_CLICK_WINDOW_MS + 1), false, 'too late to be the swipe\'s own click');
+  r.t.down(touch(50, 300));
+  r.t.move(touch(80, 300));
+  r.t.cancel();
+  assert.equal(r.t.consumeClick(4000), false, 'a cancelled gesture makes no click to swallow');
+  // The wiring: only a pointer-made click is ever swallowed.
+  assert.match(WORKSHOP, /if \(t\.consumeClick\(e\.timeStamp\) && e\.detail !== 0\)/);
 
   r = track();
   r.t.down(touch(300, 300));
@@ -263,6 +276,55 @@ test('eligibility is read again at release: a card that became unvotable mid-dra
   allowed = { yes: false, no: false }; // a tap on the sheet's Yes landed meanwhile
   t.up(touch(50 + d + 30, 300));
   assert.deepEqual(commits, []);
+});
+
+test('a drag that starts sideways and turns down is abandoned, and a sloppy diagonal never votes', () => {
+  const d = S.commitDistance(WIDTH);
+  let r = track();
+  r.t.down(touch(50, 300));
+  assert.equal(r.t.move(touch(65, 300)), true, 'locked sideways by the first 15px');
+  r.t.move(touch(80, 340));
+  assert.equal(r.frames[r.frames.length - 1], null, 'turned vertical: the card goes back');
+  assert.equal(r.t.move(touch(50 + d + 40, 360)), false, 'and stays out of it');
+  r.t.up(touch(50 + d + 40, 360));
+  assert.deepEqual(r.commits, [], 'the scroll it became is not a vote');
+
+  // Far enough, but nearly as far down as across: not clearly a swipe.
+  r = track();
+  r.t.down(touch(50, 300));
+  r.t.move(touch(70, 300));
+  r.t.move(touch(50 + d + 10, 300 + Math.round((d + 10) * 0.8)));
+  assert.equal(r.frames[r.frames.length - 1].armed, false, 'the note does not promise a vote');
+  r.t.up(touch(50 + d + 10, 300 + Math.round((d + 10) * 0.8)));
+  assert.deepEqual(r.commits, []);
+  assert.equal(S.releaseDecision(d, WIDTH, BOTH, d), null);
+  assert.equal(S.releaseDecision(d, WIDTH, BOTH, Math.floor(d / 2)), 'yes', 'a natural arc still counts');
+});
+
+test('a second finger anywhere on the page, or a lost capture, ends the swipe without a vote', () => {
+  const d = S.commitDistance(WIDTH);
+  let r = track();
+  r.t.down(touch(50, 300));
+  r.t.move(touch(70, 300));
+  r.t.move(touch(50 + d + 30, 300));
+  r.t.interrupt(1); // the window listener hears the gesture's own down: no-op
+  r.t.interrupt(2); // a finger on the rail, which the card never sees
+  r.t.up(touch(50 + d + 30, 300));
+  assert.deepEqual(r.commits, []);
+  assert.equal(r.frames[r.frames.length - 1], null);
+
+  r = track();
+  r.t.down(touch(50, 300));
+  r.t.move(touch(70, 300));
+  r.t.move(touch(50 + d + 30, 300));
+  r.t.lost(1);
+  r.t.up(touch(50 + d + 30, 300));
+  assert.deepEqual(r.commits, [], 'a release the card may not have seen is not trusted');
+  assert.equal(r.frames[r.frames.length - 1], null, 'and the card is back at rest');
+  // The hook listens where the card cannot.
+  assert.match(WORKSHOP, /window\.addEventListener\('pointerdown', onDown, true\)/);
+  assert.match(WORKSHOP, /onLostPointerCapture: \(e: ReactPointerEvent<HTMLElement>\) => \{ t\.lost\(e\.pointerId\); \}/);
+  assert.match(WORKSHOP, /window\.addEventListener\('blur', stop\)/);
 });
 
 /* ── The wiring: a swipe is the feed's own answer, and so castVote's ─── */

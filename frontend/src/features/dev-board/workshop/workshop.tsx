@@ -1278,6 +1278,26 @@ function useSwipeVote(key: string, canYes: boolean, canNo: boolean, onSwipe: (ke
   useEffect(() => {
     if (!on && trackerRef.current) trackerRef.current.cancel();
   }, [on]);
+  // What the card's own events cannot see. A second finger that lands OFF
+  // the card (on the rail, the tab bar) still makes this a pinch; and a
+  // page that loses focus mid-drag (a call, the app switcher) may never
+  // deliver the release, so the card goes back rather than hang mid-swipe.
+  useEffect(() => {
+    if (!on || typeof window === 'undefined') return undefined;
+    const t = trackerRef.current as SwipeTracker;
+    const onDown = (e: PointerEvent) => t.interrupt(e.pointerId);
+    const stop = () => t.cancel();
+    const onVis = () => { if (document.visibilityState !== 'visible') t.cancel(); };
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('blur', stop);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('blur', stop);
+      document.removeEventListener('visibilitychange', onVis);
+      t.cancel();
+    };
+  }, [on]);
   const pt = (e: ReactPointerEvent<HTMLElement>) => ({
     pointerId: e.pointerId, pointerType: e.pointerType, isPrimary: e.isPrimary, x: e.clientX, y: e.clientY,
   });
@@ -1285,11 +1305,16 @@ function useSwipeVote(key: string, canYes: boolean, canNo: boolean, onSwipe: (ke
   const handlers = on ? {
     onPointerDown: (e: ReactPointerEvent<HTMLElement>) => { t.down(pt(e)); },
     onPointerMove: (e: ReactPointerEvent<HTMLElement>) => { if (t.move(pt(e)) && e.cancelable) e.preventDefault(); },
-    onPointerUp: (e: ReactPointerEvent<HTMLElement>) => { t.up(pt(e)); },
+    onPointerUp: (e: ReactPointerEvent<HTMLElement>) => { t.up(pt(e), e.timeStamp); },
     onPointerCancel: () => { t.cancel(); },
+    // Touch pointers are captured to the card implicitly; losing that
+    // capture means the release will not come here.
+    onLostPointerCapture: (e: ReactPointerEvent<HTMLElement>) => { t.lost(e.pointerId); },
     // The click that ends a drag is not a tap on the title or the picture.
+    // Only a pointer-made click (`detail` > 0) right after the release: an
+    // activation from a keyboard or a screen reader is never swallowed.
     onClickCapture: (e: ReactMouseEvent<HTMLElement>) => {
-      if (t.consumeClick()) { e.preventDefault(); e.stopPropagation(); }
+      if (t.consumeClick(e.timeStamp) && e.detail !== 0) { e.preventDefault(); e.stopPropagation(); }
     },
   } : {};
   return { on, ref, yesRef, noRef, handlers };

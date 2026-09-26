@@ -14,12 +14,15 @@
  *   - The feed scrolls vertically. A drag is a swipe only once it has moved
  *     past a slop AND is clearly sideways; anything else, diagonals
  *     included, is the scroll's, and stays the scroll's for the rest of the
- *     gesture. (The card also carries `touch-action: pan-y`, so the browser
- *     pans vertical drags itself and sends pointercancel.)
- *   - One touch. A mouse or pen never starts one, a second finger cancels
- *     the gesture, and pointercancel ends it without a vote.
- *   - The release decides, and it re-reads eligibility then: a card that was
- *     answered or started sending while the finger was down does not vote.
+ *     gesture. A swipe that turns vertical is abandoned. (The card also
+ *     carries `touch-action: pan-y`, so the browser pans vertical drags
+ *     itself and sends pointercancel.)
+ *   - One touch. A mouse or pen never starts one, a second finger anywhere
+ *     on the page cancels the gesture, and pointercancel or a lost capture
+ *     ends it without a vote.
+ *   - The release decides: the whole travel must still be clearly sideways,
+ *     and eligibility is re-read then, so a card that was answered or
+ *     started sending while the finger was down does not vote.
  */
 
 export type SwipeSide = 'yes' | 'no';
@@ -52,9 +55,18 @@ export function sideFor(dx: number): SwipeSide {
   return dx > 0 ? 'yes' : 'no';
 }
 
-/** What a release at `dx` votes, or null for "spring back". */
-export function releaseDecision(dx: number, width: number, allowed: SwipeAllowed): SwipeSide | null {
-  if (!dx) return null;
+/** Whether a drag's overall travel is clearly sideways. */
+export function isHorizontal(dx: number, dy: number): boolean {
+  return Math.abs(dx) > Math.abs(dy) * SWIPE_DOMINANCE;
+}
+
+/**
+ * What a release at (`dx`, `dy`) votes, or null for "spring back". The
+ * whole travel must still be clearly sideways: a drag that began sideways
+ * and wandered down is not a vote.
+ */
+export function releaseDecision(dx: number, width: number, allowed: SwipeAllowed, dy = 0): SwipeSide | null {
+  if (!dx || !isHorizontal(dx, dy)) return null;
   const side = sideFor(dx);
   if (!allowed[side]) return null;
   return Math.abs(dx) >= commitDistance(width) ? side : null;
@@ -117,11 +129,30 @@ export type SwipeTracker = {
   down(e: SwipePointer): boolean;
   /** True when the drag is a swipe: the caller should stop the event. */
   move(e: SwipePointer): boolean;
-  up(e: SwipePointer): void;
+  up(e: SwipePointer, now?: number): void;
   cancel(): void;
-  /** Whether the click that ends this gesture should be swallowed (once). */
-  consumeClick(): boolean;
+  /**
+   * Some pointer went down ANYWHERE (the caller listens on the window): a
+   * second finger that landed off the card still makes this a pinch.
+   */
+  interrupt(pointerId: number): void;
+  /**
+   * The gesture's pointer lost its capture before a release reached the
+   * card: end it without a vote. (After a release it is a no-op: the
+   * implicit capture always ends with a lostpointercapture.)
+   */
+  lost(pointerId: number): void;
+  /**
+   * Whether a click arriving at `now` is the one that ends a swipe and
+   * should be swallowed. Once, and only shortly after the release: a touch
+   * drag often produces no click at all, and a leftover must never eat a
+   * later tap or an assistive-technology activation.
+   */
+  consumeClick(now: number): boolean;
 };
+
+/** How long after a swipe's release its compatibility click may arrive. */
+export const SWIPE_CLICK_WINDOW_MS = 600;
 
 export function createSwipeTracker(opts: {
   allowed: () => SwipeAllowed;
@@ -135,13 +166,16 @@ export function createSwipeTracker(opts: {
   let x0 = 0;
   let y0 = 0;
   let dx = 0;
+  let dy = 0;
   let axis: 'pending' | 'x' | 'y' = 'pending';
-  let swallow = false;
+  // When the last horizontal gesture was released, for the click after it.
+  let endedAt: number | null = null;
 
   const reset = () => {
     const drew = axis === 'x';
     id = null;
     dx = 0;
+    dy = 0;
     axis = 'pending';
     if (drew) opts.onFrame(null);
   };
@@ -153,45 +187,61 @@ export function createSwipeTracker(opts: {
         if (e.pointerId !== id) reset();
         return false;
       }
-      // A touch drag usually ends with no click at all, so a swallow left
-      // over from it must not eat the next, genuine tap.
-      swallow = false;
+      endedAt = null;
       if (e.pointerType !== 'touch' || !e.isPrimary) return false;
       if (!anySwipe(opts.allowed())) return false;
       id = e.pointerId;
       x0 = e.x;
       y0 = e.y;
       dx = 0;
+      dy = 0;
       axis = 'pending';
       return true;
     },
     move(e) {
       if (id === null || e.pointerId !== id) return false;
       const mx = e.x - x0;
+      const my = e.y - y0;
       if (axis === 'pending') {
-        axis = lockAxis(mx, e.y - y0);
+        axis = lockAxis(mx, my);
         if (axis === 'pending') return false;
-        if (axis === 'x') swallow = true;
       }
       if (axis === 'y') return false;
       dx = mx;
-      opts.onFrame(swipeVisual(dx, opts.width(), opts.allowed(), opts.reducedMotion()));
+      dy = my;
+      // A swipe that turns into a vertical drag is abandoned for good: the
+      // card goes back and nothing this gesture does can vote.
+      if (Math.abs(dy) > Math.abs(dx)) {
+        reset();
+        return false;
+      }
+      const frame = swipeVisual(dx, opts.width(), opts.allowed(), opts.reducedMotion());
+      opts.onFrame(isHorizontal(dx, dy) ? frame : { ...frame, armed: false });
       return true;
     },
-    up(e) {
+    up(e, now) {
       if (id === null || e.pointerId !== id) return;
-      const side = axis === 'x' ? releaseDecision(dx, opts.width(), opts.allowed()) : null;
+      const wasSwipe = axis === 'x';
+      const side = wasSwipe ? releaseDecision(dx, opts.width(), opts.allowed(), dy) : null;
       reset();
+      if (wasSwipe) endedAt = typeof now === 'number' ? now : 0;
       if (side) opts.onCommit(side);
     },
     cancel() {
+      endedAt = null;
       if (id === null) return;
       reset();
     },
-    consumeClick() {
-      const s = swallow;
-      swallow = false;
-      return s;
+    interrupt(pointerId) {
+      if (id !== null && pointerId !== id) reset();
+    },
+    lost(pointerId) {
+      if (id !== null && pointerId === id) reset();
+    },
+    consumeClick(now) {
+      const at = endedAt;
+      endedAt = null;
+      return at !== null && now - at <= SWIPE_CLICK_WINDOW_MS;
     },
   };
 }
