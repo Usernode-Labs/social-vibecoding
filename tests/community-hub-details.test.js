@@ -9,8 +9,8 @@
 //     draws fourteen days, Needs you counts the votes you owe, and a person
 //     who has not joined sees "Recently" (dev-board/workshop/);
 //   - a Mayor card refused for membership offers Join (features/agent-session);
-//   - Homeroom's proposal and merge lines post to #general (the database half
-//     is in tests/communities-postgres.test.js);
+//   - a Homeroom line kept in #general is drawn as Homeroom's (Homeroom
+//     writes none into a channel now: tests/channel-activity.test.js);
 //   - Discover's rows open the hub, its controls sit over the list's card,
 //     the Communities toggle is the project page's strip, and Home's Browse
 //     all links carry the accent.
@@ -179,12 +179,7 @@ test('a Mayor card refused for membership offers Join, then asks the Mayor to tr
   assert.match(routes, /const joinRequired = outcome && outcome\.result && outcome\.result\.code === 'join_required';\s*const followUp = joinRequired \? null : await startFollowUp\(/);
 });
 
-test('Homeroom\'s proposal and merge lines are #general\'s, drawn as Homeroom\'s', () => {
-  const ws = read('src/services/ws.js');
-  const send = ws.slice(ws.indexOf('async function sendSystemMessage('));
-  assert.ok(send.indexOf('generalEventProposal(msgType, metadata, thread)') < send.indexOf('INSERT INTO chat_messages'),
-    'decided before the old room is written');
-  assert.match(ws, /const ref = msgType === 'vote' \? metadata\.vote : \(msgType === 'system' \? metadata\.merged : null\);/);
+test('a Homeroom line kept in #general, as the root of somebody\'s thread, is drawn as Homeroom\'s', () => {
   const conv = read('src/services/conversations.js');
   assert.match(conv, /username: system \? 'Homeroom' : \(row\.sender_username \|\| 'Deleted user'\),/);
   assert.match(conv.slice(conv.indexOf('async function countUnread(')), /AND m\.msg_type = 'message'/);

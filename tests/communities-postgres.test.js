@@ -442,54 +442,78 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     const { rows: [{ today }] } = await pool.query(`SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today`);
     assert.equal(daily[13].day, today);
 
-    // THE PLATFORM'S EVENTS GO TO #general. A vote announcement or a merge
-    // line for Homeroom's own app is Homeroom's line in #general, with the
-    // proposal's card, and not a row in the read-only old channel.
-    const conversations = require('../src/services/conversations');
+    // A CHANNEL IS WHAT PEOPLE SAID. A platform line with no thread — a
+    // proposal put up for a vote, a merge — is written nowhere: not the
+    // Homeroom project's old room, not #general, not another app's channel.
+    // A proposal's own thread keeps its copy.
     const ws = require('../src/services/ws');
+    const { clearAutomatedChannelLines } = require('../src/db/migrate');
+    const count = async (sql, params) => (await pool.query(sql, params)).rows[0].n;
+    const roomRows = (appId) => count('SELECT COUNT(*)::int AS n FROM chat_messages WHERE app_id = $1', [appId]);
+    const generalRows = () => count('SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [general]);
     const { rows: prop } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title) VALUES ($1, $2, 'promoted', 41, 'Dark mode') RETURNING id`,
       [self.id, owner.id]);
-    const before = (await pool.query('SELECT COUNT(*)::int AS n FROM chat_messages WHERE app_id = $1', [self.id])).rows[0].n;
-    await ws.sendSystemMessage(pool, self.id, `${owner.username} promoted PR #41: Dark mode for voting`, 'vote',
-      { vote: { sessionId: prop[0].id, prNumber: 41 } });
+    const [selfBefore, otherBefore, generalBefore] = [await roomRows(self.id), await roomRows(other.id), await generalRows()];
+    assert.equal(await ws.sendSystemMessage(pool, self.id, `${owner.username} promoted PR #41: Dark mode for voting`, 'vote',
+      { vote: { sessionId: prop[0].id, prNumber: 41 } }), null);
     await ws.sendSystemMessage(pool, self.id, 'Dark mode merged (PR #41) and will be live in a few minutes.', 'system',
       { merged: { sessionId: prop[0].id, prNumber: 41, title: 'Dark mode' } });
-    // Its own thread keeps its copy, and a row the channel never drew stays put.
+    await ws.sendSystemMessage(pool, other.id, 'promoted PR #2', 'vote', { vote: { sessionId: s[0].id, prNumber: 2 } });
     await ws.sendSystemMessage(pool, self.id, 'thread copy', 'vote',
       { vote: { sessionId: prop[0].id, prNumber: 41 } }, { type: 'session', ref: prop[0].id });
-    await ws.sendSystemMessage(pool, self.id, 'an undrawn row', 'system', null);
-    const after = (await pool.query('SELECT COUNT(*)::int AS n FROM chat_messages WHERE app_id = $1', [self.id])).rows[0].n;
-    assert.equal(after - before, 2, 'only the thread copy and the undrawn row reach the old room');
-    const { rows: events } = await pool.query(
-      `SELECT m.id, m.sender_id, m.msg_type, m.content, o.object_type, o.object_ref, o.app_id
-         FROM conversation_messages m
-         LEFT JOIN conversation_message_objects o ON o.message_id = m.id
-        WHERE m.conversation_id = $1 AND m.msg_type = 'system' ORDER BY m.id`, [general]);
-    assert.deepEqual(events.map((e) => [e.sender_id, e.object_type, e.object_ref, e.app_id]), [
-      [null, 'code_proposal', prop[0].id, self.id],
-      [null, 'code_proposal', prop[0].id, self.id],
-    ]);
-    assert.match(events[0].content, /promoted PR #41: Dark mode for voting/);
-    // Not a person's message: it rings nobody and counts as nobody's unread.
-    assert.equal((await communities.generalChannelSummary(pool, member.id)).unread_count, 4,
-      'the four messages from before, not the two events');
-    assert.deepEqual((await communities.generalChannelSummary(pool, member.id)).recent.map((m) => m.content),
-      ['two', 'three', 'four'], 'and the hub\'s preview is people talking');
-    const { rows: rung } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM notifications WHERE conversation_message_id = ANY($1::int[])`,
-      [events.map((e) => e.id)]);
-    assert.equal(rung[0].n, 0);
-    // Drawn as Homeroom's, with the proposal's card for someone who may see it.
-    const shown = await conversations.getMessage(pool, asUser(boss), general, events[0].id);
-    assert.equal(shown.system, true);
-    assert.equal(shown.sender.username, 'Homeroom');
-    assert.equal(shown.objects.length, 1);
-    // Another app's events stay in its own room.
-    const otherBefore = (await pool.query('SELECT COUNT(*)::int AS n FROM chat_messages WHERE app_id = $1', [other.id])).rows[0].n;
-    await ws.sendSystemMessage(pool, other.id, 'promoted PR #2', 'vote', { vote: { sessionId: s[0].id, prNumber: 2 } });
-    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM chat_messages WHERE app_id = $1', [other.id])).rows[0].n,
-      otherBefore + 1);
+    assert.equal(await roomRows(self.id) - selfBefore, 1, 'only the thread copy');
+    assert.equal(await roomRows(other.id), otherBefore);
+    assert.equal(await generalRows(), generalBefore);
+
+    // AND THE LINES WRITTEN BEFORE ARE CLEARED ON BOOT. An app channel keeps
+    // what people said (a deleted account's message too) and every thread's
+    // copy, and loses its platform rows.
+    const { rows: [{ id: kept }] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type) VALUES ($1, NULL, 'from a deleted account', 'message') RETURNING id`,
+      [other.id]);
+    for (const [content, type] of [['promoted PR #3 for voting', 'vote'], ['PR #3 is live', 'system'], ['PR #3 hit a conflict', 'conflict']]) {
+      await pool.query(`INSERT INTO chat_messages (app_id, user_id, content, msg_type) VALUES ($1, NULL, $2, $3)`, [other.id, content, type]);
+    }
+    // #general: two old Homeroom lines. The member read up to the first, and
+    // the owner answered the second in a thread.
+    const homeroomLine = async (content) => (await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, msg_type) VALUES ($1, NULL, $2, 'system') RETURNING id`,
+      [general, content])).rows[0].id;
+    const { rows: [{ id: lastPerson }] } = await pool.query(
+      `SELECT MAX(id) AS id FROM conversation_messages WHERE conversation_id = $1`, [general]);
+    const read = await homeroomLine('evan promoted PR #40: Hub composer for voting');
+    const answered = await homeroomLine('Hub composer merged (PR #40)');
+    const { rows: [{ id: reply }] } = await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id) VALUES ($1, $2, 'nice one', $3) RETURNING id`,
+      [general, owner.id, answered]);
+    await pool.query(`UPDATE conversation_members SET last_read_message_id = $3 WHERE conversation_id = $1 AND user_id = $2`,
+      [general, member.id, read]);
+
+    await clearAutomatedChannelLines(pool);
+    const { rows: left } = await pool.query(
+      `SELECT id, content, thread_type FROM chat_messages WHERE app_id = ANY($1::int[]) AND user_id IS NULL ORDER BY id`,
+      [[self.id, other.id]]);
+    assert.deepEqual(left.map((r) => [r.content, r.thread_type]), [['thread copy', 'session'], ['from a deleted account', null]]);
+    assert.equal(left[1].id, kept);
+    const { rows: gen } = await pool.query(
+      `SELECT id, content, deleted_at IS NOT NULL AS deleted FROM conversation_messages WHERE id = ANY($1::int[]) ORDER BY id`,
+      [[read, answered, reply]]);
+    assert.deepEqual(gen.map((r) => [r.id, r.content, r.deleted]), [
+      [answered, '', true],
+      [reply, 'nice one', false],
+    ], 'the unanswered line is gone; the answered one keeps its place and loses its words, and the reply stays');
+    const { rows: [cursor] } = await pool.query(
+      `SELECT last_read_message_id FROM conversation_members WHERE conversation_id = $1 AND user_id = $2`, [general, member.id]);
+    assert.equal(cursor.last_read_message_id, lastPerson, 'moved back to the last line that stays, not to NULL');
+    assert.equal((await communities.generalChannelSummary(pool, member.id)).unread_count, 0, 'so the room does not read as unread');
+    // Once clean, the next boot changes nothing.
+    const snapshot = async () => (await pool.query(
+      `SELECT (SELECT COUNT(*) FROM chat_messages)::int AS a, (SELECT COUNT(*) FROM conversation_messages)::int AS b,
+              (SELECT COUNT(*) FROM conversation_messages WHERE deleted_at IS NOT NULL)::int AS c`)).rows[0];
+    const once = await snapshot();
+    await clearAutomatedChannelLines(pool);
+    assert.deepEqual(await snapshot(), once);
   });
 
   await t.test('#3270: the Needs you feed is every decision owed in your projects, mixed, newest first', async () => {

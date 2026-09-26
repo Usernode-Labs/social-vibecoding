@@ -2164,7 +2164,8 @@ function rowView(n) {
   }
 
   // #1688: the Friday card. `detail` is "<merged>:<open>" — what went live
-  // this week and what is waiting on votes; the card itself is in the chat.
+  // this week and what is waiting on votes. This is the whole card now: a
+  // channel carries no activity (services/ws.js sendSystemMessage).
   if (n.kind === 'weekly_digest') {
     const counts = /^(\d+):(\d+)$/.exec(String(n.detail || ''));
     const merged = counts ? Number(counts[1]) : 0;

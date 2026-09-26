@@ -400,7 +400,10 @@ async function hydrateMessages(db, user, rows) {
     // removed when it was deleted; the empty values here are the contract
     // even for a report-retained attachment the moderation queue still holds.
     const deleted = !!row.deleted_at;
-    // A platform event (postChannelEvent) has no sender: Homeroom said it.
+    // A platform line has no sender: Homeroom said it. Homeroom writes none
+    // into a channel any more (services/ws.js sendSystemMessage); a line an
+    // earlier version wrote that somebody replied to is kept, deleted, as
+    // the root of their thread (db/migrate.js clearAutomatedChannelLines).
     const system = row.msg_type === 'system';
     return {
       id: row.id,
@@ -1405,60 +1408,6 @@ async function sendMessage(pool, user, conversationId, input) {
   return { ...result, message: await getMessage(pool, user, conversationId, result.messageId) };
 }
 
-/**
- * A platform event in a channel: the Homeroom community's proposals being
- * put up for a vote and merged, posted into #general (its channel) rather
- * than into the project discussion it used to have, which is read-only now
- * (services/communities.js channelArchived; services/ws.js
- * sendSystemMessage routes them here).
- *
- * WHAT IT IS NOT is a message from a person, so it keeps none of a person's
- * consequences: no sender (the row says Homeroom), no notifications (a
- * channel is everybody, and a title that happens to hold an @name must not
- * ring that person), no read cursor moved, and not counted as unread
- * (countUnread and the hub's summaries count `msg_type = 'message'`). It
- * can carry one proposal card, written directly because the sharing check
- * is a PERSON's access; the card is still hydrated per viewer, so it shows
- * only to someone who may see the proposal.
- *
- * Returns the new row with the channel's member ids for the live push, or
- * null when there is no such channel.
- */
-async function postChannelEvent(pool, { channelKey = 'general', content, metadata = null, proposal = null } = {}) {
-  const text = String(content || '').trim().slice(0, MAX_MESSAGE_LENGTH);
-  if (!text) return null;
-  return transaction(pool, async (db) => {
-    const { rows: room } = await db.query(
-      `SELECT id FROM conversations
-        WHERE kind = 'channel' AND channel_key = $1 AND status = 'active'
-        LIMIT 1`,
-      [channelKey]
-    );
-    if (!room[0]) return null;
-    const conversationId = room[0].id;
-    const { rows } = await db.query(
-      `INSERT INTO conversation_messages (conversation_id, sender_id, content, msg_type, metadata)
-       VALUES ($1, NULL, $2, 'system', $3::jsonb)
-       RETURNING id, created_at`,
-      [conversationId, text, JSON.stringify(metadata || {})]
-    );
-    const messageId = rows[0].id;
-    const sessionId = proposal && strictId(proposal.sessionId);
-    const appId = proposal && strictId(proposal.appId);
-    if (sessionId && appId) {
-      await db.query(
-        `INSERT INTO conversation_message_objects
-           (message_id, position, object_type, app_id, object_ref, object_version)
-         VALUES ($1, 0, 'code_proposal', $2, $3, NULL)`,
-        [messageId, appId, sessionId]
-      );
-    }
-    await db.query(`UPDATE conversations SET updated_at = NOW() WHERE id = $1`, [conversationId]);
-    const memberIds = await activeMemberIds(db, conversationId);
-    return { conversationId, messageId, createdAt: rows[0].created_at, memberIds };
-  });
-}
-
 async function editMessage(pool, user, conversationId, messageId, rawContent) {
   const content = normalizeContent(rawContent);
   if (content == null) return null;
@@ -1970,7 +1919,6 @@ module.exports = {
   mentionsUsername,
   ensureChannelMemberships,
   sendMessage,
-  postChannelEvent,
   editMessage,
   deleteMessage,
   toggleReaction,

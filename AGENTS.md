@@ -225,10 +225,14 @@ remaining live-proposal boundary.
   working on, All items). The Communities screen's Needs you is one feed of
   every decision owed across your projects (`GET /api/workshop/needs-feed`). A
   project's channel lives on its hub, not in Messages, and #general is the
-  Homeroom community's channel; Messages is people and agents. Homeroom's own
-  proposal and merge lines post into #general as Homeroom's line
-  (`ws.sendSystemMessage` routes them; `conversations.postChannelEvent`),
-  never as a person's message: no notification, not counted as unread.
+  Homeroom community's channel; Messages is people and agents. **A channel
+  is what people said:** Homeroom writes no activity (a proposal put up for a
+  vote, a merge, a check verdict, a setting changed) into a project's channel
+  or #general. `ws.sendSystemMessage` writes nothing without a thread, so a
+  new platform line names the proposal's, request's or decision's own thread
+  (`{ type: 'session' | 'issue' | 'governance', ref }`) or is not written;
+  app-wide state is shown where it lives (the Workshop, notifications).
+  `migrate.clearAutomatedChannelLines` clears the lines written before.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a

@@ -32,6 +32,11 @@
  * for everything that reads content. Each active member also gets a
  * `weekly_digest` notification (its own per-app category, on by default),
  * which is what reaches a phone.
+ *
+ * A channel carries no activity now (ws.sendSystemMessage writes no line
+ * without a thread), so the card is no longer written anywhere and the
+ * notification is the whole Friday rhythm. The card's data is still built,
+ * because the notification's counts come from it.
  */
 
 const log = require('./logger');
