@@ -360,7 +360,10 @@ test('the controller is published by name and withdrawn on unmount', () => {
 
 test('create: mode, import check and POST /api/apps all moved', () => {
   const src = dialog('create-app.tsx');
-  assert.match(src, /applyMode\('new'\)/);
+  // #3160: the mode is one of the answers, and close puts every answer back
+  // to unanswered (it was applyMode('new') while "from scratch" was preselected).
+  assert.match(src, /commit\(NO_ANSWERS\)/);
+  assert.match(src, /function resetImport\(\) \{/, 'the import sub-state resets with it');
   assert.match(src, /\/api\/github\/verify-access\?url=/, 'the import URL check moved with it');
   assert.match(src, /fetch\('\/api\/apps', \{/, 'the create POST moved with it');
   // A successful create/import no longer closes the dialog. #1418 covered

@@ -12285,6 +12285,13 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-final="true"]  #create-next {
   display: none;
 }
+/* #3160: a press on a single-choice row IS the answer and unfolds the next
+   step, so the first two steps have no Next beside their rows: a Next pill
+   there read as "pick, then press Next". It returns on the details step,
+   where there is free text to leave. */
+#create-card:is([data-step="who"], [data-step="start"]) #create-next {
+  display: none;
+}
 
 /* A step COLLAPSES to its chosen row once the next one opens: the other rows
    and the captions fold away, the chevron gives way to "Change", and

@@ -2,7 +2,7 @@
 // every choice. Since communities, stage 3, it asks who a project is FOR
 // before anything else:
 //
-//   who      Just me (preselected), A group, A community; a group's invitees
+//   who      Just me, A group, A community (none preselected, #3160); a group's invitees
 //   start    what you are making (an App; Document and Video "Soon"), then
 //            from scratch or from a GitHub repo (the old mode pills, as rows)
 //   details  the name; for an import, the repo URL and its check first
@@ -38,17 +38,21 @@ test('the steps a set of answers walks: three for Just me or an import, four oth
   assert.deepEqual([...stepsFor('open', 'new')], ['who', 'start', 'details', 'approve']);
   assert.deepEqual([...stepsFor('open', 'import')], ['who', 'start', 'details'],
     'an imported repo\'s own dapp.json decides who approves');
-  assert.match(SRC, /useState<Audience>\('solo'\)/, 'Just me is preselected');
-  assert.match(SRC, /useState<Step>\('who'\)/, 'the initial state is the prerendered one');
+  // Before a question is answered: the shorter walk for no audience, "made
+  // new" for no way to begin (#3160).
+  assert.deepEqual([...stepsFor(null, null)], ['who', 'start', 'details']);
+  assert.deepEqual([...stepsFor('open', null)], ['who', 'start', 'details', 'approve']);
+  assert.match(SRC, /useState<Answers>\(NO_ANSWERS\)/, 'nothing is preselected (#3160); the initial state is the prerendered one');
   // Every answer rides on the root AND the card: the kit lifts the card out
   // of the root while presented.
-  assert.match(SRC, /id="create-modal"\s+ref=\{dialog\.rootRef\}\s+\{\.\.\.answers\}/);
-  assert.match(SRC, /id="create-card"\s+\{\.\.\.answers\}/);
+  assert.match(SRC, /id="create-modal"\s+ref=\{dialog\.rootRef\}\s+\{\.\.\.cardState\}/);
+  assert.match(SRC, /id="create-card"\s+\{\.\.\.cardState\}/);
   for (const attr of ['data-mode', 'data-import-state', 'data-step', 'data-audience', 'data-approvers', 'data-approvals', 'data-final']) {
     assert.match(SRC, new RegExp(`'${attr}': `), attr);
   }
   // Close puts every answer back.
-  assert.match(SRC, /formRef\.current\?\.reset\(\);[\s\S]*?setAudience\('solo'\);\s*setStep\('who'\);\s*setApprovers\('anyone'\);\s*setApprovals\('majority'\);/);
+  assert.match(SRC, /formRef\.current\?\.reset\(\);[\s\S]*?commit\(NO_ANSWERS\);\s*setApprovals\('majority'\);/,
+    'close puts every answer back to unanswered');
 });
 
 test('the wire body says who it is for, whom to invite and who approves', () => {
@@ -82,8 +86,7 @@ test('the first step is who it is for, in the Workshop\'s words, and a choice ad
   assert.match(SRC, /\{ key: 'invited', title: 'A group',/);
   assert.match(SRC, /\{ key: 'open', title: 'A community',/);
   assert.match(who, /data-audience-pill=\{choice\.key\}/);
-  assert.match(who, /onClick=\{\(\) => chooseAudience\(choice\.key\)\}/);
-  assert.match(SRC, /function chooseAudience\(next: Audience\) \{\s*if \(step !== 'who'\) \{\s*setError\(''\);\s*setStep\('who'\);\s*return;\s*\}\s*setAudience\(next\);\s*setError\(''\);\s*setStep\('start'\);/);
+  assert.match(who, /onClick=\{\(\) => pick\('who', choice\.key\)\}/, 'the press goes through answerChoice (pinned by the #3160 tests below)');
   // A group names its people under its collapsed row.
   assert.match(who, /id="create-invite-block"/);
   assert.match(who, /id="create-invitees"/);
@@ -101,22 +104,33 @@ test('the second step is what you are making, then how to begin', () => {
   assert.match(start, /data-mode-pill="import"/);
   assert.equal((start.match(/className=\{CHOICE\}/g) || []).length, 2);
   assert.match(SRC, /const CHOICE = 'create-mode-pill ' \+ CHOICE_BASE;/, 'the same class the mode pills carried');
-  assert.match(SRC, /function choose\(next: Mode\) \{[\s\S]*?applyMode\(next\);\s*setStep\('details'\);/);
+  assert.match(start, /onClick=\{\(\) => pick\('start', 'new'\)\}/);
+  assert.match(start, /onClick=\{\(\) => pick\('start', 'import'\)\}/);
   assert.match(start, /Start from scratch/);
   assert.match(start, /Import a GitHub repo/);
 });
 
-test('Next on a choice step advances the selected answer without validating hidden details', () => {
-  const source = SRC.slice(SRC.indexOf('function next() {'), SRC.indexOf('/** One entry point keeps every mirror of the mode in sync. */'));
+test('Next or Enter on a choice step moves on with the answer given, asks for one that is not, and never validates hidden details', () => {
+  const source = SRC.slice(SRC.indexOf('function next() {'), SRC.indexOf('  // The import check.'));
+  const { missingAnswer } = loadTsx('frontend/src/features/dialogs/create-app.tsx');
   const hiddenName = { get current() { throw new Error('The name field is still hidden'); } };
-  for (const [stepName, arg] of [['who', 'open'], ['start', 'import']]) {
+  const run = (answers) => {
     const calls = [];
-    const next = new Function('step', 'audience', 'mode', 'chooseAudience', 'choose', 'nameRef', `${source}; return next;`)(
-      stepName, 'open', 'import', (a) => calls.push(['who', a]), (m) => calls.push(['start', m]), hiddenName,
+    const errors = [];
+    const next = new Function('answersRef', 'missingAnswer', 'pick', 'setError', 'nameRef', `${source}; return next;`)(
+      { current: answers }, missingAnswer, (q, v) => calls.push([q, v]), (e) => errors.push(e), hiddenName,
     );
     next();
-    assert.deepEqual(calls, [[stepName, arg]], 'Next uses the same transition as the selected choice');
-  }
+    return { calls, errors };
+  };
+  assert.deepEqual(run({ step: 'who', audience: 'open', mode: null, approvers: null }),
+    { calls: [['who', 'open']], errors: [] }, 'the same transition as pressing the chosen row');
+  assert.deepEqual(run({ step: 'start', audience: 'open', mode: 'import', approvers: null }),
+    { calls: [['start', 'import']], errors: [] });
+  assert.deepEqual(run({ step: 'who', audience: null, mode: null, approvers: null }),
+    { calls: [], errors: ['Choose who it is for.'] }, 'nothing chosen: ask, do not move');
+  assert.deepEqual(run({ step: 'start', audience: 'invited', mode: null, approvers: null }),
+    { calls: [], errors: ['Choose how you want to start.'] }, 'Enter in the invite field asks how to start');
 });
 
 test('the details step keeps the import block and the name card, and runs the guards one step early', () => {
@@ -131,7 +145,7 @@ test('the details step keeps the import block and the name card, and runs the gu
   assert.match(next, /Paste a GitHub repo URL first\./);
   assert.match(next, /Click "Check" to verify bot access first\./);
   assert.match(next, /Give your project a name\./);
-  assert.match(next, /if \(!isLast\) \{\s*setStep\('approve'\);\s*reveal\(\);\s*\}/);
+  assert.match(next, /if \(!isLast\) \{\s*commit\(\{ \.\.\.current, step: 'approve' \}\);\s*reveal\(\);/);
   assert.match(SRC, /if \(!isLast\) \{\s*next\(\);\s*return;\s*\}/, 'submit before the last step never POSTs');
   assert.doesNotMatch(SRC, /id="create-back"/, 'no Back: the earlier steps stay on screen');
 });
@@ -204,14 +218,21 @@ test('every selected choice wears the Create button\'s accent', () => {
 });
 
 test('the shot links land on the state they name, and each has a check', () => {
-  assert.match(SRC, /if \(shot === 'create-import'\) return \{ \.\.\.open, mode: 'import', step: 'details' \};/);
-  assert.match(SRC, /if \(shot === 'create-details'\) return \{ \.\.\.open, step: 'details' \};/);
+  // Each link carries the answers that would have led there (#3160: the
+  // cold open has none, so a link cannot lean on a preselected one).
+  assert.match(SRC, /const open = NO_ANSWERS;/);
+  assert.match(SRC, /if \(shot === 'create-import'\) return \{ \.\.\.open, audience: 'solo', mode: 'import', step: 'details' \};/);
+  assert.match(SRC, /if \(shot === 'create-details'\) return \{ \.\.\.open, audience: 'solo', mode: 'new', step: 'details' \};/);
   assert.match(SRC, /if \(shot === 'create-group'\) return \{ \.\.\.open, step: 'start', audience: 'invited' \};/);
-  assert.match(SRC, /if \(shot === 'create-approve' \|\| shot === 'create-access'\) return \{ \.\.\.open, step: 'approve', audience: 'open' \};/);
+  assert.match(SRC, /if \(shot === 'create-approve' \|\| shot === 'create-access'\) return \{ \.\.\.open, step: 'approve', audience: 'open', mode: 'new' \};/);
   const byPath = new Map(DAPP.tests.map((t) => [t.path, t]));
   const first = DAPP.tests.find((t) => t.path === '/#create' && /Step 1 of 3/.test(t.expectText || ''));
   assert.ok(first, 'a check reads the step count on a cold open');
-  assert.match(first.expectSelector, /\[data-step="who"\]\[data-audience="solo"\]/);
+  assert.match(first.expectSelector, /\[data-step="who"\]\[data-audience=""\]/, 'nothing chosen on a cold open (#3160)');
+  assert.match(first.expectSelector, /:not\(:has\(\[aria-pressed="true"\]\)\)/, 'no row is pressed');
+  assert.match(first.expectSelector, /\[data-audience-pill="solo"\]\[aria-pressed="false"\]/, 'and the rows say so');
+  const cold = DAPP.tests.find((t) => t.path === '/#create' && t.expectText === 'New project');
+  assert.match(cold.expectSelector, /\[data-mode=""\]\[data-import-state="idle"\]/, 'no way to begin chosen on a cold open (#3160)');
   const details = byPath.get('/?shot=create-details#create');
   assert.match(details.expectSelector, /\[data-step="details"\] #create-name-block/);
   assert.equal(details.expectText, 'Project name');
@@ -233,7 +254,7 @@ test('the prerendered document starts on the first step with every id in place',
   const html = shellMarkup();
   const card = html.slice(html.indexOf('id="create-card"'), html.indexOf('id="rename-modal"'));
   assert.match(card, /data-step="who"/);
-  assert.match(card, /data-audience="solo"/);
+  assert.match(card, /data-audience=""/);
   assert.match(card, /data-final="false"/);
   for (const step of ['who', 'start', 'details', 'approve']) {
     assert.match(card, new RegExp(`data-create-step="${step}"`), step);
@@ -275,4 +296,90 @@ test('the prerendered Create button is idle', () => {
   assert.doesNotMatch(submit, /aria-busy/);
   assert.doesNotMatch(submit, /<svg/);
   assert.match(submit, />Create<\/button>$/);
+});
+
+// ── #3160: nothing is chosen until you choose it, and a choice moves on ──
+//
+// An admin found the dialog confusing: "Just me" and "Start from scratch"
+// opened already highlighted, and with a Next pill beside them it read as
+// "pick, then press Next". Now every question opens with no answer, a press
+// on a single-choice row IS the answer and unfolds the next step, and Next
+// only appears once there is free text (the name) to leave. The press on a
+// collapsed row still reopens that question, so an earlier answer can be
+// changed; the last step (who approves) never creates by itself.
+
+test('#3160: the dialog opens with no answer chosen, and every choice says whether it is pressed', () => {
+  const html = shellMarkup();
+  const card = html.slice(html.indexOf('id="create-card"'), html.indexOf('id="rename-modal"'));
+  const open = card.slice(0, card.indexOf('>'));
+  assert.match(open, /data-audience=""/, 'no audience preselected');
+  assert.match(open, /data-mode=""/, 'no way to begin preselected');
+  assert.match(open, /data-approvers=""/, 'no approval rule preselected');
+  assert.match(open, /data-step="who"/);
+  assert.doesNotMatch(card, /aria-pressed="true"/, 'no row is pressed on open');
+  for (const attr of ['data-audience-pill="solo"', 'data-audience-pill="invited"', 'data-audience-pill="open"',
+    'data-mode-pill="new"', 'data-mode-pill="import"', 'data-approver-pill="anyone"', 'data-approver-pill="invited"']) {
+    assert.match(card, new RegExp(`<button[^>]*${attr.replace(/"/g, '"')}[^>]*aria-pressed="false"|<button[^>]*aria-pressed="false"[^>]*${attr}`), attr);
+  }
+});
+
+test('#3160: a single choice advances by itself, a collapsed row reopens its question, and a double press does not bounce back', () => {
+  const { answerChoice, NO_ANSWERS, REOPEN_GUARD_MS } = loadTsx('frontend/src/features/dialogs/create-app.tsx');
+  assert.deepEqual({ ...NO_ANSWERS }, { step: 'who', audience: null, mode: null, approvers: null });
+  const later = REOPEN_GUARD_MS + 1;
+
+  let s = answerChoice(NO_ANSWERS, 'who', 'open', later);
+  assert.deepEqual({ ...s }, { step: 'start', audience: 'open', mode: null, approvers: null }, 'who → start on one press');
+  assert.equal(answerChoice(s, 'who', 'open', 10), s, 'the second press of a double click is ignored');
+  s = answerChoice(s, 'start', 'import', later);
+  assert.deepEqual({ ...s }, { step: 'details', audience: 'open', mode: 'import', approvers: null }, 'start → details on one press');
+  assert.equal(answerChoice(s, 'start', 'import', 10), s);
+
+  // Back: pressing a collapsed row reopens that question and keeps the answers.
+  const back = answerChoice(s, 'who', 'open', later);
+  assert.deepEqual({ ...back }, { step: 'who', audience: 'open', mode: 'import', approvers: null });
+  // ...and a different answer there moves on again, with the new answer.
+  const changed = answerChoice(back, 'who', 'invited', later);
+  assert.deepEqual({ ...changed }, { step: 'start', audience: 'invited', mode: 'import', approvers: null });
+  const reopenStart = answerChoice(s, 'start', 'import', later);
+  assert.equal(reopenStart.step, 'start');
+  assert.equal(answerChoice(reopenStart, 'start', 'new', later).mode, 'new');
+
+  // A hidden later question cannot be answered from an earlier step.
+  assert.equal(answerChoice(NO_ANSWERS, 'start', 'new', later), NO_ANSWERS);
+  assert.equal(answerChoice(NO_ANSWERS, 'approve', 'invited', later), NO_ANSWERS);
+
+  // The last step records the answer and stays put: Create is always a press of its own.
+  const approve = { step: 'approve', audience: 'open', mode: 'new', approvers: null };
+  const picked = answerChoice(approve, 'approve', 'invited', later);
+  assert.deepEqual({ ...picked }, { ...approve, approvers: 'invited' });
+  assert.equal(answerChoice(picked, 'approve', 'anyone', 10).approvers, 'anyone', 'switching the rule is never guarded');
+});
+
+test('#3160: Create names the first unanswered question instead of sending an undefined answer', () => {
+  const { missingAnswer } = loadTsx('frontend/src/features/dialogs/create-app.tsx');
+  assert.deepEqual({ ...missingAnswer({ audience: null, mode: null, approvers: null }) },
+    { step: 'who', message: 'Choose who it is for.' });
+  assert.deepEqual({ ...missingAnswer({ audience: 'solo', mode: null, approvers: null }) },
+    { step: 'start', message: 'Choose how you want to start.' });
+  assert.deepEqual({ ...missingAnswer({ audience: 'open', mode: 'new', approvers: null }) },
+    { step: 'approve', message: 'Choose who approves changes.' });
+  assert.equal(missingAnswer({ audience: 'solo', mode: 'new', approvers: null }), null, 'Just me is never asked');
+  assert.equal(missingAnswer({ audience: 'invited', mode: 'import', approvers: null }), null, 'an import is never asked');
+  assert.equal(missingAnswer({ audience: 'invited', mode: 'new', approvers: 'anyone' }), null);
+  const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  const stepIndex'));
+  assert.ok(submit.indexOf('missingAnswer(') > 0, 'submit checks the answers');
+  assert.ok(submit.indexOf('missingAnswer(') < submit.indexOf('createBody('), '...before building the body');
+});
+
+test('#3160: free text never advances, and Next waits for the step that has some', () => {
+  assert.match(CSS, /#create-card:is\(\[data-step="who"\], \[data-step="start"\]\) #create-next \{\s*display: none;\s*\}/,
+    'no Next beside the single-choice rows');
+  const invitees = SRC.slice(SRC.indexOf('id="create-invitees"'), SRC.indexOf('/>', SRC.indexOf('id="create-invitees"')));
+  assert.doesNotMatch(invitees, /onInput|onChange|onBlur/, 'typing names does not move the dialog');
+  const name = SRC.slice(SRC.indexOf('id="app-name"'), SRC.indexOf('/>', SRC.indexOf('id="app-name"')));
+  assert.doesNotMatch(name, /onInput|onChange|onBlur/, 'typing the name does not move the dialog');
+  // Keyboard: the rows are native buttons (Enter and Space press them), and
+  // an advance moves focus to the question that just unfolded.
+  assert.match(SRC, /ref=\{startHeadingRef\}[\s\S]{0,80}tabIndex=\{-1\}/);
 });
