@@ -1413,7 +1413,7 @@
       "expectText": "GitHub repo URL"
     },
     {
-      "name": "Create-project dialog opens on who it is for: Just me chosen, then A group and A community, with a step count (communities, stage 3)",
+      "name": "Create-project dialog opens on who it is for, nothing chosen yet: Just me, A group and A community, with a step count (communities, stage 3; request #3160)",
       "path": "/#create",
       "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-audience=\"solo\"] .create-who-pill[data-audience-pill=\"solo\"] + .create-who-pill[data-audience-pill=\"invited\"] + .create-who-pill[data-audience-pill=\"open\"]",
       "expectText": "Step 1 of 3"
