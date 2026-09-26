@@ -105,6 +105,13 @@ const TopochainChallenges = {
   // Empty map = no personalization available (signed out, request failed);
   // the grid renders identically, just without the "you" decorations.
   _mine: new Map(),
+  // The viewer's block-production queue state from GET /challenges-api/bp/
+  // state, read when a block-production challenge's page opens (#2493).
+  // `undefined` is loading, `null` could not be read (the page falls back to
+  // the organiser's CTA), otherwise { has_platform_access, bp_requested,
+  // bp_released }.
+  _bpState: undefined,
+  _bpRequesting: false,
   _onboarding: null,
   // The challenge groups the viewer opened or closed on this visit, as group
   // key ('setup', 'week', 'always', 'other') -> collapsed. A group absent here
@@ -1015,6 +1022,7 @@ const TopochainChallenges = {
     TopochainChallenges._breakdown = null;
     TopochainChallenges._breakdownError = null;
     TopochainChallenges._breakdownLoading = true;
+    TopochainChallenges._bpState = undefined;
     // The page's visibility IS its descriptor — _renderDetailOverlay
     // publishing a non-null `detail` is what used to be the
     // classList.remove('hidden') on this line. It is a level of the screen,
@@ -1025,6 +1033,7 @@ const TopochainChallenges = {
       TopochainChallenges._syncChrome();
     }, fromGrid ? 'push' : 'none');
     TopochainChallenges._loadBreakdown(0);
+    if (TopochainChallenges._isBlockProduction(challenge)) TopochainChallenges._loadBpState();
   },
 
   closeChallengeDetail(type = 'none') {
@@ -1280,6 +1289,150 @@ const TopochainChallenges = {
     return !!(c.card_preview && c.card_preview.illustration === 'block-production');
   },
 
+  // ── The block-production step (#2493) ───────────────────────────────
+  //
+  // The block-production challenge's CTA used to be one link to Settings ›
+  // Homeroom app. A browser has no such section (it fell back to the Settings
+  // root), and in the app it is a long page with block production near the
+  // bottom — while what the viewer needs depends on where THEY are: without a
+  // wallet the first step is to request one; with one, delegation is the
+  // default, and producing on the phone itself exists only in the Android app
+  // (off on iOS since v4, see NativeChrome.decideFirstRunSheet) and comes with
+  // a background service and battery cost. So the page reads the same
+  // session-authed queue state Settings' card reads and draws that step in
+  // place of the generic link.
+  //
+  // The environment below is a PRESENTATION hint only. The request is the
+  // existing POST /challenges-api/bp/request, keys are released by an admin,
+  // and delegation is the native wallet's own screen: nothing here decides
+  // what the viewer may do.
+
+  // Where this page is drawn. `native` is the Homeroom app's bridge (exactly
+  // `true`, as everywhere else); `android` needs it too, because the kit's
+  // platform skin is a user-agent guess that says 'android' for Chrome on an
+  // Android phone, which cannot produce blocks. `wallet` is the app's wallet
+  // row being offered (WalletSheet sets `_visible` for every native top frame
+  // once it has initialised), whose sheet is where delegation is managed.
+  _bpEnv() {
+    const w = typeof window !== 'undefined' ? window : {};
+    const native = !!(w.usernode && w.usernode.isNative === true);
+    const android = native && !!(w.unNative && w.unNative.platform === 'android');
+    const wallet = native && !!(w.WalletSheet && w.WalletSheet._visible === true
+      && typeof w.WalletSheet.openFromRow === 'function');
+    return { native, android, wallet };
+  },
+
+  // The step for a queue state and environment. Pure, so the tests pin it.
+  blockProductionStep(state, env, requesting = false) {
+    const e = env || {};
+    if (state === undefined) return { step: 'checking' };
+    if (!state) return { step: 'unavailable' };
+    if (state.bp_released) {
+      const onDevice = e.native && e.android ? {
+        title: 'Or produce blocks on this phone',
+        text: 'Producing directly on this phone earns full points.',
+        warning: 'Only for phones that can stay on. A background service keeps running with a'
+          + ' persistent notification, it uses more battery and data, and Android must let the'
+          + ' app run unrestricted in the background and set exact alarms. If the phone stops'
+          + ' the app, it misses its slots.',
+      } : null;
+      return {
+        step: 'account',
+        title: 'Your wallet is ready',
+        delegation: {
+          title: 'Delegate (recommended)',
+          text: 'Your stake is delegated to Homeroom\'s block-production server, so nothing'
+            + ' keeps running on your phone. When delegated, you receive half the points'
+            + ' you would earn by producing blocks directly from your phone.',
+        },
+        onDevice,
+        onDeviceNote: onDevice ? null
+          : 'Producing blocks on the phone itself is available only in the Android app.',
+        action: e.wallet ? { label: 'Manage delegation' } : null,
+        appNote: e.wallet ? null
+          : (e.native
+            ? 'Delegation is managed from your wallet in the Homeroom app once it has finished setting up.'
+            : 'Delegation is managed from your wallet in the Homeroom app. Open this challenge there.'),
+      };
+    }
+    if (state.bp_requested) {
+      return {
+        step: 'pending',
+        title: 'Wallet requested',
+        text: 'An admin releases wallet keys in batches. Once yours are released, come back here'
+          + ' to choose how your blocks are produced.',
+      };
+    }
+    if (!state.has_platform_access) {
+      return {
+        step: 'locked',
+        title: 'Not available yet',
+        text: 'You can request a wallet once your account has platform access.',
+      };
+    }
+    return {
+      step: 'request',
+      title: 'First, request a wallet',
+      text: 'Producing blocks needs a wallet with producer keys. Ask for one and an admin will'
+        + ' release your keys in batches.',
+      action: { label: requesting ? 'Requesting…' : 'Request a wallet', pending: !!requesting },
+    };
+  },
+
+  async _loadBpState() {
+    const challenge = TopochainChallenges._detailChallenge;
+    let next = null;
+    try {
+      const res = await window.fetch('/challenges-api/bp/state', { credentials: 'same-origin' });
+      const body = res && res.ok ? await res.json() : null;
+      next = body && body.success !== false && body.data ? body.data : null;
+    } catch { next = null; }
+    if (TopochainChallenges._detailChallenge !== challenge) return; // page closed/changed
+    TopochainChallenges._bpState = next;
+    TopochainChallenges._renderDetailOverlay();
+  },
+
+  // The request step's button. Same endpoint and follow-up as Settings'
+  // "Ask to produce blocks" (settings.js _askForBlockProduction).
+  async requestBlockProduction() {
+    if (TopochainChallenges._bpRequesting) return;
+    TopochainChallenges._bpRequesting = true;
+    TopochainChallenges._renderDetailOverlay();
+    const ui = window.PlatformUI;
+    try {
+      const res = await window.fetch('/challenges-api/bp/request', {
+        method: 'POST', credentials: 'same-origin',
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || data.success === false) {
+        throw new Error((data && data.error) || 'Request failed');
+      }
+      TopochainChallenges._bpState = Object.assign({}, TopochainChallenges._bpState || {}, {
+        bp_requested: true,
+        bp_released: !!(data.data && data.data.bp_released),
+      });
+      if (ui && ui.toast) ui.toast('Request sent. An admin will release your keys');
+      // #2960: the Android "Set up your device" sheet waits for exactly this
+      // moment; on iOS or an already-answered device it presents nothing.
+      const nc = window.NativeChrome;
+      if (nc && typeof nc.maybeShowFirstRunPermissions === 'function') {
+        nc.maybeShowFirstRunPermissions({ force: true });
+      }
+    } catch (e) {
+      if (ui && ui.toast) ui.toast((e && e.message) || 'Request failed', { error: true });
+    } finally {
+      TopochainChallenges._bpRequesting = false;
+      TopochainChallenges._renderDetailOverlay();
+    }
+  },
+
+  // The account step's button: the app's wallet sheet, whose block-production
+  // card holds "Manage delegation" and, on Android, the background-service note.
+  openWallet() {
+    const ws = window.WalletSheet;
+    if (ws && typeof ws.openFromRow === 'function') ws.openFromRow();
+  },
+
   _renderDetailOverlay() {
     if (!TopochainChallenges._detailChallenge) return;
     TopochainChallenges._store?.set({ detail: TopochainChallenges.detailView() });
@@ -1334,6 +1487,11 @@ const TopochainChallenges = {
     else if (points) amount = { text: `${points.toLocaleString('en-US')} pts so far`, earned: false };
     else if (reward) amount = { text: reward, earned: false };
 
+    const bpStep = TopochainChallenges._isBlockProduction(challenge)
+      ? TopochainChallenges.blockProductionStep(
+        TopochainChallenges._bpState, TopochainChallenges._bpEnv(), TopochainChallenges._bpRequesting)
+      : null;
+
     const totals = (bd && bd.totals) || {};
     const participants = Number(totals.participants) > 0 ? Number(totals.participants) : 0;
     const totalPoints = Number(totals.total_points) > 0 ? Number(totals.total_points) : 0;
@@ -1376,7 +1534,10 @@ const TopochainChallenges = {
       stateLabel: rail.stateLabel,
       fill: rail.fill,
       counted: !!rail.counted,
-      cta: TopochainChallenges.ctaView(dm, challenge),
+      // A block-production challenge draws the viewer's step instead of the
+      // organiser's link, unless the step could not be read.
+      blockProduction: bpStep && bpStep.step !== 'unavailable' ? bpStep : null,
+      cta: bpStep && bpStep.step !== 'unavailable' ? null : TopochainChallenges.ctaView(dm, challenge),
       description: dm.description ? str(dm.description) : null,
       requirements: dm.requirements ? str(dm.requirements) : null,
       scoring: dm.reward_logic ? str(dm.reward_logic) : null,
