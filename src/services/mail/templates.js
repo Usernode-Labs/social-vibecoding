@@ -96,7 +96,14 @@ const FOOTER_STYLE =
   `margin:24px 0 0;padding-top:16px;border-top:1px solid ${NEUTRAL_HAIRLINE};`
   + `font-size:12px;line-height:1.5;color:${NEUTRAL_SECONDARY_INK}`;
 
-const HTML_SHELL = (body) =>
+// Why a mail arrived, for every kind but one: the recipient's own account
+// or waitlist place. A project invite goes to an address somebody ELSE
+// typed, so it says that instead (its template returns `why`); claiming the
+// recipient asked for it would be the one untrue sentence in the frame.
+const WHY_DEFAULT = 'You are receiving this because of activity on your account or your '
+  + 'place on the waitlist. We only send mail you asked for.';
+
+const HTML_SHELL = (body, why = WHY_DEFAULT) =>
   '<!doctype html><html><body style="' + BODY_STYLE + '">'
   + '<div style="' + CARD_STYLE + '">'
   + `<img src="${LOGO_URL}" width="140" height="37" alt="${esc(LOGO_ALT)}" `
@@ -104,8 +111,7 @@ const HTML_SHELL = (body) =>
   + body
   + '<div style="' + FOOTER_STYLE + '">'
   + BRAND_NAME
-  + '<br>You are receiving this because of activity on your account or your '
-  + 'place on the waitlist. We only send mail you asked for.'
+  + '<br>' + esc(why)
   + '</div>'
   + '</div>'
   + '</body></html>';
@@ -398,6 +404,8 @@ function projectInvite(payload) {
   const lead = `${inviter} invited you to ${project}, a group on Homeroom, where communities build the apps they use together.`;
   const how = 'Join the waitlist with this email address. Once you are in, the invite will be waiting for you.';
   return {
+    why: 'You are receiving this because someone on Homeroom invited this address to a project. '
+      + 'You will not hear from us again unless you join, or somebody invites you again.',
     subject: `${inviter} invited you to ${project} on Homeroom`,
     text: `${lead}\n\n${how}${url ? `\n\n${url}` : ''}\n\nIf you were not expecting this, you can ignore this email.`,
     html: (
@@ -440,8 +448,8 @@ function buildMessage(kind, payload = {}) {
     ? TEMPLATES[kind]
     : null;
   if (!template) throw new Error(`unknown mail kind: ${kind}`);
-  const message = template(payload);
-  return { ...message, html: HTML_SHELL(message.html) };
+  const { why, ...message } = template(payload);
+  return { ...message, html: HTML_SHELL(message.html, why) };
 }
 
 // Every kind this module can render, for the admin console and for tests
