@@ -214,7 +214,8 @@ export interface ActiveAppInfo {
 export function buildActive(input: {
   /** Slugs with a live frame, in liveAppSlugs' order. */
   live: string[];
-  /** The slug of the app on screen, or null when the viewer is in none. */
+  /** The slug of the app on screen (currentAppOnScreen), or null when the
+   *  viewer is in none. */
   current: string | null;
   apps: RecentApp[];
   known?: ActiveAppInfo[];
@@ -239,6 +240,36 @@ export function buildActive(input: {
   }
   // The app the viewer is in leads, whatever order the caller passed.
   return items.sort((a, b) => Number(!!b.current) - Number(!!a.current));
+}
+
+/**
+ * The app ON SCREEN, which is the only Active row lit (#3096), or null.
+ *
+ * NOT the mounted frame on its own. The frame store's `slug` is the app whose
+ * frame is mounted, and it stays set for as long as that frame is: it is
+ * cleared only when the app is retired by backing out to Home (app.js goHome)
+ * or dropped. Leaving it any other way — a rail or tab-bar row to Messages,
+ * Discover, Workshop or Me, a Recents row, the app's own Workshop (the frame
+ * is PARKED behind it, app-view.js _parkAppFrame) or its discussion — keeps
+ * the frame mounted, so a row lit from `slug` alone stayed lit on screens that
+ * had nothing to do with the app.
+ *
+ * So the router's answer decides, as it does for everything else in the
+ * rail: the app is on screen only while the router's screen is `#app-view`
+ * AND no tab is lit. `#app-view` with a tab lit is the app's Workshop or one
+ * of its message threads (App._showOnlyScreen passes the override), where the
+ * lit tab is the rail's one "you are here" and the app row must not compete.
+ */
+export function currentAppOnScreen(input: {
+  /** The mounted frame's slug, '' or null when none is. */
+  frameSlug: string | null;
+  /** navStore's `screen`: the root the router last revealed. */
+  screen: string | null;
+  /** navStore's `tab`: the tab that screen lights, or null. */
+  tab: string | null;
+}): string | null {
+  if (input.screen !== 'app-view' || input.tab) return null;
+  return input.frameSlug || null;
 }
 
 /** Newest first, a row with no clock last, stable within a timestamp. */

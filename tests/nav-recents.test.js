@@ -22,7 +22,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const {
-  buildActive, buildRecents, groupRecents, recentDayLabel, RECENTS_LIMIT, RECENT_DAYS, RECENTS_MIN_SHOWN,
+  buildActive, buildRecents, currentAppOnScreen, groupRecents, recentDayLabel, RECENTS_LIMIT, RECENT_DAYS, RECENTS_MIN_SHOWN,
 } = loadTsx('frontend/src/features/nav/recents.ts');
 
 function conversation(id, kind, at, extra = {}) {
@@ -544,6 +544,48 @@ test('#3074: the Active rows are Recents\' rows, the current one lit, and nothin
   assert.doesNotMatch(list, /data-close|aria-label="Close/, 'no close button');
   const live = read('frontend/src/features/app-frame/live-apps.tsx');
   assert.match(live, /export function useCurrentAppSlug\(\): string \| null \{\s*return useStoreState\(appFrameStore\)\.slug \|\| null;/);
+});
+
+// ── #3096: only the app ON SCREEN is lit ──────────────────────────────
+//
+// The frame store's slug is the MOUNTED frame, and it survives every way of
+// leaving an app except backing out to Home (goHome retires it; the Messages,
+// Discover, Workshop and Me routes, a Recents row and the app's own Workshop
+// leave it mounted). Lighting the Active row from it alone left the row lit
+// on those screens.
+
+test('#3096: an Active row is lit only while its app is the screen on show', () => {
+  const lit = (screen, tab, frameSlug = 'notes') => currentAppOnScreen({ frameSlug, screen, tab });
+  assert.equal(lit('app-view', null), 'notes', 'in the app');
+  // Left without going Home: the frame is still mounted behind these.
+  for (const [screen, tab] of [
+    ['messages-screen', 'messages'],
+    ['browse-screen', 'discover'],
+    ['workshop-screen', 'workshop'],
+    ['profile-screen', 'me'],
+    ['settings-screen', 'me'],
+    ['home-screen', 'home'],
+  ]) assert.equal(lit(screen, tab), null, `${screen} lights no app row`);
+  // The app's own Workshop (frame parked) and its discussion / a dev session:
+  // #app-view, but the tab the router lit is where you are.
+  assert.equal(lit('app-view', 'workshop'), null, 'the app\'s Workshop');
+  assert.equal(lit('app-view', 'messages'), null, 'the app\'s discussion');
+  assert.equal(lit(null, null), null, 'signed-out / before the first route');
+  assert.equal(lit('app-view', null, ''), null, 'no frame mounted');
+
+  // End to end through buildActive: on Messages with Notes still mounted,
+  // Notes is listed (it is running) and nothing is lit.
+  const apps = [recentApp('notes', '2026-09-20T10:00:00Z'), recentApp('chess', '2026-09-20T09:00:00Z')];
+  const rows = buildActive({ live: ['notes', 'chess'], current: lit('messages-screen', 'messages'), apps });
+  assert.deepEqual(rows.map((i) => [i.label, !!i.current]), [['Notes', false], ['Chess', false]]);
+  const html = renderToHtml(createElement(loadTsx('frontend/src/features/nav/recents-list.tsx').ActiveApps, { items: rows }));
+  assert.doesNotMatch(html, /aria-current|data-current/);
+
+  // The list asks the router, not the frame alone.
+  const list = read('frontend/src/features/nav/recents-list.tsx');
+  assert.match(list, /const \{ viewer, screen, tab \} = useStoreState\(navStore\);/);
+  assert.match(list, /const current = currentAppOnScreen\(\{ frameSlug, screen, tab \}\);/);
+  assert.match(list, /buildActive\(\{\s*live,\s*current,/);
 });
 
 test('#3074: Active is drawn in the desktop block only, the app you are in lit like a tab', () => {
