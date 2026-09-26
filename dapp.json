@@ -3253,9 +3253,9 @@
       "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-scope[aria-controls=\"workshop-scope-picker\"] ~ div > #workshop-tab-status.workshop-scope-tab-on[aria-current=\"page\"] + #workshop-tab-needs):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
     },
     {
-      "name": "The Workshop's Needs you tab lists the votes waiting on you item by item, under each of your apps (#3051)",
+      "name": "The Communities screen's Needs you tab is one feed of every decision owed, mixed across projects, one card per screen (#3270)",
       "path": "/?demo=1&ws=needs#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-tab-needs[aria-current=\"page\"]) [data-workshop-pane=\"needs\"] [data-workshop-group=\"staging-demo-your-app\"] a[data-workshop-item=\"governance\"][href^=\"#app/staging-demo-your-app/dev/\"]"
+      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-tab-needs[aria-current=\"page\"]) [data-needs-reel] article[data-needs-card=\"governance\"][data-needs-app=\"staging-demo-your-app\"] a[href^=\"#app/staging-demo-your-app/dev/governance/\"]"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
