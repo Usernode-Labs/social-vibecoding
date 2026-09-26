@@ -87,6 +87,13 @@ function hasInFlightBuild(sessionId) {
   return _stagingBuilds.has(Number(sessionId));
 }
 
+// Every session with a staging build in flight (or queued) in this process.
+// For the shutdown path (server.js cleanup): a build dies with its process,
+// and nothing on the cluster outlives it to be harvested.
+function inFlightBuildSessionIds() {
+  return [..._stagingBuilds.keys()].map(Number);
+}
+
 // #866 — display-only preview state for a proposal row, derived on read.
 //
 // An imported PR is promoted the instant it's imported, so its card exists
@@ -1216,6 +1223,7 @@ module.exports = {
   _imageStepLabelForTest: imageStepLabel,
   buildAndDeployStaging,
   hasInFlightBuild,
+  inFlightBuildSessionIds,
   previewDisplayState,
   verifyStagingEdge,
   warmStagingCert,
