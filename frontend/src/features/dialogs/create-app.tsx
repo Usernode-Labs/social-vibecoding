@@ -148,16 +148,21 @@ export function stepsFor(audience: Audience, mode: Mode): readonly Step[] {
  */
 export function createBody(answers: {
   name: string;
+  /** "What is it?": one optional line, for a project made new. */
+  description?: string;
   mode: Mode;
   repoUrl?: string;
   audience: Audience;
   invitees?: string;
-  approvers: Approvers;
-  approvals: Approvals;
+  approvers: Approvers | null;
+  approvals: Approvals | null;
   approvalsN?: number;
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { name: answers.name, audience: answers.audience };
   if (answers.mode === 'import' && answers.repoUrl) body.repoUrl = answers.repoUrl;
+  // An import's own dapp.json describes it, so only a new project sends one.
+  const description = (answers.description || '').replace(/\s+/g, ' ').trim();
+  if (answers.mode === 'new' && description) body.description = description;
   if (answers.audience === 'invited') {
     const people = (answers.invitees || '')
       .split(/[\s,]+/)
@@ -288,6 +293,7 @@ function WhoGlyph({ audience }: { audience: Audience }) {
 export function CreateAppDialog() {
   const formRef = useRef<HTMLFormElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+  const describeRef = useRef<HTMLInputElement>(null);
   const urlRef = useRef<HTMLInputElement>(null);
   const inviteesRef = useRef<HTMLInputElement>(null);
   const approvalsNRef = useRef<HTMLInputElement>(null);
@@ -297,8 +303,11 @@ export function CreateAppDialog() {
   const [audience, setAudience] = useState<Audience>('solo');
   const [mode, setMode] = useState<Mode>('new');
   const [step, setStep] = useState<Step>('who');
-  const [approvers, setApprovers] = useState<Approvers>('anyone');
-  const [approvals, setApprovals] = useState<Approvals>('majority');
+  // Unanswered until pressed, like the first two steps (request #3160 and
+  // its follow-up): nothing in this dialog is chosen for the person. Create
+  // waits for an answer on the approval step (`approvalMissing` below).
+  const [approvers, setApprovers] = useState<Approvers | null>(null);
+  const [approvals, setApprovals] = useState<Approvals | null>(null);
   const [importState, setImportState] = useState<ImportState>('idle');
   const [status, setStatus] = useState<ImportStatus>(IDLE_STATUS);
   const [error, setError] = useState('');
@@ -320,6 +329,12 @@ export function CreateAppDialog() {
   const steps = stepsFor(audience, mode);
   const last = steps[steps.length - 1];
   const isLast = step === last;
+  // The approval step is answered once "Members vote" is pressed, or "People
+  // I pick" and then how many of them must say yes. Until then Create is
+  // dimmed. Only ever true ON that step, so the prerendered button (step
+  // "who") is exactly what it was.
+  const approvalMissing = step === 'approve' && isLast
+    && (approvers == null || (approvers === 'invited' && approvals == null));
 
   const dialog = useDialog('create', {
     onOpen: () => {
@@ -342,8 +357,8 @@ export function CreateAppDialog() {
       applyMode('new');
       setAudience('solo');
       setStep('who');
-      setApprovers('anyone');
-      setApprovals('majority');
+      setApprovers(null);
+      setApprovals(null);
       // Drop the progress view too, so the next open lands on the form.
       // The build carries on server-side either way — closing this is
       // dismissing a report, not cancelling anything.
@@ -548,6 +563,11 @@ export function CreateAppDialog() {
       setError('Give your project a name.');
       return;
     }
+    // Enter in a field can reach here with Create dimmed.
+    if (approvalMissing) {
+      setError(approvers == null ? 'Choose who approves changes.' : 'Choose how many of them must say yes.');
+      return;
+    }
 
     // Guard: in import mode, submit is gated behind a successful check. The
     // server runs the pre-flight again on POST anyway.
@@ -558,6 +578,7 @@ export function CreateAppDialog() {
 
     const body = createBody({
       name,
+      description: describeRef.current?.value || '',
       mode,
       repoUrl,
       audience,
@@ -619,8 +640,9 @@ export function CreateAppDialog() {
     'data-import-state': importState,
     'data-step': step,
     'data-audience': audience,
-    'data-approvers': approvers,
-    'data-approvals': approvals,
+    // Empty until answered, so no approval row wears the fill on arrival.
+    'data-approvers': approvers ?? '',
+    'data-approvals': approvals ?? '',
     'data-final': isLast ? 'true' : 'false',
   };
 
@@ -862,7 +884,7 @@ export function CreateAppDialog() {
               <code className="font-mono text-xs">
                 usernode-bot
               </code>
-              {' as a collaborator with Write access.'}
+              {' as a collaborator (Write access on an organization repo).'}
             </p>
             {/*
                 Inline status row: spinner while checking, green check on
@@ -898,6 +920,25 @@ export function CreateAppDialog() {
                 placeholder="my cool app"
               />
             </div>
+            {/* What it is: optional, and only for a project made new (an
+                import's own dapp.json describes it; app.css hides the row).
+                Written into the new repository's dapp.json, where people
+                read it on the join screen, in Discover and on its page. */}
+            <div className={ROW + ' create-describe-row shadow-[inset_0_1px_0_var(--app-sheet-line)]'}>
+              <label htmlFor="app-description" className={LABEL}>
+                What is it? (optional)
+              </label>
+              <Input
+                id="app-description"
+                ref={describeRef}
+                name="description"
+                type="text"
+                autoComplete="off"
+                maxLength={100}
+                {...FIELD}
+                placeholder="Shared shopping list"
+              />
+            </div>
           </div>
           </div>
           {/*
@@ -906,7 +947,8 @@ export function CreateAppDialog() {
               pick starts with just the creator as approver, and under it
               "at least N yes votes" is the follow-up. Written into the new
               repository's dapp.json, so it can be voted on later like any
-              other rule there.
+              other rule there. Nothing is picked on arrival, and neither is
+              the follow-up once it shows: Create waits for the answers.
           */}
           <div data-create-step="approve" className="space-y-2" ref={step === 'approve' ? lastStepRef : undefined}>
             <p className={STEP_HEADING}>4. Who approves changes?</p>
@@ -987,7 +1029,12 @@ export function CreateAppDialog() {
               unmounting (every id ships on every step). Cancel is always
               there; Next until the last step for these answers, then Create
               / Import. No Back: the earlier steps are still on screen, and
-              each collapsed row's "Change" reopens its choice.
+              each collapsed row's "Change" reopens its choice. And no Next
+              on the two question steps (request #3160): a row there is the
+              answer and moves on by itself, and nothing is filled until it
+              has been pressed (app.css, "Nothing is chosen while a step is
+              being asked"). On the approval step Create is dimmed until it
+              is answered (`approvalMissing`).
           */}
           <div className="flex gap-2 pt-1">
             <button
@@ -1022,7 +1069,7 @@ export function CreateAppDialog() {
               size="pill"
               layout="flex"
               disabledStyle="block"
-              disabled={quotaBlocksCreation || submitting}
+              disabled={quotaBlocksCreation || submitting || approvalMissing}
               aria-busy={submitting || undefined}
             >
               {submitting ? <SpinnerArcIcon className="inline-block h-4 w-4 mr-2 -mt-0.5 align-middle animate-spin" aria-hidden="true" /> : null}

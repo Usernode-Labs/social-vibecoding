@@ -262,7 +262,10 @@ test('a paused checked handoff retains its ready submission action in the worksp
   assert.doesNotMatch(html, /disabled[^>]*>Submit for review</);
 });
 
-test('managed CLI handoff keeps Propose disabled until its authoritative state is ready (#1650)', () => {
+test('a managed CLI handoff can be submitted while its staging and checks run (#3043)', () => {
+  // #3043 / #3173: submitting opens the vote; the merge gate waits for the
+  // checks. The button used to stay disabled here until the server reported
+  // ready, which stranded any proposal whose preview the idle sweep took.
   const h = makeDevChat();
   const messages = [{
     role: 'system', content: 'Staging deployed!', changesReady: true,
@@ -273,23 +276,24 @@ test('managed CLI handoff keeps Propose disabled until its authoritative state i
   });
 
   let html = h.render(messages, checking);
-  // #2074: the reason names the condition that actually failed. This is the
-  // managed-handoff contract — a tested, uploaded revision — not a generic
-  // "finish the build", which is what it used to say for all five conditions
-  // and is how a passing state got read as a broken button.
-  assert.deepEqual(h.changesRow().propose, {
-    kind: 'blocked', label: 'Submit for review',
-    reason: 'This managed session needs staging and checks to finish before it can be submitted.',
-  });
-  assert.match(html, /disabled[^>]*title="This managed session needs staging and checks to finish/,
-    'the unavailable action is disabled and explains why — naming ITS condition');
-  assert.match(html, /Submit for review/, 'the action keeps its stable label');
+  assert.equal(h.changesRow().propose.kind, 'ready');
+  assert.doesNotMatch(html, /disabled[^>]*>Submit for review</, 'enabled while the checks run');
+  assert.match(html, /title="You can submit it now\. Its checks keep running, and it can merge only once they pass\."/,
+    'and it says what submitting now means');
 
-  html = h.render(messages, { ...checking, proposal_state: 'ready', check_state: 'passing' });
-  assert.deepEqual(h.changesRow().propose, { kind: 'ready' });
-  assert.doesNotMatch(html, /disabled[^>]*>Submit for review</,
-    'the same action enables when the server reports ready');
+  html = h.render(messages, { ...checking, proposal_state: 'ready', check_state: 'passing',
+    staging_url: 'https://preview.example.org' });
+  assert.equal(h.changesRow().propose.kind, 'ready');
+  assert.match(html, /title="Ready to submit for review\."/);
   assert.match(html, />Submit for review</);
+
+  // The case that stranded #3161 and #3163: checked and passing, then the
+  // idle sweep reclaimed the preview. Submitting rebuilds it.
+  html = h.render(messages, { ...checking, status: 'paused', proposal_state: 'deploying',
+    check_state: 'passing', staging_url: null });
+  assert.equal(h.changesRow().propose.kind, 'ready');
+  assert.doesNotMatch(html, /disabled[^>]*>Submit for review</);
+  assert.match(html, /Its preview was closed while idle; submitting rebuilds it and runs the checks again\./);
 });
 
 test('live session refresh watches managed proposal readiness (#1650)', () => {
@@ -304,7 +308,7 @@ test('ordinary active sessions preserve their build-on-propose action (#1650)', 
   // which #2379 blocks.)
   h.render([{ role: 'system', content: 'Changes ready.', changesReady: true }],
     activeSession({ proposal_state: undefined, check_state: 'pending', staging_url: null }));
-  assert.deepEqual(h.changesRow().propose, { kind: 'ready' });
+  assert.equal(h.changesRow().propose.kind, 'ready');
 });
 
 test('a plain no-changes status line renders NO card', () => {
@@ -470,7 +474,7 @@ test('promotePR failure (non-OK) re-enables the button and restores its label (#
 
   await h.DevChat.promotePR();
 
-  assert.deepEqual(h.changesRow().propose, { kind: 'ready' },
+  assert.equal(h.changesRow().propose.kind, 'ready',
     'button re-enabled after a failed response');
   const html = h.getHtml();
   assert.match(html, />Submit for review</, 'original label restored');
@@ -479,7 +483,9 @@ test('promotePR failure (non-OK) re-enables the button and restores its label (#
   assert.deepEqual(h.alerts, ['Nope'], 'server error surfaced via alert');
 });
 
-test('promotePR humanizes a stale proposal readiness rejection (#1650)', async () => {
+test('promotePR shows the server\'s own reason for a refusal (#3173)', async () => {
+  // The few refusals left (nothing committed, a turn still running) each say
+  // why; a bare readiness code still reads as a sentence, not a code.
   const h = makeDevChat();
   h.render([
     { role: 'system', content: 'Staging deployed!', changesReady: true,
@@ -487,16 +493,18 @@ test('promotePR humanizes a stale proposal readiness rejection (#1650)', async (
   ], activeSession({ id: 7 }));
   h.setFetch(async () => ({
     ok: false,
-    json: async () => ({ error: 'proposal_not_ready' }),
+    json: async () => ({ error: 'proposal_not_ready',
+      message: 'An agent turn is still running on this change. Submit it for review when the turn finishes.' }),
   }));
-
   await h.DevChat.promotePR();
-
   assert.deepEqual(h.alerts, [
-    'This proposal is not ready yet. Wait for staging and checks to finish, then try again.',
+    'An agent turn is still running on this change. Submit it for review when the turn finishes.',
   ]);
-  assert.deepEqual(h.changesRow().propose, { kind: 'ready' },
-    'a readiness race remains retryable after the friendly explanation');
+  assert.equal(h.changesRow().propose.kind, 'ready', 'and it stays retryable');
+
+  h.setFetch(async () => ({ ok: false, json: async () => ({ error: 'proposal_not_ready' }) }));
+  await h.DevChat.promotePR();
+  assert.equal(h.alerts[1], 'This change cannot be submitted yet. Try again in a moment.');
 });
 
 test('promotePR failure (network error) re-enables the button and restores its label (#558)', async () => {
@@ -510,7 +518,7 @@ test('promotePR failure (network error) re-enables the button and restores its l
 
   await h.DevChat.promotePR();
 
-  assert.deepEqual(h.changesRow().propose, { kind: 'ready' },
+  assert.equal(h.changesRow().propose.kind, 'ready',
     'button re-enabled after a thrown error');
   assert.match(h.getHtml(), />Submit for review</, 'original label restored');
   assert.deepEqual(h.alerts, ['Network error'], 'network error surfaced via alert');
@@ -599,12 +607,13 @@ test('a later iteration moves the card, not its status line, to the bottom (#188
   assert.match(html, /Preview staging/, 'and its other actions');
   assert.doesNotMatch(html, /Earlier build result|Current actions are/,
     'nothing is left behind as a stub');
-  assert.deepEqual(h.changesRow().propose, { kind: 'ready' }, 'same model, same wiring');
+  assert.equal(h.changesRow().propose.kind, 'ready', 'same model, same wiring');
 });
 
 test('the trailing card keeps the proposal action\'s lifecycle (#1889)', () => {
-  // Completed on a promoted session, blocked with its reason on a failing
-  // one, ready on a paused checked one — the model the in-place card renders from.
+  // Completed on a promoted session, submittable with a warning on a failing
+  // one (#3173), ready on a paused checked one — the model the in-place card
+  // renders from.
   let h = makeDevChat();
   let html = h.render([CARD, WRAP_UP, ASK, ANSWER], withPr({ status: 'promoted' }));
   assert.ok(at(html, 'class="dc-pr-card"') > at(html, 'rounds to the hour'));
@@ -614,8 +623,9 @@ test('the trailing card keeps the proposal action\'s lifecycle (#1889)', () => {
   h = makeDevChat();
   html = h.render([CARD, WRAP_UP, ASK, ANSWER], withPr({ check_state: 'failing' }));
   assert.ok(at(html, 'class="dc-pr-card"') > at(html, 'rounds to the hour'));
-  assert.match(html, /disabled[^>]*title="The checks on this revision are failing/);
-  assert.match(html, /Submit for review/, 'the blocked action keeps its label');
+  assert.equal(h.changesRow().propose.kind, 'ready', 'failing checks gate the merge, not the submission');
+  assert.doesNotMatch(html, /disabled[^>]*>Submit for review</);
+  assert.match(html, /title="Its checks are failing\. You can submit it now; it can merge only after a fix passes them\."/);
 
   h = makeDevChat();
   html = h.render([CARD, WRAP_UP, ASK, ANSWER], withPr({ status: 'paused' }));

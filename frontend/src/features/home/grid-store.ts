@@ -79,6 +79,13 @@ export interface HomeAppView {
   showRetry: boolean;
   /** Resolved live name of the app this was forked from, or null. */
   forkName: string | null;
+  /**
+   * Who the project is for (communities; services/communities.js): 'open'
+   * (a Community), 'invited' (a Group) or 'solo' (Just you). The tile draws
+   * a small mark for the last two and none for a community, which is what
+   * most of the grid is.
+   */
+  audience: 'open' | 'invited' | 'solo';
 }
 
 /**

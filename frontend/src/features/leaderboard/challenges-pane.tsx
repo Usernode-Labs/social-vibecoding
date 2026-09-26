@@ -52,7 +52,7 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
-import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
+import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressCadence, ProgressRail } from './challenge-card';
 import { GroupHeader } from './group-header';
 import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
@@ -107,6 +107,9 @@ type CardView = {
   // "5d left" (TopochainChallenges._deadlineOf); null when done, and null
   // under a group header that carries the clock.
   deadline: string | null;
+  // "Updates every 15 min · last 10:42" (TopochainChallenges._cadenceOf) on a
+  // challenge the background scorer counts; null draws no line.
+  cadence: string | null;
 };
 
 // `meta`, `allDone` and `collapsed` are a grouped grid's header
@@ -166,6 +169,7 @@ type DetailView = {
   stateLabel: string;
   fill: number | null;
   counted: boolean;
+  cadence: string | null;
   cta: CtaView | null;
   description: string | null;
   requirements: string | null;
@@ -536,7 +540,8 @@ function ArtworkWell({ slug, tone }: { slug: string | null; tone: string | null 
 
 // The board's order, below the platform header that carries the way back and
 // the name: the category, the title with the card's meta line ("3d left · 720
-// pts so far") and the task, the artwork well, the clean rail,
+// pts so far") and the task, the artwork well, the clean rail (with the
+// card's cadence line under it on a challenge the background scorer counts),
 // the action, then the reading — description,
 // Requirements, Scoring — and Participants under a rule. The board's
 // "Next: …" hint under the action is deliberately absent (owner decision).
@@ -563,6 +568,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         name={view.goal}
         counted={view.counted}
       />
+      <ProgressCadence size="lg" text={view.cadence} />
       {view.cta ? <Cta view={view.cta} /> : null}
       {view.description ? <p className={PROSE}>{view.description}</p> : null}
       {view.requirements ? <PageSection heading="Requirements">{view.requirements}</PageSection> : null}

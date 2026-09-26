@@ -666,7 +666,7 @@ test('the Create tile renders in both states and keeps quota details reachable',
   const on = createHtml(true);
   assert.match(on, /data-create-enabled="true"/);
   assert.match(on, /home-create-btn/, 'the hook the dapp.json create checks select on');
-  assert.match(on, /Create an app/);
+  assert.match(on, /New project/);
   assert.doesNotMatch(on, /aria-disabled/);
 
   const off = createHtml(false);

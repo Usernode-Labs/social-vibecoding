@@ -1004,6 +1004,10 @@ const Home = {
       failureReason: isError && app.last_failure_reason ? String(app.last_failure_reason) : null,
       showRetry,
       forkName,
+      // The tile's audience mark (communities, stage 4): GET /api/apps
+      // derives it per row, and anything it does not say reads as a
+      // community, which draws no mark.
+      audience: app.audience === 'invited' || app.audience === 'solo' ? app.audience : 'open',
     };
   },
 

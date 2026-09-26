@@ -485,7 +485,10 @@ function feedbackRoutes(config) {
       // (LLM disabled, credits exhausted, API error) the issue is still
       // filed with the fallback template — feedback must never block on
       // LLM availability — and `titleFallback` drives a title_heal_queue
-      // row below so the sweeper regenerates the title later.
+      // row below so the sweeper regenerates the title later. Feedback the
+      // model finds nothing to title in ("Lfg") is not a failure: it comes
+      // back as the reporter's own words with `actionable: false` (#3193),
+      // files as-is, and queues no heal, since a retry gets the same answer.
       let title = llm.FEEDBACK_FALLBACK_TITLE;
       let titleFallback = true;
       if (customTitle) {

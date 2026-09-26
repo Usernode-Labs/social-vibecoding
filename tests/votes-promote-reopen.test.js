@@ -77,7 +77,7 @@ function promotePool(session = sessionRow, { promotionMatches = true } = {}) {
   ]);
 }
 
-function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool } = {}) {
+function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineInFlight = false } = {}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
@@ -94,6 +94,7 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool } = {}) {
     topicAttrs: require.resolve('../src/services/topic-attributes'),
     visuals: require.resolve('../src/services/visuals'),
     prImportSync: require.resolve('../src/services/pr-import-sync'),
+    pipeline: require.resolve('../src/services/handoff-pipeline'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
@@ -105,6 +106,8 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool } = {}) {
   const octokitRequests = [];
   const pendingCalls = [];
   const rerunCalls = [];
+  const stagingBuilds = [];
+  const captures = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => pool });
@@ -127,7 +130,16 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool } = {}) {
       return { ...existing, draft: false };
     },
   });
-  stub(ids.staging, { rebuildProduction: async () => ({ ok: true }), teardownStaging: async () => {} });
+  stub(ids.staging, {
+    rebuildProduction: async () => ({ ok: true }),
+    teardownStaging: async () => {},
+    buildAndDeployStaging: async (_config, session, _app, sha) => {
+      stagingBuilds.push({ sessionId: session.id, sha });
+      return { containerId: 'c1', stagingUrl: 'https://stage.example', hostname: 'stage' };
+    },
+    verifyStagingEdge: async () => {},
+  });
+  stub(ids.pipeline, { hasInFlightHandoffPipeline: () => pipelineInFlight });
   stub(ids.docker, {});
   stub(ids.resolver, {
     checkAndResolveConflicts: async () => {},
@@ -159,6 +171,9 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool } = {}) {
       return true;
     },
     notifyChecksPending() {},
+    captureForSession: async (_config, session, _app, sha, _result, opts) => {
+      captures.push({ sessionId: session.id, sha, opts });
+    },
   });
   stub(ids.prImportSync, {
     rerunChecksForNewHead: async (args) => { rerunCalls.push(args); },
@@ -174,15 +189,16 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool } = {}) {
   };
   return {
     voteRoutes, getPRCalls, reopenCalls, systemMessages, octokitRequests,
-    pendingCalls, rerunCalls, restore,
+    pendingCalls, rerunCalls, stagingBuilds, captures, restore,
   };
 }
 
 async function withServer({
   getPRImpl, reopenImpl, markReadyImpl, session, expectedHandoffHead, expectedHandoffStatus, promotionMatches,
+  pipelineInFlight,
 } = {}, fn) {
   const pool = promotePool(session, { promotionMatches });
-  const ctx = loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool });
+  const ctx = loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineInFlight });
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -244,6 +260,39 @@ test('a lifecycle change after native preflight requires a fresh submission', as
     assert.equal(response.status, 409);
     assert.equal((await response.json()).error, 'session_state_changed');
     assert.equal(ctx.getPRCalls.length, 0);
+  });
+});
+
+// #3173 / #3043: a managed change can now be submitted with its preview
+// gone (the idle sweep reclaimed it) or while its own run is still checking
+// it. The first must get its preview back and its checks re-run on the
+// reviewed commit; the second must not start a second build racing the run
+// that is already producing exactly that verdict.
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+test('promote rebuilds a reclaimed preview and re-runs checks on the reviewed head', async () => {
+  await withServer({ session: { ...sessionRow, source: 'cli_handoff', status: 'paused',
+    staging_url: null, check_state: 'passing' },
+  expectedHandoffHead: HEAD, expectedHandoffStatus: 'paused' }, async (ctx) => {
+    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(response.status, 200);
+    await settle();
+    assert.deepEqual(ctx.stagingBuilds, [{ sessionId: 7, sha: HEAD }]);
+    assert.equal(ctx.captures.length, 1);
+    assert.equal(ctx.captures[0].sha, HEAD);
+    assert.equal(ctx.captures[0].opts.force, true, 'a fresh verdict, not the one the old preview earned');
+  });
+});
+
+test('promote leaves a running check of the reviewed head to finish on its own', async () => {
+  await withServer({ session: { ...sessionRow, source: 'cli_handoff', status: 'paused',
+    staging_url: null, check_state: 'pending' },
+  expectedHandoffHead: HEAD, expectedHandoffStatus: 'paused', pipelineInFlight: true }, async (ctx) => {
+    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(response.status, 200);
+    await settle();
+    assert.deepEqual(ctx.stagingBuilds, [], 'no second build');
+    assert.equal(ctx.captures.length, 0);
   });
 });
 

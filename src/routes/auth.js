@@ -519,8 +519,11 @@ function authRoutes(config) {
         // services/cli-auth.js). Calling connect() directly turned every
         // valid registration into a 500 on those setups.
         ({ userId, codeId } = await withTransaction(pool, async (client) => {
+          // needs_communities_choice: an account made with a code is asked
+          // which communities to join, like an email sign-up (communities,
+          // stage 5; src/services/onboarding.js).
           const { rows: userRows } = await client.query(
-            'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id',
+            'INSERT INTO users (username, password, needs_communities_choice) VALUES ($1, $2, TRUE) RETURNING id',
             [username.trim(), hash]
           );
           const uid = userRows[0].id;
@@ -661,11 +664,20 @@ function authRoutes(config) {
     // people in, not strand every signed-in member behind a blocking step
     // the client cannot dismiss.
     let needsUsernameChoice = false;
+    // Communities, stage 5 (src/services/onboarding.js): the join screen a
+    // new account answers after its username and the terms, and the
+    // Getting started card that follows it. Same failure direction as the
+    // flag above: unreadable means no blocking step and no card.
+    let needsCommunitiesChoice = false;
+    let showGettingStarted = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
                 u.display_name, u.bio, u.dev_flow_preference,
                 u.needs_username_choice,
+                u.needs_communities_choice,
+                (u.communities_onboarded_at IS NOT NULL
+                  AND u.getting_started_closed_at IS NULL) AS show_getting_started,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -692,6 +704,8 @@ function authRoutes(config) {
         ? rows[0].dev_flow_preference
         : null;
       needsUsernameChoice = rows[0]?.needs_username_choice === true;
+      needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
+      showGettingStarted = rows[0]?.show_getting_started === true;
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
@@ -765,6 +779,16 @@ function authRoutes(config) {
         // whatever the account currently holds, so every existing client
         // renders exactly what it rendered before.
         needsUsernameChoice,
+        // Communities, stage 5. TRUE until a new account has answered "What
+        // communities do you want to join?" (set by every sign-up path:
+        // email, an activation code, a wallet; no existing account ever
+        // reads TRUE). The web shell presents that
+        // screen after the username and terms steps
+        // (frontend/src/features/auth/communities-first-run.js).
+        needsCommunitiesChoice,
+        // The Getting started card on Home: shown to an account that came
+        // through the join screen, until it is closed.
+        showGettingStarted,
         hasApiKey,
         keyLast4,
         // In-chat venue availability: feature flag + beta eligibility + a
@@ -1681,9 +1705,12 @@ function authRoutes(config) {
       const linkToken = crypto.randomBytes(16).toString('hex');
       const linkExpiresAt = new Date(Date.now() + LINK_TOKEN_TTL_MS);
 
+      // needs_communities_choice: asked which communities to join, like
+      // every other new account (communities, stage 5).
       const { rows } = await pool.query(
-        `INSERT INTO users (username, password, usernode_pubkey, wallet_link_token, wallet_link_expires_at)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        `INSERT INTO users (username, password, usernode_pubkey, wallet_link_token, wallet_link_expires_at,
+                            needs_communities_choice)
+         VALUES ($1, $2, $3, $4, $5, TRUE) RETURNING id`,
         [username.trim(), hash, pubkey.trim(), linkToken, linkExpiresAt]
       );
       const userId = rows[0].id;

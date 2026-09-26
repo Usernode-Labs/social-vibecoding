@@ -47,7 +47,7 @@ function fixture(current = session()) {
 
 test('the enabled detail button submits after live checks pass despite a stale checking workspace', async () => {
   const { c, requests, action, click } = fixture();
-  assert.equal(action(session()).disabled, true);
+  assert.equal(action(session()).disabled, false, 'checks still running do not hold it (#3043)');
   const button = action(ready());
   assert.equal(button.disabled, false);
   assert.equal(c.DevChat.currentSession.proposal_state, 'checking');
@@ -60,27 +60,32 @@ test('the enabled detail button submits after live checks pass despite a stale c
   assert.equal(c.DevChat.sessions[0].status, 'promoted');
 });
 
-test('a failed revision becoming ready submits without replacing private workspace data', async () => {
+test('a failed revision submits without replacing private workspace data (#3173)', async () => {
   const current = session({ check_state: 'failing', proposal_state: 'failed', privateWorkspace: 'preserve' });
   const { c, requests, action, click } = fixture(current);
-  assert.equal(action({ ...current }).disabled, true);
-  await click(action(ready()));
+  const button = action({ ...current });
+  assert.equal(button.disabled, false, 'failing checks gate the merge, not the submission');
+  await click(button);
   assert.equal(requests.length, 1);
   assert.equal(c.DevChat.currentSession.privateWorkspace, 'preserve');
 });
 
-test('a displayed blocked snapshot cannot submit through an older ready workspace', async () => {
+test('every displayed underway snapshot submits, exactly once (#3173)', async () => {
+  // These were the blocked snapshots. Each now submits, and the server says
+  // why in its own words if it still refuses one.
   for (const patch of [
     { proposal_state: 'checking', check_state: 'pending' },
     { proposal_state: 'failed', check_state: 'failing' },
     { check_state: 'error' },
     { status: 'paused', proposal_state: 'checking', check_state: 'pending' },
+    { status: 'paused', proposal_state: 'deploying', check_state: 'passing', staging_url: null },
   ]) {
     const { requests, action, click } = fixture(ready());
     const button = action(ready(patch));
-    assert.equal(button.disabled, true);
+    assert.equal(button.disabled, false, JSON.stringify(patch));
     await click(button);
-    assert.equal(requests.length, 0);
+    assert.equal(requests.length, 1, JSON.stringify(patch));
+    assert.equal(requests[0].url, '/api/sessions/123/promote');
   }
 });
 

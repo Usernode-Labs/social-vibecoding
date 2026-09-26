@@ -653,7 +653,7 @@ function statusNextStep(state, revisionState, checks) {
     return 'This check run is overdue and no live worker owns it. Re-run checks on this same session with proposal_recheck, then keep polling proposal_status. Do not call proposal_start.';
   }
   if (progress === 'deploying' || progress === 'checking') {
-    return 'A build or check run is still in progress. Keep this session and request ID and poll proposal_status; do not push or call proposal_start.';
+    return 'A build or check run is still in progress. Keep this session and request ID and poll proposal_status; do not push or call proposal_start. If the user wants it opened for voting now, proposal_promote works while the checks run; it can merge only once they pass.';
   }
   if (progress === 'uploaded') {
     return 'Submit the uploaded head on this same session with proposal_submit_build.';
@@ -1875,9 +1875,18 @@ function proposalHandoffRoutes(config) {
 
   // Server-side counterpart to proposal_promote's preflight. This router is
   // mounted before voteRoutes, so a handoff promoted from either MCP or its
-  // optionally-open web page must still be on the exact currently checked
-  // head with live staging and a terminal passing verdict. Local and web
-  // turns retain the same source/session and can alternate.
+  // optionally-open web page goes up for review on exactly the commit its
+  // checks describe. Local and web turns retain the same source/session and
+  // can alternate.
+  //
+  // #3173 / #3043: submitting does NOT wait for staging or a verdict. The
+  // merge gate requires passing checks on the exact reviewed commit
+  // (services/merge-requirements.js), so a vote may open while they run, and
+  // a proposal whose preview the idle sweep reclaimed is rebuilt by the
+  // promote route rather than stranded. What this still refuses is only what
+  // would put the wrong commit, or no commit, in front of the group: nothing
+  // submitted yet, an upload that was never submitted, a coding turn or sync
+  // that may still move the branch, and a branch that moved past its checks.
   // Membership first (services/communities.js): proposing is for the
   // community's members whichever router ends up promoting, and this one
   // runs ahead of voteRoutes' own copy of the same gate.
@@ -1896,18 +1905,23 @@ function proposalHandoffRoutes(config) {
       if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
         return res.status(404).json({ error: 'Active handoff session not found' });
       }
-      if (!['active', 'paused'].includes(session.status)
-          || publicSessionStatus(session).revisionState !== 'ready') {
-        return res.status(409).json({
-          error: 'proposal_not_ready',
-          message: 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.',
-        });
+      const refuse = (message) => res.status(409).json({ error: 'proposal_not_ready', message });
+      if (!['active', 'paused'].includes(session.status)) {
+        return refuse(`This change is ${session.status || 'closed'}, so it cannot be submitted for review.`);
       }
-      if (isSessionBusy(Number(session.id))) {
-        return res.status(409).json({
-          error: 'proposal_not_ready',
-          message: 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.',
-        });
+      if (hasUnsubmittedUpload(session)) {
+        return refuse('A commit was uploaded to this change but has not been submitted for checks yet. Submit it first, then submit the change for review.');
+      }
+      if (!currentCheckedHead(session)) {
+        return refuse('Nothing has been submitted to this change yet, so there is nothing to put up for review.');
+      }
+      // A running handoff pipeline is checking this very commit and keeps
+      // publishing after promotion (services/handoff-pipeline.js). It holds
+      // the session for its whole run, so no coding turn or sync can start
+      // beside it; anything ELSE holding the session may still move its
+      // branch.
+      if (isSessionBusy(Number(session.id)) && !hasInFlightHandoffPipeline(session.id)) {
+        return refuse('An agent turn is still running on this change. Submit it for review when the turn finishes.');
       }
       // Hold the same cross-surface claim used by build/sync through the
       // downstream promotion handler. Releasing before next() would reopen a

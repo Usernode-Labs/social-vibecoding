@@ -48,7 +48,7 @@ test('the steps a set of answers walks: three for Just me or an import, four oth
     assert.match(SRC, new RegExp(`'${attr}': `), attr);
   }
   // Close puts every answer back.
-  assert.match(SRC, /formRef\.current\?\.reset\(\);[\s\S]*?setAudience\('solo'\);\s*setStep\('who'\);\s*setApprovers\('anyone'\);\s*setApprovals\('majority'\);/);
+  assert.match(SRC, /formRef\.current\?\.reset\(\);[\s\S]*?setAudience\('solo'\);\s*setStep\('who'\);\s*setApprovers\(null\);\s*setApprovals\(null\);/);
 });
 
 test('the wire body says who it is for, whom to invite and who approves', () => {
@@ -70,6 +70,11 @@ test('the wire body says who it is for, whom to invite and who approves', () => 
     { name: 'Book club', audience: 'open', repoUrl: 'https://github.com/o/r' }, 'an import sends no rule');
   assert.equal(createBody({ ...base, audience: 'open', approvers: 'invited', approvals: 'atLeast', approvalsN: 99 }).governance.approvals,
     'default', 'an out-of-range number falls back rather than being refused by the server');
+  assert.equal(createBody({ ...base, audience: 'open', description: '  Swap seeds \n and plan  ' }).description,
+    'Swap seeds and plan', 'What is it? is one tidied line');
+  assert.equal(createBody({ ...base, audience: 'open', description: '   ' }).description, undefined, 'blank sends nothing');
+  assert.equal(createBody({ ...base, mode: 'import', repoUrl: 'https://github.com/o/r', audience: 'open', description: 'Ours' }).description,
+    undefined, 'an import\'s own dapp.json describes it');
   const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  const stepIndex'));
   assert.match(submit, /const body = createBody\(\{/);
   assert.match(submit, /body: JSON\.stringify\(body\)/);
@@ -126,6 +131,13 @@ test('the details step keeps the import block and the name card, and runs the gu
   assert.match(details, /id="import-check"/);
   assert.match(details, /id="app-name"/);
   assert.match(details, /Project name/);
+  assert.ok(details.indexOf('id="app-name"') < details.indexOf('id="app-description"'),
+    'What is it? sits under the name, in the same card');
+  assert.match(details, /What is it\? \(optional\)/);
+  assert.match(details, /maxLength=\{100\}/);
+  assert.match(details, /create-describe-row/);
+  assert.match(CSS, /#create-card\[data-mode="import"\] \.create-describe-row \{ display: none; \}/,
+    'an import has no What is it? row');
   assert.match(details, /create-import-rule-note/, 'an import says why there is no approval step');
   const next = SRC.slice(SRC.indexOf('function next() {'), SRC.indexOf('/** One entry point'));
   assert.match(next, /Paste a GitHub repo URL first\./);
@@ -188,7 +200,7 @@ test('app.css unfolds the steps in place, keeps the approval step to a group or 
 test('every selected choice wears the Create button\'s accent', () => {
   const tw = read('tailwind.config.js');
   assert.match(tw, /600:'#0a6ee0'/, 'violet-600 is the platform blue');
-  const at = CSS.indexOf('#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"],');
+  const at = CSS.indexOf('#create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill[data-audience-pill="solo"],');
   assert.ok(at > 0);
   const rule = CSS.slice(at, CSS.indexOf('}', at));
   for (const sel of ['data-audience-pill="invited"', 'data-mode-pill="new"', 'data-mode-pill="import"',
@@ -201,6 +213,43 @@ test('every selected choice wears the Create button\'s accent', () => {
   assert.doesNotMatch(createBlock, /#7c3aed/, 'the pre-reskin violet is gone from the dialog');
   assert.doesNotMatch(createBlock, /background: var\(--text-primary\);\n  color: var\(--bg-primary\);/,
     'no selected state in the create dialog is the solid inversion');
+});
+
+// Request #3160: a question step starts with nothing chosen, and pressing a
+// row moves on without a Next. "Just me" and "Start from scratch" were filled
+// on arrival with a Next under them, which read as a choice already made and
+// a button still to press.
+test('a question step shows no choice until one is pressed, and has no Next', () => {
+  const at = CSS.indexOf('#create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill[data-audience-pill="solo"],');
+  const rule = CSS.slice(at, CSS.indexOf('}', at));
+  // The fill on the first two steps' rows waits for the step to move on.
+  for (const aud of ['solo', 'invited', 'open']) {
+    assert.ok(rule.includes(`#create-card:not([data-step="who"])[data-audience="${aud}"]`), aud);
+  }
+  for (const mode of ['new', 'import']) {
+    assert.match(rule, new RegExp(`#create-card:is\\(\\[data-step="details"\\], \\[data-step="approve"\\]\\)\\[data-mode="${mode}"\\]\\s+\\.create-mode-pill\\[data-mode-pill="${mode}"\\]`), mode);
+  }
+  assert.doesNotMatch(rule, /\n#create-card\[data-audience="(solo|invited|open)"\]\s+\.create-who-pill/,
+    'no audience row is filled while its step is being asked');
+  assert.doesNotMatch(rule, /\n#create-card\[data-mode="(new|import)"\]\s+\.create-mode-pill/,
+    'no start row is filled while its step is being asked');
+  // The approval step starts unanswered too. Its fill is keyed on the
+  // answer, and the answer is empty until a row is pressed.
+  assert.ok(rule.includes('#create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"]'));
+  assert.match(SRC, /useState<Approvers \| null>\(null\)/);
+  assert.match(SRC, /useState<Approvals \| null>\(null\)/);
+  assert.match(SRC, /'data-approvers': approvers \?\? '',/);
+  assert.match(SRC, /'data-approvals': approvals \?\? '',/);
+  // Create waits for the answer, and only ever on that step, so the
+  // prerendered button is unchanged.
+  assert.match(SRC, /const approvalMissing = step === 'approve' && isLast\s*\n\s*&& \(approvers == null \|\| \(approvers === 'invited' && approvals == null\)\);/);
+  assert.match(SRC, /disabled=\{quotaBlocksCreation \|\| submitting \|\| approvalMissing\}/);
+  assert.match(SRC, /if \(approvalMissing\) \{\s*\n\s*setError\(approvers == null \? 'Choose who approves changes\.' : 'Choose how many of them must say yes\.'\);/);
+  // No Next on either question step; Cancel stays.
+  assert.match(CSS, /#create-card:is\(\[data-step="who"\], \[data-step="start"\]\) #create-next \{\n  display: none;\n\}/);
+  // A press on a row is the answer: it sets it and unfolds the next step.
+  assert.match(SRC, /setAudience\(next\);\s*\n\s*setError\(''\);\s*\n\s*setStep\('start'\);/);
+  assert.match(SRC, /applyMode\(next\);\s*\n\s*setStep\('details'\);/);
 });
 
 test('the shot links land on the state they name, and each has a check', () => {
@@ -262,7 +311,8 @@ test('Create sends one request at a time and shows it is busy', () => {
   assert.match(submit, /\} finally \{\s*submittingRef\.current = false;\s*setSubmitting\(false\);\s*\}/);
   assert.equal((submit.match(/fetch\('\/api\/apps'/g) || []).length, 1);
   const button = SRC.slice(SRC.indexOf('id="create-submit"'), SRC.indexOf('</Button>', SRC.indexOf('id="create-submit"')));
-  assert.match(button, /disabled=\{quotaBlocksCreation \|\| submitting\}/);
+  // (and, on the approval step, until it is answered)
+  assert.match(button, /disabled=\{quotaBlocksCreation \|\| submitting \|\| approvalMissing\}/);
   assert.match(button, /aria-busy=\{submitting \|\| undefined\}/, 'no aria-busy in the prerender');
   assert.match(button, /\{submitting \? <SpinnerArcIcon /);
   assert.match(button, /\(mode === 'import' \? 'Importing…' : 'Creating…'\)/);

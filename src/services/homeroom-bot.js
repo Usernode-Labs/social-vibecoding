@@ -836,6 +836,44 @@ function triagePrompt() {
   return triagePromptCache;
 }
 
+// What the triage knows of the platform. A request often turns on it (its
+// native kit, its `--un-*` tokens, what an app may do), and the app's
+// repository does not hold those answers.
+//
+// The conventions are a TOOL CALL away, not inline. #3161 inlined all
+// 150 KB of them, as an agent-chat scout carries them, and on rss-reader #24
+// (2026-09-26) that went wrong twice: once the model took the whole message
+// for one conventions document and never triaged; once every request
+// carried 50k tokens before the first file read, the context crossed the
+// auto-compaction limit after 86 reads, and the model's own summary said
+// the task was "not visible in my surviving context". The Homeroom read
+// tool every scout has serves the same document on demand: the essentials
+// and an index of sections, then one section at a time. The UI design
+// guidance the coding agents build with is small, so it stays inline.
+//
+// It goes AFTER the request and the triage instructions, fenced and
+// labelled as reference, so it is never read as the task.
+function triageReference() {
+  const designGuidance = require('./prompts').getDesignGuidance({ readsImages: false });
+  return `==== PLATFORM REFERENCE (for looking things up; not the request) ====
+
+The Homeroom platform's own conventions (its rules for every app on it: its native UI kit, its \`--un-*\` theme tokens, its APIs and what an app may do) are one tool call away. Call \`get_platform_conventions\` with no arguments for the essentials and an index of its sections, then with a section's slug to read just that section. Use it when the request turns on the platform; nothing in this reference is a task.
+
+The UI design guidance every coding agent here builds with follows, for judging a request that changes what people see.
+
+${designGuidance}
+
+==== END PLATFORM REFERENCE ====`;
+}
+
+// The last thing the model reads says what it is doing and restates the one
+// format parseVerdict accepts, so the verdict does not depend on it
+// remembering instructions from earlier in the turn.
+function triageClosing(issueNumber) {
+  return `That is the end of the reference. Now answer the triage request above, for issue #${issueNumber}: decide which verdict is true, and END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:
+{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "..."}`;
+}
+
 /**
  * The bot's one dev session per app, created on first use. `paused` at
  * rest and `active` only while a turn runs; is_headless FALSE and an empty
@@ -1288,7 +1326,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   const seed = sessions.buildHeadlessSeed(
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
-  const prompt = `${seed}\n\n${triagePrompt()}`;
+  const prompt = [
+    seed, triagePrompt(), triageReference(), triageClosing(issueNumber),
+  ].join('\n\n');
 
   let session;
   try {

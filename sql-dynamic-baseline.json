@@ -1088,6 +1088,13 @@
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail) SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.det"
     },
     {
+      "source": "src/services/onboarding.js",
+      "kind": "structural-template",
+      "fingerprint": "0152c7e9ae8c38c179bb",
+      "count": 1,
+      "preview": "`SELECT a.id, a.slug, a.name, a.icon_emoji, a.icon_image_id, a.self_hosted, ${members}::int AS member_count, ${communities.audienceSql('a', members)} AS audienc"
+    },
+    {
       "source": "src/services/platform-env-check.js",
       "kind": "structural-template",
       "fingerprint": "82e227c3af8b4b0141b0",

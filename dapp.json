@@ -1254,13 +1254,13 @@
       "name": "Create an app is the launcher grid's last tile, not a section below Challenges (re-pointed: Create moved into the grid)",
       "path": "/?demo=1&shot=create-enabled",
       "expectSelector": "#home-body:not(:has(#home-create-section)) #home-apps-section #app-list > #home-create-tile.home-create-btn[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
-      "expectText": "Create an app"
+      "expectText": "New project"
     },
     {
       "name": "The Create an app tile is present but locked without app quota, still last in the grid (re-pointed: Create moved into the grid)",
       "path": "/?demo=1&shot=create-disabled",
       "expectSelector": "#app-list > #home-create-tile.home-create-btn[data-panel-slot=\"create\"][data-create-enabled=\"false\"]:last-child:not([disabled])",
-      "expectText": "Create an app"
+      "expectText": "New project"
     },
     {
       "name": "Discover is one flat lane: curated cards then popular, with no sub-group label",
@@ -1413,7 +1413,7 @@
       "expectText": "GitHub repo URL"
     },
     {
-      "name": "Create-project dialog opens on who it is for: Just me chosen, then A group and A community, with a step count (communities, stage 3)",
+      "name": "Create-project dialog opens on who it is for, nothing chosen yet: Just me, A group and A community, with a step count (communities, stage 3; request #3160)",
       "path": "/#create",
       "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-audience=\"solo\"] .create-who-pill[data-audience-pill=\"solo\"] + .create-who-pill[data-audience-pill=\"invited\"] + .create-who-pill[data-audience-pill=\"open\"]",
       "expectText": "Step 1 of 3"
@@ -2472,7 +2472,7 @@
     {
       "name": "A Needs-you item leads with its title, then the sentence a voter reads, then the caption with who and when",
       "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] > .dev-ws-item-title + .dev-ws-item-summary ~ .dev-ws-item-caption > .dev-ws-item-by"
+      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"]:not([data-ws-swipeable]) > .dev-ws-item-title + .dev-ws-item-summary ~ .dev-ws-item-caption > .dev-ws-item-by"
     },
     {
       "name": "The Needs-you feed's rail offers Ask, which opens the question box about the item in front of you",
@@ -3468,6 +3468,33 @@
       "path": "/?shot=choose-username",
       "expectSelector": ".un-modal [data-choose-username] p",
       "expectText": "Letters, numbers and underscores, 3 to 32 characters."
+    },
+    {
+      "id": "auth.join-communities-first-run",
+      "name": "After the username and terms, a new account picks the communities it joins, Homeroom first, the button says how many, and Skip for now sits under it (communities, stage 5)",
+      "path": "/?shot=join-communities",
+      "expectSelector": ".un-modal [data-join-communities]:has([data-join-community=\"homeroom\"][data-checked=\"true\"] ~ [data-join-community=\"city-garden\"][data-checked=\"false\"]) [data-join-communities-save][data-picked=\"2\"] + [data-join-communities-skip]",
+      "expectText": "Join 2 communities",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/auth/communities-first-run.js",
+        "src/services/onboarding.js",
+        "src/routes/onboarding.js",
+        "src/routes/auth.js"
+      ]
+    },
+    {
+      "id": "home.getting-started-card",
+      "name": "Home opens on a Getting started card whose three steps tick off from what the person did (communities, stage 5)",
+      "path": "/?shot=getting-started",
+      "expectSelector": "#home-getting-started:not(.hidden) [data-getting-started=\"1/3\"] [data-getting-started-step=\"say-hi\"][data-done=\"true\"] ~ [data-getting-started-step=\"vote\"][data-done=\"false\"]",
+      "expectText": "Getting started",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/home/getting-started.tsx",
+        "frontend/src/features/home/index.tsx",
+        "src/services/onboarding.js"
+      ]
     },
     {
       "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",
@@ -5164,9 +5191,9 @@
       ]
     },
     {
-      "name": "#2779: an agent session's staging builds are cards: an older build is superseded, the newest offers Open preview and View change",
+      "name": "#2779: an agent session's staging builds are cards: an older build is superseded, the newest offers Open preview and View change, and says in words why its checks were skipped (#3180)",
       "path": "/#messages/agent/990801",
-      "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-preview=\"superseded\"] ~ [data-agent-session-preview=\"deployed\"] [data-agent-session-preview-open] + [data-agent-session-preview-change]",
+      "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-preview=\"superseded\"] ~ [data-agent-session-preview=\"deployed\"]:has(> [data-agent-session-checks-reason]) [data-agent-session-preview-open] + [data-agent-session-preview-change]",
       "expectText": "Superseded by a newer preview"
     },
     {
@@ -5258,9 +5285,9 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779)",
+      "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
       "path": "/#agent/990801/changes",
-      "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-drawer] [data-agent-session-active-change] a[href$=\"/dev/proposals/990802\"]"
+      "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
     }
   ],
   "governance": {

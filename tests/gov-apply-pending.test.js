@@ -724,7 +724,7 @@ test('?demo=1 reports the app lock OPEN, so the mock states are reviewable', () 
   const view = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
   );
-  assert.match(view, /const locked = !!promotedData\.locked;/);
+  assert.match(view, /const locked = keep\(promotedData\) \? !!keptCtx\.locked : !!promotedData\.locked;/);
 });
 
 test('a locked app with no ?demo=1 still suppresses the derived states', () => {

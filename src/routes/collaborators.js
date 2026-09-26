@@ -16,13 +16,12 @@ const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const notifications = require('../services/notifications');
 const userDirectory = require('../services/user-directory');
-const events = require('../services/events');
 const { drainGuard } = require('../services/lifecycle');
 const { userDirectoryLimiter } = require('../middleware/rate-limits');
 
 // Shared with POST /api/apps, which sends a Group's invites at creation
 // (services/collab-invites.js).
-const { hydrateAndPush, sendInvite } = require('../services/collab-invites');
+const { acceptInvite, sendInvite } = require('../services/collab-invites');
 
 function collaboratorRoutes(config) {
   const router = Router();
@@ -209,62 +208,17 @@ function collaboratorRoutes(config) {
     const appId = parseInt(req.params.appId, 10);
     if (!Number.isFinite(appId)) return res.status(400).json({ error: 'Invalid app id' });
     try {
-      const { rows: updated } = await pool.query(
-        `UPDATE app_collaborators
-            SET status = 'member', accepted_at = NOW()
-          WHERE app_id = $1 AND user_id = $2 AND status = 'invited'
-          RETURNING invited_by`,
-        [appId, req.user.id]
-      );
-
-      const { rows: appRows } = await pool.query(
-        'SELECT id, slug, name FROM apps WHERE id = $1', [appId]
-      );
-      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
-      const app = appRows[0];
-
-      if (!updated.length) {
-        // No pending invite: already a member (idempotent ok) or never
-        // invited (404 — don't disclose anything else).
-        const isMember = await appAccess.isCollaborator(pool, appId, req.user.id);
-        if (isMember) return res.json({ ok: true, appSlug: app.slug, alreadyMember: true });
-        return res.status(404).json({ error: 'Invite not found' });
-      }
-
-      await notifications.markInviteNotificationsRead(pool, req.user.id, appId).catch(() => {});
-      appAccess.invalidateVisibility(appId, app.slug);
-
-      const wsSvc = require('../services/ws');
-      try { wsSvc.pushNotificationToUser(req.user.id, { type: 'notifications_changed' }); } catch {}
-
-      // Tell the inviter their invite landed.
-      const inviterId = updated[0].invited_by;
-      if (inviterId && inviterId !== req.user.id) {
-        try {
-          const notifRows = await notifications.createCollabInviteAcceptedNotification(pool, {
-            appId,
-            recipientId: inviterId,
-            accepterId: req.user.id,
-          });
-          await hydrateAndPush(pool, notifRows);
-        } catch (err) {
-          log.warn('collab', 'accept notify failed', { err: err.message });
-        }
-      }
-
-      await wsSvc.sendSystemMessage(pool, appId,
-        `${req.user.username} joined as a collaborator`, 'system'
-      ).catch((err) => log.warn('collab', 'join chat msg failed', { err: err.message }));
-
-      events.record(pool, {
-        type: events.EVENT_TYPES.COLLAB_JOINED,
-        userId: req.user.id,
-        appId,
-        metadata: { invitedBy: inviterId || null },
+      // The whole acceptance lives in services/collab-invites.js, which the
+      // first-run join screen calls too (communities, stage 5): an invite
+      // accepted there is this same accept, with the same notification to
+      // the inviter and the same "joined" line in the app's chat.
+      const result = await acceptInvite(pool, { appId, user: req.user });
+      if (!result.ok) return res.status(result.status).json({ error: result.error });
+      res.json({
+        ok: true,
+        appSlug: result.appSlug,
+        ...(result.alreadyMember ? { alreadyMember: true } : null),
       });
-
-      log.info('collab', 'Invite accepted', { appId, userId: req.user.id });
-      res.json({ ok: true, appSlug: app.slug });
     } catch (err) {
       log.error('collab', 'accept failed', { appId, message: err.message });
       res.status(500).json({ error: 'Internal server error' });

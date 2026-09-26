@@ -1061,6 +1061,25 @@
     },
     {
       "source": "src/routes/admin.js",
+      "method": "POST",
+      "path": "/api/admin/users/:id/reset-first-run",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.users.item.reset.first.run.1270e93f",
+      "domain": "admin",
+      "risk": "destructive",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-users.tsx",
+        "frontend/src/features/admin/admin-users.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
       "method": "GET",
       "path": "/api/admin/codes",
       "expression": null,
@@ -7618,6 +7637,117 @@
       ]
     },
     {
+      "source": "src/routes/onboarding.js",
+      "method": "GET",
+      "path": "/api/me/join-suggestions",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.me.join.suggestions.b4b461ca",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/auth/communities-first-run.js",
+        "frontend/src/features/header/ai-credit.js",
+        "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
+        "frontend/src/features/settings/sections/email.tsx",
+        "frontend/src/features/settings/settings.js",
+        "public/js/app-view.js",
+        "public/js/session-state.js"
+      ]
+    },
+    {
+      "source": "src/routes/onboarding.js",
+      "method": "POST",
+      "path": "/api/me/communities",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.communities.d6145fab",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/auth/communities-first-run.js",
+        "frontend/src/features/header/ai-credit.js",
+        "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
+        "frontend/src/features/settings/sections/email.tsx",
+        "frontend/src/features/settings/settings.js",
+        "public/js/app-view.js",
+        "public/js/session-state.js"
+      ]
+    },
+    {
+      "source": "src/routes/onboarding.js",
+      "method": "GET",
+      "path": "/api/me/getting-started",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.me.getting.started.107eca56",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/header/ai-credit.js",
+        "frontend/src/features/home/getting-started.tsx",
+        "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
+        "frontend/src/features/settings/sections/email.tsx",
+        "frontend/src/features/settings/settings.js",
+        "public/js/app-view.js",
+        "public/js/session-state.js"
+      ]
+    },
+    {
+      "source": "src/routes/onboarding.js",
+      "method": "POST",
+      "path": "/api/me/getting-started/seen",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.getting.started.seen.eda38e89",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/home/getting-started.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/onboarding.js",
+      "method": "POST",
+      "path": "/api/me/getting-started/close",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.getting.started.close.3ca690a2",
+      "domain": "apps",
+      "risk": "destructive",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/home/getting-started.tsx"
+      ]
+    },
+    {
       "source": "src/routes/platform-about.js",
       "method": "GET",
       "path": "/api/platform/about",
@@ -8646,6 +8776,7 @@
       "clientReferences": [
         "frontend/src/features/dev-board/topic/topic-head.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
+        "public/js/app-view.js",
         "public/js/app-view.js"
       ]
     },

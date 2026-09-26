@@ -1106,7 +1106,7 @@ function appRoutes(config) {
     if (options.error) {
       return res.status(400).json({ error: options.error });
     }
-    const { collabVisibility, viewVisibility, invitees, governance: rule } = options;
+    const { collabVisibility, viewVisibility, invitees, governance: rule, description } = options;
 
     // Import-existing pre-flight: parse URL, accept any pending invite
     // for this exact repo, then verify Write access. Anything other
@@ -1236,6 +1236,18 @@ function appRoutes(config) {
         }
       }
 
+      // WHAT IT IS, if the creator said. Seeded as the manifest snapshot the
+      // template's dapp.json is about to match ({ description, secrets: [] }),
+      // so app-creator writes it into the new repository and a Retry still
+      // has it. The first deploy then snapshots the real file over it.
+      if (description) {
+        const { rows: described } = await pool.query(
+          `UPDATE apps SET manifest_snapshot = $1 WHERE id = $2 RETURNING *`,
+          [JSON.stringify({ description, secrets: [] }), appRow.id]
+        );
+        appRow = described[0] || appRow;
+      }
+
       // A Group's invites go out now, each the same invite (and the same
       // notification) Members & approvals sends. Best-effort per person: the
       // project exists either way, and anyone missed can be invited from
@@ -1266,6 +1278,7 @@ function appRoutes(config) {
           ...(options.audience ? { audience: options.audience } : {}),
           ...(invited ? { invited } : {}),
           ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
+          ...(description ? { described: true } : {}),
         },
       });
 

@@ -1310,9 +1310,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 818 leaves 22 slots against MAX_DECLARED_TESTS (840), clear of the
   // 20-slot floor.
   //
+  // 818 → 820: +2 (communities, stage 5): a new account's first run. The
+  // join screen ("What communities do you want to join?", ?shot=join-
+  // communities) and Home's Getting started card (?shot=getting-started),
+  // two new routes with nothing already declared on them to fold into.
+  // 820 leaves exactly the 20-slot floor against MAX_DECLARED_TESTS (840):
+  // the next proposal to add a check folds into an existing one or raises
+  // the cap, as tests/lib/check-cap.js says.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 818);
+  checkCap.assertPinned(DAPP.tests.length, 820);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1461,7 +1469,12 @@ test('every pill is foldable: the band shows as many as fit its line and the men
   // from folding (`i > 0`). With "Open card", the hamburger and Preview all
   // fixed at the band's right, a narrow column may leave no room before
   // them, so the fold may take the first pill too; only a kudos host stays.
-  assert.match(CARD, /fold=\{a\.kudos == null \? i \+ 1 : undefined\} hidden=\{i >= bandPrimary\.length - folded\.n\}/);
+  assert.match(CARD, /fold=\{a\.kudos == null \? i \+ 1 : undefined\}\s+hidden=\{folds && foldIndex >= foldable - folded\.n\}/);
+  // The initial `hidden` counts the same window the measurement does: the
+  // last n of the FOLDABLE specs. Counted from the end of every spec, a kudos
+  // slot or a Preview among them put it one pill off, and the next measure
+  // moved the row again.
+  assert.match(CARD, /const foldable = bandPrimary\.filter\(\(a\) => a\.kudos == null && !a\.preview\)\.length;/);
   // The fold window is taken over the specs that DRAW a foldable pill: not
   // the kudos host, and not the topic head's labelled Preview (an action
   // spec too, drawn as the band's fixed control). Counting Preview put the
