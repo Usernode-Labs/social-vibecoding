@@ -5606,6 +5606,7 @@ const DRAIN_TIMEOUT_MS = 5000;
 // pool that refuses to settle can never push the exit past the SIGKILL.
 const POOL_CLOSE_TIMEOUT_MS = 1000;
 const EVIDENCE_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
+const BUILD_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
 
 // ── The process being replaced tells its tabs where traffic went (#2545) ─
 //
@@ -5788,6 +5789,33 @@ async function cleanup() {
       attempted: interruptedEvidence.length,
       marked: result?.filter((entry) => entry.status === 'fulfilled').length || 0,
       timedOut: result === null,
+    });
+  }
+
+  // Staging builds this process was running die with it, and nothing on the
+  // cluster outlives a build to be harvested. Mark their check runs
+  // interrupted (staging-recovery.markInterruptedBuilds) so the next leader
+  // re-drives them as it takes over, BEFORE the leader lock is released
+  // below, instead of the proposal reading "building" until CHECKS_STALE_MS.
+  // Bounded like the evidence write above; the sweep stays the fallback.
+  const interruptedBuilds = require('./src/services/staging').inFlightBuildSessionIds();
+  if (interruptedBuilds.length && shutdownPool) {
+    let markTimer = null;
+    const marked = await Promise.race([
+      require('./src/services/staging-recovery').markInterruptedBuilds(shutdownPool, interruptedBuilds)
+        .catch((err) => {
+          log.warn('server', 'Could not mark interrupted staging builds', { err: err.message });
+          return [];
+        }),
+      new Promise((resolve) => {
+        markTimer = setTimeout(() => resolve(null), BUILD_SHUTDOWN_MARK_TIMEOUT_MS);
+      }),
+    ]);
+    if (markTimer) clearTimeout(markTimer);
+    log.info('server', 'Marked interrupted staging builds for re-drive on shutdown', {
+      building: interruptedBuilds.slice(0, 20),
+      marked: marked ? marked.length : 0,
+      timedOut: marked === null,
     });
   }
 

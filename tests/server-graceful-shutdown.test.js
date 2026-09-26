@@ -226,6 +226,64 @@ test('shutdown marks an unfinished visual replay with its actual interruption re
   }
 });
 
+test('shutdown marks the staging builds it is killing, before closing the pool', async () => {
+  // A deploy's SIGTERM kills the staging builds this process runs, and
+  // nothing on the cluster outlives a build (proposal 5125, 2026-09-26). The
+  // mark is what lets the next leader re-drive the run as it takes over.
+  const { server, restore } = loadServer();
+  const staging = require('../src/services/staging');
+  const recovery = require('../src/services/staging-recovery');
+  const lifecycle = require('../src/services/lifecycle');
+  const saved = { ids: staging.inFlightBuildSessionIds, mark: recovery.markInterruptedBuilds, waitFor: lifecycle.waitFor };
+  const order = [];
+  staging.inFlightBuildSessionIds = () => [5125, 5126];
+  lifecycle.waitFor = async () => true;
+  recovery.markInterruptedBuilds = async (pool, ids) => {
+    order.push('marked');
+    assert.ok(pool, 'marked through the shutdown pool');
+    assert.deepEqual(ids, [5125, 5126]);
+    return [5125];
+  };
+  try {
+    const pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
+    await runCleanup(server, { listener: fakeListener(), pool });
+    assert.deepEqual(order, ['marked', 'poolEnd']);
+    const line = logs.find((l) => l.msg === 'Marked interrupted staging builds for re-drive on shutdown');
+    assert.deepEqual(line.data, { building: [5125, 5126], marked: 1, timedOut: false });
+  } finally {
+    staging.inFlightBuildSessionIds = saved.ids;
+    recovery.markInterruptedBuilds = saved.mark;
+    lifecycle.waitFor = saved.waitFor;
+    restore();
+  }
+});
+
+test('a failing build mark is logged and never holds the exit; no build, no write', async () => {
+  const { server, restore } = loadServer();
+  const staging = require('../src/services/staging');
+  const recovery = require('../src/services/staging-recovery');
+  const lifecycle = require('../src/services/lifecycle');
+  const saved = { ids: staging.inFlightBuildSessionIds, mark: recovery.markInterruptedBuilds, waitFor: lifecycle.waitFor };
+  lifecycle.waitFor = async () => true;
+  let calls = 0;
+  try {
+    staging.inFlightBuildSessionIds = () => [5125];
+    recovery.markInterruptedBuilds = async () => { calls += 1; throw new Error('database gone'); };
+    const order = await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
+    assert.ok(order.includes('exit:0'));
+    assert.ok(logs.some((l) => l.level === 'warn' && l.msg === 'Could not mark interrupted staging builds'));
+
+    staging.inFlightBuildSessionIds = () => [];
+    await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
+    assert.equal(calls, 1, 'nothing building, nothing marked');
+  } finally {
+    staging.inFlightBuildSessionIds = saved.ids;
+    recovery.markInterruptedBuilds = saved.mark;
+    lifecycle.waitFor = saved.waitFor;
+    restore();
+  }
+});
+
 test('cleanup survives a listener that throws on close', async () => {
   const { server, logs, restore } = loadServer();
   try {
