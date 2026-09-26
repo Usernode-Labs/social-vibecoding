@@ -87,6 +87,14 @@ function noteIssueActivityForBot(appId, issueNumber, reason) {
   }
 }
 
+function noteProposalActivityForBot(pool, appId, sessionId) {
+  try {
+    Promise.resolve(require('./homeroom-bot').noteProposalActivity(pool, { appId, sessionId })).catch(() => {});
+  } catch (err) {
+    log.warn('ws', 'homeroom bot wake failed', { err: err.message });
+  }
+}
+
 function disconnectUser(userId) {
   for (const clients of [globalClients, ...rooms.values()]) {
     for (const client of clients) {
@@ -847,6 +855,8 @@ async function handleMessage(pool, client, msg) {
       // A person answering on an issue's thread is exactly what the Homeroom
       // bot waits for; a system row (a claim, a bounty) is not a message.
       if (thread && thread.type === 'issue') noteIssueActivityForBot(client.appId, thread.ref, 'thread');
+      // #3264: a reply in the discussion of the bot's own proposal.
+      if (thread && thread.type === 'session') noteProposalActivityForBot(pool, client.appId, thread.ref);
       // #2387: a reply thread grew — every row showing its root redraws its
       // "N replies" line from this frame.
       if (thread && thread.type === appChat.MESSAGE_THREAD) {

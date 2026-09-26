@@ -13,6 +13,10 @@
 //                   the issue is never closed by the bot
 //   held            a verdict a live cap held back: one line saying why,
 //                   posted once while the issue stays held (#3152)
+//   follow-up       a reply after it proposed, on the issue or in the
+//                   proposal's own discussion: answered, asked about, or
+//                   made on the proposal's branch (#3264, see
+//                   homeroom-bot-followup.js)
 //   ready           one GLM build turn in a dev session of the bot's own,
 //                   then the SAME /promote handler a person's Propose button
 //                   runs — pull request, staging, checks, vote — and a post
@@ -212,6 +216,7 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, senderId = null, notifications = null,
+  proposalSessionId = null,
 }) {
   const { rows } = await pool.query(
     `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
@@ -257,6 +262,19 @@ async function post({
       log.warn('homeroom-bot', 'Poster mention failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
     }
   }
+  // #3264: a follow-up answers where it was asked. When somebody wrote in
+  // the proposal's own discussion, the reply goes there too, as the same
+  // kind of system message the promote route writes in that thread.
+  let proposalMessage = null;
+  if (proposalSessionId) {
+    try {
+      proposalMessage = await ws.sendSystemMessage(pool, app.id, text, 'system', null, {
+        type: 'session', ref: Number(proposalSessionId),
+      });
+    } catch (err) {
+      log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
+  }
   await pool.query(
     `UPDATE homeroom_bot_posts SET github_comment_id = $2, thread_message_id = $3
       WHERE id = $1`,
@@ -265,6 +283,7 @@ async function post({
   log.info('homeroom-bot', 'Posted on issue', {
     app: app.slug, issueNumber, kind, github: !!comment, thread: !!message,
     ...(mention ? { mentioned: mention, notified } : {}),
+    ...(proposalSessionId ? { proposalThread: !!proposalMessage } : {}),
   });
   return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!message };
 }
@@ -292,19 +311,27 @@ async function botUsernameOf(github) {
  * posted while it worked, in which case the issue is left to be looked at
  * again. `since` is when the run read the thread.
  */
-async function advanceSeen({ pool, github, threadContext, app, repo, issueNumber, runId, since, postedAt }) {
+async function advanceSeen({
+  pool, github, threadContext, app, repo, issueNumber, runId, since, postedAt, proposalSessionId = null,
+}) {
   const times = (postedAt || []).filter(Boolean).map((t) => Date.parse(t)).filter(Number.isFinite);
   if (!runId || !times.length) return { advanced: false, reason: 'nothing_posted' };
   const sinceMs = Date.parse(since);
-  const [{ comments = [] } = {}, thread, login] = await Promise.all([
+  const [{ comments = [] } = {}, thread, login, proposalThread] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
     threadContext.loadIssueThread(pool, app.id, issueNumber),
     botUsernameOf(github),
+    // #3264: on a follow-up, the proposal's own discussion is a third place
+    // a person can have replied while the bot worked.
+    proposalSessionId
+      ? threadContext.loadProposalThread(pool, app.id, proposalSessionId)
+      : Promise.resolve({ messages: [] }),
   ]);
   const botLogin = String(login || '').toLowerCase();
   const newer = (at) => Number.isFinite(Date.parse(at)) && Date.parse(at) > sinceMs;
   const someoneElse = comments.some((c) => String(c.author || '').toLowerCase() !== botLogin && newer(c.createdAt))
-    || (thread?.messages || []).some((m) => newer(m.createdAt));
+    || (thread?.messages || []).some((m) => newer(m.createdAt))
+    || (proposalThread?.messages || []).some((m) => newer(m.createdAt));
   if (someoneElse) {
     log.info('homeroom-bot', 'Someone replied while the bot worked; leaving the issue to be read again', {
       app: app.slug, issueNumber,

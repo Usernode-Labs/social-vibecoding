@@ -987,7 +987,7 @@ function adminRoutes(config) {
   // control on the screen — one "what am I looking at" picker.
   const botRunFilters = (q) => ({
     app: typeof q.app === 'string' && /^[a-z0-9-]{1,120}$/.test(q.app) ? q.app : null,
-    verdict: ['question', 'ready', 'person', 'empty', 'failed'].includes(q.verdict) ? q.verdict : null,
+    verdict: ['question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'].includes(q.verdict) ? q.verdict : null,
     budgetOnly: q.verdict === 'budget',
   });
 

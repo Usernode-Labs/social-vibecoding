@@ -420,7 +420,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -1006,7 +1006,7 @@ test('parseVerdict accepts empty, and it shares the question tripwire', () => {
     'both are a demand on somebody attention, so they share one daily allowance');
   assert.ok(bot.VERDICTS.includes('empty'));
   const schema = read('src/db/schema.sql');
-  assert.match(schema, /CHECK \(verdict IN \('question', 'ready', 'person', 'empty', 'failed'\)\)/);
+  assert.match(schema, /CHECK \(verdict IN \('question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'\)\)/);
   assert.match(schema, /ALTER TABLE homeroom_bot_runs DROP CONSTRAINT IF EXISTS homeroom_bot_runs_verdict_check/,
     'and a database that predates it is widened on boot');
 });
