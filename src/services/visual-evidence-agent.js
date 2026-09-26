@@ -103,8 +103,13 @@ Before submitting the replays, inspect both revisions in the states where each
 target will be used. Every interaction target and each checkpoint focus must
 identify exactly one visible element; a waitFor target only needs one or more
 visible matches when state is visible. A hidden wait succeeds when no matching
-element remains visible. For motion, observe the actual moving state on both
-revisions. Where an animation starts, wait for its observed marker to appear,
+element remains visible. Each visible, hidden, attached, text, value, checked,
+or focusWithin checkpoint assertion must also use a unique target: all except
+hidden require exactly one match, while hidden permits zero matches or one
+hidden match. Use count only when the intended claim is the exact number of
+matches. A detached assertion means the intended target has no matches; do not
+narrow a selector merely to make it pass. For motion, observe the actual moving
+state on both revisions. Where an animation starts, wait for its observed marker to appear,
 then wait for it to become hidden before asserting the settled checkpoint.
 Do not use unrelated actions as a timer or remove a failed checkpoint.
 Verify the data behind the claimed screen loaded for the story's persona.
