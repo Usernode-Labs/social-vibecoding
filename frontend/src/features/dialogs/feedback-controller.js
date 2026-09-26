@@ -518,27 +518,35 @@ export function init() {
     // Desktop keeps drag-to-select. The mobile app can capture its visible
     // native window, and every surface keeps a PNG/JPEG picker as fallback.
     // All three sources converge here so preview/upload/offline semantics stay
-    // exactly the same. One screenshot per issue.
+    // exactly the same. #3027: up to MAX_SCREENSHOTS images per issue ("one
+    // before saving and one after saving"), each its own thumbnail with its
+    // own remove button, its own upload and its own id. The server enforces
+    // the same limit on the ids it is sent (MAX_SCREENSHOTS_PER_ISSUE in
+    // src/routes/feedback.js); this one is what keeps the dialog from ever
+    // offering a slot the server would refuse.
+    const MAX_SCREENSHOTS = 3;
     const screenshotBtn = document.getElementById('feedback-screenshot-btn');
     const screenshotLabel = screenshotBtn.querySelector('[data-screenshot-label]');
     const screenshotPickerBtn = document.getElementById('feedback-screenshot-picker-btn');
     const screenshotInput = document.getElementById('feedback-screenshot-input');
+    // The thumbnail list. feedback.tsx renders it empty; the items inside are
+    // this module's, like every other node inside the card.
     const screenshotPreview = document.getElementById('feedback-screenshot-preview');
-    const screenshotImg = document.getElementById('feedback-screenshot-img');
-    const screenshotState = document.getElementById('feedback-screenshot-state');
-    const screenshotRemove = document.getElementById('feedback-screenshot-remove');
+    const screenshotCount = document.getElementById('feedback-screenshot-count');
     const screenshotTools = window.ScreenshotSelect;
     const displayCaptureSupported = !!screenshotTools && screenshotTools.isSupported();
     let nativeCaptureSupported = false;
     let screenshotProbeSequence = 0;
-    let screenshotId = null;          // server row id, set once uploaded
-    let screenshotUploading = false;  // blocks submit while in flight
-    let screenshotObjectUrl = null;
-    // #1054: the captured bytes, kept for as long as the attachment is
-    // shown. The upload mints the id, but the id only exists on the server —
-    // so an offline submit has to carry the blob itself into the outbox and
-    // upload it at flush time. Held until the attachment is cleared.
-    let screenshotBlob = null;
+    // One entry per attached image, in the order attached:
+    //   { blob, objectUrl, id, uploading, node, img, stateEl, removeBtn }
+    // `id` is the server row id, set once uploaded; `uploading` blocks submit
+    // while in flight. #1054: `blob` is the captured bytes, kept for as long
+    // as the thumbnail is shown. The upload mints the id, but the id only
+    // exists on the server — so an offline submit has to carry the blob
+    // itself into the outbox and upload it at flush time.
+    let screenshots = [];
+    const screenshotIds = () => screenshots.filter((shot) => shot.id).map((shot) => shot.id);
+    const screenshotUploading = () => screenshots.some((shot) => shot.uploading);
     // #1284: true for the whole round trip of a native capture — from the
     // moment the dialog is suspended until the attempt has resolved one way
     // or the other. `suspendDialog()` closes the kit presentation, and the
@@ -687,11 +695,31 @@ export function init() {
     };
 
     const paintScreenshotActions = () => {
-      const attached = !!screenshotBlob;
+      const count = screenshots.length;
+      const full = count >= MAX_SCREENSHOTS;
       const canCapture = nativeCaptureSupported || displayCaptureSupported;
-      screenshotLabel.textContent = nativeCaptureSupported ? 'Take screenshot' : 'Attach screenshot';
-      screenshotBtn.classList.toggle('hidden', attached || !canCapture);
-      screenshotPickerBtn.classList.toggle('hidden', attached);
+      screenshotLabel.textContent = nativeCaptureSupported
+        ? (count ? 'Take another' : 'Take screenshot')
+        : (count ? 'Attach another' : 'Attach screenshot');
+      screenshotBtn.classList.toggle('hidden', full || !canCapture);
+      screenshotPickerBtn.classList.toggle('hidden', full);
+      // #3027: say how many fit, so the second picture is not a guess.
+      if (screenshotCount) {
+        screenshotCount.textContent = count === 0
+          ? `You can attach up to ${MAX_SCREENSHOTS} images.`
+          : full
+            ? `${count} of ${MAX_SCREENSHOTS} images attached. Remove one to add another.`
+            : `${count} of ${MAX_SCREENSHOTS} images attached.`;
+        screenshotCount.classList.remove('hidden');
+      }
+      screenshotPreview.classList.toggle('hidden', count === 0);
+      screenshotPreview.classList.toggle('flex', count > 0);
+      // Numbered from what is on screen now, so removing the middle image
+      // renumbers the rest rather than leaving a gap in the labels.
+      screenshots.forEach((shot, i) => {
+        shot.img.alt = `Image ${i + 1} preview`;
+        shot.removeBtn.setAttribute('aria-label', `Remove image ${i + 1}`);
+      });
     };
 
     const setScreenshotActionsDisabled = (disabled) => {
@@ -699,52 +727,90 @@ export function init() {
       screenshotPickerBtn.disabled = disabled;
     };
 
+    // Forget one attachment client-side. An already uploaded (now orphaned)
+    // row is GC'd by the server's 24h sweeper, as before.
+    const discardScreenshot = (shot) => {
+      if (shot.objectUrl) { URL.revokeObjectURL(shot.objectUrl); shot.objectUrl = null; }
+      if (shot.node) shot.node.remove();
+      shot.uploading = false;
+      screenshots = screenshots.filter((s) => s !== shot);
+    };
+
+    const removeScreenshot = (shot) => {
+      discardScreenshot(shot);
+      paintScreenshotActions();
+    };
+
     const resetScreenshotState = () => {
-      screenshotId = null;
-      screenshotUploading = false;
-      screenshotBlob = null;
-      if (screenshotObjectUrl) { URL.revokeObjectURL(screenshotObjectUrl); screenshotObjectUrl = null; }
-      screenshotPreview.classList.add('hidden');
-      screenshotPreview.classList.remove('flex');
-      screenshotImg.removeAttribute('src');
-      screenshotState.textContent = '';
+      for (const shot of screenshots.slice()) discardScreenshot(shot);
+      screenshots = [];
       screenshotInput.value = '';
       setScreenshotActionsDisabled(false);
       paintScreenshotActions();
     };
 
+    // One thumbnail: the preview, a status line for this image alone, and a
+    // 48px remove button. Class strings are complete literals, so Tailwind's
+    // scan of this file compiles them.
+    const renderScreenshotThumb = (shot) => {
+      const item = document.createElement('div');
+      item.className = 'flex items-center gap-2';
+      item.setAttribute('data-feedback-screenshot', '');
+      const img = document.createElement('img');
+      img.className = 'h-14 max-w-[8rem] rounded-md border border-zinc-300 dark:border-zinc-700 object-cover';
+      img.src = shot.objectUrl;
+      const stateEl = document.createElement('span');
+      stateEl.className = 'text-xs text-zinc-500 dark:text-zinc-400';
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'rounded-full w-12 h-12 flex shrink-0 items-center justify-center text-xs bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors';
+      removeBtn.textContent = '✕';
+      removeBtn.addEventListener('click', () => removeScreenshot(shot));
+      item.appendChild(img);
+      item.appendChild(stateEl);
+      item.appendChild(removeBtn);
+      screenshotPreview.appendChild(item);
+      Object.assign(shot, { node: item, img, stateEl, removeBtn });
+    };
+
+    const uploadScreenshot = (blob) => fetch('/api/feedback/screenshot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: blob,
+    });
+
     const attachScreenshotBlob = async (blob) => {
+      // Never a fourth: every caller checks the room first, and this is the
+      // backstop behind them.
+      if (screenshots.length >= MAX_SCREENSHOTS) return;
       // Thumbnail immediately; upload in the background with Submit blocked
       // (screenshotUploading) until the id lands.
-      screenshotBlob = blob;
-      screenshotObjectUrl = URL.createObjectURL(blob);
-      screenshotImg.src = screenshotObjectUrl;
+      const shot = { blob, objectUrl: URL.createObjectURL(blob), id: null, uploading: true };
+      screenshots.push(shot);
+      renderScreenshotThumb(shot);
       paintScreenshotActions();
-      screenshotPreview.classList.remove('hidden');
-      screenshotPreview.classList.add('flex');
-      screenshotState.textContent = 'Uploading…';
-      screenshotUploading = true;
+      shot.stateEl.textContent = 'Uploading…';
       try {
-        const res = await fetch('/api/feedback/screenshot', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/octet-stream' },
-          body: blob,
-        });
+        const res = await uploadScreenshot(blob);
         const data = res.ok ? await res.json() : await res.json().catch(() => ({}));
+        // Removed (or the dialog closed) while it was in flight: the answer
+        // belongs to nothing on screen any more.
+        if (!screenshots.includes(shot)) return;
         if (res.ok && data.id) {
-          screenshotId = data.id;
-          screenshotState.textContent = '';
+          shot.id = data.id;
+          shot.stateEl.textContent = '';
         } else {
-          resetScreenshotState();
+          removeScreenshot(shot);
           showFeedbackNotice(data.error || 'Screenshot upload failed', true);
         }
       } catch {
+        if (!screenshots.includes(shot)) return;
         // #1054: keep the bytes when the network fails. The outbox uploads
         // them at flush time, and an online submit retries first.
-        screenshotState.textContent = "Saved with your feedback. It'll upload when you're back online";
+        shot.stateEl.textContent = "Saved with your feedback. It'll upload when you're back online";
         showFeedbackNotice("Couldn't upload the screenshot yet. It'll be sent along with your feedback.", false);
       } finally {
-        screenshotUploading = false;
+        shot.uploading = false;
       }
     };
 
@@ -862,12 +928,15 @@ export function init() {
         // nothing left to rescue and a later close is a real close.
         captureInFlight = false;
         clearCaptureDraft();
-        if (!screenshotBlob) setScreenshotActionsDisabled(false);
+        // Full, the buttons are hidden anyway; otherwise there is room for
+        // another, so they come back.
+        setScreenshotActionsDisabled(false);
+        paintScreenshotActions();
       }
     };
 
     screenshotBtn.addEventListener('click', () => {
-      if (screenshotBtn.disabled) return;
+      if (screenshotBtn.disabled || screenshots.length >= MAX_SCREENSHOTS) return;
       const nativeAttempt = nativeCaptureSupported;
       void runCapture(nativeAttempt
         ? async () => screenshotTools.blobFromNativeCapture(await window.usernode.captureScreenshot())
@@ -878,7 +947,7 @@ export function init() {
     });
 
     screenshotPickerBtn.addEventListener('click', () => {
-      if (screenshotPickerBtn.disabled) return;
+      if (screenshotPickerBtn.disabled || screenshots.length >= MAX_SCREENSHOTS) return;
       // #1284: the camera roll is a full-screen native surface and this tab
       // can be evicted behind it. Nothing suspends the dialog here, so there
       // is no dismissal to race — only the page's own death to insure
@@ -888,32 +957,47 @@ export function init() {
     });
 
     screenshotInput.addEventListener('change', async () => {
-      const file = screenshotInput.files && screenshotInput.files[0];
+      // #3027: the picker takes several files at once. Only as many as there
+      // is room for are attached, in the order picked, and the rest are
+      // named rather than silently dropped.
+      const files = Array.from((screenshotInput.files) || []);
       screenshotInput.value = '';
       // A cancelled pick came back with the page intact — nothing to rescue.
-      if (!file) { clearCaptureDraft(); return; }
+      if (!files.length) { clearCaptureDraft(); return; }
+      const room = Math.max(0, MAX_SCREENSHOTS - screenshots.length);
+      const taken = files.slice(0, room);
+      // Bumped by every open and every real close: a dialog closed while the
+      // rest of a multi-pick was still being attached must not have them
+      // attached (and uploaded) behind it.
+      const session = screenshotProbeSequence;
       setScreenshotActionsDisabled(true);
       try {
-        const blob = await screenshotTools.prepareFile(file);
-        await attachScreenshotBlob(blob);
-      } catch (err) {
-        if (err && err.code === 'invalid-type') {
-          showFeedbackNotice('Choose a PNG or JPEG image.', true);
-        } else if (err && err.code === 'too-large') {
-          showFeedbackNotice('That image is larger than 4 MB.', true);
-        } else {
-          showFeedbackNotice("Couldn't attach that image. Please try another.", true);
+        // One at a time: each is its own upload under the server's per-user
+        // limiter, and a bad file only costs itself.
+        for (const file of taken) {
+          if (session !== screenshotProbeSequence) return;
+          try {
+            const blob = await screenshotTools.prepareFile(file);
+            if (session !== screenshotProbeSequence) return;
+            await attachScreenshotBlob(blob);
+          } catch (err) {
+            if (err && err.code === 'invalid-type') {
+              showFeedbackNotice('Choose a PNG or JPEG image.', true);
+            } else if (err && err.code === 'too-large') {
+              showFeedbackNotice('That image is larger than 4 MB.', true);
+            } else {
+              showFeedbackNotice("Couldn't attach that image. Please try another.", true);
+            }
+          }
+        }
+        if (files.length > taken.length) {
+          showFeedbackNotice(`You can attach up to ${MAX_SCREENSHOTS} images, so only the first ${taken.length === 1 ? 'one was' : `${taken.length} were`} added.`, true);
         }
       } finally {
         clearCaptureDraft();
-        if (!screenshotBlob) setScreenshotActionsDisabled(false);
+        setScreenshotActionsDisabled(false);
+        paintScreenshotActions();
       }
-    });
-
-    screenshotRemove.addEventListener('click', () => {
-      // Client-side forget only — the orphaned server row (if the upload
-      // already finished) is GC'd by the 24h sweeper.
-      resetScreenshotState();
     });
 
     // ── #1054: the offline outbox seam ─────────────────────────────
@@ -1069,9 +1153,10 @@ export function init() {
       try {
         await window.FeedbackQueue.enqueue({
           payload: body,
-          // Already-uploaded screenshots travel as an id; a capture whose
-          // upload failed travels as bytes and is uploaded at flush time.
-          screenshot: screenshotId ? null : screenshotBlob,
+          // Already-uploaded screenshots travel as ids (body.screenshotIds);
+          // a capture whose upload failed travels as bytes and is uploaded at
+          // flush time.
+          screenshots: screenshots.filter((shot) => !shot.id && shot.blob).map((shot) => shot.blob),
         });
       } catch (err) {
         showFeedbackNotice(queueRefusal(err && err.code), true);
@@ -1175,7 +1260,7 @@ export function init() {
       if (feedbackBtn.disabled) return;
       // #683: a screenshot upload is still in flight — the id isn't known
       // yet, so filing now would silently drop the attachment.
-      if (screenshotUploading) {
+      if (screenshotUploading()) {
         showFeedbackNotice('Screenshot is still uploading, one moment…', false);
         return;
       }
@@ -1215,27 +1300,25 @@ export function init() {
           && !bountyRow.classList.contains('hidden');
         if (wantBounty) body.bounty = true;
         // #1054: a capture whose upload failed earlier still has its bytes
-        // (screenshotBlob). Retry the upload now so a submit that goes
-        // through keeps the attachment the thumbnail is still promising. A
-        // second failure is not fatal — the offline branch below carries the
-        // bytes, and an online submit files without the picture as before.
-        if (!screenshotId && screenshotBlob && !isOfflineNow()) {
+        // (shot.blob). Retry those uploads now so a submit that goes through
+        // keeps the attachments the thumbnails are still promising. A second
+        // failure is not fatal — the offline branch below carries the bytes,
+        // and an online submit files without that picture as before.
+        for (const shot of screenshots.slice()) {
+          if (shot.id || !shot.blob || isOfflineNow()) continue;
           try {
-            const shotRes = await fetch('/api/feedback/screenshot', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/octet-stream' },
-              body: screenshotBlob,
-            });
+            const shotRes = await uploadScreenshot(shot.blob);
             const shotData = await shotRes.json().catch(() => ({}));
             if (shotRes.ok && shotData.id) {
-              screenshotId = shotData.id;
-              screenshotState.textContent = '';
+              shot.id = shotData.id;
+              if (shot.stateEl) shot.stateEl.textContent = '';
             }
           } catch (err) { /* still offline — handled below */ }
         }
-        // #683: attach the uploaded screenshot — the server appends the
-        // embed line and links the row to the filed issue.
-        if (screenshotId) body.screenshotId = screenshotId;
+        // #683/#3027: attach the uploaded screenshots — the server appends
+        // the embed lines and links every row to the filed issue.
+        const shotIds = screenshotIds();
+        if (shotIds.length) body.screenshotIds = shotIds;
         // #685: collect the app's state snapshot at submit time (fresh
         // state, and the modal only overlays the still-running iframe).
         // Never blocks filing: a null (provider gone, error, 5 s
@@ -1579,11 +1662,15 @@ export function init() {
       // again.
       if (!captureInFlight) setAwaitingTarget(false);
       enableSubmit(); feedbackBtn.textContent = 'Submit';
-      // #683: cancelling discards the attachment client-side; an already
-      // uploaded (now orphaned) row is GC'd server-side after 24h.
-      screenshotProbeSequence += 1;
-      nativeCaptureSupported = false;
-      resetScreenshotState();
+      // #683: cancelling discards the attachments client-side; an already
+      // uploaded (now orphaned) row is GC'd server-side after 24h. #3027: not
+      // mid-capture, though — with room for several images, the ones already
+      // attached are part of the draft that stale dismissal must not cost.
+      if (!captureInFlight) {
+        screenshotProbeSequence += 1;
+        nativeCaptureSupported = false;
+        resetScreenshotState();
+      }
       // #964: drop any pledge intent with the rest of the draft.
       bountyCheckbox.checked = false;
       const pending = pendingFirstFeedback;
