@@ -227,7 +227,7 @@ function start({ persona, args, binary = 'mcp-server-playwright',
 
 if (require.main === module) {
   const persona = process.argv[2];
-  if (!['member', 'admin'].includes(persona)) process.exit(2);
+  if (!['member', 'admin', 'full_admin'].includes(persona)) process.exit(2);
   start({ persona, args: process.argv.slice(3) });
 }
 
