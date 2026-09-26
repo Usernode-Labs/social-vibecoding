@@ -98,7 +98,8 @@ test('each paired reset serializes clones and adds the same member fixture to bo
     };
     dbManager.connectionUrl = (dbName) => `postgres://fixture@db/${dbName}`;
     fixtures.ensureFullAdminIdentity = async ({ side }) => ({
-      id: fixtures.FULL_ADMIN_PROFILE, persona: 'full_admin', path: '/#admin/users', side,
+      id: fixtures.FULL_ADMIN_PROFILE, persona: 'full_admin', path: '/#admin/users',
+      appMembership: { appId: 42, slug, status: 'member' }, side,
     });
     fixtures.canCopyMemberAgentSession = async () => true;
     fixtures.copyMemberAgentSession = async ({ side }) => ({ id: fixtures.PROFILE,
@@ -113,6 +114,8 @@ test('each paired reset serializes clones and adds the same member fixture to bo
     ]);
     assert.equal(deployment.availableFixtures.length, 2);
     assert.equal(deployment.availableFixtures[0].persona, 'full_admin');
+    assert.deepEqual(deployment.availableFixtures[0].appMembership,
+      { appId: 42, slug, status: 'member' });
     assert.equal(deployment.availableFixtures[1].persona, 'member');
     assert.equal(deployedEnvs.length, 2);
     assert.ok(deployedEnvs.every((env) => env.MAX_APPS === '0'));
