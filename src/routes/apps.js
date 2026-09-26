@@ -1,4 +1,5 @@
 const appAllowance = require('../services/app-allowance');
+const platformLimits = require('../services/platform-limit-alerts');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -1185,6 +1186,8 @@ function appRoutes(config) {
             active: countRows[0].n,
             cap: config.maxApps,
           });
+          // Somebody was just refused: make sure the admins have heard.
+          platformLimits.nudge(pool, config, 'apps');
           return res.status(429).json({
             error: `This server is at its app limit (${config.maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
@@ -1298,6 +1301,7 @@ function appRoutes(config) {
       scheduleCreationWatchdog(pool, appRow.id);
 
       res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited });
+      platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
@@ -1345,6 +1349,7 @@ function appRoutes(config) {
           `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
         );
         if (countRows[0].n >= config.maxApps) {
+          platformLimits.nudge(pool, config, 'apps');
           return res.status(429).json({
             error: `This server is at its app limit (${config.maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
@@ -1393,6 +1398,7 @@ function appRoutes(config) {
       scheduleCreationWatchdog(pool, appRow.id);
 
       res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
+      platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
