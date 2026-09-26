@@ -8,6 +8,7 @@
 
 const { Client } = require('pg');
 const dbManager = require('./db-manager');
+const hostedApp = require('../../worker/evidence-hosted-app-contract');
 
 const SOURCE_SESSION_ID = 990801;
 const SOURCE_CHANGE_ID = 990802;
@@ -147,6 +148,69 @@ async function ensureFullAdminIdentity({ databaseUrl, slug, runId, side }) {
   });
 }
 
+async function installHostedAppFixture(client, runId) {
+  const slug = hostedApp.hostedAppSlug(runId);
+  const conflict = await client.query(
+    `SELECT id, slug, manifest_snapshot FROM apps
+      WHERE id = $1 OR slug = $2
+      FOR UPDATE`,
+    [hostedApp.HOSTED_APP_ID, slug]
+  );
+  if (conflict.rows.some((row) => !hostedApp.isHostedAppFixture(row, runId))) {
+    throw new Error('The reserved visual-evidence hosted app conflicts with cloned data.');
+  }
+  const manifest = hostedApp.hostedAppManifest(runId);
+  if (conflict.rowCount === 0) {
+    await client.query(
+      `INSERT INTO apps
+         (id, name, slug, repo_url, container_id, status, created_by,
+          created_at, main_sha, last_deploy_at, manifest_snapshot,
+          self_hosted, collab_visibility, view_visibility, anon_shell,
+          anon_shell_checked_at)
+       VALUES
+         ($1, 'Homeroom evidence app', $2, NULL, NULL, 'running', NULL,
+          NOW(), NULL, NOW(), $3::jsonb,
+          FALSE, 'public', 'public', 'public', NOW())`,
+      [hostedApp.HOSTED_APP_ID, slug, JSON.stringify(manifest)]
+    );
+  } else {
+    await client.query(
+      `UPDATE apps
+          SET name = 'Homeroom evidence app', repo_url = NULL,
+              container_id = NULL, status = 'running', main_sha = NULL,
+              last_deploy_at = NOW(), manifest_snapshot = $3::jsonb,
+              self_hosted = FALSE, collab_visibility = 'public',
+              view_visibility = 'public', anon_shell = 'public',
+              anon_shell_checked_at = NOW()
+        WHERE id = $1 AND slug = $2`,
+      [hostedApp.HOSTED_APP_ID, slug, JSON.stringify(manifest)]
+    );
+  }
+  return {
+    id: hostedApp.HOSTED_APP_PROFILE,
+    persona: 'member',
+    startPath: '/#apps',
+    path: `/app/${slug}`,
+    appSlug: slug,
+    purpose: 'Clean deployed app for Homeroom app-frame and bridge evidence.',
+  };
+}
+
+async function ensureHostedAppFixture({ databaseUrl, slug, runId, side }) {
+  assertEvidenceDatabase(databaseUrl, slug, runId, side);
+  return withClient(databaseUrl, async (client) => {
+    await client.query('BEGIN');
+    try {
+      const installed = await installHostedAppFixture(client, runId);
+      await client.query('COMMIT');
+      return installed;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    }
+  });
+}
+
 async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppSlug }) {
   assertEvidenceDatabase(databaseUrl, slug, runId, side);
   return withClient(databaseUrl, async (client) => {
@@ -235,8 +299,13 @@ module.exports = {
   FULL_ADMIN_USER_ID,
   FULL_ADMIN_USERNAME,
   FULL_ADMIN_PROFILE,
+  HOSTED_APP_ID: hostedApp.HOSTED_APP_ID,
+  HOSTED_APP_PROFILE: hostedApp.HOSTED_APP_PROFILE,
+  hostedAppSlug: hostedApp.hostedAppSlug,
   installFullAdminFixture,
   ensureFullAdminIdentity,
+  installHostedAppFixture,
+  ensureHostedAppFixture,
   canCopyMemberAgentSession,
   copyMemberAgentSession,
 };

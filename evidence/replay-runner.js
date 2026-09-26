@@ -1200,7 +1200,9 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     await installOriginFence(context, allowedOrigins, diagnostics, controlledFailure, {
       hostedOrigins,
       loadHostedOrigins: async () => {
-        hostedAppState.catalog = await loadTrustedHostedAppOrigins(context, origin);
+        hostedAppState.catalog = await loadTrustedHostedAppOrigins(
+          context, origin, null, input.runId
+        );
         return hostedAppState.catalog;
       },
     });

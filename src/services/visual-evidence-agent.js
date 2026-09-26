@@ -70,7 +70,15 @@ If a story opens a running app, choose a public app with a deployed commit in
 the actual app list. evidence_get_context includes eligibleHostedAppSlugs
 from the paired app catalogs; these are candidate slugs, not proof that their
 documents and scripts load. Browse the All apps directory and search a
-candidate slug there. Do not conclude that no usable app exists after trying
+candidate slug there. For a claim about Homeroom's generic hosted-app frame,
+launch, or bridge, use the evidence-owned hosted app named in
+availableFixtures. It is a real short-lived deployment reached through the
+ordinary app directory, HTTPS edge, managed iframe, and bridge. Verify it on
+both revisions like any other candidate. If that fixture itself fails, report
+the failure instead of trying arbitrary user apps. Do not substitute the
+fixture for a claim about one specific user app's own content or behavior;
+that claim must use the named app.
+Do not conclude that no usable app exists after trying
 only the Home or demo cards, or one or two failing apps while other candidates
 remain. A staging demo card without a deployment is not an app
 runtime. After clicking the app tile, use waitForHostedApp with that app's
@@ -193,6 +201,9 @@ not remove its interactions, focus, or assertions. If a hosted app had
 browser errors or blocked external requests, inspect another deployed public app on both
 revisions and select it only if its runtime loads cleanly. Do not allow new
 origins or suppress browser errors to make the replay pass.
+The exception is the evidence-owned hosted app for a generic frame, launch,
+or bridge claim: a failure there is an infrastructure blocker to report and
+must not be hidden by switching to a user app.
 Same-origin API 404s mean the planned data route was unavailable: inspect the
 account and available fixtures, then follow a real list row to a loaded record.
 If the claim cannot be reached with that persona, report the missing fixture

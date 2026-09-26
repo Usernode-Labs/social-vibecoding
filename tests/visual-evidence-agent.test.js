@@ -146,6 +146,8 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.match(agent.promptFor({ repair: true }), /retaining the original checkpoint assertions unchanged/i);
   assert.match(agent.replayPlanGuide(), /waitFor text matches a visible substring/);
   assert.match(agent.replayPlanGuide(), /eligibleHostedAppSlugs/);
+  assert.match(agent.replayPlanGuide(), /generic hosted-app frame,\s+launch, or bridge, use the evidence-owned hosted app/i);
+  assert.match(agent.promptFor({ repair: true }), /must not be hidden by switching to a user app/i);
   assert.match(agent.replayPlanGuide(), /browser_mouse_move_xy/);
   assert.match(agent.replayPlanGuide(), /hoverViewport with/);
   assert.match(agent.replayPlanGuide(), /image interpretation is not required/);

@@ -22,8 +22,10 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 COPY capture/capture.js /app/capture.js
 COPY evidence/replay-runner.js /app/evidence-replay.js
+COPY evidence/hosted-app-fixture.js /app/evidence-hosted-app-fixture.js
 COPY worker/session-bootstrap.js /worker/session-bootstrap.js
 COPY worker/evidence-hosted-origins.js /worker/evidence-hosted-origins.js
+COPY worker/evidence-hosted-app-contract.js /worker/evidence-hosted-app-contract.js
 COPY src/services/visual-evidence-plan.js /app/visual-evidence-plan.js
 
 USER node
