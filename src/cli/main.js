@@ -2341,7 +2341,7 @@ async function runMcp(args, launcherPath) {
   });
 
   server.registerTool('social_vibecoding.proposal_promote', {
-    description: 'Open/promote a ready native CLI proposal through Homeroom’s normal app proposal and voting workflow. Call only after proposal_status reports ready and the user wants promotion. Codex requires manual approval for this dedicated tool; its project guard blocks direct api_write and literal raw-shell promotion substitutes. This acts in Homeroom, never directly in GitHub.',
+    description: 'Open/promote a native CLI proposal through Homeroom’s normal app proposal and voting workflow. Call when the user wants promotion, once a build has been submitted with proposal_submit_build: staging and checks may still be running, and the proposal can merge only once they pass. Codex requires manual approval for this dedicated tool; its project guard blocks direct api_write and literal raw-shell promotion substitutes. This acts in Homeroom, never directly in GitHub.',
     inputSchema: {
       session_id: sessionIdSchema,
       profile: apiProfileSchema,
@@ -2357,7 +2357,7 @@ async function runMcp(args, launcherPath) {
     // A sandboxed stdio MCP process commonly cannot access the host's native
     // credential store. Return the exact promotion command in that case,
     // rather than a status-only host command that strands the approved flow.
-    // The server repeats the ready/head/check gate before promotion.
+    // The server repeats the submitted-head gate before promotion.
     if (statusResult.structuredContent?.code === 'host_execution_required') {
       return mcpApiRequest({
         method: 'POST',
@@ -2373,12 +2373,14 @@ async function runMcp(args, launcherPath) {
         && ['promoted', 'merging', 'merged'].includes(statusBody.state)) {
       return statusResult;
     }
-    if (statusCode !== 200 || !statusBody
-        || !['ready', 'paused'].includes(statusBody.state)
-        || (statusBody.revisionState || statusBody.state) !== 'ready') {
+    // #3043: promotion no longer waits for a ready revision. Staging and
+    // checks may still be running; the merge gate waits for them instead.
+    // The server refuses, in its own words, only a proposal with nothing
+    // submitted or a turn still moving its branch.
+    if (statusCode !== 200 || !statusBody) {
       return mcpError(
         'proposal_not_ready',
-        'The proposal is not ready to promote. Poll proposal_status and resolve staging or check failures first.',
+        'The proposal status could not be read. Poll proposal_status, then try again.',
         { status: statusCode, body: statusBody, retryable: true, profile: profile || pinned.name }
       );
     }

@@ -2603,6 +2603,17 @@ function voteRoutes(config) {
         prTitle: session.pr_title || null,
       });
 
+      // #3043: a change may now be submitted while its own staging run is
+      // still checking the commit it went up on. That run keeps publishing
+      // into the promoted row (services/handoff-pipeline.js publishableStatus),
+      // so a second build here would only race it for the same verdict.
+      const handoffPipeline = require('../services/handoff-pipeline');
+      const ownRunChecksReviewedHead = !imported
+        && handoffPipeline.hasInFlightHandoffPipeline(session.id)
+        && !!session.reviewed_head_sha
+        && String(session.checks_commit_sha || '').toLowerCase()
+          === String(session.reviewed_head_sha).toLowerCase();
+
       // #183: a clone promoted straight off a headless auto run's pre-built
       // preview may not have its own staging yet (the copied card points at
       // the auto session's URL — same content, since the clone branch was
@@ -2612,6 +2623,10 @@ function voteRoutes(config) {
         // Imported rows already start their SHA-pinned preview/check build at
         // import time. Never fall through to the native branch-name build:
         // a fork head may not exist in the app repository at all.
+      } else if (ownRunChecksReviewedHead) {
+        log.info('votes', 'Promoted while its staging run checks the reviewed head', {
+          sessionId: session.id, headSha: session.reviewed_head_sha,
+        });
       } else if (!session.staging_url) {
         (async () => {
           // Use the exact revision captured before promotion. The fallback
