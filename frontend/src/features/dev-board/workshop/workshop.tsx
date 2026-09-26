@@ -42,7 +42,7 @@
  * link on the open card.
  */
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -80,6 +80,7 @@ import { useWorkshopGroup } from './group-mode-store';
 import { AppWorkshopScope } from '../../workshop/workshop-chrome';
 import { CommunityCard } from './community-card';
 import { readAskStream } from './ask-stream';
+import { anySwipe, createSwipeTracker, type SwipeFrame, type SwipeSide, type SwipeTracker, swipeAllowed } from './swipe-vote';
 
 type SortKey = 'people' | 'activity' | 'open';
 type TabKey = 'status' | 'needs' | 'all';
@@ -1229,7 +1230,72 @@ function BeforeAfter({ v, near, onFull }: {
  * or a callback the feed keeps stable (`openFull`), so an item renders again
  * only when something it draws changed.
  */
-const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, slug, onFull }: {
+/**
+ * #3052: swipe a votable card right for Yes, left for No.
+ *
+ * The rules live in swipe-vote.ts; this wires pointer events to them and
+ * draws each frame straight onto the card's own nodes (a transform and two
+ * opacities), because a re-render per pointermove would redraw the picture
+ * under the finger. Those nodes are this component's, rendered with no
+ * `style` prop, so nothing else writes the properties this sets.
+ *
+ * `touch-action: pan-y` (app.css, on `[data-ws-swipe]`) leaves vertical
+ * drags to the feed's scroll-snap: the browser pans them itself and sends
+ * pointercancel, which ends the gesture without a vote. A committed swipe
+ * goes to the feed's `answer` and nowhere else.
+ */
+function useSwipeVote(key: string, canYes: boolean, canNo: boolean, onSwipe: (key: string, which: SwipeSide) => void) {
+  const ref = useRef<HTMLElement | null>(null);
+  const yesRef = useRef<HTMLSpanElement | null>(null);
+  const noRef = useRef<HTMLSpanElement | null>(null);
+  // Read by the tracker at down, at every frame and again at release, so a
+  // card answered while the finger is down cannot vote on the way up.
+  const live = useRef({ key, canYes, canNo, onSwipe });
+  live.current = { key, canYes, canNo, onSwipe };
+  const trackerRef = useRef<SwipeTracker | null>(null);
+  if (!trackerRef.current) {
+    const draw = (f: SwipeFrame | null) => {
+      const el = ref.current;
+      if (!el) return;
+      if (f) el.setAttribute('data-ws-swiping', f.armed ? 'armed' : '');
+      else el.removeAttribute('data-ws-swiping');
+      el.style.transform = f ? f.transform : '';
+      if (yesRef.current) yesRef.current.style.opacity = f ? String(f.yes) : '';
+      if (noRef.current) noRef.current.style.opacity = f ? String(f.no) : '';
+    };
+    trackerRef.current = createSwipeTracker({
+      allowed: () => ({ yes: live.current.canYes, no: live.current.canNo }),
+      width: () => (ref.current ? ref.current.clientWidth : 0),
+      reducedMotion: () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      onFrame: draw,
+      onCommit: (side) => live.current.onSwipe(live.current.key, side),
+    });
+  }
+  const on = anySwipe({ yes: canYes, no: canNo });
+  // A card that stops being swipeable mid-drag (answered from the sheet)
+  // is put back to rest.
+  useEffect(() => {
+    if (!on && trackerRef.current) trackerRef.current.cancel();
+  }, [on]);
+  const pt = (e: ReactPointerEvent<HTMLElement>) => ({
+    pointerId: e.pointerId, pointerType: e.pointerType, isPrimary: e.isPrimary, x: e.clientX, y: e.clientY,
+  });
+  const t = trackerRef.current;
+  const handlers = on ? {
+    onPointerDown: (e: ReactPointerEvent<HTMLElement>) => { t.down(pt(e)); },
+    onPointerMove: (e: ReactPointerEvent<HTMLElement>) => { if (t.move(pt(e)) && e.cancelable) e.preventDefault(); },
+    onPointerUp: (e: ReactPointerEvent<HTMLElement>) => { t.up(pt(e)); },
+    onPointerCancel: () => { t.cancel(); },
+    // The click that ends a drag is not a tap on the title or the picture.
+    onClickCapture: (e: ReactMouseEvent<HTMLElement>) => {
+      if (t.consumeClick()) { e.preventDefault(); e.stopPropagation(); }
+    },
+  } : {};
+  return { on, ref, yesRef, noRef, handlers };
+}
+
+const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, slug, onFull, canYes, canNo, onSwipe }: {
   row: QueueRow;
   index: number;
   count: number;
@@ -1240,16 +1306,38 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   wide: boolean;
   slug: string;
   onFull: (el: HTMLElement) => void;
+  /** #3052: which way this card may be swiped to vote (see swipe-vote.ts). */
+  canYes: boolean;
+  canNo: boolean;
+  onSwipe: (key: string, which: SwipeSide) => void;
 }): ReactNode {
   const isVote = row.kind === 'vote';
+  const swipe = useSwipeVote(row.key, canYes, canNo, onSwipe);
   const href = openHref(slug, row.card);
   const title = row.card.title.text || row.card.title.title;
   const chips = chipsFor(row, voted);
   const summary = isVote ? row.summary : (row.body || null);
   const pct = Math.max(2, Math.round(((index + 1) / Math.max(1, count)) * 100));
   return (
-    <section className="dev-ws-item" data-ws-item={row.key} data-ws-kind={row.kind} data-ws-tint={tint}>
+    <section
+      className="dev-ws-item"
+      data-ws-item={row.key}
+      data-ws-kind={row.kind}
+      data-ws-tint={tint}
+      data-ws-swipe={swipe.on ? '' : undefined}
+      ref={swipe.ref}
+      {...swipe.handlers}
+    >
       <div className="dev-ws-item-progress" aria-hidden="true"><i style={{ width: `${pct}%` }} /></div>
+      {/* #3052: what a release will do, faded in with the drag. Decoration
+          for a touch: the rail's Vote button is the control everyone else,
+          assistive technology included, is offered. */}
+      {swipe.on ? (
+        <>
+          <span className="dev-ws-swipe-note dev-ws-swipe-yes" aria-hidden="true" ref={swipe.yesRef}>Vote yes</span>
+          <span className="dev-ws-swipe-note dev-ws-swipe-no" aria-hidden="true" ref={swipe.noRef}>Vote no</span>
+        </>
+      ) : null}
       <div className="dev-ws-item-top">
         {voted ? (
           <span className="dev-ws-item-done" data-ws-item-done="">
@@ -1301,6 +1389,11 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
     </section>
   );
 });
+
+/** A row's swipe sides as the item's two boolean props (memo-friendly). */
+function swipeProps(a: { yes: boolean; no: boolean }): { canYes: boolean; canNo: boolean } {
+  return { canYes: a.yes, canNo: a.no };
+}
 
 /**
  * The scroll position the end card is keyed under (see `curKeyRef` in
@@ -1458,6 +1551,8 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     return out;
   }, [rows, pinsVersion]);
   const n = items.length;
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   // `n + 1` slots: the items, then the end card (#2172). `i === n` is the
   // end card, and `row` is null there.
   const i = Math.min(at, n);
@@ -1644,7 +1739,11 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
    * was (and drops a pin this press added), and a refusal or a network
    * failure is reported by `castVote`'s own toast.
    */
-  const answer = (which: 'yes' | 'no') => {
+  const answer = (which: 'yes' | 'no', at: number = i) => {
+    // #3052: `at` is the item answered: the one in view for a press or a
+    // key, the swiped card for a swipe (the same card, but named rather
+    // than assumed when the release lands).
+    const row = at < n ? items[at] : null;
     if (!row) return;
     const spec = which === 'yes' ? row.yes : row.no;
     if (!spec) return;
@@ -1666,7 +1765,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     // arrived on re-numbered and slid.
     const pinnedHere = !pinsRef.current.has(row.key);
     if (pinnedHere) {
-      pinsRef.current.set(row.key, { row, index: i });
+      pinsRef.current.set(row.key, { row, index: at });
       setPinsVersion((v) => v + 1);
     }
     closeSheet();
@@ -1694,6 +1793,17 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
         }
       });
   };
+  // #3052: a committed swipe is an answer like any other, through the one
+  // function above: castVote's reason prompt for a No, its in-flight guard,
+  // the pin and the Sending… rail. Stable, so the memo()'d items skip a
+  // render; the ref carries this render's `answer`.
+  const answerRef = useRef(answer);
+  answerRef.current = answer;
+  const onSwipe = useCallback((key: string, which: 'yes' | 'no') => {
+    const idx = itemsRef.current.findIndex((r) => r.key === key);
+    if (idx < 0) return;
+    answerRef.current(which, idx);
+  }, []);
 
   const preview = row ? (row.card.rail.preview || row.card.actionPreview || null) : null;
   const canTry = !!(preview && preview.state === 'live');
@@ -1935,6 +2045,8 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
             wide={wide}
             slug={slug}
             onFull={openFull}
+            {...swipeProps(swipeAllowed(r, !!answered[r.key], !!sending[r.key]))}
+            onSwipe={onSwipe}
           />
         ))}
         {/* ALWAYS, after the last item: the swipe past the end lands here.
