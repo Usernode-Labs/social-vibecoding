@@ -90,6 +90,18 @@
       "description": "Emergency kill switch for agent-authored proposal evidence. The mechanism is enabled by default; set exactly false only to stop intent collection, paired replay, and reviewer presentation together. Proposal checks and previews continue, and legacy default-route screenshots are not restored."
     },
     {
+      "key": "MAX_APPS",
+      "group": "Scaling",
+      "default": "50",
+      "description": "Ceiling on live (non-errored) apps across the whole server. Past it, everyone but full admins is refused with \"This server is at its app limit\". 0 or less turns the cap off. Full admins are alerted as it nears the ceiling (PLATFORM_LIMIT_WARN_PERCENT)."
+    },
+    {
+      "key": "PLATFORM_LIMIT_WARN_PERCENT",
+      "group": "Scaling",
+      "default": "80",
+      "description": "Percentage of MAX_APPS or MAX_GLOBAL_SESSIONS at which full admins are alerted that the server is nearing that cap; they are alerted again when it is full. One alert per crossing: it re-arms once usage falls back 10% under the line."
+    },
+    {
       "key": "MAX_GLOBAL_SESSIONS",
       "group": "Scaling",
       "default": "75",
@@ -2821,7 +2833,8 @@
     {
       "name": "The Notifications sheet renders notification rows (Streamlined Concept)",
       "path": "/?demo=1#notifications",
-      "expectSelector": "#notifications-sheet[data-open] [data-notif-id]"
+      "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"]) [data-notif-id]",
+      "expectText": "40 of 50 apps in use."
     },
     {
       "name": "A notification row says what kind it is, then which one, then where it came from",
