@@ -4346,75 +4346,59 @@ const AppView = {
   changeSubmissionState(item) {
     if (!item || !['active', 'paused'].includes(item.status)) return { kind: 'completed' };
     if (AppView._changeActions.get(Number(item.id)) === 'promote') return { kind: 'pending' };
-    // Ordinary sessions can kick off their first build/check cycle on submit.
-    // Managed handoffs must already have a checked, uploaded revision.
+    // #3173 / #3043 — an underway change can ALWAYS be submitted for review.
+    // Submitting opens the vote; it does not merge. Checks gate MERGE — the
+    // merge gate requires a passing verdict on the exact reviewed commit
+    // (services/merge-requirements.js) however the vote goes — so nothing
+    // here has to wait for them.
     //
-    // #2074 — submitting is not merging, and this gate had been treating them
-    // as the same act. Three facts say so:
+    // #2074 already let an ordinary session submit while its checks ran. What
+    // was left was a gate the browser and the server enforced for no reason
+    // the merge gate does not already cover: a managed (CLI handoff) change
+    // waited for staging and a green verdict, and any change with failing
+    // checks was refused. The managed wait stranded proposals for good once
+    // the idle sweep took their preview away (#3161, #3163): "needs staging
+    // and checks to finish", with nothing left running that could finish.
     //
-    //   * POST /api/sessions/:id/promote has no checks condition. The wait was
-    //     the browser's alone.
-    //   * The connector's submit_work puts a change to the vote and answers
-    //     "Checks and the staging preview build automatically" — so the state
-    //     this refused is one the group is routinely shown anyway, through the
-    //     platform's other door.
-    //   * Checks gate MERGE. The platform says it in its own words wherever it
-    //     explains itself: "Merge is blocked until checks pass." A promoted
-    //     proposal with check_state 'pending' is ordinary, and the merge gate
-    //     refuses a non-green one however the vote goes.
-    //
-    // A build takes minutes and a vote takes days, so waiting for the first
-    // before starting the second spent the build for nothing.
-    //
-    // What still blocks is a KNOWN-BAD verdict: 'failing' and 'error' are
-    // reasons not to put a change in front of the group. 'pending', a build in
-    // flight, an unmeasured state and a stale-base caveat are not verdicts at
-    // all — they are answers that have not arrived.
-    //
-    // `_checksBaseNote` in particular: that is #1442's "checks ran against a
-    // main that has since moved", which #2038 made deliberately SOFT — "a
-    // caveat on a green result, not a failure, so it never blocks the vote".
-    // Soft for merging and hard for submitting cannot both be right.
-    const handoff = item.source === 'cli_handoff';
-    const blocked = (reason) => ({ kind: 'blocked', label: 'Submit for review', reason });
-
-    // Reported in the order a reader would act on them, and each naming its
-    // OWN condition. Five conditions collapsing into one sentence about
-    // finishing the build is what turned a passing state into a bug report:
-    // the message named checks that were not running, and gave no way to tell
-    // whether waiting would help.
-    // Pausing releases coding resources; review readiness belongs to the revision.
+    // So the state is always 'ready'. What it carries is a NOTE: one sentence
+    // that says what submitting now means for this change, in the order a
+    // reader would care. The server stays authoritative for the few things it
+    // still refuses (nothing committed yet, an agent turn still running), and
+    // says why in its own words when it does.
+    const ready = (note, tone = 'ok') => ({ kind: 'ready', note, tone });
     if (item.check_state === 'failing') {
-      return blocked('The checks on this revision are failing. Push a fix, then submit it.');
+      return ready('Its checks are failing. You can submit it now; it can merge only after a fix passes them.', 'warn');
     }
     if (item.check_state === 'error') {
-      return blocked('The checks could not run on this revision. Push a fix, then submit it.');
+      return ready('Its checks could not run. You can submit it now; it can merge only once they run and pass.', 'warn');
     }
-    if (handoff && item.proposal_state !== 'ready') {
-      if (['checking', 'deploying', 'stalled'].includes(item.proposal_state)) {
-        return blocked('This managed session needs staging and checks to finish before it can be submitted.');
-      }
-      return blocked('This managed session needs a tested commit uploaded before it can be submitted.');
-    }
-    if (handoff && item.check_state !== 'passing') {
-      return blocked('This managed session needs its checks to pass before it can be submitted.');
+    // A managed change's uploaded commit is not its revision until the agent
+    // submits it; the server refuses to put it up for review before then.
+    if (item.source === 'cli_handoff' && item.proposal_state === 'uploaded') {
+      return ready('A commit was uploaded but has not been submitted for checks yet. Ask the agent to submit it first.', 'mute');
     }
     // #2379 — a change with nothing on its branch is not a change yet. The
-    // server already refuses it (promote 409s "no committed code on its
-    // branch yet"), so an enabled button only promised a failure. Two ways to
-    // know: the checks ran and found the branch level with main, or nothing
-    // has ever reached the branch at all — no pull request, no preview, no
-    // checks ever started. A check run in flight is NOT that second case: it
-    // starts on a push, so it keeps #2074's "not a verdict yet" rule above.
-    if (!handoff && item.source !== 'imported') {
+    // server refuses it ("no committed code on its branch yet"); say so here
+    // too, so the refusal is not a surprise. Two ways to know: the checks ran
+    // and found the branch level with main, or nothing has ever reached the
+    // branch at all (for a managed change, a draft the agent never
+    // submitted). A check run in flight is NOT that second case: it starts on
+    // a push.
+    if (item.source !== 'imported') {
       const levelWithMain = item.check_state === 'skipped'
         && /no commits beyond main/.test(item.check_error_detail || '');
-      const nothingPushed = !item.pr_number && !item.staging_url && !item.check_state;
+      const nothingPushed = item.source === 'cli_handoff'
+        ? item.proposal_state === 'draft'
+        : !item.pr_number && !item.staging_url && !item.check_state;
       if (levelWithMain || nothingPushed) {
-        return blocked('There are no committed changes to submit yet. Ask the agent to make a change first.');
+        return ready('There are no committed changes to submit yet. Ask the agent to make a change first.', 'mute');
       }
     }
-    return { kind: 'ready' };
+    if (item.check_state === 'passing' && !item.staging_url) {
+      return ready('Ready to submit for review. Its preview was closed while idle; submitting rebuilds it and runs the checks again.');
+    }
+    if (item.check_state === 'passing') return ready('Ready to submit for review.');
+    return ready('You can submit it now. Its checks keep running, and it can merge only once they pass.');
   },
   _completeChangeView(item, card, body) {
     const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
@@ -4505,7 +4489,7 @@ const AppView = {
     body.evidence = AppView._evidenceView(item.visualEvidence);
     if (underway) {
       const checks = rows.find((r) => r.key === 'checks');
-      if (item.check_state === 'failing' && checks) checks.text = [{ b: 'Failing.', tone: 'bad' }, ' Required checks need attention before this change can be proposed.'];
+      if (item.check_state === 'failing' && checks) checks.text = [{ b: 'Failing.', tone: 'bad' }, ' Required checks need attention before this change can merge.'];
       if (main.key === 'behind') {
         const behind = AppView._freshnessOf(item).behindBy ?? main.count;
         main.label = 'Main';
@@ -4517,12 +4501,12 @@ const AppView = {
       rows.forEach((r) => { delete r.step; delete r.stepDone; });
       const submission = AppView.changeSubmissionState(item);
       const ready = submission.kind === 'ready';
-      rows.push({ key: 'review', label: 'Review', tone: ready ? 'ok' : 'mute',
-        text: [ready ? 'Ready to submit for review.' : submission.reason || 'Submitting for review…'] });
+      rows.push({ key: 'review', label: 'Review', tone: ready ? submission.tone : 'mute',
+        text: [ready ? submission.note : 'Submitting for review…'] });
       card.actions = (card.actions || []).filter((a) => a.key !== 'promote');
       if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
         label: submission.kind === 'pending' ? 'Submitting…' : 'Submit for review',
-        title: submission.reason, disabled: !ready || !!busy,
+        title: submission.note, disabled: !ready || !!busy,
         act: { fn: 'runChangeAction', args: [item.id, 'promote', item] } });
     }
   },
@@ -4550,9 +4534,11 @@ const AppView = {
     try {
       const response = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.ok === false) throw new Error(data.error === 'proposal_not_ready'
-        ? 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.'
-        : data.message || data.error || 'The action could not be completed.');
+      // The server's own sentence first: since #3173 the few refusals left
+      // (nothing committed, an agent turn still running) each say why.
+      if (!response.ok || data.ok === false) throw new Error(data.message || (data.error === 'proposal_not_ready'
+        ? 'This change cannot be submitted yet. Try again in a moment.'
+        : data.error) || 'The action could not be completed.');
       if (stillVisible() && action !== 'promote') PlatformUI.toast(data.message || 'Synced with main.');
       if (action === 'promote') {
         const promoted = { status: 'promoted' };
