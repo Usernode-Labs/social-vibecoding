@@ -4,12 +4,13 @@
  * Communities, stage 5: a new account's first run.
  *
  *   sign in → username → terms → "What communities do you want to join?"
- *           → the tour → Home, with a Getting started card on top.
+ *           → Home, with a Getting started card on top, whose first row
+ *             offers the tour (#3240).
  *
  * The first two steps were already there (frontend/src/features/auth/
  * username-first-run.js, frontend/src/features/settings/terms-first-run.js).
  * This module is the server half of the other two: which communities the
- * join screen offers and what answering it does, and the three first steps
+ * join screen offers and what answering it does, and the four first steps
  * the card on Home ticks off.
  *
  * ── Who is asked ────────────────────────────────────────────────────────
@@ -39,10 +40,14 @@
  *
  * ── The card ───────────────────────────────────────────────────────────
  *
- * Three steps in ONE community, the first one the person joined on that
- * screen (or Homeroom when that is all they picked), each of which ticks
- * off from something the person actually did rather than from a checkbox:
+ * The tour, then three steps in ONE community, the first one the person
+ * joined on that screen (or Homeroom when that is all they picked), each of
+ * which ticks off from something the person actually did rather than from a
+ * checkbox:
  *
+ *   tour     the welcome tour finished or skipped, on any device
+ *            (`users.tour_done_at`, #3237). It used to start by itself after
+ *            the join screen; since #3240 this row is where it is offered;
  *   say-hi   a message of theirs in its chat;
  *   vote     a vote of theirs on a change or a request, or, when nothing
  *            there is waiting on one, a visit to the Workshop;
@@ -55,8 +60,8 @@
  *
  * ── The tour ───────────────────────────────────────────────────────────
  *
- * Only whether it is done (`users.tour_done_at`), so a tour finished on one
- * device is not offered again on the next. The tour itself is all client
+ * Only whether it is done (`users.tour_done_at`), which ticks the card's
+ * first row on every device. The tour itself is all client
  * (frontend/src/features/home/tour).
  */
 
@@ -290,7 +295,8 @@ async function focusCommunity(pool, userId, { showSelfHosted = false } = {}) {
  */
 async function gettingStarted(pool, userId, { showSelfHosted = false } = {}) {
   const { rows: userRows } = await pool.query(
-    `SELECT communities_onboarded_at, getting_started_closed_at, getting_started_seen
+    `SELECT communities_onboarded_at, getting_started_closed_at, getting_started_seen,
+            tour_done_at
        FROM users WHERE id = $1`,
     [userId]
   );
@@ -323,6 +329,15 @@ async function gettingStarted(pool, userId, { showSelfHosted = false } = {}) {
   const waiting = Number(f.waiting) || 0;
 
   const steps = [
+    {
+      // The client draws this row with a Start button and asks for the tour
+      // itself; there is nowhere to navigate, so no href.
+      id: 'tour',
+      title: 'Take the 1-minute tour',
+      detail: 'See how Homeroom works.',
+      done: !!(u && u.tour_done_at),
+      href: null,
+    },
     {
       id: 'say-hi',
       title: `Say hi in ${name}`,

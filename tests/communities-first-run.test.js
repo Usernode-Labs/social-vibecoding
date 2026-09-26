@@ -61,7 +61,7 @@ test('only a new account is asked: a flag set at sign-up, false for everyone bef
 
 // ── the join screen ────────────────────────────────────────────────────
 
-test('the join screen comes after the username and terms steps, and before the tour', () => {
+test('the join screen comes after the username and terms steps, and before Home and its card', () => {
   assert.ok(MAIN.indexOf("import './features/auth/username-first-run.js';")
     < MAIN.indexOf("import './features/auth/communities-first-run.js';"));
   assert.match(GATE, /window\.App\.user\.needsCommunitiesChoice !== true/);
@@ -69,9 +69,12 @@ test('the join screen comes after the username and terms steps, and before the t
   assert.match(GATE, /const terms = window\.TermsFirstRun;[\s\S]{0,120}await terms\.settled\(\);/);
   assert.ok(GATE.indexOf('await CommunitiesFirstRun._afterEarlierSteps();')
     < GATE.indexOf("fetch('/api/me/join-suggestions'"), 'terms first, then the list');
-  // It publishes the settled() the tour waits on.
+  // It publishes itself on window, where the tour reads whether a join
+  // screen is due or was shown here (the tour no longer waits on it: it
+  // starts from the card, #3240).
   assert.match(GATE, /window\.CommunitiesFirstRun = CommunitiesFirstRun;/);
-  assert.match(read('frontend/src/features/home/tour/index.tsx'), /host\.CommunitiesFirstRun/);
+  assert.match(read('frontend/src/features/home/tour/index.tsx'),
+    /\(window as unknown as \{ CommunitiesFirstRun\?: FirstRunGate \}\)\.CommunitiesFirstRun;/);
 });
 
 test('it never lands on a capture route, and has one screenshot state of its own', () => {
@@ -132,9 +135,11 @@ test('the card counts, records the two visits it asks for, and closes for good',
   assert.equal(card.seenKeyFor({ href: '#messages/app/x' }), null, 'a message leaves its own row');
   assert.match(CARD_SRC, /void post\('\/api\/me\/getting-started\/close'\)/);
   assert.match(CARD_SRC, /void post\('\/api\/me\/getting-started\/seen', \{ step: seen \}\)/);
-  // The fixture is three steps, one done, the shape the declared check reads.
+  // The fixture is four steps, one done, the shape the declared check reads:
+  // the tour first, not yet taken, so its Start button is on screen (#3240).
   assert.deepEqual(card.SHOT_MODEL.steps.map((s) => [s.id, s.done]),
-    [['say-hi', true], ['vote', false], ['explore', false]]);
+    [['tour', false], ['say-hi', true], ['vote', false], ['explore', false]]);
+  assert.equal(card.SHOT_MODEL.total, 4);
   assert.doesNotMatch(CARD_SRC.replace(/\/\*[\s\S]*?\*\//g, ''), /—/);
 });
 
@@ -160,7 +165,8 @@ test('both screens have a declared check on their own screenshot state', () => {
     'the Skip sits right under the Join button');
   const card = DAPP.tests.find((t) => t.id === 'home.getting-started-card');
   assert.equal(card.path, '/?shot=getting-started');
-  assert.match(card.expectSelector, /\[data-getting-started="1\/3"\]/);
+  assert.match(card.expectSelector, /\[data-getting-started="1\/4"\] \[data-getting-started-step="tour"\]\[data-done="false"\] ~ /);
+  assert.equal(card.expectText, 'Take the 1-minute tour');
   for (const t of [join, card]) assert.ok(t.expectSelector.length <= 256);
 });
 
@@ -187,24 +193,36 @@ test('an admin can reset an account\'s first run, from the user menu', () => {
   assert.match(USERS, /title: `Reset \$\{user\.username\}'s first run\?`/);
 });
 
-test('a join screen shown in this browser starts the tour over', () => {
+test('a join screen shown in this browser forgets its "done", so the card offers the tour again', () => {
   const TOUR = read('frontend/src/features/home/tour/index.tsx');
-  const DONE = read('frontend/src/features/home/tour/tour-done.ts');
   // The gate says so, and never for the ?shot= fixture.
   assert.match(GATE, /shownHere\(\) \{\s*\n\s*return CommunitiesFirstRun\._shownHere === true;/);
   assert.match(GATE, /if \(!\(opts && opts\.demo\)\) CommunitiesFirstRun\._shownHere = true;/);
-  // A finished tour waits for a pending join screen instead of giving up.
-  // "Finished" is the account's answer or this browser's (#3237), and a join
-  // screen shown here is never finished, whatever either says...
-  assert.match(TOUR, /if \(tourDoneFor\(userId\) && !firstRunPending\(\)\) return;/);
-  assert.match(TOUR, /joinShownHere: firstRunShownHere\(\),/);
-  assert.match(DONE, /if \(joinShownHere\) return false;\s*\n\s*return serverDone \|\| localDone;/);
-  // ...and once it has been shown here, this browser's "done" is cleared
-  // before the re-read (the reset cleared the account's).
-  const start = TOUR.slice(TOUR.indexOf('if (started.current || userId == null) return;'));
-  const body = start.slice(0, start.indexOf('}, [userId, start, firstRunRev]);'));
-  assert.match(body, /if \(firstRunShownHere\(\)\) \{\s*\n\s*clearDone\(userId\);\s*\n\s*clearStep\(userId\);\s*\n\s*\}/);
-  assert.ok(body.indexOf('clearDone(userId)') < body.lastIndexOf('if (tourDoneFor(userId)) return;'));
+  // The tour no longer starts by itself after the screen (#3240): the reset
+  // cleared the account's "done", the card's tour row reads that, and this
+  // browser's copy is cleared too, or the backfill would put it back.
+  assert.doesNotMatch(TOUR, /tourDoneFor|whenFirstRunSettled/);
+  const forget = TOUR.slice(TOUR.indexOf('const forget = () => {'));
+  assert.match(forget.slice(0, forget.indexOf('}, [userId]);')),
+    /if \(!firstRunShownHere\(\)\) return;\s*\n\s*clearDone\(userId\);\s*\n\s*clearStep\(userId\);/);
+  // And never copied back over an account whose join screen is due.
+  assert.match(TOUR, /joinShownHere: firstRunShownHere\(\),\s*\n\s*joinPending: firstRunPending\(\),/);
+});
+
+test('the card offers the tour as its first row, with a Start button until it is done', () => {
+  // Server: the first step, ticked from the account's tour_done_at.
+  const svc = read('src/services/onboarding.js');
+  const fn = svc.slice(svc.indexOf('async function gettingStarted('), svc.indexOf('/** Record a visit the card asked for.'));
+  assert.match(fn, /SELECT communities_onboarded_at, getting_started_closed_at, getting_started_seen,\s*\n\s*tour_done_at/);
+  assert.match(fn, /const steps = \[\s*\{[\s\S]*?id: 'tour',\s*title: 'Take the 1-minute tour',\s*detail: 'See how Homeroom works\.',\s*done: !!\(u && u\.tour_done_at\),\s*href: null,/);
+  // Client: a row that is not a button, holding one; pressed, it asks for the
+  // tour the way Settings' Replay does, and the tour's own write reloads it.
+  assert.match(CARD_SRC, /step\.id === 'tour' && !step\.done \? \(/);
+  assert.match(CARD_SRC, /chevron=\{false\}/);
+  assert.match(CARD_SRC, /variant="pillAccent"/);
+  assert.match(CARD_SRC, /data-getting-started-tour-start=""/);
+  assert.match(CARD_SRC, /if \(step\.id === 'tour'\) \{\s*requestTour\(\);\s*return;\s*\}/);
+  assert.match(CARD_SRC, /document\.addEventListener\(TOUR_DONE_EVENT, onChange\);/);
 });
 
 // A browser that has signed in before boots from the session snapshot, and
@@ -224,10 +242,9 @@ test('the join screen is re-offered once a snapshot boot confirms the session', 
   // It waits for a terms ask in flight or on screen, capped.
   assert.match(GATE, /for \(let i = 0; terms && \(terms\._inFlight \|\| terms\._presented\) && i < 2400; i \+= 1\) \{/);
   // The tour looks again once the screen is answered, which on this path is
-  // after its first look.
+  // after its first look, and forgets this browser's "done" then.
   const TOUR = read('frontend/src/features/home/tour/index.tsx');
-  assert.match(TOUR, /document\.addEventListener\('sv:communities-joined', bump\);/);
-  assert.match(TOUR, /\}, \[userId, start, firstRunRev\]\);/);
+  assert.match(TOUR, /document\.addEventListener\('sv:communities-joined', forget\);/);
   // And the card reads the confirmed session's showGettingStarted.
   assert.match(CARD_SRC, /document\.addEventListener\('sv:session', onChange\);/);
   assert.match(APP_JS, /document\.dispatchEvent\(new CustomEvent\('sv:session', \{/);
