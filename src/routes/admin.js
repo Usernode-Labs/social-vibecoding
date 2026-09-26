@@ -24,6 +24,7 @@ const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
+const onboarding = require('../services/onboarding');
 // The CSV writer the topochain admin's two exports share: quoting plus the
 // spreadsheet formula-injection guard, documented where it is defined.
 const { csvField } = require('./topochain/helpers');
@@ -678,6 +679,28 @@ function adminRoutes(config) {
       res.json({ ok: true, username: recovery.user.username, tempPassword });
     } catch (err) {
       log.error('admin', 'Password reset failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // "Reset first run" (communities, stage 5): the account's next load shows
+  // the join screen, the tour and the Getting started card again, as for a
+  // new account. For trying onboarding on a test account, or on yourself.
+  // Nothing the account owns is touched (services/onboarding.js
+  // resetFirstRun), so any full admin may do it, to anyone, like a password
+  // reset.
+  router.post('/api/admin/users/:id/reset-first-run', requireAdminWrite, async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    try {
+      const user = await onboarding.resetFirstRun(pool, userId);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      log.info('admin', 'First run reset', { id: user.id, username: user.username, by: req.user.username });
+      res.json({ ok: true, username: user.username });
+    } catch (err) {
+      log.error('admin', 'First run reset failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -221,4 +221,39 @@ test('the first run: join screen and Getting started, against the full schema', 
     assert.equal((await call('POST', '/api/me/getting-started/close')).status, 200);
     assert.equal((await call('GET', '/api/me/getting-started')).data.show, false);
   });
+
+  // An admin's "Reset first run" (Admin → Users → ⋯). Continues from the
+  // newcomer above, who has answered, visited, closed the card and joined.
+  await t.test('Reset first run brings the first run back and touches nothing the account owns', async () => {
+    const onboarding = require('../src/services/onboarding');
+    const membershipsBefore = (await pool.query(
+      'SELECT community_id FROM community_members WHERE user_id = $1 ORDER BY community_id', [newbie.id])).rows;
+    const pinsBefore = (await pool.query(
+      'SELECT app_id FROM app_favorites WHERE user_id = $1 AND NOT hidden ORDER BY app_id', [newbie.id])).rows;
+
+    assert.deepEqual(await onboarding.resetFirstRun(pool, newbie.id), { id: newbie.id, username: 'newbie' });
+    const u = (await pool.query(
+      `SELECT needs_communities_choice, communities_onboarded_at, getting_started_closed_at, getting_started_seen
+         FROM users WHERE id = $1`, [newbie.id])).rows[0];
+    assert.deepEqual(u, {
+      needs_communities_choice: true, communities_onboarded_at: null,
+      getting_started_closed_at: null, getting_started_seen: null,
+    }, 'exactly a new account\'s first-run state');
+    assert.deepEqual((await pool.query(
+      'SELECT community_id FROM community_members WHERE user_id = $1 ORDER BY community_id', [newbie.id])).rows,
+    membershipsBefore, 'still in everything it joined');
+    assert.deepEqual((await pool.query(
+      'SELECT app_id FROM app_favorites WHERE user_id = $1 AND NOT hidden ORDER BY app_id', [newbie.id])).rows,
+    pinsBefore, 'its Home tiles stay');
+
+    // The join screen shows what it is already in, ticked, and can be
+    // answered again; the card comes back after it.
+    const list = (await call('GET', '/api/me/join-suggestions')).data.communities;
+    assert.equal(list.find((c) => c.slug === 'city-garden').checked, true);
+    assert.equal((await call('GET', '/api/me/getting-started')).data.show, false, 'no card before the screen');
+    const again = await call('POST', '/api/me/communities', { join: ['city-garden'] });
+    assert.equal(again.status, 200, JSON.stringify(again.data));
+    assert.equal((await call('GET', '/api/me/getting-started')).data.show, true);
+    assert.equal(await onboarding.resetFirstRun(pool, 987654321), null, 'no such account');
+  });
 });

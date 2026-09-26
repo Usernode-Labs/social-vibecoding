@@ -66,6 +66,7 @@
   const CommunitiesFirstRun = {
     _presented: false,
     _answered: false,
+    _shownHere: false,
     _settle: null,
     _settled: null,
 
@@ -76,6 +77,15 @@
       if (CommunitiesFirstRun._answered) return false;
       return !!(window.App && window.App.user
         && window.App.user.needsCommunitiesChoice === true);
+    },
+
+    // Has THIS document shown the real join screen (never the ?shot=
+    // fixture)? Read by the tour: a first run shown here, a new account's or
+    // one an admin reset (Admin → Users → ⋯ → Reset first run), restarts the
+    // tour even in a browser that finished it before, because the tour keeps
+    // "done" per browser rather than on the server.
+    shownHere() {
+      return CommunitiesFirstRun._shownHere === true;
     },
 
     // Resolves when this document's step is done with: answered, skipped, or
@@ -199,6 +209,7 @@
     _present(list, opts) {
       if (CommunitiesFirstRun._presented) return;
       CommunitiesFirstRun._presented = true;
+      if (!(opts && opts.demo)) CommunitiesFirstRun._shownHere = true;
 
       const el = (tag, cls, text) => {
         const node = document.createElement(tag);
