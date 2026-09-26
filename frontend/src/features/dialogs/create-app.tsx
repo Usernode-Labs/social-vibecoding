@@ -936,7 +936,7 @@ export function CreateAppDialog() {
                 autoComplete="off"
                 maxLength={100}
                 {...FIELD}
-                placeholder="A shared shopping list for our house"
+                placeholder="Shared shopping list"
               />
             </div>
           </div>

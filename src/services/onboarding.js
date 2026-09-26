@@ -73,17 +73,36 @@ function iconUrl(row) {
 // a phone. dapp.json's own field has no limit of its own.
 const DETAIL_MAX = 100;
 
+// A few words for the communities people are most likely to be offered,
+// until each says what it is itself. When this was written none of the live
+// apps' dapp.json had a `description`, so the join screen would have been a
+// column of bare names. Keyed by slug, which a rename leaves alone (Game
+// Corner is still puzzlechain-6cf8ff). A community's own line always wins:
+// once its dapp.json says something, its entry here is never read, and can
+// be dropped.
+const STARTER_DETAILS = Object.freeze({
+  'puzzlechain-6cf8ff': 'Daily puzzles and games',
+  'mypage-777ed2': 'Decorate your own page',
+  'community-tier-lists-57ce6a': 'Rank anything together',
+  'recipebot-33b169': 'AI recipe helper',
+  'todo-list-b91765': 'Shared to-do lists',
+  'supply-line-rts-6408b2': 'Slow-paced strategy game',
+  'gym-tracker-9de81f': 'Log your workouts',
+});
+
 // What the join screen says under a community's name. Homeroom says what
 // joining it means; an invite says who sent it; anything else says what it
 // is, in its own words: dapp.json's top-level `description`, the line
 // Homeroom's About pane already shows (routes/platform-about.js), which a
 // community sets and changes by a voted change like any other line there.
-// Nothing at all when it has none. "Community · N members" was the same
-// words on every row, and the count said little about what the thing is.
+// Without one, its starter line if it has one, else nothing at all.
+// "Community · N members" was the same words on every row, and the count
+// said little about what the thing is.
 function suggestionDetail(row) {
   if (row.self_hosted) return 'Contribute to the Homeroom platform';
   if (row.invited_by) return `Invited by @${row.invited_by}`;
-  const text = typeof row.description === 'string' ? row.description.replace(/\s+/g, ' ').trim() : '';
+  const own = typeof row.description === 'string' ? row.description.replace(/\s+/g, ' ').trim() : '';
+  const text = own || STARTER_DETAILS[row.slug] || '';
   return text.length > DETAIL_MAX ? `${text.slice(0, DETAIL_MAX - 1).trimEnd()}…` : text;
 }
 
@@ -399,6 +418,7 @@ async function closeCard(pool, userId) {
 module.exports = {
   SUGGESTION_LIMIT,
   MAX_JOIN,
+  STARTER_DETAILS,
   joinSuggestions,
   suggestionDetail,
   parseJoin,

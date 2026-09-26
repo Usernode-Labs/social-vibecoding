@@ -226,6 +226,18 @@ test('what the join screen says under each name', () => {
   assert.equal(suggestionDetail({ description: 'A garden\n\nfor   everyone.' }), 'A garden for everyone.');
   assert.equal(suggestionDetail({ description: null }), '');
   assert.equal(suggestionDetail({ member_count: 40, audience: 'open' }), '', 'no "Community · N members"');
+  // A starter line stands in until the community writes its own, and never
+  // over it.
+  assert.equal(suggestionDetail({ slug: 'gym-tracker-9de81f', description: null }), 'Log your workouts');
+  assert.equal(suggestionDetail({ slug: 'gym-tracker-9de81f', description: '  ' }), 'Log your workouts');
+  assert.equal(suggestionDetail({ slug: 'gym-tracker-9de81f', description: 'Lift, log, repeat.' }), 'Lift, log, repeat.');
+  assert.equal(suggestionDetail({ slug: 'gym-tracker-9de81f', invited_by: 'ada' }), 'Invited by @ada');
+  const { STARTER_DETAILS } = require('../src/services/onboarding');
+  for (const [slug, line] of Object.entries(STARTER_DETAILS)) {
+    const words = line.split(' ').length;
+    assert.ok(words >= 2 && words <= 4, `${slug}: a starter line is a few words, not a sentence ("${line}")`);
+    assert.doesNotMatch(line, /\.$/, `${slug}: no full stop on a few words`);
+  }
   const long = suggestionDetail({ description: 'word '.repeat(60) });
   assert.ok(long.length <= 100 && long.endsWith('…'), 'two lines at most on a phone');
 });
