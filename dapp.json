@@ -2989,9 +2989,9 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The bar's destination order: Home, Discover, Communities in the middle, Messages, then you (#1443)",
+      "name": "The bar's destination order: Home, Discover, Messages in the middle, Communities, then you (#1443)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-workshop[href=\"#communities\"] + #platform-tab-messages + #platform-recents + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-tab-workshop[href=\"#communities\"] + #platform-recents + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -3253,9 +3253,9 @@
       "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-scope[aria-controls=\"workshop-scope-picker\"] ~ div > #workshop-tab-status.workshop-scope-tab-on[aria-current=\"page\"] + #workshop-tab-needs):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
     },
     {
-      "name": "The Workshop's Needs you tab lists the votes waiting on you item by item, under each of your apps (#3051)",
+      "name": "The Communities screen's Needs you tab is one feed of every decision owed, mixed across projects, one card per screen (#3270)",
       "path": "/?demo=1&ws=needs#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-tab-needs[aria-current=\"page\"]) [data-workshop-pane=\"needs\"] [data-workshop-group=\"staging-demo-your-app\"] a[data-workshop-item=\"governance\"][href^=\"#app/staging-demo-your-app/dev/\"]"
+      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-tab-needs[aria-current=\"page\"]) [data-needs-reel] article[data-needs-card=\"governance\"][data-needs-app=\"staging-demo-your-app\"] a[href^=\"#app/staging-demo-your-app/dev/governance/\"]"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
@@ -5167,9 +5167,9 @@
       "expectSelector": "html:not(.in-side-panel) body:has(#platform-side-panel.hidden):has(#platform-header:not(.hidden)):has(#platform-tabs:not(.hidden)) #messages-screen:not(.hidden)"
     },
     {
-      "name": "#2802: the desktop rail's Recents sits between Messages and Me, labelled by its heading",
+      "name": "#2802: the desktop rail's Recents sits between the last section, Communities, and Me, labelled by its heading",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-messages + #platform-recents[role=\"group\"][aria-labelledby=\"platform-recents-head\"] > h2#platform-recents-head"
+      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-recents[role=\"group\"][aria-labelledby=\"platform-recents-head\"] > h2#platform-recents-head"
     },
     {
       "name": "#2800: Me is the rail's last row, straight after Recents, so the thin rule the rail draws above Me sits between them",

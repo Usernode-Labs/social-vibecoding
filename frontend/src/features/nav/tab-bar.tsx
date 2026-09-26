@@ -90,11 +90,12 @@ import { RecentsList } from './recents-list';
  * Settings, Wallet, Validator and Admin are all reached from Me, which is
  * why five is enough — a sixth tab would be a section nobody visits daily.
  *
- * COMMUNITIES SITS IN THE MIDDLE. It was the fourth tab, "Workshop", beside
- * Messages; the product is centred on communities now, and each one's
- * channel lives on its own hub rather than in Messages, so the tab that holds
- * them is the one most visits go through and takes the centre seat. Its key
- * is still `workshop`: the key names the screen (`#workshop-screen`) and the
+ * MESSAGES SITS IN THE MIDDLE, COMMUNITIES FOURTH. Communities took the
+ * centre seat when it was renamed from "Workshop" (#3261), on the argument
+ * that most visits would go through it. In use the thumb's first stop was
+ * still the people and agents you talk to, so Messages has its centre seat
+ * back and Communities sits beside you, fourth. Communities' key is still
+ * `workshop`: the key names the screen (`#workshop-screen`) and the
  * declared checks select on `#platform-tab-workshop`, while the words a
  * person sees are Communities and `#communities` (AGENTS.md, "Communities
  * own projects"). Inside a project, "Workshop" is the build tab beside its
@@ -117,8 +118,8 @@ const TABS = [
     Icon: HomeIcon,
   },
   { key: 'discover' as const, label: 'Discover', href: '#apps', Icon: SearchIcon },
-  { key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon },
   { key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon },
+  { key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon },
   // "Me" is the label only until somebody is signed in: from then on this tab
   // is named after them (#2760) — see tabLabel below.
   { key: 'me' as const, label: 'Me', href: '#profile', Icon: UserIcon },
@@ -574,9 +575,10 @@ export function PlatformTabs() {
         } : undefined}
       />
       {TABS.flatMap(({ key, label, href, Icon }) => [
-        // RECENTS SIT BETWEEN THE SECTIONS AND YOU (#2802): after Messages,
-        // before Me at the rail's foot, which is where the Resume strip it
-        // replaces sat. Desktop only; app.css keeps it off the phone's bar.
+        // RECENTS SIT BETWEEN THE SECTIONS AND YOU (#2802): after the last
+        // section (Communities), before Me at the rail's foot, which is where
+        // the Resume strip it replaces sat, so the four destinations stay one
+        // run. Desktop only; app.css keeps it off the phone's bar.
         key === 'me' ? <RecentsList key="recents" /> : null,
         <a
           key={key}

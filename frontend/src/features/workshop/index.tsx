@@ -90,6 +90,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { channelUnread, useMessagesSnapshot } from '../messages/store';
 import { AllAppsScope } from './workshop-chrome';
+import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import { workshopStore } from './workshop-store.js';
 
 // The legacy router reads the DOM on the line after it routes — the ?shot=
@@ -130,6 +131,27 @@ export const SECTIONS: ReadonlyArray<{ key: Audience; label: string; noun: strin
 
 /** How many rows a section shows before "Show N more". */
 export const SECTION_LIMIT = 3;
+
+/**
+ * How many more rows each press of "Show N more" reveals (#3269). A long
+ * section opened all at once turned three rows into thirty, and the next
+ * section went off the bottom of the screen; five at a time keeps the list
+ * something you read down rather than something you scroll past.
+ */
+export const SECTION_STEP = 5;
+
+/**
+ * The fold for a section of `total` rows with `limit` of them out: how many
+ * show, what the fold row says, and the limit a press moves to. Pure, so the
+ * three-then-five-then-fewer sequence is tested without a click.
+ */
+export function sectionFold(total: number, limit: number): { shown: number; label: string | null; next: number } {
+  const shown = Math.min(total, Math.max(SECTION_LIMIT, limit));
+  if (total <= SECTION_LIMIT) return { shown: total, label: null, next: SECTION_LIMIT };
+  const hidden = total - shown;
+  if (!hidden) return { shown, label: 'Show fewer', next: SECTION_LIMIT };
+  return { shown, label: `Show ${Math.min(hidden, SECTION_STEP)} more`, next: shown + SECTION_STEP };
+}
 
 function SectionGlyph({ audience }: { audience: Audience }) {
   const cls = 'w-4 h-4 shrink-0';
@@ -600,14 +622,19 @@ function RowSkeletons(): ReactNode {
  *
  * THE FOLD IS A ROW OF THE CARD, not a link under it: the language's "Show
  * more" (Messages' channels, Discover's tiers) is the last row of the group it
- * extends, full-width with no tile, so it reads as more of the same list. A
+ * extends, full-width with no tile, so it reads as more of the same list. It
+ * reveals SECTION_STEP rows a press and says how many ("Show 5 more"), and
+ * becomes "Show fewer" once the section is all out (#3269). A
  * `button`, not an anchor, because it navigates nowhere — which also keeps it
  * out of `a[data-workshop-app]:first-of-type` for good.
  */
 function Section({ audience, label, rows }: { audience: Audience; label: string; rows: WorkshopRow[] }) {
-  const [expanded, setExpanded] = useState(false);
-  const shown = expanded ? rows : rows.slice(0, SECTION_LIMIT);
-  const hidden = rows.length - shown.length;
+  // How many rows are out. Each press of "Show N more" adds SECTION_STEP;
+  // once every row is out the same row folds the section back to three.
+  const [limit, setLimit] = useState(SECTION_LIMIT);
+  const fold = sectionFold(rows.length, limit);
+  const shown = rows.slice(0, fold.shown);
+  const expanded = fold.shown === rows.length;
   const headingId = `workshop-section-${audience}`;
   return (
     <section data-workshop-section={audience} aria-labelledby={headingId}>
@@ -625,8 +652,8 @@ function Section({ audience, label, rows }: { audience: Audience; label: string;
             chevron={false}
             data-workshop-more={audience}
             aria-expanded={expanded}
-            onClick={() => setExpanded((open) => !open)}
-            title={expanded ? 'Show fewer' : `Show ${hidden} more`}
+            onClick={() => setLimit(fold.next)}
+            title={fold.label || ''}
             titleClassName="text-center font-semibold text-violet-700 dark:text-violet-300"
           />
         ) : null}
@@ -640,6 +667,7 @@ export function WorkshopScreen() {
   const state = useStoreState(workshopStore) as {
     open: boolean; rows: WorkshopRow[] | null; error: boolean;
     tab: TabKey; scopeOpen: boolean; items: Items | null; itemsError: boolean;
+    feed: NeedsFeedItem[] | null; feedError: boolean; feedCapped: boolean;
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   // TWO TABS, READ ACROSS EVERY APP (#3051). #2718's review took the app
@@ -881,14 +909,11 @@ export function WorkshopScreen() {
         </div>
         {state.tab === 'needs' ? (
           <div data-workshop-pane="needs">
+            {/* ONE FEED, EVERYTHING MIXED (#3270): every decision owed by you
+                across your projects, one per screen, newest first — the
+                shape a project's own Needs you page has. See ./needs-reel.tsx. */}
             {state.error ? null : (
-              <ItemPane
-                rows={rows}
-                items={state.items}
-                itemsError={state.itemsError}
-                section="needs"
-                emptyText="Nothing is waiting on your vote in any of your apps."
-              />
+              <NeedsReel items={state.feed} error={state.feedError} capped={state.feedCapped} />
             )}
           </div>
         ) : null}
@@ -936,11 +961,14 @@ export const workshopController = {
     let apps: Array<Omit<WorkshopRow, 'working' | 'needs'>> | null = null;
     let counts: Counts = {};
     let items: Items | null = null;
+    let feed: NeedsFeedItem[] | null = null;
+    let feedCapped = false;
     try {
-      const [appsRes, countsRes, itemsRes] = await Promise.all([
+      const [appsRes, countsRes, itemsRes, feedRes] = await Promise.all([
         fetch(`/api/apps${demo}`),
         fetch(`/api/workshop/counts${demo}`).catch(() => null),
         fetch(`/api/workshop/items${demo}`).catch(() => null),
+        fetch(`/api/workshop/needs-feed${demo}`).catch(() => null),
       ]);
       if (appsRes.ok) {
         const data = await appsRes.json();
@@ -963,6 +991,15 @@ export const workshopController = {
         const data = await itemsRes.json().catch(() => null);
         if (data && data.items && typeof data.items === 'object') items = data.items;
       }
+      // The Needs you feed, optional in the same way: losing it costs that
+      // tab its cards (it says so), never the screen.
+      if (feedRes && feedRes.ok) {
+        const data = await feedRes.json().catch(() => null);
+        if (data && Array.isArray(data.items)) {
+          feed = data.items as NeedsFeedItem[];
+          feedCapped = Number(data.max) > 0 && feed.length >= Number(data.max);
+        }
+      }
     } catch {
       // Offline is a state, not a crash: fall through to the error card,
       // which offers the same load again rather than a page reload.
@@ -981,6 +1018,9 @@ export const workshopController = {
       error: false,
       items: items || {},
       itemsError: !items,
+      feed: feed || [],
+      feedError: !feed,
+      feedCapped,
     });
   },
 };

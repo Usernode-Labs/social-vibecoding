@@ -47,30 +47,41 @@ const community = (over = {}) => ({
 
 const days = (counts) => counts.map((n, i) => ({ day: `2026-09-${String(10 + i).padStart(2, '0')}`, n }));
 
-test('Members & activity draws fourteen days as bars, the busiest the tallest', () => {
-  const { MembersCard } = loadTsx(HUB);
+test('#3268: the hero carries who is here and the fortnight, with the actions at the row\'s end', () => {
+  const { HeroPeople, HeroActivity, HERO_FACES } = loadTsx(CARD);
+  const members = ['ada', 'lin', 'kai', 'mia', 'sam', 'zoe', 'raj'].map((u, i) => ({ id: i + 1, username: u }));
+  const people = renderToHtml(createElement(HeroPeople, { members, count: 19 },
+    createElement('span', { className: 'dev-ws-hero-actions' }, 'Joined')));
+  assert.equal(HERO_FACES, 5);
+  assert.equal([...people.matchAll(/class="dev-ws-hero-face"/g)].length, 5, 'five faces, then the count says the rest');
+  assert.match(people, /<span class="dev-ws-hero-count" data-ws-members-cell="members">19 members<\/span><span class="dev-ws-hero-actions">Joined<\/span>/,
+    'the count, then the actions at the far end of the same row');
+
   const counts = [0, 1, 2, 0, 0, 3, 4, 0, 1, 0, 0, 2, 0, 4];
-  const html = renderToHtml(createElement(MembersCard, {
-    data: community({ activity: { active_week: 4, shipped_month: 3, daily: days(counts) } }),
-  }));
-  const bars = [...html.matchAll(/<span class="(dev-ws-hub-trend-bar[^"]*)" style="height:(\d+)%" title="([^"]+)"/g)];
+  const html = renderToHtml(createElement(HeroActivity, { activity: { active_week: 4, shipped_month: 3, daily: days(counts) } }));
+  assert.match(html, /<span data-ws-members-cell="active"><b>4<\/b> active this week<\/span> · <span data-ws-members-cell="shipped"><b>3<\/b> shipped this month<\/span>/);
+  assert.match(html, /Who took part, last 14 days/);
+  const bars = [...html.matchAll(/<span class="(dev-ws-hero-spark-bar[^"]*)" style="height:(\d+)%" title="([^"]+)"/g)];
   assert.equal(bars.length, 14);
-  assert.deepEqual(bars.map((b) => Number(b[2])), counts.map((n) => (n ? Math.max(12, Math.round((n / 4) * 100)) : 6)));
+  assert.deepEqual(bars.map((b) => Number(b[2])), counts.map((n) => (n ? Math.max(12, Math.round((n / 4) * 100)) : 8)));
   assert.ok(bars.every((b, i) => counts[i] ? !/quiet/.test(b[1]) : /quiet/.test(b[1])), 'a quiet day is a sliver in the rule colour');
   assert.match(bars[1][3], /: 1 person$/);
   assert.match(bars[13][3], /: 4 people$/);
-  assert.match(html, /role="img" aria-label="People taking part each day, last 14 days: 0, 1, 2/);
-  assert.match(html, /<figcaption class="dev-ws-hub-trend-cap"><span>Last 14 days<\/span><span>Today<\/span><\/figcaption>/);
-  // It sits between the three numbers and the faces.
-  assert.ok(html.indexOf('data-ws-members-stats') < html.indexOf('data-ws-members-trend'));
-  assert.ok(html.indexOf('data-ws-members-trend') < html.indexOf('dev-ws-hub-people'));
+  assert.match(html, /data-ws-members-trend="" role="img" aria-label="People taking part each day, last 14 days: 0, 1, 2/);
 
-  const quiet = renderToHtml(createElement(MembersCard, {
-    data: community({ activity: { active_week: 0, shipped_month: 0, daily: days(Array(14).fill(0)) } }),
-  }));
-  assert.match(quiet, /data-ws-trend-empty="">Nobody has been around in the last 14 days\./, 'a silent fortnight is a sentence');
-  const older = renderToHtml(createElement(MembersCard, { data: community() }));
-  assert.doesNotMatch(older, /data-ws-members-trend/, 'no days in the record, no trend');
+  // A zero says nothing; a silent fortnight is one sentence.
+  const shippedOnly = renderToHtml(createElement(HeroActivity, { activity: { active_week: 0, shipped_month: 2, daily: days(counts) } }));
+  assert.doesNotMatch(shippedOnly, /active this week/);
+  assert.match(shippedOnly, /<b>2<\/b> shipped this month/);
+  const quiet = renderToHtml(createElement(HeroActivity, { activity: { active_week: 0, shipped_month: 0, daily: days(Array(14).fill(0)) } }));
+  assert.match(quiet, /data-ws-members-trend="" data-ws-trend-empty="">Nobody has been around in the last 14 days\./);
+
+  // Just you: the hero stays as it was; a Community or a Group gets both rows.
+  const src = CARD_SRC;
+  assert.match(src, /\{solo \? actions : \(\s*<HeroPeople members=\{data\.members\} count=\{Number\(data\.member_count\) \|\| 0\}>\s*\{actions\}\s*<\/HeroPeople>\s*\)\}\s*\{solo \? null : <HeroActivity activity=\{data\.activity\} \/>\}/);
+  assert.ok(src.indexOf('data-ws-community-description') < src.indexOf('<HeroPeople members'), 'what it is, then who is here');
+  assert.ok(src.indexOf('<HeroActivity activity') < src.indexOf('data-ws-community-rule=""'), 'and how a change gets in last');
+  assert.doesNotMatch(read(HUB), /export function MembersCard/, 'the hub has no Members & activity card any more');
 });
 
 test('Needs you counts the votes you owe, not the requests nobody has claimed', () => {

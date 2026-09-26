@@ -15982,6 +15982,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   .dev-ws-scope > button { display: none; }
   .dev-ws-scope:not(:has(> [role='menu'])) { display: none; }
 }
+/* The Communities screen's all-apps chip likewise (#3271): on a phone the
+   header's title is the chip there (#header-scope-switch,
+   features/header/header-title.tsx), and its panel still opens in the
+   chip's row, which the tabs now lead. */
+@media (max-width: 699.98px) {
+  #workshop-screen #workshop-scope { display: none; }
+}
 /* ═══════════════════════════════════════════════════════════════════════
    NEEDS YOU: A FEED OF DECISIONS. One item per screen, the rail of
    actions at the right edge, sheets over the item. workshop.tsx's NeedsFeed
@@ -16149,6 +16156,69 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 @media (hover: hover) {
   .workshop-scope-tab:not(.workshop-scope-tab-on):hover { color: var(--text-primary); }
 }
+/* ── The Communities screen's Needs you feed (#3270, workshop/needs-reel.tsx) ──
+   One decision per screen, like a project's own Needs you page: the reel is
+   its own scroller, a screen tall less the bars around it, and snaps a card
+   to the top as it moves. A card is the plane colour, 20px, one hairline —
+   the language's card — with the project it belongs to leading it, the
+   question and its two answers at its foot. */
+.workshop-reel {
+  height: calc(100dvh - 232px); min-height: 360px;
+  margin: 4px 16px 0; overflow-y: auto; overscroll-behavior: contain;
+  scroll-snap-type: y mandatory; scroll-padding-top: 0;
+  display: flex; flex-direction: column; gap: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+@media (min-width: 768px) {
+  .workshop-reel { height: calc(100dvh - 190px); max-width: 560px; }
+}
+.workshop-reel-loading { background: var(--dc-sheet-solid); border-radius: 20px; }
+.workshop-reel-card {
+  flex: 0 0 100%; box-sizing: border-box; scroll-snap-align: start;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 16px 18px 18px; border-radius: 20px;
+  background: var(--dc-sheet-solid); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  overflow: hidden;
+}
+.workshop-reel-top { display: flex; align-items: center; gap: 8px; }
+.workshop-reel-app {
+  display: inline-flex; align-items: center; gap: 8px; min-width: 0;
+  font-size: 13px; font-weight: 650; color: var(--text-primary); text-decoration: none;
+}
+.workshop-reel-tile {
+  width: 26px; height: 26px; flex: none; border-radius: 8px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
+}
+.workshop-reel-pos { margin-left: auto; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.workshop-reel-what { margin: 0; font-size: 13px; color: var(--text-muted); }
+.workshop-reel-title { margin: 0; font-size: 22px; line-height: 1.25; font-weight: 700; letter-spacing: -.01em; text-wrap: balance; }
+.workshop-reel-title a { color: var(--text-primary); text-decoration: none; }
+.workshop-reel-summary {
+  margin: 0; font-size: 16px; line-height: 1.45; color: var(--text-secondary);
+  display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden;
+}
+.workshop-reel-by { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--text-muted); }
+.workshop-reel-spacer { flex: 1 1 auto; min-height: 0; }
+.workshop-reel-answers { display: flex; flex-direction: column; gap: 10px; }
+.workshop-reel-ask { margin: 0; font-size: 15px; font-weight: 650; color: var(--text-primary); }
+.workshop-reel-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.workshop-reel-no, .workshop-reel-yes {
+  height: 48px; border: 0; border-radius: 14px; cursor: pointer;
+  font-family: inherit; font-size: 16px; font-weight: 650;
+}
+.workshop-reel-no { background: var(--state-neutral-bg); color: var(--text-primary); }
+.workshop-reel-yes { background: var(--accent); color: #fff; }
+.workshop-reel-no:disabled, .workshop-reel-yes:disabled { opacity: .6; cursor: default; }
+.workshop-reel-open, .workshop-reel-decide {
+  display: inline-flex; align-items: center; gap: 2px; align-self: flex-start;
+  font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none;
+}
+.workshop-reel-decide {
+  align-self: stretch; justify-content: center; height: 48px; border-radius: 14px;
+  background: var(--accent); color: #fff;
+}
+.workshop-reel-voted { margin: 0; font-size: 15px; font-weight: 600; color: var(--text-secondary); }
+.workshop-reel-voted a { color: var(--accent); }
 /* ── THE PROJECT HUB'S OWN CARDS (features/dev-board/workshop/hub-cards.tsx) ──
    The channel, Needs you, and Members & activity, on the hub tab under the
    hero. They are `.dev-ws-strip` cards with the tab's one heading, and what
@@ -16210,19 +16280,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   flex-basis: 100%; margin: 0; padding: 0 14px 8px;
   font-size: 12.5px; color: var(--state-blocked);
 }
-/* Fourteen days of people, as bars the height of the busiest day. */
-.dev-ws-hub-trend { margin: 2px 0 0; display: flex; flex-direction: column; gap: 4px; }
-.dev-ws-hub-trend-bars { display: flex; align-items: flex-end; gap: 3px; height: 40px; }
-.dev-ws-hub-trend-bar {
-  flex: 1 1 0; min-width: 0; border-radius: 3px 3px 1px 1px;
-  background: var(--accent); opacity: .72;
-}
-.dev-ws-hub-trend-bar:last-child { opacity: 1; }
-.dev-ws-hub-trend-bar-quiet { background: var(--app-sheet-line); opacity: 1; }
-.dev-ws-hub-trend-cap {
-  display: flex; justify-content: space-between;
-  font-size: 11.5px; color: var(--text-muted);
-}
 .dev-ws-hub-archive {
   display: inline-flex; align-items: center; gap: 2px; align-self: flex-start;
   font-size: 12.5px; color: var(--text-muted);
@@ -16238,14 +16295,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-hub-needs-title { font-size: 15px; font-weight: 650; color: var(--text-primary); }
 .dev-ws-hub-needs-sub { font-size: 13px; color: var(--text-muted); }
 .dev-ws-hub-needs-join { margin: 0; font-size: 12.5px; color: var(--text-muted); }
-/* Members & activity: three figures, the dashboard's ruled row. */
-.dev-ws-dash.dev-ws-dash-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.dev-ws-dash-3 > [data-ws-members-cell] { border-top: 0; padding-top: 2px; padding-bottom: 2px; }
-.dev-ws-dash-3 > [data-ws-members-cell]:nth-child(2n+1) { border-left: 1px solid var(--app-sheet-line); padding-left: 14px; }
-.dev-ws-dash-3 > [data-ws-members-cell]:first-child { border-left: 0; padding-left: 2px; }
-.dev-ws-hub-people { display: flex; align-items: center; margin-top: 2px; }
-.dev-ws-hub-person { margin-right: -6px; border-radius: 9999px; box-shadow: 0 0 0 2px var(--dc-sheet-solid, #fff); }
-.dev-ws-hub-more { margin-left: 12px; font-size: 12.5px; color: var(--text-muted); }
 /* The way back from Needs you or All items to the tab they belong to. */
 .dev-ws-page-back {
   display: inline-flex; align-items: center; gap: 2px; align-self: flex-start;
@@ -16574,6 +16623,40 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-hero-actions:empty { display: none; }
 .dev-ws-hero-desc { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
 .dev-ws-hero-line { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
+/* WHO IS HERE, IN THE HERO (#3268). The people row: up to five faces,
+   the member count, and the actions pushed to its far end. The activity
+   line under it: this week in words, and the last fourteen days as a small
+   bar chart at its end, the busiest day the tallest bar. */
+.dev-ws-hero-people { display: flex; align-items: center; gap: 10px; min-height: 32px; }
+.dev-ws-hero-people > .dev-ws-hero-actions { margin-left: auto; }
+.dev-ws-hero-faces { display: inline-flex; align-items: center; flex: none; }
+.dev-ws-hero-face {
+  width: 26px; height: 26px; margin-right: -6px; border-radius: 9999px;
+  display: grid; place-items: center;
+  color: #fff; font-size: 11.5px; font-weight: 700;
+  box-shadow: 0 0 0 2px var(--home-ground, var(--bg-primary));
+}
+.dev-ws-hero-face:last-child { margin-right: 0; }
+.dev-ws-hero-count { font-size: 14px; font-weight: 650; color: var(--text-primary); white-space: nowrap; }
+.dev-ws-hero-activity { display: flex; align-items: flex-end; gap: 14px; }
+.dev-ws-hero-activity-words { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dev-ws-hero-activity-line { font-size: 14px; line-height: 19px; color: var(--text-primary); }
+.dev-ws-hero-activity-line b { font-weight: 650; }
+.dev-ws-hero-activity-cap { font-size: 12px; color: var(--text-muted); }
+.dev-ws-hero-spark { flex: none; width: 112px; height: 30px; display: flex; align-items: flex-end; gap: 2px; }
+.dev-ws-hero-spark-bar {
+  flex: 1 1 0; min-width: 0; border-radius: 2px 2px 1px 1px;
+  background: var(--accent); opacity: .72;
+}
+.dev-ws-hero-spark-bar:last-child { opacity: 1; }
+.dev-ws-hero-spark-bar-quiet { background: var(--app-sheet-line); opacity: 1; }
+/* The Join and "Open it up" popups hang from the RIGHT here: the actions
+   end the people row, so a popup opening rightward would leave the screen. */
+.dev-ws-hero .dev-ws-hero-people .dev-ws-join-pop { left: auto; right: -6px; }
+.dev-ws-hero .dev-ws-hero-people .dev-ws-join-pop::before { left: auto; right: 26px; }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-hero .dev-ws-hero-people .dev-ws-join-pop { transform-origin: calc(100% - 32px) 0; }
+}
 /* A change to who it is for, up for a vote: the one line on the hero that
    asks for something, so it carries the accent and goes to the proposal. */
 a.dev-ws-hero-pending {
@@ -18405,14 +18488,14 @@ html.un-ios {
 /* "COMMUNITIES" IS THE BAR'S LONGEST WORD. Eleven letters at 11px is about
    a phone's fifth of the screen — a hair over it in some fonts — so at 390px
    it was clipped to "Communi…". This one label tightens its tracking and is
-   let out of its cell rather than cut: it is centred, and its neighbours'
-   words (Discover, Messages) are shorter than their cells by more than it
-   overhangs. Narrower than 375px it drops half a point as well. The rail
-   has room and is left alone. */
+   let out of its cell rather than cut: it is centred, and its seat is wider
+   than the others. Narrower than 375px it drops half a point as well. The
+   rail has room and is left alone. */
 @media (max-width: 767.98px) {
-  /* The middle seat is a little wider than the other four: it holds the
-     longest word, and the bar's other labels have room to spare. */
-  #platform-tabs { grid-template-columns: 1fr 1fr 1.3fr 1fr 1fr; }
+  /* Communities' seat, the fourth, is a little wider than the other four:
+     it holds the longest word, and the bar's other labels (Messages in the
+     middle, your name last, which ellipsizes) have room to spare. */
+  #platform-tabs { grid-template-columns: 1fr 1fr 1fr 1.3fr 1fr; }
   #platform-tab-workshop { overflow: visible; }
   #platform-tab-workshop .platform-tab-label {
     letter-spacing: -.02em;
@@ -18422,8 +18505,8 @@ html.un-ios {
 }
 @media (max-width: 374.98px) {
   /* The smallest phones: every label drops half a point and tightens, the
-     cells lose their 2px sides, and the middle seat widens a little less. */
-  #platform-tabs { grid-template-columns: 1fr 1fr 1.2fr 1fr 1fr; }
+     cells lose their 2px sides, and Communities' seat widens a little less. */
+  #platform-tabs { grid-template-columns: 1fr 1fr 1fr 1.2fr 1fr; }
   .platform-tab { padding: 0; }
   .platform-tab .platform-tab-label { font-size: 10.5px; letter-spacing: -.02em; }
 }

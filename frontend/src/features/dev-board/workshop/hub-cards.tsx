@@ -1,10 +1,15 @@
 /**
- * The project hub's own cards: its channel, what needs you, and its members
- * and activity. They sit on the hub tab of a project's page
- * (./workshop.tsx), under the hero, in the order the hub was agreed in:
+ * The project hub's own cards: its channel and what needs you. They sit on
+ * the hub tab of a project's page (./workshop.tsx), under the hero, in the
+ * order the hub was agreed in:
  *
- *   the CHANNEL, then NEEDS YOU, then MEMBERS & ACTIVITY, with Since your
- *   last visit at the foot of the tab (drawn by the lander itself).
+ *   the CHANNEL, then NEEDS YOU, with Since your last visit at the foot of
+ *   the tab (drawn by the lander itself).
+ *
+ * Members & activity was the third card. It is the hero's now (#3268,
+ * ./community-card.tsx HeroPeople and HeroActivity): who is here and how
+ * lively it has been are part of what the project IS, so they are read
+ * where the page starts rather than three cards down.
  *
  * ── The channel lives here now ─────────────────────────────────────────
  *
@@ -225,97 +230,6 @@ export function NeedsCard({ queue, canPost, onOpen }: {
       </button>
       {count && !canPost ? (
         <p className="dev-ws-hub-needs-join" data-ws-hub-needs-join="">Join to vote on these.</p>
-      ) : null}
-    </section>
-  );
-}
-
-/**
- * The last fourteen days as fourteen bars: how many different people took
- * part each day (said something, started a change, voted). Heights are
- * relative to the busiest day; a quiet day keeps a sliver so the fortnight
- * reads as a row of days rather than a gap. Nothing is drawn until the read
- * carries the days, and a fortnight in which nobody did anything is one
- * sentence rather than fourteen slivers.
- */
-function ActivityTrend({ days }: { days: Array<{ day: string; n: number }> }) {
-  if (days.length < 2) return null;
-  const peak = Math.max(0, ...days.map((d) => Number(d.n) || 0));
-  const label = (d: { day: string; n: number }) => {
-    const when = new Date(`${d.day}T12:00:00`);
-    const date = Number.isNaN(when.getTime()) ? d.day
-      : when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    return `${date}: ${plural(Number(d.n) || 0, 'person', 'people')}`;
-  };
-  if (!peak) {
-    return <p className="dev-ws-week-note" data-ws-members-trend="" data-ws-trend-empty="">Nobody has been around in the last 14 days.</p>;
-  }
-  return (
-    <figure className="dev-ws-hub-trend" data-ws-members-trend="">
-      <div className="dev-ws-hub-trend-bars" role="img" aria-label={`People taking part each day, last ${days.length} days: ${days.map((d) => Number(d.n) || 0).join(', ')}`}>
-        {days.map((d) => {
-          const n = Number(d.n) || 0;
-          return (
-            <span
-              key={d.day}
-              className={n ? 'dev-ws-hub-trend-bar' : 'dev-ws-hub-trend-bar dev-ws-hub-trend-bar-quiet'}
-              style={{ height: `${n ? Math.max(12, Math.round((n / peak) * 100)) : 6}%` }}
-              title={label(d)}
-            />
-          );
-        })}
-      </div>
-      <figcaption className="dev-ws-hub-trend-cap">
-        <span>Last 14 days</span>
-        <span>Today</span>
-      </figcaption>
-    </figure>
-  );
-}
-
-/** Members & activity: how many, who was around this week, what shipped. */
-export function MembersCard({ data }: { data: CommunityPayload | null }): ReactNode {
-  if (!data || data.audience === 'solo') return null;
-  const members = Number(data.member_count) || 0;
-  const active = Number(data.activity?.active_week) || 0;
-  const shipped = Number(data.activity?.shipped_month) || 0;
-  const cells = [
-    { key: 'members', n: members, label: members === 1 ? 'member' : 'members' },
-    { key: 'active', n: active, label: 'active this week' },
-    { key: 'shipped', n: shipped, label: 'shipped this month', tone: shipped ? 'good' : undefined },
-  ];
-  return (
-    <section className="dev-ws-strip dev-ws-hub-members" data-ws-members="">
-      <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Members &amp; activity</span>
-      </div>
-      <div className="dev-ws-dash dev-ws-dash-3" data-ws-members-stats="">
-        {cells.map((c) => (
-          <span
-            key={c.key}
-            className={c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell'}
-            data-ws-members-cell={c.key}
-          >
-            <b>{c.n}</b>
-            <span className="dev-ws-dash-label">
-              {c.tone ? <i className={`dev-ws-dash-dot dev-ws-dash-dot-${c.tone}`} aria-hidden="true" /> : null}
-              <span>{c.label}</span>
-            </span>
-          </span>
-        ))}
-      </div>
-      <ActivityTrend days={data.activity?.daily || []} />
-      {data.members && data.members.length ? (
-        <div className="dev-ws-hub-people" aria-label={plural(members, 'member', 'members')}>
-          {data.members.map((m) => (
-            <span key={m.id} className="dev-ws-hub-person" title={`@${m.username}`}>
-              <Avatar name={m.username} />
-            </span>
-          ))}
-          {members > data.members.length ? (
-            <span className="dev-ws-hub-more">+{members - data.members.length}</span>
-          ) : null}
-        </div>
       ) : null}
     </section>
   );

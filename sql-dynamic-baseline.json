@@ -810,6 +810,13 @@
     {
       "source": "src/routes/workshop-overview.js",
       "kind": "runtime-built-identifier",
+      "fingerprint": "76b99148103cf1d2387f",
+      "count": 1,
+      "preview": "NEEDS_FEED_SQL"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "kind": "runtime-built-identifier",
       "fingerprint": "930ea21d49f9b0b9c5cb",
       "count": 1,
       "preview": "COUNTS_SQL"

@@ -82,7 +82,7 @@ import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { AppWorkshopScope } from '../../workshop/workshop-chrome';
 import { CommunityCard, useCommunity } from './community-card';
-import { ChannelCard, MembersCard, NeedsCard } from './hub-cards';
+import { ChannelCard, NeedsCard } from './hub-cards';
 import { readAskStream } from './ask-stream';
 import {
   commitDistance,
@@ -3504,13 +3504,13 @@ export function DevWorkshop(): ReactNode {
         />
       ) : null}
 
-      {/* ── The hub's own cards: the channel, what needs you, who is here ──
+      {/* ── The hub's own cards: the channel, then what needs you ──
           The channel lives on the hub now (Messages is people and agents),
-          then the Needs-you queue's head, then members and activity; Since
-          your last visit stays at the foot. See ./hub-cards.tsx. */}
+          then the Needs-you queue's head; Since your last visit stays at the
+          foot. Who is here and the 14-day trend are the hero's (#3268). See
+          ./hub-cards.tsx. */}
       {slug ? <ChannelCard slug={slug} name={app.name || slug} data={community} /> : null}
       <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} />
-      <MembersCard data={community} />
 
       </>
       ) : null}

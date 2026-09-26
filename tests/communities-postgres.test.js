@@ -491,4 +491,37 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM chat_messages WHERE app_id = $1', [other.id])).rows[0].n,
       otherBefore + 1);
   });
+
+  await t.test('#3270: the Needs you feed is every decision owed in your projects, mixed, newest first', async () => {
+    const overview = require('../src/routes/workshop-overview');
+    const me = await user();
+    const author = await user();
+    const garden = await app({ createdBy: author.id });
+    const swap = await app({ createdBy: author.id });
+    const stranger = await app({ createdBy: author.id });
+    await communities.join(pool, garden, me.id);
+    await communities.join(pool, swap, me.id);
+    const promote = async (a, title, ago) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, pr_summary_md, pr_number, last_activity_at)
+       VALUES ($1, $2, 'promoted', $3, '## Why\n- because', 7, NOW() - $4::interval) RETURNING id`,
+      [a.id, author.id, title, ago])).rows[0].id;
+    const older = await promote(garden, 'Older change', '2 days');
+    const newer = await promote(swap, 'Newer change', '1 hour');
+    const voted = await promote(garden, 'Already voted', '3 hours');
+    await promote(stranger, 'Not my project', '10 minutes');
+    await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [voted, me.id]);
+    await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [older, author.id]);
+    const { rows } = await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, overview.NEEDS_FEED_MAX]);
+    const feed = overview.shapeNeedsFeed(rows);
+    assert.deepEqual(feed.map((f) => [f.app.slug, f.title]), [
+      [swap.slug, 'Newer change'], [garden.slug, 'Older change'],
+    ], 'mixed across projects by recency; not the one already voted on; not a project I am not in');
+    assert.equal(feed[1].yes, 1, 'with the tally so far');
+    assert.equal(feed[1].summary, '## Why\n- because', 'and the summary, for the card to set as a paragraph');
+    assert.equal(typeof feed[0].epoch, 'number', 'and the epoch a vote must carry');
+    // Leaving a project takes its cards with it.
+    await communities.leave(pool, swap, me.id);
+    const after = overview.shapeNeedsFeed((await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, 60])).rows);
+    assert.deepEqual(after.map((f) => f.title), ['Older change']);
+  });
 });
