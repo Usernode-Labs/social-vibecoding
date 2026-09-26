@@ -1979,7 +1979,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     // arrived on re-numbered and slid.
     const pinnedHere = !pinsRef.current.has(row.key);
     if (pinnedHere) {
-      pinsRef.current.set(row.key, { row, index: i });
+      pinsRef.current.set(row.key, { row, index: at });
       setPinsVersion((v) => v + 1);
     }
     closeSheet();
@@ -2011,7 +2011,6 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
         if (settled) settled();
       });
   };
-
   /**
    * The swipe's way in (#3052): the card in view, when it is one the viewer
    * can vote on and has not answered here, with no vote of its own already

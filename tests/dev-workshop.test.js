@@ -4649,7 +4649,9 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   // vote, which in a feed reads as the card vanishing under the press: the
   // row is pinned in place with its confirmation until you move on.
   assert.ok(!/window\.setTimeout\(\(\) => setAt\(i \+ 1\)/.test(WORKSHOP), 'no auto-advance');
-  assert.match(WORKSHOP, /pinsRef\.current\.set\(row\.key, \{ row, index: i \}\);/, 'the answered row is pinned');
+  // #3052: at the index of the item answered, which a swipe names (`at`
+  // defaults to `i`, the item in view, for a press or a key).
+  assert.match(WORKSHOP, /pinsRef\.current\.set\(row\.key, \{ row, index: at \}\);/, 'the answered row is pinned');
   // AND STAYS PINNED. The pins used to be dropped once the next card had
   // settled, which removed the voted row from ABOVE the one in view: every
   // index after it moved, the counter re-numbered, the index-keyed tint

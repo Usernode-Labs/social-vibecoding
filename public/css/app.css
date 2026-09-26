@@ -15992,6 +15992,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-needs-scroll {
   flex: 1 1 auto; min-height: 0;
   overflow-y: auto; overscroll-behavior: contain;
+  /* #3052: a swiped card travels sideways; the feed must not scroll with it. */
+  overflow-x: hidden;
   scroll-snap-type: y mandatory;
   scrollbar-width: none;
   border-radius: 22px;
@@ -16023,6 +16025,30 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-item[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .10), rgba(255, 255, 255, 0) 55%, rgba(251, 191, 36, .08)); }
 .dark .dev-ws-item[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .16), rgba(0, 0, 0, 0) 55%, rgba(244, 114, 182, .10)); }
 .dark .dev-ws-item[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .16), rgba(0, 0, 0, 0) 55%, rgba(251, 191, 36, .08)); }
+/* #3052: swipe to vote. A card this viewer can vote on carries
+   `data-ws-swipe`: `touch-action: pan-y` hands vertical drags to the feed's
+   own scroll (the browser pans them and cancels the gesture), and only a
+   clearly sideways drag moves the card. `data-ws-swiping` is set while the
+   finger is down, so the card tracks it with no lag; on release it springs
+   back to rest, and only where motion is welcome. Under reduced motion the
+   card never moves at all (swipe-vote.ts draws no transform); the note alone
+   says what a release will do. */
+.dev-ws-item[data-ws-swipe] { touch-action: pan-y; }
+.dev-ws-swipe-note {
+  position: absolute; left: 50%; top: 42%; z-index: 2;
+  transform: translate(-50%, -50%);
+  padding: 10px 20px; border-radius: 14px;
+  border: 2px solid currentColor; background: var(--dc-sheet);
+  font-size: 22px; font-weight: 800; letter-spacing: .02em; white-space: nowrap;
+  opacity: 0; pointer-events: none;
+}
+.dev-ws-swipe-yes { color: var(--state-ok); }
+.dev-ws-swipe-no { color: var(--state-blocked); }
+.dev-ws-item[data-ws-swiping="armed"] .dev-ws-swipe-note { box-shadow: 0 0 0 4px var(--dc-sheet); }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) { transition: transform .22s ease-out; }
+  .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) .dev-ws-swipe-note { transition: opacity .18s ease-out; }
+}
 .dev-ws-item-progress {
   position: absolute; left: 22px; right: 22px; top: 9px; height: 3px;
   border-radius: 2px; background: var(--state-neutral-bg);

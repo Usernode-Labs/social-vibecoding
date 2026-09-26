@@ -1,3 +1,5 @@
+'use strict';
+
 // Swipe to vote on a Needs-you card, on a phone (#3052).
 //
 // The arithmetic is EXECUTED (tests/lib/render-tsx.js `loadTsx`, the harness
