@@ -3231,8 +3231,12 @@ const App = {
         DevChat.messages.push({
           role: 'system',
           ccLog: data.log,
-          content: data.agentBackend === 'codex_openrouter' ? 'Codex log' : 'Claude Code log',
+          // #3296: an OpenRouter model can run in Claude Code as well.
+          content: data.agentBackend === 'codex_openrouter' && data.agentHarness !== 'claude'
+            ? 'Codex log'
+            : 'Claude Code log',
           agentBackend: data.agentBackend,
+          agentHarness: data.agentHarness,
           agentModel: data.agentModel,
           created_at: new Date().toISOString(),
         });

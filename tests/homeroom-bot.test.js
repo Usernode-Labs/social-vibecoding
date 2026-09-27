@@ -481,7 +481,9 @@ test('every issue starts a fresh model thread, through the platform\'s own readi
   assert.match(start.s, /agent_thread_id = NULL/, 'and the saved thread is cleared in the row, for every later reader');
 
   // The imitation is only worth something while it matches the platform.
-  assert.match(read('src/services/agent-turn.js'), /resumeThreadId: resumeThreadId \|\| session\.agent_thread_id \|\| null/,
+  // (#3296 added a harness check after this read; it can only drop a thread,
+  // never supply one, so a null here still means the saved thread.)
+  assert.match(read('src/services/agent-turn.js'), /const candidateThreadId = resumeThreadId \|\| session\.agent_thread_id \|\| null;/,
     'if this changes, re-check how a null thread is read before trusting the test above');
   assert.match(read('src/routes/sessions.js'), /resumeThreadId \?\? runtimeContext\.resumeThreadId \?\? null/);
 });

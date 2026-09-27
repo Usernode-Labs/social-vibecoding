@@ -430,6 +430,13 @@
       "description": "Preferred OpenRouter model for new coding-agent sessions. The complete key-visible catalog remains selectable; if this slug is absent, Homeroom safely recommends another compatible model."
     },
     {
+      "key": "OPENROUTER_MODEL_HARNESSES",
+      "group": "AI & coding agents",
+      "required": false,
+      "default": "z-ai/glm-5.3-flash=claude,deepseek/deepseek-v4.1-flash=codex",
+      "description": "Which coding-agent CLI runs each OpenRouter model: comma-separated exact-model=harness pairs, where harness is claude (Claude Code through OpenRouter's Anthropic-compatible endpoint) or codex. Models not listed run in Codex. Set none to run every OpenRouter model in Codex."
+    },
+    {
       "key": "OPENROUTER_RECOMMENDED_MODELS",
       "group": "AI & coding agents",
       "required": false,

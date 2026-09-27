@@ -170,12 +170,30 @@ function mintEvidenceJwt(sessionId, runId) {
 // runner, tokens, env, and active-turn record can never disagree (review
 // Commit 1 / plan 3.1). Rejects unknown backends instead of silently
 // falling through to Claude.
-function resolveTurnBackend(agentBackend) {
+//
+// #3296 split the OpenRouter backend by harness. The flags below keep their
+// historical meaning and add the new case alongside them:
+//   isClaude            claude_code: Claude Code on Anthropic (proxy or BYOK)
+//   isCodex             codex_openrouter run by the Codex CLI
+//   isClaudeOpenRouter  codex_openrouter run by Claude Code, through the
+//                       worker-local Messages adapter (worker/claude-
+//                       openrouter-request.js) that holds the user's key
+//   isOpenRouter        either OpenRouter case: the user's key, the
+//                       agent_turns ledger, narrow capability tokens only
+//   runsClaude          the runner is run-cc.sh and the journal is Claude
+//                       stream-json, whoever the provider is
+function resolveTurnBackend(agentBackend, agentHarness = null) {
   const backend = registry.resolveBackend(agentBackend || 'claude_code');
+  const isOpenRouter = backend === 'codex_openrouter';
+  const harness = isOpenRouter ? registry.resolveOpenRouterHarness(agentHarness) : null;
   return {
     backend,
-    isCodex: backend === 'codex_openrouter',
+    harness,
+    isOpenRouter,
+    isCodex: isOpenRouter && harness === 'codex',
+    isClaudeOpenRouter: isOpenRouter && harness === 'claude',
     isClaude: backend === 'claude_code',
+    runsClaude: !isOpenRouter || harness === 'claude',
   };
 }
 
@@ -192,13 +210,15 @@ function requireNonEmptySecret(value, name) {
 // PROD_DEBUG_JWT rides along on build + scout turns only — never sync
 // (bookkeeping, no free-form agent).
 function buildTurnSecretEnv({
-  mode, agentBackend, workerSessionJwt, workerPushJwt, issuesReadJwt,
+  mode, agentBackend, agentHarness = null, workerSessionJwt, workerPushJwt, issuesReadJwt,
   anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
   evidenceJwt, evidenceMemberToken, evidenceAdminToken, evidenceFullAdminToken,
   homeroomMcpToken = null,
 }) {
-  const { backend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
-  if (!isClaude && !isCodex) {
+  const {
+    backend, isCodex, isClaude, isClaudeOpenRouter,
+  } = resolveTurnBackend(agentBackend, agentHarness);
+  if (!isClaude && !isCodex && !isClaudeOpenRouter) {
     throw new Error(`buildTurnSecretEnv: unsupported backend ${agentBackend}`);
   }
   if (!['scout', 'build', 'sync', 'evidence'].includes(mode)) {
@@ -206,6 +226,25 @@ function buildTurnSecretEnv({
   }
   if (isCodex && mode === 'sync') {
     throw new Error('buildTurnSecretEnv: Codex sync mode is not supported');
+  }
+  if (isClaudeOpenRouter && (mode === 'sync' || mode === 'evidence')) {
+    throw new Error(`buildTurnSecretEnv: Claude over OpenRouter ${mode} mode is not supported`);
+  }
+
+  if (isClaudeOpenRouter) {
+    // #3296: the same capability set as a Codex turn — the model provider is
+    // the user's OpenRouter key either way, and that is what decides trust,
+    // not which CLI drives it. The key reaches only the worker-local adapter;
+    // run-cc.sh hands it to that one process and Claude Code itself gets a
+    // per-invocation local token. No Anthropic key, proxy base or general
+    // worker:session token, and no production-debug grant.
+    const env = { OPENROUTER_API_KEY: requireNonEmptySecret(openrouterApiKey, 'openrouterApiKey') };
+    env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
+    if (mode === 'build') {
+      env.WORKER_JWT = requireNonEmptySecret(workerPushJwt, 'workerPushJwt');
+    }
+    if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
+    return env;
   }
 
   if (isCodex) {
@@ -697,6 +736,25 @@ function noteCodexToolCompletion(state, event) {
   return true;
 }
 
+// An OpenRouter turn that Claude Code ran (#3296): Claude stream-json in the
+// journal, OpenRouter's key and ledger behind it.
+function isClaudeOnOpenRouter(state) {
+  return state?.agentBackend === 'codex_openrouter' && state?.agentHarness === 'claude';
+}
+
+// Give a Claude-harness OpenRouter result the shape every OpenRouter caller
+// already reads (#3296): the thread to resume lives in agentThreadId, as a
+// Codex thread does, and nothing is written into cc_session_id, which belongs
+// to Anthropic Claude Code sessions. Idempotent; a no-op for other turns.
+function finalizeHarnessResult(state) {
+  if (!isClaudeOnOpenRouter(state)) return state;
+  const claudeSessionId = state.sessionId || state.initSessionId || null;
+  if (claudeSessionId) state.agentThreadId = claudeSessionId;
+  state.sessionId = null;
+  state.initSessionId = null;
+  return state;
+}
+
 function applyStreamEvent(event, onProgress, state) {
   liveAgentSpend.observe(state.liveSpend, event);
   if (event?.type === 'stream_event' && !state.evidenceFirstStreamSeen) {
@@ -900,13 +958,19 @@ function applyStreamEvent(event, onProgress, state) {
     if (observeDiagnostics && Array.isArray(event.permission_denials)) {
       state.permissionDenialCount = event.permission_denials.length;
     }
-    if (event.cost_usd != null || event.total_cost_usd != null) {
-      state.providerCostSeen = true;
+    // #3296: Claude Code prices a run from its own Anthropic price list, which
+    // says nothing about an OpenRouter model. An OpenRouter turn is priced by
+    // the agent_turns ledger from the catalog snapshot instead, exactly like
+    // a Codex turn, so its costUsd stays the unknown zero Codex leaves it at.
+    if (!isClaudeOnOpenRouter(state)) {
+      if (event.cost_usd != null || event.total_cost_usd != null) {
+        state.providerCostSeen = true;
+      }
+      // Keep the pre-telemetry billing precedence exactly unchanged. The
+      // separate flag above is enough to distinguish an explicitly reported
+      // zero from this state's legacy zero default.
+      state.costUsd = event.cost_usd || event.total_cost_usd || state.costUsd;
     }
-    // Keep the pre-telemetry billing precedence exactly unchanged. The
-    // separate flag above is enough to distinguish an explicitly reported
-    // zero from this state's legacy zero default.
-    state.costUsd = event.cost_usd || event.total_cost_usd || state.costUsd;
     state.sessionId = event.session_id || state.sessionId;
     if (event.is_error) state.ccIsError = true;
   }
@@ -1129,7 +1193,9 @@ function parseLine(line, onProgress, state) {
     // JSONL with a different event schema than Claude's stream-json. The
     // Codex adapter (src/agents/codex-openrouter.js) normalizes them to
     // the same progress vocabulary. Claude turns keep the legacy parser.
-    if (state.agentBackend === 'codex_openrouter') {
+    // #3296: an OpenRouter turn run by Claude Code writes Claude stream-json,
+    // so only the Codex harness takes this branch.
+    if (state.agentBackend === 'codex_openrouter' && state.agentHarness !== 'claude') {
       const codex = require('../agents/codex-openrouter');
       // The normalizer returns an ARRAY of normalized events (a single
       // file_change can emit several changed paths), and it now uses the
@@ -2708,6 +2774,10 @@ async function execInWorker(sessionId, {
   // (direct transport) instead of the Claude runner + Anthropic proxy.
   // Defaults to claude_code (unchanged behavior).
   agentBackend = 'claude_code',
+  // #3296: which CLI runs an OpenRouter turn — 'codex' (the default, and the
+  // only runner before harnesses existed) or 'claude'. Ignored for
+  // claude_code, which is always Claude Code on Anthropic.
+  agentHarness = null,
   // Codex/OpenRouter-specific turn context (direct transport, review P0):
   // the user's OpenRouter key is passed in ONLY for this specific docker
   // exec (injected as OPENROUTER_API_KEY into the per-turn environment),
@@ -2820,6 +2890,7 @@ async function execInWorker(sessionId, {
     // the attempt and release the dispatch_pending record immediately.
     stopped.turnId = preRegisteredTurnId;
     stopped.agentBackend = agentBackend;
+    stopped.agentHarness = resolveTurnBackend(agentBackend, agentHarness).harness;
     stopped.execExitSeen = true;
     stopped.exitCode = 143;
     return stopped;
@@ -2832,8 +2903,14 @@ async function execInWorker(sessionId, {
   // shorter later) and the next push fails with 401 from the proxy.
   // One backend decision for this whole dispatch (review Commit 1 /
   // plan 3.1): all runner/token/env/active-turn choices derive from it.
-  const { backend: resolvedBackend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
-  if (systemPrompt && !isClaude && !(isCodex && mode === 'evidence')) {
+  const {
+    backend: resolvedBackend, harness: resolvedHarness, isCodex, isClaude,
+    isClaudeOpenRouter, isOpenRouter, runsClaude,
+  } = resolveTurnBackend(agentBackend, agentHarness);
+  if (isClaudeOpenRouter && !['scout', 'build'].includes(mode)) {
+    throw new Error(`execInWorker: Claude over OpenRouter supports scout and build turns, not ${mode}`);
+  }
+  if (systemPrompt && !runsClaude && !(isCodex && mode === 'evidence')) {
     throw new Error('execInWorker: systemPrompt is only supported for Claude or Codex evidence turns');
   }
   if (resumeFallbackPrompt && !isClaude) {
@@ -2887,7 +2964,7 @@ async function execInWorker(sessionId, {
   let evidenceJwt = null;
   if (mode !== 'evidence') issuesReadJwt = mintIssuesReadJwt(sessionId);
   else evidenceJwt = mintEvidenceJwt(sessionId, evidenceRunId);
-  if (isCodex) {
+  if (isOpenRouter) {
     if (mode === 'build') {
       workerPushJwt = mintWorkerPushJwt(sessionId);
     }
@@ -2902,7 +2979,7 @@ async function execInWorker(sessionId, {
     }
   }
 
-  const persistedModel = isCodex ? (agentModel || '') : models.resolve(model);
+  const persistedModel = isOpenRouter ? (agentModel || '') : models.resolve(model);
 
   // The prompt travels as a file, never as exec argv/env — a single
   // argv/env string is capped at 128 KiB on Linux, and build prompts
@@ -2940,6 +3017,7 @@ async function execInWorker(sessionId, {
     secretEnv = buildTurnSecretEnv({
       mode,
       agentBackend: resolvedBackend,
+      agentHarness: resolvedHarness,
       workerSessionJwt,
       workerPushJwt,
       issuesReadJwt,
@@ -2990,6 +3068,26 @@ async function execInWorker(sessionId, {
     // scout/sync.
    ...inLoopBrowser.browserEnvForMode(mode),
  };
+  if (isClaudeOpenRouter) {
+    // #3296: run-cc.sh drives Claude Code through the worker-local Messages
+    // adapter (worker/claude-openrouter-request.js) instead of Anthropic. The
+    // model is the session-pinned OpenRouter slug; the adapter pins every
+    // request to it, caps the reply at the catalog's output limit and sets
+    // the reasoning effort. The resume id is the Claude session this
+    // OpenRouter thread recorded.
+    safeEnv.AGENT_PROVIDER = 'openrouter';
+    safeEnv.MODEL = agentModel || '';
+    safeEnv.AGENT_MODEL = agentModel || '';
+    safeEnv.AGENT_MODEL_MAX_OUTPUT_TOKENS = agentModelMetadata?.maxOutputTokens != null
+      ? String(agentModelMetadata.maxOutputTokens)
+      : '';
+    // The thinking level, which the adapter sends as output_config.effort.
+    safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
+    safeEnv.CLAUDE_RESUME_SESSION_ID = resumeSessionId || '';
+    safeEnv.RESUME_FALLBACK_PROMPT_FILE = '';
+    safeEnv.TURN_UUID = turnUuid || '';
+    safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
+  }
   if (isCodex) {
     safeEnv.AGENT_BACKEND = 'codex_openrouter';
     safeEnv.AGENT_MODEL = agentModel || '';
@@ -3016,7 +3114,7 @@ async function execInWorker(sessionId, {
     // the (already-validated) base so generation and catalog agree.
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
   }
-  const runner = isCodex ? '/usr/local/bin/run-codex-agent.sh' : '/usr/local/bin/run-cc.sh';
+  const runner = registry.runnerFor(resolvedBackend, resolvedHarness);
  // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal
   // file in the CC volume and appends __USERNODE_EXIT__ <code> when it
@@ -3073,6 +3171,8 @@ async function execInWorker(sessionId, {
     mode,
     journal,
     backend: resolvedBackend,
+    // Restart recovery replays the journal with this harness's parser.
+    harness: resolvedHarness || undefined,
     turnUuid: turnUuid || undefined,
     // plan 7.4: persist the attempt identity so interactive/headless
     // recovery can terminalize the correct agent_turns row idempotently.
@@ -3185,6 +3285,8 @@ async function execInWorker(sessionId, {
     // agent_backend in __USERNODE_RESULT__ (too late for the events), so
     // we seed it from the dispatch param up front.
     state.agentBackend = agentBackend;
+    // #3296: and the harness, which decides that parser for OpenRouter.
+    state.agentHarness = resolvedHarness;
     if (mode === 'evidence') {
       state.evidenceOrigins = evidenceOrigins;
       state.evidenceNavigationHints = evidenceNavigationHints;
@@ -3199,11 +3301,11 @@ async function execInWorker(sessionId, {
       });
     }
     state.telemetryDiagnosticsEnabled = !!measuredTelemetryComponent;
-    if (isClaude) {
+    if (runsClaude) {
       state.providerRateLimitEventCount = 0;
       state.contextCompactionCount = 0;
     }
-    if (isCodex) state.providerRetryCount = 0;
+    if (isOpenRouter) state.providerRetryCount = 0;
     state.providerStartedMs = providerStartedMs;
     state.dispatchSetupDurationMs = providerStartedMs == null
       ? null
@@ -3236,7 +3338,7 @@ async function execInWorker(sessionId, {
     if (!holdTurnRecord && state.execExitSeen && !state.fatalError) {
       execWorkerCommand(containerName, ['rm', '-f', journal]).catch(() => {});
     }
-    return state;
+    return finalizeHarnessResult(state);
   } finally {
     // The agent process is done with the platform once its journal has
     // ended: the tail (PR, staging, the wrap-up) never uses this token.
@@ -3773,6 +3875,9 @@ async function resumeTurnFromJournal(sessionId, {
   onProgress,
   byokCentsSoFar = 0,
   agentBackend = 'claude_code',
+  // The persisted active_turn.harness (#3296). Absent on a record written
+  // before harnesses existed, which was always a Codex OpenRouter turn.
+  agentHarness = null,
   telemetryComponent = null,
   telemetryCorrelationId = null,
   telemetryAttemptNumber = null,
@@ -3818,13 +3923,14 @@ async function resumeTurnFromJournal(sessionId, {
   // recovery too (review P4). The caller passes the persisted
   // session.agent_backend.
   state.agentBackend = agentBackend;
+  const recoveredBackend = resolveTurnBackend(agentBackend, agentHarness);
+  state.agentHarness = recoveredBackend.harness;
   state.telemetryDiagnosticsEnabled = !!llmTelemetry.collectionComponent(telemetryComponent);
-  const recoveredBackend = resolveTurnBackend(agentBackend);
-  if (recoveredBackend.isClaude) {
+  if (recoveredBackend.runsClaude) {
     state.providerRateLimitEventCount = 0;
     state.contextCompactionCount = 0;
   }
-  if (recoveredBackend.isCodex) state.providerRetryCount = 0;
+  if (recoveredBackend.isOpenRouter) state.providerRetryCount = 0;
   const physicalStartedAt = new Date(startedAt || Date.now());
   const safeStartedAt = Number.isFinite(physicalStartedAt.getTime())
     ? physicalStartedAt
@@ -3856,7 +3962,7 @@ async function resumeTurnFromJournal(sessionId, {
     // The recovery caller owns required persistence (thread id + ledger)
     // and calls finishTurn only after it succeeds. Deleting here used to
     // destroy the sole replay source before those writes had landed.
-    return state;
+    return finalizeHarnessResult(state);
   } finally {
     if (providerTerminalObserved && state.providerDispatched
         && resolveTurnBackend(agentBackend).isClaude && telemetryComponent && turnId) {
@@ -4006,7 +4112,8 @@ async function listOrphanWorkers() {
 // (run-cc.sh + claude) or the Codex runner, its request adapter, and codex.
 // Without the codex terms, long Codex turns look idle (watchdog abandons)
 // and Stop appends a fake marker without killing the process.
-const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh|codex|run-codex-agent\\.sh|codex-openrouter-request\\.js)( |$)';
+// #3296 adds the Claude-over-OpenRouter request adapter that wraps claude.
+const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh|codex|run-codex-agent\\.sh|codex-openrouter-request\\.js|claude-openrouter-request\\.js)( |$)';
 const TURN_PROC_PROBE_SCRIPT =
   'busy=0; for d in /proc/[0-9]*; do '
   + '[ "$d" = "/proc/$$" ] && continue; '
@@ -4430,6 +4537,9 @@ module.exports = {
   mintEvidenceJwt,
   evidenceControlUrl,
   buildTurnSecretEnv,
+  // #3296: harness-aware backend resolution and result shape (for tests)
+  resolveTurnBackend,
+  finalizeHarnessResult,
   // file-based dispatch-prompt transport (E2BIG fix; exported for tests)
   TURN_PROMPT_PATH,
   TURN_SYSTEM_PROMPT_PATH,

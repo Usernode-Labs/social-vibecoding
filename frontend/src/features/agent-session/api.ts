@@ -183,6 +183,8 @@ export interface OpenRouterModel {
   isRecommended?: boolean;
   isDefaultFavorite?: boolean;
   isFavorite?: boolean;
+  /** Which CLI the platform runs this model in (#3296). */
+  harness?: 'claude' | 'codex';
 }
 
 /** Everything the picker offers, read once per page. */

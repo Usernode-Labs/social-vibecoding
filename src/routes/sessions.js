@@ -8787,6 +8787,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       journal: activeTurn.journal,
       turnId: activeTurn.turnId || null,
       agentBackend: activeTurn.backend || 'claude_code',
+      agentHarness: activeTurn.harness || null,
       telemetryComponent: activeTurn.telemetryComponent
         || (activeTurn.mode === 'scout' ? 'coding_agent_scout'
           : activeTurn.mode === 'build' ? 'coding_agent_build' : null),
@@ -9282,9 +9283,15 @@ function codingAgentRuntimeIdentity(session, selectedModel, config = {}) {
   const model = isCodex
     ? (session?.agent_model || config.openrouterDefaultCodexModel || null)
     : selectedModel;
+  // #3296: which CLI an OpenRouter turn runs in, from the same per-model map
+  // the dispatch reads, so the transcript names the agent that actually ran.
+  // Rows carry it only for the exception, Claude Code: every reader treats a
+  // row without it as Codex, which is what every earlier OpenRouter row was.
+  const harness = isCodex ? registry.openRouterHarnessForModel(model, config) : null;
   return {
     backend,
     isCodex,
+    harness,
     model,
     modelLabel: isCodex
       ? safeAgentModelLabel(model)
@@ -9293,6 +9300,7 @@ function codingAgentRuntimeIdentity(session, selectedModel, config = {}) {
     metadata: {
       agentBackend: backend,
       agentModel: model || null,
+      ...(harness === 'claude' ? { agentHarness: harness } : {}),
     },
   };
 }
@@ -9538,8 +9546,9 @@ A read-only helper \`usernode-issues\` is available (run it via Bash) â€” it pri
   // Claude's scout reads with Read/Glob/Grep and run-cc.sh strips its edit
   // tools. A Codex scout reads through shell commands and has no such switch,
   // so it is told plainly, and the runner puts back anything it changes
-  // (worker/run-codex-agent.sh restore_scout_tree, #2810).
-  const scoutPlanModeLine = isCodexSession
+  // (worker/run-codex-agent.sh restore_scout_tree, #2810). An OpenRouter
+  // model that runs in Claude Code (#3296) has Claude's tools and switch.
+  const scoutPlanModeLine = isCodexSession && agentIdentity.harness !== 'claude'
     ? 'You are running in PLAN MODE: read and search the repository with read-only shell commands (for example `rg`, `ls`, `sed -n`, `cat`), but do not edit, create, delete, commit, or push anything. Do not attempt to: anything this run changes in the repository is discarded when it ends.'
     : 'You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.';
   // #2817: every scout settles the design decisions in the spec.
@@ -9867,6 +9876,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: req.user.id, model: turnModel,
           resumeThreadId, config,
+          // #3296: the platform's per-model choice of CLI.
+          harness: 'auto',
         }),
         dispatchOnce: (ctx) => doScout(ctx),
         // Returns the status line rather than a bare boolean, so the loop
@@ -10265,7 +10276,10 @@ async function runCodexAttemptLoop({
       turnUuid: attempt.turnUuid,
       status,
       threadId: result?.agentThreadId || null,
-      usageTotal: agentTurn.usageTotalFromResult(result),
+      usageTotal: agentTurn.usageTotalFromResult(result
+        ? { ...result, agentHarness: runtimeContext.agentHarness }
+        : result),
+      usageScope: agentTurn.usageScopeForHarness(runtimeContext.agentHarness),
       telemetryComponent: result?.providerDispatched === true
         ? (telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'))
@@ -10295,7 +10309,11 @@ async function runCodexAttemptLoop({
   let lastResult = null;
   let lastError = null;
   let attemptNumber = 0;
-  let attemptResumeThreadId = resumeThreadId ?? runtimeContext.resumeThreadId ?? null;
+  // A thread the runtime refused to resume (it was written by the other CLI,
+  // #3296) stays refused even though the caller read it off the session row.
+  let attemptResumeThreadId = runtimeContext.resumeThreadDropped
+    ? null
+    : (resumeThreadId ?? runtimeContext.resumeThreadId ?? null);
   let allowRetryPendingForAttempt = false;
   // #2676: null means "use the runtime's own ceiling". A max_tokens refusal
   // sets it for attempt two so the retry asks for a reply the account can
@@ -12051,6 +12069,8 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: req.user.id, model: turnModel,
           resumeThreadId, config,
+          // #3296: the platform's per-model choice of CLI.
+          harness: 'auto',
         }),
         dispatchOnce: (ctx) => doBuild(ctx),
         retryPredicate: (r) => !!codexMaxTokensRetry(r, stopHandle)
