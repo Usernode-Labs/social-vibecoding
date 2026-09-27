@@ -2456,14 +2456,16 @@ function appRoutes(config) {
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
 
-      const { sendSystemMessage, pushAppUpdate } = require('../services/ws');
-      await sendSystemMessage(pool, app.id,
-        locked
-          ? `${req.user.username} locked this app, so merges now also require an admin yes vote`
-          : `${req.user.username} unlocked this app, so merges no longer require an admin yes vote`,
-        'system'
-      ).catch((err) => log.warn('apps', 'Lock chat msg failed', { err: err.message }));
+      // On the record for the project's Workshop notices
+      // (services/app-notices.js): a channel carries no activity.
+      events.record(pool, {
+        type: events.EVENT_TYPES.APP_LOCK_CHANGED,
+        userId: req.user.id,
+        appId: app.id,
+        metadata: { locked: app.locked },
+      });
 
+      const { pushAppUpdate } = require('../services/ws');
       pushAppUpdate({
         action: 'lock_changed',
         appSlug: app.slug,

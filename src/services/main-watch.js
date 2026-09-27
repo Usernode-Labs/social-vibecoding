@@ -72,10 +72,6 @@ function parseRepo(repoUrl) {
   return m ? { owner: m[1], repo: m[2] } : null;
 }
 
-function short(sha) {
-  return sha ? String(sha).slice(0, 7) : '';
-}
-
 function sameSha(a, b) {
   return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
 }
@@ -262,7 +258,6 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
   const wasPaused = !!previous && (!!previous.was_paused_sha
     || previous.was_state === 'failing' || previous.was_state === 'confirming');
 
-  const prRef = prNumber ? `PR #${prNumber}` : 'the last merge';
   let verdict;
   if (confirmationOf) {
     // The first run already happened and was red; the process that was
@@ -284,21 +279,13 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
       log.info('main-watch', 'Discarded a first red for a superseded merge', { appId: app.id, sha: mergeSha });
       return null;
     }
-    if (confirmationOf) {
-      // The group already heard about the first red; it does not need to
-      // hear that a restart happened in between.
-      log.info('main-watch', 'Resuming an interrupted confirming run', {
-        appId: app.id, slug: app.slug, sha: mergeSha, prNumber, test: firstFailingTest(firstRun.failureReason),
-      });
-    } else {
-      log.info('main-watch', 'main failed once; re-running to confirm', {
-        appId: app.id, slug: app.slug, sha: mergeSha, prNumber, test: firstFailingTest(firstRun.failureReason),
-      });
-      await postGroup(pool, app.id,
-        `⚠️ main's unit suite failed after ${prRef} merged (${short(mergeSha)})${named(firstRun)}. `
-        + 'Re-running once to confirm; merges are paused meanwhile, except for proposals already '
-        + 'tested level with main.');
-    }
+    // Held, the board's banner says so (main-pause-store: "re-running to
+    // confirm"); nothing is posted anywhere else.
+    log.info('main-watch', confirmationOf
+      ? 'Resuming an interrupted confirming run'
+      : 'main failed once; re-running to confirm', {
+      appId: app.id, slug: app.slug, sha: mergeSha, prNumber, test: firstFailingTest(firstRun.failureReason),
+    });
     const again = await runSuite(config, pool, app, parsed, mergeSha);
     if (again.state === 'passing') {
       verdict = { state: 'passing', detail: { ...again.detail, flake: firstRun } };
@@ -323,45 +310,16 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
     confirmed: detail.confirmed, flake: !!detail.flake,
   });
 
-  if (verdict.state === 'failing') {
-    const tail = 'Merges for this app are paused until a fix lands or an admin resumes them.';
-    if (detail.confirmed === true) {
-      await postGroup(pool, app.id,
-        `⚠️ main's unit suite is failing after ${prRef} merged (${short(mergeSha)}), confirmed on a `
-        + `second run${named(detail)}. ${tail}`);
-    } else if (detail.confirmed === false) {
-      const why = detail.confirmation && detail.confirmation.failureReason
-        ? ` (${String(detail.confirmation.failureReason).slice(0, 200)})` : '';
-      await postGroup(pool, app.id,
-        `⚠️ main's unit suite failed after ${prRef} merged (${short(mergeSha)})${named(detail)}, and the `
-        + `confirming run could not complete${why}. Merges for this app stay paused until a fix lands `
-        + 'or an admin resumes them.');
-    } else {
-      const reason = detail.failureReason ? ` ${String(detail.failureReason).slice(0, 400)}` : '';
-      await postGroup(pool, app.id,
-        `⚠️ main's unit suite is failing after ${prRef} merged (${short(mergeSha)}).${reason} ${tail}`);
-    }
-  } else if (verdict.state === 'passing' && detail.flake) {
-    await postGroup(pool, app.id,
-      `main's unit suite passed on the confirming run (${short(mergeSha)}); the first failure was a `
-      + `flake${named(detail.flake)}. Merges continue.`);
+  // A red pauses merges and a green lifts the pause: the stored state is
+  // the whole of it, and the board's banner is how it is seen
+  // (main-pause-store). A channel carries no activity.
+  if (verdict.state === 'passing' && detail.flake) {
     kickQueue(config, app.id, 'post-flake');
   } else if (verdict.state === 'passing' && wasPaused) {
-    await postGroup(pool, app.id,
-      `main's unit suite is green again after ${prRef} merged (${short(mergeSha)}). Merges resume.`);
     // The pause lifted; whatever was approved meanwhile can go.
     kickQueue(config, app.id, 'post-green');
   }
   return { state: verdict.state, sha: mergeSha, detail };
-}
-
-// `: <test>` for a message, from a verdict detail; the whole reason when
-// no test is named; nothing when there is nothing.
-function named(detail) {
-  const test = firstFailingTest(detail && detail.failureReason);
-  if (test) return `: ${test}`;
-  const reason = detail && detail.failureReason ? String(detail.failureReason).slice(0, 300) : '';
-  return reason ? `: ${reason}` : '';
 }
 
 function kickQueue(config, appId, why) {
@@ -391,22 +349,8 @@ async function resume(config, pool, appId, { by = null } = {}) {
   log.info('main-watch', 'Merges resumed by an admin', {
     appId, sha: rows[0].main_check_resumed_sha, by: by && by.username,
   });
-  await postGroup(pool, appId,
-    `${by && by.username ? by.username : 'An admin'} resumed merges while main's unit suite is failing (${short(rows[0].main_check_resumed_sha)}).`);
   kickQueue(config, appId, 'post-resume');
   return describe(rows[0]);
-}
-
-// Worded for the group, and no longer written: a channel carries no
-// activity (ws.sendSystemMessage drops a line with no thread). The pause
-// itself is shown on the Workshop (main-pause-store).
-async function postGroup(pool, appId, content) {
-  try {
-    const { sendSystemMessage } = require('./ws');
-    await sendSystemMessage(pool, appId, content, 'system');
-  } catch (err) {
-    log.warn('main-watch', 'group message failed', { appId, err: err.message });
-  }
 }
 
 // How long a 'running' / 'confirming' row may sit before it is taken for

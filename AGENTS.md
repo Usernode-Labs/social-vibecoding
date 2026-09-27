@@ -230,9 +230,16 @@ remaining live-proposal boundary.
   vote, a merge, a check verdict, a setting changed) into a project's channel
   or #general. `ws.sendSystemMessage` writes nothing without a thread, so a
   new platform line names the proposal's, request's or decision's own thread
-  (`{ type: 'session' | 'issue' | 'governance', ref }`) or is not written;
-  app-wide state is shown where it lives (the Workshop, notifications).
-  `migrate.clearAutomatedChannelLines` clears the lines written before.
+  (`{ type: 'session' | 'issue' | 'governance', ref }`) or is not written.
+  App-wide state is shown where it lives: merges paused and a stalled release
+  are banners on the project page, and settings changed lately and the
+  Friday card are the Workshop tab's notices panel (`services/app-notices.js`,
+  read from `events` — record a new kind there, not a chat line).
+  `migrate.clearAutomatedChannelLines` clears the lines written before. A
+  door to a project's hub (a link that says so) calls
+  `AppView._landOnHub(slug)` first, so it opens on the hub rather than the
+  tab the page was last left on. Back and Forward are not doors: the page
+  reopens on the tab last shown, read fresh when it mounts.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a

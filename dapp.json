@@ -2403,9 +2403,9 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban .dev-kanban-col .dev-ws-rowwrap > .dev-ws-row[role=\"button\"][aria-expanded=\"false\"][data-issue-row]"
     },
     {
-      "name": "A project's Workshop tab leads All items with its one line on what the open work is about",
+      "name": "A project's Workshop tab leads All items with its one line on what the open work is about, under the notices panel",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-open-line]",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-notices] ~ [data-ws-dashboard] > [data-ws-open-line]",
       "expectText": "Staging demo: one line on what the open issues and waiting proposals are about."
     },
     {

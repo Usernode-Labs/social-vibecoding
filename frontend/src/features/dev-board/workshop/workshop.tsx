@@ -82,6 +82,7 @@ import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { AppWorkshopScope } from '../../workshop/workshop-chrome';
 import { CommunityCard, useCommunity } from './community-card';
+import { WorkshopNotices } from './notices';
 import { ChannelCard, NeedsCard } from './hub-cards';
 import { readAskStream } from './ask-stream';
 import {
@@ -149,6 +150,15 @@ export function hubLabel(audience: string | null | undefined): string {
   if (audience === 'open') return 'Community hub';
   if (audience === 'invited') return 'Group hub';
   return 'Hub';
+}
+
+/**
+ * The tab the page should open on now (AppView._workshopTab: a `?ws=` link,
+ * else the one last chosen), or null where AppView is not there to ask.
+ */
+export function freshTab(): TabKey | null {
+  const tab = callAppView('_workshopTab');
+  return tab === 'status' || tab === 'workshop' || tab === 'needs' || tab === 'all' ? tab : null;
 }
 
 /** Which of the two tabs is lit while `tab` is up: a page lights its parent. */
@@ -3139,7 +3149,13 @@ export function DevWorkshop(): ReactNode {
   // State re-renders when the node arrives, which wakes the effect exactly
   // then.
   const [bar, setBar] = useState<HTMLElement | null>(null);
-  const [tab, setTab] = useState<TabKey>(() => v.tab || 'status');
+  // Seeded from a FRESH read of the remembered tab, not from the publish: the
+  // store keeps the last view published, so a page opened again (Back, or a
+  // door that has just set the hub) would otherwise open on a tab the viewer
+  // has since left. The first render is the loading skeleton either way, so
+  // the prerendered page is unchanged; the publish is the fallback where
+  // AppView is not there to ask.
+  const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
   const lit = litTab(tab);
   const markerBox = useTabMarker(bar, lit);
   // Moving between the tabs and the two pages under them, remembered the way
@@ -3163,12 +3179,25 @@ export function DevWorkshop(): ReactNode {
   // changes for the life of the page, while `_rerenderWorkshop()` republishes
   // on every data change: without the guard each republish would yank a
   // reader who had tapped another tab back to the deep-linked one.
-  const deepTabApplied = useRef<boolean>(!!v.tab);
+  const deepTabApplied = useRef<boolean>(!!v.tab || !!freshTab());
   useEffect(() => {
     if (deepTabApplied.current || !v.tab) return;
     deepTabApplied.current = true;
     setTab(v.tab);
   }, [v.tab]);
+  // A DOOR TO THIS PROJECT'S HUB, pressed while its page is already open —
+  // the logo menu's "Go to community hub" changes no address, so no route
+  // runs. AppView._landOnHub says so; a door to another project is not ours.
+  useEffect(() => {
+    const onDoor = (event: Event) => {
+      const door = (event as CustomEvent<{ slug: string | null; tab: TabKey } | null>).detail;
+      if (!door || (door.slug && door.slug !== v.slug)) return;
+      setTab(door.tab);
+      try { window.scrollTo?.({ top: 0 }); } catch { /* no window to scroll */ }
+    };
+    window.addEventListener('usernode:workshop-tab', onDoor);
+    return () => window.removeEventListener('usernode:workshop-tab', onDoor);
+  }, [v.slug]);
   // Which pane is under the tabs. Lives in a module-global store rather than
   // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
   // the kanban view model only when the stage pane is up. See
@@ -3523,6 +3552,11 @@ export function DevWorkshop(): ReactNode {
           against that whole rather than ahead of it. */}
       {tab === 'workshop' ? (
       <>
+      {/* ── Lately in this project ──
+          What changed about the project itself — this week's card, and
+          settings changed in the last week — which used to be lines in its
+          channel. Only when there is something to say (./notices.tsx). */}
+      {slug ? <WorkshopNotices slug={slug} /> : null}
       {/* ── One pane: where the app is, and what moved while you were away ──
           These were two strips asking one question. The description leads —
           the app says what it is about the way a theme does — and the personal

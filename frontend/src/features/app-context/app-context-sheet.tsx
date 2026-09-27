@@ -646,6 +646,12 @@ export function AppsSwitcherSheet(): ReactNode {
                 {owed}
               </span>
             ) : null}
+            // It says community hub, so it opens the hub, not whichever tab
+            // the page was last left on (AppView._landOnHub).
+            onClick={(e) => {
+              if (slug) (window as any).AppView?._landOnHub?.(slug);
+              followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
+            }}
           />
           {/*
               #2763: the TWO-PANE route. `#app/<slug>/dev/chat` was the old

@@ -54,6 +54,13 @@ const EVENT_TYPES = Object.freeze({
   APP_ADMINS_CHANGED: 'app_admins_changed',
   APPROVER_INVITED: 'approver_invited',
   APPROVER_JOINED: 'approver_joined',
+  // The app's lock toggled (POST /api/apps/:slug/lock), with { locked }.
+  // Read back by services/app-notices.js with the settings changes above.
+  APP_LOCK_CHANGED: 'app_lock_changed',
+  // The Friday card (services/weekly-digest.js), its data as metadata. A
+  // channel carries no activity, so this is where the card lives, and a
+  // project's Workshop shows it for a few days (services/app-notices.js).
+  WEEKLY_DIGEST: 'weekly_digest',
   // Sync-with-main completed (issue: make sync emit session activity).
   // Attributed to the session owner (sync bills the owner), recorded on
   // the terminal path with { syncResult, behind, sha, pushOk, trigger }.

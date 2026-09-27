@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * The Friday card (#1688): once a week, per app, one message in the app's
- * general chat saying what went live and who made it, and what is waiting
- * on votes.
+ * The Friday card (#1688): once a week, per app, one card saying what went
+ * live and who made it, and what is waiting on votes. It was a message in
+ * the app's general chat; it is shown on the project's Workshop now.
  *
  * ── Why a card, and why every week ─────────────────────────────────────
  *
@@ -27,16 +27,15 @@
  * the UPDATE of apps.weekly_digest_at itself, guarded on that age, so two
  * instances that both find an app due can only stamp it once.
  *
- * The card is one system message in general chat, carrying its data as
- * metadata (`weekly`) for the transcript's card row, and a plain-text line
- * for everything that reads content. Each active member also gets a
+ * The card is one `weekly_digest` event carrying its data as metadata, and
+ * contentLine is its plain-text sentence. Each active member also gets a
  * `weekly_digest` notification (its own per-app category, on by default),
  * which is what reaches a phone.
  *
  * A channel carries no activity now (ws.sendSystemMessage writes no line
- * without a thread), so the card is no longer written anywhere and the
- * notification is the whole Friday rhythm. The card's data is still built,
- * because the notification's counts come from it.
+ * without a thread), so the card is recorded as a `weekly_digest` event
+ * instead, and a project's Workshop shows it for a few days after it is
+ * made (services/app-notices.js), beside the notification.
  */
 
 const log = require('./logger');
@@ -157,8 +156,10 @@ async function post(pool, app, digest, now) {
   );
   if (!claimed.length) return { posted: false, claimed: false, notified: 0 };
 
-  const { sendSystemMessage } = require('./ws');
-  await sendSystemMessage(pool, app.id, contentLine(digest), 'system', { weekly: digest }, null);
+  // The card itself: a project's Workshop shows it for a few days
+  // (services/app-notices.js), since a channel carries no activity.
+  const events = require('./events');
+  await events.record(pool, { type: events.EVENT_TYPES.WEEKLY_DIGEST, appId: app.id, metadata: digest });
 
   let notified = 0;
   try {

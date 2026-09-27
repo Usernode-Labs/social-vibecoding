@@ -2566,16 +2566,8 @@ function voteRoutes(config) {
       const promoLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
-      await sendSystemMessage(pool, session.app_id,
-        `${req.user.username} promoted ${promoLabel} for voting`,
-        'vote',
-        // Lets the group-chat client render live vote buttons inline on
-        // this activity row (see group-chat.js renderMessageHtml).
-        { vote: { sessionId: session.id, prNumber: session.pr_number || null } }
-      );
-      // Dual-post into the proposal's own thread so the topic discussion
-      // carries its lifecycle in context (general chat stays the
-      // app-wide entry point).
+      // Into the proposal's own thread, so the topic discussion carries its
+      // lifecycle in context (a channel carries no activity).
       await sendSystemMessage(pool, session.app_id,
         `${req.user.username} promoted ${promoLabel} for voting`,
         'vote',
@@ -3157,11 +3149,6 @@ function voteRoutes(config) {
       if (promote) {
         // Explicit submissions still announce the vote exactly as before.
         const label = pr.title ? `PR #${prNumber}: ${pr.title}` : `PR #${prNumber}`;
-        await sendSystemMessage(pool, app.id,
-          `${req.user.username} imported ${label} for voting`,
-          'vote',
-          { vote: { sessionId, prNumber } }
-        ).catch(() => {});
         await sendSystemMessage(pool, app.id,
           `${req.user.username} imported ${label} for voting`,
           'vote',
@@ -5044,7 +5031,6 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
           const msg = a.scope === 'platform'
             ? `Platform variable "${a.key}" was declared and set by this proposal; takes effect on the platform's next deploy.`
             : `Secret "${a.key}" was declared and set by this proposal; redeploying…`;
-          await sendSystemMessage(pool, session.app_id, msg, 'system').catch(() => {});
           await sendSystemMessage(pool, session.app_id, msg, 'system',
             null, { type: 'session', ref: session.id }).catch(() => {});
           if (a.scope === 'platform') {
@@ -5266,8 +5252,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         });
         const recipient = session.user_id ? `<@${session.user_id}>` : 'the author';
         const bountyMsg = `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} for PR #${session.pr_number || session.id}`;
-        await sendSystemMessage(pool, session.app_id, bountyMsg, 'system').catch(() => {});
-        // Dual-post into the proposal's thread (lifecycle in context).
+        // Into the proposal's thread (lifecycle in context).
         await sendSystemMessage(pool, session.app_id, bountyMsg, 'system',
           null, { type: 'session', ref: session.id }).catch(() => {});
       }
@@ -5382,8 +5367,8 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       log.warn('votes', 'Failed to destroy CC volume', { sessionId: session.id, err: err.message });
     }
 
-    // Announce in group chat, and dual-post into the proposal's own
-    // thread so its discussion carries the outcome in context.
+    // Say it in the proposal's own thread, so its discussion carries the
+    // outcome in context (a channel carries no activity).
     // The ordinary line leads with the change and thanks the voters; the
     // "(yes/active votes)" figure stays at the end in the same shape, since
     // migrate.js's votes_required backfill parses it out of historical
@@ -5428,7 +5413,6 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         ...(liveSoon ? { liveSoon: true } : {}),
       },
     } : null;
-    await sendSystemMessage(pool, session.app_id, mergedLine, 'system', mergedMeta);
     await sendSystemMessage(pool, session.app_id, mergedLine,
       'system', mergedMeta, { type: 'session', ref: session.id }
     ).catch(() => {});
@@ -5986,7 +5970,6 @@ async function checkAndMerge(config, pool, session, options = {}) {
         [session.app_id, session.id]
       ).then((r) => !!(r.rows[0] && r.rows[0].content === blockMsg)).catch(() => false);
       if (!alreadySaid) {
-        await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
         await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
           null, { type: 'session', ref: session.id }).catch(() => {});
       }
@@ -6085,7 +6068,6 @@ async function checkAndMerge(config, pool, session, options = {}) {
           ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
           : `PR #${session.pr_number || session.id}`;
         const blockMsg = platformEnvCheck.describeBlock(envVerdict.detail, label);
-        await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
         await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
           null, { type: 'session', ref: session.id }).catch(() => {});
         log.info('votes', 'Merge blocked: platform variables unset', {

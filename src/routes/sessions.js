@@ -12717,8 +12717,7 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
                   merged: false,
                 });
                 const resetMsg = `An update was pushed to PR #${session.pr_number || session.id} (commit ${commitHash.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
-                await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
-                // Dual-post into the proposal's thread (lifecycle in context).
+                // Into the proposal's thread (lifecycle in context).
                 await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
                   null, { type: 'session', ref: session.id }).catch(() => {});
                 log.info('sessions', 'Retired PR votes after new commit', {

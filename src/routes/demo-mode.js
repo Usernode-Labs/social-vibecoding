@@ -253,7 +253,6 @@ function demoModeRoutes(config) {
   async function announcePromotion({ app, partner, session }) {
     const line = `${partner.username} promoted ${prLabel(session.pr_number, session.pr_title)} for voting`;
     const meta = { vote: { sessionId: session.id, prNumber: session.pr_number } };
-    await ws.sendSystemMessage(pool, app.id, line, 'vote', meta).catch(() => {});
     await ws.sendSystemMessage(pool, app.id, line, 'vote', meta, { type: 'session', ref: session.id })
       .catch(() => {});
     ws.pushSessionUpdate({ action: 'promoted', sessionId: session.id, appSlug: app.slug });

@@ -150,11 +150,12 @@ test('a single upload opens a proposal carrying the new image, and never writes 
     response = await request(proposed.url);
     assert.equal(response.status, 200); assert.match(response.headers.get('cache-control'), /immutable/);
     assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
-    // Announced like the other governance kinds: group chat plus the
-    // proposal's own thread, and a board refresh for every open client.
-    assert.equal(state.messages.length, 2);
+    // Announced like the other governance kinds: in the proposal's own
+    // thread (a channel carries no activity), and a board refresh for every
+    // open client.
+    assert.equal(state.messages.length, 1);
     assert.match(state.messages[0][2], /maker proposed changing the featured illustration/);
-    assert.deepEqual(state.messages[1][5], { type: 'governance', ref: issue.id });
+    assert.deepEqual(state.messages[0][5], { type: 'governance', ref: issue.id });
     assert.deepEqual(state.pushes, [{ action: 'created', appSlug: 'gym', appId: 1, issueId: issue.id, kind: 'featured_illustration' }]);
     // GET now reports the open card, and a second save waits for it.
     response = await request(endpoint);
