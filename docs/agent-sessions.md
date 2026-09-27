@@ -175,7 +175,7 @@ The Mayor is today's Mayor loop, moved out of the route and run with a conversat
 | `list_apps`, `get_app`, `list_requests`, `get_request`, `get_proposal`, `list_my_proposals`, `get_platform_conventions`, `get_change` | Shared MCP (read) | No | These replace `list_github_issues`/`get_github_issue`, and the MCP versions also include the Homeroom discussion |
 | `start_change {app, title, linkedIssues?}` | Shared MCP (new) | **Yes** | Creates a change with `agent_session_id` and makes it active. It parks the previous active change. It counts against the active-session cap. |
 | `promote_change`, `sync_change`, `recheck_change`, `withdraw_change` | Shared MCP (new) | **Yes** (except recheck) | Promotion and withdrawal are the user's decision. Sync revises the change, which clears votes, so it needs a yes. |
-| `create_request`, `claim_request`, `release_request`, `update_proposal_issues` | Shared MCP (existing) | **Yes** | They post publicly in the user's name |
+| `create_request`, `claim_request`, `release_request`, `propose_close_request`, `update_proposal_issues` | Shared MCP (existing) | **Yes** | They post publicly in the user's name. `propose_close_request` opens a group vote on closing a request; it closes nothing by itself |
 | `dispatch_scout`, `dispatch_coding_agent` | Mayor-internal | No, as today | Target the active change only; refused when there is none |
 | `switch_active_change {changeId}`, `set_focus_app {slug}` | Mayor-internal | No | Switching resumes a parked change. The user's own changes only. |
 | `web_fetch`, `draft_issue_report`, `get_prod_status`, `suggest_answers`, `suggest_replies` | Mayor-internal, as today | No | `get_prod_status` only for admins when the active change targets the platform app |

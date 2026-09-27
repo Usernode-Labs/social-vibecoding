@@ -257,6 +257,22 @@ test('create_request can only ever file an ordinary request', () => {
     'kind is never taken from tool input');
 });
 
+test('propose_close_request can only ever file a close-issue vote', () => {
+  // The same multiplexed route, and the same rule: the tool pins its one
+  // kind. A close proposal decides nothing — the group votes on it — which
+  // is what puts it on the connector beside create_request.
+  const start = TOOLS_SRC.indexOf("server.registerTool('propose_close_request'");
+  assert.ok(start > 0, 'propose_close_request is registered');
+  const end = TOOLS_SRC.indexOf('server.registerTool(', start + 10);
+  const body = TOOLS_SRC.slice(start, end > 0 ? end : undefined);
+  assert.match(body, /kind: 'close_issue'/);
+  assert.equal([...body.matchAll(/kind:/g)].length, 1, 'one kind, and only that one');
+  // No connector tool files any of the other governance kinds.
+  for (const other of ['secret_change', 'maintenance_campaign', 'featured_illustration', 'rename']) {
+    assert.doesNotMatch(TOOLS_SRC, new RegExp(`kind: '${other}'`), `no tool files ${other}`);
+  }
+});
+
 test('every route the tools call is on the allowlist', () => {
   // The two lists are maintained separately, so drift between them would
   // show up as a tool that 403s in production. Extract the literal paths
