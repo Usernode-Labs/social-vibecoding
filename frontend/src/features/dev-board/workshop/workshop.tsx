@@ -3544,10 +3544,12 @@ export function DevWorkshop(): ReactNode {
       </>
       ) : null}
 
-      {/* ── THE WORKSHOP TAB: your work in full, then the board's summary ──
-          What the group is building, beside the hub: the viewer's own work
-          in flight first and in full, then All items' numbers and its one
-          line, whose head opens All items itself. */}
+      {/* ── THE WORKSHOP TAB: the board's summary, then your work in full ──
+          What the group is building, beside the hub: All items' numbers and
+          its one line, whose head opens All items itself, then the viewer's
+          own work in flight, in full. All items leads (#3299): the tab is
+          about what the group is building, and your share of it reads
+          against that whole rather than ahead of it. */}
       {tab === 'workshop' ? (
       <>
       {/* ── Lately in this project ──
@@ -3555,67 +3557,6 @@ export function DevWorkshop(): ReactNode {
           settings changed in the last week — which used to be lines in its
           channel. Only when there is something to say (./notices.tsx). */}
       {slug ? <WorkshopNotices slug={slug} /> : null}
-      {/* ── Yours, first ──
-          The first question a returning member has is about their OWN work,
-          and the lander answered every other one before it: what the app is
-          doing, what the group needs, what nobody has picked up. A
-          half-finished session of theirs was somewhere down inside a theme,
-          under a heading about the theme. */}
-      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
-        <section className="dev-ws-strip" data-ws-mine="">
-          <div className="dev-ws-head">
-            <span className="dev-ws-head-title">What you are working on</span>
-            {v.mine.count ? <span className="dev-ws-head-n">{v.mine.count}</span> : null}
-          </div>
-          <div className="dev-ws-lane" data-ws-lane="mine">
-            {/* #2182: the strip does not leave when the viewer has nothing
-                underway. It says so instead, so the pane keeps one shape
-                and the place your work will appear is always the same.
-
-                The way in is NEW CHANGE, by the name the Homeroom menu
-                gives it. This said "start something from the + button",
-                and the "+" has no propose row — starting a change is that
-                menu's New change, an owner decision (#2740 review) — so
-                the line sent a viewer to a menu that could not do what it
-                promised. A read-only viewer has neither door, so is told
-                the fact and nothing to press — and so is a viewer under the
-                start-here banner, whose New change is at the top of this
-                very tab and whose board has no open item to pick up. */}
-            {!v.mine.rows.length ? (
-              <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
-                {actions.readOnly || startHere
-                  ? 'You have no work going on.'
-                  : 'You have no work going on. Pick up an open item below, or start a change with New change in the Homeroom menu.'}
-              </p>
-            ) : null}
-            {/* IN FULL on the Workshop tab: the whole of your own work is
-                what this tab leads with, so nothing of it waits behind a
-                reveal. */}
-            {v.mine.rows.map((row) => (row.t === 'card' ? (
-              <CardRowView
-                key={row.key}
-                row={row}
-                slug={slug}
-                canPost={canPost}
-                open={openRows.mine === row.key}
-                onToggle={() => toggleRow('mine', row.key)}
-              />
-            ) : null))}
-            {/* THE SAME CONTROL AS THE OTHER TWO. This was a left-aligned
-                grey pill (`gc-vote-btn`) while "Show past week" and "Show
-                older" — which do the identical thing one pane up and one
-                pane down — were centred muted text with a caret. Three
-                spellings of one gesture. It is `.dev-ws-reveal` now, and the
-                caret turns over when there is nothing left to reveal, which
-                is what that class already does for the since list.
-                Its hit area is `touch-target-32`, not the kit's 44px one the
-                other two carry (QA 2026-09-24 Q19): it sits 4px under the
-                last row, and a 44px box would take that row's bottom edge. */}
-
-          </div>
-        </section>
-      ) : null}
-
       {/* ── One pane: where the app is, and what moved while you were away ──
           These were two strips asking one question. The description leads —
           the app says what it is about the way a theme does — and the personal
@@ -3765,6 +3706,66 @@ export function DevWorkshop(): ReactNode {
               The card MODEL stays published (app-view.js
               `_discussionCardModel`) because the board's own surfaces draw
               from it; what goes is this screen's copy of the door. */}
+        </section>
+      ) : null}
+
+      {/* ── Yours, in its own pane ──
+          A returning member's own work gets a pane of its own: a
+          half-finished session of theirs was somewhere down inside a theme,
+          under a heading about the theme. It sits UNDER All items since
+          #3299 — the board's summary leads the tab, and this pane follows
+          it. */}
+      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
+        <section className="dev-ws-strip" data-ws-mine="">
+          <div className="dev-ws-head">
+            <span className="dev-ws-head-title">What you are working on</span>
+            {v.mine.count ? <span className="dev-ws-head-n">{v.mine.count}</span> : null}
+          </div>
+          <div className="dev-ws-lane" data-ws-lane="mine">
+            {/* #2182: the strip does not leave when the viewer has nothing
+                underway. It says so instead, so the pane keeps one shape
+                and the place your work will appear is always the same.
+
+                The way in is NEW CHANGE, by the name the Homeroom menu
+                gives it. This said "start something from the + button",
+                and the "+" has no propose row — starting a change is that
+                menu's New change, an owner decision (#2740 review) — so
+                the line sent a viewer to a menu that could not do what it
+                promised. A read-only viewer has neither door, so is told
+                the fact and nothing to press — and so is a viewer under the
+                start-here banner, whose New change is at the top of this
+                very tab and whose board has no open item to pick up. */}
+            {!v.mine.rows.length ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
+                {actions.readOnly || startHere
+                  ? 'You have no work going on.'
+                  : 'You have no work going on. Pick up an open item in All items, or start a change with New change in the Homeroom menu.'}
+              </p>
+            ) : null}
+            {/* IN FULL on the Workshop tab: the whole of your own work is
+                on screen here, so nothing of it waits behind a reveal. */}
+            {v.mine.rows.map((row) => (row.t === 'card' ? (
+              <CardRowView
+                key={row.key}
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.mine === row.key}
+                onToggle={() => toggleRow('mine', row.key)}
+              />
+            ) : null))}
+            {/* THE SAME CONTROL AS THE OTHER TWO. This was a left-aligned
+                grey pill (`gc-vote-btn`) while "Show past week" and "Show
+                older" — which do the identical thing one pane up and one
+                pane down — were centred muted text with a caret. Three
+                spellings of one gesture. It is `.dev-ws-reveal` now, and the
+                caret turns over when there is nothing left to reveal, which
+                is what that class already does for the since list.
+                Its hit area is `touch-target-32`, not the kit's 44px one the
+                other two carry (QA 2026-09-24 Q19): it sits 4px under the
+                last row, and a 44px box would take that row's bottom edge. */}
+
+          </div>
         </section>
       ) : null}
       </>

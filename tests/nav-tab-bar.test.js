@@ -780,13 +780,146 @@ test('the marker is the Workshop\'s blue, on the Workshop\'s curve, phone only',
   assert.match(rule[0], /background: var\(--lit-tint\);/);
   assert.match(rule[0], /box-shadow: inset 0 0 0 1px var\(--lit-line\);/);
   assert.match(rule[0], /opacity: 0;/, 'hidden until measured');
+  assert.match(rule[0], /transform-origin: 0 0;/, 'the slide scales from the corner its translate places');
   assert.match(css, /\.platform-tabs-marker\[data-marker-at\] \{ opacity: 1; \}/);
-  assert.match(css,
-    /@media \(prefers-reduced-motion: no-preference\) \{\s*\.platform-tabs-marker\[data-marker-slide\] \{\s*transition:\s*transform \.26s cubic-bezier\(\.32, \.72, 0, 1\)/,
-    'the slide is the Workshop marker\'s, and reduced motion does without it');
   assert.match(css, /\.platform-tab \{\s*position: relative;\s*z-index: 1;\s*\}/,
     'the tabs sit over the marker');
   // The rail keeps its row fill; the marker is not drawn there.
   const desktop = css.slice(css.indexOf('.platform-tab[aria-current="page"] {\n    background: var(--lit-tint);'));
   assert.match(desktop.slice(0, 400), /\.platform-tabs-marker \{\s*display: none;\s*\}/);
+  // The Workshop strip's duration and curve, as an animation now (#3259).
+  const { MARKER_SLIDE } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  assert.deepEqual({ ...MARKER_SLIDE }, { duration: 260, easing: 'cubic-bezier(.32, .72, 0, 1)' });
+  assert.match(css, /\.dev-ws-tab-marker\[data-ws-marker-slide\] \{[^}]*cubic-bezier\(\.32, \.72, 0, 1\)/,
+    'the curve is still the Workshop strip\'s');
+});
+
+// ── #3259: the slide starts before the swap, and the swap waits for it ──
+
+// Measured in the iOS simulator: with the slide written two frames after the
+// swap began, its first frames landed in the swap's long ones and it appeared
+// half-way across. A press now slides first and the navigation waits until
+// the slide is running on the compositor.
+test('the slide is transform only, a FLIP from the box it leaves (#3259)', () => {
+  const { slideKeyframes, shownBox } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  const [start, end] = slideKeyframes({ x: 150, y: 4, w: 88, h: 45 }, { x: 290, y: 4, w: 58, h: 45 });
+  assert.equal(start, 'translate(150px, 4px) scale(1.5172, 1)', 'starts looking like the box it leaves');
+  assert.equal(end, 'translate(290px, 4px) scale(1, 1)', 'and ends as laid out');
+  assert.deepEqual(
+    start.match(/[a-z]+\(/g), end.match(/[a-z]+\(/g),
+    'both ends spell the same functions, so they interpolate one by one',
+  );
+  // A press during a slide starts the next one from where the pill IS.
+  assert.deepEqual(
+    { ...shownBox({ x: 290, y: 4, w: 58, h: 45 }, 'matrix(1.2, 0, 0, 1, 210.5, 4)') },
+    { x: 210.5, y: 4, w: 69.6, h: 45 },
+  );
+  assert.deepEqual({ ...shownBox({ x: 1, y: 2, w: 3, h: 4 }, 'none') }, { x: 1, y: 2, w: 3, h: 4 });
+
+  const src = read('frontend/src/features/nav/tab-bar.tsx');
+  const hook = src.slice(src.indexOf('function useTabMarker('), src.indexOf('function goToTab('));
+  assert.match(hook, /slide\.current = el\.animate\(\[\{ transform: start \}, \{ transform: end \}\], \{\s*duration: MARKER_SLIDE\.duration,\s*easing: MARKER_SLIDE\.easing,\s*\}\);/,
+    'no delay and no fill: a delayed animation was not handed to the compositor');
+  assert.match(hook, /if \(!box \|\| !from \|\| !box\.slide \|\| !motionWelcome\(\)\) return;/,
+    'only a selection change slides, and reduced motion gets none');
+  assert.doesNotMatch(css, /\.platform-tabs-marker\[data-marker-slide\]/, 'no transition of width and height on the main thread');
+  assert.doesNotMatch(src, /'data-marker-slide'/);
+});
+
+test('a press waits for its slide to run before it navigates (#3259)', async () => {
+  const { schedulePress, SLIDE_START_WAIT_MS, PRESS_SETTLE_MS } = loadTsx('frontend/src/features/nav/tab-press.ts');
+  const frames = [];
+  const raf = (cb) => { frames.push(cb); return frames.length; };
+  const caf = (id) => { frames[id - 1] = null; };
+  const frame = () => { const due = frames.splice(0); for (const cb of due) if (cb) cb(); };
+  const timers = [];
+  const clock = {
+    set: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clear: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
+  };
+  const fire = (ms) => { for (const t of timers) if (t.ms === ms && t.fn) { const fn = t.fn; t.fn = null; fn(); } };
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  // The slide starts late: nothing navigates until it does, then a frame on.
+  const holder = { current: null };
+  let went = 0;
+  let start;
+  const ready = new Promise((resolve) => { start = resolve; });
+  schedulePress(holder, 'discover', () => { went += 1; }, () => {}, () => ready, raf, caf, clock);
+  assert.equal(went, 0, 'not in the press\'s own task');
+  frame();
+  await flush();
+  frame();
+  assert.equal(went, 0, 'not two frames out while the slide has not started');
+  start();
+  await flush();
+  assert.equal(went, 0, 'not in the task that learns it started');
+  frame();
+  assert.equal(went, 1, 'a frame after the slide is running');
+
+  // A slide that never starts cannot hold the navigation up.
+  const stuck = { current: null };
+  let stuckWent = 0;
+  schedulePress(stuck, 'me', () => { stuckWent += 1; }, () => {}, () => new Promise(() => {}), raf, caf, clock);
+  frame();
+  fire(SLIDE_START_WAIT_MS);
+  frame();
+  assert.equal(stuckWent, 1);
+
+  // No slide to wait for: two frames, as before.
+  const plain = { current: null };
+  let plainWent = 0;
+  schedulePress(plain, 'home', () => { plainWent += 1; }, () => {}, () => null, raf, caf, clock);
+  frame();
+  assert.equal(plainWent, 0);
+  frame();
+  assert.equal(plainWent, 1);
+
+  // A second press before the first navigates replaces it.
+  const twice = { current: null };
+  const gone = [];
+  schedulePress(twice, 'discover', () => gone.push('discover'), () => {}, () => null, raf, caf, clock);
+  schedulePress(twice, 'me', () => gone.push('me'), () => {}, () => null, raf, caf, clock);
+  frame();
+  frame();
+  assert.deepEqual(gone, ['me']);
+
+  // Unanswered, the bar goes back to the router's tab; answered, it stays.
+  const lost = { current: null };
+  let settled = 0;
+  schedulePress(lost, 'messages', () => {}, () => { settled += 1; }, () => null, raf, caf, clock);
+  frame();
+  frame();
+  fire(PRESS_SETTLE_MS);
+  assert.equal(settled, 1);
+  assert.equal(lost.current, null);
+  const answered = { current: null };
+  let settledAnswered = 0;
+  const entry = schedulePress(answered, 'messages', () => {}, () => { settledAnswered += 1; }, () => null, raf, caf, clock);
+  frame();
+  frame();
+  entry.cancel();
+  answered.current = null;
+  fire(PRESS_SETTLE_MS);
+  assert.equal(settledAnswered, 0);
+});
+
+test('a plain press on another tab lights it and slides first; the router answers after (#3259)', () => {
+  const src = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(src, /onClick=\{\(event\) => onTabClick\(event, key, href\)\}/);
+  assert.match(src, /aria-current=\{lit === key \? 'page' : undefined\}/,
+    'the pressed tab is lit until the router answers');
+  const click = src.slice(src.indexOf('const onTabClick = '), src.indexOf('return (', src.indexOf('const onTabClick = ')));
+  assert.match(click, /if \(nav\?\.isNativeClick\?\.\(event\)\) return;/, 'a modified click stays the browser\'s');
+  assert.match(click, /if \(key !== lit && press\(event\.currentTarget, key, \(\) => goToTab\(key, href\)\)\) \{\s*event\.preventDefault\(\);/);
+  const press = src.slice(src.indexOf('const press = (el: HTMLElement'), src.indexOf('return { box, lit, markerRef, press };'));
+  assert.ok(press.indexOf('place(el, true);') < press.indexOf('schedulePress('), 'the pill moves in the press\'s own task');
+  assert.match(press, /schedulePress\(pending, key, go, \(\) => setPressed\(null\), \(\) => slide\.current\?\.ready \?\? null\);/);
+  // The three roads the clicks take at once, taken late.
+  const go = src.slice(src.indexOf('function goToTab('), src.indexOf('export function PlatformTabs()'));
+  assert.match(go, /app\.navigateHome\(\{ viaTab: true \}\);/);
+  assert.match(go, /if \(key === 'workshop' && app\?\.resumeWorkshopView\?\.\(\)\) return;/);
+  assert.match(go, /window\.location\.assign\(href\);/);
+  // The router lighting the pressed tab answers the press.
+  assert.match(src, /if \(!pending\.current \|\| pending\.current\.key !== tab\) return;\s*pending\.current\.cancel\(\);\s*pending\.current = null;\s*setPressed\(null\);/);
 });

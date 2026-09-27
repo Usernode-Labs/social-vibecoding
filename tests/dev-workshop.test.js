@@ -1552,8 +1552,8 @@ test('the strips are ordered for a returning member: state, then what to do, the
   const html = workshopHtml(AppView);
   // THE HUB: what needs you, then the one block about what changed, at its
   // foot. (The channel and Members & activity sit between them once the
-  // community record has answered; this render has none.) Your own work
-  // and where the app is are the Workshop tab's, in that order.
+  // community record has answered; this render has none.) Where the app is
+  // and your own work are the Workshop tab's, in that order (#3299).
   const order = ['data-ws-hub-needs', 'data-ws-since-head']
     .map((k) => html.indexOf(k));
   assert.ok(order.every((i) => i >= 0), `every strip is drawn: ${JSON.stringify(order)}`);
@@ -1562,9 +1562,9 @@ test('the strips are ordered for a returning member: state, then what to do, the
   assert.ok(!html.includes('data-ws-mine') && !html.includes('data-ws-dashboard'),
     'your work and the board are the Workshop tab\'s');
   const workshop = workshopHtml(AppView, 'workshop');
-  const wsOrder = ['data-ws-mine', 'data-ws-dashboard'].map((k) => workshop.indexOf(k));
+  const wsOrder = ['data-ws-dashboard', 'data-ws-mine'].map((k) => workshop.indexOf(k));
   assert.ok(wsOrder.every((i) => i >= 0) && wsOrder[0] < wsOrder[1],
-    'the Workshop tab leads with your own work, then All items');
+    'the Workshop tab leads with All items, then your own work (#3299)');
   assert.ok(!html.includes('data-ws-discussion'), 'and the old discussion section is gone');
   assert.ok(!html.includes('data-discussion-row'), 'nor its row');
   // The order changed with the "since" move: the pane used to lead with what
@@ -2019,10 +2019,10 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
     'most recently active first, and keyed apart from the same card elsewhere');
 
   const html = workshopHtml(AppView, 'workshop');
-  // FIRST ON THE WORKSHOP TAB, in full: the hub is the community, and the
-  // Workshop is what is being built, which starts with what YOU are building.
-  // All items' numbers follow it.
-  assert.ok(html.indexOf('data-ws-mine') >= 0 && html.indexOf('data-ws-mine') < html.indexOf('data-ws-dashboard'));
+  // ON THE WORKSHOP TAB, in full: the hub is the community, and the
+  // Workshop is what is being built. All items' numbers lead it and what YOU
+  // are building follows (#3299).
+  assert.ok(html.indexOf('data-ws-dashboard') >= 0 && html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-mine'));
   assert.ok(!html.includes('data-ws-mine-more'), 'nothing of it waits behind a reveal');
   assert.match(html, /data-ws-lane="mine"/);
   assert.match(html, /What you are working on/);
@@ -5095,7 +5095,7 @@ test('#2182: "What you are working on" stays on screen with nothing in it, and s
   // and the "+" has no propose row — starting a change is the Homeroom
   // menu's New change (an owner decision, #2740 review). It names that door
   // now, by the name the header gives the menu.
-  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item below, or start a change with New change in the Homeroom menu\.<\/p>/,
+  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item in All items, or start a change with New change in the Homeroom menu\.<\/p>/,
     'with the note in the lane');
   assert.doesNotMatch(html, /start something from the \+ button/, 'and not the door that cannot open');
   // A read-only viewer has neither door (no New change, no board writes), so
@@ -5106,7 +5106,7 @@ test('#2182: "What you are working on" stays on screen with nothing in it, and s
       'a read-only viewer is told the fact alone');
   });
   assert.ok(!html.includes('data-ws-mine-more'), 'and no more-of-yours button');
-  assert.ok(html.indexOf('data-ws-mine') < html.indexOf('data-ws-dashboard'), 'in its usual place, leading the Workshop tab');
+  assert.ok(html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-mine'), 'in its usual place, under All items (#3299)');
   // The declared check reaches this state through ?shot=mine-empty, whatever
   // the demo seeded for the viewer.
   const Seeded = makeAppView();

@@ -2129,9 +2129,9 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] ~ [data-ws-dash-cell=\"shipped\"] > b"
     },
     {
-      "name": "Workshop: What you are working on stays on screen when it is empty, and says so (#2182)",
+      "name": "Workshop: What you are working on stays on screen when it is empty, and says so (#2182), under All items (#3299)",
       "path": "/?demo=1&shot=mine-empty&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-dashboard] ~ [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
       "expectText": "You have no work going on."
     },
     {

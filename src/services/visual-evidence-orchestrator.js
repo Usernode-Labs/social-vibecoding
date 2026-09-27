@@ -886,7 +886,11 @@ function recordAgentDiagnostic(metrics, raw) {
     'http_error', 'network_error', 'stream_error', 'cancelled'].includes(raw.outcome)) {
     event.outcome = raw.outcome;
   }
-  for (const key of ['mcpServerCount', 'toolDefinitionCount', 'browserMemberToolCount',
+  for (const key of ['mcpServerCount', 'toolDefinitionCount', 'topLevelFunctionToolCount',
+    'topLevelNamespaceToolCount', 'topLevelCustomToolCount', 'topLevelOtherToolCount',
+    'nestedToolDefinitionCount', 'nestedFunctionToolCount', 'nestedCustomToolCount',
+    'nestedOtherToolCount', 'evidenceToolDefinitionCount', 'otherMcpServerCount',
+    'forwardedToolDefinitionCount', 'removedToolDefinitionCount', 'browserMemberToolCount',
     'browserAdminToolCount', 'browserFullAdminToolCount', 'storyCount', 'callOrdinal', 'headingCount',
     'buttonCount', 'linkCount', 'imageBlocks', 'exitCode', 'checkRank',
     'documentOrdinal', 'httpStatus', 'requestOrdinal', 'chunkCount', 'hitOrdinal',
@@ -921,8 +925,12 @@ function recordAgentDiagnostic(metrics, raw) {
     event.stage = raw.stage;
   }
   for (const key of ['evidenceGetContextAvailable', 'evidenceRunPlanAvailable',
-    'evidenceReportBlockerAvailable', 'completionReminder', 'terminalToolChoiceRequired']) {
+    'evidenceReportBlockerAvailable', 'completionReminder', 'terminalToolChoiceRequired',
+    'toolSurfaceFiltered']) {
     if (typeof raw[key] === 'boolean') event[key] = raw[key];
+  }
+  if (raw.terminalToolWireFormat === 'namespace' || raw.terminalToolWireFormat === 'flat') {
+    event.terminalToolWireFormat = raw.terminalToolWireFormat;
   }
   for (const key of ['jsonValid', 'acceptedIntentPresent', 'originsPresent', 'revisionsPresent']) {
     if (typeof raw[key] === 'boolean') event[key] = raw[key];
