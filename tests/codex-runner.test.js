@@ -166,7 +166,7 @@ test('runner: evidence completion resumes with terminal tools only and forces a 
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.end(`data: ${JSON.stringify({
       type: 'response.output_item.done',
-      item: { type: 'function_call', name: 'mcp__evidence__evidence_run_plan' },
+      item: { type: 'function_call', namespace: 'mcp__evidence', name: 'evidence_run_plan' },
     })}\n\n`);
   });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
@@ -183,8 +183,12 @@ test('runner: evidence completion resumes with terminal tools only and forces a 
   const response = await fetch(base + '/responses', {
     method: 'POST', headers: { authorization: 'Bearer ' + process.env.OPENROUTER_API_KEY },
     body: JSON.stringify({ model: process.env.AGENT_MODEL, stream: true, input: [], tools: [
-      { type: 'function', name: 'mcp__evidence__evidence_run_plan', parameters: { type: 'object' } },
-      { type: 'function', name: 'mcp__evidence__evidence_report_blocker', parameters: { type: 'object' } },
+      { type: 'function', name: 'exec_command', parameters: { type: 'object' } },
+      { type: 'namespace', name: 'mcp__evidence', tools: [
+        { type: 'function', name: 'evidence_report_blocker', parameters: { type: 'object' } },
+        { type: 'function', name: 'evidence_run_plan', parameters: { type: 'object' } },
+      ] },
+      { type: 'web_search' },
     ], tool_choice: 'auto', parallel_tool_calls: true }),
   });
   if (!response.ok) throw new Error(await response.text());
@@ -225,7 +229,15 @@ test('runner: evidence completion resumes with terminal tools only and forces a 
   assert.equal(result.code, 0, result.stdout + result.stderr);
   assert.equal(providerBody.tool_choice, 'required');
   assert.equal(providerBody.parallel_tool_calls, false);
+  assert.deepEqual(providerBody.tools.map(tool => [tool.type, tool.name]), [
+    ['namespace', 'mcp__evidence'],
+  ]);
+  assert.deepEqual(providerBody.tools[0].tools.map(tool => tool.name).sort(), [
+    'evidence_report_blocker', 'evidence_run_plan',
+  ]);
   assert.match(result.stdout, /__USERNODE_EVIDENCE_PROVIDER__ \{"kind":"provider_tool_config"/);
+  assert.match(result.stdout, /"terminalToolWireFormat":"namespace"/);
+  assert.match(result.stdout, /"toolSurfaceFiltered":true/);
   assert.doesNotMatch(result.stdout, /__USERNODE_PHASE__ evidence_(?:proxy|browser_bootstrap)/);
   assert.doesNotMatch(result.stdout + result.stderr, /member-token|admin-token|full-admin-token/);
 });

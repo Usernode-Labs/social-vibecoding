@@ -31,17 +31,78 @@ const HOP_HEADERS = new Set([
   'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length',
 ]);
 const EVIDENCE_TERMINAL_TOOL = /(?:^|__)evidence_(?:run_plan|report_blocker)$/;
+const EVIDENCE_TERMINAL_TOOL_NAMES = new Set([
+  'evidence_run_plan', 'evidence_report_blocker',
+]);
+
+function incrementType(counts, type) {
+  const key = type === 'function' || type === 'namespace' || type === 'custom'
+    ? type : 'other';
+  counts[key] += 1;
+}
+
+function flatMcpToolName(name) {
+  if (typeof name !== 'string' || !name.startsWith('mcp__')) return null;
+  const separator = name.indexOf('__', 'mcp__'.length);
+  if (separator <= 'mcp__'.length || separator + 2 >= name.length) return null;
+  return { server: name.slice('mcp__'.length, separator), name: name.slice(separator + 2) };
+}
+
+// Codex 0.146 sends local MCP tools as namespace definitions:
+// {type:"namespace",name:"mcp__evidence",tools:[{type:"function",name:"..."}]}.
+// Older clients flattened them into top-level mcp__server__tool functions.
+// Keep one parser for both shapes so diagnostics describe the actual wire
+// request and the completion guard cannot silently depend on one CLI version.
+function inspectToolDefinitions(tools) {
+  const definitions = Array.isArray(tools) ? tools : [];
+  const topLevelTypes = { function: 0, namespace: 0, custom: 0, other: 0 };
+  const nestedTypes = { function: 0, namespace: 0, custom: 0, other: 0 };
+  const logicalTools = [];
+  const mcpServers = new Set();
+  for (const definition of definitions) {
+    incrementType(topLevelTypes, definition?.type);
+    if (definition?.type === 'namespace' && typeof definition.name === 'string') {
+      const server = definition.name.startsWith('mcp__')
+        ? definition.name.slice('mcp__'.length) : null;
+      if (server) mcpServers.add(server);
+      const children = Array.isArray(definition.tools) ? definition.tools : [];
+      for (const child of children) {
+        incrementType(nestedTypes, child?.type);
+        if (typeof child?.name === 'string') {
+          logicalTools.push({ server, name: child.name, type: child.type });
+        }
+      }
+      continue;
+    }
+    if (typeof definition?.name !== 'string') continue;
+    const mcp = flatMcpToolName(definition.name);
+    if (mcp) mcpServers.add(mcp.server);
+    logicalTools.push({ server: mcp?.server || null, name: mcp?.name || definition.name,
+      type: definition.type });
+  }
+  return { definitions, topLevelTypes, nestedTypes, logicalTools, mcpServers };
+}
 
 function evidenceToolInventory(tools) {
-  const definitions = Array.isArray(tools) ? tools : [];
-  const names = definitions.filter(tool => tool?.type === 'function' && typeof tool.name === 'string')
-    .map(tool => tool.name);
-  const servers = new Set(names.map(name => /^mcp__([^_]+(?:_[^_]+)*)__/.exec(name)?.[1]).filter(Boolean));
-  const countFor = server => names.filter(name => name.startsWith(`mcp__${server}__`)).length;
-  const available = tool => names.some(name => name.endsWith(`__${tool}`) || name === tool);
+  const inspected = inspectToolDefinitions(tools);
+  const countFor = server => inspected.logicalTools.filter(tool => tool.server === server).length;
+  const available = name => inspected.logicalTools.some(tool => tool.name === name
+    && (tool.server === 'evidence' || tool.server == null));
+  const knownMcpServers = new Set(['evidence', 'browser_member', 'browser_admin',
+    'browser_full_admin']);
   return {
-    mcpServerCount: servers.size,
-    toolDefinitionCount: definitions.length,
+    mcpServerCount: inspected.mcpServers.size,
+    toolDefinitionCount: inspected.definitions.length,
+    topLevelFunctionToolCount: inspected.topLevelTypes.function,
+    topLevelNamespaceToolCount: inspected.topLevelTypes.namespace,
+    topLevelCustomToolCount: inspected.topLevelTypes.custom,
+    topLevelOtherToolCount: inspected.topLevelTypes.other,
+    nestedToolDefinitionCount: Object.values(inspected.nestedTypes).reduce((sum, count) => sum + count, 0),
+    nestedFunctionToolCount: inspected.nestedTypes.function,
+    nestedCustomToolCount: inspected.nestedTypes.custom,
+    nestedOtherToolCount: inspected.nestedTypes.namespace + inspected.nestedTypes.other,
+    evidenceToolDefinitionCount: countFor('evidence'),
+    otherMcpServerCount: [...inspected.mcpServers].filter(server => !knownMcpServers.has(server)).length,
     evidenceGetContextAvailable: available('evidence_get_context'),
     evidenceRunPlanAvailable: available('evidence_run_plan'),
     evidenceReportBlockerAvailable: available('evidence_report_blocker'),
@@ -49,6 +110,59 @@ function evidenceToolInventory(tools) {
     browserAdminToolCount: countFor('browser_admin'),
     browserFullAdminToolCount: countFor('browser_full_admin'),
   };
+}
+
+function hasExactTerminalTools(tools) {
+  return tools.length === EVIDENCE_TERMINAL_TOOL_NAMES.size
+    && tools.every(tool => tool?.type === 'function'
+      && EVIDENCE_TERMINAL_TOOL_NAMES.has(tool.name))
+    && new Set(tools.map(tool => tool.name)).size === EVIDENCE_TERMINAL_TOOL_NAMES.size;
+}
+
+function evidenceCompletionToolSurface(tools) {
+  const definitions = Array.isArray(tools) ? tools : [];
+  if (definitions.length === 0) return { empty: true };
+  const namespaces = [];
+  const flatTools = [];
+  for (const definition of definitions) {
+    if (definition?.type === 'namespace' && typeof definition.name === 'string'
+        && definition.name.startsWith('mcp__')) {
+      if (definition.name !== 'mcp__evidence') return null;
+      namespaces.push(definition);
+      continue;
+    }
+    const flat = flatMcpToolName(definition?.name);
+    if (flat) {
+      if (flat.server !== 'evidence') return null;
+      flatTools.push({ definition, name: flat.name, type: definition.type });
+      continue;
+    }
+    // A terminal-looking top-level function is not the run-scoped evidence
+    // MCP tool and must not be allowed to satisfy the completion contract.
+    if (typeof definition?.name === 'string'
+        && EVIDENCE_TERMINAL_TOOL_NAMES.has(definition.name)) return null;
+  }
+  if (namespaces.length === 1 && flatTools.length === 0
+      && hasExactTerminalTools(Array.isArray(namespaces[0].tools) ? namespaces[0].tools : [])) {
+    return {
+      empty: false,
+      tools: [namespaces[0]],
+      terminalToolDefinitionCount: EVIDENCE_TERMINAL_TOOL_NAMES.size,
+      wireFormat: 'namespace',
+      removedToolDefinitionCount: definitions.length - 1,
+    };
+  }
+  if (namespaces.length === 0
+      && hasExactTerminalTools(flatTools.map(tool => ({ type: tool.type, name: tool.name })))) {
+    return {
+      empty: false,
+      tools: flatTools.map(tool => tool.definition),
+      terminalToolDefinitionCount: EVIDENCE_TERMINAL_TOOL_NAMES.size,
+      wireFormat: 'flat',
+      removedToolDefinitionCount: definitions.length - flatTools.length,
+    };
+  }
+  return null;
 }
 
 async function readBounded(stream, limit) {
@@ -249,31 +363,36 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
       }
       let terminalToolChoiceRequired = false;
       let terminalToolDefinitionCount = 0;
+      let terminalToolWireFormat = null;
+      let removedToolDefinitionCount = 0;
+      let toolSurfaceFiltered = false;
+      const incomingToolInventory = evidenceToolInventory(body.tools);
       if (terminalToolChoicePending) {
         const tools = Array.isArray(body.tools) ? body.tools : [];
-        const callable = tools.filter(tool => tool?.type === 'function'
-          && typeof tool.name === 'string');
-        const terminal = callable.filter(tool => EVIDENCE_TERMINAL_TOOL.test(tool.name));
-        terminalToolDefinitionCount = terminal.length;
+        const completionSurface = evidenceCompletionToolSurface(tools);
         // Codex may compact a long resumed thread before sending the user's
         // new prompt. That provider request deliberately has no tools. Let it
         // finish, keep the requirement pending, then enforce it on the first
         // request that actually carries the completion turn's MCP surface.
-        if (tools.length === 0) {
+        if (completionSurface?.empty) {
           // No terminal decision can be made in a tool-free compaction call.
-        } else if (terminal.length !== 2 || callable.length !== terminal.length
-            || tools.length !== callable.length) {
+        } else if (!completionSurface) {
           replyError(res, 500, 'Evidence completion tools were not configured safely');
           return;
         } else {
           // This recovery turn exists only because the model already ended
-          // once without a terminal action. Its MCP surface contains exactly
-          // the plan and blocker tools, so require one of them on the first
-          // eligible provider response instead of trusting another prose
-          // reminder.
+          // once without a terminal action. Codex always includes its built-in
+          // tools alongside MCP tools, so expose only the validated evidence
+          // namespace to the provider and require one terminal choice on the
+          // first eligible response.
+          body.tools = completionSurface.tools;
           body.tool_choice = 'required';
           body.parallel_tool_calls = false;
           terminalToolChoiceRequired = true;
+          terminalToolDefinitionCount = completionSurface.terminalToolDefinitionCount;
+          terminalToolWireFormat = completionSurface.wireFormat;
+          removedToolDefinitionCount = completionSurface.removedToolDefinitionCount;
+          toolSurfaceFiltered = removedToolDefinitionCount > 0;
         }
       }
       const incomingCap = body.max_output_tokens;
@@ -305,9 +424,13 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
           toolConfigReported = true;
           emitTiming({
             kind: 'provider_tool_config',
-            ...evidenceToolInventory(body.tools),
+            ...incomingToolInventory,
+            forwardedToolDefinitionCount: body.tools.length,
             completionReminder: requireEvidenceTerminalTool === true,
             terminalToolChoiceRequired,
+            toolSurfaceFiltered,
+            ...(terminalToolWireFormat ? { terminalToolWireFormat } : {}),
+            ...(removedToolDefinitionCount > 0 ? { removedToolDefinitionCount } : {}),
           });
         }
         emitTiming({ kind: 'provider_request_start', requestOrdinal: ordinal,

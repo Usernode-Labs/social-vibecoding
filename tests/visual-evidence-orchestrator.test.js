@@ -1388,10 +1388,15 @@ test('a completed planner turn without tool calls retains tool availability and 
         evidenceGetContextAvailable: true, evidenceRunPlanAvailable: true,
         browserMemberToolCount: 7, browserAdminToolCount: 7 });
       options.onEvidenceDiagnostic({ kind: 'provider_tool_config', mcpServerCount: 3,
-        toolDefinitionCount: 24, evidenceGetContextAvailable: true,
+        toolDefinitionCount: 12, topLevelFunctionToolCount: 8,
+        topLevelNamespaceToolCount: 3, topLevelOtherToolCount: 1,
+        nestedToolDefinitionCount: 24, nestedFunctionToolCount: 24,
+        evidenceToolDefinitionCount: 4, forwardedToolDefinitionCount: 12,
+        evidenceGetContextAvailable: true,
         evidenceRunPlanAvailable: true, evidenceReportBlockerAvailable: true,
         browserMemberToolCount: 7, browserAdminToolCount: 7,
-        completionReminder: false, terminalToolChoiceRequired: false });
+        completionReminder: false, terminalToolChoiceRequired: false,
+        toolSurfaceFiltered: false });
       options.onEvidenceDiagnostic({ kind: 'context_result', outcome: 'ok', responseCharacters: 12000,
         jsonValid: true, acceptedIntentPresent: true, originsPresent: true,
         revisionsPresent: true, storyCount: 3 });
@@ -1415,6 +1420,10 @@ test('a completed planner turn without tool calls retains tool availability and 
   assert.equal(trace.agentActivity.events[3].storyCount, 3);
   assert.equal(trace.agentActivity.providerToolConfigs.length, 1);
   assert.equal(trace.agentActivity.providerToolConfigs[0].evidenceReportBlockerAvailable, true);
+  assert.equal(trace.agentActivity.providerToolConfigs[0].topLevelNamespaceToolCount, 3);
+  assert.equal(trace.agentActivity.providerToolConfigs[0].nestedToolDefinitionCount, 24);
+  assert.equal(trace.agentActivity.providerToolConfigs[0].evidenceToolDefinitionCount, 4);
+  assert.equal(trace.agentActivity.providerToolConfigs[0].toolSurfaceFiltered, false);
   assert.deepEqual(trace.agentActivity.toolCounts, {});
 });
 

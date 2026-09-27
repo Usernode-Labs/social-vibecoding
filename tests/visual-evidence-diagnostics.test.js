@@ -136,12 +136,18 @@ test('Codex MCP events report the tool lifecycle without recording its arguments
   state.evidenceDiagnosticObserver = (event) => events.push(event);
   worker.parseLine(JSON.stringify({ type: 'turn.started' }), () => {}, state);
   worker.parseLine(`__USERNODE_EVIDENCE_PROVIDER__ ${JSON.stringify({
-    kind: 'provider_tool_config', mcpServerCount: 4, toolDefinitionCount: 58,
+    kind: 'provider_tool_config', mcpServerCount: 4, toolDefinitionCount: 13,
+    topLevelFunctionToolCount: 8, topLevelNamespaceToolCount: 4,
+    topLevelCustomToolCount: 0, topLevelOtherToolCount: 1,
+    nestedToolDefinitionCount: 58, nestedFunctionToolCount: 58,
+    nestedCustomToolCount: 0, nestedOtherToolCount: 0,
+    evidenceToolDefinitionCount: 4, otherMcpServerCount: 0,
+    forwardedToolDefinitionCount: 13,
     evidenceGetContextAvailable: true, evidenceRunPlanAvailable: true,
     evidenceReportBlockerAvailable: true,
     browserMemberToolCount: 18, browserAdminToolCount: 18,
     browserFullAdminToolCount: 18, completionReminder: false,
-    terminalToolChoiceRequired: false,
+    terminalToolChoiceRequired: false, toolSurfaceFiltered: false,
   })}`, () => {}, state);
   worker.parseLine(JSON.stringify({
     type: 'item.started', item: {
@@ -158,12 +164,18 @@ test('Codex MCP events report the tool lifecycle without recording its arguments
   }), () => {}, state);
   assert.deepEqual(events, [
     { kind: 'provider_init', completionReminder: false },
-    { kind: 'provider_tool_config', mcpServerCount: 4, toolDefinitionCount: 58,
+    { kind: 'provider_tool_config', mcpServerCount: 4, toolDefinitionCount: 13,
+      topLevelFunctionToolCount: 8, topLevelNamespaceToolCount: 4,
+      topLevelCustomToolCount: 0, topLevelOtherToolCount: 1,
+      nestedToolDefinitionCount: 58, nestedFunctionToolCount: 58,
+      nestedCustomToolCount: 0, nestedOtherToolCount: 0,
+      evidenceToolDefinitionCount: 4, otherMcpServerCount: 0,
+      forwardedToolDefinitionCount: 13,
       evidenceGetContextAvailable: true, evidenceRunPlanAvailable: true,
       evidenceReportBlockerAvailable: true,
       browserMemberToolCount: 18, browserAdminToolCount: 18,
       browserFullAdminToolCount: 18, completionReminder: false,
-      terminalToolChoiceRequired: false },
+      terminalToolChoiceRequired: false, toolSurfaceFiltered: false },
     { kind: 'first_output' },
     { kind: 'tool_start', sequence: 1, tool: 'evidence_get_context' },
     { kind: 'tool_end', sequence: 1, tool: 'evidence_get_context', outcome: 'ok' },
