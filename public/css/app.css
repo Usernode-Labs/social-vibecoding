@@ -18431,29 +18431,30 @@ html.un-ios {
   background: var(--lit-tint);
   box-shadow: inset 0 0 0 1px var(--lit-line);
   pointer-events: none;
+  /* The slide scales from the corner the transform places (tab-bar.tsx,
+     slideKeyframes). */
+  transform-origin: 0 0;
   /* Hidden until measured, and while nothing is lit. */
   opacity: 0;
 }
 .platform-tabs-marker[data-marker-at] { opacity: 1; }
 /* ONLY A SELECTION CHANGE SLIDES, as on the Workshop's strip: the first
-   placement and a re-measure of the same tab carry `data-marker-at` without
-   `data-marker-slide`, and land where they are.
+   placement and a re-measure of the same tab land where they are.
+
+   THE SLIDE IS NOT A TRANSITION HERE (#3259). It is an animation useTabMarker
+   plays over the resting style (MARKER_SLIDE in tab-bar.tsx): the Workshop
+   strip's duration and curve, but transform only. A transition of width
+   and height ran on the main thread, and a press now starts the slide
+   before the screen swap, whose long frames froze them mid-slide. Reduced
+   motion is read there too, and gets no slide.
 
    IT SLIDES THROUGH A VIEW TRANSITION TOO. A tab change is a screen swap,
    and the swap runs as a view transition in which #platform-tabs is its own
    group whose OLD image is dropped and whose NEW image is shown at once
    (see the `platform-tabs` group near the top of this file). The new image
-   is a live rendering of the element, not a still, so a CSS transition
-   started by the swap plays inside it; this is the one part of the bar that
-   moves on a tab change, and the label colour still pops, as it should. */
-@media (prefers-reduced-motion: no-preference) {
-  .platform-tabs-marker[data-marker-slide] {
-    transition:
-      transform .26s cubic-bezier(.32, .72, 0, 1),
-      width .26s cubic-bezier(.32, .72, 0, 1),
-      height .26s cubic-bezier(.32, .72, 0, 1);
-  }
-}
+   is a live rendering of the element, not a still, so an animation started
+   by the press plays inside it; this is the one part of the bar that moves
+   on a tab change, and the label colour still pops, as it should. */
 
 /* The badge's anchor. `position: relative` on the glyph's wrapper rather
    than on the whole tab, so the count sits on the ICON's corner and not on
