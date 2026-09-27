@@ -266,14 +266,49 @@ export async function setAgentChoice(id: number, agent: AgentChoice): Promise<Ag
   return body.session;
 }
 
+/** The reads the picker is built from, each of which can be asked again on its own. */
+export type CatalogPart = 'models' | 'prefs' | 'notes' | 'openrouter';
+
+export interface CatalogRead {
+  catalog: ModelCatalog;
+  /** The parts that did not answer this time, to ask again later; empty once all have. */
+  missing: CatalogPart[];
+}
+
+// How long the picker waits for one read. A request that never settles (a
+// stalled socket, a phone app resuming on a radio that is still waking) used
+// to hold the whole catalog, and with it the model pill, for the rest of the
+// page. The OpenRouter list waits longer: the server reads the key's own
+// catalogue from OpenRouter for it, and gives that read 20 seconds.
+const CATALOG_READ_MS = 10_000;
+const CATALOG_LIST_MS = 30_000;
+
+/** A read's JSON, or null when it failed, answered an error, or ran out of time. */
+function readWithin(path: string, ms: number): Promise<unknown> {
+  const abort = typeof AbortController === 'function' ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<null>((resolve) => {
+    timer = setTimeout(() => { abort?.abort(); resolve(null); }, ms);
+  });
+  const read = request(path, abort ? { signal: abort.signal } : {})
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+  return Promise.race([read, expired]).finally(() => clearTimeout(timer));
+}
+
 /**
  * The picker's options: the Anthropic models (GET /api/models), the saved
  * default (GET /api/me/coding-agent) and, where OpenRouter is offered, the
  * viewer's OpenRouter catalog. A part that does not load is left out rather
- * than failing the picker; the server validates every pick anyway.
+ * than failing the picker, and named in `missing` so the caller can ask for
+ * it again: pass back the catalog and those parts, and only they are read,
+ * over what was already known. The server validates every pick anyway.
  */
-export async function loadModelCatalog(): Promise<ModelCatalog> {
-  const catalog: ModelCatalog = {
+export async function loadModelCatalog(
+  previous: ModelCatalog | null = null,
+  retry: CatalogPart[] | null = null,
+): Promise<CatalogRead> {
+  const catalog: ModelCatalog = previous ? { ...previous } : {
     anthropic: [],
     anthropicDefault: null,
     defaultBackend: 'claude_code',
@@ -284,10 +319,18 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
     recommendedOpenRouterId: null,
     notes: null,
   };
+  const wanted = (part: CatalogPart) => !previous || !retry || retry.includes(part);
+  const missing: CatalogPart[] = [];
+  const read = (part: CatalogPart, path: string) => (wanted(part)
+    ? readWithin(path, CATALOG_READ_MS).then((body) => {
+      if (!body) missing.push(part);
+      return body;
+    })
+    : Promise.resolve(null));
   const [models, prefs, notes] = await Promise.all([
-    request('/api/models').then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    request('/api/me/coding-agent').then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    request('/api/model-notes').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    read('models', '/api/models'),
+    read('prefs', '/api/me/coding-agent'),
+    read('notes', '/api/model-notes'),
   ]) as [
     { models?: Array<{ id?: unknown; label?: unknown }>; default?: unknown } | null,
     {
@@ -325,16 +368,21 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
     catalog.codexAvailable = prefs.codexAvailable === true;
     catalog.defaultReasoningEffort = typeof prefs.defaultReasoningEffort === 'string' ? prefs.defaultReasoningEffort : null;
   }
-  if (catalog.codexAvailable) {
-    const list = await request('/api/me/coding-agent/models?backend=codex_openrouter')
-      .then((r) => (r.ok ? r.json() : null)).catch(() => null) as
+  // The list is read once the preferences say OpenRouter is offered. Until
+  // they have answered nobody knows whether it is, so it stays owed.
+  if (missing.includes('prefs')) {
+    if (wanted('openrouter')) missing.push('openrouter');
+  } else if (catalog.codexAvailable && (wanted('openrouter') || prefs)) {
+    const list = await readWithin('/api/me/coding-agent/models?backend=codex_openrouter', CATALOG_LIST_MS) as
       { models?: OpenRouterModel[]; recommendedModelId?: unknown } | null;
     if (list && Array.isArray(list.models)) {
       catalog.openrouter = list.models.filter((m) => m && typeof m.id === 'string');
       catalog.recommendedOpenRouterId = typeof list.recommendedModelId === 'string' ? list.recommendedModelId : null;
+    } else {
+      missing.push('openrouter');
     }
   }
-  return catalog;
+  return { catalog, missing };
 }
 
 export async function listDrafts(id: number): Promise<SavedDraft[]> {

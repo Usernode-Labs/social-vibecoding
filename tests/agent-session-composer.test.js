@@ -367,7 +367,7 @@ test('each model says what a typical change costs on it, never as a bare amount'
   assert.doesNotMatch(pill, /about/, 'closed: no estimate');
   assert.doesNotMatch(read('frontend/src/features/agent-session/index.tsx'), /data-agent-session-model-cost|typical change<\/span>/,
     'and nothing beside it');
-  assert.match(read('frontend/src/features/agent-session/api.ts'), /request\('\/api\/model-notes'\)/, 'the dev chat\'s figures, from its route');
+  assert.match(read('frontend/src/features/agent-session/api.ts'), /read\('notes', '\/api\/model-notes'\)/, 'the dev chat\'s figures, from its route');
 });
 
 // ── 5. Reply costs, and a turn that did not finish ─────────────────────

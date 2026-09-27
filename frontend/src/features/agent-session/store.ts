@@ -680,6 +680,9 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   host?: AgentSessionHost;
   drawer?: boolean;
 }) {
+  // Every route into a conversation, the same one again included, asks for
+  // any part of the model catalog that did not answer (loadModelCatalog).
+  void loadModelCatalog();
   if (id === 'new') return openDraft(host);
   // THE SAME SESSION AGAIN changes where it is drawn and nothing else — and in
   // particular does not claim the load (QA 2026-09-24 Q23). A cold deep link
@@ -1700,15 +1703,23 @@ export function setSpecTab(tab: SpecTab) {
 // ── The model ──────────────────────────────────────────────────────────
 
 /**
- * Read the picker's options once per page; a failed read is retried on the next open.
+ * Read the picker's options once per page. Whatever answered is published at
+ * once, so the model pill appears; a part that did not answer (a failure, an
+ * error, or a read that ran out of time: ./api.ts) is read again on the next
+ * call, which comes when a conversation is opened or routed to
+ * (openAgentSession), when the page comes back to the foreground and when the
+ * network returns (the composer, ./index.tsx). A complete catalog is never
+ * read again.
  *
  * Member-only, so it waits for a viewer the endpoint answers (QA 2026-09-24
  * Q35, ../../lib/platform-viewer.ts) instead of spending a 401 or 403 on a
  * signed-out or waitlisted document; `sv:authed` asks again.
  */
 let catalogDeferred = false;
+// null until the first read; then the parts still owed.
+let catalogMissing: api.CatalogPart[] | null = null;
 export function loadModelCatalog(): Promise<void> {
-  if (state.catalog) return Promise.resolve();
+  if (state.catalog && catalogMissing && !catalogMissing.length) return Promise.resolve();
   if (!hasPlatformViewer()) {
     if (!catalogDeferred) {
       catalogDeferred = true;
@@ -1717,8 +1728,11 @@ export function loadModelCatalog(): Promise<void> {
     return Promise.resolve();
   }
   if (!catalogRequest) {
-    catalogRequest = api.loadModelCatalog()
-      .then((catalog) => { publish({ catalog }); })
+    catalogRequest = api.loadModelCatalog(state.catalog, catalogMissing)
+      .then(({ catalog, missing }) => {
+        catalogMissing = missing;
+        publish({ catalog });
+      })
       .catch(() => {})
       .finally(() => { catalogRequest = null; });
   }
