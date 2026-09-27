@@ -554,6 +554,8 @@ function AppRow({ row }: { row: WorkshopRow }) {
         const win = window as any;
         if (win.NavLink?.isNativeClick?.(event)) return;
         event.preventDefault();
+        // A row opens the project's hub, whatever tab it was last left on.
+        win.AppView?._landOnHub?.(row.slug);
         win.App?.navigateToApp?.(row.slug, 'dev');
       }}
       leading={(

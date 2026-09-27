@@ -1316,13 +1316,13 @@ async function getReactionsForMessages(pool, messageIds, viewerId = null) {
 // the main stream is the app's channel (the hub's Channel card, the Messages
 // room), and Homeroom's activity — a proposal put up for a vote, a merge, a
 // check verdict, a setting changed, main going red — is no longer a line in
-// it, nor in #general. The story of one proposal, request or decision stays
-// in its own thread, which is why the callers that announced an event twice
-// still post the thread copy, and why a proposal's own notices name its
-// thread. The app-wide notices that have no thread (main's suite, a release,
-// the Friday card, a visibility or governance change) are shown where that
-// state lives — the Workshop's pause banner, the admins' notifications, the
-// members' own notifications, dapp.json — and are not written anywhere.
+// it, nor in #general. The story of one proposal, request or decision is
+// told in its own thread, which every caller names. The app-wide notices
+// that have no thread are shown where that state lives: main's suite and a
+// stalled release as banners on the project page (dev-board/board-frame.tsx),
+// and the Friday card and settings changed lately in the Workshop's notices
+// panel (services/app-notices.js, read from `events`). A call with no thread
+// is refused here rather than trusted to the callers.
 // db/migrate.js clearAutomatedChannelLines removes the lines written before.
 async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null, thread = null) {
   if (!thread) return null;

@@ -142,9 +142,6 @@ async function acceptInvite(pool, { appId, user }) {
     }
   }
 
-  await wsSvc.sendSystemMessage(pool, appId,
-    `${user.username} joined as a collaborator`, 'system'
-  ).catch((err) => log.warn('collab', 'join chat msg failed', { err: err.message }));
 
   events.record(pool, {
     type: events.EVENT_TYPES.COLLAB_JOINED,

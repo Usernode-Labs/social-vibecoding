@@ -1992,6 +1992,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -2070,6 +2071,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2093,6 +2095,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2116,6 +2119,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2139,6 +2143,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2162,6 +2167,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2208,6 +2214,29 @@
       "expression": null,
       "status": "exempt",
       "reason": "child-app provider proxy, not a Classic control"
+    },
+    {
+      "source": "src/routes/app-notices.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/notices",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.apps.item.notices.158654c8",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app",
+      "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
+        "frontend/src/features/dialogs/members-controller.js",
+        "frontend/src/features/messages/api.ts",
+        "public/js/app-view.js"
+      ]
     },
     {
       "source": "src/routes/app-permissions.js",
@@ -2269,6 +2298,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -2392,6 +2422,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2415,6 +2446,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2622,6 +2654,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/fork-app.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2669,6 +2702,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2691,6 +2725,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2751,6 +2786,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2774,6 +2810,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
@@ -2798,6 +2835,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
@@ -2821,6 +2859,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/rename-app.tsx",
         "frontend/src/features/messages/api.ts",
@@ -2844,6 +2883,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
@@ -2886,6 +2926,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/workshop/community-card.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2909,6 +2950,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2931,6 +2973,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2953,6 +2996,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2976,6 +3020,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -3031,6 +3076,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/create-app.tsx",
         "frontend/src/features/dialogs/fork-app.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -3057,6 +3103,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
@@ -3081,6 +3128,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/workshop/community-card.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -3103,6 +3151,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
@@ -3143,6 +3192,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -3837,6 +3887,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -3859,6 +3910,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -4095,6 +4147,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/feed-thread.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -4120,6 +4173,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/feed-thread.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -4236,6 +4290,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -4295,6 +4350,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/mention-typeahead.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -4589,6 +4645,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -4612,6 +4669,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -4688,6 +4746,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse-detail.tsx",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -5828,6 +5887,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -5850,6 +5910,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -5959,6 +6020,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -6711,6 +6773,7 @@
         "frontend/src/features/admin/admin-campaigns.tsx",
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/close-issue.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6772,6 +6835,7 @@
         "frontend/src/features/admin/admin-campaigns.tsx",
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/close-issue.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6814,6 +6878,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -6838,6 +6903,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/ref-typeahead.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -7279,6 +7345,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -7537,6 +7604,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7561,6 +7629,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7635,6 +7704,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7879,6 +7949,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -7901,6 +7972,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -8342,6 +8414,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -8516,6 +8589,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -8555,6 +8629,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -8577,6 +8652,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -8747,6 +8823,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -8770,6 +8847,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -8792,6 +8870,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -9908,6 +9987,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -12713,6 +12793,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/import-pr.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -12809,6 +12890,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/ref-typeahead.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -12833,6 +12915,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -13032,6 +13115,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"

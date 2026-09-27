@@ -247,7 +247,6 @@ async function unpromoteSession({ pool, sessionId, userId, actorUsername = null 
   const content = `${actorUsername || 'The author'} moved ${label} back to Underway. Its votes were cleared, and it goes up for a fresh vote when it is proposed again`;
   try {
     const { sendSystemMessage } = require('./ws');
-    await sendSystemMessage(pool, session.app_id, content, 'system');
     await sendSystemMessage(pool, session.app_id, content, 'system', null,
       { type: 'session', ref: session.id }).catch(() => {});
   } catch (err) {

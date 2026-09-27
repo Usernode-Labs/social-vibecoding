@@ -202,7 +202,7 @@ export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
       id={id}
       ref={panelRef}
       role="menu"
-      aria-label="Which workshop?"
+      aria-label="Which project?"
       className={'mx-4 mb-3 rounded-2xl overflow-hidden bg-white dark:bg-zinc-900 '
         + 'border border-zinc-200 dark:border-zinc-800'}
       // The arrows, Home and End move between the rows (QA 2026-09-24 Q18).
@@ -211,7 +211,7 @@ export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
       onKeyDown={(event) => { roveMenuFocus(event, event.currentTarget); }}
     >
       <p className="px-4 pt-3 pb-2 flex flex-col">
-        <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Which workshop?</span>
+        <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Which project?</span>
         <span className="text-xs text-zinc-500 dark:text-zinc-400">All your projects, or one of them.</span>
       </p>
       {/* ALL APPS IS THE WAY BACK UP — and the reason the app's Workshop

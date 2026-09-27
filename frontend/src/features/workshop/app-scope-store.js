@@ -1,5 +1,5 @@
 /**
- * Whether an app Workshop's "Which workshop?" panel is open (#2768).
+ * Whether an app Workshop's "Which project?" panel is open (#2768).
  *
  * TWO CONTROLS OPEN ONE PANEL, which is why this is a store and not the
  * `useState` it used to be inside `AppWorkshopScope`

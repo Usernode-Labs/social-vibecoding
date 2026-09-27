@@ -2719,6 +2719,10 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   assert.ok(route && /\[data-ws-dashboard\] > \[data-ws-open-line\]/
     .test(route.expectSelector), 'the lead line is what the gate can select');
   assert.ok(!route.expectSelector.includes(':has('), 'no :has() on a gate that blocks merge');
+  // The notices panel rides this check rather than a slot of its own: a
+  // sibling step, so it stays a plain chain. The staging demo gives it a
+  // Friday card and a setting changed (services/app-notices.js).
+  assert.match(route.expectSelector, /#dev-workshop \[data-ws-notices\] ~ \[data-ws-dashboard\] > \[data-ws-open-line\]$/);
 
   const themesCheck = byName(/renders its themes into #dev-workshop/);
   assert.ok(themesCheck && /\.dev-ws-row\[role="button"\]\[aria-expanded\]/.test(themesCheck.expectSelector));
@@ -3914,11 +3918,17 @@ test('the ?ws= deep link survives arriving AFTER the first paint', () => {
   //
   // Asserted as source text because nothing here runs effects: these tests
   // render statically, so the only local witness to an effect is the code.
-  assert.match(WORKSHOP, /const \[tab, setTab\] = useState<TabKey>\(\(\) => v\.tab \|\| 'status'\);/,
+  //
+  // The seed asks AppView first now (`freshTab`): the store keeps the LAST
+  // view published, so a page opened again — Back, or a hub door that has
+  // just set the tab — opened on a tab the viewer had since left. The
+  // publish stays the fallback, and the late-arrival effect stays for a
+  // mount where AppView is not there to ask.
+  assert.match(WORKSHOP, /const \[tab, setTab\] = useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\);/,
     'the seed still paints the right tab on the first frame when the view is already there');
   assert.match(
     WORKSHOP,
-    /const deepTabApplied = useRef<boolean>\(!!v\.tab\);\s*useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/,
+    /const deepTabApplied = useRef<boolean>\(!!v\.tab \|\| !!freshTab\(\)\);\s*useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/,
     'and an effect applies it when the publish lands later',
   );
   // The ref is not decoration. `v.tab` reads the URL, so it never changes for
@@ -4075,7 +4085,7 @@ test('the "+" asks to be wired when its row mounts, because the module wires it 
   // the late-arrival effect on `v.tab`: a state update raised inside a
   // passive effect is scheduled at default priority, so the pane lands a task
   // AFTER the synchronous publish the module's call follows.
-  assert.match(WORKSHOP, /useState<TabKey>\(\(\) => v\.tab \|\| 'status'\)/);
+  assert.match(WORKSHOP, /useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\)/);
   assert.match(WORKSHOP, /useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/);
   // So the "+" asks for itself, from its OWN mount effect. It rode on the
   // filter row's effect while it lived at the end of that row; it is its own

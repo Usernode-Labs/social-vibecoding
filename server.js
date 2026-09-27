@@ -68,6 +68,7 @@ const { reportAiRoutes } = require('./src/routes/report-ai');
 const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { workshopOverviewRoutes } = require('./src/routes/workshop-overview');
+const { appNoticesRoutes } = require('./src/routes/app-notices');
 const { messagesOverviewRoutes } = require('./src/routes/messages-overview');
 const { platformAboutRoutes } = require('./src/routes/platform-about');
 const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
@@ -612,6 +613,9 @@ app.use(workshopThemesRoutes(config));
 // every app the viewer can see. Me-scoped like the ordering routes, so it
 // sits behind authMiddleware and refuses an anonymous caller outright.
 app.use(workshopOverviewRoutes(config));
+// A project's notices on its Workshop tab: settings changed lately and this
+// week's card (services/app-notices.js). View access, as its chat is.
+app.use(appNoticesRoutes(config));
 app.use(messagesOverviewRoutes(config));
 // The mark menu's "About Homeroom" pane: the platform's name, tagline and
 // version, and its apps / members / merged figures. One cached answer for

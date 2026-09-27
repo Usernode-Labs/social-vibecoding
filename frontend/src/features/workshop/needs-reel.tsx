@@ -105,7 +105,11 @@ function ReelCard({ item, index, total, voted, busy, onVote }: {
       aria-labelledby={`workshop-reel-title-${item.kind}-${item.id}`}
     >
       <div className="workshop-reel-top">
-        <a className="workshop-reel-app" href={`#app/${encodeURIComponent(item.app.slug)}/workshop`}>
+        <a
+          className="workshop-reel-app"
+          href={`#app/${encodeURIComponent(item.app.slug)}/workshop`}
+          onClick={() => { (window as any).AppView?._landOnHub?.(item.app.slug); }}
+        >
           <span className="app-icon-tile workshop-reel-tile" data-icon={appIconKind(tile as never)} aria-hidden="true">
             <AppIconContent app={tile as never} />
           </span>

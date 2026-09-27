@@ -796,6 +796,8 @@ const Browse = {
   openRow(view) {
     const href = Browse.rowHref(view);
     if (!href) return;
+    // The hub, not the tab that project page was last left on.
+    if (typeof AppView !== 'undefined' && AppView._landOnHub) AppView._landOnHub(view.slug);
     location.hash = href;
   },
 
