@@ -87,9 +87,9 @@ test('a project page is its hub and its Workshop; Needs you and All items are pa
   assert.ok(at('<CommunityCard') < at('<ChannelCard') && at('<ChannelCard') < at('<NeedsCard'),
     'hero, channel, Needs you');
   assert.ok(LANDER.lastIndexOf('data-ws-since=""') > LANDER.indexOf('<NeedsCard'), 'Since your last visit last');
-  // The Workshop tab: your own work, then All items' numbers with See all.
+  // The Workshop tab: All items' numbers with See all, then your own work (#3299).
   const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("));
-  assert.ok(ws.indexOf('data-ws-mine=""') < ws.indexOf('data-ws-dashboard=""'));
+  assert.ok(ws.indexOf('data-ws-dashboard=""') < ws.indexOf('data-ws-mine=""'));
   assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
   // Each page has its way back to the tab it hangs off.
   assert.match(LANDER, /\{tab === 'needs' \|\| tab === 'all' \? \(\s*<PageBack\s+label=\{tab === 'needs' \? hubLabel\(community\?\.audience\) : 'Workshop'\}\s+onBack=\{\(\) => openTab\(tab === 'needs' \? 'status' : 'workshop'\)\}/);
