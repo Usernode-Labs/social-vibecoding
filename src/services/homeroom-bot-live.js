@@ -52,6 +52,16 @@ const log = require('./logger');
 // list included. Posting on real GitHub issues and pushing real branches
 // from it would be an irreversible side effect of a preview, so on staging a
 // live app is triaged exactly as a shadow one.
+// The bot's platform username. Its Homeroom thread posts are ordinary
+// messages from this user (#3288), so every "did a person reply?" check
+// leaves this author out. The GitHub login it comments as is a different
+// name (github.getBotUsername()).
+const BOT_USERNAME = 'homeroom_bot';
+
+function isOwnMessage(m) {
+  return String(m?.author || '').toLowerCase() === BOT_USERNAME;
+}
+
 function isStaging() {
   return process.env.USERNODE_ENV === 'staging';
 }
@@ -330,8 +340,8 @@ async function advanceSeen({
   const botLogin = String(login || '').toLowerCase();
   const newer = (at) => Number.isFinite(Date.parse(at)) && Date.parse(at) > sinceMs;
   const someoneElse = comments.some((c) => String(c.author || '').toLowerCase() !== botLogin && newer(c.createdAt))
-    || (thread?.messages || []).some((m) => newer(m.createdAt))
-    || (proposalThread?.messages || []).some((m) => newer(m.createdAt));
+    || (thread?.messages || []).some((m) => !isOwnMessage(m) && newer(m.createdAt))
+    || (proposalThread?.messages || []).some((m) => !isOwnMessage(m) && newer(m.createdAt));
   if (someoneElse) {
     log.info('homeroom-bot', 'Someone replied while the bot worked; leaving the issue to be read again', {
       app: app.slug, issueNumber,
@@ -573,6 +583,8 @@ async function buildAndPropose({
 }
 
 module.exports = {
+  BOT_USERNAME,
+  isOwnMessage,
   isLiveFor,
   isStaging,
   lookingText,
