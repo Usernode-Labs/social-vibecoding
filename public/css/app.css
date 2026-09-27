@@ -7984,6 +7984,14 @@ span.gc-vote-btn-icon { cursor: default; }
   vertical-align: middle;
 }
 .gc-vote-inline:empty { display: none; }
+/* #3288: the same card under a message bubble (the Homeroom bot's proposal
+   post), on its own line below the text rather than trailing it. */
+.gc-vote-inline.gc-vote-inline-block {
+  display: flex;
+  margin-left: 0;
+  margin-top: 6px;
+}
+.gc-vote-inline.gc-vote-inline-block:empty { display: none; }
 /* ── The status band, full width ───────────────────────────
    The state bar, the 💬 count, the Closes-#N pills and the metadata chips
    (priority / assignee / category). These used to ride on the title's own

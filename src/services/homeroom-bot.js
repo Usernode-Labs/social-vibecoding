@@ -1361,7 +1361,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     }
     const looked = await live.post({
       pool, github, ws: liveD.ws, app, repo, issueNumber,
-      kind: 'looking', text: live.lookingText(),
+      kind: 'looking', text: live.lookingText(), sender: bot,
     }).catch((err) => {
       log.warn('homeroom-bot', 'Looking post failed (continuing)', { app: app.slug, issueNumber, err: err.message });
       return null;
@@ -1795,7 +1795,7 @@ async function runFollowUp(pool, config, {
   let runId = null;
   const say = async (kind, text, postedAt) => {
     const posted = await live.post({
-      pool, github, ws: deps.ws, app, repo, issueNumber, kind, runId, text,
+      pool, github, ws: deps.ws, app, repo, issueNumber, kind, runId, text, sender: bot,
       // Answered where it was asked: the proposal's thread too, when that
       // is where somebody wrote.
       proposalSessionId: replies.some((r) => r.where === 'proposal') ? session.id : null,
@@ -1910,7 +1910,7 @@ async function actOnVerdict({
   const say = async (kind, text, extra = {}) => {
     const mention = live.tagsPoster(kind) ? await posterOnce() : null;
     const posted = await live.post({
-      pool, github, ws, app, repo, issueNumber, kind, runId, text, mention, senderId: bot.id,
+      pool, github, ws, app, repo, issueNumber, kind, runId, text, mention, senderId: bot.id, sender: bot,
       notifications: deps.notifications || null, ...extra,
     });
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);

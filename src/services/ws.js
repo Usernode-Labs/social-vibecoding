@@ -1351,6 +1351,50 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
   return { id: rows[0].id, createdAt: rows[0].created_at };
 }
 
+/**
+ * #3288: a thread post from a synthetic account (the Homeroom bot), written
+ * and broadcast as an ORDINARY message from that user, so the chat draws it
+ * as a bubble with a name and not as a centred system line.
+ *
+ * Deliberately NOT handleMessage. That is the path for a person at a
+ * keyboard, and three of its effects are wrong for text a model wrote:
+ *   - it turns every `@name` in the body into a notification, so a reply
+ *     that quoted a handle would notify whoever owns it (the caller writes
+ *     the one mention it means, for the person it answers);
+ *   - it wakes the Homeroom bot on issue and proposal threads, and this is
+ *     the bot talking;
+ *   - its collaborator and join gates are for people; the bot is on an app
+ *     because the app is in its live list.
+ * What it keeps is the row and the frame: `msg_type = 'message'`, the
+ * author's user_id, and the same `chat` payload handleMessage broadcasts,
+ * through broadcastFromSender so a viewer who blocked the account does not
+ * receive it. Thread posts only, like sendSystemMessage.
+ */
+async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null } = {}) {
+  if (!thread || !user || !Number.isInteger(Number(user.id))) return null;
+  const text = String(content || '').trim().slice(0, MAX_CHAT_LEN);
+  if (!text) return null;
+  const { rows } = await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+     VALUES ($1, $2, $3, 'message', $4, $5, $6)
+     RETURNING id, created_at`,
+    [appId, Number(user.id), text, JSON.stringify(metadata || {}), thread.type, thread.ref]
+  );
+  await broadcastFromSender(pool, appId, {
+    type: 'chat',
+    id: rows[0].id,
+    userId: Number(user.id),
+    username: user.username,
+    content: text,
+    msgType: 'message',
+    ...(metadata ? { metadata } : {}),
+    thread,
+    createdAt: rows[0].created_at,
+    postedVia: null,
+  }, Number(user.id));
+  return { id: rows[0].id, createdAt: rows[0].created_at };
+}
+
 function getOnlineUsers(appId) {
   const room = rooms.get(appId);
   if (!room) return [];
@@ -1669,4 +1713,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
+module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };

@@ -22,16 +22,20 @@
 //                   runs — pull request, staging, checks, vote — and a post
 //                   on the issue that links the proposal
 //
-// Every post goes where the platform's "Generate proposal" already posts: a
-// GitHub comment on the issue, and a system message in the issue's Homeroom
-// discussion thread. Every post is recorded in homeroom_bot_posts.
+// Every post goes to two places: a GitHub comment on the issue, and a
+// message from the bot's own user in the issue's Homeroom discussion thread
+// (an ordinary message since #3288, drawn as its bubble; it used to be a
+// system line). Every post is recorded in homeroom_bot_posts.
 //
 // ── The loop this must never start ───────────────────────────────────────
 //
 // A post is issue activity, and issue activity re-queues the issue. Two
 // halves keep the bot from answering itself:
-//   - its Homeroom posts are SYSTEM messages, which the queue's thread-
-//     activity query (msg_type = 'message') has always ignored;
+//   - its Homeroom posts come from a synthetic user, and every "did a person
+//     reply?" check leaves synthetic authors out: the queue's thread-activity
+//     queries by is_synthetic, advanceSeen and the follow-up by BOT_USERNAME.
+//     They are written by ws.sendBotMessage, which, unlike a person's post,
+//     never fires the bot's own wake hooks;
 //   - its GitHub comment moves the issue's updated_at, so the run records
 //     the comment's own created_at as what it has seen (advanceSeen). It
 //     does that only when nobody else posted while it worked: a person's
@@ -226,8 +230,15 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, senderId = null, notifications = null,
-  proposalSessionId = null,
+  proposalSessionId = null, sender = null,
 }) {
+  // #3288: with a sender (the bot's own user), the thread posts are ordinary
+  // messages from it, drawn as its bubbles. `msgType` then no longer picks
+  // the row's kind: the proposal link is a message whose `metadata.vote`
+  // the chat hangs the vote card on. Without one, the old system line.
+  const inThread = (content, thread, meta = metadata, kindOfRow = msgType) => (sender
+    ? ws.sendBotMessage(pool, app.id, { user: sender, content, metadata: meta, thread })
+    : ws.sendSystemMessage(pool, app.id, content, kindOfRow, meta, thread));
   const { rows } = await pool.query(
     `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
      VALUES ($1, $2, $3, $4)
@@ -250,7 +261,7 @@ async function post({
   // author of an issue opened there about comments on it.
   const threadText = mention ? `@${mention} ${text}` : text;
   try {
-    message = await ws.sendSystemMessage(pool, app.id, threadText, msgType, metadata, { type: 'issue', ref: issueNumber });
+    message = await inThread(threadText, { type: 'issue', ref: issueNumber });
   } catch (err) {
     log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
   }
@@ -264,7 +275,7 @@ async function post({
     try {
       const notify = notifications || require('./notifications');
       const rows = await notify.createMentionNotifications(pool, {
-        appId: app.id, chatMessageId: message.id, senderId, content: `@${mention}`,
+        appId: app.id, chatMessageId: message.id, senderId: senderId ?? sender?.id ?? null, content: `@${mention}`,
       });
       await Promise.all(rows.map((row) => notify.hydrateAndPush(pool, row)));
       notified = rows.length;
@@ -273,14 +284,12 @@ async function post({
     }
   }
   // #3264: a follow-up answers where it was asked. When somebody wrote in
-  // the proposal's own discussion, the reply goes there too, as the same
-  // kind of system message the promote route writes in that thread.
+  // the proposal's own discussion, the reply goes there too, as a message
+  // from the bot (#3288).
   let proposalMessage = null;
   if (proposalSessionId) {
     try {
-      proposalMessage = await ws.sendSystemMessage(pool, app.id, text, 'system', null, {
-        type: 'session', ref: Number(proposalSessionId),
-      });
+      proposalMessage = await inThread(text, { type: 'session', ref: Number(proposalSessionId) }, null, 'system');
     } catch (err) {
       log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
     }
