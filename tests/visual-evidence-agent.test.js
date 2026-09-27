@@ -139,6 +139,8 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.match(agent.replayPlanGuide(), /Use count only when the intended claim is the exact number of\s+matches/);
   assert.match(agent.replayPlanGuide(), /A detached assertion means the intended target has no matches/);
   assert.match(agent.replayPlanGuide(), /execute every accepted interaction step on both revisions/);
+  assert.match(agent.replayPlanGuide(), /call evidence_reset_side and execute each final\s+action list/i);
+  assert.match(agent.replayPlanGuide(), /tour, dialog, banner, or saved preference/i);
   assert.match(agent.replayPlanGuide(), /actually click it on both revisions and\s+assert the resulting page or URL/);
   assert.match(agent.replayPlanGuide(), /state:"visible" or state:"hidden"/);
   assert.match(agent.replayPlanGuide(), /waitFor target only needs one or more\s+visible matches when state is visible/);
@@ -148,6 +150,8 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.match(agent.replayPlanGuide(), /eligibleHostedAppSlugs/);
   assert.match(agent.replayPlanGuide(), /generic hosted-app frame,\s+launch, or bridge, use the evidence-owned hosted app/i);
   assert.match(agent.promptFor({ repair: true }), /must not be hidden by switching to a user app/i);
+  assert.match(agent.promptFor({ repair: true }), /one visible target timed out while becoming actionable/i);
+  assert.match(agent.promptFor({ repair: true }), /Never force-click/);
   assert.match(agent.replayPlanGuide(), /browser_mouse_move_xy/);
   assert.match(agent.replayPlanGuide(), /hoverViewport with/);
   assert.match(agent.replayPlanGuide(), /image interpretation is not required/);

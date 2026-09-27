@@ -801,6 +801,85 @@ test('only a loaded hosted app with blocked embedded requests may be replaced in
     } } }, plan), 'hosted_app');
 });
 
+test('only an actionability timeout on one attached visible target may be repaired', () => {
+  const plan = fixtures.plan();
+  const detail = {
+    phase: 'action', side: 'base', actionId: 'open-app', actionType: 'click',
+    targetStates: [{ matchedCount: 1, visibleCount: 1, attachedCount: 1 }],
+    pageState: { visibleDialogCount: 1 },
+  };
+  const failure = Object.assign(
+    new Error('locator.click: Timeout 10000ms exceeded. Call log: target intercepted pointer events'),
+    { code: 'replay_failed', detail }
+  );
+  assert.equal(orchestrator.replayRepairKind(failure, plan), 'actionability');
+  assert.equal(orchestrator.replayRepairKind(Object.assign(
+    new Error('locator.click: Timeout 10000ms exceeded.'),
+    { code: 'replay_failed', detail: { ...detail,
+      targetStates: [{ matchedCount: 0, visibleCount: 0, attachedCount: 0 }] } }
+  ), plan), null);
+  assert.equal(orchestrator.replayRepairKind(Object.assign(
+    new Error('browser was closed'), { code: 'replay_failed', detail }
+  ), plan), null);
+  assert.equal(orchestrator.replayRepairKind(Object.assign(
+    new Error('locator.click: Timeout 10000ms exceeded.'),
+    { code: 'replay_failed', detail: { ...detail, actionType: 'navigate' } }
+  ), plan), null);
+});
+
+test('a blocked visible action starts a correction turn and two clean replays', async () => {
+  const rejected = fixtures.plan();
+  // The fixture deliberately shares its before/after action array. A real
+  // parsed plan has independent JSON arrays, so mirror that shape here before
+  // adding the setup action to both sides.
+  const corrected = JSON.parse(JSON.stringify(fixtures.plan()));
+  const dismissal = {
+    id: 'dismiss-blocker', stage: 'setup', type: 'click',
+    target: { by: 'role', role: 'button', name: 'Skip tour', exact: true },
+  };
+  corrected.stories[0].replay.before.actions.unshift(dismissal);
+  corrected.stories[0].replay.after.actions.unshift({ ...dismissal });
+  const blocked = Object.assign(
+    new Error('locator.click: Timeout 10000ms exceeded. Call log: target intercepted pointer events'),
+    { code: 'replay_failed', detail: {
+      storyId: 'invite-suggestions', viewport: 'desktop', side: 'base',
+      phase: 'action', actionId: 'open-members', actionType: 'click',
+      targetStates: [{ matchedCount: 1, visibleCount: 1, attachedCount: 1 }],
+      pageState: { visibleDialogCount: 1, visibleLandmarkIds: ['home-tour'] },
+    } }
+  );
+  const fixture = setup({ dispatch: async (options, dispatchCount) => {
+    const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+    if (dispatchCount === 1) {
+      await assert.rejects(control.runPlan(rejected), { code: 'replay_failed' });
+    } else {
+      assert.equal(options.repairAttempt, 1);
+      assert.equal(control.getContext().repair.failure.kind, 'actionability');
+      assert.equal(control.getContext().repair.failure.detail.actionId, 'open-members');
+      await control.runPlan(corrected);
+    }
+    return { backend: 'claude_code', threadId: 'evidence-thread' };
+  } });
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      fixture.calls.passes.push(args[2].pass);
+      throw blocked;
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
+  assert.equal(fixture.calls.stored, 1);
+  assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTrigger, {
+    kind: 'actionability', code: 'replay_failed', side: 'base', actionId: 'open-members',
+  });
+});
+
 test('an actually changing static checkpoint can get a bounded observed-state repair', () => {
   const plan = fixtures.plan();
   const failure = { code: 'unstable_checkpoint', detail: {

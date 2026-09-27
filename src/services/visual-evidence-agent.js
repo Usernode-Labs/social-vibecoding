@@ -124,7 +124,12 @@ Verify the data behind the claimed screen loaded for the story's persona.
 A plan must execute every accepted interaction step on both revisions and
 assert the accepted checkpoint after the last step. Before calling
 evidence_run_plan, compare the numbered intent.steps with the before and after
-action lists one by one. A visible control is not proof that clicking it
+action lists one by one. Then call evidence_reset_side and execute each final
+action list from its declared startPath on both freshly reset revisions. Do
+not rely on a tour, dialog, banner, or saved preference you dismissed during
+earlier exploration staying dismissed after reset; encode the observed
+semantic dismissal or completion action in the replay when it blocks the
+claimed flow. A visible control is not proof that clicking it
 reaches the claimed destination: actually click it on both revisions and
 assert the resulting page or URL. If the frozen story cannot prove its full
 claim with the available fixture and replay actions, report that blocker
@@ -212,6 +217,13 @@ If a declared controlled failure was unused, keep its exact accepted API path
 and inspect the real triggering action on both revisions. Move the failure
 toggle before that action; do not invent another path or claim success until
 the browser shows the intended error state.
+If the failure says one visible target timed out while becoming actionable,
+inspect both freshly reset revisions for the surface that intercepts it, a
+disabled state, or an unfinished transition. Add the real semantic action that
+dismisses or completes that blocker, or a bounded wait for an observed state,
+then retain and exercise the original claimed interaction. Never force-click,
+mutate the DOM, use coordinates to slip past an overlay, or navigate directly
+to skip the accepted user flow.
 Review the remaining actions, assertions, and focus targets before resubmitting.
 Do not guess a replacement from the error text alone. Submit one complete
 corrected set of replays through evidence_run_plan. An accepted response means
