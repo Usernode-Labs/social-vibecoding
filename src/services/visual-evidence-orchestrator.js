@@ -145,9 +145,10 @@ function replayRepairKind(error, plan) {
   // assertion that requires a unique target is another locator error. Keep
   // count assertions as claims about cardinality, and keep detached failures
   // hard: narrowing a selector until nothing matches would not prove that the
-  // intended element disappeared. Wrong values and states remain hard
-  // failures except for an exact motion checkpoint that can be verified after
-  // an observed, bounded state wait.
+  // intended element disappeared. Wrong values and states remain hard except
+  // for two bounded cases: an exact motion checkpoint that can be verified
+  // after an observed state wait, and a supporting base-side visibility check
+  // beside a separate absence assertion for a change declared absent on base.
   if (code !== 'assertion_failed' || error?.detail?.phase !== 'assertion') return null;
   const assertionType = error.detail.assertion?.type;
   const uniqueAssertion = ['visible', 'hidden', 'attached', 'checked', 'text', 'value', 'focusWithin']
@@ -161,8 +162,26 @@ function replayRepairKind(error, plan) {
   const side = detail.side === 'base' ? 'before' : detail.side === 'head' ? 'after' : null;
   const assertion = side && Number.isInteger(detail.assertionIndex)
     ? story?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex] : null;
-  if (story?.intent?.animation !== 'motion' || !assertion
+  if (!assertion
       || planContract.canonicalJson(assertion) !== planContract.canonicalJson(detail.assertion)) return null;
+  const siblingBaseAssertions = Array.isArray(story?.replay?.checkpoint?.assertions?.before)
+    ? story.replay.checkpoint.assertions.before : [];
+  const preservesBaseAbsenceProof = siblingBaseAssertions.some((candidate, index) =>
+    index !== detail.assertionIndex && (
+      candidate?.type === 'hidden'
+      || candidate?.type === 'detached'
+      || (candidate?.type === 'count' && candidate.count === 0)
+    ));
+  if (detail.side === 'base'
+      && story?.intent?.baseState === 'not_present'
+      && assertion.type === 'visible'
+      && detail.count === 1
+      && targetStates.length === 1
+      && targetStates[0]?.matchedCount === 1
+      && targetStates[0]?.attachedCount === 1
+      && targetStates[0]?.visibleCount === 0
+      && preservesBaseAbsenceProof) return 'supporting_visibility';
+  if (story?.intent?.animation !== 'motion') return null;
   // A motion marker can still be visible at the checkpoint even though it
   // will settle moments later. Permit one bounded plan correction, but only
   // when the exact recorded assertion failed for that transient state.
@@ -1617,6 +1636,8 @@ async function executeRun(config, options, injected = {}) {
             ? 'A motion checkpoint ran while an observed element was still visible. Inspect both revisions and add an observed, bounded wait without changing the checkpoint assertions or interactions.'
             : repairKind === 'static_timing'
               ? 'The static checkpoint kept changing after at least three pixel samples. Inspect both revisions and wait for an observed settled state. Keep the original interactions, focus, and assertions.'
+            : repairKind === 'supporting_visibility'
+              ? 'A supporting base-side visibility assertion matched one attached but hidden element while another assertion still proves the accepted change is absent on base. Inspect both fresh revisions. Correct or remove only that unsupported context assertion, retain the separate base absence proof and every accepted interaction and claim, and report a blocker if the hidden element is actually required.'
             : repairKind === 'actionability'
               ? 'The planned target existed and was visible, but it did not become actionable. Inspect both fresh revisions for a blocking dialog, tour, disabled state, or unfinished transition. Add explicit semantic actions or bounded observed-state waits, then keep the original claimed interaction. Do not force the action or bypass the user flow.'
             : repairKind === 'hosted_app'
@@ -1656,6 +1677,8 @@ async function executeRun(config, options, injected = {}) {
           ? 'A motion checkpoint ran before the animation settled; the evidence agent is checking the timing…'
           : repairKind === 'static_timing'
             ? 'The static checkpoint kept changing; the evidence agent is checking the settled state…'
+          : repairKind === 'supporting_visibility'
+            ? 'A supporting base checkpoint assertion was hidden; the evidence agent is checking the real surrounding state…'
           : repairKind === 'actionability'
             ? 'A visible control was blocked or not ready; the evidence agent is correcting the setup flow…'
           : repairKind === 'hosted_app'

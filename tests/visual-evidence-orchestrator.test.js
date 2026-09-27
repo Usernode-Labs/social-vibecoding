@@ -915,6 +915,81 @@ test('only ambiguous unique assertion targets become locator repairs', () => {
   }, plan), null);
 });
 
+test('only a hidden supporting base assertion beside an absence proof gets a correction', () => {
+  const plan = fixtures.plan();
+  const story = plan.stories[0];
+  story.intent.baseState = 'not_present';
+  const supporting = {
+    type: 'visible', target: { by: 'css', value: '#admin-merges-runs' },
+  };
+  story.replay.checkpoint.assertions.before.unshift(supporting);
+  const failure = {
+    code: 'assertion_failed',
+    detail: {
+      storyId: story.id, side: 'base', phase: 'assertion', assertionIndex: 0,
+      count: 1, actual: null, assertion: supporting,
+      targetStates: [{ matchedCount: 1, visibleCount: 0, attachedCount: 1 }],
+    },
+  };
+  assert.equal(orchestrator.replayRepairKind(failure, plan), 'supporting_visibility');
+  assert.equal(orchestrator.replayRepairKind({ ...failure,
+    detail: { ...failure.detail, side: 'head' } }, plan), null);
+  story.intent.baseState = 'present';
+  assert.equal(orchestrator.replayRepairKind(failure, plan), null);
+  story.intent.baseState = 'not_present';
+  story.replay.checkpoint.assertions.before.splice(1, 1);
+  assert.equal(orchestrator.replayRepairKind(failure, plan), null);
+});
+
+test('a hidden supporting base assertion gets one bounded correction and fresh passes', async () => {
+  const rejected = fixtures.plan();
+  const story = rejected.stories[0];
+  story.intent.baseState = 'not_present';
+  const supporting = {
+    type: 'visible', target: { by: 'css', value: '#admin-merges-runs' },
+  };
+  story.replay.checkpoint.assertions.before.unshift(supporting);
+  const corrected = JSON.parse(JSON.stringify(rejected));
+  corrected.stories[0].replay.checkpoint.assertions.before.shift();
+  const failure = Object.assign(new Error('visible assertion failed.'), {
+    code: 'assertion_failed',
+    detail: {
+      storyId: story.id, side: 'base', phase: 'assertion', assertionIndex: 0,
+      count: 1, actual: null, assertion: supporting,
+      targetStates: [{ matchedCount: 1, visibleCount: 0, attachedCount: 1 }],
+    },
+  });
+  const fixture = setup({
+    dispatch: async (options, dispatchCount) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      if (dispatchCount === 1) await assert.rejects(control.runPlan(rejected));
+      else {
+        assert.equal(control.getContext().repair.failure.kind, 'supporting_visibility');
+        await control.runPlan(corrected);
+      }
+      return { backend: 'claude_code', threadId: 'evidence-thread' };
+    },
+  });
+  fixture.run.intent = contract.parseIntent(contract.semanticIntentFromPlan(rejected));
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      fixture.calls.passes.push(args[2].pass);
+      throw failure;
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
+  assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTrigger, {
+    kind: 'supporting_visibility', code: 'assertion_failed', side: 'base', assertionIndex: 0,
+  });
+});
+
 test('a missing readiness locator gets one correction turn and fresh replay passes', async () => {
   const rejected = fixtures.plan();
   const corrected = fixtures.plan();
