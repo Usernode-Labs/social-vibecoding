@@ -375,6 +375,42 @@ test('stop and liveness probes see the Claude-over-OpenRouter adapter', () => {
 
 // ── UI ────────────────────────────────────────────────────────────────
 
+// The copy the OpenRouter settings screen actually shows is what settings.js
+// `_normalizeOpenRouterCopy()` writes at runtime, over the static markup.
+// #3296's first cut edited only the static copy, which never rendered, and a
+// test pinning that source passed on text nobody saw. So pin the runtime copy,
+// and hold the static copy equal to it.
+function renderedOpenRouterCopy() {
+  const settings = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
+  const start = settings.indexOf('_normalizeOpenRouterCopy() {');
+  const body = settings.slice(start, settings.indexOf('_formatOpenRouterPrice(value)', start));
+  const pick = (re) => { const m = re.exec(body); assert.ok(m, String(re)); return m[1]; };
+  return {
+    heading: pick(/heading\.textContent = '([^']*)'/),
+    intro: pick(/intro\.textContent = '([^']*)'/),
+    label: pick(/modelLabel\.textContent = '([^']*)'/),
+  };
+}
+
+test('the OpenRouter settings copy people see names the models that run in Claude Code', () => {
+  const copy = renderedOpenRouterCopy();
+  assert.match(copy.intro, /Models marked Claude Code in the model list run in Claude Code\./);
+  // Which CLI runs the rest is not a product choice, so it stays unnamed.
+  assert.doesNotMatch(`${copy.heading} ${copy.intro} ${copy.label}`, /Codex/);
+});
+
+test('the static OpenRouter settings markup says exactly what the runtime copy says', () => {
+  const copy = renderedOpenRouterCopy();
+  const tsx = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'sections', 'openrouter.tsx'), 'utf8');
+  const section = /<SectionHeading title=\{<>([^<]*)<\/>\}>\s*([^<]*?)\s*<\/SectionHeading>/.exec(tsx);
+  assert.ok(section, 'the OpenRouter SectionHeading is where this test expects it');
+  assert.equal(section[1], copy.heading);
+  assert.equal(section[2].replace(/\s+/g, ' '), copy.intro);
+  const label = /<Label[^>]*htmlFor="settings-openrouter-model">\s*([^<]*?)\s*<\/Label>/.exec(tsx);
+  assert.ok(label, 'the model picker label is where this test expects it');
+  assert.equal(label[1], copy.label);
+});
+
 test('the transcript and the log name the CLI that actually ran', () => {
   const transcript = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'agent-session', 'transcript.ts'), 'utf8');
   assert.match(transcript, /meta\.agentBackend === 'codex_openrouter' && meta\.agentHarness !== 'claude' \? 'Codex' : 'Claude Code'/);
@@ -391,11 +427,6 @@ test('pickers mark the Claude Code models and keep their thinking level', () => 
     assert.match(fs.readFileSync(path.join(ROOT, file), 'utf8'),
       /if \(model\?\.harness === 'claude'\) badges\.push\('Claude Code'\);/, file);
   }
-  // The settings screen no longer calls every OpenRouter model a Codex model.
-  const settings = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'sections', 'openrouter.tsx'), 'utf8');
-  assert.match(settings, /Models marked Claude Code in the list run in Claude Code; the rest run in Codex\./);
-  assert.match(settings, /<SectionHeading title=\{<>OpenRouter<\/>\}>/);
-  assert.match(settings, /\n\s+Coding model\n\s+<\/Label>/);
   const choice = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'agent-session', 'model-choice.ts'), 'utf8');
   assert.match(choice, /return !model \|\| model\.supportsReasoning !== false;/);
   assert.ok(!/harness !== 'claude'/.test(choice), 'no model loses its thinking level for running in Claude Code');

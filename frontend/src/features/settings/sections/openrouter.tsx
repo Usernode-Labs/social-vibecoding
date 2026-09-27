@@ -6,10 +6,13 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 
 /**
- * OpenRouter as the preferred coding agent. #3296: a model runs in Codex or,
- * where the platform's per-model map says so, in Claude Code; the model list
- * marks the Claude Code ones, so the copy here names neither CLI as the only
- * one. #2568: every account is
+ * OpenRouter as the preferred coding agent. The heading, description and
+ * model label are ALSO written at runtime by settings.js
+ * `_normalizeOpenRouterCopy()`, so the text here must be that text word for
+ * word: #3296's first cut edited only this copy, and the page never showed
+ * it. tests/openrouter-harness.test.js holds the two equal. The description
+ * names Claude Code, the one CLI a model can run in besides the unnamed
+ * default, because the model list tags those models. #2568: every account is
  * created with its included company key, so there is nothing to claim and no
  * identity to prove first — #settings-openrouter-included is a STATUS line,
  * not a card with a button. Everyone may still use a personal OpenRouter key
@@ -22,7 +25,7 @@ export function OpenRouterSection() {
   return (
     <div data-settings-section="openrouter" className="hidden">
       <SectionHeading title={<>OpenRouter</>}>
-        Your account comes with an included OpenRouter key, and OpenRouter is the default coding-agent option. GLM 5.3 Flash is preferred when your OpenRouter catalog exposes it, and you can select any other available model. Models marked Claude Code in the list run in Claude Code; the rest run in Codex. Keys are encrypted at rest and injected only for a turn.
+        Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your account comes with an included OpenRouter key, so OpenRouter is the default and GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Models marked Claude Code in the model list run in Claude Code. Keys are encrypted at rest and injected only for each turn.
       </SectionHeading>
       <div id="settings-openrouter-included" className="hidden rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/30 px-3 py-3 mb-3">
         <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Included OpenRouter key</div>
@@ -53,7 +56,7 @@ export function OpenRouterSection() {
       </div>
       <div id="settings-openrouter-models-wrap" className="hidden mt-4">
         <Label className="mb-1" htmlFor="settings-openrouter-model">
-          Coding model
+          OpenRouter model
         </Label>
         <div className="flex flex-wrap gap-2 mb-2">
           <Input
