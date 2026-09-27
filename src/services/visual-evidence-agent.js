@@ -243,6 +243,13 @@ dismisses or completes that blocker, or a bounded wait for an observed state,
 then retain and exercise the original claimed interaction. Never force-click,
 mutate the DOM, use coordinates to slip past an overlay, or navigate directly
 to skip the accepted user flow.
+If the repair context names supporting_visibility, the accepted change is
+absent on base and a separate assertion already proves that absence. Inspect
+the failed supporting target on both fresh revisions. Correct or remove only
+that unsupported context assertion if it was not a real visible prerequisite;
+retain the separate base absence proof, every accepted interaction, and the
+head-side claim. If the hidden element is required for the claimed flow, call
+evidence_report_blocker instead of weakening the claim.
 Review the remaining actions, assertions, and focus targets before resubmitting.
 Do not guess a replacement from the error text alone. Submit one complete
 corrected set of replays through evidence_run_plan. An accepted response means
