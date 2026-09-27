@@ -66,6 +66,7 @@ import { confirmAction } from '../../lib/confirm';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
+import { ImageViewer, openInViewer } from '../image-viewer/image-viewer';
 import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
@@ -177,6 +178,9 @@ function AttachmentImage({ att }: { att: Attachment }) {
   // chip rather than a broken-image icon. The module used to rewrite the
   // anchor in place; this is the same anchor, drawn the other way.
   const [broken, setBroken] = useState(false);
+  // #3286: a plain tap opens the picture in the app's own viewer, which has
+  // a way out; the link is still the file for a new tab on purpose.
+  const [viewing, setViewing] = useState(false);
   if (broken) {
     return (
       <a href={att.url} target="_blank" rel="noopener" className="dc-msg-att-chip">
@@ -185,15 +189,25 @@ function AttachmentImage({ att }: { att: Attachment }) {
     );
   }
   return (
-    <a href={att.url} target="_blank" rel="noopener" title={`${att.name}: open full size`}>
-      <img
-        className="dc-msg-att-img"
-        src={att.url}
-        alt={att.name}
-        loading="lazy"
-        onError={() => setBroken(true)}
-      />
-    </a>
+    <>
+      <a
+        href={att.url}
+        target="_blank"
+        rel="noopener"
+        title={`${att.name}: open full size`}
+        data-image-open=""
+        onClick={(event) => openInViewer(event, () => setViewing(true))}
+      >
+        <img
+          className="dc-msg-att-img"
+          src={att.url}
+          alt={att.name}
+          loading="lazy"
+          onError={() => setBroken(true)}
+        />
+      </a>
+      {viewing ? <ImageViewer src={att.url} alt={att.name} onClose={() => setViewing(false)} /> : null}
+    </>
   );
 }
 

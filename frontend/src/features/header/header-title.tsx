@@ -172,7 +172,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
         {switcher ? null : tile}
         {allAppsSwitcher ? (
           /* THE ALL-APPS CHIP, in the bar (#3271). The same control as the
-             screen's own `#workshop-scope` — the grid, "All apps" and the ⌄ —
+             screen's own `#workshop-scope` — the grid, "All" and the ⌄ —
              opening the same panel, which still drops down at the top of the
              screen, right under this bar. */
           <button
@@ -183,11 +183,11 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
             aria-haspopup="menu"
             aria-expanded={allAppsOpen ? 'true' : 'false'}
             aria-controls="workshop-scope-picker"
-            aria-label="All apps, open one of your apps"
+            aria-label="All your projects, or open one"
             onClick={() => workshopStore.set({ scopeOpen: !allAppsOpen })}
           >
             <Squares2X2Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
-            <span id="header-title-name" className="min-w-0 truncate">All apps</span>
+            <span id="header-title-name" className="min-w-0 truncate">All</span>
             <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
           </button>
         ) : switcher ? (

@@ -42,7 +42,8 @@
  * Improve panel, and came back as an App | Workshop segmented control when
  * that panel retired (#2718 review). The owner's call in #2761 was that it
  * should not be a toggle at all: the Workshop is one more place this menu
- * goes, so it is a "Go to workshop" row in the list like the others, and
+ * goes, so it is a row in the list like the others ("Go to community hub"
+ * since #3287, the page it opens on), and
  * nothing replaces the App segment — the parked app on the bar (#2762) is
  * how you get back to a running app.
  *
@@ -117,7 +118,6 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
 import {
-  BoardIcon,
   ChatIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -125,6 +125,7 @@ import {
   PlusWideIcon,
   SparklesIcon,
   TerminalIcon,
+  UserGroupIcon,
   XIcon,
 } from '@/components/ui/icons';
 
@@ -282,7 +283,7 @@ export function AppsSwitcherSheet(): ReactNode {
   } = useStoreState(improveStore);
   const agentSessions = useAgentSessions();
   // Votes this viewer owes on the app in context — the badge on the
-  // "Go to workshop" row. See the fetch below.
+  // "Go to community hub" row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
 
   // HOMEROOM FOR A VIEWER WHO IS NOT SERVED ITS ROW (SELF_APP_PUBLIC_VOTING
@@ -516,7 +517,7 @@ export function AppsSwitcherSheet(): ReactNode {
         {/* THE App | Workshop STRIP IS RETIRED (#2761). It sat here as a
             segmented control, and a toggle was the wrong shape for it: this
             menu is a list of places, and the strip's one real job was
-            getting you to the Workshop. That is the "Go to workshop" row at
+            getting you to the Workshop. That is the "Go to community hub" row at
             the top of the list below now, carrying the vote-count badge the
             strip's Workshop segment carried. Nothing replaces the App
             segment — the parked app on the bar (#2762) is the way back to a
@@ -618,6 +619,12 @@ export function AppsSwitcherSheet(): ReactNode {
               `data-context-row="workshop"` is the key the strip's segment
               carried, kept so the row still names its destination.
 
+              GO TO COMMUNITY HUB is its words since #3287: a project's page
+              opens on its hub (the project's channel, Needs you, who is
+              here) beside its Workshop, so the row says where it lands, with
+              the Communities tab's glyph. The address, id and key are the
+              Workshop's still, as every other door to the hub's are.
+
               THE BADGE IS THE ONE THING CONDITIONAL, and only in a subtree
               React already owns: `owed` is null in the prerender and arrives
               from the fetch above after the sheet opens.
@@ -627,8 +634,8 @@ export function AppsSwitcherSheet(): ReactNode {
             dataContextRow="workshop"
             elRef={workshopRowRef}
             href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
-            icon={<BoardIcon />}
-            label="Go to workshop"
+            icon={<UserGroupIcon />}
+            label="Go to community hub"
             trailing={owed ? (
               <span
                 id="app-menu-workshop-owed"
