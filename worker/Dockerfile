@@ -144,6 +144,9 @@ COPY run-cc.sh       /usr/local/bin/run-cc.sh
 COPY run-codex-agent.sh /usr/local/bin/run-codex-agent.sh
 COPY start-inloop-db.sh /usr/local/bin/start-inloop-db.sh
 COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
+# #3296: the same per-invocation, worker-local adapter for an OpenRouter turn
+# that Claude Code runs. It holds that turn's key; claude gets a local token.
+COPY claude-openrouter-request.js /usr/local/bin/claude-openrouter-request.js
 COPY evidence-mcp.js /usr/local/bin/evidence-mcp.js
 COPY build-evidence-mcp.js /usr/local/bin/build-evidence-mcp.js
 COPY evidence-origin-proxy.js /usr/local/bin/evidence-origin-proxy.js

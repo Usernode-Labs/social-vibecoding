@@ -3111,6 +3111,9 @@
       const badges = [];
       if (model?.isFavorite) badges.push('★');
       if (model?.isRecommended) badges.push('Recommended');
+      // #3296: the platform runs some OpenRouter models in Claude Code rather
+      // than Codex. Only that exception is named; Codex is every other row.
+      if (model?.harness === 'claude') badges.push('Claude Code');
       if (model?.createdAt) {
         const age = Date.now() - Date.parse(model.createdAt);
         if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');

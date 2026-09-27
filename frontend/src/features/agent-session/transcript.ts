@@ -231,12 +231,14 @@ export function prettyModel(id: unknown): string {
 
 /**
  * The agent a row says ran: Codex for an OpenRouter change (its runner is the
- * Codex CLI), Claude Code otherwise, or the user's own machine.
+ * Codex CLI) unless the row says Claude Code ran it (#3296: the platform runs
+ * some OpenRouter models in Claude Code), Claude Code otherwise, or the
+ * user's own machine.
  */
 export function agentLabel(meta: Record<string, unknown>): string {
   if (typeof meta.localAgentLabel === 'string' && meta.localAgentLabel) return `${meta.localAgentLabel} · your machine`;
   if (typeof meta.agentBackend !== 'string' && typeof meta.agentModel !== 'string') return '';
-  const agent = meta.agentBackend === 'codex_openrouter' ? 'Codex' : 'Claude Code';
+  const agent = meta.agentBackend === 'codex_openrouter' && meta.agentHarness !== 'claude' ? 'Codex' : 'Claude Code';
   const model = prettyModel(meta.agentModel);
   return model ? `${agent} · ${model}` : agent;
 }

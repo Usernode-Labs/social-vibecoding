@@ -6,7 +6,10 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 
 /**
- * OpenRouter/Codex as the preferred coding agent. #2568: every account is
+ * OpenRouter as the preferred coding agent. #3296: a model runs in Codex or,
+ * where the platform's per-model map says so, in Claude Code; the model list
+ * marks the Claude Code ones, so the copy here names neither CLI as the only
+ * one. #2568: every account is
  * created with its included company key, so there is nothing to claim and no
  * identity to prove first — #settings-openrouter-included is a STATUS line,
  * not a card with a button. Everyone may still use a personal OpenRouter key
@@ -18,8 +21,8 @@ import { Select } from '@/components/ui/select';
 export function OpenRouterSection() {
   return (
     <div data-settings-section="openrouter" className="hidden">
-      <SectionHeading title={<>OpenRouter &amp; Codex</>}>
-        Your account comes with an included OpenRouter key, and OpenRouter is the default coding-agent option. GLM 5.3 Flash is preferred when your OpenRouter catalog exposes it, and you can select any other available model. Keys are encrypted at rest and injected only for a turn.
+      <SectionHeading title={<>OpenRouter</>}>
+        Your account comes with an included OpenRouter key, and OpenRouter is the default coding-agent option. GLM 5.3 Flash is preferred when your OpenRouter catalog exposes it, and you can select any other available model. Models marked Claude Code in the list run in Claude Code; the rest run in Codex. Keys are encrypted at rest and injected only for a turn.
       </SectionHeading>
       <div id="settings-openrouter-included" className="hidden rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/30 px-3 py-3 mb-3">
         <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Included OpenRouter key</div>
@@ -50,7 +53,7 @@ export function OpenRouterSection() {
       </div>
       <div id="settings-openrouter-models-wrap" className="hidden mt-4">
         <Label className="mb-1" htmlFor="settings-openrouter-model">
-          Codex model
+          Coding model
         </Label>
         <div className="flex flex-wrap gap-2 mb-2">
           <Input

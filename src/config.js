@@ -15,6 +15,7 @@ const {
   // two profiles can never drift onto different vocabularies.
   REASONING_EFFORTS: REASONING_EFFORT_LEVELS,
 } = require('./services/global-chat/prompt');
+const { parseOpenRouterHarnessMap } = require('./agents/registry');
 
 // #2600: the default reasoning effort for an OpenRouter CODING turn when the
 // user has not picked one in Settings. It is 'xhigh' — the top of the scale
@@ -367,6 +368,16 @@ function load() {
     // GLM 5.3 Flash; docs/coding-agent-defaults.md has the evidence and
     // what would change the answer.
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
+    // #3296: which CLI runs each OpenRouter model — `claude` (Claude Code
+    // against OpenRouter's Anthropic-compatible endpoint) or `codex`. GLM 5.3
+    // Flash does better in Claude Code and DeepSeek v4.1 Flash in Codex; a
+    // model not listed here stays on Codex. The name above predates this and
+    // still means "the default OpenRouter coding model", whichever CLI runs it.
+    openrouterModelHarnesses: parseOpenRouterHarnessMap(
+      process.env.OPENROUTER_MODEL_HARNESSES === undefined
+        ? 'z-ai/glm-5.3-flash=claude,deepseek/deepseek-v4.1-flash=codex'
+        : process.env.OPENROUTER_MODEL_HARNESSES,
+    ),
     // The effort a coding turn runs at when the session carries no explicit
     // choice. A user's Settings choice is stored on the session and still
     // wins; this only fills the blank.

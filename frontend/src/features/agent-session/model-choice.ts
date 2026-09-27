@@ -37,6 +37,8 @@ const EFFORT_LABELS: Record<string, string> = {
 };
 
 const OPENROUTER_TITLE = 'Runs on your OpenRouter key';
+// #3296: the platform runs some OpenRouter models in Claude Code, not Codex.
+const OPENROUTER_CLAUDE_TITLE = 'Runs on your OpenRouter key, in Claude Code';
 const ANTHROPIC_TITLE = 'Runs on the platform Claude allowance, or your own Anthropic key';
 
 export interface PickerOption {
@@ -149,7 +151,8 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
   const pushOpenRouter = (id: string | null | undefined) => {
     if (!id) return;
     const model = openRouterModel(catalog, id);
-    push(withCost({ value: `${OPENROUTER_PREFIX}${id}`, label: model?.name || id, title: OPENROUTER_TITLE }, modelCost(id, catalog, model)));
+    const title = model?.harness === 'claude' ? OPENROUTER_CLAUDE_TITLE : OPENROUTER_TITLE;
+    push(withCost({ value: `${OPENROUTER_PREFIX}${id}`, label: model?.name || id, title }, modelCost(id, catalog, model)));
   };
   const openRouter = !!catalog && catalog.codexAvailable && catalog.openrouter.length > 0;
 
@@ -182,11 +185,15 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
   return options.map((option) => (option.value === fallback ? { ...option, isDefault: true } : option));
 }
 
-/** Does this choice take a reasoning effort? Only an OpenRouter model that offers one. */
+/**
+ * Does this choice take a reasoning effort? Only an OpenRouter model that
+ * offers one and runs in Codex: Claude Code has no control for OpenRouter's
+ * effort, so the server sends none for a model it runs there (#3296).
+ */
 export function offersReasoning(choice: AgentChoice | null, catalog: ModelCatalog | null): boolean {
   if (!choice || choice.backend !== 'codex_openrouter') return false;
   const model = openRouterModel(catalog, choice.model);
-  return !model || model.supportsReasoning !== false;
+  return !model || (model.supportsReasoning !== false && model.harness !== 'claude');
 }
 
 /**

@@ -43,6 +43,7 @@ In `Usernode-Labs/social-vibecoding`, open **Settings → Secrets and variables
 | Variable | `OPENROUTER_MANAGED_WORKSPACE_ID` | Recommended | Dedicated funded OpenRouter workspace id. |
 | Variable | `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY` | No longer used | Every account is created with its included key (#2568), so there is no eligibility gate. The deploy still writes this variable; it is inert. |
 | Variable | `OPENROUTER_DEFAULT_CODEX_MODEL` | Optional | Preferred model slug; deploy default is `z-ai/glm-5.3-flash`. |
+| Variable | `OPENROUTER_MODEL_HARNESSES` | Optional | Which CLI runs each model, as `model=claude` or `model=codex` pairs. Unset, the platform default `z-ai/glm-5.3-flash=claude,deepseek/deepseek-v4.1-flash=codex` applies; unlisted models run in Codex; `none` runs every model in Codex. See `docs/coding-agent-defaults.md`. |
 
 `CODEX_OPENROUTER_ENABLED` remains `true` by default and is now the only
 switch: #2568 retired both eligibility gates. `CODEX_OPENROUTER_BETA_USER_IDS`

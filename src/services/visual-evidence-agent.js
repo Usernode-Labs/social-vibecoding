@@ -390,9 +390,11 @@ async function dispatchClaude(config, options, deps) {
 async function dispatchCodex(config, options, runtimeContext, deps) {
   const { pool, session, runId, origins, authTokens, onProgress, resumeThreadId } = options;
   const logicalTurnId = crypto.randomUUID();
-  let attemptResume = resumeThreadId === undefined
-    ? (session.agent_thread_id || null)
-    : resumeThreadId;
+  // Evidence always runs the Codex CLI. A build thread Claude Code wrote
+  // (#3296) is not one Codex can resume, and the runtime says so.
+  let attemptResume = runtimeContext.resumeThreadDropped
+    ? null
+    : (resumeThreadId === undefined ? (session.agent_thread_id || null) : resumeThreadId);
   let lastResult = null;
   reportDiagnostic(options, { kind: 'backend_selected', backend: 'codex_openrouter' });
 
