@@ -225,7 +225,8 @@ test('#3295: an app\'s Workshop draws no chip; its panel renders only once opene
   });
   const html = renderToHtml(createElement(opened.AppWorkshopScope, { slug: 'notes-ab12' }));
   assert.match(html, /^<div class="dev-ws-scope" data-ws-scope=""><div id="dev-ws-scope-chip-picker"[^>]* role="menu"/);
-  assert.match(html, /Which workshop\?/);
+  // #3302 named the panel "Which project?"; this test landed after it (#3305).
+  assert.match(html, /Which project\?/);
   assert.match(html, /id="dev-ws-scope-chip-picker-all"/, 'All, the way back up');
   assert.doesNotMatch(html, /id="dev-ws-scope-chip"/, 'and no chip beside it');
   assert.doesNotMatch(html, /aria-haspopup/, 'the only control for it is the header\'s');
