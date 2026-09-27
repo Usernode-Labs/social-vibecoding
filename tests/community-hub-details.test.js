@@ -84,6 +84,25 @@ test('#3268: the hero carries who is here and the fortnight, with the actions at
   assert.doesNotMatch(read(HUB), /export function MembersCard/, 'the hub has no Members & activity card any more');
 });
 
+test('#3276: the people row wraps its actions instead of running past a phone\'s edge', () => {
+  // Five faces, "13 members", Joined and Invite came to 364px in a 359px
+  // row on a 375px phone, and the hub scrolled sideways. Nothing in the row
+  // can shrink, so it has to wrap: the row, and the actions among themselves.
+  const rule = (sel) => {
+    const m = CSS.match(new RegExp(`^${sel.replace(/[.>]/g, '\\$&')} \\{([^}]*)\\}`, 'm'));
+    assert.ok(m, `${sel} has a rule`);
+    return m[1];
+  };
+  assert.match(rule('.dev-ws-hero-people'), /display: flex; flex-wrap: wrap;/);
+  const actions = rule('.dev-ws-hero-people > .dev-ws-hero-actions');
+  assert.match(actions, /flex-wrap: wrap;/);
+  // Still at the row's far end when they wrap: the Join and "Open it up"
+  // popups hang from the right of their button.
+  assert.match(actions, /margin-left: auto;/);
+  assert.match(actions, /justify-content: flex-end;/);
+  assert.match(CSS, /\.dev-ws-hero \.dev-ws-hero-people \.dev-ws-join-pop \{ left: auto; right: -6px; \}/);
+});
+
 test('Needs you counts the votes you owe, not the requests nobody has claimed', () => {
   const { NeedsCard } = loadTsx(HUB);
   const row = (key, title, kind) => ({ t: 'card', key, card: { title: { text: title } }, who: 'ada', kind });
