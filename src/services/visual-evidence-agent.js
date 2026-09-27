@@ -261,6 +261,11 @@ that unsupported context assertion if it was not a real visible prerequisite;
 retain the separate base absence proof, every accepted interaction, and the
 head-side claim. If the hidden element is required for the claimed flow, call
 evidence_report_blocker instead of weakening the claim.
+If the repair context names assertion_locator, inspect the failed assertion's
+target on both fresh revisions and change only that target. The control plane
+locks the assertion type and expected count or value, every action and route,
+the focus targets, all sibling assertions, and every other story. Do not
+remove a redundant-looking assertion or rewrite the flow to make it pass.
 Review the remaining actions, assertions, and focus targets before resubmitting.
 Do not guess a replacement from the error text alone. Submit one complete
 corrected set of replays through evidence_run_plan. An accepted response means
