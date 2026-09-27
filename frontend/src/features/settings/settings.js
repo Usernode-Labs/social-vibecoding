@@ -3077,7 +3077,11 @@
       const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
       if (heading) heading.textContent = 'OpenRouter';
       if (intro) {
-        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your account comes with an included OpenRouter key, so OpenRouter is the default and GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
+        // #3296: the one worker detail worth naming. The platform runs some
+        // OpenRouter models in Claude Code, and the model list tags them; the
+        // default runner stays unnamed, like every other implementation
+        // detail. sections/openrouter.tsx renders this same text statically.
+        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your account comes with an included OpenRouter key, so OpenRouter is the default and GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Models marked Claude Code in the model list run in Claude Code. Keys are encrypted at rest and injected only for each turn.';
       }
       if (modelLabel) modelLabel.textContent = 'OpenRouter model';
     },

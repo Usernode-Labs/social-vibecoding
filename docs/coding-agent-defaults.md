@@ -76,7 +76,11 @@ per model from `OPENROUTER_MODEL_HARNESSES` (`src/config.js`
 | anything not listed | Codex |
 
 Users do not choose it. The model picker marks the Claude Code models, and the
-transcript names the CLI that actually ran.
+OpenRouter settings description says what that mark means. The transcript
+names the CLI that actually ran. That description is written at runtime by
+`settings.js` `_normalizeOpenRouterCopy()`, over the static
+`sections/openrouter.tsx` markup, so an edit to one is an edit to both; a test
+holds them equal.
 
 What stays the same for either harness, because `codex_openrouter` is still
 the session's backend id and it identifies the OpenRouter venue: the user's
