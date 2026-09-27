@@ -1434,6 +1434,38 @@ test('an unplanned model exit preserves its redacted final explanation for the o
   assert.deepEqual(observed, [response]);
 });
 
+test('a normal model exit that forgot the plan gets one reminder in the same bounded thread', async () => {
+  const dispatchOptions = [];
+  const fixture = setup({
+    dispatch: async (options, count) => {
+      dispatchOptions.push(options);
+      if (count === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return {
+          backend: 'claude_code', threadId: 'evidence-thread',
+          result: { lastResultText: 'Submitting the validated plan now.', exitCode: 0 },
+        };
+      }
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      await control.runPlan(fixtures.plan());
+      return { backend: 'claude_code', threadId: 'evidence-thread', result: { exitCode: 0 } };
+    },
+  });
+
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  assert.equal(dispatchOptions[0].completionReminder, false);
+  assert.equal(dispatchOptions[1].completionReminder, true);
+  assert.equal(dispatchOptions[1].resumeThreadId, 'evidence-thread');
+  const dispatches = fixture.transitions.at(-1).patch.traceSummary.agentDispatches;
+  assert.equal(dispatches[0].completionReminder, undefined);
+  assert.equal(dispatches[1].completionReminder, true);
+  assert.ok(dispatches[1].timeoutMs < dispatches[0].timeoutMs,
+    'the reminder spends only what remains of the original agent budget');
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+});
+
 test('an author plan uses the same two clean replays without a second model call', async () => {
   const fixture = setup();
   const result = await execute(fixture, { authorPlan: fixtures.plan() });

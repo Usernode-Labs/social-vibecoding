@@ -81,15 +81,6 @@ server.registerTool('evidence_get_context', {
   catch (error) { return toolError(error); }
 });
 
-server.registerTool('evidence_reset_pair', {
-  description: 'Atomically restore both exploration sides to the same pristine paired fixture generation and return both replacement origins. Call once before verifying the final base and head action lists. Deterministic replay resets both sides automatically.',
-  inputSchema: {},
-  annotations,
-}, async () => {
-  try { return resultContent((await request('/reset-pair', { method: 'POST' })).result); }
-  catch (error) { return toolError(error); }
-});
-
 server.registerTool('evidence_set_request_failure', {
   description: 'Only for a story whose accepted intent declares controlledFailurePath: deliberately fail that exact API GET during browser exploration. Applies to both revisions. Set enabled=true before the triggering action, and false afterward. The replay plan must declare the same toggles and a real matching request on each revision; reviewers see a controlled-test label.',
   inputSchema: { path: z.string().min(6).max(512), enabled: z.boolean() },
