@@ -30,6 +30,26 @@ const HOP_HEADERS = new Set([
   'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
   'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length',
 ]);
+const EVIDENCE_TERMINAL_TOOL = /(?:^|__)evidence_(?:run_plan|report_blocker)$/;
+
+function evidenceToolInventory(tools) {
+  const definitions = Array.isArray(tools) ? tools : [];
+  const names = definitions.filter(tool => tool?.type === 'function' && typeof tool.name === 'string')
+    .map(tool => tool.name);
+  const servers = new Set(names.map(name => /^mcp__([^_]+(?:_[^_]+)*)__/.exec(name)?.[1]).filter(Boolean));
+  const countFor = server => names.filter(name => name.startsWith(`mcp__${server}__`)).length;
+  const available = tool => names.some(name => name.endsWith(`__${tool}`) || name === tool);
+  return {
+    mcpServerCount: servers.size,
+    toolDefinitionCount: definitions.length,
+    evidenceGetContextAvailable: available('evidence_get_context'),
+    evidenceRunPlanAvailable: available('evidence_run_plan'),
+    evidenceReportBlockerAvailable: available('evidence_report_blocker'),
+    browserMemberToolCount: countFor('browser_member'),
+    browserAdminToolCount: countFor('browser_admin'),
+    browserFullAdminToolCount: countFor('browser_full_admin'),
+  };
+}
 
 async function readBounded(stream, limit) {
   const chunks = [];
@@ -89,7 +109,14 @@ function usageFromResponse(usage) {
   };
 }
 
-async function inspectEvent(event, recordError, recordUsage) {
+function terminalEvidenceToolFromEvent(parsed) {
+  const candidates = [parsed?.item, parsed?.output_item, parsed?.response?.output_item];
+  if (Array.isArray(parsed?.response?.output)) candidates.push(...parsed.response.output);
+  return candidates.some(item => item?.type === 'function_call'
+    && typeof item.name === 'string' && EVIDENCE_TERMINAL_TOOL.test(item.name));
+}
+
+async function inspectEvent(event, recordError, recordUsage, recordTerminalTool = null) {
   const small = event.length <= MAX_ERROR_DIAGNOSTIC_BYTES;
   // A cheap substring test first: only a terminal event is worth parsing at
   // a size no error envelope reaches.
@@ -99,6 +126,9 @@ async function inspectEvent(event, recordError, recordUsage) {
     .map(line => line.slice(5).trimStart()).join('\n');
   let parsed;
   try { parsed = JSON.parse(data); } catch { return; /* Non-JSON events, including [DONE], pass through. */ }
+  if (recordTerminalTool && terminalEvidenceToolFromEvent(parsed)) {
+    try { recordTerminalTool(); } catch { /* Tool-choice tracking cannot affect the response. */ }
+  }
   if (small) {
     try {
       await recordError(parsed?.error || parsed?.response?.error || (parsed?.type === 'error' ? parsed : null));
@@ -112,7 +142,7 @@ async function inspectEvent(event, recordError, recordUsage) {
   }
 }
 
-async function* observeEventStream(body, recordError, recordUsage = null) {
+async function* observeEventStream(body, recordError, recordUsage = null, recordTerminalTool = null) {
   const decoder = new StringDecoder('utf8');
   let pending = '';
   let oversized = false;
@@ -128,7 +158,7 @@ async function* observeEventStream(body, recordError, recordUsage = null) {
       const event = pending.slice(0, boundary.index);
       pending = pending.slice(boundary.index + boundary[0].length);
       boundaryRe.lastIndex = 0;
-      if (!oversized) await inspectEvent(event, recordError, recordUsage);
+      if (!oversized) await inspectEvent(event, recordError, recordUsage, recordTerminalTool);
       oversized = false;
     }
     // Events past the usage cap need no inspection. Retain only enough bytes
@@ -170,7 +200,8 @@ async function readKeyAllowance(base, apiKey, fetchImpl, signal) {
 }
 
 async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
-  onRequest = () => {}, onTiming = null, onUsage = null, timingIntervalMs = 15_000, fetchImpl = fetch }) {
+  onRequest = () => {}, onTiming = null, onUsage = null, timingIntervalMs = 15_000,
+  requireEvidenceTerminalTool = false, reportEvidenceToolConfig = false, fetchImpl = fetch }) {
   const base = new URL(baseUrl);
   if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
     throw new Error('invalid_provider_url');
@@ -181,6 +212,8 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
   const upstreamBase = base.href.replace(/\/+$/, '');
   const active = new Set();
   let requestOrdinal = 0;
+  let terminalToolChoicePending = requireEvidenceTerminalTool === true;
+  let toolConfigReported = false;
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/responses') {
       replyError(res, 404, 'Unsupported OpenRouter adapter route');
@@ -214,6 +247,35 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         replyError(res, 400, 'OpenRouter request model does not match the selected model');
         return;
       }
+      let terminalToolChoiceRequired = false;
+      let terminalToolDefinitionCount = 0;
+      if (terminalToolChoicePending) {
+        const tools = Array.isArray(body.tools) ? body.tools : [];
+        const callable = tools.filter(tool => tool?.type === 'function'
+          && typeof tool.name === 'string');
+        const terminal = callable.filter(tool => EVIDENCE_TERMINAL_TOOL.test(tool.name));
+        terminalToolDefinitionCount = terminal.length;
+        // Codex may compact a long resumed thread before sending the user's
+        // new prompt. That provider request deliberately has no tools. Let it
+        // finish, keep the requirement pending, then enforce it on the first
+        // request that actually carries the completion turn's MCP surface.
+        if (tools.length === 0) {
+          // No terminal decision can be made in a tool-free compaction call.
+        } else if (terminal.length !== 2 || callable.length !== terminal.length
+            || tools.length !== callable.length) {
+          replyError(res, 500, 'Evidence completion tools were not configured safely');
+          return;
+        } else {
+          // This recovery turn exists only because the model already ended
+          // once without a terminal action. Its MCP surface contains exactly
+          // the plan and blocker tools, so require one of them on the first
+          // eligible provider response instead of trusting another prose
+          // reminder.
+          body.tool_choice = 'required';
+          body.parallel_tool_calls = false;
+          terminalToolChoiceRequired = true;
+        }
+      }
       const incomingCap = body.max_output_tokens;
       if (incomingCap != null && (!Number.isSafeInteger(incomingCap) || incomingCap < 1)) {
         replyError(res, 400, 'Invalid OpenRouter output limit');
@@ -238,9 +300,23 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
           && body.previous_response_id.length > 0;
         timing = { ordinal, startedAt, stage: 'await_headers', status: null,
           responseBytes: 0, chunks: 0, outcome: 'ok' };
+        if (reportEvidenceToolConfig && !toolConfigReported
+            && Array.isArray(body.tools) && body.tools.length > 0) {
+          toolConfigReported = true;
+          emitTiming({
+            kind: 'provider_tool_config',
+            ...evidenceToolInventory(body.tools),
+            completionReminder: requireEvidenceTerminalTool === true,
+            terminalToolChoiceRequired,
+          });
+        }
         emitTiming({ kind: 'provider_request_start', requestOrdinal: ordinal,
           payloadBytes, inputBytes, instructionBytes, inputItems, previousResponseLinked,
-          maxOutputTokens: body.max_output_tokens });
+          maxOutputTokens: body.max_output_tokens,
+          ...(terminalToolChoiceRequired ? {
+            terminalToolChoiceRequired: true,
+            terminalToolDefinitionCount,
+          } : {}) });
         timing.interval = setInterval(() => emitTiming({
           kind: 'provider_request_pending', requestOrdinal: ordinal,
           stage: timing.stage,
@@ -274,6 +350,10 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         inputItems: Array.isArray(body.input) ? body.input.length : null,
         httpStatus: response.status,
         requestId: safeRequestId(response.headers.get('x-request-id') || response.headers.get('x-openrouter-request-id')),
+        ...(terminalToolChoiceRequired ? {
+          terminalToolChoiceRequired: true,
+          terminalToolDefinitionCount,
+        } : {}),
       };
       const retryAfter = response.headers.get('retry-after');
       if (retryAfter && /^\d+$/.test(retryAfter) && Number.isSafeInteger(Number(retryAfter))) {
@@ -313,7 +393,8 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
       if (response.body) {
         const isEventStream = response.headers.get('content-type')?.includes('text/event-stream');
         const bodyStream = isEventStream
-          ? Readable.from(observeEventStream(response.body, recordError, onUsage))
+          ? Readable.from(observeEventStream(response.body, recordError, onUsage,
+            terminalToolChoiceRequired ? () => { terminalToolChoicePending = false; } : null))
           : response.status === 402
             ? Readable.from(observeErrorBody(response.body, recordError))
             : Readable.fromWeb(response.body);
@@ -386,6 +467,9 @@ async function runCodex(args, env = process.env) {
     // distinguished from a runner that never sent a request.
     onTiming: diagnostic => process.stdout.write(
       `${env.MODE === 'evidence' ? '__USERNODE_EVIDENCE_PROVIDER__' : '__USERNODE_CODING_PROVIDER__'} ${JSON.stringify(diagnostic)}\n`),
+    requireEvidenceTerminalTool: env.MODE === 'evidence'
+      && env.EVIDENCE_COMPLETION_REMINDER === '1',
+    reportEvidenceToolConfig: env.MODE === 'evidence',
   });
   // The override is process-local. Neither the key nor the ephemeral listener
   // is written to the persistent Codex configuration.

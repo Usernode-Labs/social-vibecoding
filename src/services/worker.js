@@ -465,11 +465,11 @@ function safeResultSubtype(value) {
 // contain private app data or credentials and must never enter a run trace.
 const EVIDENCE_DIAGNOSTIC_TOOLS = new Set([
   'evidence_get_context', 'evidence_reset_pair', 'evidence_reset_side',
-  'evidence_set_request_failure', 'evidence_run_plan',
+  'evidence_set_request_failure', 'evidence_run_plan', 'evidence_report_blocker',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
-  'browser_hover', 'browser_drag', 'browser_resize', 'browser_wait_for',
+  'browser_hover', 'browser_mouse_move_xy', 'browser_drag', 'browser_resize', 'browser_wait_for',
   'browser_console_messages', 'browser_network_requests', 'browser_tabs',
   'browser_close',
 ]);
@@ -754,6 +754,7 @@ function applyStreamEvent(event, onProgress, state) {
       toolDefinitionCount: collectionCount(systemEvent.tools),
       evidenceGetContextAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_get_context'),
       evidenceRunPlanAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_run_plan'),
+      evidenceReportBlockerAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_report_blocker'),
       browserMemberToolCount: mcpToolCount(systemEvent.tools, 'browser_member'),
       browserAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_admin'),
       browserFullAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_full_admin'),
@@ -1144,7 +1145,11 @@ function parseLine(line, onProgress, state) {
         const isToolCompletion = ['command_completed', 'file_read_completed', 'mcp_completed'].includes(ev.kind)
           || (ev.kind === 'file_changed' && ev.lifecycle === 'completed');
         if (ev.kind === 'phase' && ev.lifecycle === 'turn_started') {
-          emitEvidenceDiagnostic(state, { kind: 'provider_init' });
+          const completionReminder = state.evidenceCompletionReminder === true;
+          emitEvidenceDiagnostic(state, {
+            kind: 'provider_init',
+            completionReminder,
+          });
         }
         if ((ev.kind === 'agent_message' || isToolStart) && !state.evidenceFirstOutputSeen) {
           state.evidenceFirstOutputSeen = true;
@@ -2716,6 +2721,7 @@ async function execInWorker(sessionId, {
   evidenceOrigins = null,
   evidenceAuthTokens = null,
   evidenceNavigationHints = null,
+  evidenceCompletionReminder = false,
   turnUuid = null,
   logicalTurnId = null,
   attemptNumber = null,
@@ -2857,6 +2863,9 @@ async function execInWorker(sessionId, {
         throw new Error(`execInWorker: invalid ${side} evidence origin`);
       }
     }
+    if (typeof evidenceCompletionReminder !== 'boolean') {
+      throw new Error('execInWorker: evidence completion reminder must be boolean');
+    }
   }
   const useAnthropicProxy = isClaude && !anthropicApiKey;
   const measuredTelemetryComponent = llmTelemetry.collectionComponent(telemetryComponent);
@@ -2961,6 +2970,7 @@ async function execInWorker(sessionId, {
       EVIDENCE_BASE_ORIGIN: new URL(evidenceOrigins.base).origin,
       EVIDENCE_HEAD_ORIGIN: new URL(evidenceOrigins.head).origin,
       EVIDENCE_NAVIGATION_HINTS: JSON.stringify(evidenceNavigationHints || {}),
+      EVIDENCE_COMPLETION_REMINDER: evidenceCompletionReminder ? '1' : '0',
     } : {}),
     ...(isClaude ? {
       MODEL: models.resolve(model),
@@ -3178,6 +3188,7 @@ async function execInWorker(sessionId, {
     if (mode === 'evidence') {
       state.evidenceOrigins = evidenceOrigins;
       state.evidenceNavigationHints = evidenceNavigationHints;
+      state.evidenceCompletionReminder = evidenceCompletionReminder === true;
     }
     if (mode === 'evidence' && typeof onEvidenceDiagnostic === 'function') {
       state.evidenceDiagnosticObserver = onEvidenceDiagnostic;

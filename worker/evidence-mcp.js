@@ -122,6 +122,21 @@ server.registerTool('evidence_run_plan', {
   catch (error) { return toolError(error); }
 });
 
+server.registerTool('evidence_report_blocker', {
+  description: 'End this evidence attempt without a replay only when observations from the supplied revisions prove that an honest plan cannot be submitted. State the concrete missing fixture, inaccessible state, or unsupported interaction. Do not use this for uncertainty, a validation error, or to avoid submitting a known flow.',
+  inputSchema: {
+    reason: z.string().trim().min(1).max(1000)
+      .describe('Concise user-visible explanation of the observed blocker and the exact state or capability that is missing.'),
+  },
+  annotations,
+}, async ({ reason }) => {
+  try {
+    return resultContent((await request('/finish', {
+      method: 'POST', body: { status: 'failed', reason }, timeoutMs: 30_000,
+    })).result);
+  } catch (error) { return toolError(error); }
+});
+
 const transport = new StdioServerTransport();
 server.connect(transport).catch((error) => {
   process.stderr.write(`${String(error?.message || error).slice(0, 1000)}\n`);

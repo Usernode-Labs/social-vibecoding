@@ -112,6 +112,7 @@ test('Codex evidence receives the planning contract as developer context in a fr
   });
   assert.equal(result.threadId, 'evidence-thread');
   assert.equal(dispatched.resumeSessionId, null);
+  assert.equal(dispatched.evidenceCompletionReminder, false);
   assert.equal(dispatched.systemPrompt, agent.SYSTEM_PROMPT);
   assert.match(dispatched.systemPrompt, /Use evidence_get_context first/);
   assert.match(dispatched.systemPrompt, /submit them through the tool/);
@@ -129,6 +130,8 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.match(agent.promptFor({ completionReminder: true }), /ended normally without calling evidence_run_plan/i);
   assert.match(agent.promptFor({ completionReminder: true }), /Do not reset the\s+exploration pair/i);
   assert.match(agent.promptFor({ completionReminder: true }), /call evidence_run_plan now/i);
+  assert.match(agent.promptFor({ completionReminder: true }), /evidence_report_blocker/i);
+  assert.match(agent.promptFor({ completionReminder: true }), /only those two terminal\s+tools/i);
   assert.match(agent.promptFor({ repair: true }), /rejected plan and the exact replay failure/i);
   assert.match(agent.promptFor({ repair: true }), /BOTH exact\s+revisions/i);
   assert.match(agent.replayPlanGuide(), /No arbitrary JavaScript/);
@@ -145,7 +148,8 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.match(agent.replayPlanGuide(), /initially\s+authenticated base and head pair/i);
   assert.match(agent.replayPlanGuide(), /replacing\s+their databases invalidates the long-lived browser sessions/i);
   assert.match(agent.replayPlanGuide(), /bootstraps fresh persona sessions before each\s+deterministic replay/i);
-  assert.match(agent.SYSTEM_PROMPT, /next action must be the\s+evidence_run_plan tool call/i);
+  assert.match(agent.SYSTEM_PROMPT, /next action must be evidence_run_plan/i);
+  assert.match(agent.SYSTEM_PROMPT, /use evidence_report_blocker with the concrete\s+reason/i);
   assert.doesNotMatch(agent.replayPlanGuide(), /evidence_reset_pair/);
   assert.match(agent.replayPlanGuide(), /tour, dialog, banner, or saved preference/i);
   assert.match(agent.replayPlanGuide(), /actually click it on both revisions and\s+assert the resulting page or URL/);
@@ -187,6 +191,38 @@ test('a second hosted dispatch receives an explicit repair task through the norm
   assert.equal(prompts.length, 1);
   assert.match(prompts[0], /first submitted plan failed deterministic replay/i);
   assert.match(prompts[0], /evidence_run_plan/);
+});
+
+test('a completion reminder is marked so the Codex runner can expose only terminal tools', async () => {
+  let dispatched;
+  await agent.dispatch({ visualEvidence: { maxAgentMs: 500 } }, {
+    pool: {}, session: {
+      id: 42, user_id: 7, repo_url: 'https://github.com/acme/demo.git',
+      branch_name: 'proposal', agent_backend: 'codex_openrouter',
+      agent_model: 'z-ai/glm-test',
+    },
+    runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token', full_admin: 'private-token' },
+    resumeThreadId: 'evidence-thread', completionReminder: true,
+  }, {
+    workerService: {
+      ensureWorker: async () => 'warm-worker',
+      execInWorker: async (_sessionId, options) => {
+        dispatched = options;
+        return { exitCode: 0, agentThreadId: 'evidence-thread' };
+      },
+    },
+    agentTurn: {
+      resolveCodexRuntimeContext: async () => ({
+        agentModel: 'z-ai/glm-test', agentModelMetadata: { supportsTools: true },
+      }),
+      startCodexAttempt: async () => ({ turnUuid: 'attempt-1', journal: '/tmp/attempt-1' }),
+      completeCodexAttempt: async () => {},
+      usageTotalFromResult: () => null,
+    },
+  });
+  assert.equal(dispatched.evidenceCompletionReminder, true);
+  assert.match(dispatched.prompt, /requires one tool call before any prose/i);
 });
 
 test('backend results cannot silently turn an errored model turn into success', () => {

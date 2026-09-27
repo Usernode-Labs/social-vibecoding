@@ -136,8 +136,10 @@ semantic dismissal or completion action in the replay when it blocks the
 claimed flow. A visible control is not proof that clicking it
 reaches the claimed destination: actually click it on both revisions and
 assert the resulting page or URL. If the frozen story cannot prove its full
-claim with the available fixture and replay actions, report that blocker
-instead of submitting a narrower plan that happens to pass.
+claim with the available fixture and replay actions, call
+evidence_report_blocker instead of submitting a narrower plan that happens to
+pass. Name the concrete observed missing state or capability; do not use the
+blocker tool for uncertainty or a plan validation error.
 A visible page shell, composer, or heading does not prove that an owner-scoped
 record exists. If the page says "not found", a required list is empty, or an
 API request for the record fails unexpectedly, do not submit that route. Follow the actual
@@ -196,8 +198,10 @@ acceptance, finish your turn. The platform waits for replay, starts a separate
 correction turn for a repairable replay failure, and makes passing media available to human
 reviewers. You do not need image understanding or a relevance verdict. Do not
 merely narrate the replays in your final answer: submit them through the tool.
-Do not say that you are about to submit them; your next action must be the
-evidence_run_plan tool call.`;
+Do not say that you are about to submit them. If the complete flow is known,
+your next action must be evidence_run_plan. If direct observations prove that
+an honest replay cannot be made, use evidence_report_blocker with the concrete
+reason. Do not finish with prose before one of those terminal tool calls.`;
 
 function promptFor({ repair = false, completionReminder = false } = {}) {
   const task = completionReminder
@@ -206,7 +210,9 @@ Use the browser observations already in this thread. Do not reset the
 exploration pair, repeat completed exploration, or merely say that you will
 submit. If the complete accepted flow is known, call evidence_run_plan now
 with one typed replay per story. If a real blocker prevents a valid plan,
-report that blocker plainly instead of claiming that a submission happened.`
+call evidence_report_blocker with the concrete observation instead of claiming
+that a submission happened. This recovery turn exposes only those two terminal
+tools and requires one tool call before any prose.`
     : repair
     ? `The first submitted plan failed deterministic replay. Call
 evidence_get_context to read the rejected plan and the exact replay failure.
@@ -338,6 +344,7 @@ async function dispatchClaude(config, options, deps) {
     evidenceOrigins: origins,
     evidenceAuthTokens: authTokens,
     evidenceNavigationHints: options.navigationHints,
+    evidenceCompletionReminder: options.completionReminder === true,
     telemetryComponent: 'visual_evidence_agent',
     telemetryCorrelationId: runId,
     telemetryAttemptNumber: 1,
@@ -438,6 +445,7 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
         evidenceOrigins: origins,
         evidenceAuthTokens: authTokens,
         evidenceNavigationHints: options.navigationHints,
+        evidenceCompletionReminder: options.completionReminder === true,
         turnUuid: attempt.turnUuid,
         logicalTurnId,
         attemptNumber,

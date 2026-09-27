@@ -123,6 +123,12 @@ test('both evidence backends launch Playwright through the content-free timing o
     assert.doesNotMatch(evidenceMcp, /registerTool\('evidence_reset_pair'/);
     assert.doesNotMatch(evidenceMcp, /request\('\/reset-pair'/);
     assert.doesNotMatch(evidenceMcp, /registerTool\('evidence_reset_side'/);
+    assert.match(evidenceMcp, /registerTool\('evidence_report_blocker'/);
+    assert.match(evidenceMcp, /status: 'failed', reason/);
+    assert.match(codexRunner,
+      /enabled_tools = \["evidence_run_plan", "evidence_report_blocker"\]/);
+    assert.match(codexRunner,
+      /EVIDENCE_COMPLETION_REMINDER" != "1"/);
     assert.equal((codexRunner.match(/"browser_mouse_move_xy"/g) || []).length, 3);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

@@ -842,6 +842,7 @@ function replayProgressEvent(event, pass) {
 const AGENT_DIAGNOSTIC_KINDS = new Set([
   'worker_prepare_start', 'worker_prepare_end', 'backend_selected',
   'turn_start', 'turn_end', 'provider_dispatched', 'provider_init',
+  'provider_tool_config',
   'first_stream', 'first_output', 'provider_result', 'provider_notice', 'provider_usage',
   'context_result',
   'runner_phase', 'runner_result', 'runner_exit', 'resume_retry',
@@ -859,11 +860,11 @@ const AGENT_DIAGNOSTIC_PHASES = new Set([
 ]);
 const AGENT_DIAGNOSTIC_TOOLS = new Set([
   'evidence_get_context', 'evidence_reset_pair', 'evidence_reset_side',
-  'evidence_set_request_failure', 'evidence_run_plan',
+  'evidence_set_request_failure', 'evidence_run_plan', 'evidence_report_blocker',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
-  'browser_hover', 'browser_drag', 'browser_resize', 'browser_wait_for',
+  'browser_hover', 'browser_mouse_move_xy', 'browser_drag', 'browser_resize', 'browser_wait_for',
   'browser_console_messages', 'browser_network_requests', 'browser_tabs',
   'browser_close', 'other',
 ]);
@@ -889,7 +890,7 @@ function recordAgentDiagnostic(metrics, raw) {
     'browserAdminToolCount', 'browserFullAdminToolCount', 'storyCount', 'callOrdinal', 'headingCount',
     'buttonCount', 'linkCount', 'imageBlocks', 'exitCode', 'checkRank',
     'documentOrdinal', 'httpStatus', 'requestOrdinal', 'chunkCount', 'hitOrdinal',
-    'count', 'catalogCount']) {
+    'count', 'catalogCount', 'terminalToolDefinitionCount']) {
     if (Number.isSafeInteger(raw[key]) && raw[key] >= 0 && raw[key] <= 1000) {
       event[key] = raw[key];
     }
@@ -919,7 +920,8 @@ function recordAgentDiagnostic(metrics, raw) {
   if (['await_headers', 'await_first_byte', 'streaming'].includes(raw.stage)) {
     event.stage = raw.stage;
   }
-  for (const key of ['evidenceGetContextAvailable', 'evidenceRunPlanAvailable']) {
+  for (const key of ['evidenceGetContextAvailable', 'evidenceRunPlanAvailable',
+    'evidenceReportBlockerAvailable', 'completionReminder', 'terminalToolChoiceRequired']) {
     if (typeof raw[key] === 'boolean') event[key] = raw[key];
   }
   for (const key of ['jsonValid', 'acceptedIntentPresent', 'originsPresent', 'revisionsPresent']) {
@@ -978,6 +980,10 @@ function recordAgentDiagnostic(metrics, raw) {
         { ...activity.providerPending.get(event.requestOrdinal), ...event });
     }
   }
+  if (kind === 'provider_tool_config') {
+    activity.providerToolConfigs.push(event);
+    if (activity.providerToolConfigs.length > 4) activity.providerToolConfigs.shift();
+  }
   activity.counts[kind] = (activity.counts[kind] || 0) + 1;
   activity.events.push(event);
   if (activity.events.length > MAX_AGENT_EVENTS) activity.events.shift();
@@ -1001,9 +1007,10 @@ function newRunMetrics() {
     replayEvents: [],
     agentAttempts: 0,
     agentDispatches: [],
+    agentFinalResponses: [],
     agentActivity: { events: [], counts: {}, toolCounts: {}, pending: new Map(),
       browserCallCounts: {}, browserPending: new Map(), documentPending: new Map(),
-      providerPending: new Map(), budgetMs: null },
+      providerPending: new Map(), providerToolConfigs: [], budgetMs: null },
     agentFinalResponse: null,
     repairCount: 0,
     repairTrigger: null,
@@ -1047,6 +1054,9 @@ function agentActivitySummary(metrics) {
     pendingBrowserCalls: [...metrics.agentActivity.browserPending.values()].slice(-8),
     pendingDocumentRequests: [...metrics.agentActivity.documentPending.values()].slice(-8),
     pendingProviderRequests: [...metrics.agentActivity.providerPending.values()].slice(-8),
+    ...(metrics.agentActivity.providerToolConfigs.length ? {
+      providerToolConfigs: metrics.agentActivity.providerToolConfigs.slice(-4),
+    } : {}),
   };
 }
 
@@ -1066,6 +1076,8 @@ function traceSummary(metrics, extra = {}) {
     fixtureResets: metrics.fixtureResets.slice(0, 12),
     agentAttempts: metrics.agentAttempts,
     agentDispatches: metrics.agentDispatches.slice(0, 4),
+    ...(metrics.agentFinalResponses.length
+      ? { agentFinalResponses: metrics.agentFinalResponses.slice(0, 4) } : {}),
     agentActivity: agentActivitySummary(metrics),
     repairCount: metrics.repairCount,
     ...(metrics.repairTrigger ? { repairTrigger: metrics.repairTrigger } : {}),
@@ -1515,6 +1527,11 @@ async function executeRun(config, options, injected = {}) {
           metrics.agentFinalResponse = agentFinalResponseSummary(
             dispatched.result, authTokens, exploration.origins
           );
+          metrics.agentFinalResponses.push({
+            dispatch: metrics.agentDispatches.length,
+            ...(completionReminder ? { completionReminder: true } : {}),
+            ...metrics.agentFinalResponse,
+          });
           options.onAgentFinalResponse?.(metrics.agentFinalResponse);
         }
         return { dispatched, error: null };
@@ -1556,6 +1573,7 @@ async function executeRun(config, options, injected = {}) {
       }
       if (!agentOutcome.error && !latestHardVerdict
           && registration.control.planCalls === 0
+          && !registration.control.finished
           && agentOutcome.dispatched?.result && agentThreadId) {
         // Some tool-capable models finish with prose saying they are about to
         // submit, but omit the tool call. Reuse the same thread and the
@@ -1689,10 +1707,11 @@ async function executeRun(config, options, injected = {}) {
       repairAttempt: Math.max(0, registration.control.planCalls - 1),
       traceSummary: finalTrace,
     });
+    const { agentFinalResponses: _privateResponses, ...logFinalTrace } = finalTrace;
     log.info('visual-evidence', 'Visual evidence captures stored', {
       sessionId: session.id,
       runId: run.id,
-      trace: finalTrace,
+      trace: logFinalTrace,
     });
     notifyEvidence(session, app, 'verified');
     progress('Visual evidence captured for human review.');
@@ -1731,7 +1750,11 @@ async function executeRun(config, options, injected = {}) {
     }
     // The final model answer is for the proposal owner and app managers only;
     // do not copy its potentially app-derived text into the general log ring.
-    const { agentFinalResponse: _privateResponse, ...logTrace } = failureTrace;
+    const {
+      agentFinalResponse: _privateResponse,
+      agentFinalResponses: _privateResponses,
+      ...logTrace
+    } = failureTrace;
     log.warn('visual-evidence', 'Visual evidence run ended without captured evidence', {
       sessionId: session?.id || null,
       runId: run?.id || options.runId || null,

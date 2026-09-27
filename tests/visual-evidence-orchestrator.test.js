@@ -1387,6 +1387,11 @@ test('a completed planner turn without tool calls retains tool availability and 
       options.onEvidenceDiagnostic({ kind: 'provider_init', mcpServerCount: 3, toolDefinitionCount: 24,
         evidenceGetContextAvailable: true, evidenceRunPlanAvailable: true,
         browserMemberToolCount: 7, browserAdminToolCount: 7 });
+      options.onEvidenceDiagnostic({ kind: 'provider_tool_config', mcpServerCount: 3,
+        toolDefinitionCount: 24, evidenceGetContextAvailable: true,
+        evidenceRunPlanAvailable: true, evidenceReportBlockerAvailable: true,
+        browserMemberToolCount: 7, browserAdminToolCount: 7,
+        completionReminder: false, terminalToolChoiceRequired: false });
       options.onEvidenceDiagnostic({ kind: 'context_result', outcome: 'ok', responseCharacters: 12000,
         jsonValid: true, acceptedIntentPresent: true, originsPresent: true,
         revisionsPresent: true, storyCount: 3 });
@@ -1400,13 +1405,16 @@ test('a completed planner turn without tool calls retains tool availability and 
   assert.equal(trace.control.planCalls, 0);
   assert.equal(trace.agentDispatches[0].outcome, 'completed');
   assert.deepEqual(trace.agentActivity.events.map((event) => event.kind),
-    ['provider_dispatched', 'provider_init', 'context_result', 'first_output', 'provider_result']);
+    ['provider_dispatched', 'provider_init', 'provider_tool_config',
+      'context_result', 'first_output', 'provider_result']);
   assert.equal(trace.agentActivity.events[0].requestMode, 'agent_resume');
   assert.equal(trace.agentActivity.events[1].evidenceGetContextAvailable, true);
   assert.equal(trace.agentActivity.events[1].evidenceRunPlanAvailable, true);
   assert.equal(trace.agentActivity.events[1].browserMemberToolCount, 7);
-  assert.equal(trace.agentActivity.events[2].responseCharacters, 12000);
-  assert.equal(trace.agentActivity.events[2].storyCount, 3);
+  assert.equal(trace.agentActivity.events[3].responseCharacters, 12000);
+  assert.equal(trace.agentActivity.events[3].storyCount, 3);
+  assert.equal(trace.agentActivity.providerToolConfigs.length, 1);
+  assert.equal(trace.agentActivity.providerToolConfigs[0].evidenceReportBlockerAvailable, true);
   assert.deepEqual(trace.agentActivity.toolCounts, {});
 });
 
@@ -1463,7 +1471,53 @@ test('a normal model exit that forgot the plan gets one reminder in the same bou
   assert.equal(dispatches[1].completionReminder, true);
   assert.ok(dispatches[1].timeoutMs < dispatches[0].timeoutMs,
     'the reminder spends only what remains of the original agent budget');
+  const responses = fixture.transitions.at(-1).patch.traceSummary.agentFinalResponses;
+  assert.equal(responses.length, 1);
+  assert.equal(responses[0].dispatch, 1);
+  assert.equal(responses[0].excerpt, 'Submitting the validated plan now.');
   assert.deepEqual(fixture.calls.passes, [1, 2]);
+});
+
+test('the completion retry may report a concrete blocker instead of fabricating a plan', async () => {
+  const fixture = setup({
+    dispatch: async (options, count) => {
+      if (count === 1) {
+        return {
+          backend: 'codex_openrouter', threadId: 'evidence-thread',
+          result: { lastResultText: 'I cannot submit this flow yet.', exitCode: 0 },
+        };
+      }
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      control.finish({
+        status: 'failed',
+        reason: 'The accepted full-admin screen has no selectable proposal row in either revision.',
+      });
+      return { backend: 'codex_openrouter', threadId: 'evidence-thread', result: { exitCode: 0 } };
+    },
+  });
+
+  await assert.rejects(execute(fixture), (error) => {
+    assert.equal(error.code, 'evidence_agent_reported_failure');
+    assert.match(error.message, /no selectable proposal row/i);
+    return true;
+  });
+  const trace = fixture.transitions.at(-1).patch.traceSummary;
+  assert.equal(trace.control.planCalls, 0);
+  assert.equal(trace.control.finishStatus, 'failed');
+  assert.match(trace.control.finishReason, /no selectable proposal row/i);
+  assert.equal(trace.agentFinalResponses.length, 2);
+});
+
+test('a concrete blocker reported during exploration does not trigger a redundant reminder', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      control.finish({ status: 'failed', reason: 'The required fixture record is absent on both revisions.' });
+      return { backend: 'codex_openrouter', threadId: 'evidence-thread', result: { exitCode: 0 } };
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'evidence_agent_reported_failure' });
+  assert.equal(fixture.calls.dispatches, 1);
 });
 
 test('an author plan uses the same two clean replays without a second model call', async () => {

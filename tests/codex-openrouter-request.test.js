@@ -82,6 +82,83 @@ test('the wire cap is enforced on every GLM request, independently of history si
   assert.doesNotMatch(JSON.stringify(diagnostics), /test-openrouter-key|coding instructions|Short request|long history/);
 });
 
+test('an evidence completion retry must choose one terminal tool on its first provider response', async t => {
+  const calls = [];
+  const base = await upstream(t, async (req, res) => {
+    calls.push(await json(req));
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const item = calls.length === 2
+      ? { type: 'function_call', name: 'mcp__evidence__evidence_run_plan' }
+      : { type: 'message', role: 'assistant' };
+    res.end(`data: ${JSON.stringify({ type: 'response.output_item.done', item })}\n\n`);
+  });
+  const events = [];
+  const instance = await adapter(t, base, {
+    requireEvidenceTerminalTool: true,
+    reportEvidenceToolConfig: true,
+    onTiming: event => events.push(event),
+  });
+  const tools = [
+    { type: 'function', name: 'mcp__evidence__evidence_run_plan', parameters: { type: 'object' } },
+    { type: 'function', name: 'mcp__evidence__evidence_report_blocker', parameters: { type: 'object' } },
+  ];
+  const compaction = await request(instance, {
+    model: MODEL, stream: true, input: [], tools: [],
+  });
+  assert.equal(compaction.status, 200);
+  await compaction.text();
+  const first = await request(instance, {
+    model: MODEL, stream: true, input: [], tools,
+    tool_choice: 'auto', parallel_tool_calls: true,
+  });
+  assert.equal(first.status, 200);
+  await first.text();
+  const second = await request(instance, {
+    model: MODEL, stream: true, input: [], tools,
+    tool_choice: 'auto', parallel_tool_calls: true,
+  });
+  assert.equal(second.status, 200);
+  await second.text();
+  assert.equal(calls[0].tool_choice, undefined, 'tool-free compaction is allowed before the recovery prompt');
+  assert.equal(calls[1].tool_choice, 'required');
+  assert.equal(calls[1].parallel_tool_calls, false);
+  assert.equal(calls[2].tool_choice, 'auto', 'only the recovery turn\'s first eligible response is forced');
+  assert.equal(calls[2].parallel_tool_calls, true);
+  const starts = events.filter(event => event.kind === 'provider_request_start');
+  assert.equal(starts[0].terminalToolChoiceRequired, undefined);
+  assert.equal(starts[1].terminalToolChoiceRequired, true);
+  assert.equal(starts[1].terminalToolDefinitionCount, 2);
+  assert.equal(starts[2].terminalToolChoiceRequired, undefined);
+  const config = events.find(event => event.kind === 'provider_tool_config');
+  assert.equal(config.mcpServerCount, 1);
+  assert.equal(config.toolDefinitionCount, 2);
+  assert.equal(config.evidenceGetContextAvailable, false);
+  assert.equal(config.evidenceRunPlanAvailable, true);
+  assert.equal(config.evidenceReportBlockerAvailable, true);
+  assert.equal(config.completionReminder, true);
+  assert.equal(config.terminalToolChoiceRequired, true);
+});
+
+test('forced evidence completion refuses an unexpected tool surface', async t => {
+  let upstreamCalls = 0;
+  const base = await upstream(t, async (_req, res) => {
+    upstreamCalls += 1;
+    res.end('{}');
+  });
+  const instance = await adapter(t, base, { requireEvidenceTerminalTool: true });
+  const response = await request(instance, {
+    model: MODEL,
+    tools: [
+      { type: 'function', name: 'mcp__evidence__evidence_run_plan', parameters: { type: 'object' } },
+      { type: 'function', name: 'mcp__evidence__evidence_report_blocker', parameters: { type: 'object' } },
+      { type: 'function', name: 'browser_member__browser_click', parameters: { type: 'object' } },
+    ],
+  });
+  assert.equal(response.status, 500);
+  assert.match((await response.json()).error.message, /not configured safely/i);
+  assert.equal(upstreamCalls, 0);
+});
+
 test('evidence timing separates provider wait, first byte, and stream completion without content', async t => {
   const privateText = 'private model output';
   const base = await upstream(t, async (req, res) => {
