@@ -57,6 +57,12 @@ export type TranscriptItem =
     tone: 'ok' | 'error' | 'muted';
     /** A turn that did not finish: the reply suggestions offer to try again. */
     turnFailed?: boolean;
+    /**
+     * The conversation's last word is this turn not finishing, and the
+     * server can run it again (its note says `retryable`): the note offers
+     * Retry, which re-runs the turn with no new message.
+     */
+    retry?: boolean;
   }
   | RunItem
   | {
@@ -335,8 +341,8 @@ export function buildTranscript(
       items.push({ kind: 'note', key, text: row.content, tone: meta.ok === false ? 'error' : 'ok' });
       continue;
     }
-    if (event === 'turn_failed') {
-      items.push({ kind: 'note', key, text: row.content, tone: 'error', turnFailed: true });
+    if (event === 'turn_failed' || event === 'turn_interrupted') {
+      items.push({ kind: 'note', key, text: row.content, tone: 'error', turnFailed: true, ...(meta.retryable === true ? { retry: true } : {}) });
       continue;
     }
     if (event) {
@@ -456,6 +462,12 @@ export function buildTranscript(
   unfinished.forEach((run, index) => {
     if (!liveRun || index !== unfinished.length - 1) run.status = 'ended';
   });
+  // Retry belongs to the conversation's last word only: a turn that did not
+  // finish and has been answered since is history.
+  for (let at = 0; at < items.length - 1; at += 1) {
+    const item = items[at];
+    if (item.kind === 'note' && item.retry) items[at] = { ...item, retry: false };
+  }
   return items;
 }
 

@@ -17,7 +17,7 @@ import { useMenuKeyboard } from '../../lib/menu-keys';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
-import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { AgentAppDialog } from './agent-dialog';
 import { MessageComposer } from './composer';
@@ -69,6 +69,7 @@ import {
   loadAgentSessions,
   openAgentSession,
   startAgentSession,
+  useAgentSessionSelector,
   useAgentSessions,
 } from '../agent-session/store';
 import type { AgentSession as MayorSession } from '../agent-session/api';
@@ -1372,6 +1373,16 @@ function MayorSessionThread({ id }: { id: number | 'new' }) {
       if (current.open && current.host === 'messages' && same) deactivateAgentSession();
     };
   }, [id]);
+  // A screen swap can close the conversation under this pane after the pane
+  // took it (a desktop's transition out of #agent/<id> into Messages closes
+  // the conversation's own screen last): the pane would draw a conversation
+  // nobody holds open, which nothing updates. While Messages is on screen
+  // and nothing holds it, the pane takes it back.
+  const shown = useVisibility('messages-screen', false);
+  const held = useAgentSessionSelector((s) => s.open);
+  useEffect(() => {
+    if (shown && !held) void openAgentSession({ id, host: 'messages' });
+  }, [shown, held, id]);
   return (
     <section
       className="flex messages-thread-pane dc-lift dc-lift-session messages-thread-agent"

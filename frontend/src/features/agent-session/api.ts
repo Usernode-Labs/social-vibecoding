@@ -55,12 +55,20 @@ export interface AgentSession {
   doneUnseen?: boolean;
   lastActivityAt: string | null;
   createdAt: string | null;
+  /**
+   * The server's count of writes to this conversation (schema.sql, "Keeping
+   * every screen of a conversation in step"): a screen holding an older one
+   * re-reads its state.
+   */
+  version?: number;
 }
 
 export interface AgentTurnState {
+  /** The running turn's id, where it is known: the lease every pod reads. */
+  id?: string | null;
   phase: 'mayor' | 'cc' | 'mayor2';
-  stopping: boolean;
-  changeId: number | null;
+  stopping?: boolean;
+  changeId?: number | null;
   /** Epoch ms the running work started: the build once dispatched, else the turn. */
   startedAt?: number | null;
 }
@@ -76,6 +84,10 @@ export interface AgentMessage {
   costCents?: number | null;
   metadata: Record<string, unknown>;
   createdAt: string | null;
+  /** The sending screen's own id for a user message, when it gave one. */
+  clientMessageId?: string | null;
+  /** When the row was written or last edited, in the database's order. */
+  rev?: number;
 }
 
 /**
@@ -428,6 +440,36 @@ export async function getSession(id: number): Promise<{ session: AgentSession; t
   return json(await request(`/api/agent-sessions/${id}`), 'Could not load this agent session.');
 }
 
+/**
+ * A conversation read in one consistent snapshot (GET .../state): what the
+ * screen draws, the version and rev it was read at, and the running turn.
+ * Sent the version it holds, the server answers only `unchanged` (and
+ * `busy`) while that is still current; sent a rev, only the rows written or
+ * edited since (`full: false`).
+ */
+export type AgentStateRead =
+  | { unchanged: true; version: number; busy: boolean; turn: AgentTurnState | null }
+  | {
+    unchanged: false;
+    version: number;
+    busy: boolean;
+    turn: AgentTurnState | null;
+    session: AgentSession;
+    messages: AgentMessage[];
+    full: boolean;
+    nextAfter: number | null;
+    rev: number;
+    actions: AgentAction[];
+  };
+
+export async function getState(id: number, { version = null, rev = null }: { version?: number | null; rev?: number | null } = {}): Promise<AgentStateRead> {
+  const query = new URLSearchParams();
+  if (version != null) query.set('version', String(version));
+  if (rev != null) query.set('rev', String(rev));
+  const suffix = query.toString() ? `?${query}` : '';
+  return json(await request(`/api/agent-sessions/${id}/state${suffix}`), 'Could not load this agent session.');
+}
+
 export async function getMessages(id: number, after = 0): Promise<{ messages: AgentMessage[]; nextAfter: number | null }> {
   return json(await request(`/api/agent-sessions/${id}/messages?after=${after}&limit=200`), 'Could not load the conversation.');
 }
@@ -573,30 +615,48 @@ export async function readEventStream(
   dispatch();
 }
 
-/** POST a turn and stream its events. Throws with the server's answer when it refuses. */
+/**
+ * POST a turn and stream its events. Throws with the server's answer when it
+ * refuses. `clientMessageId` is this screen's own id for the message: sent
+ * again after a dropped connection, the server recognises it and answers
+ * that it already has it (`duplicate`), with no second turn. `retry` re-runs
+ * a turn that did not finish, with no message of its own.
+ */
 export async function sendTurn(
   id: number,
   message: string,
-  { signal, onEvent, attachmentIds = [] }: {
+  { signal, onEvent, attachmentIds = [], clientMessageId = null, retry = false }: {
     signal?: AbortSignal;
     onEvent: (event: AgentTurnEvent) => void;
     /** Uploads to this conversation (uploadAttachment), sent with the message. */
     attachmentIds?: string[];
+    clientMessageId?: string | null;
+    retry?: boolean;
   },
-): Promise<void> {
+): Promise<{ duplicate: boolean; messageId?: number | null }> {
+  const payload: Record<string, unknown> = retry ? { retry: true } : { message };
+  if (attachmentIds.length) payload.attachmentIds = attachmentIds;
+  if (clientMessageId) payload.clientMessageId = clientMessageId;
   const response = await fetch(`/api/agent-sessions/${id}/turns`, {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify(attachmentIds.length ? { message, attachmentIds } : { message }),
+    body: JSON.stringify(payload),
     signal,
   });
   if (!response.ok) {
     await json(response, 'The Mayor could not take that message.');
-    return;
+    return { duplicate: false };
+  }
+  // The stream is the answer; JSON is the exception: the server already had
+  // this message (a retry after a dropped connection).
+  if (/application\/json/.test(response.headers?.get?.('Content-Type') || '')) {
+    const body = await json<{ duplicate?: boolean; messageId?: number }>(response, 'The Mayor could not take that message.');
+    return { duplicate: !!body.duplicate, messageId: body.messageId ?? null };
   }
   await readEventStream(response, onEvent);
+  return { duplicate: false };
 }
 
 /**

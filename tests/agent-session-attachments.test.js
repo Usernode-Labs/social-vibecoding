@@ -164,11 +164,16 @@ test('a turn names only its own unsent uploads, and files alone are a message', 
       'FROM agent_sessions s': () => ({ rows: [OPEN_SESSION] }),
       'FROM chat_session_attachments\\s+WHERE id = ANY': (_sql, params) => ({ rows: params[0].map((id) => unsent.get(id)).filter(Boolean) }),
       'UPDATE agent_sessions\\s+SET active_turn': () => ({ rows: [{ id: 5 }] }),
+      // The route writes the message with the lease (startTurnWithMessage).
+      'INSERT INTO chat_session_messages': () => ({ rows: [{ id: 99 }] }),
     }, async (call, pool) => {
       const filesOnly = await call('POST', '/api/agent-sessions/5/turns', { attachmentIds: [ATT_B, ATT_A] });
       assert.equal(filesOnly.status, 200);
       assert.equal(runs.length, 1);
       assert.equal(runs[0].messageText, '(attached files)', 'the dev chat\'s stand-in, which the transcript hides');
+      assert.deepEqual(runs[0].recorded, { id: 99, clientMessageId: null }, 'written by the route, with the lease, before the stream');
+      const link = pool.calls.find((c) => /UPDATE chat_session_attachments SET message_id/.test(c.sql));
+      assert.deepEqual(link.params, [99, [ATT_B, ATT_A], 5], 'the files belong to the message the route wrote');
       assert.deepEqual(runs[0].attachments.map((a) => [a.id, a.kind, a.filename, a.contentType, a.sizeBytes, a.meta || null]), [
         [ATT_B, 'zip', 'site.zip', 'application/zip', 900, { entryCount: 2 }],
         [ATT_A, 'image', 'shot.png', 'image/png', PNG.length, null],
@@ -202,6 +207,8 @@ test('the message row lists its files and claims them; the history and a build r
   assert.match(src, /JSON\.stringify\(\{ agentTurnId: turnId, \.\.\.\(attachments\.length \? \{ attachments \} : \{\}\) \}\)/);
   assert.match(src, /UPDATE chat_session_attachments SET message_id = \$1\s+WHERE id = ANY\(\$2\) AND agent_session_id = \$3 AND message_id IS NULL/,
     'linked, so the orphan sweep leaves them alone');
+  assert.match(read('src/services/agent-sessions.js'), /UPDATE chat_session_attachments SET message_id = \$1\s+WHERE id = ANY\(\$2\) AND agent_session_id = \$3 AND message_id IS NULL/,
+    'and where the route writes the message, the same link');
   assert.match(src, /d\.attachments\.loadForHistory\(pool, history\)/);
   assert.match(src, /historyToMessages\(history, d\.buildMayorMessages, historyAttachments\)/);
 
@@ -370,22 +377,42 @@ test('a sent message shows its files, and the files-only stand-in is never shown
 
 // ── 5. One bubble per message ──────────────────────────────────────────
 
-test('the pending bubble goes when a newer user row lands, from any refresh', () => {
+test('a sent message is one row: its outbox copy goes the moment the server\'s row with its id lands, from any read', () => {
   globalThis.window = { location: { hash: '' }, App: {}, UsernodeReact: {}, PlatformUI: { toast() {} } };
   try {
     const store = loadTsx('frontend/src/features/agent-session/store.ts');
-    const turn = { pendingUserText: 'Build the spec', pendingAfterId: 40 };
-    const row = (id, role) => ({ id, role, content: '', metadata: {} });
-    assert.equal(store.settlePending(turn, [row(40, 'user'), row(41, 'assistant')]), turn, 'only older rows: it stays');
-    assert.deepEqual(store.settlePending(turn, [row(40, 'user'), row(42, 'user')]), { pendingUserText: null, pendingAfterId: null });
-    const fresh = { pendingUserText: 'first', pendingAfterId: null };
-    assert.equal(store.settlePending(fresh, [row(1, 'user')]).pendingUserText, null, 'a new conversation: any user row');
-    const none = { pendingUserText: null, pendingAfterId: null };
-    assert.equal(store.settlePending(none, [row(9, 'user')]), none);
+    const outbox = loadTsx('frontend/src/features/agent-session/outbox.ts');
+    const item = (clientId, status = 'sending') => ({ clientId, message: 'Build the spec', shown: 'Build the spec', status, error: '', createdAt: Date.now(), attachmentKeys: [] });
+    const row = (id, role, clientMessageId = null) => ({ id, role, content: '', metadata: {}, clientMessageId });
+    const held = [item('c-one'), item('c-two', 'failed')];
+    assert.equal(outbox.withoutLanded(held, [row(40, 'user'), row(41, 'assistant')]), held, 'not landed: both stay, and the same array comes back');
+    assert.deepEqual(outbox.withoutLanded(held, [row(42, 'user', 'c-one')]).map((i) => i.clientId), ['c-two'],
+      'landed by its id, not by being the newest user row');
+    assert.deepEqual(outbox.withoutLanded(held, [row(43, 'user', 'c-two')]).map((i) => i.clientId), ['c-one'],
+      'a Not sent that reached the server after all is simply sent');
+    const stranded = outbox.markStranded(held, new Set(['c-one']), 'This was not sent.');
+    assert.equal(stranded, held, 'still in flight in this page: left alone');
+    assert.deepEqual(outbox.markStranded([item('c-three')], new Set(), 'This was not sent.').map((i) => [i.status, i.error]),
+      [['failed', 'This was not sent.']], 'nothing is sending it any more and the server does not have it: Not sent');
+    assert.deepEqual(outbox.mergeRows([row(1, 'user'), row(2, 'assistant')], [{ ...row(2, 'assistant'), content: 'edited' }, row(3, 'user')])
+      .map((r) => [r.id, r.content]), [[1, ''], [2, 'edited'], [3, '']], 'a read since a rev merges edits and new rows by id');
 
     const src = read('frontend/src/features/agent-session/store.ts');
-    assert.match(src, /publish\(\(current\) => \(\{ messages: all, turn: settlePending\(current\.turn, all\) \}\)\)/,
-      'every messages refresh settles it, not only the turn\'s own end');
+    assert.match(src, /const outbox = markStranded\(withoutLanded\(current\.outbox, messages\), inFlight\(\), STRANDED_TEXT\);/,
+      'every read settles it, not only the turn\'s own end');
+
+    // The streamed words stay until the read that brings their saved row.
+    const live = { ...store.getAgentSessionState().turn, running: true, phase: 'mayor', streamText: 'Here it is', settleOn: 44, turnId: 'aaaaaaaa-1' };
+    const before = store.settleTurn(live, { busy: true, turn: { id: 'aaaaaaaa-1', phase: 'mayor' }, messages: [row(40, 'user')], sending: false });
+    assert.equal(before.streamText, 'Here it is', 'not yet in the read: the words stay');
+    const after = store.settleTurn(live, { busy: true, turn: { id: 'aaaaaaaa-1', phase: 'cc', startedAt: 5 }, messages: [row(44, 'assistant')], sending: false });
+    assert.deepEqual([after.streamText, after.settleOn, after.phase, after.startedAt], ['', null, 'cc', 5], 'the row is in: the words go in the same publish');
+    const ended = store.settleTurn(live, { busy: false, turn: null, messages: [row(44, 'assistant')], sending: false });
+    assert.equal(ended.running, false, 'the server says the turn is over: it is');
+    assert.equal(store.settleTurn(live, { busy: false, turn: null, messages: [], sending: true }).running, true,
+      'but not while this screen\'s own send is still waiting to be accepted');
+    const other = store.settleTurn(live, { busy: true, turn: { id: 'bbbbbbbb-2', phase: 'mayor' }, messages: [], sending: false });
+    assert.deepEqual([other.turnId, other.streamText], ['bbbbbbbb-2', ''], 'another turn: drawn afresh');
 
     // A coding agent's bare phase marker reads as words, never as "[phase]".
     assert.equal(store.progressLine('Reading the header'), 'Reading the header');

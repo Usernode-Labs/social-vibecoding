@@ -106,6 +106,14 @@ function findLast(sessionId, predicate) {
 
 // Chat handler calls this at the end of a run so we can drop the ring
 // buffer promptly rather than waiting for the idle TTL.
+// The events the buffer holds now, oldest first: GET
+// /api/agent-sessions/:id/events replays the running turn's from here to a
+// screen that opens mid-turn, which has no Last-Event-Id to resume from.
+function snapshot(sessionId) {
+  const b = buffers.get(sessionId);
+  return b ? b.events.slice() : [];
+}
+
 function clearSession(sessionId) {
   const b = buffers.get(sessionId);
   if (!b) return;
@@ -123,4 +131,4 @@ function subscriberCount(sessionId) {
   return b ? b.subs.size : 0;
 }
 
-module.exports = { publish, subscribe, findLast, clearSession, subscriberCount };
+module.exports = { publish, subscribe, findLast, snapshot, clearSession, subscriberCount };

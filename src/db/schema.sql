@@ -9511,6 +9511,213 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_agent_session
   ON chat_session_attachments(agent_session_id) WHERE agent_session_id IS NOT NULL;
 
+-- ── Keeping every screen of a conversation in step with the server ──────
+--
+-- A conversation's screens (its own screen, the Messages pane, the side
+-- panel, another device) used to learn what changed from one in-memory event
+-- stream that had to reach each of them exactly once. Now the database says
+-- when a conversation changed, whatever changed it:
+--
+--   state_version  one counter per conversation, bumped by the triggers
+--                  below on every write a screen draws: a message written or
+--                  edited, its active change's status, checks or preview, the
+--                  Mayor's turn starting, moving phase or ending, a card, the
+--                  title, the model, the archive.
+--   rev            a stamp on every message row, from one sequence, taken on
+--                  insert AND on update, so a screen asks for "what changed
+--                  since rev N" and gets the edited rows (a card's outcome, a
+--                  cost) as well as the new ones.
+--
+-- Each bump is announced to the owner's open sockets on every pod: the
+-- trigger speaks services/ws-bus.js's own envelope on its own channel
+-- (`usernode_ws`, kind `user`), with an instance id no process has, so every
+-- instance delivers it once, the writer's included. A screen that hears a
+-- version it does not have re-reads GET /api/agent-sessions/:id/state.
+-- tests/agent-session-sync.test.js pins the envelope to ws-bus.js.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS state_version BIGINT NOT NULL DEFAULT 0;
+
+CREATE SEQUENCE IF NOT EXISTS chat_session_messages_rev_seq;
+ALTER TABLE chat_session_messages ADD COLUMN IF NOT EXISTS rev BIGINT;
+
+-- A message sent from a conversation carries the client's id for it, so a
+-- send retried after a dropped connection is recognised instead of written
+-- twice. The dev chat's index above is per change, and a conversation's
+-- message may have no change (session_id NULL), so this one is per
+-- conversation.
+CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_agent_client_message_idx
+  ON chat_session_messages (agent_session_id, client_message_id)
+  WHERE agent_session_id IS NOT NULL AND client_message_id IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION stamp_chat_message_rev() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.rev := nextval('chat_session_messages_rev_seq');
+  RETURN NEW;
+END;
+$$;
+
+-- Per statement: one bump per conversation a statement touched, however
+-- many of its rows it wrote.
+CREATE OR REPLACE FUNCTION bump_agent_session_version_from_messages() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE agent_sessions s
+     SET state_version = s.state_version + 1
+   WHERE s.id IN (SELECT DISTINCT r.agent_session_id FROM changed_rows r
+                   WHERE r.agent_session_id IS NOT NULL);
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION bump_agent_session_version_from_actions() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE agent_sessions s
+     SET state_version = s.state_version + 1
+   WHERE s.id IN (SELECT DISTINCT r.agent_session_id FROM changed_rows r);
+  RETURN NULL;
+END;
+$$;
+
+-- A change's own row moves on its own (checks, the preview, the vote): the
+-- conversation it belongs to is bumped when something its screens draw
+-- moved. The WHEN clause on the trigger keeps every other update of
+-- chat_sessions (heartbeats, worker bookkeeping) away from it.
+CREATE OR REPLACE FUNCTION bump_agent_session_version_from_change() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE agent_sessions SET state_version = state_version + 1
+   WHERE id IN (NEW.agent_session_id, OLD.agent_session_id);
+  RETURN NULL;
+END;
+$$;
+
+-- The conversation's own row. Only what a screen draws bumps it: renewing
+-- the turn lease every half minute, reading the conversation (seen_at) and
+-- the compaction summary do not. A write that already moved state_version
+-- (the triggers above) is left as it is.
+CREATE OR REPLACE FUNCTION agent_session_state_touch() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.state_version = OLD.state_version AND (
+       NEW.title IS DISTINCT FROM OLD.title
+    OR NEW.status IS DISTINCT FROM OLD.status
+    OR NEW.focus_app_id IS DISTINCT FROM OLD.focus_app_id
+    OR NEW.focus_context IS DISTINCT FROM OLD.focus_context
+    OR NEW.active_change_id IS DISTINCT FROM OLD.active_change_id
+    OR NEW.agent_backend IS DISTINCT FROM OLD.agent_backend
+    OR NEW.agent_model IS DISTINCT FROM OLD.agent_model
+    OR NEW.agent_reasoning_effort IS DISTINCT FROM OLD.agent_reasoning_effort
+    OR NEW.archived_at IS DISTINCT FROM OLD.archived_at
+    OR NEW.last_done_at IS DISTINCT FROM OLD.last_done_at
+    OR (NEW.active_turn->>'id') IS DISTINCT FROM (OLD.active_turn->>'id')
+    OR (NEW.active_turn->>'phase') IS DISTINCT FROM (OLD.active_turn->>'phase')
+  ) THEN
+    NEW.state_version := OLD.state_version + 1;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- `busy` is a hint for the lists' spinner; the screen re-reads for the
+-- truth. 90 seconds is services/agent-sessions.js TURN_LEASE_STALE_SECONDS.
+CREATE OR REPLACE FUNCTION agent_session_state_announce() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM pg_notify('usernode_ws', json_build_object(
+    'i', 'db:agent_sessions',
+    'k', 'user',
+    'r', json_build_object('userId', NEW.user_id),
+    'd', json_build_object(
+      'type', 'agent_session_changed',
+      'agentSessionId', NEW.id,
+      'version', NEW.state_version,
+      'busy', (NEW.active_turn IS NOT NULL
+               AND COALESCE(NEW.active_turn->>'renewedAt', NEW.active_turn->>'startedAt')::timestamptz
+                   >= NOW() - interval '90 seconds')
+    )
+  )::text);
+  RETURN NULL;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_session_messages_zz_stamp_rev'
+                   AND tgrelid = 'chat_session_messages'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER chat_session_messages_zz_stamp_rev
+      BEFORE INSERT OR UPDATE ON chat_session_messages
+      FOR EACH ROW EXECUTE FUNCTION stamp_chat_message_rev();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_session_messages_agent_version_ins'
+                   AND tgrelid = 'chat_session_messages'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER chat_session_messages_agent_version_ins
+      AFTER INSERT ON chat_session_messages
+      REFERENCING NEW TABLE AS changed_rows
+      FOR EACH STATEMENT EXECUTE FUNCTION bump_agent_session_version_from_messages();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_session_messages_agent_version_upd'
+                   AND tgrelid = 'chat_session_messages'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER chat_session_messages_agent_version_upd
+      AFTER UPDATE ON chat_session_messages
+      REFERENCING NEW TABLE AS changed_rows
+      FOR EACH STATEMENT EXECUTE FUNCTION bump_agent_session_version_from_messages();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_session_messages_agent_version_del'
+                   AND tgrelid = 'chat_session_messages'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER chat_session_messages_agent_version_del
+      AFTER DELETE ON chat_session_messages
+      REFERENCING OLD TABLE AS changed_rows
+      FOR EACH STATEMENT EXECUTE FUNCTION bump_agent_session_version_from_messages();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'agent_session_actions_version_ins'
+                   AND tgrelid = 'agent_session_actions'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER agent_session_actions_version_ins
+      AFTER INSERT ON agent_session_actions
+      REFERENCING NEW TABLE AS changed_rows
+      FOR EACH STATEMENT EXECUTE FUNCTION bump_agent_session_version_from_actions();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'agent_session_actions_version_upd'
+                   AND tgrelid = 'agent_session_actions'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER agent_session_actions_version_upd
+      AFTER UPDATE ON agent_session_actions
+      REFERENCING NEW TABLE AS changed_rows
+      FOR EACH STATEMENT EXECUTE FUNCTION bump_agent_session_version_from_actions();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_sessions_agent_session_version'
+                   AND tgrelid = 'chat_sessions'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER chat_sessions_agent_session_version
+      AFTER UPDATE ON chat_sessions
+      FOR EACH ROW WHEN (
+        (NEW.agent_session_id IS NOT NULL OR OLD.agent_session_id IS NOT NULL) AND (
+             NEW.agent_session_id IS DISTINCT FROM OLD.agent_session_id
+          OR NEW.status IS DISTINCT FROM OLD.status
+          OR NEW.pr_number IS DISTINCT FROM OLD.pr_number
+          OR NEW.pr_title IS DISTINCT FROM OLD.pr_title
+          OR NEW.session_title IS DISTINCT FROM OLD.session_title
+          OR NEW.staging_url IS DISTINCT FROM OLD.staging_url
+          OR NEW.check_state IS DISTINCT FROM OLD.check_state
+          OR NEW.check_error_detail IS DISTINCT FROM OLD.check_error_detail
+          OR NEW.test_results IS DISTINCT FROM OLD.test_results
+          OR NEW.visual_evidence_state IS DISTINCT FROM OLD.visual_evidence_state
+          OR NEW.visual_evidence_run_id IS DISTINCT FROM OLD.visual_evidence_run_id))
+      EXECUTE FUNCTION bump_agent_session_version_from_change();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'agent_sessions_state_touch'
+                   AND tgrelid = 'agent_sessions'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER agent_sessions_state_touch
+      BEFORE UPDATE ON agent_sessions
+      FOR EACH ROW EXECUTE FUNCTION agent_session_state_touch();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'agent_sessions_state_announce'
+                   AND tgrelid = 'agent_sessions'::regclass AND NOT tgisinternal) THEN
+    CREATE TRIGGER agent_sessions_state_announce
+      AFTER UPDATE ON agent_sessions
+      FOR EACH ROW WHEN (NEW.state_version IS DISTINCT FROM OLD.state_version)
+      EXECUTE FUNCTION agent_session_state_announce();
+  END IF;
+END $$;
+
 -- Admin Support (#admin/support): one row per thing staff did to or looked
 -- at on a participant's account. `view` rows are the access audit (one per
 -- admin, user and hour); `points_adjustment` / `points_reversal` rows carry
