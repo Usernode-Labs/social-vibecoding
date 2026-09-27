@@ -185,15 +185,11 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
   return options.map((option) => (option.value === fallback ? { ...option, isDefault: true } : option));
 }
 
-/**
- * Does this choice take a reasoning effort? Only an OpenRouter model that
- * offers one and runs in Codex: Claude Code has no control for OpenRouter's
- * effort, so the server sends none for a model it runs there (#3296).
- */
+/** Does this choice take a reasoning effort? Only an OpenRouter model that offers one. */
 export function offersReasoning(choice: AgentChoice | null, catalog: ModelCatalog | null): boolean {
   if (!choice || choice.backend !== 'codex_openrouter') return false;
   const model = openRouterModel(catalog, choice.model);
-  return !model || (model.supportsReasoning !== false && model.harness !== 'claude');
+  return !model || model.supportsReasoning !== false;
 }
 
 /**

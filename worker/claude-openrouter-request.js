@@ -18,13 +18,16 @@
 // The listener also enforces what the platform chose for the turn: every
 // request is pinned to the session's model (Claude Code's background calls
 // ask for a Haiku alias, which would bill a different model to the user's
-// key), a reply is capped at the model's catalog output limit, and images are
-// replaced with a note, because the platform runs OpenRouter models on text.
+// key), a reply is capped at the model's catalog output limit, images are
+// replaced with a note, because the platform runs OpenRouter models on text,
+// the session's thinking level is applied, and Claude Code's Anthropic-only
+// web search is swapped for OpenRouter's own.
 //
 //   node claude-openrouter-request.js <claude arguments...>
 //
 // Env: OPENROUTER_API_KEY, AGENT_MODEL (required); OPENROUTER_API_BASE,
-// AGENT_MODEL_MAX_OUTPUT_TOKENS, HOMEROOM_MCP_TOKEN, MODE (optional).
+// AGENT_MODEL_MAX_OUTPUT_TOKENS, AGENT_REASONING_EFFORT, HOMEROOM_MCP_TOKEN,
+// MODE (optional).
 
 const http = require('node:http');
 const crypto = require('node:crypto');
@@ -101,9 +104,41 @@ function textOnly(blocks) {
   });
 }
 
-// Pin the model, cap the reply and keep the input text. Exported for tests:
-// this is the policy.
-function applyTurnPolicy(body, { model, maxOutputTokens, countTokens }) {
+// The platform's effort scale (minimal … xhigh) plus Anthropic's `max`.
+// OpenRouter translates each onto the model's own reasoning levels.
+const REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+
+// Claude Code's WebSearch is Anthropic's server-side search tool
+// (`web_search_20250305` and its successors), which only Anthropic runs.
+// OpenRouter has its own server-side search, `openrouter:web_search`, on the
+// same Messages API and for any model. Swap one for the other, so WebSearch
+// works on an OpenRouter model. Codex never had search here: its catalog
+// declares none. Claude Code sends this tool only on its own WebSearch
+// sub-request, so a surprise in OpenRouter's reply fails that one search
+// rather than the turn. Each search is billed to the key (about $0.007 with
+// Exa, OpenRouter's fallback engine for models without native search), so
+// the searches per call are capped.
+const ANTHROPIC_WEB_SEARCH = /^web_search_\d{8}$/;
+const WEB_SEARCH_MAX_USES = 5;
+
+function openRouterWebSearch(tool) {
+  const maxUses = Number.isSafeInteger(tool.max_uses) && tool.max_uses > 0
+    ? Math.min(tool.max_uses, WEB_SEARCH_MAX_USES)
+    : WEB_SEARCH_MAX_USES;
+  const parameters = { max_uses: maxUses };
+  // Anthropic's `blocked_domains` is OpenRouter's `excluded_domains`; like
+  // Anthropic, OpenRouter takes one list or the other, never both.
+  if (Array.isArray(tool.allowed_domains) && tool.allowed_domains.length) {
+    parameters.allowed_domains = tool.allowed_domains;
+  } else if (Array.isArray(tool.blocked_domains) && tool.blocked_domains.length) {
+    parameters.excluded_domains = tool.blocked_domains;
+  }
+  return { type: 'openrouter:web_search', parameters };
+}
+
+// Pin the model, cap the reply, keep the input text, set the thinking level
+// and route web search to OpenRouter. Exported for tests: this is the policy.
+function applyTurnPolicy(body, { model, maxOutputTokens, countTokens, reasoningEffort = null }) {
   body.model = model;
   if (Array.isArray(body.messages)) {
     body.messages = body.messages.map((message) => (message && Array.isArray(message.content)
@@ -111,6 +146,22 @@ function applyTurnPolicy(body, { model, maxOutputTokens, countTokens }) {
       : message));
   }
   if (countTokens) return body;
+  if (Array.isArray(body.tools)) {
+    body.tools = body.tools.map((tool) => (tool && typeof tool.type === 'string' && ANTHROPIC_WEB_SEARCH.test(tool.type)
+      ? openRouterWebSearch(tool)
+      : tool));
+  }
+  // The thinking level. On OpenRouter's Messages API `output_config.effort`
+  // becomes the model's own reasoning effort, and it outranks an adaptive or
+  // budgeted `thinking`. `thinking: disabled` would still switch reasoning
+  // off for a non-Anthropic model, so it goes when an effort is set.
+  if (REASONING_EFFORTS.has(reasoningEffort)) {
+    const config = body.output_config && typeof body.output_config === 'object' && !Array.isArray(body.output_config)
+      ? body.output_config
+      : {};
+    body.output_config = { ...config, effort: reasoningEffort };
+    if (body.thinking?.type === 'disabled') delete body.thinking;
+  }
   if (Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0) {
     const asked = body.max_tokens;
     body.max_tokens = Number.isSafeInteger(asked) && asked > 0
@@ -129,7 +180,7 @@ function applyTurnPolicy(body, { model, maxOutputTokens, countTokens }) {
 }
 
 async function startMessagesAdapter({
-  baseUrl, apiKey, model, maxOutputTokens = null, localToken,
+  baseUrl, apiKey, model, maxOutputTokens = null, reasoningEffort = null, localToken,
   onTiming = null, timingIntervalMs = 15_000, fetchImpl = fetch,
 }) {
   const base = new URL(baseUrl);
@@ -177,7 +228,7 @@ async function startMessagesAdapter({
         replyError(res, 400, 'invalid_request_error', 'Invalid OpenRouter request body');
         return;
       }
-      applyTurnPolicy(body, { model, maxOutputTokens, countTokens });
+      applyTurnPolicy(body, { model, maxOutputTokens, countTokens, reasoningEffort });
       const serializedBody = JSON.stringify(body);
       if (onTiming && !countTokens) {
         // Sizes and counts only: the request's content never leaves here.
@@ -328,6 +379,7 @@ async function runClaude(args, env = process.env) {
     apiKey: env.OPENROUTER_API_KEY,
     model,
     maxOutputTokens: Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0 ? maxOutputTokens : null,
+    reasoningEffort: env.AGENT_REASONING_EFFORT || null,
     localToken,
     // The same content-free request timing a Codex turn reports, so a quiet
     // model call shows in the owner's progress log either way.

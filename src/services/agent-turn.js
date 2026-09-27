@@ -251,10 +251,10 @@ async function resolveCodexRuntimeContext({
     // Do not send a reasoning parameter to a model OpenRouter explicitly says
     // does not support one. If the catalog was temporarily unavailable, keep
     // the user's existing preference instead of guessing about capability.
-    // Claude Code has no control that maps onto OpenRouter's reasoning
-    // effort, so a Claude-harness turn runs at the model's own default and
-    // the ledger records no effort rather than one that was never sent.
-    agentReasoningEffort: catalogModel?.supportsReasoning === false || agentHarness === 'claude'
+    // A Claude-harness turn carries it too: the worker-local adapter sends it
+    // as the Messages API's output_config.effort, which OpenRouter maps onto
+    // the model's own reasoning effort (#3296).
+    agentReasoningEffort: catalogModel?.supportsReasoning === false
       ? null
       : requestedReasoningEffort,
     agentModelMetadata: runtimeModelMetadataForModel(catalogModel, resolvedModel),

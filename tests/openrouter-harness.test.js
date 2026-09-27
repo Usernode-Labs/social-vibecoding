@@ -130,8 +130,8 @@ test("'auto' resolves the harness from the map; callers that do not ask keep Cod
   });
   assert.equal(auto.agentHarness, 'claude');
   assert.equal(auto.agentModel, GLM);
-  // Claude Code sends no OpenRouter effort, so the ledger records none.
-  assert.equal(auto.agentReasoningEffort, null);
+  // The thinking level travels to Claude Code too (as output_config.effort).
+  assert.equal(auto.agentReasoningEffort, 'xhigh');
 
   const legacy = await agentTurn.resolveCodexRuntimeContext({
     pool, userId: 3, config: CONFIG, session: session(),
@@ -384,7 +384,7 @@ test('the transcript and the log name the CLI that actually ran', () => {
   assert.match(sessions, /\.\.\.\(harness === 'claude' \? \{ agentHarness: harness \} : \{\}\),/);
 });
 
-test('pickers mark the Claude Code models and the composer hides an effort it cannot send', () => {
+test('pickers mark the Claude Code models and keep their thinking level', () => {
   const credentials = fs.readFileSync(path.join(ROOT, 'src', 'routes', 'credentials.js'), 'utf8');
   assert.match(credentials, /harness: registry\.openRouterHarnessForModel\(model\.id, config\),/);
   for (const file of ['frontend/src/features/dev-chat/dev-chat.js', 'frontend/src/features/settings/settings.js']) {
@@ -397,6 +397,7 @@ test('pickers mark the Claude Code models and the composer hides an effort it ca
   assert.match(settings, /<SectionHeading title=\{<>OpenRouter<\/>\}>/);
   assert.match(settings, /\n\s+Coding model\n\s+<\/Label>/);
   const choice = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'agent-session', 'model-choice.ts'), 'utf8');
-  assert.match(choice, /model\.supportsReasoning !== false && model\.harness !== 'claude'/);
+  assert.match(choice, /return !model \|\| model\.supportsReasoning !== false;/);
+  assert.ok(!/harness !== 'claude'/.test(choice), 'no model loses its thinking level for running in Claude Code');
   assert.match(choice, /'Runs on your OpenRouter key, in Claude Code'/);
 });

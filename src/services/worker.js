@@ -3072,14 +3072,17 @@ async function execInWorker(sessionId, {
     // #3296: run-cc.sh drives Claude Code through the worker-local Messages
     // adapter (worker/claude-openrouter-request.js) instead of Anthropic. The
     // model is the session-pinned OpenRouter slug; the adapter pins every
-    // request to it and caps the reply at the catalog's output limit. The
-    // resume id is the Claude session this OpenRouter thread recorded.
+    // request to it, caps the reply at the catalog's output limit and sets
+    // the reasoning effort. The resume id is the Claude session this
+    // OpenRouter thread recorded.
     safeEnv.AGENT_PROVIDER = 'openrouter';
     safeEnv.MODEL = agentModel || '';
     safeEnv.AGENT_MODEL = agentModel || '';
     safeEnv.AGENT_MODEL_MAX_OUTPUT_TOKENS = agentModelMetadata?.maxOutputTokens != null
       ? String(agentModelMetadata.maxOutputTokens)
       : '';
+    // The thinking level, which the adapter sends as output_config.effort.
+    safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
     safeEnv.CLAUDE_RESUME_SESSION_ID = resumeSessionId || '';
     safeEnv.RESUME_FALLBACK_PROMPT_FILE = '';
     safeEnv.TURN_UUID = turnUuid || '';

@@ -55,6 +55,60 @@ test('every request is pinned to the session model and capped at its output limi
   );
 });
 
+test('the thinking level is sent as output_config.effort, which OpenRouter maps for every model', () => {
+  const body = applyTurnPolicy(
+    { max_tokens: 10, output_config: { format: 'kept' }, thinking: { type: 'disabled' }, messages: [] },
+    { model: GLM, maxOutputTokens: 10, reasoningEffort: 'xhigh' },
+  );
+  assert.deepEqual(body.output_config, { format: 'kept', effort: 'xhigh' });
+  // thinking: disabled would switch reasoning off for a non-Anthropic model.
+  assert.equal(body.thinking, undefined);
+  // An adaptive or budgeted thinking stays: effort outranks it on OpenRouter.
+  const adaptive = applyTurnPolicy(
+    { max_tokens: 10, thinking: { type: 'adaptive' }, messages: [] },
+    { model: GLM, maxOutputTokens: 10, reasoningEffort: 'low' },
+  );
+  assert.deepEqual(adaptive.thinking, { type: 'adaptive' });
+  assert.deepEqual(adaptive.output_config, { effort: 'low' });
+  // No effort, or one outside the scale: the request is left to the model.
+  for (const effort of [null, '', 'turbo']) {
+    const untouched = applyTurnPolicy(
+      { max_tokens: 10, thinking: { type: 'disabled' }, messages: [] },
+      { model: GLM, maxOutputTokens: 10, reasoningEffort: effort },
+    );
+    assert.equal(untouched.output_config, undefined, String(effort));
+    assert.deepEqual(untouched.thinking, { type: 'disabled' });
+  }
+  // count_tokens is not a generation.
+  const count = applyTurnPolicy({ messages: [] }, { model: GLM, countTokens: true, reasoningEffort: 'high' });
+  assert.equal(count.output_config, undefined);
+});
+
+test("Claude Code's Anthropic web search becomes OpenRouter's, capped", () => {
+  const body = applyTurnPolicy({
+    max_tokens: 10, messages: [],
+    tools: [
+      { name: 'Read', description: 'read a file', input_schema: { type: 'object' } },
+      { type: 'web_search_20250305', name: 'web_search', max_uses: 8, blocked_domains: ['example.test'] },
+    ],
+  }, { model: GLM, maxOutputTokens: 10 });
+  assert.deepEqual(body.tools, [
+    { name: 'Read', description: 'read a file', input_schema: { type: 'object' } },
+    { type: 'openrouter:web_search', parameters: { max_uses: 5, excluded_domains: ['example.test'] } },
+  ]);
+  const allowed = applyTurnPolicy({
+    messages: [],
+    tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 2,
+      allowed_domains: ['docs.example.test'], blocked_domains: ['x.example.test'] }],
+  }, { model: GLM });
+  assert.deepEqual(allowed.tools, [{
+    type: 'openrouter:web_search', parameters: { max_uses: 2, allowed_domains: ['docs.example.test'] },
+  }]);
+  // Anything that is not Anthropic's web search tool passes untouched.
+  const other = applyTurnPolicy({ messages: [], tools: [{ type: 'bash_20250124', name: 'bash' }] }, { model: GLM });
+  assert.deepEqual(other.tools, [{ type: 'bash_20250124', name: 'bash' }]);
+});
+
 test('images and documents become a note, because OpenRouter models run on text', () => {
   const body = applyTurnPolicy({
     model: 'x', max_tokens: 10,
@@ -312,7 +366,7 @@ test('run-cc.sh runs an OpenRouter scout through the adapter with the key out of
     PROMPT_FILE: fx.prompt, BRANCH: 'smoke', SESSION_ID: '1', PLATFORM_URL: 'http://platform',
     MODE: 'scout', WORKSPACE_DIR: fx.ws,
     AGENT_PROVIDER: 'openrouter', MODEL: GLM, AGENT_MODEL: GLM,
-    AGENT_MODEL_MAX_OUTPUT_TOKENS: '64000',
+    AGENT_MODEL_MAX_OUTPUT_TOKENS: '64000', AGENT_REASONING_EFFORT: 'xhigh',
     OPENROUTER_API_KEY: KEY, OPENROUTER_API_BASE: upstream.base,
     BROWSER_MCP_CONFIG: path.join(fx.dir, 'absent.json'),
   };
@@ -329,14 +383,18 @@ test('run-cc.sh runs an OpenRouter scout through the adapter with the key out of
   assert.equal(runtime.haiku, GLM);
   const at = runtime.args.indexOf('--model');
   assert.equal(runtime.args[at + 1], GLM);
+  // A scout keeps the Anthropic scout's tool set; WebSearch stays, routed to
+  // OpenRouter's own search by the adapter.
   const disallowed = runtime.args.indexOf('--disallowed-tools');
-  assert.deepEqual(runtime.args.slice(disallowed, disallowed + 5),
-    ['--disallowed-tools', 'Edit', 'Write', 'NotebookEdit', 'WebSearch']);
+  assert.deepEqual(runtime.args.slice(disallowed, disallowed + 4),
+    ['--disallowed-tools', 'Edit', 'Write', 'NotebookEdit']);
+  assert.ok(!runtime.args.includes('WebSearch'));
 
   assert.equal(upstream.seen.length, 1);
   assert.equal(upstream.seen[0].headers.authorization, `Bearer ${KEY}`);
   assert.equal(upstream.seen[0].body.model, GLM);
   assert.equal(upstream.seen[0].body.max_tokens, 64_000);
+  assert.deepEqual(upstream.seen[0].body.output_config, { effort: 'xhigh' }, 'the thinking level reaches OpenRouter');
 
   assert.ok(!out.includes(KEY), 'the journal never carries the key');
   assert.match(out, /found \*\*\*\*/);

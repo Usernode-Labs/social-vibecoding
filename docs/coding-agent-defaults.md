@@ -101,20 +101,37 @@ output limit. Images and PDFs in a request are replaced with a short note: the
 platform runs OpenRouter models on text only, as Codex's model catalog does,
 and a text-only model would refuse the whole request.
 
+The thinking level still applies. The adapter sends the session's reasoning
+effort as the Messages API's `output_config.effort`. OpenRouter documents that
+field as its unified `reasoning.effort`, translated to each model's own levels,
+and ranks it above Claude Code's `thinking`. A `thinking: disabled` would
+still switch reasoning off for a non-Anthropic model, so the adapter drops it
+when an effort is set.
+
+Web search works, which it never did on this venue: Codex's OpenRouter model
+catalog declares `supports_search_tool: false`. Claude Code's WebSearch sends
+Anthropic's server-side search tool (`web_search_20250305`), which only
+Anthropic runs. The adapter swaps it for OpenRouter's `openrouter:web_search`
+server tool, which the Messages API accepts for any model. OpenRouter runs
+the search with the model's native search, or with Exa (about $0.007 a search,
+billed to the key) for models without one, GLM included. Searches are capped
+at 5 per WebSearch call. Claude Code sends that tool only on WebSearch's own
+sub-request, so a reply Claude Code cannot read fails that search, not the
+turn. OpenRouter's server tools are in beta.
+
 Known differences from a Codex turn:
 
-- **Reasoning effort is not sent.** Claude Code has no control that maps onto
-  OpenRouter's effort, so the model thinks at its provider default and the
-  picker hides the thinking level for these models.
-- **WebSearch is disabled.** It is Anthropic's server-side tool, which another
-  provider cannot run. WebFetch runs locally and is kept.
 - **Usage covers the run, not the thread.** Claude Code reports totals for one
   invocation, and Anthropic's `input_tokens` excludes cache reads and writes.
   The ledger adds the three and skips the thread-delta step Codex's cumulative
   totals need.
-- **Scout and build only.** Visual evidence and the Homeroom bot still run
-  Codex. They call the runtime without `harness: 'auto'`, and a thread
-  written by the other CLI is not resumed there.
+- **Search fees are not in the ledger estimate.** The estimate prices tokens
+  from the catalog. OpenRouter bills each web search separately, and the key's
+  own limit still covers it.
+- **Scout and build only.** The dev chat and agent chats dispatch through the
+  same scout and build, so both use the map. Visual evidence and the Homeroom
+  bot still run Codex. They call the runtime without `harness: 'auto'`, and a
+  thread written by the other CLI is not resumed there.
 
 Changing the map mid-conversation is safe. The ledger records which CLI wrote
 each thread (`agent_turns.metadata.harness`). A turn whose harness differs

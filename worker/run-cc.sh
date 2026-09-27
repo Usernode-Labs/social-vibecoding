@@ -42,8 +42,9 @@
 #                              against OpenRouter through the worker-local
 #                              claude-openrouter-request.js adapter, and needs
 #                              OPENROUTER_API_KEY + AGENT_MODEL (MODEL is the
-#                              same slug); OPENROUTER_API_BASE and
-#                              AGENT_MODEL_MAX_OUTPUT_TOKENS are optional.
+#                              same slug); OPENROUTER_API_BASE,
+#                              AGENT_MODEL_MAX_OUTPUT_TOKENS and
+#                              AGENT_REASONING_EFFORT are optional.
 #   PAT                        legacy back-compat — not set by the
 #                              current platform. The push step uses
 #                              `usernode-push` (which calls back into
@@ -334,15 +335,6 @@ elif [ "$MODE" = "evidence" ]; then
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_install"
 else
   PERMISSION_FLAGS="--dangerously-skip-permissions"
-fi
-# WebSearch is Anthropic's own server-side search. Another provider cannot run
-# it, so an OpenRouter turn would spend a model call on a tool that can only
-# fail; WebFetch runs locally and stays.
-if [ "$AGENT_PROVIDER" = "openrouter" ]; then
-  case "$PERMISSION_FLAGS" in
-    *--disallowed-tools*) PERMISSION_FLAGS="$PERMISSION_FLAGS WebSearch" ;;
-    *) PERMISSION_FLAGS="$PERMISSION_FLAGS --disallowed-tools WebSearch" ;;
-  esac
 fi
 
 # Optional in-loop browser: expose the pinned Playwright MCP server so a
