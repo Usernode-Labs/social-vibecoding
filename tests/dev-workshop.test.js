@@ -893,7 +893,102 @@ test('the walk’s depth belongs to the pane, because two controls read it', () 
   assert.equal([...at(0).matchAll(/data-ws-card="/g)].length, 0);
   assert.equal([...at(1).matchAll(/data-ws-card="/g)].length, 1);
   assert.equal([...at(2).matchAll(/data-ws-card="/g)].length, 2);
-  assert.ok(!at(2).includes('data-ws-week-more'), 'and the control goes when the walk is spent');
+  // #3293: SPENT, NOT GONE. The control used to leave when the walk ran
+  // out; it stays, disabled, which is the reveal controls' convention
+  // (#2183) — a button that vanishes reads as one that broke.
+  assert.match(at(1), /data-ws-week-more="">/, 'live while there is more');
+  assert.match(at(2), /data-ws-week-more="" disabled="">/, 'and disabled when the walk is spent');
+});
+
+// ── #3293: the walk reaches back to the project's start ──────────────
+
+test('#3293: "Show past week" keeps going back, week by week, to the project’s start', async () => {
+  // It stopped at last week: the model writes two windows, the client was
+  // built to walk further, and nothing ever sent it more. The server now
+  // derives every older week from what landed in it and names the Monday the
+  // project began, so a walk pressed to its end has reached the start.
+  const WEEK = 7 * 86400000;
+  const monday = Date.UTC(2026, 8, 14); // this week's, under FIXED_NOW
+  const iso = (ms) => new Date(ms).toISOString();
+  const cards = {
+    lastWeek: 'The vote counter was rebuilt and two preview races were closed.',
+    thisWeek: 'Kubernetes deploys stopped racing the health check.',
+    open: 'The domain migration and a long tail of preview reliability.',
+    // Oldest first on the wire, on purpose: the order is the client's to set.
+    older: [
+      { start: iso(monday - 5 * WEEK), closed: 1, line: 'The first proposal went in.' },
+      { start: iso(monday - 2 * WEEK), closed: 7, line: 'Dark mode; Keyboard voting; Mobile layout; and 4 more.' },
+    ],
+    // Created a week before anything landed: that week held nothing, so it
+    // has no card, and it is still where the walk ends.
+    firstWeek: iso(monday - 6 * WEEK),
+  };
+  const AppView = await loadWith(responseBody({ digestCards: cards }));
+  assert.deepEqual(plain(AppView._workshopThemes.digestCards.older.map((w) => w.closed)), [7, 1],
+    'the normaliser keeps each week’s count, newest first');
+
+  const dash = AppView._workshopView().dashboard;
+  assert.deepEqual(plain(dash.weeks.map((w) => w.key)),
+    ['thisWeek', 'lastWeek', `week:${monday - 2 * WEEK}`, `week:${monday - 5 * WEEK}`],
+    'past last week, on to the oldest week anything landed in, and no window for the empty weeks between');
+  // The server counts them over the whole history, the same rows the tiles
+  // count, so the figure is exact and never a floor.
+  assert.deepEqual(plain(dash.weeks.slice(2).map((w) => w.counts)),
+    [{ closed: 7, partial: false }, { closed: 1, partial: false }]);
+  assert.equal(dash.firstWeek, monday - 6 * WEEK);
+
+  const { WeekWalk } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const walk = (shown, firstWeek) => renderToHtml(createElement(WeekWalk,
+    { weeks: plain(dash.weeks), firstWeek, shown, onMore: () => {} }));
+  for (let shown = 1; shown <= 3; shown++) {
+    const html = walk(shown, dash.firstWeek);
+    assert.equal([...html.matchAll(/data-ws-card="/g)].length, shown, `press ${shown} reveals one more week`);
+    assert.match(html, /data-ws-week-more="">/, 'and the step back stays live while there is more');
+    assert.ok(!html.includes('dev-ws-week-note'), 'with no floor drawn mid-walk');
+  }
+  const third = walk(3, dash.firstWeek);
+  assert.match(third, /<span class="dev-ws-card-dates">Aug 31 – Sep 6<\/span>/, 'an older week is its dates');
+  assert.match(third, /<b>7<\/b>changes landed/, 'with its figure');
+  assert.match(third, /Dark mode; Keyboard voting; Mobile layout; and 4 more\./, 'and what landed in it');
+
+  // THE BEGINNING, SAID. Spent with `firstWeek` set is the project's start,
+  // whether or not its first week had a card of its own.
+  const end = walk(4, dash.firstWeek);
+  assert.equal([...end.matchAll(/data-ws-card="/g)].length, 4);
+  assert.match(end, /data-ws-week-more="" disabled="">/, 'the control is spent, not gone');
+  assert.match(end, /<p class="dev-ws-week-note" data-ws-week-start="">This project started the week of Aug 3\.<\/p>/);
+  assert.ok(!end.includes('data-ws-week-end'), 'and it does not also say the summary ran out');
+
+  // Without `firstWeek` (a history that could not be read, a cache from
+  // before it) the walk claims no beginning: only the summary's reach.
+  const unknown = walk(4, null);
+  assert.match(unknown, /data-ws-week-end="">That is as far back as the summary goes\.</);
+  assert.ok(!unknown.includes('data-ws-week-start'));
+  assert.match(unknown, /data-ws-week-more="" disabled="">/);
+
+  // A cache written before the counts existed carries none, and the card
+  // draws its line alone rather than a zero.
+  const legacy = plain(AppView._workshopWeeks({ ...cards, older: [{ start: monday - 3 * WEEK, line: 'Old.' }] },
+    FIXED_NOW, null));
+  assert.equal(legacy[legacy.length - 1].counts, null);
+});
+
+test('#3293: a week from another year says which year', () => {
+  // The walk reaches back past a year now, and "Sep 22 – Sep 28" names two
+  // weeks once it does. The current year stays bare, as it always was.
+  const { WeekWalk } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const WEEK = 7 * 86400000;
+  const weeks = [
+    { key: 'week:a', title: '', startMs: Date.UTC(2026, 0, 12), endMs: Date.UTC(2026, 0, 12) + WEEK,
+      counts: null, line: 'January.' },
+    { key: 'week:b', title: '', startMs: Date.UTC(2025, 11, 29), endMs: Date.UTC(2025, 11, 29) + WEEK,
+      counts: null, line: 'Across the new year.' },
+  ];
+  const html = renderToHtml(createElement(WeekWalk,
+    { weeks, firstWeek: Date.UTC(2025, 11, 29), shown: 2, onMore: () => {} }));
+  assert.match(html, /<span class="dev-ws-card-dates">Jan 12 – Jan 18<\/span>/, 'this year: no year');
+  assert.match(html, /<span class="dev-ws-card-dates">Dec 29, 2025 – Jan 4<\/span>/, 'last year: named');
+  assert.match(html, /This project started the week of Dec 29, 2025\./);
 });
 
 test('a window is a block on a rule: its heading, what it paid, then its line', async () => {
