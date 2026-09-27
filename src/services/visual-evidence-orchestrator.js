@@ -42,6 +42,16 @@ const MAX_AGENT_EVENTS = 128;
 const REPAIRABLE_LOCATOR_CODES = new Set([
   'ambiguous_locator', 'locator_not_found', 'locator_not_visible',
 ]);
+const ACTIONABILITY_METHODS = Object.freeze({
+  click: 'click',
+  fill: 'fill',
+  press: 'press',
+  select: 'selectOption',
+  check: 'check',
+  uncheck: 'uncheck',
+  hover: 'hover',
+  drag: 'dragTo',
+});
 const MAX_REPAIR_ATTEMPTS = 2;
 const MAX_TRANSIENT_REPLAY_RETRIES = 1;
 const SESSION_IDLE_WAIT_MS = 120_000;
@@ -81,6 +91,24 @@ function replayRepairKind(error, plan) {
   // correction turn on a locator that only disappeared with the page bundle.
   if (transientNetworkReplayFailure(error)) return null;
   if (REPAIRABLE_LOCATOR_CODES.has(code)) return 'locator';
+  // Playwright can resolve one attached, visible target and still time out
+  // waiting for it to become actionable. A modal, tour, disabled state, or
+  // moving surface usually means the replay omitted an observed setup action
+  // or readiness wait. Give the planner the exact fresh-page diagnostics so
+  // it can correct that flow. Keep arbitrary replay failures hard: page exits,
+  // browser crashes, network faults, and missing/ambiguous locators must use
+  // their own classifications instead of spending a model repair turn here.
+  const actionabilityMethod = ACTIONABILITY_METHODS[error?.detail?.actionType];
+  const targetStates = Array.isArray(error?.detail?.targetStates)
+    ? error.detail.targetStates : [];
+  if (code === 'replay_failed'
+      && error?.detail?.phase === 'action'
+      && actionabilityMethod
+      && targetStates.length > 0
+      && targetStates.every((target) => target?.matchedCount === 1
+        && target.visibleCount === 1 && target.attachedCount === 1)
+      && new RegExp(`^locator\\.${actionabilityMethod}: Timeout \\d+ms exceeded\\b`)
+        .test(String(error?.message || ''))) return 'actionability';
   if (code === 'controlled_failure_unused') return 'controlled_failure';
   if (code === 'browser_diagnostics' && error?.detail?.phase === 'browser_diagnostics') {
     const diagnostics = error.detail.browserDiagnostics || error.detail;
@@ -1536,15 +1564,17 @@ async function executeRun(config, options, injected = {}) {
             registration.control.lastSubmittedPlan)) {
         const replayFailure = registration.control.lastReplayFailure.error;
         const repairKind = replayRepairKind(replayFailure, registration.control.lastSubmittedPlan);
-        // A wrong locator or premature motion checkpoint can get a bounded
-        // correction turn. No failed media is published; the replacement must
-        // still pass both clean, provenance-fenced replay passes.
+        // A wrong locator, non-actionable control, or premature checkpoint can
+        // get a bounded correction turn. No failed media is published; the
+        // replacement must still pass both clean, provenance-fenced passes.
         const failureDetail = boundedReplayDetail(replayFailure);
         registration.control.allowRepair(
           repairKind === 'motion_timing'
             ? 'A motion checkpoint ran while an observed element was still visible. Inspect both revisions and add an observed, bounded wait without changing the checkpoint assertions or interactions.'
             : repairKind === 'static_timing'
               ? 'The static checkpoint kept changing after at least three pixel samples. Inspect both revisions and wait for an observed settled state. Keep the original interactions, focus, and assertions.'
+            : repairKind === 'actionability'
+              ? 'The planned target existed and was visible, but it did not become actionable. Inspect both fresh revisions for a blocking dialog, tour, disabled state, or unfinished transition. Add explicit semantic actions or bounded observed-state waits, then keep the original claimed interaction. Do not force the action or bypass the user flow.'
             : repairKind === 'hosted_app'
               ? 'The selected hosted app loaded but had browser errors or blocked external requests. Inspect a different deployed public app on both revisions, keep the original platform interaction and assertions, and use it only if its runtime loads cleanly. Do not widen the network policy or suppress browser errors.'
             : repairKind === 'route_data'
@@ -1582,6 +1612,8 @@ async function executeRun(config, options, injected = {}) {
           ? 'A motion checkpoint ran before the animation settled; the evidence agent is checking the timing…'
           : repairKind === 'static_timing'
             ? 'The static checkpoint kept changing; the evidence agent is checking the settled state…'
+          : repairKind === 'actionability'
+            ? 'A visible control was blocked or not ready; the evidence agent is correcting the setup flow…'
           : repairKind === 'hosted_app'
             ? 'The selected app had browser errors; the evidence agent is checking another deployed app…'
           : repairKind === 'route_data'
