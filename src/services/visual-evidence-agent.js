@@ -124,12 +124,12 @@ Verify the data behind the claimed screen loaded for the story's persona.
 A plan must execute every accepted interaction step on both revisions and
 assert the accepted checkpoint after the last step. Before calling
 evidence_run_plan, compare the numbered intent.steps with the before and after
-action lists one by one. Then call evidence_reset_pair exactly once, use the
-base and head replacement origins returned by that single call, and execute
-each final action list from its declared startPath on those freshly reset
-revisions. Do not call the reset tool once per side: the pair is replaced
-atomically, so another reset would invalidate both origins from the prior
-generation. Do
+action lists one by one. Exercise the final action lists on the initially
+authenticated base and head pair, then submit them directly through
+evidence_run_plan. Do not try to reset the exploration environments: replacing
+their databases invalidates the long-lived browser sessions. The platform
+resets both sides itself and bootstraps fresh persona sessions before each
+deterministic replay. Do
 not rely on a tour, dialog, banner, or saved preference you dismissed during
 earlier exploration staying dismissed after reset; encode the observed
 semantic dismissal or completion action in the replay when it blocks the
@@ -195,10 +195,19 @@ validated submission; it does not wait for replay or return a verdict. After
 acceptance, finish your turn. The platform waits for replay, starts a separate
 correction turn for a repairable replay failure, and makes passing media available to human
 reviewers. You do not need image understanding or a relevance verdict. Do not
-merely narrate the replays in your final answer: submit them through the tool.`;
+merely narrate the replays in your final answer: submit them through the tool.
+Do not say that you are about to submit them; your next action must be the
+evidence_run_plan tool call.`;
 
-function promptFor({ repair = false } = {}) {
-  const task = repair
+function promptFor({ repair = false, completionReminder = false } = {}) {
+  const task = completionReminder
+    ? `Your previous turn ended normally without calling evidence_run_plan.
+Use the browser observations already in this thread. Do not reset the
+exploration pair, repeat completed exploration, or merely say that you will
+submit. If the complete accepted flow is known, call evidence_run_plan now
+with one typed replay per story. If a real blocker prevents a valid plan,
+report that blocker plainly instead of claiming that a submission happened.`
+    : repair
     ? `The first submitted plan failed deterministic replay. Call
 evidence_get_context to read the rejected plan and the exact replay failure.
 Inspect the failed action or checkpoint in the live browser on BOTH exact
@@ -314,7 +323,10 @@ async function dispatchClaude(config, options, deps) {
   let result;
   try { result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
     mode: 'evidence',
-    prompt: promptFor({ repair: options.repairAttempt > 0 }),
+    prompt: promptFor({
+      repair: options.repairAttempt > 0,
+      completionReminder: options.completionReminder === true,
+    }),
     systemPrompt: SYSTEM_PROMPT,
     model,
     resumeSessionId: resumeThreadId === undefined
@@ -409,7 +421,10 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
       reportDiagnostic(options, { kind: 'turn_start' });
       result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
         mode: 'evidence',
-        prompt: promptFor({ repair: options.repairAttempt > 0 }),
+        prompt: promptFor({
+          repair: options.repairAttempt > 0,
+          completionReminder: options.completionReminder === true,
+        }),
         systemPrompt: SYSTEM_PROMPT,
         branchName: session.branch_name,
         agentBackend: 'codex_openrouter',

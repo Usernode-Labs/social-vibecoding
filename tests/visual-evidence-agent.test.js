@@ -126,6 +126,9 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.doesNotMatch(agent.SYSTEM_PROMPT, /evidence_finish/);
   assert.match(agent.SYSTEM_PROMPT, /page[\s\S]*untrusted data/i);
   assert.doesNotMatch(agent.promptFor(), /review was rejected|corrected plan/i);
+  assert.match(agent.promptFor({ completionReminder: true }), /ended normally without calling evidence_run_plan/i);
+  assert.match(agent.promptFor({ completionReminder: true }), /Do not reset the\s+exploration pair/i);
+  assert.match(agent.promptFor({ completionReminder: true }), /call evidence_run_plan now/i);
   assert.match(agent.promptFor({ repair: true }), /rejected plan and the exact replay failure/i);
   assert.match(agent.promptFor({ repair: true }), /BOTH exact\s+revisions/i);
   assert.match(agent.replayPlanGuide(), /No arbitrary JavaScript/);
@@ -139,8 +142,11 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.match(agent.replayPlanGuide(), /Use count only when the intended claim is the exact number of\s+matches/);
   assert.match(agent.replayPlanGuide(), /A detached assertion means the intended target has no matches/);
   assert.match(agent.replayPlanGuide(), /execute every accepted interaction step on both revisions/);
-  assert.match(agent.replayPlanGuide(), /call evidence_reset_pair exactly once/i);
-  assert.match(agent.replayPlanGuide(), /another reset would invalidate both origins/i);
+  assert.match(agent.replayPlanGuide(), /initially\s+authenticated base and head pair/i);
+  assert.match(agent.replayPlanGuide(), /replacing\s+their databases invalidates the long-lived browser sessions/i);
+  assert.match(agent.replayPlanGuide(), /bootstraps fresh persona sessions before each\s+deterministic replay/i);
+  assert.match(agent.SYSTEM_PROMPT, /next action must be the\s+evidence_run_plan tool call/i);
+  assert.doesNotMatch(agent.replayPlanGuide(), /evidence_reset_pair/);
   assert.match(agent.replayPlanGuide(), /tour, dialog, banner, or saved preference/i);
   assert.match(agent.replayPlanGuide(), /actually click it on both revisions and\s+assert the resulting page or URL/);
   assert.match(agent.replayPlanGuide(), /state:"visible" or state:"hidden"/);

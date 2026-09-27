@@ -593,19 +593,16 @@ Returns sanitized run metadata, intent, changed-file summary, base/head labels,
 available viewports/personas, and the allowed origins. It never returns raw
 credentials.
 
-### `evidence_reset_pair`
-
-Atomically restores both revisions to one pristine paired fixture generation
-and returns both replacement origins. The planner calls it once before its
-final base/head verification. A later reset replaces both environments, so
-origins from different reset generations must never be combined. This is for
-exploration only; the replay tool always starts clean.
-
 ### Browser exploration tools
 
 Use the pinned Playwright MCP surface, restricted by a proxy to the two run
 origins. Screenshot results must be emitted as image content so vision-capable
 models can inspect them.
+
+The planner receives one authenticated exploration pair. It does not receive a
+reset tool because replacing a database would invalidate the browser's current
+session. `evidence_run_plan` owns clean resets and creates fresh authenticated
+contexts for deterministic replay.
 
 ### `evidence_run_plan`
 

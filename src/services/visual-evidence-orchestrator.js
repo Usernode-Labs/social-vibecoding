@@ -1451,7 +1451,7 @@ async function executeRun(config, options, injected = {}) {
       },
     });
 
-    const dispatchOnce = async (forceBackend = null, repairAttempt = 0) => {
+    const dispatchOnce = async (forceBackend = null, repairAttempt = 0, completionReminder = false) => {
       if (stopRequested.has(run.id)) {
         throw new VisualEvidenceOrchestrationError('evidence_stopped', EVIDENCE_STOPPED_REASON);
       }
@@ -1467,6 +1467,7 @@ async function executeRun(config, options, injected = {}) {
         requestedBackend: String(forceBackend || session.agent_backend || 'unknown').slice(0, 64),
         requestedModel: safeModelId(session.agent_model || session.model),
         repairAttempt,
+        ...(completionReminder ? { completionReminder: true } : {}),
         budgetMs: repairAttempt > 0 ? repairAgentBudgetMs : agentBudgetMs,
       };
       metrics.agentDispatches.push(dispatchTrace);
@@ -1500,6 +1501,7 @@ async function executeRun(config, options, injected = {}) {
           resumeThreadId: agentThreadId,
           forceBackend,
           repairAttempt,
+          completionReminder,
           timeoutMs: remainingAgentMs,
           suspendedMs,
         }, injected.agentDependencies || {});
@@ -1551,6 +1553,21 @@ async function executeRun(config, options, injected = {}) {
           && !metrics.agentActivity.counts.provider_dispatched) {
         progress('The selected Codex model could not start the evidence flow; using the platform evidence planner…');
         agentOutcome = await dispatchOnce('claude_code');
+      }
+      if (!agentOutcome.error && !latestHardVerdict
+          && registration.control.planCalls === 0
+          && agentOutcome.dispatched?.result && agentThreadId) {
+        // Some tool-capable models finish with prose saying they are about to
+        // submit, but omit the tool call. Reuse the same thread and the
+        // remainder of the original agent budget for one explicit reminder;
+        // this is not another full exploration allowance.
+        progress('The evidence planner finished without submitting its replay; asking it to complete the tool call…');
+        const priorBackend = metrics.agentDispatches.at(-1)?.backend;
+        agentOutcome = await dispatchOnce(
+          priorBackend === 'claude_code' ? 'claude_code' : null,
+          0,
+          true
+        );
       }
       // The hosted tool acknowledges an accepted plan immediately. Its HTTP
       // request must never wait through a full paired browser replay, which

@@ -118,10 +118,10 @@ test('both evidence backends launch Playwright through the content-free timing o
     assert.match(codexRunner, /EVIDENCE_HOSTED_ORIGINS_FILE/);
     assert.match(codexRunner, /env_vars = \[[^\n]*"EVIDENCE_HOSTED_ORIGINS_FILE"/);
     assert.match(codexRunner, /evidence-hosted-origins\.js/);
-    assert.match(codexRunner, /enabled_tools = \[[^\n]*"evidence_reset_pair"/);
+    assert.doesNotMatch(codexRunner, /enabled_tools = \[[^\n]*"evidence_reset_pair"/);
     assert.doesNotMatch(codexRunner, /enabled_tools = \[[^\n]*"evidence_reset_side"/);
-    assert.match(evidenceMcp, /registerTool\('evidence_reset_pair'/);
-    assert.match(evidenceMcp, /request\('\/reset-pair'/);
+    assert.doesNotMatch(evidenceMcp, /registerTool\('evidence_reset_pair'/);
+    assert.doesNotMatch(evidenceMcp, /request\('\/reset-pair'/);
     assert.doesNotMatch(evidenceMcp, /registerTool\('evidence_reset_side'/);
     assert.equal((codexRunner.match(/"browser_mouse_move_xy"/g) || []).length, 3);
   } finally {
