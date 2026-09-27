@@ -1289,6 +1289,13 @@ async function becomeLeader() {
   // heartbeating, and fail the turn they were holding.
   startLocalAgentLeaseSweeper(config);
 
+  // Agent sessions: a Mayor turn whose process died (a crash, a kill) left
+  // its lease to go stale; say in its conversation that it was interrupted,
+  // with Retry, and hand the lease back (services/mayor/agent-turn.js).
+  require('./src/services/mayor/agent-turn').startInterruptedTurnSweeper({
+    pool: require('./src/db/pool').getPool(config),
+  });
+
   // #1010: fast, gate-first governance applies (minute-scale). Complements
   // the hourly sweeper's Pass 0b, which keeps ownership of the close-issue
   // superseded sweep (its GitHub fetch is too costly to run per minute).
@@ -5675,6 +5682,14 @@ async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
   lifecycle.setShuttingDown();
+  // The Mayor's turns in agent sessions end with this process: each one
+  // records what it had said and that it was interrupted (with Retry), and
+  // hands its lease back, so the conversation is never left looking busy
+  // with nobody working. A turn whose coding agent is running is left to
+  // restart recovery. Awaited with the drain below, before the pool closes.
+  const agentTurnsEnded = require('./src/services/mayor/agent-turn').interruptLocalTurns({ timeoutMs: 3000 })
+    .catch((err) => log.warn('server', 'Interrupting agent turns failed', { err: err.message }));
+  require('./src/services/mayor/agent-turn').stopInterruptedTurnSweeper();
   const retentionStop = require('./src/services/build-retention').stop();
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
@@ -5775,6 +5790,7 @@ async function cleanup() {
     log.info('server', 'All handlers and visual evidence runs drained');
   }
   await pushStop;
+  await agentTurnsEnded;
 
   // A planned replay is hosted by this server process. If it is still active
   // when the drain expires, record the actual shutdown now so its owner can

@@ -85,6 +85,8 @@ import {
   archiveCurrentSession,
   decideCard,
   deleteSavedDraft,
+  discardOutbox,
+  editOutbox,
   editSavedDraft,
   loadModelCatalog,
   openAgentSession,
@@ -100,7 +102,9 @@ import {
   recheckChange,
   removeAttachment,
   renameCurrentSession,
+  retryOutbox,
   retryStaging,
+  retryTurn,
   unarchiveCurrentSession,
   PREVIEW_SLOT_ID,
   saveComposerDraft,
@@ -540,8 +544,8 @@ const Item = memo(function Item({ item, sessionId = null }: { item: TranscriptIt
           <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
         </div>
       );
-    case 'note':
-      return (
+    case 'note': {
+      const note = (
         <p
           className={`text-sm ${item.tone === 'error' ? 'text-red-700 dark:text-red-300' : item.tone === 'ok' ? 'text-emerald-700 dark:text-emerald-300' : 'text-zinc-500 dark:text-zinc-400'}`}
           data-agent-session-note={item.tone}
@@ -549,6 +553,23 @@ const Item = memo(function Item({ item, sessionId = null }: { item: TranscriptIt
           {item.text}
         </p>
       );
+      if (!item.retry) return note;
+      // The conversation's last word is a turn that did not finish: Retry
+      // runs it again, on the conversation as it stands, with no new message.
+      return (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {note}
+          <button
+            type="button"
+            className="text-sm font-semibold text-violet-700 hover:underline dark:text-violet-300"
+            data-agent-session-retry-turn
+            onClick={() => { void retryTurn(); }}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
     case 'run':
       return <RunCard run={item} />;
     case 'spec':
@@ -1103,6 +1124,68 @@ function TypingDots() {
   );
 }
 
+/**
+ * What this screen sent that the server has not shown back yet
+ * (./outbox.ts), drawn as the message it will be: faded while it is on its
+ * way, and replaced in place by the server's own row. One the server did not
+ * take says so under it, with Retry (the same message, which the server
+ * recognises if it got there after all), Edit (back to the box) and
+ * Discard. It is never dropped or turned into a draft on its own.
+ */
+function OutboxRows() {
+  const outbox = useAgentSessionSelector((s) => s.outbox);
+  const busy = useAgentSessionSelector((s) => s.turn.running);
+  if (!outbox.length) return null;
+  const action = 'font-semibold hover:underline disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:no-underline';
+  return (
+    <>
+      {outbox.map((item) => (
+        <div key={item.clientId} className="flex flex-col items-end gap-1" data-agent-session-outbox={item.status}>
+          <p className={`max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 ${item.status === 'sending' ? 'opacity-80' : ''}`}>{item.shown}</p>
+          {item.status === 'failed' ? (
+            <div className="flex max-w-[85%] flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[13px]" role="alert">
+              <span className="text-red-700 dark:text-red-300" data-agent-session-outbox-error>{item.error || 'This was not sent.'}</span>
+              {item.message || item.attachmentKeys.length ? (
+                <button
+                  type="button"
+                  className={`${action} text-violet-700 dark:text-violet-300`}
+                  disabled={busy}
+                  title={busy ? 'The Mayor is still working. You can send this when it finishes' : 'Send this again'}
+                  data-agent-session-outbox-retry
+                  onClick={() => retryOutbox(item.clientId)}
+                >
+                  Retry
+                </button>
+              ) : null}
+              {item.message ? (
+                <button
+                  type="button"
+                  className={`${action} text-zinc-600 dark:text-zinc-300`}
+                  data-agent-session-outbox-edit
+                  onClick={() => {
+                    const text = editOutbox(item.clientId);
+                    if (text) fillComposer(text);
+                  }}
+                >
+                  Edit
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className={`${action} text-zinc-500 dark:text-zinc-400`}
+                data-agent-session-outbox-discard
+                onClick={() => discardOutbox(item.clientId)}
+              >
+                Discard
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </>
+  );
+}
+
 function LiveTurn({ runShown }: { runShown: boolean }) {
   // The one reader of the streamed text on this screen (with FollowOutput):
   // it re-renders once per frame of a reply, and nothing around it does.
@@ -1123,7 +1206,7 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
     const actions = new Map(actionList.map((action) => [action.id, action]));
     return turn.cards.map((card) => cardView(card, actions));
   }, [turn.cards, actionList]);
-  if (!turn.running && !turn.pendingUserText) return null;
+  if (!turn.running) return null;
   const seconds = turn.startedAt ? Math.max(0, Math.round((clock - turn.startedAt) / 1000)) : 0;
   // A running build draws its own card with the progress and the clock.
   const working = turn.running && !(runShown && turn.phase === 'cc');
@@ -1135,11 +1218,6 @@ function LiveTurn({ runShown }: { runShown: boolean }) {
       : (turn.activity || (turn.phase === 'mayor2' ? 'Wrapping up' : ''));
   return (
     <>
-      {turn.pendingUserText ? (
-        <div className="flex justify-end opacity-80">
-          <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">{turn.pendingUserText}</p>
-        </div>
-      ) : null}
       {said || working ? (
         <article data-agent-session-live>
           <p className="mb-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">Mayor</p>
@@ -1395,7 +1473,9 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
       <p className="flex flex-wrap items-baseline gap-x-1.5 px-2 pb-1 text-[11px] text-zinc-500 dark:text-zinc-400">
         <span className="font-semibold uppercase tracking-wide">{`Saved drafts (${drafts.length})`}</span>
         <span>· on all your devices</span>
-        {busy ? <span className="ml-auto">sending unlocks when the Mayor finishes</span> : null}
+        {busy
+          ? <span className="ml-auto">sending unlocks when the Mayor finishes</span>
+          : <span className="ml-auto font-semibold text-violet-700 dark:text-violet-300" data-agent-session-drafts-ready>Ready to send</span>}
       </p>
       <ul className="flex flex-col gap-1">
         {drafts.map((draft) => (
@@ -1671,6 +1751,14 @@ function Composer({ id }: { id: string }) {
           onRemove={removeAttachment}
         />
       ) : null}
+      {saving ? (
+        // Said in words, above what is typed, the moment it applies: while
+        // the Mayor works, Enter and the button keep this as a draft. It is
+        // not sent, and nothing sends it on its own.
+        <p className="px-2 text-[13px] text-zinc-600 dark:text-zinc-300" data-agent-session-save-note>
+          The Mayor is still working, so this will be <span className="font-semibold">saved as a draft, not sent</span>. Send it from your drafts when it finishes.
+        </p>
+      ) : null}
       <textarea
         ref={input}
         id={id}
@@ -1739,13 +1827,15 @@ function Composer({ id }: { id: string }) {
             type="submit"
             data-agent-session-send="save"
             variant="unstyled"
-            size="icon"
             ink="solid"
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 hover:bg-emerald-700"
+            // Words, not a round button in Send's place: a green circle read
+            // as Send, and the message went to the drafts instead.
+            className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-emerald-600 px-3.5 text-sm font-semibold hover:bg-emerald-700"
             aria-label="Save as draft"
             title={SAVE_TITLE}
           >
-            <SaveDraftIcon width={20} height={20} aria-hidden="true" />
+            <SaveDraftIcon width={18} height={18} aria-hidden="true" />
+            <span>Save draft</span>
           </Button>
         ) : (
           <Button
@@ -1915,14 +2005,19 @@ function FollowOutput({ scroll, stick, count }: {
     streamText: s.turn.streamText,
     running: s.turn.running,
     cards: s.turn.cards.length,
-    pendingUserText: s.turn.pendingUserText,
+    outbox: s.outbox.length,
   }));
   useEffect(() => { stick.current = true; }, [live.id]);
-  useEffect(() => { if (live.pendingUserText) stick.current = true; }, [live.pendingUserText]);
+  // Sending a message takes the reader to it, wherever they were.
+  const sent = useRef(live.outbox);
+  useEffect(() => {
+    if (live.outbox > sent.current) stick.current = true;
+    sent.current = live.outbox;
+  }, [live.outbox]);
   useEffect(() => {
     if (!scroll.current || !stick.current) return;
     scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [live.id, count, live.streamText, live.running, live.cards, live.pendingUserText]);
+  }, [live.id, count, live.streamText, live.running, live.cards, live.outbox]);
   return null;
 }
 
@@ -1944,7 +2039,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
     actions: s.actions,
     running: s.turn.running,
     turnPhase: s.turn.phase,
-    pendingUserText: s.turn.pendingUserText,
+    outbox: s.outbox.length,
     credits: s.credits,
     error: s.error,
     drawerOpen: s.drawerOpen,
@@ -1976,7 +2071,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
     return () => window.clearInterval(timer);
   }, [runShown]);
   const replies = latestReplies(items);
-  const empty = snapshot.phase === 'ready' && !items.length && !snapshot.running && !snapshot.pendingUserText;
+  const empty = snapshot.phase === 'ready' && !items.length && !snapshot.running && !snapshot.outbox;
   const about: About = snapshot.session || snapshot.draft;
   const request = snapshot.draft ? draftRequest(snapshot.draft.hint) : null;
 
@@ -2008,6 +2103,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
           ) : null}
           {empty ? <EmptyState about={about} request={request} /> : null}
           {items.map((item) => <Item key={item.key} item={item} sessionId={snapshot.id} />)}
+          <OutboxRows />
           <LiveTurn runShown={runShown} />
           <FollowOutput scroll={scroll} stick={stick} count={items.length} />
           {snapshot.session?.activeChange?.previewCapture ? <PreviewCapture change={snapshot.session.activeChange} /> : null}

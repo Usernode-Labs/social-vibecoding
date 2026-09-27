@@ -480,8 +480,10 @@ test('a follow-up turn records no user message and carries on from the card', as
 });
 
 test('the turn keeps its lease fresh while it runs', async () => {
-  assert.equal(agentTurn.LEASE_RENEW_MS, 30000);
-  assert.ok(agentTurn.LEASE_RENEW_MS < require('../src/services/agent-sessions').TURN_LEASE_STALE_MINUTES * 60000 / 5,
+  // Every 15 seconds inside a 90-second window: a deploy that kills the turn
+  // leaves its conversation looking busy for at most a minute and a half.
+  assert.equal(agentTurn.LEASE_RENEW_MS, 15000);
+  assert.ok(agentTurn.LEASE_RENEW_MS < require('../src/services/agent-sessions').TURN_LEASE_STALE_SECONDS * 1000 / 5,
     'renewed many times inside the stale window');
 });
 

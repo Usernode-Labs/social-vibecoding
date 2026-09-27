@@ -2567,9 +2567,8 @@ const App = {
             window.UsernodeReact?.messages?.refreshBlockedView?.(data.userId, data.blocked);
             break;
           case 'agent_session_changed':
-            // #2779: one of this user's agent sessions started or finished
-            // a turn, or was read in another tab. Recents, the mark's menu
-            // and Messages redraw its spinner or green dot from the list.
+            // #2779: an agent session changed (with its new `version`). The
+            // lists redraw their marks; the open one re-reads if behind.
             window.UsernodeReact?.agentSession?.listChanged?.(data);
             break;
           case 'agent_session_drafts_changed':
@@ -2663,6 +2662,10 @@ const App = {
     // Messages owns a global drawer unread badge even while its screen is
     // closed, so reconcile its summary after a disconnect in every view.
     window.UsernodeReact?.messages?.refresh?.();
+    // An open agent session learns about its changes from this socket's
+    // notices: whatever it missed while the socket was down, it reads now.
+    window.UsernodeReact?.agentSession?.resync?.();
+    window.UsernodeReact?.agentSession?.refreshList?.();
     // #1038: `session_state` is fire-and-forget like every other broadcast,
     // so anything that transitioned during the disconnect window was lost.
     // The reconcile endpoint is the authority — it also clears overrides for

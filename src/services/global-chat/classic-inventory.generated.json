@@ -1740,6 +1740,7 @@
       "mobileSupported": true,
       "classicPath": "#apps",
       "clientReferences": [
+        "frontend/src/features/agent-session/api.ts",
         "frontend/src/features/agent-session/api.ts"
       ]
     },
@@ -1758,6 +1759,7 @@
       "mobileSupported": true,
       "classicPath": "#apps",
       "clientReferences": [
+        "frontend/src/features/agent-session/api.ts",
         "frontend/src/features/agent-session/api.ts"
       ]
     },
@@ -1807,6 +1809,14 @@
       "source": "src/routes/agent-sessions.js",
       "method": "GET",
       "path": "/api/agent-sessions/:id",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
+    },
+    {
+      "source": "src/routes/agent-sessions.js",
+      "method": "GET",
+      "path": "/api/agent-sessions/:id/state",
       "expression": null,
       "status": "exempt",
       "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
