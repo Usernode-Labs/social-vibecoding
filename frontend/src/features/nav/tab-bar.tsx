@@ -80,6 +80,7 @@ import { useVisibility } from '../../lib/visibility-store';
 import { navStore } from './nav-store.js';
 import { clearPeekTimer, enterPeek, leavePeek } from './rail-peek';
 import { RecentsList } from './recents-list';
+import { schedulePress, type PendingPress } from './tab-press';
 
 /**
  * The five tabs, in order.
@@ -394,6 +395,17 @@ export function tabContentRect(tab: HTMLElement): ContentRect | null {
  * changes with the press (it keys off `aria-current`); only the pill's start
  * is held, by one frame nobody saw anyway.
  *
+ * A PRESS ON THE BAR NO LONGER TAKES THIS PATH (#3259). Waiting out one
+ * heavy frame was not enough on a phone: the swap is several long frames
+ * (measured in the iOS simulator: the router's own task, then frames of 40
+ * to 150ms while the new screen lays out and its data lands), so a slide
+ * started two frames out still began inside one of them and showed from its
+ * middle. So a press moves the pill FIRST, in the press's own task, and it is
+ * the NAVIGATION that waits, until the slide is running on the compositor
+ * where the swap cannot hold it (useTabMarker's `press`, schedulePress). This
+ * path is still what a tab change the bar did not start takes (Back, a link,
+ * a deep link).
+ *
  * Without rAF (a test environment) it runs at once.
  */
 export function afterNextFrame(
@@ -419,15 +431,127 @@ export function afterNextFrame(
   };
 }
 
+/**
+ * THE SLIDE ITSELF: the Workshop strip's duration and curve
+ * (`.dev-ws-tab-marker`), run as a transform-only animation (#3259).
+ *
+ * It was a CSS transition of transform, width and height. The transform ran
+ * on the compositor, but width and height are layout and ran on the main
+ * thread, so once a press started the slide ahead of the screen swap, the
+ * swap froze them mid-slide: the pill glided at the old tab's width (from
+ * Communities to Me it ran past the screen's right edge in the iOS
+ * simulator) and snapped to size when the swap let go. So the pill takes its
+ * new size at once, and the slide is a FLIP: it starts scaled to the box it
+ * is leaving and eases into the new one, all transform, all compositor.
+ *
+ * NO DELAY, deliberately. Measured on a test page in the iOS simulator with
+ * the main thread blocked for 250ms two frames after the press: a translate
+ * transition, a translate+scale transition and this animation all painted
+ * 20%, 43%, 68%… straight through the block, while the same animation or
+ * transition given a 34ms delay stood still and then appeared at the end.
+ * A delay keeps WebKit from handing it to the compositor.
+ */
+export const MARKER_SLIDE = { duration: 260, easing: 'cubic-bezier(.32, .72, 0, 1)' } as const;
+
+type Box = { x: number; y: number; w: number; h: number };
+
+const round4 = (n: number) => Math.round(n * 10000) / 10000;
+
+/**
+ * The two transforms of a slide from `from` to `to`, for a marker laid out
+ * at `to`'s size with `transform-origin: 0 0` (app.css).
+ *
+ * BOTH ENDS SPELL THE SAME FUNCTIONS, `translate() scale()`, the end with a
+ * scale of 1, so the two interpolate function by function rather than as
+ * matrices. That is the form measured running on the compositor through a
+ * blocked main thread (MARKER_SLIDE); keep the lists matched when changing it.
+ */
+export function slideKeyframes(from: Box, to: Box): [string, string] {
+  const sx = to.w > 0 ? round4(from.w / to.w) : 1;
+  const sy = to.h > 0 ? round4(from.h / to.h) : 1;
+  return [
+    `translate(${from.x}px, ${from.y}px) scale(${sx}, ${sy})`,
+    `translate(${to.x}px, ${to.y}px) scale(1, 1)`,
+  ];
+}
+
+/**
+ * Where a marker laid out at `laidOut`'s size is on screen under `transform`,
+ * a computed `matrix(a, b, c, d, e, f)`. A press during a slide starts the
+ * next one from where the pill IS, not from the box it was leaving.
+ */
+export function shownBox(laidOut: Box, transform: string): Box {
+  const m = /^matrix\(([^)]+)\)$/.exec(String(transform || '').trim());
+  const v = m ? m[1].split(',').map(Number) : [];
+  if (v.length !== 6 || v.some((n) => !Number.isFinite(n))) return laidOut;
+  return { x: v[4], y: v[5], w: laidOut.w * v[0], h: laidOut.h * v[3] };
+}
+
+/** Reduced motion asks for none; unreadable answers that motion is welcome. */
+function motionWelcome(): boolean {
+  try {
+    return !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  } catch (_) {
+    return true;
+  }
+}
+
+/** A press slides only where a slide can show: a placed, drawn marker, with motion welcome. */
+function canSlide(bar: HTMLElement): boolean {
+  const marker = bar.querySelector<HTMLElement>('.platform-tabs-marker[data-marker-at]');
+  // Unplaced (nothing lit yet), or `display: none` (the desktop rail).
+  if (!marker || marker.getClientRects().length === 0) return false;
+  return motionWelcome();
+}
+
 function useTabMarker(
   barRef: React.RefObject<HTMLElement | null>,
   tab: string | null,
-): TabMarkerBox | null {
+): {
+  box: TabMarkerBox | null;
+  lit: string | null;
+  markerRef: React.RefObject<HTMLSpanElement | null>;
+  press: (el: HTMLElement, key: string, go: () => void) => boolean;
+} {
   const [box, setBox] = useState<TabMarkerBox | null>(null);
+  const markerRef = useRef<HTMLSpanElement | null>(null);
+  // The box the marker was last laid out at, which the next slide leaves,
+  // and the slide playing now, whose start a press waits for.
+  const laidOut = useRef<TabMarkerBox | null>(null);
+  const slide = useRef<Animation | null>(null);
+  // THE TAB A PRESS LIT, until the router has answered it (#3259). The bar
+  // answers a press at once, pill and label together, and the router's tab
+  // takes over when it lands; `lit` is what the bar draws. Null at first,
+  // so the first render is the prerender's.
+  const [pressed, setPressed] = useState<string | null>(null);
+  const lit = pressed ?? tab;
+  // The press waiting for its route. A ref, not state: nothing renders from
+  // it, and the callbacks that read it outlive the render they came from.
+  const pending = useRef<PendingPress | null>(null);
+
+  const place = (el: HTMLElement, selectionChanged: boolean) => {
+    const next = markerBoxFor(el, tabContentRect(el));
+    if (!next) return;
+    setBox((prev) => {
+      if (prev && prev.x === next.x && prev.y === next.y
+        && prev.w === next.w && prev.h === next.h) return prev;
+      return { ...next, slide: !!prev && selectionChanged };
+    });
+  };
+
+  // The router lit the tab a press slid to: the press is answered, and the
+  // bar is the router's again with nothing to move.
+  useLayoutEffect(() => {
+    if (!pending.current || pending.current.key !== tab) return;
+    pending.current.cancel();
+    pending.current = null;
+    setPressed(null);
+  }, [tab]);
+
   useLayoutEffect(() => {
     const bar = barRef.current;
     if (!bar) return;
-    if (!tab) {
+    if (!lit) {
       setBox(null);
       return;
     }
@@ -436,18 +560,13 @@ function useTabMarker(
     const measure = (selectionChanged: boolean) => {
       const el = bar.querySelector<HTMLElement>('.platform-tab[aria-current="page"]');
       if (!el) return;
-      const next = markerBoxFor(el, tabContentRect(el));
-      if (!next) return;
-      setBox((prev) => {
-        if (prev && prev.x === next.x && prev.y === next.y
-          && prev.w === next.w && prev.h === next.h) return prev;
-        return { ...next, slide: !!prev && selectionChanged };
-      });
+      place(el, selectionChanged);
     };
     // This run is the tab having changed; the observer's are layout moving.
     // The first placement lands now; a move from a tab already marked waits
     // out the screen swap's frame and then slides, re-measuring then so it
-    // goes where the tab IS rather than where it was a frame ago.
+    // goes where the tab IS rather than where it was a frame ago. After a
+    // press the pill is already there, so this lands on the same box.
     const hadBox = bar.querySelector('.platform-tabs-marker[data-marker-at]') !== null;
     if (hadBox) {
       cancelSlide = afterNextFrame(() => {
@@ -472,8 +591,77 @@ function useTabMarker(
       ro.disconnect();
       cancelSlide?.();
     };
-  }, [barRef, tab]);
-  return box;
+  }, [barRef, lit]);
+
+  // THE SLIDE (MARKER_SLIDE). React has just laid the marker out at `box`;
+  // a selection change plays it in from the box it left, or from wherever a
+  // slide still running had got to. Anything else lands where it is: the
+  // first placement, a re-measure, reduced motion, nothing lit.
+  useLayoutEffect(() => {
+    const el = markerRef.current;
+    const prev = laidOut.current;
+    laidOut.current = box;
+    if (!el || typeof el.animate !== 'function') return;
+    const running = typeof el.getAnimations === 'function' ? el.getAnimations() : [];
+    const from = prev && running.length ? shownBox(prev, getComputedStyle(el).transform) : prev;
+    for (const animation of running) animation.cancel();
+    slide.current = null;
+    if (!box || !from || !box.slide || !motionWelcome()) return;
+    const [start, end] = slideKeyframes(from, box);
+    slide.current = el.animate([{ transform: start }, { transform: end }], {
+      duration: MARKER_SLIDE.duration,
+      easing: MARKER_SLIDE.easing,
+    });
+  }, [box]);
+
+  // Unmounting abandons a press: its navigation and its settle timer.
+  useEffect(() => () => {
+    pending.current?.cancel();
+    pending.current = null;
+  }, []);
+
+  /**
+   * A press on another tab (#3259): light it and slide to it NOW, and
+   * navigate once the slide is running (schedulePress). The slide is made in
+   * the press's own task, and the swap's long frames begin only after it is
+   * on the compositor, where they cannot hold it. `go` is the tab's own
+   * navigation, run a few frames late.
+   *
+   * False when the pill cannot slide (the desktop rail, reduced motion,
+   * nothing lit yet): the caller navigates as it always did, at once.
+   *
+   * If the router never lights `key`, the bar goes back to the tab it did
+   * light after PRESS_SETTLE_MS rather than sitting on the wrong one.
+   */
+  const press = (el: HTMLElement, key: string, go: () => void): boolean => {
+    const bar = barRef.current;
+    if (!bar || !canSlide(bar)) return false;
+    place(el, true);
+    setPressed(key);
+    // A second press before the first has navigated replaces it.
+    schedulePress(pending, key, go, () => setPressed(null), () => slide.current?.ready ?? null);
+    return true;
+  };
+
+  return { box, lit, markerRef, press };
+}
+
+/**
+ * A tab's navigation, run by a press after the pill has started (#3259). The
+ * same three roads the bar's clicks take at once: Home through the router
+ * (onHomeClick), Communities back to the Workshop you left when there is one
+ * (onWorkshopClick), and otherwise the tab's own href.
+ */
+function goToTab(key: string, href: string): void {
+  const app = (window as unknown as {
+    App?: { navigateHome?: (opts?: { viaTab?: boolean }) => void; resumeWorkshopView?: () => boolean };
+  }).App;
+  if (key === 'home' && app?.navigateHome) {
+    app.navigateHome({ viaTab: true });
+    return;
+  }
+  if (key === 'workshop' && app?.resumeWorkshopView?.()) return;
+  window.location.assign(href);
 }
 
 export function PlatformTabs() {
@@ -512,7 +700,26 @@ export function PlatformTabs() {
   // watch the viewport.
   useClassToggle(barRef, 'platform-tabs-folded', !railOpen);
   const { enter, leave } = useRailPeek(peek);
-  const marker = useTabMarker(barRef, tab);
+  const { box: marker, lit, markerRef, press } = useTabMarker(barRef, tab);
+  // A plain press on another tab lights it and slides the pill first, and
+  // navigates a frame later (useTabMarker's `press`, #3259). A modified click
+  // stays the browser's, a second press on a tab still waiting for its route
+  // adds nothing, and a press the pill cannot slide for navigates at once,
+  // the way every press did before.
+  const onTabClick = (event: React.MouseEvent<HTMLAnchorElement>, key: string, href: string) => {
+    const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
+    if (nav?.isNativeClick?.(event)) return;
+    if (key === lit && lit !== tab) {
+      event.preventDefault();
+      return;
+    }
+    if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href))) {
+      event.preventDefault();
+      return;
+    }
+    const now = key === 'home' ? onHomeClick : key === 'workshop' ? onWorkshopClick : undefined;
+    now?.(event);
+  };
 
   return (
     <>
@@ -561,13 +768,14 @@ export function PlatformTabs() {
           them (app.css raises each tab one step), `aria-hidden` because
           `aria-current` already says which tab is lit, and bare until
           measured — see useTabMarker. `data-marker-at` is what makes it
-          visible; `data-marker-slide` is what app.css hangs the slide on.
+          visible. The style is where it rests; the slide there is an
+          animation useTabMarker plays over it (MARKER_SLIDE).
       */}
       <span
+        ref={markerRef}
         className="platform-tabs-marker"
         aria-hidden="true"
         {...(marker ? { 'data-marker-at': '' } : {})}
-        {...(marker && marker.slide ? { 'data-marker-slide': '' } : {})}
         style={marker ? {
           transform: `translate(${marker.x}px, ${marker.y}px)`,
           width: `${marker.w}px`,
@@ -589,10 +797,12 @@ export function PlatformTabs() {
           // `aria-current="page"` and nothing else marks the active tab:
           // it is what a screen reader announces and what the declared
           // checks select on, and it costs no second attribute to keep in
-          // step with. The colour comes from app.css keying off it.
-          aria-current={tab === key ? 'page' : undefined}
+          // step with. The colour comes from app.css keying off it. It is the
+          // router's tab, except for the moment between a press and its route
+          // landing, when it is the tab pressed (useTabMarker, #3259).
+          aria-current={lit === key ? 'page' : undefined}
           aria-label={tabLabel(key, label, viewer).ariaLabel}
-          onClick={key === 'home' ? onHomeClick : key === 'workshop' ? onWorkshopClick : undefined}
+          onClick={(event) => onTabClick(event, key, href)}
         >
           <span className="platform-tab-mark">
             <Icon className="platform-tab-glyph" aria-hidden="true" />
