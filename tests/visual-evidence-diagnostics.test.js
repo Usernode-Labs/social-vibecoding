@@ -17,7 +17,8 @@ test('evidence worker reports the last browser tool without retaining its inputs
       { name: 'evidence' }, { name: 'browser_member' }, { name: 'browser_admin' },
       { name: 'browser_full_admin' },
     ],
-    tools: ['mcp__evidence__evidence_get_context', 'mcp__evidence__evidence_run_plan', 'private-tool-definition'],
+    tools: ['mcp__evidence__evidence_get_context', 'mcp__evidence__evidence_run_plan',
+      'mcp__evidence__evidence_report_blocker', 'private-tool-definition'],
   }), progress, state);
   worker.parseLine(JSON.stringify({ type: 'stream_event', event: { type: 'message_start', private: 'private-token' } }), progress, state);
   worker.parseLine(JSON.stringify({
@@ -35,8 +36,9 @@ test('evidence worker reports the last browser tool without retaining its inputs
 
   assert.deepEqual(events, [
     { kind: 'runner_phase', phase: 'evidence_browser_bootstrap' },
-    { kind: 'provider_init', mcpServerCount: 4, toolDefinitionCount: 3,
+    { kind: 'provider_init', mcpServerCount: 4, toolDefinitionCount: 4,
       evidenceGetContextAvailable: true, evidenceRunPlanAvailable: true,
+      evidenceReportBlockerAvailable: true,
       browserMemberToolCount: 0, browserAdminToolCount: 0, browserFullAdminToolCount: 0 },
     { kind: 'first_stream' },
     { kind: 'first_output' },
@@ -56,6 +58,7 @@ test('provider init distinguishes unavailable evidence tools from absent tool me
   assert.deepEqual(events, [{
     kind: 'provider_init', mcpServerCount: null, toolDefinitionCount: 1,
     evidenceGetContextAvailable: false, evidenceRunPlanAvailable: false,
+    evidenceReportBlockerAvailable: false,
     browserMemberToolCount: 1, browserAdminToolCount: 0, browserFullAdminToolCount: 0,
   }]);
 
@@ -66,6 +69,7 @@ test('provider init distinguishes unavailable evidence tools from absent tool me
   assert.deepEqual(missing, [{
     kind: 'provider_init', mcpServerCount: null, toolDefinitionCount: null,
     evidenceGetContextAvailable: null, evidenceRunPlanAvailable: null,
+    evidenceReportBlockerAvailable: null,
     browserMemberToolCount: null, browserAdminToolCount: null,
     browserFullAdminToolCount: null,
   }]);
@@ -131,6 +135,14 @@ test('Codex MCP events report the tool lifecycle without recording its arguments
   state.agentBackend = 'codex_openrouter';
   state.evidenceDiagnosticObserver = (event) => events.push(event);
   worker.parseLine(JSON.stringify({ type: 'turn.started' }), () => {}, state);
+  worker.parseLine(`__USERNODE_EVIDENCE_PROVIDER__ ${JSON.stringify({
+    kind: 'provider_tool_config', mcpServerCount: 4, toolDefinitionCount: 58,
+    evidenceGetContextAvailable: true, evidenceRunPlanAvailable: true,
+    evidenceReportBlockerAvailable: true,
+    browserMemberToolCount: 18, browserAdminToolCount: 18,
+    browserFullAdminToolCount: 18, completionReminder: false,
+    terminalToolChoiceRequired: false,
+  })}`, () => {}, state);
   worker.parseLine(JSON.stringify({
     type: 'item.started', item: {
       id: 'private-item', type: 'mcp_tool_call',
@@ -145,7 +157,13 @@ test('Codex MCP events report the tool lifecycle without recording its arguments
     },
   }), () => {}, state);
   assert.deepEqual(events, [
-    { kind: 'provider_init' },
+    { kind: 'provider_init', completionReminder: false },
+    { kind: 'provider_tool_config', mcpServerCount: 4, toolDefinitionCount: 58,
+      evidenceGetContextAvailable: true, evidenceRunPlanAvailable: true,
+      evidenceReportBlockerAvailable: true,
+      browserMemberToolCount: 18, browserAdminToolCount: 18,
+      browserFullAdminToolCount: 18, completionReminder: false,
+      terminalToolChoiceRequired: false },
     { kind: 'first_output' },
     { kind: 'tool_start', sequence: 1, tool: 'evidence_get_context' },
     { kind: 'tool_end', sequence: 1, tool: 'evidence_get_context', outcome: 'ok' },
