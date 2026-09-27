@@ -148,21 +148,15 @@ function replayRepairKind(error, plan) {
     if (story && story.intent.animation !== 'motion') return 'static_timing';
   }
   // A missing element in a positive assertion or more than one match for an
-  // assertion that requires a unique target is another locator error. Keep
-  // count assertions as claims about cardinality, and keep detached failures
-  // hard: narrowing a selector until nothing matches would not prove that the
-  // intended element disappeared. Wrong values and states remain hard except
-  // for two bounded cases: an exact motion checkpoint that can be verified
-  // after an observed state wait, and a supporting base-side visibility check
-  // beside a separate absence assertion for a change declared absent on base.
+  // assertion that requires a unique target is another locator error. A
+  // positive count assertion may also have selected the wrong accessible
+  // target. Its correction is safe only because RunControl pins every plan
+  // field except this exact failed assertion's target: the expected count,
+  // value, actions, focus, and sibling assertions cannot be weakened. Keep
+  // negative count and detached failures hard; changing their selector until
+  // nothing matches would not prove the intended element disappeared. Wrong
+  // values and states remain hard except for the bounded cases below.
   if (code !== 'assertion_failed' || error?.detail?.phase !== 'assertion') return null;
-  const assertionType = error.detail.assertion?.type;
-  const uniqueAssertion = ['visible', 'hidden', 'attached', 'checked', 'text', 'value', 'focusWithin']
-    .includes(assertionType);
-  if (uniqueAssertion && error.detail.count > 1) return 'locator';
-  if (error.detail.count === 0
-    && ['visible', 'attached', 'checked', 'text', 'value', 'focusWithin']
-      .includes(assertionType)) return 'locator';
   const detail = error.detail;
   const story = plan?.stories?.find((item) => item.id === detail.storyId);
   const side = detail.side === 'base' ? 'before' : detail.side === 'head' ? 'after' : null;
@@ -170,6 +164,15 @@ function replayRepairKind(error, plan) {
     ? story?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex] : null;
   if (!assertion
       || planContract.canonicalJson(assertion) !== planContract.canonicalJson(detail.assertion)) return null;
+  const positiveUniqueAssertion = ['visible', 'attached', 'checked', 'text', 'value', 'focusWithin']
+    .includes(assertion.type);
+  if ((Number.isInteger(detail.count) && detail.count > 1
+        && (positiveUniqueAssertion || assertion.type === 'hidden'))
+      || (detail.count === 0 && positiveUniqueAssertion)
+      || (assertion.type === 'count' && assertion.count > 0
+        && Number.isInteger(detail.count) && detail.count !== assertion.count)) {
+    return 'assertion_locator';
+  }
   const siblingBaseAssertions = Array.isArray(story?.replay?.checkpoint?.assertions?.before)
     ? story.replay.checkpoint.assertions.before : [];
   const preservesBaseAbsenceProof = siblingBaseAssertions.some((candidate, index) =>
@@ -1654,6 +1657,8 @@ async function executeRun(config, options, injected = {}) {
             ? 'A motion checkpoint ran while an observed element was still visible. Inspect both revisions and add an observed, bounded wait without changing the checkpoint assertions or interactions.'
             : repairKind === 'static_timing'
               ? 'The static checkpoint kept changing after at least three pixel samples. Inspect both revisions and wait for an observed settled state. Keep the original interactions, focus, and assertions.'
+            : repairKind === 'assertion_locator'
+              ? 'A positive checkpoint assertion selected the wrong element or cardinality. Inspect the failed target on both fresh revisions and correct only that assertion target. Its assertion type and expected count or value, every action, route, focus target, and every other assertion are locked.'
             : repairKind === 'supporting_visibility'
               ? 'A supporting base-side visibility assertion matched one attached but hidden element while another assertion still proves the accepted change is absent on base. Inspect both fresh revisions. Correct or remove only that unsupported context assertion, retain the separate base absence proof and every accepted interaction and claim, and report a blocker if the hidden element is actually required.'
             : repairKind === 'actionability'
@@ -1695,6 +1700,8 @@ async function executeRun(config, options, injected = {}) {
           ? 'A motion checkpoint ran before the animation settled; the evidence agent is checking the timing…'
           : repairKind === 'static_timing'
             ? 'The static checkpoint kept changing; the evidence agent is checking the settled state…'
+          : repairKind === 'assertion_locator'
+            ? 'A checkpoint assertion selected the wrong element; the evidence agent is correcting only that locator…'
           : repairKind === 'supporting_visibility'
             ? 'A supporting base checkpoint assertion was hidden; the evidence agent is checking the real surrounding state…'
           : repairKind === 'actionability'

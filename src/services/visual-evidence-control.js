@@ -61,6 +61,32 @@ function preservesTimingRepair(rejected, corrected, failure) {
     && planContract.canonicalJson(action.target) === planContract.canonicalJson(failedAssertion.target));
 }
 
+function preservesAssertionLocatorRepair(rejected, corrected, failure) {
+  const detail = failure?.detail;
+  const side = detail?.side === 'base' ? 'before' : detail?.side === 'head' ? 'after' : null;
+  if (!rejected || !side || !Number.isInteger(detail?.assertionIndex)) return false;
+  const oldStory = rejected.stories.find((story) => story.id === detail.storyId);
+  const newStory = corrected.stories.find((story) => story.id === detail.storyId);
+  const oldAssertion = oldStory?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex];
+  const newAssertion = newStory?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex];
+  if (!oldAssertion?.target || !newAssertion?.target
+      || planContract.canonicalJson(oldAssertion) !== planContract.canonicalJson(detail.assertion)
+      || planContract.canonicalJson(oldAssertion.target)
+        === planContract.canonicalJson(newAssertion.target)) return false;
+
+  // A failed positive assertion may have pointed at the wrong element, but
+  // that does not authorize the repair turn to rewrite what the checkpoint
+  // proves. Put the old target back into a copy of the proposed correction;
+  // the entire plan must then be byte-for-byte equivalent to the rejected
+  // plan. This pins the assertion type and expected count/value as well as
+  // every action, route, focus target, sibling assertion, and other story.
+  const normalized = cloneJson(corrected);
+  const normalizedStory = normalized.stories.find((story) => story.id === detail.storyId);
+  normalizedStory.replay.checkpoint.assertions[side][detail.assertionIndex].target
+    = cloneJson(oldAssertion.target);
+  return planContract.canonicalJson(normalized) === planContract.canonicalJson(rejected);
+}
+
 class RunControl {
   constructor({ runId, sessionId, intent, context, resetPair, runPlan, expiresAt }) {
     this.runId = runId;
@@ -197,6 +223,14 @@ class RunControl {
         throw new EvidenceControlError(
           'evidence_timing_repair_changed_flow',
           'A motion timing correction may change waits only. Keep the original interactions, routes, and assertions, then wait for the failed marker to become hidden before the checkpoint.',
+          400
+        );
+      }
+      if (this.repairFailure?.kind === 'assertion_locator'
+          && !preservesAssertionLocatorRepair(this.rejectedPlan, plan, this.repairFailure)) {
+        throw new EvidenceControlError(
+          'evidence_assertion_locator_repair_changed_plan',
+          'An assertion locator correction may change only the failed assertion target. Keep its type and expected value or count, plus every action, route, focus target, and other assertion unchanged.',
           400
         );
       }

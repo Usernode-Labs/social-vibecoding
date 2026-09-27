@@ -894,29 +894,48 @@ test('an actually changing static checkpoint can get a bounded observed-state re
     detail: { ...failure.detail, sampleCount: 2 } }, plan), null);
 });
 
-test('only ambiguous unique assertion targets become locator repairs', () => {
+test('only exact positive assertion locator mismatches become constrained repairs', () => {
   const plan = fixtures.plan();
-  const failure = (type, count, actual = null) => ({
-    code: 'assertion_failed',
-    detail: {
-      phase: 'assertion', side: 'base', assertionIndex: 0, count, actual,
-      assertion: { type, target: { by: 'css', value: '[data-step="approve"]' } },
-    },
-  });
-  for (const type of ['visible', 'hidden', 'attached', 'checked', 'text', 'value', 'focusWithin']) {
-    assert.equal(orchestrator.replayRepairKind(failure(type, 2), plan), 'locator', type);
+  const story = plan.stories[0];
+  const failure = (assertion, count, actual = null) => {
+    story.replay.checkpoint.assertions.before[0] = assertion;
+    return {
+      code: 'assertion_failed',
+      detail: {
+        storyId: story.id, phase: 'assertion', side: 'base', assertionIndex: 0,
+        count, actual, assertion,
+      },
+    };
+  };
+  const target = { by: 'css', value: '[data-step="approve"]' };
+  const assertions = [
+    { type: 'visible', target },
+    { type: 'hidden', target },
+    { type: 'attached', target },
+    { type: 'checked', target },
+    { type: 'text', target, value: 'Approved', exact: true },
+    { type: 'value', target, value: 'approved' },
+    { type: 'focusWithin', target },
+  ];
+  for (const assertion of assertions) {
+    assert.equal(orchestrator.replayRepairKind(failure(assertion, 2), plan),
+      'assertion_locator', assertion.type);
   }
-  assert.equal(orchestrator.replayRepairKind(failure('attached', 0), plan), 'locator');
-  assert.equal(orchestrator.replayRepairKind(failure('hidden', 1, true), plan), null);
-  assert.equal(orchestrator.replayRepairKind(failure('detached', 2), plan), null);
-  assert.equal(orchestrator.replayRepairKind({
-    code: 'assertion_failed',
-    detail: {
-      phase: 'assertion', side: 'base', assertionIndex: 0, count: 2,
-      assertion: { type: 'count', count: 1,
-        target: { by: 'css', value: '[data-step="approve"]' } },
-    },
-  }, plan), null);
+  assert.equal(orchestrator.replayRepairKind(failure({ type: 'attached', target }, 0), plan),
+    'assertion_locator');
+  assert.equal(orchestrator.replayRepairKind(failure({ type: 'hidden', target }, 1, true), plan), null);
+  assert.equal(orchestrator.replayRepairKind(failure({ type: 'detached', target }, 2), plan), null);
+  assert.equal(orchestrator.replayRepairKind(failure({ type: 'count', count: 1, target }, 0), plan),
+    'assertion_locator');
+  assert.equal(orchestrator.replayRepairKind(failure({ type: 'count', count: 1, target }, 2), plan),
+    'assertion_locator');
+  assert.equal(orchestrator.replayRepairKind(failure({ type: 'count', count: 0, target }, 1), plan), null);
+
+  const exact = { type: 'visible', target };
+  const mismatch = failure(exact, 0);
+  mismatch.detail.assertion = { ...exact, target: { by: 'css', value: '.different' } };
+  assert.equal(orchestrator.replayRepairKind(mismatch, plan), null,
+    'the browser failure must identify the exact assertion in the submitted plan');
 });
 
 test('only a hidden supporting base assertion beside an absence proof gets a correction', () => {
@@ -994,6 +1013,66 @@ test('a hidden supporting base assertion gets one bounded correction and fresh p
   });
 });
 
+test('a positive count assertion with the wrong accessible target gets one constrained correction', async () => {
+  const rejected = fixtures.plan();
+  const failedAssertion = {
+    type: 'count',
+    target: {
+      by: 'role', role: 'status', name: 'Paused live view · Checks passing', exact: true,
+    },
+    count: 1,
+  };
+  rejected.stories[0].replay.checkpoint.assertions.after.push(failedAssertion);
+  const corrected = structuredClone(rejected);
+  corrected.stories[0].replay.checkpoint.assertions.after[1].target = {
+    by: 'css', value: '#admin-merges-paused-live',
+  };
+  const failure = Object.assign(new Error('count assertion failed.'), {
+    code: 'assertion_failed',
+    detail: {
+      storyId: rejected.stories[0].id, side: 'head', phase: 'assertion',
+      assertionIndex: 1, assertionType: 'count', count: 0, actual: 0,
+      assertion: failedAssertion,
+      targetStates: [{
+        kind: 'role', role: 'status', matchedCount: 0, attachedCount: 0, visibleCount: 0,
+        roleHints: {
+          candidateCount: 2,
+          candidates: [{ name: '- status: Paused live view · Checks passing', visible: true }],
+        },
+      }],
+    },
+  });
+  const fixture = setup({
+    dispatch: async (options, dispatchCount) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      if (dispatchCount === 1) await assert.rejects(control.runPlan(rejected));
+      else {
+        assert.equal(control.getContext().repair.failure.kind, 'assertion_locator');
+        await control.runPlan(corrected);
+      }
+      return { backend: 'codex_openrouter', agentThreadId: 'evidence-thread' };
+    },
+  });
+  fixture.run.intent = contract.parseIntent(contract.semanticIntentFromPlan(rejected));
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      fixture.calls.passes.push(args[2].pass);
+      throw failure;
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
+  assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTrigger, {
+    kind: 'assertion_locator', code: 'assertion_failed', side: 'head', assertionIndex: 1,
+  });
+});
+
 test('a missing readiness locator gets one correction turn and fresh replay passes', async () => {
   const rejected = fixtures.plan();
   const corrected = fixtures.plan();
@@ -1041,21 +1120,24 @@ test('a missing readiness locator gets one correction turn and fresh replay pass
 });
 
 test('a missing positive assertion locator can receive a second bounded correction', async () => {
-  const plans = [fixtures.plan(), fixtures.plan(), fixtures.plan()];
+  const plans = [fixtures.plan(), fixtures.plan()];
   plans[1].stories[0].replay.before.actions[0].target = {
     by: 'role', role: 'button', name: 'Browse all apps', exact: true,
   };
-  plans[2].stories[0].replay.after.actions[0].target = {
-    by: 'role', role: 'button', name: 'Browse all apps', exact: false,
+  plans.push(structuredClone(plans[1]));
+  plans[2].stories[0].replay.checkpoint.assertions.after[0].target = {
+    by: 'css', value: '[role="listbox"]:not([hidden])',
   };
+  const failedAssertion = contract.parseReplayPlan(plans[1])
+    .stories[0].replay.checkpoint.assertions.after[0];
   const failures = [
     Object.assign(new Error('Action locator missing.'), {
       code: 'locator_not_found', detail: { side: 'base', phase: 'action', actionId: 'wait-ready' },
     }),
     Object.assign(new Error('visible assertion failed.'), {
       code: 'assertion_failed', detail: {
-        side: 'head', phase: 'assertion', assertionIndex: 1, count: 0,
-        assertion: { type: 'visible', target: { by: 'text', value: 'Ready', exact: true } },
+        storyId: 'invite-suggestions', side: 'head', phase: 'assertion',
+        assertionIndex: 0, count: 0, assertion: failedAssertion,
       },
     }),
   ];
@@ -1090,26 +1172,26 @@ test('a missing positive assertion locator can receive a second bounded correcti
 });
 
 test('an ambiguous assertion locator can receive the remaining bounded correction', async () => {
-  const plans = [fixtures.plan(), fixtures.plan(), fixtures.plan()];
+  const plans = [fixtures.plan(), fixtures.plan()];
   plans[1].stories[0].replay.before.actions[0].target = {
     by: 'role', role: 'button', name: 'Browse all apps', exact: true,
   };
+  plans.push(structuredClone(plans[1]));
   plans[2].stories[0].replay.checkpoint.assertions.before[0].target = {
-    by: 'css', value: '[data-step="approve"][data-approvers="anyone"]:not([hidden])',
+    by: 'css', value: '[role="listbox"]:not([hidden])',
   };
+  const failedAssertion = contract.parseReplayPlan(plans[1])
+    .stories[0].replay.checkpoint.assertions.before[0];
   const ambiguousAssertion = {
     storyId: 'invite-suggestions', side: 'base', phase: 'assertion', assertionIndex: 0,
     count: 2, actual: null,
-    assertion: {
-      type: 'attached',
-      target: { by: 'css', value: '[data-step="approve"][data-approvers="anyone"]' },
-    },
+    assertion: failedAssertion,
   };
   const failures = [
     Object.assign(new Error('Action locator missing.'), {
       code: 'locator_not_found', detail: { side: 'base', phase: 'action', actionId: 'wait-ready' },
     }),
-    Object.assign(new Error('attached assertion failed.'), {
+    Object.assign(new Error('hidden assertion failed.'), {
       code: 'assertion_failed', detail: ambiguousAssertion,
     }),
   ];
@@ -1119,8 +1201,8 @@ test('an ambiguous assertion locator can receive the remaining bounded correctio
       assert.equal(options.repairAttempt, dispatchCount - 1);
       if (dispatchCount === 3) {
         assert.deepEqual(control.getContext().repair.failure, {
-          kind: 'locator', code: 'assertion_failed',
-          message: 'attached assertion failed.', detail: ambiguousAssertion,
+          kind: 'assertion_locator', code: 'assertion_failed',
+          message: 'hidden assertion failed.', detail: ambiguousAssertion,
         });
       }
       if (dispatchCount < 3) await assert.rejects(control.runPlan(plans[dispatchCount - 1]));
@@ -1143,7 +1225,7 @@ test('an ambiguous assertion locator can receive the remaining bounded correctio
   assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 2);
   assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTriggers, [
     { kind: 'locator', code: 'locator_not_found', side: 'base', actionId: 'wait-ready' },
-    { kind: 'locator', code: 'assertion_failed', side: 'base', assertionIndex: 0 },
+    { kind: 'assertion_locator', code: 'assertion_failed', side: 'base', assertionIndex: 0 },
   ]);
 });
 
