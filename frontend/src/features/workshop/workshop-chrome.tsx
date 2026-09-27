@@ -110,7 +110,8 @@ const CHIP = 'inline-flex items-center gap-2 max-w-full h-9 pl-2 pr-2.5 rounded-
  * "(icon) App name ⌄" — which app's Workshop this is, and the list behind it.
  *
  * `scope: null` is the all-apps end (#3051): the grid glyph the panel's own
- * All apps row wears, and the words "All apps". It is never disabled, because
+ * All row wears, and the word "All" (#3277: the owner's call; the grid and
+ * the list under it already say all of what). It is never disabled, because
  * there is always somewhere to go: another app, or back up to all of them.
  */
 export function WorkshopScope({ open, id, scope, onToggle }: {
@@ -128,6 +129,7 @@ export function WorkshopScope({ open, id, scope, onToggle }: {
       aria-haspopup="menu"
       aria-expanded={open ? 'true' : 'false'}
       aria-controls={`${id}-picker`}
+      aria-label={scope ? undefined : 'All your projects, or open one'}
       onClick={() => onToggle(!open)}
     >
       {scope ? (
@@ -141,7 +143,7 @@ export function WorkshopScope({ open, id, scope, onToggle }: {
       ) : (
         <Squares2X2Icon className="w-5 h-5 shrink-0 ml-0.5" aria-hidden="true" />
       )}
-      <span className="min-w-0 truncate">{scope ? (scope.name || scope.slug) : 'All apps'}</span>
+      <span className="min-w-0 truncate">{scope ? (scope.name || scope.slug) : 'All'}</span>
       <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
     </button>
   );
@@ -210,14 +212,14 @@ export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
     >
       <p className="px-4 pt-3 pb-2 flex flex-col">
         <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Which workshop?</span>
-        <span className="text-xs text-zinc-500 dark:text-zinc-400">All apps, or one app’s.</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">All your projects, or one of them.</span>
       </p>
       {/* ALL APPS IS THE WAY BACK UP — and the reason the app's Workshop
           needs no back arrow beyond the rail's own Workshop tab. */}
       <PanelRow
         id={`${id}-all`}
         leading={<Squares2X2Icon className="w-5 h-5" />}
-        title="All apps"
+        title="All"
         trailing={scope === null
           ? <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
           : undefined}

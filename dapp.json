@@ -2281,7 +2281,7 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban"
     },
     {
-      "name": "#2761: the mark's menu opens its list on Go to workshop, with no App segment above it (owner's decision; reverses #1386's App segment)",
+      "name": "#2761: the mark's menu opens its list on Go to community hub, with no App segment above it (owner's decision; reverses #1386's App segment)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet > #improve-quick-actions + #switcher-nav > a#app-menu-row-workshop:first-child"
     },
@@ -2507,7 +2507,7 @@
       "expectText": "See what changed this week"
     },
     {
-      "name": "#2761: on the Workshop the menu's Go to workshop row is a plain link, not a selected toggle segment",
+      "name": "#2761: on the Workshop the menu's Go to community hub row is a plain link, not a selected toggle segment",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#apps-switcher-sheet #switcher-nav > a#app-menu-row-workshop:not([aria-current])"
     },
@@ -3122,9 +3122,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel:not(:has(.messages-message-system)) .messages-message:not(.messages-message-system)"
     },
     {
-      "name": "A group conversation renders an attached screenshot with a macOS-style name (#2113)",
+      "name": "A group conversation renders an attached screenshot with a macOS-style name, a thumbnail that opens in the app's own viewer (#2113, #3286)",
       "path": "/?demo=1#messages/910002",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-attachment a[href*=\"/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1\"] img[alt]"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-attachment a[data-image-open][href*=\"/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1\"] img[alt]"
     },
     {
       "name": "The notifications strip reads Unread, Messages, All — agents live under Messages, and it opens on Unread (#2718 review, #2815)",
@@ -3210,10 +3210,10 @@
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #app-menu-row-discussion + #app-menu-row-about"
     },
     {
-      "name": "The menu links out to the Workshop, scoped to the app, as a Go to workshop row (#2718, #2761)",
+      "name": "The menu links out to the project's community hub, scoped to the app, as a Go to community hub row (#2718, #2761, #3287)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-workshop[href=\"#app/usernode-2d5619/workshop\"]",
-      "expectText": "Go to workshop"
+      "expectText": "Go to community hub"
     },
     {
       "name": "#2763: Go to app discussion opens the two-pane Messages route, not the old full-screen chat",
@@ -3247,7 +3247,7 @@
       "expectText": "Just you"
     },
     {
-      "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All apps chip over its Current status and Needs you tabs, lit like a project page's (#3051)",
+      "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All chip over its Current status and Needs you tabs, lit like a project page's (#3051)",
       "path": "/?demo=1#workshop",
       "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-scope[aria-controls=\"workshop-scope-picker\"] ~ div > #workshop-tab-status.workshop-scope-tab-on[aria-current=\"page\"] + #workshop-tab-needs):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
     },

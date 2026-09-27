@@ -177,15 +177,16 @@ test('#3051: the all-apps screen wears the All apps chip again (reverses #2759)'
   const html = renderToHtml(createElement(chrome.WorkshopScope, {
     id: 'workshop-scope', open: false, scope: null, onToggle: () => {},
   }));
-  assert.match(html, />All apps</);
+  assert.match(html, />All</, 'the word All (#3277)');
+  assert.match(html, /aria-label="All your projects, or open one"/, 'and what All means, to a screen reader');
   // Its panel ticks All apps, and pressing that row only closes the panel:
   // navigating to the screen you are on would throw its scroll away.
   const panel = renderToHtml(createElement(chrome.WorkshopPicker, {
     id: 'workshop-scope-picker', scope: null, onClose: () => {},
     apps: [{ slug: 'notes-ab12', name: 'Notes' }],
   }));
-  assert.match(panel, /id="workshop-scope-picker-all"[\s\S]*?<\/svg><\/span><span[^>]*><span[^>]*>All apps<\/span><\/span><svg/,
-    'All apps carries the tick');
+  assert.match(panel, /id="workshop-scope-picker-all"[\s\S]*?<\/svg><\/span><span[^>]*><span[^>]*>All<\/span><\/span><svg/,
+    'All carries the tick');
   assert.match(CHROME, /onClose\(\);\n\s*if \(scope === null\) return;\n\s*goToAllApps\(\);/);
   // The chip's row leads the screen now, so it carries the header's notch
   // clearance the legend carried while it led.

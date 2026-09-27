@@ -268,6 +268,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M4 20 20 4',
     'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
     'M4 5a8 3 0 1 0 16 0 8 3 0 1 0-16 0',
+    // BoardIcon came back to this list with #3287: the app chip's menu row
+    // is "Go to community hub" and wears the Communities glyph, so the board
+    // mark is drawn only by a project page's Workshop tab, behind state.
+    'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
     'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6',
     // THE GRID left this list again with #3051. #2759 had put it behind state
     // when the all-apps Workshop's scope chip went; the owner brought that
