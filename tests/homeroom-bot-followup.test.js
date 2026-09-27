@@ -300,11 +300,16 @@ test('a message in the bot\'s proposal thread wakes it; any other proposal\'s do
   assert.match(ws, /if \(thread && thread\.type === 'session'\) noteProposalActivityForBot\(pool, client\.appId, thread\.ref\);/);
 });
 
-test('the bot\'s replies in a proposal thread are system messages, so they never wake it', () => {
+test('the bot\'s replies in a proposal thread come from its own user, and are never read as a person\'s', () => {
+  // #3288: its posts are ordinary messages now, so the guard is who wrote
+  // them, not what kind of row they are.
   const src = read('src/services/homeroom-bot-live.js');
-  assert.match(src, /ws\.sendSystemMessage\(pool, app\.id, text, 'system', null, \{\s*type: 'session', ref: Number\(proposalSessionId\),/);
+  assert.match(src, /inThread\(text, \{ type: 'session', ref: Number\(proposalSessionId\) \}, null, 'system'\)/);
+  assert.match(src, /ws\.sendBotMessage\(pool, app\.id, \{ user: sender, content, metadata: meta, thread \}\)/);
   const q = read('src/services/homeroom-bot.js');
   const activity = q.slice(q.indexOf('async function proposalThreadActivityByIssue'), q.indexOf('function latestOf'));
   assert.match(activity, /m\.msg_type = 'message'/);
   assert.match(activity, /cs\.status = 'promoted'/);
+  assert.match(activity, /author\.is_synthetic IS NOT TRUE/, 'the bot\'s own reply there does not re-queue it');
 });
+

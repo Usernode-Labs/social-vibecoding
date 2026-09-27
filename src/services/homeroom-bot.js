@@ -57,7 +57,8 @@ const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
 const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
 
-const BOT_USERNAME = 'homeroom_bot';
+// One name, in the live module, which compares thread authors against it.
+const { BOT_USERNAME } = live;
 const MODES = Object.freeze(['off', 'shadow', 'live']);
 // `empty` (#2737) is the fourth: a request with nothing in it to build or
 // even to ask about. It exists because the prompt's unclear branch used to
@@ -599,10 +600,14 @@ async function busyIssueNumbers(pool, appId) {
 
 async function threadActivityByIssue(pool, appId) {
   const { rows } = await pool.query(
-    `SELECT thread_ref AS n, MAX(created_at) AS last_at
-       FROM chat_messages
-      WHERE app_id = $1 AND thread_type = 'issue' AND msg_type = 'message'
-      GROUP BY thread_ref`,
+    // #3288: the bot's own posts are ordinary messages now, so "a person
+    // answered" has to say person: a synthetic author is never one.
+    `SELECT m.thread_ref AS n, MAX(m.created_at) AS last_at
+       FROM chat_messages m
+       LEFT JOIN users u ON u.id = m.user_id
+      WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.msg_type = 'message'
+        AND u.is_synthetic IS NOT TRUE
+      GROUP BY m.thread_ref`,
     [appId],
   );
   return new Map(rows.map((r) => [Number(r.n), r.last_at]));
@@ -611,8 +616,9 @@ async function threadActivityByIssue(pool, appId) {
 /**
  * #3264: the newest person's message in the discussion of each of the bot's
  * open proposals on this app, by the issue it answers. Messages only
- * (`msg_type = 'message'`): the bot's own posts there are system messages,
- * as are the promote and vote-reset notices, so none of them re-queue it.
+ * (`msg_type = 'message'`), so the promote and vote-reset notices never
+ * re-queue it, and from people only (#3288): the bot's own replies there are
+ * ordinary messages too.
  */
 async function proposalThreadActivityByIssue(pool, appId, botId) {
   const { rows } = await pool.query(
@@ -622,7 +628,9 @@ async function proposalThreadActivityByIssue(pool, appId, botId) {
        JOIN chat_messages m
          ON m.app_id = cs.app_id AND m.thread_type = 'session' AND m.thread_ref = cs.id
         AND m.msg_type = 'message' AND m.deleted_at IS NULL
+       LEFT JOIN users author ON author.id = m.user_id
       WHERE cs.app_id = $1 AND cs.user_id = $2 AND cs.status = 'promoted'
+        AND author.is_synthetic IS NOT TRUE
       GROUP BY n`,
     [appId, botId],
   );
@@ -1353,7 +1361,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     }
     const looked = await live.post({
       pool, github, ws: liveD.ws, app, repo, issueNumber,
-      kind: 'looking', text: live.lookingText(),
+      kind: 'looking', text: live.lookingText(), sender: bot,
     }).catch((err) => {
       log.warn('homeroom-bot', 'Looking post failed (continuing)', { app: app.slug, issueNumber, err: err.message });
       return null;
@@ -1693,6 +1701,7 @@ async function runFollowUp(pool, config, {
     issueThread: issueThread?.messages || [],
     proposalThread: proposalThread?.messages || [],
     botLogin,
+    botUsername: BOT_USERNAME,
     sinceMs: toMs(lastRun?.thread_seen_at),
   });
   if (!replies.length) {
@@ -1786,7 +1795,7 @@ async function runFollowUp(pool, config, {
   let runId = null;
   const say = async (kind, text, postedAt) => {
     const posted = await live.post({
-      pool, github, ws: deps.ws, app, repo, issueNumber, kind, runId, text,
+      pool, github, ws: deps.ws, app, repo, issueNumber, kind, runId, text, sender: bot,
       // Answered where it was asked: the proposal's thread too, when that
       // is where somebody wrote.
       proposalSessionId: replies.some((r) => r.where === 'proposal') ? session.id : null,
@@ -1901,7 +1910,7 @@ async function actOnVerdict({
   const say = async (kind, text, extra = {}) => {
     const mention = live.tagsPoster(kind) ? await posterOnce() : null;
     const posted = await live.post({
-      pool, github, ws, app, repo, issueNumber, kind, runId, text, mention, senderId: bot.id,
+      pool, github, ws, app, repo, issueNumber, kind, runId, text, mention, senderId: bot.id, sender: bot,
       notifications: deps.notifications || null, ...extra,
     });
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);

@@ -739,6 +739,21 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
           <Body html={msg.bodyHtml} />
           <Attachments items={msg.attachments} />
+          {/*
+              #3288: a message that carries a proposal (the Homeroom bot's
+              "built this" post, now an ordinary message from its user) hangs
+              the same vote card a vote row does. The same controller host as
+              SystemRow's: an empty span, never looked inside, filled by
+              GroupChat.refreshVoteControls from the two data-* attributes.
+          */}
+          {msg.voteRef ? (
+            <span
+              className="gc-vote-inline gc-vote-inline-block"
+              data-vote-controls=""
+              data-session-id={msg.voteRef.sessionId}
+              data-pr-number={msg.voteRef.prNumber}
+            />
+          ) : null}
           {grouped && msg.editedTitle ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
           ) : null}

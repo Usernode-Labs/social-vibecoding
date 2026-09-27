@@ -464,7 +464,9 @@ async function generalChannelSummary(pool, userId) {
 
 // Members & activity on the hub: how many people did something here this
 // week (said something in the channel, started a change, or voted on one),
-// and how many changes shipped in the last thirty days.
+// and how many changes shipped in the last thirty days. People only: a
+// synthetic account (the Homeroom bot, which opens changes and, since #3288,
+// posts ordinary messages) is never counted as somebody active here.
 async function activitySummary(pool, appId) {
   // THE TREND: people active on each of the last fourteen days, oldest
   // first, the same three kinds of taking part as the week's count. Days
@@ -472,7 +474,7 @@ async function activitySummary(pool, appId) {
   const { rows: days } = await pool.query(
     `SELECT to_char(d.day, 'YYYY-MM-DD') AS day, COUNT(DISTINCT who.user_id)::int AS n
        FROM generate_series(CURRENT_DATE - 13, CURRENT_DATE, INTERVAL '1 day') AS d(day)
-       LEFT JOIN (
+       LEFT JOIN (SELECT w.user_id, w.day FROM (
          SELECT m.user_id, m.created_at::date AS day FROM chat_messages m
           WHERE m.app_id = $1 AND m.user_id IS NOT NULL
             AND m.created_at >= CURRENT_DATE - 13
@@ -485,6 +487,7 @@ async function activitySummary(pool, appId) {
            JOIN chat_sessions s ON s.id = v.session_id
           WHERE s.app_id = $1 AND v.user_id IS NOT NULL
             AND v.created_at >= CURRENT_DATE - 13
+       ) w JOIN users u ON u.id = w.user_id AND u.is_synthetic IS NOT TRUE
        ) who ON who.day = d.day::date
       GROUP BY d.day
       ORDER BY d.day`,
@@ -505,7 +508,7 @@ async function activitySummary(pool, appId) {
             JOIN chat_sessions s ON s.id = v.session_id
            WHERE s.app_id = $1 AND v.user_id IS NOT NULL
              AND v.created_at > NOW() - INTERVAL '7 days'
-        ) who) AS active_week,
+        ) who JOIN users u ON u.id = who.user_id AND u.is_synthetic IS NOT TRUE) AS active_week,
        (SELECT COUNT(*)::int FROM chat_sessions s
          WHERE s.app_id = $1 AND s.status = 'merged'
            AND COALESCE(s.merged_at, s.created_at) > NOW() - INTERVAL '30 days') AS shipped_month`,

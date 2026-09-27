@@ -55,11 +55,16 @@ function toMs(value) {
  * What people said since the bot last looked, from all three places a
  * reply can land: a GitHub comment on the issue, the issue's Homeroom
  * thread, the proposal's Homeroom thread. The bot's own GitHub comments are
- * not replies; its Homeroom posts are system messages and never reach the
- * thread loaders at all. Oldest first.
+ * not replies, and neither are its Homeroom thread posts, which are ordinary
+ * messages from its own user since #3288. Oldest first.
  */
-function newReplies({ comments = [], issueThread = [], proposalThread = [], botLogin = '', sinceMs = 0 }) {
+function newReplies({
+  comments = [], issueThread = [], proposalThread = [], botLogin = '', botUsername = '', sinceMs = 0,
+}) {
   const bot = String(botLogin || '').toLowerCase();
+  // #3288: its Homeroom posts are ordinary messages from its own user now.
+  const self = String(botUsername || '').toLowerCase();
+  const person = (m) => !self || String(m.author || '').toLowerCase() !== self;
   const after = (at) => toMs(at) > sinceMs;
   const out = [];
   for (const c of comments) {
@@ -67,10 +72,10 @@ function newReplies({ comments = [], issueThread = [], proposalThread = [], botL
     if (after(c.createdAt)) out.push({ where: 'issue', via: 'github', author: c.author || 'unknown', body: c.body || '', createdAt: c.createdAt });
   }
   for (const m of issueThread) {
-    if (after(m.createdAt)) out.push({ where: 'issue', via: 'homeroom', author: m.author || 'unknown', body: m.body || '', createdAt: m.createdAt });
+    if (person(m) && after(m.createdAt)) out.push({ where: 'issue', via: 'homeroom', author: m.author || 'unknown', body: m.body || '', createdAt: m.createdAt });
   }
   for (const m of proposalThread) {
-    if (after(m.createdAt)) out.push({ where: 'proposal', via: 'homeroom', author: m.author || 'unknown', body: m.body || '', createdAt: m.createdAt });
+    if (person(m) && after(m.createdAt)) out.push({ where: 'proposal', via: 'homeroom', author: m.author || 'unknown', body: m.body || '', createdAt: m.createdAt });
   }
   return out.sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
 }
