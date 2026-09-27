@@ -272,7 +272,7 @@ not exercise this branch's evidence agent with managed model access.
 3. Trigger the local proposal's normal rerun/preview route **without**
    `authorPlan`. The orchestrator must dispatch `visual-evidence-agent`, and
    the worker must use its normal `evidence_get_context`, base/head browser,
-   `evidence_reset_side`, and `evidence_run_plan` tools. The platform must
+   `evidence_reset_pair`, and `evidence_run_plan` tools. The platform must
    perform the same two clean replays, store the artifacts, and serve them on
    its authenticated evidence routes and proposal card. Run this once for the
    synthetic UI change and at least once for a historically failed revision,

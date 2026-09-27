@@ -81,12 +81,12 @@ server.registerTool('evidence_get_context', {
   catch (error) { return toolError(error); }
 });
 
-server.registerTool('evidence_reset_side', {
-  description: 'Restore one exploration side to its pristine paired fixture and return its replacement origin. Deterministic replay resets both sides automatically.',
-  inputSchema: { side: z.enum(['base', 'head']) },
+server.registerTool('evidence_reset_pair', {
+  description: 'Atomically restore both exploration sides to the same pristine paired fixture generation and return both replacement origins. Call once before verifying the final base and head action lists. Deterministic replay resets both sides automatically.',
+  inputSchema: {},
   annotations,
-}, async ({ side }) => {
-  try { return resultContent((await request('/reset-side', { method: 'POST', body: { side } })).result); }
+}, async () => {
+  try { return resultContent((await request('/reset-pair', { method: 'POST' })).result); }
   catch (error) { return toolError(error); }
 });
 

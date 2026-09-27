@@ -187,6 +187,16 @@ function internalRoutes(_config) {
     catch (err) { return evidenceError(res, err); }
   });
 
+  router.post('/api/internal/evidence/:runId/reset-pair', evidenceAuth, evidenceLimiter, async (req, res) => {
+    try {
+      const result = await evidenceControlForRequest(req).resetPair();
+      return res.json({ ok: true, result });
+    } catch (err) { return evidenceError(res, err); }
+  });
+
+  // Kept for an older worker during a rolling deployment. RunControl serves
+  // the base/head companion calls from one atomic reset so the second request
+  // cannot invalidate the first request's origin.
   router.post('/api/internal/evidence/:runId/reset-side', evidenceAuth, evidenceLimiter, async (req, res) => {
     try {
       const result = await evidenceControlForRequest(req).resetSide(req.body?.side);

@@ -64,6 +64,7 @@ test('both evidence backends launch Playwright through the content-free timing o
   const dockerfile = read('Dockerfile');
   const claudeRunner = read('run-cc.sh');
   const codexRunner = read('run-codex-agent.sh');
+  const evidenceMcp = read('evidence-mcp.js');
   const command = 'node';
 
   assert.match(dockerfile, /npm install -g @playwright\/mcp@\$\{PLAYWRIGHT_MCP_VERSION\}/);
@@ -117,6 +118,11 @@ test('both evidence backends launch Playwright through the content-free timing o
     assert.match(codexRunner, /EVIDENCE_HOSTED_ORIGINS_FILE/);
     assert.match(codexRunner, /env_vars = \[[^\n]*"EVIDENCE_HOSTED_ORIGINS_FILE"/);
     assert.match(codexRunner, /evidence-hosted-origins\.js/);
+    assert.match(codexRunner, /enabled_tools = \[[^\n]*"evidence_reset_pair"/);
+    assert.doesNotMatch(codexRunner, /enabled_tools = \[[^\n]*"evidence_reset_side"/);
+    assert.match(evidenceMcp, /registerTool\('evidence_reset_pair'/);
+    assert.match(evidenceMcp, /request\('\/reset-pair'/);
+    assert.doesNotMatch(evidenceMcp, /registerTool\('evidence_reset_side'/);
     assert.equal((codexRunner.match(/"browser_mouse_move_xy"/g) || []).length, 3);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
