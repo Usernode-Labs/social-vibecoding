@@ -133,11 +133,17 @@ test('run diagnostics are private to the author or app manager, available live, 
         activeTurnMode: 'evidence', activeTurnPhase: 'cleanup_pending',
         workerInFlight: false, workerMode: null },
       replayPasses: [{ pass: 1, durationMs: 20 }], replayRuntime: 'kubernetes', agentAttempts: 1,
+      replayRetries: [{ attempt: 1, pass: 1, retry: 1, kind: 'navigation_network_failure' }],
+      fixtureResets: [{ pass: 1, storyId: 'invite-suggestions', viewport: 'desktop', durationMs: 8 }],
       agentDispatches: [{ requestedBackend: 'codex_openrouter', requestedModel: 'glm-4', backend: 'claude_code', model: 'claude-sonnet', fallbackReason: 'model_without_tools', outcome: 'completed' }],
       agentActivity: { budgetMs: 240000, events: [{ atMs: 1200, kind: 'agent_deadline' }] },
       agentFinalResponse: { excerpt: 'The model stopped after context.', characters: 32 },
+      agentFinalResponses: [{ dispatch: 1, excerpt: 'The first plan failed.', characters: 22 }],
       lastReplayEvent: { pass: 2, type: 'viewport_started', storyId: 'invite-suggestions', viewport: 'desktop' },
       replayEvents: [{ pass: 2, type: 'action_started', actionId: 'open-settings', side: 'head' }],
+      repairCount: 1,
+      repairTrigger: { kind: 'supporting_visibility', code: 'assertion_failed', side: 'base', assertionIndex: 1 },
+      repairTriggers: [{ kind: 'supporting_visibility', code: 'assertion_failed', side: 'base', assertionIndex: 1 }],
       planSource: 'hosted_planner', tokenUsage: { inputTokens: 123 }, artifactBytes: 345,
       failure: { phase: 'pass_2', code: 'assertion_failed', detail: { side: 'head', phase: 'assertion' } },
       control: { planCalls: 1, finishStatus: 'failed', finishReason: 'The checkpoint did not render.' },
@@ -197,6 +203,8 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.equal(diagnostics.currentRun, true);
   assert.equal(diagnostics.replayPlan.stories[0].id, fixtures.plan().stories[0].id);
   assert.deepEqual(diagnostics.trace.replayPasses, [{ pass: 1, durationMs: 20 }]);
+  assert.equal(diagnostics.trace.replayRetries[0].kind, 'navigation_network_failure');
+  assert.equal(diagnostics.trace.fixtureResets[0].durationMs, 8);
   assert.equal(diagnostics.trace.heartbeat.poolWaiting, 3);
   assert.equal(diagnostics.trace.idleWait.waitClass, 'evidence_recovery');
   assert.equal(diagnostics.trace.idleWait.activeTurnPhase, 'cleanup_pending');
@@ -207,6 +215,12 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.equal(diagnostics.trace.agentDispatches[0].fallbackReason, 'model_without_tools');
   assert.equal(diagnostics.trace.agentActivity.events[0].kind, 'agent_deadline');
   assert.equal(diagnostics.trace.agentFinalResponse.excerpt, 'The model stopped after context.');
+  assert.equal(diagnostics.trace.agentFinalResponses[0].excerpt, 'The first plan failed.');
+  assert.deepEqual(diagnostics.trace.repairTrigger,
+    { kind: 'supporting_visibility', code: 'assertion_failed', side: 'base', assertionIndex: 1 });
+  assert.deepEqual(diagnostics.trace.repairTriggers, [
+    { kind: 'supporting_visibility', code: 'assertion_failed', side: 'base', assertionIndex: 1 },
+  ]);
   assert.equal(diagnostics.trace.lastReplayEvent.pass, 2);
   assert.equal(diagnostics.trace.replayEvents[0].actionId, 'open-settings');
   assert.equal(diagnostics.trace.replayRuntime, 'kubernetes');
@@ -248,6 +262,8 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.equal(verified.state, 'verified');
   assert.equal(verified.failureCode, null);
   assert.equal(verified.trace.agentDispatches[0].backend, 'claude_code');
+  assert.equal(verified.trace.repairTrigger.kind, 'supporting_visibility');
+  assert.equal(verified.trace.agentFinalResponses[0].dispatch, 1);
   session.visual_evidence_run_id = null;
   session.visual_evidence_state = 'planned';
   session.visual_evidence_detail = { notStartedReason: 'No staging preview was built.' };
