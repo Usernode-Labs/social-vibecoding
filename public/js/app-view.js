@@ -7915,15 +7915,23 @@ const AppView = {
     // dropped rather than rendered blank; a week that is genuinely empty is
     // the server's to describe ("nothing landed"), because the client cannot
     // tell an empty week from a week it was never told about.
+    //
+    // #3293: the server derives these (what landed, by title) back to the
+    // project's first week, and `closed` is how many changes landed in the
+    // window, counted over the whole history, so exact. Anything but a
+    // non-negative integer is no count, and the card then draws its line
+    // alone rather than a zero it cannot stand behind.
+    const count = (x) => (Number.isInteger(x) && x >= 0 ? x : null);
     const older = (Array.isArray(v.older) ? v.older : [])
-      .map((w) => ({ start: AppView._ms(w && w.start), line: line(w && w.line) }))
+      .map((w) => ({ start: AppView._ms(w && w.start), line: line(w && w.line), closed: count(w && w.closed) }))
       .filter((w) => w.start && w.line)
       .sort((a, b) => b.start - a.start);
-    // The Monday of the first week this app had any activity: where the
-    // walk-back stops offering another step. Null when the server has not
-    // said, which reads as "there may be more" — the button then disappears
-    // when `older` runs out instead, which is the same stop one week late
-    // rather than a false floor.
+    // The Monday of the week the project began: the walk's floor. The
+    // server sends it only beside a COMPLETE `older` (#3293), so reaching
+    // the end of the walk with it set is reaching the project's start. Null
+    // when the server has not said, which reads as "there may be more": the
+    // walk then ends where `older` does and says only that the summary goes
+    // no further, which is a true statement rather than a false floor.
     const firstWeek = AppView._ms(v.firstWeek) || null;
     return (cards.lastWeek || cards.thisWeek || cards.open || older.length)
       ? { ...cards, older, firstWeek }
@@ -8025,12 +8033,14 @@ const AppView = {
       const n = Math.round((thisStart - w.start) / WEEK);
       if (n < 2) continue;
       older.push({
-        // Its dates, as above. The server has never written a count for a
-        // window this old, so it carries none — the pane draws the line
-        // alone rather than a zero it cannot stand behind.
+        // Its dates, as above. #3293: the server counts what landed in it
+        // over the whole history, the same rows the tiles count, so the
+        // figure is exact and never a floor. A window it sent no count for
+        // (a cache from before that) carries none, and the pane draws the
+        // line alone rather than a zero it cannot stand behind.
         key: `week:${w.start}`, title: '', line: w.line,
         startMs: w.start, endMs: w.start + WEEK,
-        counts: null,
+        counts: Number.isInteger(w.closed) ? { closed: w.closed, partial: false } : null,
       });
     }
     // Newest of the older windows first, continuing the walk backwards.
@@ -8721,10 +8731,11 @@ const AppView = {
         thisWeek: { closed: shippedThisWeek, partial: weekCountsPartial },
         lastWeek: { closed: shippedPrev, partial: weekCountsPartial },
       }),
-      // The Monday of the app's first week of activity, when the server has
-      // said. The walk stops when `weeks` runs out either way; this is only
-      // how the pane can tell "that is the whole history" from "that is all
-      // that has been written so far".
+      // The Monday of the week the project began, when the server has said
+      // (#3293: beside a complete history of older weeks). The walk stops
+      // when `weeks` runs out either way; this is only how the pane can tell
+      // "that is the whole history" from "that is all that has been written
+      // so far".
       firstWeek: (tData && tData.digestCards && tData.digestCards.firstWeek) || null,
       summary: (tData && tData.digest) || null,
       // The merged history is paged. With more behind it, page-counted week

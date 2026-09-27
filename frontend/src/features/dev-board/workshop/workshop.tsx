@@ -773,6 +773,20 @@ function DashTiles({ d }: { d: Dash }): ReactNode {
  * paragraph and then to the derived sentence, and never renders an empty box.
  */
 /**
+ * "Aug 25", in UTC like the weeks themselves — and "Aug 25, 2025" for a day
+ * outside the current year. #3293 walks back to the project's start, which
+ * for a project over a year old passes a second Aug 25; a range is an
+ * absolute fact only while it names one week.
+ */
+function weekDate(ms: number): string {
+  const d = new Date(ms);
+  const other = d.getUTCFullYear() !== new Date().getUTCFullYear();
+  return d.toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', timeZone: 'UTC', ...(other ? { year: 'numeric' } : {}),
+  });
+}
+
+/**
  * "Aug 25 – Aug 31" for a window whose `endMs` is the Monday after it, and
  * "Sep 14 → now" for the one that has not finished.
  *
@@ -783,13 +797,11 @@ function DashTiles({ d }: { d: Dash }): ReactNode {
  * from its Monday to NOW, so that is what it says.
  */
 function weekRange(startMs: number, endMs: number, live?: boolean): string {
-  const fmt = (ms: number) => new Date(ms)
-    .toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-  if (live) return `${fmt(startMs)} → now`;
+  if (live) return `${weekDate(startMs)} → now`;
   // `endMs` is EXCLUSIVE — the next Monday — so the caption names the Sunday
   // before it. Captioning a Monday–Sunday week with two Mondays is the kind
   // of off-by-one a reader notices and cannot explain.
-  return `${fmt(startMs)} – ${fmt(endMs - 86400000)}`;
+  return `${weekDate(startMs)} – ${weekDate(endMs - 86400000)}`;
 }
 
 /**
@@ -816,13 +828,20 @@ function weekRange(startMs: number, endMs: number, live?: boolean): string {
  * past week. It is the pane's lead paragraph now, above this walk and
  * outside it, and the button's label is true on every press.
  *
- * The walk ends where the server's lines end, and SAYS SO. `firstWeek` is
- * the app's beginning and the server has never sent one, so the only thing
- * that ever happened when the lines ran out was the button silently
- * leaving — which reads as a control that broke. "As far back as the
- * summary goes" is the weaker statement and the true one: it is a fact
- * about the summary's reach, not a claim about the app's age, and it can
- * always be made.
+ * The walk ends where the server's lines end, and SAYS SO. It used to end
+ * at last week whatever the project's age, because the model writes two
+ * windows and nothing wrote a third; the server now derives every older
+ * week from what landed in it and sends `firstWeek`, the Monday the project
+ * began (#3293), so a walk pressed to its end has reached the start and says
+ * when that was. Without `firstWeek` (the history could not be read, a
+ * cache from before it) "as far back as the summary goes" is the weaker
+ * statement and the true one: a fact about the summary's reach, not a claim
+ * about the project's age.
+ *
+ * The control does not leave when the walk is spent: it stays, DISABLED,
+ * which is the reveal controls' convention (#2183, `.dev-ws-reveal:disabled`)
+ * — a button that vanishes reads as one that broke, and the note under it
+ * says why there is nothing more.
  */
 export function WeekWalk({ weeks, firstWeek, note, shown, onMore }: {
   weeks: Dash['weeks'];
@@ -848,8 +867,12 @@ export function WeekWalk({ weeks, firstWeek, note, shown, onMore }: {
   if (!weeks.length) return null;
   const drawn = weeks.slice(0, shown);
   const more = weeks.length - drawn.length;
-  const oldest = drawn[drawn.length - 1];
-  const atStart = !more && !!firstWeek && !!oldest && oldest.startMs === firstWeek;
+  // Not "the oldest card IS the first week": a project's first weeks often
+  // land nothing, and a week that held nothing has no card, so the walk can
+  // be complete with its last card later than the Monday it began. The
+  // server sends `firstWeek` only beside a complete history, so spent plus
+  // set is the beginning.
+  const atStart = !more && !!firstWeek;
   return (
     <div className="dev-ws-cards" data-ws-cards="">
       {drawn.map((w) => (
@@ -892,27 +915,28 @@ export function WeekWalk({ weeks, firstWeek, note, shown, onMore }: {
         </article>
       ))}
       {note ? <p className="dev-ws-digest-note" data-ws-digest-note="">{note}</p> : null}
-      {more ? (
-        <button
-          type="button"
-          className="dev-ws-reveal dev-ws-week-more un-touch-target"
-          data-ws-week-more=""
-          onClick={onMore}
-        >
-          {/* Pointing DOWN, because that is where the window it reveals
-              appears — under the card you are reading, not above it. */}
-          <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-          Show past week
-        </button>
-      ) : null}
-      {/* The walk's floor. `atStart` is the app's BEGINNING and needs the
-          server's `firstWeek`, which it has never sent — so the only thing
-          that ever happened when the lines ran out was the button silently
-          leaving, which reads as a control that broke. The weaker statement
-          is the true one and can always be made: this is as far as the
-          SUMMARY reaches, which is not a claim about the app's age. */}
-      {atStart ? (
-        <p className="dev-ws-week-note" data-ws-week-start="">The first week this app had any activity.</p>
+      <button
+        type="button"
+        className="dev-ws-reveal dev-ws-week-more un-touch-target"
+        data-ws-week-more=""
+        disabled={!more}
+        onClick={onMore}
+      >
+        {/* Pointing DOWN, because that is where the window it reveals
+            appears — under the card you are reading, not above it. */}
+        <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+        Show past week
+      </button>
+      {/* The walk's floor. `atStart` is the project's BEGINNING, which the
+          server names with `firstWeek` beside a complete history (#3293), so
+          the note says when that was rather than only that the walk is
+          over. Without it the weaker statement is the true one and can
+          always be made: this is as far as the SUMMARY reaches, which is not
+          a claim about the project's age. */}
+      {atStart && firstWeek ? (
+        <p className="dev-ws-week-note" data-ws-week-start="">
+          {`This project started the week of ${weekDate(firstWeek)}.`}
+        </p>
       ) : null}
       {!more && !atStart ? (
         <p className="dev-ws-week-note" data-ws-week-end="">That is as far back as the summary goes.</p>
