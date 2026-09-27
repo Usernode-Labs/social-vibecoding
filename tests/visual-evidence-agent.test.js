@@ -132,6 +132,12 @@ test('the evidence prompt asks for a replay plan and leaves visual judgement to 
   assert.match(agent.promptFor({ completionReminder: true }), /call evidence_run_plan now/i);
   assert.match(agent.promptFor({ completionReminder: true }), /evidence_report_blocker/i);
   assert.match(agent.promptFor({ completionReminder: true }), /only those two terminal\s+tools/i);
+  assert.match(agent.promptFor({ repair: true, completionReminder: true }),
+    /bounded repair exploration ended without calling/i);
+  assert.match(agent.promptFor({ repair: true, completionReminder: true }),
+    /preserving every accepted interaction and assertion unrelated to the\s+exact replay failure/i);
+  assert.match(agent.promptFor({ repair: true, completionReminder: true }),
+    /only those two terminal tools/i);
   assert.match(agent.promptFor({ repair: true }), /rejected plan and the exact replay failure/i);
   assert.match(agent.promptFor({ repair: true }), /BOTH exact\s+revisions/i);
   assert.match(agent.replayPlanGuide(), /No arbitrary JavaScript/);

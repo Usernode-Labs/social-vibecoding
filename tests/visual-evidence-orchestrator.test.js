@@ -597,6 +597,10 @@ test('a replay failure survives a correction turn that submits no new plan', asy
         await assert.rejects(control.runPlan(fixtures.plan()), { code: 'ambiguous_locator' });
       } else {
         assert.equal(options.repairAttempt, 1);
+        if (dispatchCount === 3) {
+          assert.equal(options.completionReminder, true);
+          assert.equal(options.resumeThreadId, 'thread-1');
+        }
       }
       // The planner can finish its turn normally after receiving the tool
       // error. That must not replace the platform's actual replay failure.
@@ -622,7 +626,7 @@ test('a replay failure survives a correction turn that submits no new plan', asy
     planCalls: 1, finishStatus: null, finishReason: null,
   });
   assert.ok(failure.patch.traceSummary.lastReplayEvent.elapsedMs >= 0);
-  assert.equal(fixture.calls.dispatches, 2);
+  assert.equal(fixture.calls.dispatches, 3);
   assert.equal(fixture.calls.stored, 0);
   assert.equal(fixture.calls.cleaned, 1);
   assert.deepEqual(failure.patch.traceSummary.lastReplayEvent, {
@@ -1265,6 +1269,65 @@ test('a correction turn has time to inspect the page after the first planner bud
   assert.equal(dispatches[0].budgetMs, 20);
   assert.equal(dispatches[1].budgetMs, 200);
   assert.ok(dispatches[1].timeoutMs > 0);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
+});
+
+test('a timed-out correction uses its reserved terminal-only reminder without extending the repair budget', async () => {
+  const mismatch = Object.assign(new Error('Outcome did not match an element.'), {
+    code: 'locator_not_found', detail: {
+      side: 'base', phase: 'action', actionId: 'select-outcome', kind: 'label',
+      matchedCount: 0, visibleCount: 0, attachedCount: 0,
+    },
+  });
+  const corrected = fixtures.plan();
+  corrected.stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  const dispatchOptions = [];
+  const fixture = setup({
+    dispatch: async (options, dispatchCount) => {
+      dispatchOptions.push(options);
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      if (dispatchCount === 1) {
+        await assert.rejects(control.runPlan(fixtures.plan()), { code: 'locator_not_found' });
+        return { backend: 'codex_openrouter', threadId: 'evidence-thread', result: { exitCode: 0 } };
+      }
+      if (dispatchCount === 2) {
+        assert.equal(options.repairAttempt, 1);
+        assert.equal(options.completionReminder, false);
+        throw Object.assign(new Error('The repair exploration timed out.'), {
+          code: 'evidence_agent_timeout',
+        });
+      }
+      assert.equal(options.repairAttempt, 1);
+      assert.equal(options.completionReminder, true);
+      assert.equal(options.resumeThreadId, 'evidence-thread');
+      await control.runPlan(corrected);
+      return { backend: 'codex_openrouter', threadId: 'evidence-thread', result: { exitCode: 0 } };
+    },
+  });
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      fixture.calls.passes.push(args[2].pass);
+      throw mismatch;
+    }
+    return runPass(...args);
+  };
+
+  const result = await execute(fixture, { maxRepairAgentMs: 200 });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 3);
+  assert.equal(dispatchOptions[1].timeoutMs, 100);
+  assert.ok(dispatchOptions[2].timeoutMs > 0 && dispatchOptions[2].timeoutMs <= 100);
+  const dispatches = fixture.transitions.at(-1).patch.traceSummary.agentDispatches;
+  assert.equal(dispatches[1].budgetMs, 200);
+  assert.equal(dispatches[1].completionReserveMs, 100);
+  assert.equal(dispatches[1].code, 'evidence_agent_timeout');
+  assert.equal(dispatches[2].completionReminder, true);
+  assert.equal(dispatches[2].repairAttempt, 1);
   assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
 });
 

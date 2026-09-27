@@ -204,7 +204,18 @@ an honest replay cannot be made, use evidence_report_blocker with the concrete
 reason. Do not finish with prose before one of those terminal tool calls.`;
 
 function promptFor({ repair = false, completionReminder = false } = {}) {
-  const task = completionReminder
+  const task = completionReminder && repair
+    ? `Your bounded repair exploration ended without calling
+evidence_run_plan or evidence_report_blocker. Use the rejected-plan context
+and browser observations already in this thread. Do not reset the exploration
+pair, repeat completed inspection, broaden the accepted claim, or merely say
+that you will submit. Call evidence_run_plan now with the complete corrected
+replays, preserving every accepted interaction and assertion unrelated to the
+exact replay failure. If the observations show that no honest correction is
+possible, call evidence_report_blocker with the concrete reason. This recovery
+turn exposes only those two terminal tools and requires one tool call before
+any prose.`
+    : completionReminder
     ? `Your previous turn ended normally without calling evidence_run_plan.
 Use the browser observations already in this thread. Do not reset the
 exploration pair, repeat completed exploration, or merely say that you will
