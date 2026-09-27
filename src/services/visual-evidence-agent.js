@@ -124,8 +124,12 @@ Verify the data behind the claimed screen loaded for the story's persona.
 A plan must execute every accepted interaction step on both revisions and
 assert the accepted checkpoint after the last step. Before calling
 evidence_run_plan, compare the numbered intent.steps with the before and after
-action lists one by one. Then call evidence_reset_side and execute each final
-action list from its declared startPath on both freshly reset revisions. Do
+action lists one by one. Then call evidence_reset_pair exactly once, use the
+base and head replacement origins returned by that single call, and execute
+each final action list from its declared startPath on those freshly reset
+revisions. Do not call the reset tool once per side: the pair is replaced
+atomically, so another reset would invalidate both origins from the prior
+generation. Do
 not rely on a tour, dialog, banner, or saved preference you dismissed during
 earlier exploration staying dismissed after reset; encode the observed
 semantic dismissal or completion action in the replay when it blocks the

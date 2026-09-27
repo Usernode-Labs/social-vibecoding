@@ -593,11 +593,13 @@ Returns sanitized run metadata, intent, changed-file summary, base/head labels,
 available viewports/personas, and the allowed origins. It never returns raw
 credentials.
 
-### `evidence_reset_side`
+### `evidence_reset_pair`
 
-Resets one side's browser context and, when the story performed writes, restores
-its pristine database snapshot. This is for exploration only; the replay tool
-always starts clean.
+Atomically restores both revisions to one pristine paired fixture generation
+and returns both replacement origins. The planner calls it once before its
+final base/head verification. A later reset replaces both environments, so
+origins from different reset generations must never be combined. This is for
+exploration only; the replay tool always starts clean.
 
 ### Browser exploration tools
 

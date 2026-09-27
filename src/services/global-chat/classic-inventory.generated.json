@@ -6544,6 +6544,14 @@
     {
       "source": "src/routes/internal.js",
       "method": "POST",
+      "path": "/api/internal/evidence/:runId/reset-pair",
+      "expression": null,
+      "status": "exempt",
+      "reason": "platform-to-worker/internal service protocol"
+    },
+    {
+      "source": "src/routes/internal.js",
+      "method": "POST",
       "path": "/api/internal/evidence/:runId/reset-side",
       "expression": null,
       "status": "exempt",

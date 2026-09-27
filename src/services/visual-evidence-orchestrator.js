@@ -858,7 +858,8 @@ const AGENT_DIAGNOSTIC_PHASES = new Set([
   'evidence_mcp_ready', 'claude', 'agent', 'done',
 ]);
 const AGENT_DIAGNOSTIC_TOOLS = new Set([
-  'evidence_get_context', 'evidence_reset_side', 'evidence_set_request_failure', 'evidence_run_plan',
+  'evidence_get_context', 'evidence_reset_pair', 'evidence_reset_side',
+  'evidence_set_request_failure', 'evidence_run_plan',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -1294,12 +1295,12 @@ async function executeRun(config, options, injected = {}) {
       intent,
       context,
       expiresAt: Date.now() + (config.visualEvidence?.maxRunMs || 1_440_000),
-      resetSide: async (side) => {
+      resetPair: async () => {
         const reset = await deps.environment.resetPair(config, pair, { onProgress });
         if (!sameProvenance(reset, expectedProvenance)) {
           throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'The exploration reset changed the paired fixture or image.');
         }
-        return { side, origin: reset.origins[side], bothSidesReset: true };
+        return { origins: reset.origins, bothSidesReset: true };
       },
       runPlan: async (plan, { attempt }) => {
         const replayStartedAt = Date.now();
@@ -1604,7 +1605,7 @@ async function executeRun(config, options, injected = {}) {
         // pinned pair before the planner inspects the control again.
         failurePhase = 'repair_reset';
         const repairResetStartedAt = Date.now();
-        try { await registration.control.resetSide('base'); }
+        try { await registration.control.resetPair(); }
         finally { replaySuspendedMs += Date.now() - repairResetStartedAt; }
         metrics.repairCount += 1;
         failurePhase = 'agent_repair';

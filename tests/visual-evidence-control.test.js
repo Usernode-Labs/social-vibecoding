@@ -17,7 +17,7 @@ test('exploration resets and deterministic replay cannot race each other', async
     intent: fixtures.intent(),
     context: {},
     expiresAt: Date.now() + 10_000,
-    resetSide: async () => ({ ok: true }),
+    resetPair: async () => ({ origins: { base: 'http://base.test', head: 'http://head.test' } }),
     runPlan: async () => {
       await waiting;
       return { hardVerdict: { passed: true }, planHash };
@@ -36,6 +36,70 @@ test('exploration resets and deterministic replay cannot race each other', async
   });
   assert.equal(finished.status, 'verified');
   assert.equal(finished.planHash, planHash);
+});
+
+test('paired exploration reset returns one coherent base and head generation', async () => {
+  let generation = 0;
+  const control = new RunControl({
+    runId: '0'.repeat(32),
+    sessionId: 42,
+    intent: fixtures.intent(),
+    context: {},
+    expiresAt: Date.now() + 10_000,
+    resetPair: async () => {
+      generation += 1;
+      return {
+        origins: {
+          base: `http://base-${generation}.test`,
+          head: `http://head-${generation}.test`,
+        },
+      };
+    },
+    runPlan: async () => ({ hardVerdict: { passed: true } }),
+  });
+
+  assert.deepEqual(await control.resetPair(), {
+    origins: { base: 'http://base-1.test', head: 'http://head-1.test' },
+  });
+  assert.equal(generation, 1);
+});
+
+test('legacy base and head reset calls share one atomic pair during a rolling deploy', async () => {
+  let generation = 0;
+  const control = new RunControl({
+    runId: '1'.repeat(32),
+    sessionId: 42,
+    intent: fixtures.intent(),
+    context: {},
+    expiresAt: Date.now() + 10_000,
+    resetPair: async () => {
+      generation += 1;
+      return {
+        origins: {
+          base: `http://base-${generation}.test`,
+          head: `http://head-${generation}.test`,
+        },
+      };
+    },
+    runPlan: async () => ({ hardVerdict: { passed: true } }),
+  });
+
+  assert.deepEqual(await control.resetSide('base'), {
+    side: 'base',
+    origin: 'http://base-1.test',
+    origins: { base: 'http://base-1.test', head: 'http://head-1.test' },
+    bothSidesReset: true,
+  });
+  assert.deepEqual(await control.resetSide('head'), {
+    side: 'head',
+    origin: 'http://head-1.test',
+    origins: { base: 'http://base-1.test', head: 'http://head-1.test' },
+    bothSidesReset: true,
+  });
+  assert.equal(generation, 1, 'the companion side does not invalidate the first origin');
+
+  assert.equal((await control.resetSide('base')).origin, 'http://base-2.test');
+  assert.equal(generation, 2, 'a new reset cycle still creates a new pair');
 });
 
 test('the evidence turn stays live after waiting for bounded platform replay', async () => {
@@ -85,7 +149,7 @@ test('hosted plan submission acknowledges while replay is pending and retries ar
   const control = new RunControl({
     runId: 'f'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
     expiresAt: Date.now() + 10_000,
-    resetSide: async () => ({ ok: true }),
+    resetPair: async () => ({ origins: { base: 'http://base.test', head: 'http://head.test' } }),
     runPlan: async () => {
       calls += 1;
       await pendingReplay;

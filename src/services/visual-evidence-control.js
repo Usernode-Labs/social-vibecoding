@@ -62,12 +62,18 @@ function preservesTimingRepair(rejected, corrected, failure) {
 }
 
 class RunControl {
-  constructor({ runId, sessionId, intent, context, resetSide, runPlan, expiresAt }) {
+  constructor({ runId, sessionId, intent, context, resetPair, runPlan, expiresAt }) {
     this.runId = runId;
     this.sessionId = Number(sessionId);
     this.intent = planContract.parseIntent(intent);
     this.context = cloneJson(context);
-    this.resetSideCallback = resetSide;
+    this.resetPairCallback = resetPair;
+    // During a rolling deploy an older evidence worker may still call the
+    // retired one-side endpoint twice, once for base and once for head. Keep
+    // the first atomic pair available for the companion call so that the
+    // second request cannot invalidate the origin returned by the first.
+    this.legacyResetPair = null;
+    this.legacyResetSides = new Set();
     this.runPlanCallback = runPlan;
     this.expiresAt = Number(expiresAt || Date.now() + 8 * 60_000);
     this.planCalls = 0;
@@ -109,24 +115,55 @@ class RunControl {
     });
   }
 
-  async resetSide(side) {
+  async resetPair() {
     try {
       this.assertLive();
-      if (!['base', 'head'].includes(side)) throw new EvidenceControlError('invalid_evidence_side', 'Side must be base or head.', 400);
       if (this.finished) throw new EvidenceControlError('evidence_turn_finished', 'This evidence turn is already finished.');
-      if (typeof this.resetSideCallback !== 'function') {
-        throw new EvidenceControlError('evidence_reset_unavailable', 'Side reset is unavailable for this run.', 503);
+      if (typeof this.resetPairCallback !== 'function') {
+        throw new EvidenceControlError('evidence_reset_unavailable', 'Paired reset is unavailable for this run.', 503);
       }
       if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
       this.busy = 'resetting paired state';
-      try { return await this.resetSideCallback(side); }
+      try {
+        const result = await this.resetPairCallback();
+        if (!result?.origins?.base || !result?.origins?.head) {
+          throw new EvidenceControlError(
+            'invalid_evidence_reset', 'Paired reset did not return both replacement origins.', 500
+          );
+        }
+        this.legacyResetPair = null;
+        this.legacyResetSides.clear();
+        return cloneJson(result);
+      }
       finally { this.busy = null; }
     } catch (error) {
       if (this.lastToolFailure?.operation !== 'run-plan') {
-        this.lastToolFailure = { operation: 'reset-side', error };
+        this.lastToolFailure = { operation: 'reset-pair', error };
       }
       throw error;
     }
+  }
+
+  async resetSide(side) {
+    if (!['base', 'head'].includes(side)) {
+      throw new EvidenceControlError('invalid_evidence_side', 'Side must be base or head.', 400);
+    }
+    this.assertLive();
+    if (this.finished) throw new EvidenceControlError('evidence_turn_finished', 'This evidence turn is already finished.');
+    if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
+    let pair = this.legacyResetPair;
+    if (!pair || this.legacyResetSides.has(side)) {
+      pair = await this.resetPair();
+      this.legacyResetPair = pair;
+      this.legacyResetSides.clear();
+    }
+    this.legacyResetSides.add(side);
+    return {
+      side,
+      origin: pair.origins[side],
+      origins: cloneJson(pair.origins),
+      bothSidesReset: true,
+    };
   }
 
   queuePlan(rawPlan) {
