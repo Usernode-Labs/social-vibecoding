@@ -1316,7 +1316,20 @@ function useModelChoice() {
   const snapshot = useAgentSessionPick((s) => ({
     catalog: s.catalog, session: s.session, draft: s.draft, choosing: s.choosing, phase: s.phase,
   }));
+  // The catalog is read once per page, but a part that did not answer is
+  // asked again (./store.ts): when a conversation is opened or routed to,
+  // when the page comes back to the foreground, and when the network
+  // returns. Each is a no-op once everything has answered.
   useEffect(() => { void loadModelCatalog(); }, []);
+  useEffect(() => {
+    const retry = () => { if (document.visibilityState !== 'hidden') void loadModelCatalog(); };
+    window.addEventListener('online', retry);
+    document.addEventListener('visibilitychange', retry);
+    return () => {
+      window.removeEventListener('online', retry);
+      document.removeEventListener('visibilitychange', retry);
+    };
+  }, []);
   const catalog = snapshot.catalog;
   const explicit = snapshot.session ? (snapshot.session.agent || null) : (snapshot.draft?.agent || null);
   const current = effectiveChoice(explicit, catalog);
