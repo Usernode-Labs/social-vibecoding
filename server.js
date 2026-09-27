@@ -82,6 +82,7 @@ const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
 const { galleryRoutes } = require('./src/routes/gallery');
 const { appInstallRoutes } = require('./src/routes/app-install');
+const communityInviteRoutes = require('./src/routes/community-invites');
 const {
   cliAuthGate,
   cliApiBearerAuth,
@@ -700,6 +701,12 @@ app.use(topochainAdminRoutes(config));
 // serve index.html for these clean app paths. The shell's own manifest
 // link and public/manifest.webmanifest are untouched — see the route.
 app.use(appInstallRoutes(config));
+// Invite links (routes/community-invites.js): the API, the anonymous
+// preview under /api/public/, and the `/invite/<token>` page. AFTER
+// authMiddleware (every route but the preview needs req.user) and BEFORE the
+// `app.get('*')` catch-all, which would otherwise answer the page with a
+// plain index.html and no link preview.
+app.use(communityInviteRoutes(config));
 
 // Mint the iframe identity token the shell injects into an app iframe.
 //

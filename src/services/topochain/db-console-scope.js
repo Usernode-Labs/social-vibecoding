@@ -186,6 +186,11 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   sessions: ['token'],
   // Redeemable invite codes.
   activation_codes: ['code'],
+  // Invite links (services/community-invites.js): a live token is a way
+  // into a project, a private group's included. Who made it, its limits and
+  // its use count stay readable, which is what a "my link did not work"
+  // question needs.
+  community_invites: ['token'],
   // Encrypted app secrets + the last-4 hint that narrows a guess.
   app_secrets: ['value_enc', 'value_last4'],
   platform_env_values: ['value_enc', 'value_last4'],

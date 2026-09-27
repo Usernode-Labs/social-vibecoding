@@ -9944,6 +9944,172 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;
 -- clears it, so the tour follows the join screen again on every device.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at TIMESTAMPTZ;
 
+-- ── Communities, stage 6: invite links ──────────────────────────────────
+--
+-- A link anyone can open to join a community: /invite/<token>
+-- (src/services/community-invites.js). Any member makes one; it lasts
+-- `expires_at` and works for `max_uses` people (7 days and 25 unless the
+-- maker says otherwise), and whoever made it, a project admin or a platform
+-- admin can turn it off (`revoked_at`).
+--
+-- What a link GRANTS is what its maker could grant: on a project where
+-- building is by invitation (collab-private) it is the collaborator invite,
+-- accepted; anywhere else it is membership. One function below applies it,
+-- so the two moments it happens (on the spot, and when a queued person is
+-- let in) cannot disagree.
+--
+-- `app_id` is the project the link was made from. Communities and apps are
+-- one-to-one today, so it names the community's one project; `community_id`
+-- is kept beside it for the day a community owns several (#3292).
+--
+-- staging:private: a live token is a way in, which is auth material, and
+-- the redemptions say who followed whose link.
+CREATE TABLE IF NOT EXISTS community_invites (
+  id           SERIAL PRIMARY KEY,
+  token        VARCHAR(32) NOT NULL UNIQUE,
+  community_id INTEGER NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  app_id       INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  max_uses     INTEGER NOT NULL DEFAULT 25 CHECK (max_uses BETWEEN 1 AND 100),
+  uses         INTEGER NOT NULL DEFAULT 0 CHECK (uses >= 0),
+  expires_at   TIMESTAMPTZ NOT NULL,
+  revoked_at   TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_community_invites_app ON community_invites (app_id, created_by);
+COMMENT ON TABLE community_invites IS 'staging:private';
+
+-- One row per person who followed a link. 'joined' was applied; 'queued' is
+-- somebody without platform access yet, whose community waits for the day
+-- they are let in (the trigger below applies it then); 'cancelled' was
+-- queued on a link that was turned off first. `skipped_waitlist` marks the
+-- invite tree letting them in (users.admitted_by says by whom).
+CREATE TABLE IF NOT EXISTS community_invite_redemptions (
+  id               SERIAL PRIMARY KEY,
+  invite_id        INTEGER NOT NULL REFERENCES community_invites(id) ON DELETE CASCADE,
+  user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status           VARCHAR(16) NOT NULL DEFAULT 'queued'
+                     CHECK (status IN ('joined', 'queued', 'cancelled')),
+  skipped_waitlist BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  applied_at       TIMESTAMPTZ,
+  UNIQUE (invite_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_community_invite_redemptions_user
+  ON community_invite_redemptions (user_id) WHERE applied_at IS NULL;
+COMMENT ON TABLE community_invite_redemptions IS 'staging:private';
+
+-- THE INVITE TREE: who let whom in. Built, and off until
+-- INVITE_TREE_ENABLED says otherwise (services/community-invites.js).
+-- `invite_generation` 0 is "let in by us" (an admin release, an activation
+-- code, a genesis wallet, and everyone who had access before this); 1 is
+-- somebody a generation-0 person's link let in, and so on. Skips used is a
+-- COUNT of admitted_by, so there is no counter to drift. NULL generation on
+-- an account with access reads as 0 (the reads COALESCE it); grantPlatform-
+-- Access writes 0, the lowest, whenever we let somebody in ourselves.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS admitted_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_generation SMALLINT;
+CREATE INDEX IF NOT EXISTS idx_users_admitted_by ON users (admitted_by) WHERE admitted_by IS NOT NULL;
+
+-- Whether the person who made a link can still grant what it grants: an
+-- admin, or a collaborator where building is by invitation, or a member
+-- elsewhere. A link dies with its maker's standing — somebody removed from
+-- a group does not keep a way to add people to it — and a link whose maker
+-- is gone dies too. services/community-invites.js reads this for the
+-- preview and the redeem; apply_community_invite() below reads it again at
+-- release, for a queued person.
+CREATE OR REPLACE FUNCTION community_invite_maker_holds(p_invite INTEGER) RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (
+    SELECT 1
+      FROM community_invites i
+      JOIN apps a ON a.id = i.app_id
+      JOIN users u ON u.id = i.created_by
+     WHERE i.id = p_invite
+       AND (u.is_admin
+            OR CASE WHEN a.collab_visibility = 'private' AND NOT a.self_hosted
+                    THEN EXISTS (SELECT 1 FROM app_collaborators c
+                                  WHERE c.app_id = a.id AND c.user_id = u.id AND c.status = 'member')
+                    ELSE EXISTS (SELECT 1 FROM community_members m
+                                  WHERE m.community_id = a.community_id AND m.user_id = u.id)
+               END)
+  );
+$$;
+
+-- Apply one redemption: the grant, the membership and the Home pin, as the
+-- Join button does (communities.join). Idempotent: an applied row is left
+-- alone, and so is one whose link was turned off, or whose maker lost the
+-- standing to grant it, while it waited.
+CREATE OR REPLACE FUNCTION apply_community_invite(p_redemption INTEGER) RETURNS BOOLEAN
+LANGUAGE plpgsql AS $$
+DECLARE
+  r RECORD;
+BEGIN
+  SELECT x.id, x.user_id, i.app_id, i.created_by, i.revoked_at,
+         a.community_id, a.collab_visibility, a.self_hosted
+    INTO r
+    FROM community_invite_redemptions x
+    JOIN community_invites i ON i.id = x.invite_id
+    JOIN apps a ON a.id = i.app_id
+   WHERE x.id = p_redemption AND x.applied_at IS NULL AND x.status <> 'cancelled';
+  IF NOT FOUND OR r.revoked_at IS NOT NULL OR r.community_id IS NULL THEN
+    RETURN FALSE;
+  END IF;
+  IF NOT community_invite_maker_holds((SELECT invite_id FROM community_invite_redemptions WHERE id = r.id)) THEN
+    RETURN FALSE;
+  END IF;
+  -- Building by invitation: the link is the maker's collaborator invite,
+  -- accepted. The collaborator trigger joins the community from this row.
+  IF r.collab_visibility = 'private' AND NOT r.self_hosted THEN
+    INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+    VALUES (r.app_id, r.user_id, 'member', r.created_by, NOW())
+    ON CONFLICT (app_id, user_id) DO UPDATE
+      SET status = 'member', accepted_at = COALESCE(app_collaborators.accepted_at, NOW())
+      WHERE app_collaborators.status <> 'member';
+  END IF;
+  INSERT INTO community_members (community_id, user_id, source)
+  VALUES (r.community_id, r.user_id, 'joined')
+  ON CONFLICT (community_id, user_id) DO NOTHING;
+  INSERT INTO app_favorites (app_id, user_id) VALUES (r.app_id, r.user_id)
+  ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE;
+  UPDATE community_invite_redemptions
+     SET status = 'joined', applied_at = NOW()
+   WHERE id = r.id;
+  RETURN TRUE;
+END;
+$$;
+
+-- Somebody let in (any path: an admin release, an activation code, a wallet,
+-- the invite tree) joins every community their links queued. On the
+-- false → true edge only, like join_platform_community above.
+CREATE OR REPLACE FUNCTION apply_queued_community_invites() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.has_platform_access THEN
+    RETURN NULL;
+  END IF;
+  PERFORM apply_community_invite(x.id)
+     FROM community_invite_redemptions x
+    WHERE x.user_id = NEW.id AND x.applied_at IS NULL AND x.status = 'queued';
+  RETURN NULL;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'users_apply_queued_community_invites'
+       AND tgrelid = 'users'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER users_apply_queued_community_invites
+      AFTER UPDATE OF has_platform_access ON users
+      FOR EACH ROW WHEN (NEW.has_platform_access)
+      EXECUTE FUNCTION apply_queued_community_invites();
+  END IF;
+END $$;
+
 -- ── Platform limit alerts ──────────────────────────────────────────────
 --
 -- The last level each server-wide cap reached (services/platform-limit-

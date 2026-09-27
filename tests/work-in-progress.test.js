@@ -141,7 +141,7 @@ test('#3071: a menu row writes its address before the menu closes, so closing ca
 
 test('the mark\'s menu: the app\'s own rows first, then Continue, after mount only, with "Show more" when there are more', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /const continuing = mounted && view !== 'about'\s*\? continueRows\(agentSessions \|\| \[\]\)\s*: \{ rows: \[\], more: false \};/,
+  assert.match(sheet, /const continuing = mounted && view === 'menu'\s*\? continueRows\(agentSessions \|\| \[\]\)\s*: \{ rows: \[\], more: false \};/,
     'never in the prerender (the hydrating render matches it), and not keyed on the app');
   assert.match(sheet, /if \(open && window\.App\?\.user\) void loadAgentSessions\(\);/,
     'for any signed-in viewer: the flag never hides a conversation that exists');

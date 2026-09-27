@@ -61,6 +61,12 @@ const EVENT_TYPES = Object.freeze({
   // channel carries no activity, so this is where the card lives, and a
   // project's Workshop shows it for a few days (services/app-notices.js).
   WEEKLY_DIGEST: 'weekly_digest',
+  // Invite links (services/community-invites.js): made, turned off, and
+  // followed, with { inviteId, ... }. The redemption rows are the record of
+  // who followed whose link; these are the analytics trail.
+  INVITE_LINK_CREATED: 'invite_link_created',
+  INVITE_LINK_REVOKED: 'invite_link_revoked',
+  INVITE_LINK_REDEEMED: 'invite_link_redeemed',
   // Sync-with-main completed (issue: make sync emit session activity).
   // Attributed to the session owner (sync bills the owner), recorded on
   // the terminal path with { syncResult, behind, sha, pushOk, trigger }.

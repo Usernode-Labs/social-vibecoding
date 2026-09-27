@@ -1,0 +1,190 @@
+'use strict';
+
+// Invite links, without a database (tests/community-invites-postgres.test.js
+// runs the SQL): the rules that are pure, the page's link preview, and the
+// seams that carry a link through sign-in and into the shell.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { loadTsx } = require('./lib/render-tsx');
+
+const ROOT = path.join(__dirname, '..');
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const invites = require('../src/services/community-invites');
+const routes = require('../src/routes/community-invites');
+
+test('a token is 22 base64url characters, and nothing else reaches the database', () => {
+  assert.equal(invites.isToken('YigKXxtTzBB_TFZVTkjEtg'), true);
+  for (const bad of ['', 'short', 'YigKXxtTzBB_TFZVTkjEt', 'YigKXxtTzBB_TFZVTkjEtg1', "YigKXxtTzBB'TFZVTkjEtg", null, 42]) {
+    assert.equal(invites.isToken(bad), false, String(bad));
+  }
+  assert.equal(invites.invitePath('abc'), '/invite/abc');
+});
+
+test('defaults are 7 days and 25 people, within 1–30 days and 1–100 people', () => {
+  assert.equal(invites.DEFAULT_DAYS, 7);
+  assert.equal(invites.DEFAULT_USES, 25);
+  assert.deepEqual({ ...invites.LIMITS }, { minDays: 1, maxDays: 30, minUses: 1, maxUses: 100 });
+  const schema = read('src/db/schema.sql');
+  assert.match(schema, /max_uses\s+INTEGER NOT NULL DEFAULT 25 CHECK \(max_uses BETWEEN 1 AND 100\)/);
+});
+
+test('why a link is dead: turned off, then expired, then used up', () => {
+  const now = new Date('2026-09-27T12:00:00Z');
+  const live = { revoked_at: null, expires_at: '2026-10-01T00:00:00Z', uses: 0, max_uses: 25 };
+  assert.equal(invites.deadReason(live, now), null);
+  assert.equal(invites.deadReason(null, now), 'unknown');
+  assert.equal(invites.deadReason({ ...live, revoked_at: now, uses: 25 }, now), 'revoked');
+  assert.equal(invites.deadReason({ ...live, expires_at: '2026-09-27T12:00:00Z' }, now), 'expired');
+  assert.equal(invites.deadReason({ ...live, uses: 25 }, now), 'used_up');
+  // A link dies with its maker's standing: removed from the group, gone.
+  assert.equal(invites.deadReason({ ...live, maker_holds: false }, now), 'revoked');
+  assert.equal(invites.deadReason({ ...live, maker_holds: true }, now), null);
+  const schema = read('src/db/schema.sql');
+  assert.match(schema, /CREATE OR REPLACE FUNCTION community_invite_maker_holds\(p_invite INTEGER\) RETURNS BOOLEAN/);
+  assert.match(schema, /IF NOT community_invite_maker_holds\(\(SELECT invite_id FROM community_invite_redemptions WHERE id = r\.id\)\) THEN\s+RETURN FALSE;/,
+    'checked again at release, for a queued person');
+  assert.match(read('src/services/community-invites.js'), /community_invite_maker_holds\(i\.id\) AS maker_holds/);
+});
+
+test('what a link grants is what its maker could: a collaborator where building is by invitation', () => {
+  assert.equal(invites.grantFor({ collab_visibility: 'private', self_hosted: false }), 'collaborator');
+  assert.equal(invites.grantFor({ collab_visibility: 'public', self_hosted: false }), 'member');
+  assert.equal(invites.grantFor({ collab_visibility: 'private', self_hosted: true }), 'member', 'Homeroom has no collaborators');
+  // The one implementation, in SQL, says the same.
+  assert.match(read('src/db/schema.sql'), /IF r\.collab_visibility = 'private' AND NOT r\.self_hosted THEN\s+INSERT INTO app_collaborators/);
+});
+
+test('THE TREE is off unless switched on, with lifetime skips of 10, 5, 2, then none; admins unlimited', () => {
+  const saved = { enabled: process.env.INVITE_TREE_ENABLED, budgets: process.env.INVITE_TREE_BUDGETS };
+  try {
+    delete process.env.INVITE_TREE_ENABLED;
+    delete process.env.INVITE_TREE_BUDGETS;
+    assert.equal(invites.treeEnabled(), false);
+    assert.deepEqual(invites.treeBudgets(), [10, 5, 2]);
+    assert.deepEqual([0, 1, 2, 3, 9].map((g) => invites.budgetFor(g)), [10, 5, 2, 0, 0]);
+    assert.equal(invites.budgetFor(null), 0, 'no generation: not let in yet');
+    assert.equal(invites.budgetFor(5, { isAdmin: true }), Infinity);
+    process.env.INVITE_TREE_BUDGETS = '4, 3';
+    assert.deepEqual(invites.treeBudgets(), [4, 3]);
+    process.env.INVITE_TREE_BUDGETS = 'nonsense';
+    assert.deepEqual(invites.treeBudgets(), [10, 5, 2], 'a bad value falls back');
+  } finally {
+    if (saved.enabled === undefined) delete process.env.INVITE_TREE_ENABLED; else process.env.INVITE_TREE_ENABLED = saved.enabled;
+    if (saved.budgets === undefined) delete process.env.INVITE_TREE_BUDGETS; else process.env.INVITE_TREE_BUDGETS = saved.budgets;
+  }
+  const src = read('src/services/community-invites.js');
+  // The inviter's row is locked while their skips are counted, and the count
+  // IS the record: no counter to drift.
+  assert.match(src, /FROM users WHERE id = \$1\s+FOR UPDATE/);
+  assert.match(src, /SELECT COUNT\(\*\)::int AS n FROM users WHERE admitted_by = \$1/);
+  // grantPlatformAccess is "let in by us": generation 0, the lowest.
+  assert.match(read('src/services/waitlist.js'), /invite_generation = 0\s+WHERE id = \$1 AND \(has_platform_access = FALSE OR invite_generation IS DISTINCT FROM 0\)/);
+});
+
+test('the tables are staging:private, and a queued invite is applied by a trigger on being let in', () => {
+  const schema = read('src/db/schema.sql');
+  assert.match(schema, /COMMENT ON TABLE community_invites IS 'staging:private';/);
+  assert.match(schema, /COMMENT ON TABLE community_invite_redemptions IS 'staging:private';/);
+  assert.match(schema, /CREATE TRIGGER users_apply_queued_community_invites\s+AFTER UPDATE OF has_platform_access ON users\s+FOR EACH ROW WHEN \(NEW\.has_platform_access\)/);
+  assert.match(schema, /IF TG_OP = 'UPDATE' AND OLD\.has_platform_access THEN\s+RETURN NULL;/, 'the false → true edge only');
+});
+
+test('the page\'s link preview: a live link names the project and inviter, a dead one nothing, all escaped', () => {
+  const live = routes.previewTags({
+    live: true,
+    project: { name: 'Tiers & <Lists>', iconUrl: '/app-icons/abc' },
+    inviter: 'ada',
+    memberCount: 3,
+  }, 'https://app.example');
+  assert.match(live, /<meta property="og:title" content="Join Tiers &amp; &lt;Lists&gt; on Homeroom">/);
+  assert.match(live, /<meta property="og:description" content="@ada invited you to Tiers &amp; &lt;Lists&gt;\. 3 people are in it\.">/);
+  assert.match(live, /<meta property="og:image" content="https:\/\/app\.example\/app-icons\/abc">/);
+  const dead = routes.previewTags({ live: false, reason: 'revoked' }, 'https://app.example');
+  assert.match(dead, /content="Homeroom invite"/);
+  assert.doesNotMatch(dead, /og:image/);
+  assert.equal(routes.withPreviewTags('<html><head><title>x</title></head></html>', '<meta a>'),
+    '<html><head><title>x</title><meta a>\n</head></html>');
+});
+
+test('the paths: the page is a shell document; following from the waiting room is open, making links is not', () => {
+  const auth = read('src/middleware/auth.js');
+  assert.match(auth, /\|\| \/\^\\\/invite\\\/\[A-Za-z0-9_-\]\{22\}\$\/\.test\(pathname\)/);
+  assert.match(auth, /'\/api\/invite-links\/by-token\/',\s+'\/api\/invite-links\/queued',\s+\];/);
+  assert.doesNotMatch(auth, /'\/api\/invite-links\/',/, 'not the whole prefix');
+  assert.match(auth, /'\/api\/public\/',/, 'the preview rides the existing anonymous tier');
+  const server = read('server.js');
+  assert.ok(server.indexOf('app.use(communityInviteRoutes(config));') < server.indexOf("app.get('*', (req, res) => {"),
+    'mounted before the catch-all');
+  const src = read('src/routes/community-invites.js');
+  for (const route of [
+    "router.post('/api/apps/:slug/invite-links', drainGuard, inviteLinkCreateLimiter,",
+    "router.get('/api/apps/:slug/invite-links',",
+    "router.delete('/api/invite-links/:id', drainGuard,",
+    "router.get('/api/public/invites/:token', invitePreviewLimiter,",
+    "router.get('/api/invite-links/by-token/:token', invitePreviewLimiter,",
+    "router.post('/api/invite-links/by-token/:token/redeem', drainGuard, inviteRedeemLimiter,",
+    "router.get('/api/invite-links/queued',",
+    "router.get('/invite/:token', invitePreviewLimiter,",
+  ]) assert.ok(src.includes(route), route);
+  // Only a live link leaves its token for sign-in to follow.
+  assert.match(src, /if \(preview\.live\) invites\.setInviteCookie\(req, res, token\);/);
+});
+
+test('signing UP from an invite page follows the link server-side; signing IN is asked first', () => {
+  const auth = read('src/routes/auth.js');
+  // Only an account the email code just created: signing up from the link is
+  // the consent. A forced navigation that plants the cookie cannot make an
+  // existing account join anything without the shell's confirm.
+  assert.match(auth, /const invite = verified\.created\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId\)\s+: \(communityInvites\.clearInviteCookie\(res\), null\);\s+if \(verified\.next === 'signed-in'\)/);
+  const login = auth.slice(auth.indexOf("log.info('auth', 'Login successful'"), auth.indexOf("log.info('auth', 'Login successful'") + 900);
+  assert.match(login, /communityInvites\.clearInviteCookie\(res\);/, 'a password sign-in drops the carried copy');
+  assert.doesNotMatch(login, /redeemCarried/);
+  const src = read('src/services/community-invites.js');
+  assert.match(src, /httpOnly: true,\s+sameSite: 'lax',/);
+  // It never throws into a sign-in.
+  assert.match(src, /log\.warn\('invites', 'Following a carried invite link failed'/);
+});
+
+test('the shell: signed out it is the landing, remembered for after sign-in; signed in it is a confirm', () => {
+  const app = read('public/js/app.js');
+  assert.match(app, /const inviteToken = rawHash \? null : App\._inviteTokenFromPath\(location\.pathname\);/);
+  assert.match(app, /AuthScreens\.rememberDeepLink\(location\.pathname\);\s+AuthScreens\.show\('landing'\);/);
+  assert.match(app, /if \(App\.user\.hasPlatformAccess !== false\) \{\s+App\._followInvite\(inviteToken\);/);
+  assert.match(app, /confirmLabel: 'Join',\s+cancelLabel: 'Not now',/);
+  const screens = read('public/js/auth-screens.js');
+  assert.match(screens, /if \(\/\^\\\/invite\\\/\[A-Za-z0-9_-\]\{22\}\$\/\.test\(value\)\) return value;/, 'a deep link back to it');
+  assert.match(screens, /if \(invite\) AuthScreens\._waitingInvite = invite\[1\];/, 'kept for the waiting room');
+  const waiting = read('frontend/src/features/auth/waiting.tsx');
+  assert.match(waiting, /fetch\(`\/api\/invite-links\/by-token\/\$\{encodeURIComponent\(token\)\}\/redeem`/);
+  assert.match(waiting, /fetch\('\/api\/invite-links\/queued'/);
+});
+
+test('the words: the landing card, the invite pane', () => {
+  const card = loadTsx('frontend/src/features/auth/invite-card.tsx');
+  assert.equal(card.inviteTokenFrom('/invite/YigKXxtTzBB_TFZVTkjEtg'), 'YigKXxtTzBB_TFZVTkjEtg');
+  assert.equal(card.inviteTokenFrom('/invite/nope'), null);
+  assert.equal(card.invitedLine({ live: true, reason: null, project: { name: 'Tiers', iconEmoji: null, iconUrl: null }, inviter: 'ada' }),
+    '@ada invited you to join Tiers.');
+  assert.equal(card.membersLine(1), '1 person is in it.');
+  assert.equal(card.membersLine(0), '');
+
+  const pane = loadTsx('frontend/src/features/app-context/invite-pane.tsx');
+  const now = Date.parse('2026-09-27T12:00:00Z');
+  const fresh = { expiresAt: '2026-10-04T12:00:00Z', maxUses: 25, uses: 0 };
+  assert.equal(pane.linkSentence(fresh, 'member', now), 'Anyone with this link can join. It expires in 7 days and works for 25 people.');
+  assert.equal(pane.linkSentence({ ...fresh, uses: 24 }, 'collaborator', now),
+    'Anyone with this link can join and build with you. It expires in 7 days and works for 1 more person.');
+  assert.equal(pane.linkDetail({ ...fresh, uses: 3 }, now), '3 of 25 used · 7 days left');
+  assert.equal(pane.newcomerLine(null), 'Someone new to Homeroom joins the waitlist first, and this project when they are let in.');
+  assert.equal(pane.newcomerLine(2), 'You can let 2 people new to Homeroom skip the waitlist.');
+
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /id="app-menu-row-invite"\s+ref=\{inviteRowRef\}\s+type="button"/);
+  assert.match(sheet, /<RowBody icon=\{<LinkIcon \/>\} label="Invite to community" \/>/);
+  assert.match(sheet, /view === 'invite' \? \(\s+<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>/);
+  assert.match(read('frontend/src/features/app-context/app-context-controller.js'), /showInvite\(\) \{\s+appContextStore\.set\(\{ view: 'invite' \}\);/);
+});

@@ -122,6 +122,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   InfoCircleIcon,
+  LinkIcon,
   PlusWideIcon,
   SparklesIcon,
   TerminalIcon,
@@ -130,6 +131,7 @@ import {
 } from '@/components/ui/icons';
 
 import { AboutPane } from './about-pane';
+import { InvitePane } from './invite-pane';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
 import { improveStore } from '../improve/improve-store.js';
@@ -302,8 +304,10 @@ export function AppsSwitcherSheet(): ReactNode {
   // would come back without its `hidden`.
   const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
   const discussionRowRef = useRef<HTMLAnchorElement | null>(null);
+  // The invite row goes with them: its links are to the same project.
+  const inviteRowRef = useRef<HTMLButtonElement | null>(null);
   useIsomorphicLayoutEffect(() => {
-    for (const el of [workshopRowRef.current, discussionRowRef.current]) {
+    for (const el of [workshopRowRef.current, discussionRowRef.current, inviteRowRef.current]) {
       if (el && el.classList.contains('hidden') !== !!restricted) {
         el.classList.toggle('hidden', !!restricted);
       }
@@ -342,7 +346,7 @@ export function AppsSwitcherSheet(): ReactNode {
   useEffect(() => {
     if (open && window.App?.user) void loadAgentSessions();
   }, [open]);
-  const continuing = mounted && view !== 'about'
+  const continuing = mounted && view === 'menu'
     ? continueRows(agentSessions || [])
     : { rows: [], more: false };
 
@@ -440,13 +444,14 @@ export function AppsSwitcherSheet(): ReactNode {
             the class string cannot be. */}
         <div className="flex items-center gap-3 px-5 pt-4 pb-1 shrink-0">
           {/*
-              THE BACK ARROW IS THE ABOUT PANE'S, and it replaces the label
+              THE BACK ARROW IS THE SECOND PANES' (About, Invite), and it
+              replaces the label
               rather than sitting beside it: About is one level inside this
               sheet, so the row that names the level has to be the row that
               leaves it. On the menu it is the "Apps" label it has always
               been.
           */}
-          {view === 'about' ? (
+          {view !== 'menu' ? (
             <button
               id="app-about-back"
               type="button"
@@ -512,8 +517,8 @@ export function AppsSwitcherSheet(): ReactNode {
             scroll as it is. Back on the menu pane they are where they were.
             `view` is 'menu' in the prerender, so the hydrating render is the
             same markup. */}
-        {view === 'about' ? null : <UpdateStatus />}
-        {view === 'about' ? null : <ImproveQuickActions />}
+        {view !== 'menu' ? null : <UpdateStatus />}
+        {view !== 'menu' ? null : <ImproveQuickActions />}
         {/* THE App | Workshop STRIP IS RETIRED (#2761). It sat here as a
             segmented control, and a toggle was the wrong shape for it: this
             menu is a list of places, and the strip's one real job was
@@ -529,7 +534,9 @@ export function AppsSwitcherSheet(): ReactNode {
           id="switcher-nav"
           className="flex-1 min-h-0 overflow-y-auto pb-2 platform-safe-sheet"
         >
-          {view === 'about' ? <AboutPane label={appLabel} /> : (
+          {view === 'about' ? <AboutPane label={appLabel} /> : view === 'invite' ? (
+            <InvitePane slug={slug || null} label={appLabel} />
+          ) : (
           <>
           {/*
               ── THE APP'S OPTIONS, and nothing else ────────────────────
@@ -674,6 +681,24 @@ export function AppsSwitcherSheet(): ReactNode {
             icon={<ChatIcon />}
             label={mounted && target === 'platform' ? 'Go to platform discussion' : 'Go to app discussion'}
           />
+          {/*
+              INVITE TO COMMUNITY: a link to this project anyone can use to
+              join it (./invite-pane.tsx, the third pane, for About's
+              reason). On Home the project in context is Homeroom's own, so
+              the row invites people to Homeroom. A button, not an anchor:
+              what it opens is this sheet in another state, not an address.
+              Rendered unconditionally, like the rows above it; the pane
+              says so when the viewer cannot invite anyone yet.
+          */}
+          <button
+            id="app-menu-row-invite"
+            ref={inviteRowRef}
+            type="button"
+            className={`${ROW} w-full text-left`}
+            onClick={() => AppContext.showInvite()}
+          >
+            <RowBody icon={<LinkIcon />} label="Invite to community" />
+          </button>
           {/*
               The terminal is the one Improve row that stays TOP LEVEL rather
               than moving into About: it is something you do, not a fact about
