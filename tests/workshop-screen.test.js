@@ -773,19 +773,21 @@ test('the app\'s own Workshop keeps the rail, and lights the tab it came through
     /--ws-area: calc\([\s\S]*?max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom, 0px\)\)\s*\);/);
 });
 
-test('the app\'s own Workshop wears the same scope chip, read from the other end', () => {
+test('the app\'s own Workshop wears the same scope panel, read from the other end', () => {
   // "should preserve the app switcher". The all-apps screen's chip says "All
-  // apps" and picking one navigates here; this one names the app and its
-  // panel offers the others — and All apps, which is the way back up and the
-  // other half of why the back arrow is gone.
+  // apps" and picking one navigates here; here the header's tile and name are
+  // the chip (#2768, and at every width since #3295) and the panel offers the
+  // others — and All apps, which is the way back up and the other half of why
+  // the back arrow is gone.
   const chrome = read('frontend/src/features/workshop/workshop-chrome.tsx');
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
 
   assert.match(ws, /import \{ AppWorkshopScope \} from '\.\.\/\.\.\/workshop\/workshop-chrome';/,
     'ONE component, not a second chip that can drift from the first');
-  assert.match(ws, /<AppWorkshopScope\n\s+slug=\{slug\}/);
-  // Its name and artwork come from the store the header's own tile reads, so
-  // the two cannot disagree about which app this is, and no second fetch.
+  assert.match(ws, /<AppWorkshopScope slug=\{slug\} \/>/);
+  // The page's own picture of the app (the hero) reads its name and artwork
+  // from the store the header's tile reads, so the two cannot disagree about
+  // which app this is, and no second fetch.
   assert.match(ws, /name=\{app\.name \|\| undefined\}/);
   assert.match(ws, /iconUrl=\{app\.iconUrl\}/);
   assert.match(ws, /const app = useStoreState\(improveStore\);/);
@@ -800,9 +802,9 @@ test('the app\'s own Workshop wears the same scope chip, read from the other end
   // position and its open windows away to arrive where it started.
   assert.match(chrome, /onClose\(\);\n\s*if \(scope\?\.slug === app\.slug\) return;/);
 
-  // ITS OPEN STATE IS A STORE OF ITS OWN (#2768): two controls open this
-  // panel — the chip above 700px, the header's tile and name below it — so
-  // the flag cannot be the chip's `useState`. And it is still not
+  // ITS OPEN STATE IS A STORE OF ITS OWN (#2768): the control that opens this
+  // panel is the header's tile and name, in another React root, so the flag
+  // cannot be a `useState` here. And it is still not
   // workshopStore: the all-apps screen's chip (#3051) keeps its flag there,
   // and a flag shared between two screens is a panel left open on one
   // greeting the other.
@@ -813,7 +815,7 @@ test('the app\'s own Workshop wears the same scope chip, read from the other end
   assert.match(island, /useEffect\(\(\) => \{\n\s*appScopeStore\.set\(\{ open: false \}\);\n\s*return \(\) => appScopeStore\.set\(\{ open: false \}\);\n\s*\}, \[slug\]\);/);
   // The list loads in an effect and never during render.
   assert.match(island, /useEffect\(\(\) => \{[\s\S]{0,600}fetch\(`\/api\/apps\$\{demoQuery\(\)\}`\)/);
-  assert.match(island, /catch \{/, 'and offline leaves the chip working');
+  assert.match(island, /catch \{/, 'and offline leaves the panel working');
 });
 
 // ── 4. The rows behind the counts (#3051) ──────────────────────────────

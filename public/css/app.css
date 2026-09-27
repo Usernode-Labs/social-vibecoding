@@ -15157,10 +15157,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
   color: var(--text-muted);
 }
-/* WHICH WORKSHOP YOU ARE IN (#2718 review) — the scope chip, and the panel
-   it opens. The chip itself is the shared component's, styled there; what
-   this owns is where the pair SITS on this screen, which the all-apps screen
-   answers with its own page padding.
+/* WHICH WORKSHOP YOU ARE IN (#2718 review) — the panel the header's app
+   switcher opens (features/header/header-title.tsx). It renders only while
+   open, at the head of the column, right under the bar. There is no chip
+   here any more at any width (#3295): a phone lost it to the header in
+   #2768, and a desktop, which drew it above the tabs or beside them on a
+   wide window (#2837), has now too.
 
    The panel's own `mx-4` is cancelled: it was written for a screen whose
    column runs to the window's edge, and this column is already inset. A
@@ -15169,48 +15171,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-scope {
   display: flex;
   flex-direction: column;
-  gap: 6px;
   align-items: stretch;
-}
-.dev-ws-scope > button {
-  align-self: flex-start;
-  max-width: 100%;
 }
 .dev-ws-scope > [role='menu'] {
   margin-inline: 0;
   margin-bottom: 0;
 }
-/* #2837: ON A LARGE DESKTOP WINDOW THE CHIP JOINS THE TAB PILL'S ROW. Above,
-   it had a row to itself. On a wide window that row put it alone in the
-   middle of the page, lined up with nothing around it. workshop.tsx's
-   `useScopeInline` checks whether the space left of the reading column is
-   wide enough for the chip. If it is, it sets `data-ws-scope-inline` on the
-   Workshop root, and these rules move the chip into that space. It sits on
-   the pill's row, its right edge 12px from the pill's left edge.
-
-   The pill does not move. The chip's wrapper loses its height and gives back
-   the 10px column gap under it (`.dev-ws { gap: 10px }`), so the tabs row sits
-   exactly where it would with no chip at all. The ear and the selection
-   marker measure from the pill, so they are unchanged too. The chip is 36px
-   tall (`h-9`), the same as the pill's track (32px tabs plus 2px padding on
-   each side), so `top: 0` lines them up.
-
-   With the panel open the wrapper keeps its height. The panel opens in place
-   at the top of the column, level with the chip, and pushes the tabs down,
-   the same way it does on its own row. Its width is capped so it reads as the
-   chip's menu, not as a bar across the whole column. */
-.dev-ws[data-ws-scope-inline] > .dev-ws-scope { position: relative; }
-.dev-ws[data-ws-scope-inline] > .dev-ws-scope:not(:has(> [role='menu'])) {
-  height: 0;
-  margin-bottom: -10px;
-}
-.dev-ws[data-ws-scope-inline] > .dev-ws-scope > button {
-  position: absolute;
-  top: 0;
-  right: calc(100% + 12px);
-  max-width: 220px;
-}
-.dev-ws[data-ws-scope-inline] > .dev-ws-scope > [role='menu'] { max-width: 420px; }
 .dev-ws-strip {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -15982,18 +15948,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     min-height: var(--ws-fit);
   }
 }
-/* ON A PHONE THE HEADER IS THE CHIP (#2768) — the `.dev-ws-scope` chip
-   from the Workshop's head, far above. The bar already shows
-   this app's tile and name, and below 700px those two ARE the switcher
-   (features/header/header-title.tsx), opening this same panel. So the chip
-   goes, and the wrapper with it while the panel is shut — an empty flex item
-   would still cost `.dev-ws` a 10px gap at the top of the page. */
-@media (max-width: 699.98px) {
-  .dev-ws-scope > button { display: none; }
-  .dev-ws-scope:not(:has(> [role='menu'])) { display: none; }
-}
-/* The Communities screen's all-apps chip likewise (#3271): on a phone the
-   header's title is the chip there (#header-scope-switch,
+/* ON A PHONE THE HEADER IS THE CHIP on the Communities screen (#3271), as it
+   is on an app's Workshop at every width (#2768, #3295): the header's title
+   is the all-apps chip there (#header-scope-switch,
    features/header/header-title.tsx), and its panel still opens in the
    chip's row, which the tabs now lead. */
 @media (max-width: 699.98px) {
@@ -17121,6 +17078,13 @@ a.dev-ws-hero-pending {
   .dev-ws-keys-hint { display: block; align-self: center; margin: 4px 0 0; font-size: 11px; color: var(--text-faint); font-family: ui-monospace, Menlo, monospace; }
   .dev-ws-ask-msg { font-size: 14px; }
   .dev-ws-ask-log { max-height: none; }
+
+  /* THE SWITCHER'S PANEL (#3295), which the header's app switcher drops at
+     the head of the column (see `.dev-ws-scope`, far above). The column is
+     760px here, and a menu of names across all of it reads as a bar rather
+     than as the switcher's list; the cap is the one the wide-window panel had
+     beside the retired chip (#2837). */
+  .dev-ws-scope > [role='menu'] { max-width: 420px; }
 }
 
 /* Between the breakpoint and a wide desktop the panel would push the card

@@ -2517,9 +2517,9 @@
       "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #app-menu-row-about"
     },
     {
-      "name": "Homeroom's hub carries its channel, #general, with a composer that posts there and its old discussion read-only; on a desktop the header names the app (#2768)",
+      "name": "Homeroom's hub carries its channel, #general, with a composer that posts there and its old discussion read-only; the header's app switcher names the app, on a desktop too (#2768, #3295)",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "body:has(#dev-workshop #dev-ws-scope-chip):has(#header-title-name) #dev-workshop section[data-ws-channel][data-ws-channel-handle=\"general\"]:has(form[data-ws-channel-compose] > input[placeholder=\"Message #general…\"]) a[data-ws-channel-archive]",
+      "expectSelector": "body:has(#header-app-switch > #header-title-name) #dev-workshop section[data-ws-channel][data-ws-channel-handle=\"general\"]:has(form[data-ws-channel-compose] > input[placeholder=\"Message #general…\"]) a[data-ws-channel-archive]",
       "expectText": "Earlier project discussion"
     },
     {
@@ -5136,9 +5136,9 @@
       "expectText": "About Homeroom"
     },
     {
-      "name": "Inside an app the header is that app's strip, tile and name (#2718) - except on a desktop Workshop, where the demo's app route lands and the name stands alone beside the scope chip (#2768)",
+      "name": "Inside an app the header is that app's strip, tile and name (#2718) - and on its Workshop, where the demo's app route lands, the tile and name are the app switcher at every width, with no scope chip in the page (#2768, #3295)",
       "path": "/?demo=1#app/usernode-2d5619/app",
-      "expectSelector": "body:not(:has(#dev-ws-scope-chip)) #platform-header #header-app-tile + span > #header-title-name, body:has(#app-view:not(.hidden) #dev-ws-scope-chip) #platform-header #header-title > span > span:first-child > #header-title-name"
+      "expectSelector": "body:not(:has(#header-app-switch)) #platform-header #header-app-tile + span > #header-title-name, #platform-header #header-app-switch > #header-app-tile + #header-title-name"
     },
     {
       "name": "An app's Workshop keeps the rail, which only a running app covers (#2718 review)",
