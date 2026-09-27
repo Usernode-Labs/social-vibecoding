@@ -275,6 +275,20 @@ remaining live-proposal boundary.
   rows, not `community_members`, unless the action is literally Join or
   Leave. The vote threshold counts active MEMBERS
   (`services/active-users.js`, concept #3).
+- **An invite link grants what its maker could grant.** `/invite/<token>`
+  (`services/community-invites.js`, the "Communities, stage 6" block of
+  `schema.sql`) is made by any member from the logo menu's "Invite to
+  community" pane: 7 days and 25 people unless they choose otherwise, and
+  revocable. On a project where building is by invitation it is the
+  collaborator invite, accepted; anywhere else it is membership. One SQL
+  function, `apply_community_invite()`, applies it, both on the spot and from
+  the trigger that runs when an account is let in, so a person without
+  platform access is QUEUED and joins on release, however that happens. The
+  page carries the token in an HttpOnly cookie, so signing up or in from it
+  follows the link server-side (`redeemCarried` in `routes/auth.js`). The
+  invite tree (`users.admitted_by`, `invite_generation`; skips of 10, 5, 2)
+  is built and OFF behind `INVITE_TREE_ENABLED`; `grantPlatformAccess` is
+  "let in by us", generation 0.
 
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 

@@ -3798,6 +3798,65 @@ const App = {
     )}`;
   },
 
+  // The token of an invite link's path, or null. Same shape the server's
+  // isSpaDocumentPath lets through (src/middleware/auth.js).
+  _inviteTokenFromPath(pathname) {
+    const m = /^\/invite\/([A-Za-z0-9_-]{22})$/.exec(String(pathname || ''));
+    return m ? m[1] : null;
+  },
+
+  // Follow an invite link as a signed-in account with platform access
+  // (services/community-invites.js). Home first, with the invite address
+  // replaced so Back or a reload does not ask again; then, if the link is
+  // live and the viewer is not in the project yet, one confirm naming it and
+  // who invited them. In it — just now, or already — opens its hub. A dead
+  // link says why, once.
+  async _followInvite(token) {
+    try { history.replaceState(null, '', App._rootUrl('')); } catch (_) {}
+    App.restoreFromHash();
+    const toast = (msg, error) => {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg, error ? { error: true } : undefined);
+    };
+    const DEAD = {
+      expired: 'That invite link has expired.',
+      revoked: 'That invite link was turned off.',
+      used_up: 'That invite link has been used as many times as it allows.',
+      unknown: 'That invite link does not work.',
+    };
+    const openHub = (slug) => {
+      if (!slug) return;
+      if (typeof AppView !== 'undefined' && AppView._landOnHub) AppView._landOnHub(slug);
+      App.navigateToApp(slug, 'dev');
+    };
+    try {
+      const res = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
+      const standing = await res.json().catch(() => ({}));
+      if (standing.mine === 'joined' && standing.slug) { openHub(standing.slug); return; }
+      if (!standing.live) { toast(DEAD[standing.reason] || DEAD.unknown, true); return; }
+      const name = standing.project && standing.project.name ? standing.project.name : 'this project';
+      const count = standing.memberCount || 0;
+      const ok = window.ConfirmModal ? await ConfirmModal.show({
+        title: `Join ${name}?`,
+        message: `${standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.'}`
+          + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : ''),
+        confirmLabel: 'Join',
+        cancelLabel: 'Not now',
+      }) : true;
+      if (!ok) return;
+      const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      const result = await joined.json().catch(() => ({}));
+      if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
+      if (result.slug) {
+        toast(`You joined ${result.name || name}.`);
+        openHub(result.slug);
+      }
+    } catch (_) {
+      toast('Could not open that invite link. Try again.', true);
+    }
+  },
+
   _deepLinkTarget() {
     if (location.hash) return location.hash;
     const appPath = App._appRouteFromPath(location.pathname);
@@ -3826,6 +3885,28 @@ const App = {
         ? (qIdx === -1 ? rawHash : rawHash.slice(0, qIdx))
         : pathRoute;
       const fragQuery = qIdx === -1 ? '' : rawHash.slice(qIdx + 1);
+
+      // ── An invite link (/invite/<token>) ───────────────────────────
+      // Signed out, it is the landing, whose invite card
+      // (features/auth/landing.tsx) names the project and offers sign-up;
+      // the path is remembered so signing in comes back here. Signed in, it
+      // is followed after a confirm (App._followInvite). A waiting account
+      // never reaches this: enterAuthed hands it to the waiting room, which
+      // follows the link itself (features/auth/waiting.tsx). A fragment
+      // outranks it, as it does a clean app path: #signup and #login are
+      // where the landing sends a visitor next.
+      const inviteToken = rawHash ? null : App._inviteTokenFromPath(location.pathname);
+      if (inviteToken && window.AuthScreens) {
+        if (!App.user) {
+          AuthScreens.rememberDeepLink(location.pathname);
+          AuthScreens.show('landing');
+          return;
+        }
+        if (App.user.hasPlatformAccess !== false) {
+          App._followInvite(inviteToken);
+          return;
+        }
+      }
 
       // ── Anonymous-shell routing (fold-auth-pages-into-SPA) ─────────
       // #landing / #login / #signup / #register[/<code>] / #waiting are

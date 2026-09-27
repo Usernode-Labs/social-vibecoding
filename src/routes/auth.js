@@ -23,6 +23,7 @@ const {
 } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
+const communityInvites = require('../services/community-invites');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
 const usernames = require('../services/usernames');
@@ -314,6 +315,12 @@ function authRoutes(config) {
 
       log.info('auth', 'Login successful', { userId: user.id, username: user.username, matchedBy });
 
+      // An invite link this visitor opened before signing in is NOT followed
+      // here: an existing account is asked first, by the shell, which comes
+      // back to the link as a remembered deep link (App._followInvite). The
+      // carried copy is dropped, so nothing follows it later without asking.
+      communityInvites.clearInviteCookie(res);
+
       res.json({
         // Echo the account's real username, not the raw identifier — the
         // identifier may have been an email.
@@ -350,6 +357,15 @@ function authRoutes(config) {
         req.body?.code,
         { createSession }
       );
+      // An invite link this visitor opened first is followed as the account
+      // the code just CREATED (services/community-invites.js): signing up
+      // from the link is the consent, and the new account's community is
+      // queued for the day it is let in. An account that already existed is
+      // asked by the shell instead, like a password sign-in, so the carried
+      // copy is only dropped. Never throws.
+      const invite = verified.created
+        ? await communityInvites.redeemCarried(pool, req, res, verified.userId)
+        : (communityInvites.clearInviteCookie(res), null);
       if (verified.next === 'signed-in') {
         // The account already has a password, so there is nothing to set up.
         // Clear any stale continuation and hand back the ordinary web session,
@@ -368,6 +384,7 @@ function authRoutes(config) {
             username: verified.user.username,
             ...roleFields(verified.user.isAdmin, verified.user.adminReadonly),
           },
+          ...(invite ? { invite } : {}),
         });
       }
       // #2568: a brand-new account gets its included OpenRouter key here,
@@ -400,6 +417,7 @@ function authRoutes(config) {
         needsUsername: !!verified.needsUsernameChoice,
         suggestedUsername: verified.suggestedUsername || null,
         waitlisted: typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null,
+        ...(invite ? { invite } : {}),
       });
     } catch (error) {
       if (error instanceof emailSignup.EmailSignupError) {

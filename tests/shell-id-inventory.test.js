@@ -369,6 +369,7 @@ const ADDED_IDS = {
   // the same test a stray id does — so a conditional id is recorded in prose
   // rather than in the map. They are listed here so the inventory is still
   // the complete log of what this branch added.
+  'app-menu-row-invite': 'Invite links: "Invite to community" opens the sheet\'s THIRD pane, a link to the project anyone can use to join it (features/app-context/invite-pane.tsx, services/community-invites.js). A button for About\'s reason, and rendered unconditionally, like the rows beside it, so the prerender and the hydrating render agree.',
   'app-menu-row-about': '#2718: the row that opens the sheet\'s SECOND PANE — the repository, sharing, the running version and how to add the app to a home screen. A button and not an anchor, which is the honest shape: there is no address to open in a new tab, because the pane is this sheet in another state. Two panes of one sheet rather than two sheets, because the kit cannot present a sheet while it is still dismissing another.',
   // ── #2718: the platform's five places get a bar ──────────────────
   // The app chip's menu was carrying two unlike lists — the app's own

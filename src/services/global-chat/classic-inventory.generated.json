@@ -4729,6 +4729,145 @@
       ]
     },
     {
+      "source": "src/routes/community-invites.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/invite-links",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.apps.item.invite.links.7937a553",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app",
+      "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
+        "frontend/src/features/app-context/invite-pane.tsx",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
+        "frontend/src/features/dialogs/members-controller.js",
+        "frontend/src/features/messages/api.ts",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/invite-links",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.apps.item.invite.links.f3306c2e",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app",
+      "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
+        "frontend/src/features/app-context/invite-pane.tsx",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
+        "frontend/src/features/dialogs/members-controller.js",
+        "frontend/src/features/messages/api.ts",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "DELETE",
+      "path": "/api/invite-links/:id",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.delete.invite.links.item.ca5e0a99",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/app-context/invite-pane.tsx",
+        "frontend/src/features/auth/waiting.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "GET",
+      "path": "/api/public/invites/:token",
+      "expression": null,
+      "status": "exempt",
+      "reason": "anonymous public API rather than signed-in Classic"
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "GET",
+      "path": "/api/invite-links/queued",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.invite.links.queued.daada465",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/app-context/invite-pane.tsx",
+        "frontend/src/features/auth/waiting.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "GET",
+      "path": "/api/invite-links/by-token/:token",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.invite.links.by.token.item.3c802365",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "public/js/app.js"
+      ]
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "POST",
+      "path": "/api/invite-links/by-token/:token/redeem",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.invite.links.by.token.item.redeem.694ca705",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/auth/waiting.tsx",
+        "public/js/app.js"
+      ]
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "GET",
+      "path": "/invite/:token",
+      "expression": null,
+      "status": "exempt",
+      "reason": "invite-link document: the shell with a link preview, represented by the invite-link capabilities"
+    },
+    {
       "source": "src/routes/content-reports.js",
       "method": "POST",
       "path": "/api/apps/:slug/report",
@@ -13372,6 +13511,13 @@
       "path": "/api/public/apps",
       "sources": [
         "frontend/src/features/auth/landing.tsx"
+      ],
+      "reason": "signed-out public surface outside authenticated Global Chat"
+    },
+    {
+      "path": "/api/public/invites/:param",
+      "sources": [
+        "frontend/src/features/auth/invite-card.tsx"
       ],
       "reason": "signed-out public surface outside authenticated Global Chat"
     },
