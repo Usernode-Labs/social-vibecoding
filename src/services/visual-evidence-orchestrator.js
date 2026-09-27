@@ -54,8 +54,14 @@ const ACTIONABILITY_METHODS = Object.freeze({
 });
 const MAX_REPAIR_ATTEMPTS = 2;
 const MAX_TRANSIENT_REPLAY_RETRIES = 1;
+const MAX_REPAIR_COMPLETION_RESERVE_MS = 90_000;
 const SESSION_IDLE_WAIT_MS = 120_000;
 const EVIDENCE_RECOVERY_WAIT_MS = 240_000;
+
+function repairCompletionReserveMs(budgetMs) {
+  const bounded = Math.max(2, Number(budgetMs) || 2);
+  return Math.min(MAX_REPAIR_COMPLETION_RESERVE_MS, Math.floor(bounded / 2));
+}
 
 function transientNetworkReplayFailure(error) {
   const diagnostics = error?.detail?.browserDiagnostics;
@@ -1009,7 +1015,7 @@ function recordAgentDiagnostic(metrics, raw) {
   }
   if (kind === 'provider_tool_config') {
     activity.providerToolConfigs.push(event);
-    if (activity.providerToolConfigs.length > 4) activity.providerToolConfigs.shift();
+    if (activity.providerToolConfigs.length > 8) activity.providerToolConfigs.shift();
   }
   activity.counts[kind] = (activity.counts[kind] || 0) + 1;
   activity.events.push(event);
@@ -1082,7 +1088,7 @@ function agentActivitySummary(metrics) {
     pendingDocumentRequests: [...metrics.agentActivity.documentPending.values()].slice(-8),
     pendingProviderRequests: [...metrics.agentActivity.providerPending.values()].slice(-8),
     ...(metrics.agentActivity.providerToolConfigs.length ? {
-      providerToolConfigs: metrics.agentActivity.providerToolConfigs.slice(-4),
+      providerToolConfigs: metrics.agentActivity.providerToolConfigs.slice(-8),
     } : {}),
   };
 }
@@ -1102,9 +1108,9 @@ function traceSummary(metrics, extra = {}) {
     replayEvents: metrics.replayEvents.slice(-MAX_REPLAY_EVENTS),
     fixtureResets: metrics.fixtureResets.slice(0, 12),
     agentAttempts: metrics.agentAttempts,
-    agentDispatches: metrics.agentDispatches.slice(0, 4),
+    agentDispatches: metrics.agentDispatches.slice(0, 8),
     ...(metrics.agentFinalResponses.length
-      ? { agentFinalResponses: metrics.agentFinalResponses.slice(0, 4) } : {}),
+      ? { agentFinalResponses: metrics.agentFinalResponses.slice(0, 8) } : {}),
     agentActivity: agentActivitySummary(metrics),
     repairCount: metrics.repairCount,
     ...(metrics.repairTrigger ? { repairTrigger: metrics.repairTrigger } : {}),
@@ -1490,7 +1496,12 @@ async function executeRun(config, options, injected = {}) {
       },
     });
 
-    const dispatchOnce = async (forceBackend = null, repairAttempt = 0, completionReminder = false) => {
+    const dispatchOnce = async (
+      forceBackend = null,
+      repairAttempt = 0,
+      completionReminder = false,
+      timeoutLimitMs = null
+    ) => {
       if (stopRequested.has(run.id)) {
         throw new VisualEvidenceOrchestrationError('evidence_stopped', EVIDENCE_STOPPED_REASON);
       }
@@ -1517,7 +1528,14 @@ async function executeRun(config, options, injected = {}) {
         const remainingAgentMs = dispatchTrace.budgetMs
           - (Date.now() - window.startedAt
             - (suspendedMs() - window.suspendedAt));
-        dispatchTrace.timeoutMs = Math.max(0, remainingAgentMs);
+        const dispatchTimeoutMs = timeoutLimitMs == null
+          ? remainingAgentMs
+          : Math.min(remainingAgentMs, Math.max(1, Number(timeoutLimitMs) || 1));
+        dispatchTrace.timeoutMs = Math.max(0, dispatchTimeoutMs);
+        if (repairAttempt > 0 && !completionReminder && timeoutLimitMs != null) {
+          dispatchTrace.completionReserveMs = Math.max(0,
+            dispatchTrace.budgetMs - dispatchTrace.timeoutMs);
+        }
         if (remainingAgentMs <= 0) {
           throw new VisualEvidenceOrchestrationError(
             'evidence_agent_timeout',
@@ -1541,7 +1559,7 @@ async function executeRun(config, options, injected = {}) {
           forceBackend,
           repairAttempt,
           completionReminder,
-          timeoutMs: remainingAgentMs,
+          timeoutMs: dispatchTimeoutMs,
           suspendedMs,
         }, injected.agentDependencies || {});
         addAgentUsage(metrics, dispatched);
@@ -1687,8 +1705,35 @@ async function executeRun(config, options, injected = {}) {
             ? 'The planned route could not load its data; the evidence agent is checking the account and fixture…'
           : 'A planned control did not match the page; the evidence agent is inspecting and correcting it…');
         const priorBackend = metrics.agentDispatches.at(-1)?.requestedBackend;
-        agentOutcome = await dispatchOnce(priorBackend === 'claude_code' ? 'claude_code' : null, metrics.repairCount);
+        const repairBackend = priorBackend === 'claude_code' ? 'claude_code' : null;
+        const completionReserveMs = repairCompletionReserveMs(repairAgentBudgetMs);
+        agentOutcome = await dispatchOnce(
+          repairBackend,
+          metrics.repairCount,
+          false,
+          repairAgentBudgetMs - completionReserveMs
+        );
         await awaitSubmittedReplay();
+        if (!latestHardVerdict
+            && registration.control.planCalls === metrics.repairCount
+            && !registration.control.finished
+            && agentThreadId
+            && (!agentOutcome.error
+              || errorCode(agentOutcome.error) === 'evidence_agent_timeout')) {
+          // A slower tool-capable model may use the whole repair exploration
+          // window while actively inspecting the failed target. Reserve part
+          // of the same bounded budget for a terminal-only continuation so it
+          // must submit the correction it found or report the blocker. This
+          // does not grant a second exploration allowance or weaken replay.
+          progress('The evidence correction did not submit its replay; asking it to complete the tool call…');
+          agentOutcome = await dispatchOnce(
+            repairBackend,
+            metrics.repairCount,
+            true,
+            completionReserveMs
+          );
+          await awaitSubmittedReplay();
+        }
         if (registration.control.planCalls === metrics.repairCount) break;
       }
       if (agentOutcome.error && !latestHardVerdict) {
@@ -2048,6 +2093,7 @@ module.exports = {
   progressPhase,
   replayProgressEvent,
   replayRepairKind,
+  repairCompletionReserveMs,
   transientNetworkReplayFailure,
   startRunHeartbeat,
   liveRunObserver,
