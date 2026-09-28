@@ -133,6 +133,7 @@ export interface ConversationSummary {
   membershipStatus: MembershipStatus;
   myRole: MemberRole;
   requester?: ConversationUser | null;
+  invitationNote?: string | null;
   peer?: ConversationUser | null;
   latestMessage?: ConversationMessage | null;
   latestSummary?: string;

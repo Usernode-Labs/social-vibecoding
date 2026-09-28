@@ -52,6 +52,7 @@ const DDL = `
     status VARCHAR(16) NOT NULL DEFAULT 'invited'
       CHECK (status IN ('invited', 'member', 'declined', 'left', 'removed')),
     invited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    invitation_note TEXT CHECK (char_length(invitation_note) <= 500),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     responded_at TIMESTAMPTZ,
     joined_at TIMESTAMPTZ,

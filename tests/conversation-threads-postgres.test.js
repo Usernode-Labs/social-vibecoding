@@ -125,6 +125,37 @@ test('conversation threads, soft delete, permalinks and mark-unread on the real 
     )).rows;
   }
 
+  await t.test('group invitation notes follow each recipient and preserve consent', async () => {
+    const sender = await user('note_sender');
+    const recipient = await user('note_recipient');
+    const later = await user('note_later');
+    const outsider = await user('note_outsider');
+    const made = await conversations.createGroup(pool, sender, 'Notes', [recipient.id], 'Please review our designs.');
+    const id = made.conversationId;
+    await send(sender, id, { content: 'Retained private history' });
+    const invited = await conversations.getConversation(pool, recipient, id);
+    assert.equal(invited.invitationNote, 'Please review our designs.');
+    assert.deepEqual(invited.members, []);
+    assert.equal(invited.latestMessage, null);
+    assert.equal(await conversations.listMessages(pool, recipient, id), null);
+    assert.equal(await conversations.getConversation(pool, outsider, id), null);
+    assert.equal((await conversations.getConversation(pool, sender, id)).invitationNote, null);
+    await conversations.addMembers(pool, sender, id, [recipient.id], 'Do not overwrite');
+    assert.equal((await conversations.getConversation(pool, recipient, id)).invitationNote, 'Please review our designs.');
+    await conversations.addMembers(pool, sender, id, [later.id], 'A separate invitation.');
+    assert.equal((await conversations.getConversation(pool, later, id)).invitationNote, 'A separate invitation.');
+    await conversations.respond(pool, recipient, id, 'decline');
+    await conversations.addMembers(pool, sender, id, [recipient.id]);
+    assert.equal((await conversations.getConversation(pool, recipient, id)).invitationNote, null, 'reinvite clears the old note');
+    await conversations.respond(pool, recipient, id, 'accept');
+    assert.equal((await conversations.getConversation(pool, recipient, id)).invitationNote, null);
+    assert.ok((await conversations.listMessages(pool, recipient, id)).messages.some(m => m.content === 'Retained private history'));
+    assert.equal(await conversations.addMembers(pool, outsider, id, [later.id], 'not a member'), null);
+    await conversations.setBlock(pool, outsider.id, sender.id, true);
+    assert.equal(await conversations.addMembers(pool, sender, id, [outsider.id], 'blocked'), null);
+    await assert.rejects(pool.query('UPDATE conversation_members SET invitation_note = $1 WHERE conversation_id = $2', ['x'.repeat(501), id]), /check constraint/);
+  });
+
   const crew = await group(alice, 'Crew', [bob, carol, dave]);
   const direct = await conversations.createDirect(pool, alice, bob.id);
   assert.ok(await conversations.respond(pool, bob, direct.conversationId, 'accept'));
