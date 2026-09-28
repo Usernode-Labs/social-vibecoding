@@ -3414,8 +3414,8 @@
       "expectSelector": ".app-card[data-yours].cursor-grab"
     },
     {
-      "name": "A persisted staging sample appears in Your apps",
-      "path": "/?demo=1",
+      "name": "A persisted staging sample appears in expanded Your apps",
+      "path": "/?demo=1&shot=home-apps",
       "expectSelector": ".app-card[data-slug='staging-demo-your-app']"
     },
     {
