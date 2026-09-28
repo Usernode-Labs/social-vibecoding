@@ -108,6 +108,149 @@ const merged = (over) => ({
   ...over,
 });
 
+// #3199: sorting is local to In review and must never become a filter.
+const reviewColumn = a => a._kanbanView().cols.find(c => c.key === 'inreview');
+const reviewKeys = a => Array.from(reviewColumn(a).rows, row => row.key);
+function reviewBoard() {
+  const a = makeAppView();
+  a.appData = { slug: 'first-app' };
+  a._ghIssues = [issue({ number: 1 })];
+  a._envIssueNumbers = new Set();
+  a._proposals = [];
+  a._govProposals = [];
+  a._merged = [merged({ id: 80, created_at: '2026-09-28' })];
+  a._mySessions = [{ id: 90, session_title: 'Working', status: 'active' }];
+  a._sharedSessions = [];
+  a._kanbanFilters = { ...none };
+  a._repaintKanbanBoard = () => {};
+  return a;
+}
+
+test('In review defaults to newest submission, independent of comments, status and old manual order', () => {
+  const a = reviewBoard();
+  a._proposals = [
+    prop({ id: 1, promoted_at: '2026-09-01', last_message_at: '2026-09-28', status: 'merging' }),
+    prop({ id: 2, promoted_at: '2026-09-20', created_at: '2026-08-01' }),
+    prop({ id: 3, promoted_at: '2026-09-20' }),
+    prop({ id: 4, created_at: '2026-09-10' }),
+    prop({ id: 5 }),
+  ];
+  a._boardOrder = { issues: [], review: ['proposal:1', 'proposal:2', 'proposal:5'] };
+  assert.equal(reviewColumn(a).reviewSort, 'newest');
+  assert.deepEqual(reviewKeys(a), ['proposal:3', 'proposal:2', 'proposal:4', 'proposal:1', 'proposal:5']);
+});
+
+test('Vote priority orders unvoted first, then positive qualifying shortfall, enough votes, unknown', () => {
+  const a = reviewBoard();
+  a._proposalsCtx = {};
+  a._proposals = [
+    prop({ id: 1, qualified_yes_count: 1, yes_count: 99, votes_required: 5 }),
+    prop({ id: 2, yes_count: 3, votes_required: 4, my_prior_vote: 'yes' }),
+    prop({ id: 3, yes_count: 7, votes_required: null }),
+    prop({ id: 4, yes_count: 10, votes_required: 10 }),
+    prop({ id: 5, yes_count: 3, votes_required: 4, my_vote: 'yes' }),
+    prop({ id: 6, yes_count: 1, votes_required: 4, my_vote: 'no' }),
+    prop({ id: 7, yes_count: 20, votes_required: 10 }),
+  ];
+  a._setReviewSort('priority');
+  assert.deepEqual(reviewKeys(a), [2, 1, 7, 4, 3, 5, 6].map(id => `proposal:${id}`));
+  assert.equal(reviewColumn(a).count, 7, 'voted and already-qualified proposals remain visible');
+});
+
+test('code and governance proposals share qualifying shortfalls and newest tie breaks', () => {
+  const a = reviewBoard();
+  a._proposalsCtx = { majority: 4 };
+  a._proposals = [
+    prop({ id: 1, yes_count: 2, promoted_at: '2026-09-20' }),
+    prop({ id: 2, votes_required: 4, yes_count: 2, promoted_at: '2026-09-21' }),
+  ];
+  a._govProposals = [gov({ id: 8, up_count: 99, qualified_yes_count: 1, approvals_required: 3,
+    votes_required: 50, created_at: '2026-09-22' })];
+  a._setReviewSort('priority');
+  const col = reviewColumn(a);
+  assert.equal(col.rows[0].card.key, a._govCardModel(a._govProposals[0]).key);
+  assert.deepEqual(Array.from(col.rows.slice(1), r => r.key), ['proposal:2', 'proposal:1']);
+  assert.equal(a._reviewVotesNeeded({ kind: 'gov', item: { up_count: 2, votes_required: 5 } }), 3);
+});
+
+test('changing review order leaves filters, every other column, feed and category data unchanged', () => {
+  const a = reviewBoard();
+  a._proposals = [prop({ id: 1, votes_required: 5, yes_count: 4, promoted_at: '2026-09-01' }),
+    prop({ id: 2, votes_required: 5, yes_count: 1, promoted_at: '2026-09-20' })];
+  const others = () => JSON.stringify(a._kanbanView().cols.filter(c => c.key !== 'inreview'));
+  const feed = JSON.stringify(a._feedItems());
+  const categories = JSON.stringify(a._bucketDevItems({ proposals: a._proposals }));
+  const before = others();
+  assert.deepEqual(reviewKeys(a), ['proposal:2', 'proposal:1']);
+  a._setReviewSort('priority');
+  assert.deepEqual(reviewKeys(a), ['proposal:1', 'proposal:2']);
+  assert.equal(others(), before);
+  assert.equal(JSON.stringify(a._feedItems()), feed);
+  assert.equal(JSON.stringify(a._bucketDevItems({ proposals: a._proposals })), categories);
+  assert.equal(a._kanbanFiltersActive(), false);
+  assert.equal(a._kanbanFilterCount(), 0);
+  a._kanbanFilters = { ...none, q: 'no such proposal' };
+  assert.equal(reviewColumn(a).count, 0);
+  assert.equal(reviewColumn(a).empty, 'No matching cards');
+  assert.equal(reviewColumn(a).reviewSort, 'priority', 'empty filtered columns still offer the toggle');
+});
+
+test('review sort persists per app, survives reload, validates values and repaints only the board', () => {
+  const a = reviewBoard();
+  let repaints = 0;
+  a._repaintKanbanBoard = () => { repaints++; };
+  a._repaintBoardSurface = () => { throw new Error('must not repaint other surfaces'); };
+  a._setReviewSort('priority');
+  a._setReviewSort('priority');
+  a._setReviewSort('invalid');
+  assert.equal(repaints, 1);
+  const store = a.__sandbox.sessionStorage;
+  const b = makeCtx({ sessionStorage: store }).__AppView;
+  b.appData = { slug: 'first-app' };
+  assert.equal(b._reviewSort(), 'priority');
+  a.appData = { slug: 'second-app' };
+  assert.equal(a._reviewSort(), 'newest');
+  a.appData = { slug: 'first-app' };
+  assert.equal(a._reviewSort(), 'priority');
+  a._setReviewSort('newest');
+  assert.equal(store.getItem(`${a.REVIEW_SORT_KEY}:first-app`), null);
+  store.setItem(`${a.REVIEW_SORT_KEY}:third-app`, 'invalid');
+  a.appData = { slug: 'third-app' };
+  assert.equal(a._reviewSort(), 'newest');
+});
+
+test('review sort still works with unavailable storage and when signed out', () => {
+  const a = reviewBoard();
+  a.__sandbox.sessionStorage = {
+    getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); },
+    removeItem() { throw new Error('blocked'); },
+  };
+  a.__sandbox.App.user = null;
+  a._proposals = [prop({ id: 1, votes_required: 5, yes_count: 4 }),
+    prop({ id: 2, votes_required: 5, yes_count: 1 })];
+  assert.equal(a._reviewSort(), 'newest');
+  a._setReviewSort('priority');
+  assert.deepEqual(reviewKeys(a), ['proposal:1', 'proposal:2']);
+  a._setReviewSort('newest');
+  assert.equal(a._reviewSort(), 'newest');
+});
+
+test('only In review renders a two-button sort with selected state and a visible explanation', () => {
+  const a = reviewBoard();
+  let html = kanbanHtml(a);
+  assert.equal((html.match(/aria-label="Sort In review"/g) || []).length, 1);
+  const control = html.slice(html.indexOf('aria-label="Sort In review"'), html.indexOf('</div>', html.indexOf('aria-label="Sort In review"')));
+  assert.match(control, /aria-pressed="true"[^>]*>Newest<\/button>/);
+  assert.match(control, /aria-pressed="false"[^>]*>Vote priority<\/button>/);
+  assert.ok(html.indexOf('id="dev-kanban-col-inreview"') < html.indexOf('aria-label="Sort In review"'));
+  a._setReviewSort('priority');
+  html = kanbanHtml(a);
+  assert.match(html, /aria-pressed="true"[^>]*>Vote priority<\/button>/);
+  assert.match(html, /Unvoted first, then fewest qualifying votes still needed\.<\/p>/);
+  const dialog = renderComponent('frontend/src/features/dialogs/board-filters.tsx', 'BoardFiltersDialog', {});
+  assert.doesNotMatch(dialog, /Already voted|Proposal order|Fewest votes needed/);
+});
+
 test('default filters match every kind', () => {
   const AppView = makeAppView();
   assert.equal(AppView._devCardMatches('issue', issue({}), none), true);
@@ -1156,82 +1299,4 @@ test('a declared check reading the filter bar asks for the All-items sub-view (w
   }
   assert.deepEqual(offenders.join('\n'), '',
     'these workshop-route checks read All-items nodes without ws=all');
-});
-
-// #3199: these exercise the loaded board model, not a parallel sort helper.
-test('proposal ordering uses qualifying votes and handles unknown requirements last', () => {
-  const a = makeAppView();
-  a._kanbanFilters = { ...none, proposalSort: 'closest' };
-  a._proposalsCtx = {};
-  const rows = [
-    prop({ id: 1, yes_count: 99, qualified_yes_count: 1, votes_required: 5 }),
-    prop({ id: 2, yes_count: 3, votes_required: 4 }),
-    prop({ id: 3, yes_count: 7, votes_required: null }),
-    prop({ id: 4, yes_count: 10, votes_required: 10 }),
-  ];
-  const result = a._bucketDevItems({ proposals: rows,
-    gov: [gov({ id: 5, up_count: 9, qualified_yes_count: 1, approvals_required: 3, votes_required: 50 })] });
-  assert.deepEqual(Array.from(result.inReview, r => r.item.id), [4, 2, 5, 1, 3]);
-  assert.equal(a._reviewVotesNeeded({ kind: 'proposal', item: rows[0] }), 4, 'advisory votes do not count');
-  a._proposalsCtx = { majority: 10 };
-  assert.equal(a._reviewVotesNeeded({ kind: 'proposal', item: rows[2] }), 3, 'same legacy threshold fallback as the card');
-});
-
-test('newest proposal order ignores recent comments and breaks time ties by id', () => {
-  const a = makeAppView();
-  a._kanbanFilters = { ...none, proposalSort: 'newest' };
-  const old = prop({ id: 1, promoted_at: '2026-09-01', last_message_at: '2026-09-28', status: 'merging' });
-  const fresh = prop({ id: 2, promoted_at: '2026-09-20' });
-  const tie = prop({ id: 3, promoted_at: '2026-09-20' });
-  const data = { proposals: [old, fresh, tie] };
-  assert.deepEqual(Array.from(a._bucketDevItems(data).inReview, r => r.item.id), [3, 2, 1]);
-  a._proposals = data.proposals;
-  a._visibleGhIssues = () => [];
-  assert.deepEqual(Array.from(a._feedItems(), r => r.id), [3, 2, 1]);
-  a._kanbanFilters = { ...none };
-  assert.equal(a._bucketDevItems(data).inReview[0].item.id, 1, 'default board pin order survives');
-  assert.equal(a._feedItems()[0].id, 1, 'default feed remains recent activity first');
-});
-
-test('voted filter includes yes and no, excludes an obsolete revision vote, and combines with search', () => {
-  const a = makeAppView();
-  const f = { ...none, votedByMe: true };
-  for (const vote of ['yes', 'no']) assert.equal(a._devCardMatches('proposal', prop({ my_vote: vote }), f), true);
-  assert.equal(a._devCardMatches('gov', gov({ my_vote: 'up' }), f), true);
-  assert.equal(a._devCardMatches('proposal', prop({ my_vote: null, my_prior_vote: 'yes' }), f), false);
-  assert.equal(a._devCardMatches('issue', issue({ my_vote: 'up' }), f), false);
-  assert.equal(a._devCardMatches('proposal', prop({ my_vote: 'yes' }), { ...f, q: 'not in this title' }), false);
-  assert.equal(a._devCardMatches('proposal', prop({ my_vote: 'yes' }), { ...f, q: 'header' }), true);
-  for (const kind of ['issue', 'session', 'merged']) {
-    assert.equal(a._devCardMatches(kind, prop(), { ...none, proposalSort: 'newest' }), false);
-  }
-});
-
-test('review controls persist per app, stay mutually exclusive and clear via their chips', () => {
-  const a = makeAppView();
-  a._kanbanFilters = { ...none, q: 'design' };
-  a._repaintBoardSurface = () => {};
-  a.applyKanbanFilters({ votedByMe: true, needsVote: true, proposalSort: 'closest' });
-  assert.equal(a._kanbanFilters.needsVote, false);
-  assert.equal(a._kanbanFilters.q, 'design');
-  assert.equal(a._kanbanFilterCount(), 2);
-  assert.ok(a._kanbanActiveChips().some(c => c.key === 'proposalSort' && c.label === 'Fewest votes needed'));
-  a._saveKanbanFilters('first-app');
-  assert.equal(a._loadKanbanFilters('first-app').votedByMe, true);
-  assert.equal(a._loadKanbanFilters('first-app').proposalSort, 'closest');
-  assert.equal(a._loadKanbanFilters('other-app').proposalSort, undefined);
-  a._dismissKanbanFilter('votedByMe');
-  a._dismissKanbanFilter('proposalSort');
-  a._dismissKanbanFilter('q');
-  assert.equal(a._kanbanFiltersActive(), false);
-  a.applyKanbanFilters({ proposalSort: 'untrusted-value' });
-  assert.equal(a._reviewOrder(), null);
-});
-
-test('the existing Filters dialog explains proposal-only ordering and current revision votes', () => {
-  const html = renderComponent('frontend/src/features/dialogs/board-filters.tsx', 'BoardFiltersDialog', {});
-  assert.ok(html.includes('Already voted'));
-  assert.ok(html.includes('current revision'));
-  assert.ok(html.includes('Fewest votes needed'));
-  assert.ok(html.includes('Choosing an order shows only open proposals'));
 });

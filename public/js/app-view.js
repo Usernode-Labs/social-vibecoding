@@ -592,6 +592,61 @@ const AppView = {
       }
     } catch {}
   },
+  // Sorting belongs to the In review column, not the board's shared
+  // filters or activity feed. Remember it per app for this browser tab,
+  // with an in-memory fallback when sessionStorage is unavailable.
+  REVIEW_SORT_KEY: 'devReviewSort',
+  _reviewSortByApp: new Map(),
+  _reviewSort() {
+    const slug = AppView.appData?.slug || App.currentApp || '';
+    if (!AppView._reviewSortByApp.has(slug)) {
+      let stored;
+      try { stored = window.sessionStorage.getItem(`${AppView.REVIEW_SORT_KEY}:${slug}`); } catch {}
+      AppView._reviewSortByApp.set(slug, stored === 'priority' ? 'priority' : 'newest');
+    }
+    return AppView._reviewSortByApp.get(slug);
+  },
+  _setReviewSort(mode) {
+    if (!['newest', 'priority'].includes(mode) || mode === AppView._reviewSort()) return;
+    const slug = AppView.appData?.slug || App.currentApp || '';
+    AppView._reviewSortByApp.set(slug, mode);
+    try {
+      const key = `${AppView.REVIEW_SORT_KEY}:${slug}`;
+      if (mode === 'newest') window.sessionStorage.removeItem(key);
+      else window.sessionStorage.setItem(key, mode);
+    } catch {}
+    AppView._repaintKanbanBoard();
+  },
+  _reviewVotesNeeded(entry) {
+    const item = entry.item || {};
+    const raw = entry.kind === 'gov' && item.approvals_required != null
+      ? item.approvals_required : item.votes_required;
+    const threshold = Number(raw);
+    const fallback = entry.kind === 'proposal' ? Number(AppView._proposalsCtx?.majority) : NaN;
+    const required = Number.isFinite(threshold) && threshold > 0 ? threshold : fallback;
+    if (!Number.isFinite(required) || required <= 0) return Infinity;
+    const tally = Number(item.qualified_yes_count != null ? item.qualified_yes_count
+      : entry.kind === 'gov' ? item.up_count : item.yes_count);
+    return Math.max(0, required - (Number.isFinite(tally) ? tally : 0));
+  },
+  _compareReviewProposals(a, b, mode) {
+    if (mode === 'priority') {
+      // Only the vote on the CURRENT revision counts. A prior revision's
+      // vote leaves this proposal in the unvoted group, as its card does.
+      const voted = Number(!!a.item?.my_vote) - Number(!!b.item?.my_vote);
+      if (voted) return voted;
+      const left = AppView._reviewVotesNeeded(a), right = AppView._reviewVotesNeeded(b);
+      // Positive shortfalls first, already enough votes next, unknown last.
+      const rank = n => Number.isFinite(n) ? (n > 0 ? 0 : 1) : 2;
+      const group = rank(left) - rank(right);
+      if (group) return group;
+      if (left !== right) return left < right ? -1 : 1;
+    }
+    const stamp = row => Date.parse(row.item?.promoted_at || '')
+      || Date.parse(row.item?.created_at || '') || 0;
+    return stamp(b) - stamp(a) || Number(b.item?.id || 0) - Number(a.item?.id || 0)
+      || String(a.kind).localeCompare(String(b.kind));
+  },
   // Was this click (or key) inside a fold wrapper — a Workshop row, a Board
   // row, or the open card either folds to (card/fold.tsx)? The fold owns
   // those; the delegated handlers above stand aside for them.
@@ -7411,7 +7466,7 @@ const AppView = {
           ts(m.last_message_at)),
       });
     }
-    return items.sort(AppView._reviewOrder() ? AppView._compareReviewProposals : (a, b) => b.t - a.t);
+    return items.sort((a, b) => b.t - a.t);
   },
 
   // The list feed's VIEW MODEL (card/model.ts DevFeedView).
@@ -9428,7 +9483,7 @@ const AppView = {
     // Governance proposals have no merge or check state, so they sort in the
     // normal (unpinned) tier alongside non-pipeline PRs.
     for (const g of gov) review.push({ kind: 'gov', item: g, _r: 4, _t: govT(g) });
-    review.sort(AppView._reviewOrder() ? AppView._compareReviewProposals : (a, b) => (a._r - b._r) || (b._t - a._t));
+    review.sort((a, b) => (a._r - b._r) || (b._t - a._t));
 
     const done = merged.slice().sort(AppView._compareMergedRows);
 
@@ -9565,10 +9620,6 @@ const AppView = {
   _devCardMatches(kind, item, filters) {
     const f = filters || {};
     const it = item || {};
-    if (f.votedByMe || ['newest', 'closest'].includes(f.proposalSort)) {
-      if (kind !== 'proposal' && kind !== 'gov') return false;
-      if (f.votedByMe && !it.my_vote) return false;
-    }
     const q = (f.q || '').trim().toLowerCase();
     if (q) {
       let title; let num;
@@ -9698,38 +9749,10 @@ const AppView = {
     return themeOk();
   },
 
-  _reviewOrder() {
-    const value = AppView._kanbanFilters?.proposalSort;
-    return ['newest', 'closest'].includes(value) ? value : null;
-  },
-
-  _reviewVotesNeeded(entry) {
-    const item = entry.item || {};
-    const raw = entry.kind === 'gov' && item.approvals_required != null
-      ? item.approvals_required : item.votes_required;
-    const threshold = Number(raw);
-    const fallback = entry.kind === 'proposal' ? Number(AppView._proposalsCtx?.majority) : NaN;
-    const required = Number.isFinite(threshold) && threshold > 0 ? threshold : fallback;
-    if (!Number.isFinite(required) || required <= 0) return Infinity;
-    const tally = Number(item.qualified_yes_count != null ? item.qualified_yes_count
-      : entry.kind === 'gov' ? item.up_count : item.yes_count);
-    return Math.max(0, required - (Number.isFinite(tally) ? tally : 0));
-  },
-
-  _compareReviewProposals(a, b) {
-    if (AppView._reviewOrder() === 'closest') {
-      const left = AppView._reviewVotesNeeded(a), right = AppView._reviewVotesNeeded(b);
-      if (left !== right) return left < right ? -1 : 1;
-    }
-    const stamp = row => Date.parse(row.item?.promoted_at || row.item?.created_at || '') || 0;
-    return stamp(b) - stamp(a) || Number(b.item?.id || 0) - Number(a.item?.id || 0)
-      || String(a.kind).localeCompare(String(b.kind));
-  },
-
   _kanbanFiltersActive() {
     const f = AppView._kanbanFilters || {};
     return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote || f.theme
-      || f.assignedToMe || f.createdByMe || f.votedByMe || AppView._reviewOrder());
+      || f.assignedToMe || f.createdByMe);
   },
 
   // #1935: the signed-in viewer's handle, as the board's person fields spell
@@ -10049,7 +10072,7 @@ const AppView = {
     if (key === 'q') {
       AppView._kanbanFilters.q = '';
       AppView._kanbanFilterSeq += 1;
-    } else if (key === 'needsVote' || key === 'votedByMe' || key === 'assignedToMe' || key === 'createdByMe') {
+    } else if (key === 'needsVote' || key === 'assignedToMe' || key === 'createdByMe') {
       AppView._kanbanFilters[key] = false;
     } else {
       AppView._kanbanFilters[key] = null;
@@ -10068,8 +10091,7 @@ const AppView = {
       ? (f.assignedToMe ? 1 : 0) + (f.createdByMe ? 1 : 0)
       : 0;
     return (f.priority ? 1 : 0) + (f.category ? 1 : 0)
-      + (f.assignee ? 1 : 0) + (f.needsVote ? 1 : 0) + (f.theme ? 1 : 0)
-      + (f.votedByMe ? 1 : 0) + (AppView._reviewOrder() ? 1 : 0) + quick;
+      + (f.assignee ? 1 : 0) + (f.needsVote ? 1 : 0) + (f.theme ? 1 : 0) + quick;
   },
   // One entry per active filter, in a fixed order — the dismissable chip
   // row's data. The chips themselves (Material selected filter-chip with a
@@ -10093,9 +10115,6 @@ const AppView = {
       });
     }
     if (f.needsVote) chips.push({ key: 'needsVote', label: 'Waiting on you' });
-    if (f.votedByMe) chips.push({ key: 'votedByMe', label: 'Already voted' });
-    const order = AppView._reviewOrder();
-    if (order) chips.push({ key: 'proposalSort', label: order === 'newest' ? 'Newest proposals' : 'Fewest votes needed' });
     // Same rule as the count: a dismissable chip for a filter whose own
     // toggle is two controls away would be the same state said twice.
     if (AppView._quickFiltersInDialog) {
@@ -10139,8 +10158,6 @@ const AppView = {
         category: f.category || null,
         assignee: f.assignee || null,
         needsVote: !!f.needsVote,
-        votedByMe: !!f.votedByMe,
-        proposalSort: AppView._reviewOrder(),
         assignedToMe: !!f.assignedToMe,
         createdByMe: !!f.createdByMe,
       },
@@ -10164,9 +10181,7 @@ const AppView = {
       priority: n.priority || null,
       category: n.category || null,
       assignee: n.assignee || null,
-      needsVote: !!n.needsVote && !n.votedByMe,
-      votedByMe: !!n.votedByMe,
-      proposalSort: ['newest', 'closest'].includes(n.proposalSort) ? n.proposalSort : null,
+      needsVote: !!n.needsVote,
       // ONLY WHEN THE DIALOG OWNED THEM. Its values are a snapshot taken at
       // open; if the strip has the toggles instead, the reader may have
       // flipped one since, and writing the stale snapshot back over it would
@@ -10241,14 +10256,11 @@ const AppView = {
     });
     const meta = AppView._ghIssuesMeta || {};
 
-    // #613: apply the manual drag order overlay to the Issues + In review
-    // columns BEFORE filtering, so hiding cards via the filter bar never
-    // disturbs the saved order. Empty order → no change.
+    // Preserve the historical manual order for Issues. In review now has
+    // an explicit sorting control, which supersedes its old drag order.
     const order = AppView._boardOrder || { issues: [], review: [] };
     buckets.issues = AppView._applyManualOrder(
       buckets.issues, order.issues, (c) => AppView._cardOrderKey('issues', c));
-    if (!AppView._reviewOrder()) buckets.inReview = AppView._applyManualOrder(
-      buckets.inReview, order.review, (c) => AppView._cardOrderKey('review', c));
 
     // #482: apply the filter bar AFTER bucketing, per column, so every
     // card's lifecycle placement stays identical to the unfiltered board —
@@ -10269,9 +10281,12 @@ const AppView = {
         ? AppView._devCardMatches('issue', e.item, f)
         : AppView._devCardMatches('session', e.item, f)))
       : buckets.inProgress;
-    const kInReview = filtering
+    const reviewSort = AppView._reviewSort();
+    const reviewMatches = filtering
       ? buckets.inReview.filter((x) => AppView._devCardMatches(x.kind, x.item, f))
       : buckets.inReview;
+    // Copy so the shared bucketer/feed/category order stays independent.
+    const kInReview = reviewMatches.slice().sort((a, b) => AppView._compareReviewProposals(a, b, reviewSort));
     // Done AGES OUT: unfiltered, the column shows what landed in the last
     // seven days (never fewer than the newest three, so a quiet fortnight
     // does not empty it) and a "Show all N" footer for the rest. A settled
@@ -10363,6 +10378,7 @@ const AppView = {
       },
       {
         key: 'inreview', title: 'In review', count: kInReview.length,
+        reviewSort,
         rows: cardRows(
           kInReview,
           (x) => (x.kind === 'proposal'

@@ -213,6 +213,35 @@ function Column(
           ? <span className="text-zinc-500 dark:text-zinc-500 font-mono">{'· '}<CountSkeleton /></span>
           : <span className="text-zinc-500 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>}
       </div>
+      {col.key === 'inreview' && col.reviewSort ? (
+        <div className="mb-3">
+          <div
+            role="group"
+            aria-label="Sort In review"
+            className="flex gap-0.5 rounded-full bg-white dark:bg-zinc-900 p-0.5"
+          >
+            {(['newest', 'priority'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={col.reviewSort === mode}
+                title={mode === 'newest'
+                  ? 'Most recently submitted for review first'
+                  : 'Unvoted first, then fewest qualifying votes still needed. Already-qualified proposals follow those still short. Newest breaks ties.'}
+                className={`flex-1 min-h-[44px] px-2 rounded-full text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${col.reviewSort === mode ? SECTION_TAB_ACTIVE : SECTION_TAB_INACTIVE}`}
+                onClick={() => callAppView('_setReviewSort', mode)}
+              >
+                {mode === 'newest' ? 'Newest' : 'Vote priority'}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 px-0.5 min-h-[2rem] text-xs leading-snug text-zinc-500 dark:text-zinc-400">
+            {col.reviewSort === 'newest'
+              ? 'Most recently submitted for review first.'
+              : 'Unvoted first, then fewest qualifying votes still needed.'}
+          </p>
+        </div>
+      ) : null}
       {!loading && col.status ? (
         <div
           data-kanban-col-status={col.key}
