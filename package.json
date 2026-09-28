@@ -16,6 +16,7 @@
     "test": "node --require ./tests/lib/test-net.js --test --test-force-exit --test-timeout=180000 tests/*.test.js",
     "pretest:changed": "node scripts/ensure-shell-artifacts.js --html-only",
     "test:changed": "node scripts/test-changed.js",
+    "test:shell-upgrade:browser": "node scripts/verify-shell-upgrade.js",
     "test:visual-evidence:local": "node scripts/local-visual-evidence/run.js",
     "visual-evidence:local-setup": "node scripts/local-visual-evidence/prepare-env.js",
     "test:visual-evidence:platform-local": "node scripts/local-visual-evidence/run-platform.js",

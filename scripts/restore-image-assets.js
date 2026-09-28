@@ -13,6 +13,8 @@ const IMAGE_ASSETS = process.env.USERNODE_IMAGE_ASSET_DIR || '/opt/usernode-shel
 const FILES = [
   'index.html',
   'css/tailwind.css',
+  'shell/release.json',
+  'shell/worker.js',
 ];
 // Everything the React build emitted, discovered rather than listed: it is
 // more than one file now (frontend/vite.config.ts emits lazy route chunks

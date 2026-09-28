@@ -90,7 +90,9 @@ const needsShell = !htmlFresh || (!htmlOnly && !jsFresh);
 
 if (prebuilt) {
   const cssPath = path.join(ROOT, 'public', 'css', 'tailwind.css');
-  if (needsShell || read(cssPath) === null) {
+  if (needsShell || read(cssPath) === null
+      || read(path.join(ROOT, 'public', 'shell', 'release.json')) === null
+      || read(path.join(ROOT, 'public', 'shell', 'worker.js')) === null) {
     throw new Error(
       '[ensure-shell] immutable image is missing build-time shell assets; rebuild the image'
     );
@@ -117,4 +119,5 @@ if (needsShell) {
 // stale utility set just because the React shell itself was unchanged.
 if (runtime) {
   runNode('scripts/build-tailwind.js');
+  runNode('scripts/build-shell-release.js');
 }
