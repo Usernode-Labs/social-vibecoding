@@ -24,6 +24,7 @@
 // same way buildAndPropose runs a build.
 
 const log = require('./logger');
+const { parseStopMentioning } = require('./homeroom-bot-live');
 
 // Revisions the bot makes to one proposal on its own. Each one clears the
 // votes the proposal had, so an unbounded loop of "one more tweak" costs the
@@ -124,7 +125,9 @@ function followUpPrompt({ seed, proposalBlock = '', prNumber = null, replies = [
     '- "person": what they want is a decision for a person (taste, policy, something outside this app), or it would change what the proposal is. Say so and why. Change no files.',
     '',
     `END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it:`,
-    `{"action": ${actions}, "reply": "what to post back to them, in plain language", "summary": "for revise only: one sentence on what you changed"}`,
+    `{"action": ${actions}, "reply": "what to post back to them, in plain language", "summary": "for revise only: one sentence on what you changed", "stop_mentioning": ["name of each person who asked the bot to stop tagging them"]}`,
+    '',
+    '`stop_mentioning`: the names, exactly as the replies show them, of anybody who asked the Homeroom bot itself to stop tagging, messaging or notifying them. Only a person asking for themselves, and only about the bot, not about the app\'s own notifications. Usually empty. If that is all a reply says, "answer" with a short acknowledgement.',
   );
   return lines.join('\n');
 }
@@ -149,7 +152,10 @@ function parseFollowUp(text) {
     if (!ACTIONS.includes(action)) continue;
     const reply = clipText(obj.reply, 3000);
     if (!reply) continue;
-    return { action, reply, summary: clipText(obj.summary, 600) || null };
+    return {
+      action, reply, summary: clipText(obj.summary, 600) || null,
+      stopMentioning: parseStopMentioning(obj.stop_mentioning),
+    };
   }
   return null;
 }

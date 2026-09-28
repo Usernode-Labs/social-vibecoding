@@ -9292,6 +9292,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_homeroom_bot_posts_looking
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_posts_issue
   ON homeroom_bot_posts(app_id, issue_number, created_at DESC);
 
+-- Who asked the Homeroom bot to stop tagging them on an issue. The bot's
+-- posts @-mention whoever filed the issue and the people who took part in
+-- its discussion; a person here is left out of that issue's mentions from
+-- then on. Recorded from the triage or follow-up turn that read the ask.
+CREATE TABLE IF NOT EXISTS homeroom_bot_mention_optouts (
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number  INTEGER NOT NULL,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  run_id        INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, issue_number, user_id)
+);
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
 -- (still refused by the settings route). Acting for real is per app

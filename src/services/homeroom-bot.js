@@ -579,6 +579,7 @@ function parseVerdict(text) {
           : demoted ? clip(`Asked "${demoted.question}", but it was not a blocker: built with its default, "${demoted.default}".`, 2000)
             : null,
       demoted: !!demoted,
+      stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
     };
   }
   return null;
@@ -1736,6 +1737,13 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   await supersedeQueuedBuilds(pool, { appId: app.id, issueNumber, runId }).catch((err) => {
     log.warn('homeroom-bot', 'Could not supersede a queued shadow build', { app: app.slug, issueNumber, err: err.message });
   });
+  // Before anything is posted: whoever asked the bot to stop tagging them
+  // is left out of this post and every later one on the issue.
+  if (parsed.stopMentioning?.length) {
+    await live.recordMentionOptOuts({
+      pool, github, app, repo, issueNumber, names: parsed.stopMentioning, runId,
+    }).catch((err) => log.warn('homeroom-bot', 'Could not record a mention opt-out', { app: app.slug, issueNumber, err: err.message }));
+  }
   log.info('homeroom-bot', 'Triaged', {
     app: app.slug, issueNumber, verdict: parsed.verdict, costUsd, runId,
     ...(parsed.demoted ? { demotedQuestion: true } : {}),
@@ -2352,6 +2360,11 @@ async function runFollowUp(pool, config, {
   }
 
   const parsed = followup.parseFollowUp(result.lastResultText);
+  if (parsed?.stopMentioning?.length) {
+    await live.recordMentionOptOuts({
+      pool, github, app, repo, issueNumber, names: parsed.stopMentioning, proposalSessionId: session.id,
+    }).catch((err) => log.warn('homeroom-bot', 'Could not record a mention opt-out', { app: app.slug, issueNumber, err: err.message }));
+  }
   const moved = followup.headMoved({
     mode, result, reviewedHeadSha: session.reviewed_head_sha, action: parsed?.action,
   });
@@ -2360,9 +2373,17 @@ async function runFollowUp(pool, config, {
   }
 
   let runId = null;
+  let targets;
   const say = async (kind, text, postedAt) => {
+    // The people on the issue and the proposal, as a verdict's posts tag them.
+    if (targets === undefined) {
+      targets = await live.mentionTargets({
+        pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
+      }).catch(() => []);
+    }
     const posted = await live.post({
-      pool, github, ws: deps.ws, app, repo, issueNumber, kind, runId, text, sender: bot,
+      pool, github, ws: deps.ws, app, repo, issueNumber, kind, runId, text, sender: bot, senderId: bot.id,
+      mentions: live.tagsPoster(kind) ? targets : [], notifications: deps.notifications || null,
       // Answered where it was asked: the proposal's thread too, when that
       // is where somebody wrote.
       proposalSessionId: replies.some((r) => r.where === 'proposal') ? session.id : null,
@@ -2459,25 +2480,25 @@ async function actOnVerdict({
   seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin = null, deps,
 }) {
   const { github, ws } = deps;
-  // Whoever filed the issue is named on the answers that ask something of
-  // them, so they are notified (live.issuePoster). Looked up once, and only
-  // when such an answer is posted.
-  let poster;
-  const posterOnce = async () => {
-    if (poster === undefined) {
-      poster = await live.issuePoster(pool, { app, repo, issueNumber, issue, botLogin })
+  // Whoever filed the issue, and whoever took part in its discussion, are
+  // tagged on the posts that concern them, so they are notified
+  // (live.mentionTargets), except anybody who asked the bot to stop. Looked
+  // up once, when the first such post goes out, and read fresh on each run.
+  let targets;
+  const targetsOnce = async () => {
+    if (targets === undefined) {
+      targets = await live.mentionTargets({ pool, github, app, repo, issueNumber, issue, botLogin, bot })
         .catch((err) => {
-          log.warn('homeroom-bot', 'Could not find who filed the issue', { app: app.slug, issueNumber, err: err.message });
-          return null;
+          log.warn('homeroom-bot', 'Could not work out who to tag', { app: app.slug, issueNumber, err: err.message });
+          return [];
         });
-      if (poster && bot.username && poster.toLowerCase() === String(bot.username).toLowerCase()) poster = null;
     }
-    return poster;
+    return targets;
   };
   const say = async (kind, text, extra = {}) => {
-    const mention = live.tagsPoster(kind) ? await posterOnce() : null;
+    const mentions = live.tagsPoster(kind) ? await targetsOnce() : [];
     const posted = await live.post({
-      pool, github, ws, app, repo, issueNumber, kind, runId, text, mention, senderId: bot.id, sender: bot,
+      pool, github, ws, app, repo, issueNumber, kind, runId, text, mentions, senderId: bot.id, sender: bot,
       notifications: deps.notifications || null, ...extra,
     });
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);

@@ -257,37 +257,36 @@ test('issuePoster: the platform\'s issue row, the feedback report, the Source li
   assert.equal((await poster({ body: 'plain', user: 'stranger' })).name, null, 'no linked account, nobody to notify here');
 });
 
-test('the answers that ask something of the poster name them; the notice and a held note do not; the bot never names itself', async (t) => {
+test('the answers tag whoever filed the issue and took part; the notice and a held note tag nobody', async (t) => {
+  // Who exactly, and who is left out, is tests/homeroom-bot-mentions.test.js.
   const h = actHarness();
   const realPost = live.post;
-  const realPoster = live.issuePoster;
-  t.after(() => { live.post = realPost; live.issuePoster = realPoster; });
+  const realTargets = live.mentionTargets;
+  t.after(() => { live.post = realPost; live.mentionTargets = realTargets; });
   const lookups = [];
-  let who = 'evan';
-  live.issuePoster = async (_pool, args) => { lookups.push(args); return who; };
-  live.post = async (args) => { h.posts.push({ kind: args.kind, mention: args.mention, senderId: args.senderId }); return {}; };
+  live.mentionTargets = async (args) => { lookups.push(args); return ['evan', 'maya']; };
+  live.post = async (args) => { h.posts.push({ kind: args.kind, mentions: args.mentions, senderId: args.senderId }); return {}; };
 
   await act(h, { verdict: 'question', question: 'Which colour?' });
   await act(h, { verdict: 'person', reason: 'Taste.' });
   await act(h, { verdict: 'empty', reason: 'Nothing.' });
-  assert.deepEqual(h.posts.map((p) => [p.kind, p.mention, p.senderId]),
-    [['question', 'evan', 77], ['person', 'evan', 77], ['empty', 'evan', 77]]);
-  assert.equal(lookups.length, 3, 'one lookup per answer');
+  assert.deepEqual(h.posts.map((p) => [p.kind, p.mentions, p.senderId]),
+    [['question', ['evan', 'maya'], 77], ['person', ['evan', 'maya'], 77], ['empty', ['evan', 'maya'], 77]]);
+  assert.equal(lookups.length, 3, 'one lookup per run, read fresh each time');
   assert.equal(lookups[0].issueNumber, 12);
+  assert.equal(lookups[0].bot.id, 77, 'so the bot can leave itself out');
 
   h.posts.length = 0;
   lookups.length = 0;
   await act(h, { verdict: 'question', question: 'x' }, { capSuppressed: 'question_tripwire' });
-  assert.deepEqual(h.posts.map((p) => [p.kind, p.mention]), [['held_question_tripwire', null]]);
+  assert.deepEqual(h.posts.map((p) => [p.kind, p.mentions]), [['held_question_tripwire', []]]);
   assert.equal(lookups.length, 0, 'a held note looks nobody up');
 
-  h.posts.length = 0;
-  who = 'Homeroom_Bot';
-  await act(h, { verdict: 'person', reason: 'x' });
-  assert.equal(h.posts[0].mention, null, 'an issue the bot itself filed names nobody');
-
-  assert.ok(live.tagsPoster('proposal') && live.tagsPoster('build_failed'), 'a proposal or a failed build is theirs to know about too');
+  for (const kind of ['proposal', 'build_failed', 'spec', 'blocked', 'followup_answer', 'followup_revise']) {
+    assert.ok(live.tagsPoster(kind), `${kind} is theirs to know about too`);
+  }
   assert.ok(!live.tagsPoster('looking'));
+  assert.ok(!live.tagsPoster('held_proposals_per_app'));
 });
 
 test('what it says: the question with its default, notes that never close, a linked proposal', () => {

@@ -342,13 +342,146 @@ async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec
 // report, then the body's "**Source:**" line; for an issue opened on
 // GitHub, the Homeroom account linked to its author's GitHub login.
 
-// The kinds of post that ask something of the person who filed the issue.
-// Not "looking" (a notice, before anything is known) and not a held note
-// (nothing for them to do; the bot comes back on its own).
-const POSTER_KINDS = new Set(['question', 'person', 'empty', 'proposal', 'build_failed', 'blocked']);
+// The kinds of post that tag people: whoever filed the issue and whoever
+// took part in its discussion (see mentionTargets). Every answer, the spec
+// and the proposal, and every follow-up on the proposal. Not "looking" (a
+// notice, before anything is known) and not a held note (nothing for them
+// to do; the bot comes back on its own).
+const TAGGING_KINDS = new Set([
+  'question', 'person', 'empty', 'proposal', 'build_failed', 'blocked', 'spec',
+  'followup_answer', 'followup_ask', 'followup_revise', 'followup_person', 'followup_failed',
+]);
 
 function tagsPoster(kind) {
-  return POSTER_KINDS.has(kind);
+  return TAGGING_KINDS.has(kind);
+}
+
+// At most this many people are tagged on one post: whoever filed it, then
+// the earliest to join in. A crowded issue does not become a crowded inbox.
+const MAX_MENTIONS = 6;
+
+function isOtherBotLogin(login, botLogin) {
+  const l = String(login || '').toLowerCase();
+  return !l || l.endsWith('[bot]') || l === 'usernode-bot' || (botLogin && l === String(botLogin).toLowerCase());
+}
+
+/**
+ * Who a post on this issue tags, as Homeroom usernames, in order: whoever
+ * filed it, then everybody who wrote in its Homeroom thread (and the
+ * proposal's, when there is one) or commented on GitHub from an account
+ * linked to Homeroom, earliest first. Never the bot or another synthetic
+ * account, never somebody who asked the bot to stop tagging them here
+ * (homeroom_bot_mention_optouts), and at most MAX_MENTIONS.
+ */
+async function mentionTargets({
+  pool, github, app, repo, issueNumber, issue, botLogin = null, bot = null, proposalSessionId = null,
+}) {
+  const names = [];
+  const poster = await issuePoster(pool, { app, repo, issueNumber, issue, botLogin }).catch(() => null);
+  if (poster) names.push(poster);
+  const { rows: talked } = await pool.query(
+    `SELECT u.username, MIN(m.id) AS first_id
+       FROM chat_messages m
+       JOIN users u ON u.id = m.user_id
+      WHERE m.app_id = $1 AND m.msg_type = 'message' AND m.deleted_at IS NULL
+        AND u.is_synthetic = FALSE
+        AND ((m.thread_type = 'issue' AND m.thread_ref = $2)
+             OR ($3::int IS NOT NULL AND m.thread_type = 'session' AND m.thread_ref = $3::int))
+      GROUP BY u.username
+      ORDER BY first_id`,
+    [app.id, issueNumber, proposalSessionId == null ? null : Number(proposalSessionId)],
+  );
+  names.push(...talked.map((r) => r.username));
+  let comments = [];
+  try {
+    ({ comments = [] } = await github.fetchIssueComments(repo.owner, repo.repo, issueNumber));
+  } catch {
+    comments = [];
+  }
+  const logins = [...new Set(comments.map((c) => String(c.author || '')).filter((l) => !isOtherBotLogin(l, botLogin))
+    .map((l) => l.toLowerCase()))];
+  if (logins.length) {
+    const { rows: linked } = await pool.query(
+      `SELECT username, LOWER(github_login) AS login FROM users
+        WHERE LOWER(github_login) = ANY($1::text[]) AND is_synthetic = FALSE`,
+      [logins],
+    );
+    const byLogin = new Map(linked.map((r) => [r.login, r.username]));
+    for (const l of logins) if (byLogin.has(l)) names.push(byLogin.get(l));
+  }
+  const { rows: out } = await pool.query(
+    `SELECT u.username FROM homeroom_bot_mention_optouts o JOIN users u ON u.id = o.user_id
+      WHERE o.app_id = $1 AND o.issue_number = $2`,
+    [app.id, issueNumber],
+  );
+  const optedOut = new Set(out.map((r) => r.username.toLowerCase()));
+  const botName = String(bot?.username || BOT_USERNAME).toLowerCase();
+  const seen = new Set();
+  const targets = [];
+  for (const name of names) {
+    const key = String(name || '').toLowerCase();
+    if (!key || key === botName || key === BOT_USERNAME || optedOut.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    targets.push(name);
+    if (targets.length >= MAX_MENTIONS) break;
+  }
+  return targets;
+}
+
+/** The names a triage or follow-up turn read asking the bot to stop tagging them. */
+function parseStopMentioning(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .map((n) => (typeof n === 'string' ? n.replace(/^@/, '').trim() : ''))
+    .filter((n) => /^[A-Za-z0-9_.-]{1,64}$/.test(n)))].slice(0, 20);
+}
+
+/**
+ * The people a triage or follow-up turn read asking the bot to stop tagging
+ * them on this issue, recorded so no later post does. A name counts only if
+ * it is somebody who actually wrote there: a Homeroom username from the
+ * issue's or the proposal's thread, or a GitHub login linked to a Homeroom
+ * account that commented on the issue. Nobody can opt somebody else out.
+ * Resolves the usernames recorded.
+ */
+async function recordMentionOptOuts({
+  pool, github, app, repo, issueNumber, names, runId = null, proposalSessionId = null,
+}) {
+  const asked = [...new Set((names || []).map((n) => String(n || '').replace(/^@/, '').trim().toLowerCase()).filter(Boolean))];
+  if (!asked.length) return [];
+  const { rows: fromThread } = await pool.query(
+    `SELECT DISTINCT u.id, u.username
+       FROM chat_messages m
+       JOIN users u ON u.id = m.user_id
+      WHERE m.app_id = $1 AND m.msg_type = 'message' AND m.deleted_at IS NULL
+        AND u.is_synthetic = FALSE AND LOWER(u.username) = ANY($4::text[])
+        AND ((m.thread_type = 'issue' AND m.thread_ref = $2)
+             OR ($3::int IS NOT NULL AND m.thread_type = 'session' AND m.thread_ref = $3::int))`,
+    [app.id, issueNumber, proposalSessionId == null ? null : Number(proposalSessionId), asked],
+  );
+  let fromGithub = [];
+  try {
+    const { comments = [] } = await github.fetchIssueComments(repo.owner, repo.repo, issueNumber);
+    const logins = [...new Set(comments.map((c) => String(c.author || '').toLowerCase()))].filter((l) => asked.includes(l));
+    if (logins.length) {
+      ({ rows: fromGithub } = await pool.query(
+        `SELECT id, username FROM users WHERE LOWER(github_login) = ANY($1::text[]) AND is_synthetic = FALSE`,
+        [logins],
+      ));
+    }
+  } catch {
+    fromGithub = [];
+  }
+  const people = new Map([...fromThread, ...fromGithub].map((u) => [u.id, u.username]));
+  if (!people.size) return [];
+  await pool.query(
+    `INSERT INTO homeroom_bot_mention_optouts (app_id, issue_number, user_id, run_id)
+     SELECT $1, $2, u, $4 FROM UNNEST($3::int[]) AS u
+     ON CONFLICT (app_id, issue_number, user_id) DO NOTHING`,
+    [app.id, issueNumber, [...people.keys()], runId],
+  );
+  log.info('homeroom-bot', 'Stopped tagging people who asked', { app: app.slug, issueNumber, people: [...people.values()] });
+  return [...people.values()];
 }
 
 /** The Homeroom username of whoever filed the issue, or null. */
@@ -399,9 +532,13 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
  */
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
-  msgType = 'system', metadata = null, mention = null, senderId = null, notifications = null,
+  msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
   proposalSessionId = null, sender = null, threadMessage = null,
 }) {
+  // Everybody this post tags (mentionTargets); `mention` is the one-person
+  // form the older callers pass.
+  const tagged = [...new Set([...(mentions || []), ...(mention ? [mention] : [])].filter(Boolean))];
+  const handles = tagged.map((n) => `@${n}`).join(' ');
   // #3288: with a sender (the bot's own user), the thread posts are ordinary
   // messages from it, drawn as its bubbles. `msgType` then no longer picks
   // the row's kind: the proposal link is a message whose `metadata.vote`
@@ -429,13 +566,14 @@ async function post({
   // platform username is never written as an @mention (#723: it would
   // notify whoever owns that handle there), and GitHub already notifies the
   // author of an issue opened there about comments on it.
-  const threadText = mention ? `@${mention} ${text}` : text;
+  const threadText = handles ? `${handles} ${text}` : text;
   try {
     // A spec is a card in the thread (its full text is on GitHub, and one
     // click away from the card), not a wall of markdown in a chat bubble.
     message = threadMessage && sender
       ? await ws.sendBotMessage(pool, app.id, {
-        user: sender, content: threadMessage.content, metadata: threadMessage.metadata,
+        user: sender, content: handles ? `${handles} ${threadMessage.content}` : threadMessage.content,
+        metadata: threadMessage.metadata,
         thread: { type: 'issue', ref: issueNumber }, msgType: threadMessage.msgType,
       })
       : await inThread(threadText, { type: 'issue', ref: issueNumber });
@@ -444,15 +582,15 @@ async function post({
   }
   // A system message fires no mention notifications of its own, so the
   // mention row is written here, as the "needs a conversation" prompt does
-  // (conversation-prompt.js). Only for the poster: the content handed over
-  // is their handle alone, never the message, whose model-written text could
-  // name anybody.
+  // (conversation-prompt.js). Only for the people it tags: the content
+  // handed over is their handles alone, never the message, whose
+  // model-written text could name anybody.
   let notified = 0;
-  if (mention && message?.id) {
+  if (handles && message?.id) {
     try {
       const notify = notifications || require('./notifications');
       const rows = await notify.createMentionNotifications(pool, {
-        appId: app.id, chatMessageId: message.id, senderId: senderId ?? sender?.id ?? null, content: `@${mention}`,
+        appId: app.id, chatMessageId: message.id, senderId: senderId ?? sender?.id ?? null, content: handles,
       });
       await Promise.all(rows.map((row) => notify.hydrateAndPush(pool, row)));
       notified = rows.length;
@@ -478,7 +616,7 @@ async function post({
   ).catch(() => {});
   log.info('homeroom-bot', 'Posted on issue', {
     app: app.slug, issueNumber, kind, github: !!comment, thread: !!message,
-    ...(mention ? { mentioned: mention, notified } : {}),
+    ...(tagged.length ? { mentioned: tagged, notified } : {}),
     ...(proposalSessionId ? { proposalThread: !!proposalMessage } : {}),
   });
   return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!message };
@@ -941,6 +1079,10 @@ module.exports = {
   proposalLink,
   tagsPoster,
   issuePoster,
+  mentionTargets,
+  recordMentionOptOuts,
+  parseStopMentioning,
+  MAX_MENTIONS,
   post,
   advanceSeen,
   botUsernameOf,

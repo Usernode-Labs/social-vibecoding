@@ -227,7 +227,7 @@ test('live.post puts the card in the thread and the full spec on GitHub', async 
     appId: 9, user: BOT, content: card.content, metadata: card.metadata,
     thread: { type: 'issue', ref: 12 }, msgType: 'spec_share',
   }]);
-  assert.equal(live.tagsPoster('spec'), false, 'a notice, not a question: nobody is @-mentioned');
+  assert.equal(live.tagsPoster('spec'), true, 'whoever filed it and took part are tagged on the spec');
 });
 
 function actHarness() {
@@ -268,7 +268,7 @@ test('live: the spec goes on the issue before the build, and on the proposal onc
   const spec = h.posts[0];
   assert.equal(spec.text, live.specCommentText(SPEC));
   assert.deepEqual(spec.threadMessage, live.specCard({ sessionId: 5001, version: 3, spec: SPEC, bot: BOT }));
-  assert.equal(spec.mention, null);
+  assert.ok(Array.isArray(spec.mentions), 'tagged like every answer (tests/homeroom-bot-mentions.test.js)');
   assert.ok(postedAt.length >= 1, 'its GitHub comment counts as the bot\'s own');
 
   const shares = h.queries.filter((q) => /SET shared_to_group_at = NOW\(\)/.test(q.sql));
