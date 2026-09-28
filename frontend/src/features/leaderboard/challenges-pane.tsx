@@ -59,6 +59,7 @@ import { SeasonProgress, type SeasonProgressView } from './season-progress';
 import type { ChallengeState } from './challenge-card';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
 import { YourStanding } from './your-standing';
+import { CountedActivities, UnlockedChallenges, PointsExplainer } from './challenge-activity';
 
 // The controller, by name. It is published on `window` for its legacy callers
 // (./leaderboard.js's lazy mount, app.js's pull-to-refresh and its #982
@@ -133,6 +134,7 @@ type GridView =
     progress: SeasonProgressView;
     notice?: string;
     onboardingEventId?: number | null;
+    unlocked?: { eventId: number; groups: string[]; next: { href: string; title: string } | null } | null;
     // While setup gates the event: how many challenges it hides (0 = none
     // to show, and on an older server without the count).
     lockedCount?: number;
@@ -156,6 +158,8 @@ type CtaView =
 
 type DetailView = {
   key: string;
+  window?: string | null;
+  personalActivities?: boolean;
   eyebrow: string | null;
   goal: string;
   task: string | null;
@@ -349,6 +353,8 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           declared dapp.json check anchors.
       */}
       <SeasonProgress id="tc-se-challenge-summary" view={view.progress} className="mb-4" />
+      {view.unlocked ? <UnlockedChallenges view={view.unlocked} /> : null}
+      <PointsExplainer />
       {view.onboardingEventId != null ? (
         <button
           className="mb-3 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
@@ -584,8 +590,11 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         </a>
       ) : null}
       {view.description ? <p className={PROSE}>{view.description}</p> : null}
+      {view.window ? <PageSection heading="Activity window">{view.window}</PageSection> : null}
+      <PointsExplainer />
       {view.requirements ? <PageSection heading="Requirements">{view.requirements}</PageSection> : null}
       {view.scoring ? <PageSection heading="Scoring">{view.scoring}</PageSection> : null}
+      {view.personalActivities ? <CountedActivities key={view.key} challengeId={view.key} /> : null}
       <section className="flex flex-col gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
         <div className="flex items-baseline justify-between gap-3">
           {/* `mb-0`: this heading is an ITEM on a shared baseline with the

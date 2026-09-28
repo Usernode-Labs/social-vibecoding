@@ -688,6 +688,13 @@ export function KudosPane(): ReactNode {
       {state.chrome?.kind === 'profile' ? <ProfileHeader view={state.chrome} /> : null}
       {state.chrome?.kind === 'tabs' ? <TabChrome view={state.chrome} /> : null}
       <div id="leaderboard-body" className="mt-2">
+        <details className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
+          <summary className="cursor-pointer font-medium">What are kudos?</summary>
+          <p className="mt-2">Kudos thank someone for a proposal. The Kudos boards show appreciation on merged proposals, and My history shows the kudos and votes you gave.</p>
+          <p className="mt-1">Your giving allowance resets weekly. Received kudos do not expire with that reset, though they can be retracted or removed with a contribution. Each board shows its selected time period.</p>
+          <p className="mt-1">Kudos are separate from challenge points and tokens. Check a challenge’s scoring rules to see what earns points.</p>
+          <a href="#leaderboard/challenges" className="mt-2 inline-block font-medium text-violet-700 dark:text-violet-400">See challenges and scoring</a>
+        </details>
         <Body view={state.body} />
       </div>
     </>

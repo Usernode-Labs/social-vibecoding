@@ -8149,6 +8149,25 @@
     {
       "source": "src/routes/profile.js",
       "method": "GET",
+      "path": "/api/me/challenges/:challengeId/activities",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "leaderboards.get.me.challenges.item.activities.d3bd220a",
+      "domain": "leaderboards",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "leaderboard",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#leaderboard/challenges",
+      "clientReferences": [
+        "frontend/src/features/leaderboard/challenge-activity.tsx",
+        "frontend/src/features/leaderboard/challenge-activity.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/profile.js",
+      "method": "GET",
       "path": "/api/me/email",
       "expression": null,
       "status": "mapped",

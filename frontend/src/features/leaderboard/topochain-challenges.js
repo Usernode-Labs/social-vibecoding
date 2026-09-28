@@ -614,12 +614,47 @@ const TopochainChallenges = {
       // without one; a payload without the field (an older server) is 0,
       // which draws no placeholder. Unlocked, nothing hides and there is
       // nothing to say: no notice, no count.
+      unlocked: onboarding.unlocked ? TopochainChallenges._unlockSummary(ordered, groups) : null,
       ...(onboarding.unlocked ? {} : {
         notice: 'Finish these to unlock the rest of the season.',
         lockedCount: Number(onboarding.hidden_count) || 0,
       }),
       groups,
     };
+  },
+
+  _unlockSummary(ordered, groups) {
+    const available = groups.filter(group => group.key !== 'setup' && group.cards.length);
+    if (!available.length) return null;
+    const next = ordered.find(c => TopochainChallenges._groupOf(c).key !== 'setup'
+      && !TopochainChallenges._isDone(c) && TopochainChallenges._isOpen(c));
+    const eventId = TopochainChallenges._eventId();
+    return {
+      eventId,
+      groups: available.map(group => group.heading).filter(Boolean),
+      next: next ? {
+        href: `#leaderboard/challenges/${Number(eventId)}/${Number(next.id)}`,
+        title: String(next.card_preview?.goal || 'Open a challenge'),
+      } : null,
+    };
+  },
+
+  _exactWindow(c) {
+    const context = window.TopochainEventContext;
+    const event = context && typeof context.selectedEvent === 'function' ? context.selectedEvent() : null;
+    const start = c.effective?.schedule_start || event?.starts_at;
+    const end = c.effective?.schedule_end || event?.ends_at;
+    const format = value => {
+      if (!value) return null;
+      const date = new Date(value);
+      return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(undefined, {
+        weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+      }).format(date) : null;
+    };
+    const from = format(start); const through = format(end);
+    if (!from && !through) return null;
+    return [from && `Starts ${from}.`, through && `Ends ${through}.`].filter(Boolean).join(' ');
   },
 
   // One group's header, from its challenges: how many are done, whether all
@@ -1398,6 +1433,8 @@ const TopochainChallenges = {
 
     return {
       key: str(challenge.id),
+      window: TopochainChallenges._exactWindow(challenge),
+      personalActivities: !!window.App?.user?.id,
       eyebrow,
       goal: str(cp.goal || ''),
       deadline,
