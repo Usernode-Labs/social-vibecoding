@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { withStateRead } = require('./lib/agent-session-state-read');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -188,7 +189,7 @@ function withBrowser(fn) {
       id: 7, title: 'Dark mode', status: 'open', focusApp: null, focusContext: {}, busy: false,
       activeChange: null, changes: [], lastActivityAt: null, createdAt: null,
     };
-    globalThis.fetch = async (url, init = {}) => {
+    globalThis.fetch = withStateRead(async (url, init = {}) => {
       const method = init.method || 'GET';
       const body = init.body ? JSON.parse(init.body) : null;
       requests.push([method, url, body]);
@@ -207,7 +208,7 @@ function withBrowser(fn) {
       else if (/\/turns$/.test(url)) return { ok: false, status: 409, json: async () => ({ error: 'busy', busy: true }) };
       else answer = { session, turn: null };
       return { ok: true, status: 200, json: async () => answer };
-    };
+    });
     try {
       const api = loadTsx('tests/fixtures/agent-session-api.ts');
       await fn({ api, requests, toasts });
@@ -264,16 +265,16 @@ test('Save parks the text only while the Mayor works; a draft is sent by a tap o
 
 test('Stop hands back the message still waiting, or the newest one sent', () => {
   const { stoppedText } = loadTsx('tests/fixtures/agent-session-api.ts');
-  const turn = (pendingUserText) => ({ pendingUserText });
+  const sending = (message) => [{ clientId: 'c1', message, shown: message, status: 'sending', error: '', createdAt: 1, attachmentKeys: [] }];
   const rows = [
     { role: 'user', content: 'first' },
     { role: 'assistant', content: 'ok' },
     { role: 'user', content: 'second' },
     { role: 'system', content: 'Build started' },
   ];
-  assert.equal(stoppedText({ turn: turn('waiting'), messages: rows }), 'waiting');
-  assert.equal(stoppedText({ turn: turn(null), messages: rows }), 'second');
-  assert.equal(stoppedText({ turn: turn(null), messages: [] }), null);
+  assert.equal(stoppedText({ outbox: sending('waiting'), messages: rows }), 'waiting', 'the message still on its way');
+  assert.equal(stoppedText({ outbox: [], messages: rows }), 'second');
+  assert.equal(stoppedText({ outbox: [], messages: [] }), null);
 });
 
 test('the composer keeps what was typed per conversation, and the drafts list offers its three acts', () => {
@@ -367,7 +368,7 @@ test('each model says what a typical change costs on it, never as a bare amount'
   assert.doesNotMatch(pill, /about/, 'closed: no estimate');
   assert.doesNotMatch(read('frontend/src/features/agent-session/index.tsx'), /data-agent-session-model-cost|typical change<\/span>/,
     'and nothing beside it');
-  assert.match(read('frontend/src/features/agent-session/api.ts'), /request\('\/api\/model-notes'\)/, 'the dev chat\'s figures, from its route');
+  assert.match(read('frontend/src/features/agent-session/api.ts'), /read\('notes', '\/api\/model-notes'\)/, 'the dev chat\'s figures, from its route');
 });
 
 // ── 5. Reply costs, and a turn that did not finish ─────────────────────

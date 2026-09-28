@@ -266,9 +266,9 @@ test('unpromote against a real PostgreSQL', async (t) => {
       assert.ok(s[0].promoted_at, 'promoted_at stays: it records that it was once proposed');
 
       assert.deepEqual(loaded.spies.destroyed, ['usernode-worker-10']);
-      assert.equal(loaded.spies.chat.length, 2, 'app chat and the proposal thread');
+      assert.equal(loaded.spies.chat.length, 1, 'the proposal thread; a channel carries no activity');
       assert.match(loaded.spies.chat[0].content, /alice moved PR #7: Tidy the header back to Underway/);
-      assert.deepEqual(loaded.spies.chat[1].thread, { type: 'session', ref: 10 });
+      assert.deepEqual(loaded.spies.chat[0].thread, { type: 'session', ref: 10 });
       assert.doesNotMatch(loaded.spies.chat[0].content, /—/, 'no em dashes in product copy');
       assert.equal(loaded.spies.sessionUpdates.at(-1).action, 'unpromoted');
       assert.equal(loaded.spies.voteUpdates.at(-1).sessionId, 10);
@@ -278,7 +278,7 @@ test('unpromote against a real PostgreSQL', async (t) => {
       const again = await srv.post(10);
       assert.equal(again.status, 200);
       assert.equal(again.body.alreadyUnderway, true);
-      assert.equal(loaded.spies.chat.length, 2, 'a repeat posts nothing');
+      assert.equal(loaded.spies.chat.length, 1, 'a repeat posts nothing');
     });
 
     await t.test('an Underway proposal cannot be voted on or claimed for a merge', async () => {

@@ -159,6 +159,13 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
+      "fingerprint": "186bdc9221b3dd99e2f1",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted "
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
       "fingerprint": "3ebf0a6fda28d39ecee9",
       "count": 1,
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS} FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
@@ -183,13 +190,6 @@
       "fingerprint": "7b1ff9cff45031446175",
       "count": 1,
       "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
-    },
-    {
-      "source": "src/routes/apps.js",
-      "kind": "structural-template",
-      "fingerprint": "c803ef2d58849531c800",
-      "count": 1,
-      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boo"
     },
     {
       "source": "src/routes/chat.js",
@@ -449,6 +449,27 @@
       "fingerprint": "637f78fe7afd6e0a2a5b",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done FROM challenges c JOIN season_events se ON se.id = c.season_event_id LEFT JOIN"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "134804e3ee991de9a219",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_local_commit_sha = CASE WHEN handoff_uploaded_sha = $1 THEN handoff"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "1b33c1367f728315daa1",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5, ${summaryFreshness.INVALIDATE_SQL}, handoff_upload_checked_sha = checks_comm"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "4d198d8077561e5df3bd",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_local_commit_sha = CASE WHEN handoff_uploaded_sha = $1 THEN handoff"
     },
     {
       "source": "src/routes/sessions.js",
@@ -761,13 +782,6 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "14f151af81fb8a4ffe22",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "157017d7b5984923ede2",
       "count": 1,
       "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.status = 'merged' ${prCursorSql} ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, cs.id DESC LIMIT $${prPa"
@@ -803,9 +817,37 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
+      "fingerprint": "6341099aa6cadaa62bea",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, stale_notified_at = NULL WHERE id = $2`"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "a4928abcd2921e892baa",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
       "fingerprint": "c0f8e5747ee725a64c53",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "f608cc463981be2c9bda",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, stale_notified_at = NULL, approval_epoch = approval_epoch + CASE WHEN $3::"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "76b99148103cf1d2387f",
+      "count": 1,
+      "preview": "NEEDS_FEED_SQL"
     },
     {
       "source": "src/routes/workshop-overview.js",
@@ -878,11 +920,32 @@
       "preview": "`INSERT INTO app_check_history (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, consecutive_passes) VALUES ${values.jo"
     },
     {
+      "source": "src/services/cli-handoff-sync.js",
+      "kind": "structural-template",
+      "fingerprint": "468267d2ba00b7bc7ac5",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_uploaded_sha = $1, handoff_local_commit_sha = NULL, handoff_upload_"
+    },
+    {
+      "source": "src/services/cli-handoff-sync.js",
+      "kind": "structural-template",
+      "fingerprint": "dbc430251a0b764b430a",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_uploaded_sha = $1, handoff_local_commit_sha = NULL, handoff_upload_"
+    },
+    {
       "source": "src/services/communities.js",
       "kind": "structural-template",
       "fingerprint": "5c0f6f71276d5c1f5622",
       "count": 1,
       "preview": "`SELECT a.community_id, (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS member_count, EXISTS (SELECT 1 FROM community_m"
+    },
+    {
+      "source": "src/services/community-invites.js",
+      "kind": "structural-template",
+      "fingerprint": "b6d1aa5f14b1c9bc2dbc",
+      "count": 1,
+      "preview": "`SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses, i.expires_at, i.revoked_at, a.slug, a.name, a.icon_emoji, a.icon_image_id, a."
     },
     {
       "source": "src/services/connector-limits.js",
@@ -1100,6 +1163,20 @@
       "fingerprint": "82e227c3af8b4b0141b0",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET platform_env_state = $2, platform_env_detail = $3::jsonb WHERE id = $1${commitGuard}`"
+    },
+    {
+      "source": "src/services/pr-import-sync.js",
+      "kind": "structural-template",
+      "fingerprint": "36b109513c0a522a23d1",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET imported_pr_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, stale_notified_at = NULL, approval_epoch = approval_epoch + CASE WHEN $"
+    },
+    {
+      "source": "src/services/pr-import-sync.js",
+      "kind": "structural-template",
+      "fingerprint": "dd7dfd2983ae4a231fb1",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`"
     },
     {
       "source": "src/services/preview-lifecycle.js",

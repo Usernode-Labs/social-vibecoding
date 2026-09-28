@@ -2567,9 +2567,8 @@ const App = {
             window.UsernodeReact?.messages?.refreshBlockedView?.(data.userId, data.blocked);
             break;
           case 'agent_session_changed':
-            // #2779: one of this user's agent sessions started or finished
-            // a turn, or was read in another tab. Recents, the mark's menu
-            // and Messages redraw its spinner or green dot from the list.
+            // #2779: an agent session changed (with its new `version`). The
+            // lists redraw their marks; the open one re-reads if behind.
             window.UsernodeReact?.agentSession?.listChanged?.(data);
             break;
           case 'agent_session_drafts_changed':
@@ -2663,6 +2662,10 @@ const App = {
     // Messages owns a global drawer unread badge even while its screen is
     // closed, so reconcile its summary after a disconnect in every view.
     window.UsernodeReact?.messages?.refresh?.();
+    // An open agent session learns about its changes from this socket's
+    // notices: whatever it missed while the socket was down, it reads now.
+    window.UsernodeReact?.agentSession?.resync?.();
+    window.UsernodeReact?.agentSession?.refreshList?.();
     // #1038: `session_state` is fire-and-forget like every other broadcast,
     // so anything that transitioned during the disconnect window was lost.
     // The reconcile endpoint is the authority — it also clears overrides for
@@ -3231,8 +3234,12 @@ const App = {
         DevChat.messages.push({
           role: 'system',
           ccLog: data.log,
-          content: data.agentBackend === 'codex_openrouter' ? 'Codex log' : 'Claude Code log',
+          // #3296: an OpenRouter model can run in Claude Code as well.
+          content: data.agentBackend === 'codex_openrouter' && data.agentHarness !== 'claude'
+            ? 'Codex log'
+            : 'Claude Code log',
           agentBackend: data.agentBackend,
+          agentHarness: data.agentHarness,
           agentModel: data.agentModel,
           created_at: new Date().toISOString(),
         });
@@ -3798,6 +3805,65 @@ const App = {
     )}`;
   },
 
+  // The token of an invite link's path, or null. Same shape the server's
+  // isSpaDocumentPath lets through (src/middleware/auth.js).
+  _inviteTokenFromPath(pathname) {
+    const m = /^\/invite\/([A-Za-z0-9_-]{22})$/.exec(String(pathname || ''));
+    return m ? m[1] : null;
+  },
+
+  // Follow an invite link as a signed-in account with platform access
+  // (services/community-invites.js). Home first, with the invite address
+  // replaced so Back or a reload does not ask again; then, if the link is
+  // live and the viewer is not in the project yet, one confirm naming it and
+  // who invited them. In it — just now, or already — opens its hub. A dead
+  // link says why, once.
+  async _followInvite(token) {
+    try { history.replaceState(null, '', App._rootUrl('')); } catch (_) {}
+    App.restoreFromHash();
+    const toast = (msg, error) => {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg, error ? { error: true } : undefined);
+    };
+    const DEAD = {
+      expired: 'That invite link has expired.',
+      revoked: 'That invite link was turned off.',
+      used_up: 'That invite link has been used as many times as it allows.',
+      unknown: 'That invite link does not work.',
+    };
+    const openHub = (slug) => {
+      if (!slug) return;
+      if (typeof AppView !== 'undefined' && AppView._landOnHub) AppView._landOnHub(slug);
+      App.navigateToApp(slug, 'dev');
+    };
+    try {
+      const res = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
+      const standing = await res.json().catch(() => ({}));
+      if (standing.mine === 'joined' && standing.slug) { openHub(standing.slug); return; }
+      if (!standing.live) { toast(DEAD[standing.reason] || DEAD.unknown, true); return; }
+      const name = standing.project && standing.project.name ? standing.project.name : 'this project';
+      const count = standing.memberCount || 0;
+      const ok = window.ConfirmModal ? await ConfirmModal.show({
+        title: `Join ${name}?`,
+        message: `${standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.'}`
+          + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : ''),
+        confirmLabel: 'Join',
+        cancelLabel: 'Not now',
+      }) : true;
+      if (!ok) return;
+      const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      const result = await joined.json().catch(() => ({}));
+      if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
+      if (result.slug) {
+        toast(`You joined ${result.name || name}.`);
+        openHub(result.slug);
+      }
+    } catch (_) {
+      toast('Could not open that invite link. Try again.', true);
+    }
+  },
+
   _deepLinkTarget() {
     if (location.hash) return location.hash;
     const appPath = App._appRouteFromPath(location.pathname);
@@ -3826,6 +3892,28 @@ const App = {
         ? (qIdx === -1 ? rawHash : rawHash.slice(0, qIdx))
         : pathRoute;
       const fragQuery = qIdx === -1 ? '' : rawHash.slice(qIdx + 1);
+
+      // ── An invite link (/invite/<token>) ───────────────────────────
+      // Signed out, it is the landing, whose invite card
+      // (features/auth/landing.tsx) names the project and offers sign-up;
+      // the path is remembered so signing in comes back here. Signed in, it
+      // is followed after a confirm (App._followInvite). A waiting account
+      // never reaches this: enterAuthed hands it to the waiting room, which
+      // follows the link itself (features/auth/waiting.tsx). A fragment
+      // outranks it, as it does a clean app path: #signup and #login are
+      // where the landing sends a visitor next.
+      const inviteToken = rawHash ? null : App._inviteTokenFromPath(location.pathname);
+      if (inviteToken && window.AuthScreens) {
+        if (!App.user) {
+          AuthScreens.rememberDeepLink(location.pathname);
+          AuthScreens.show('landing');
+          return;
+        }
+        if (App.user.hasPlatformAccess !== false) {
+          App._followInvite(inviteToken);
+          return;
+        }
+      }
 
       // ── Anonymous-shell routing (fold-auth-pages-into-SPA) ─────────
       // #landing / #login / #signup / #register[/<code>] / #waiting are
@@ -4030,8 +4118,9 @@ const App = {
         App.navigateToProfile(parts[1] ? decodeURIComponent(parts[1]) : null);
         return;
       }
-      if (parts[0] === 'workshop') {
-        // The Workshop screen (#workshop): the viewer's apps with their two
+      if (parts[0] === 'communities' || parts[0] === 'workshop') {
+        // The Communities screen (#communities; #workshop is its old name and
+        // still lands here): the viewer's communities with their two
         // Workshop numbers. No gate beyond the anonymous-shell branch above —
         // the counts endpoint is me-scoped server-side and answers 401 to a
         // caller with no session. No second segment: the drill-in is the
@@ -4933,7 +5022,7 @@ const App = {
   _abandonWorkshopResume() {
     if (!App._resumingWorkshop || App._resumingWorkshop !== location.pathname) return false;
     App._forgetWorkshopView();
-    try { history.replaceState(null, '', App._rootUrl('#workshop')); } catch (_) { return false; }
+    try { history.replaceState(null, '', App._rootUrl('#communities')); } catch (_) { return false; }
     App.restoreFromHash();
     return true;
   },
@@ -5061,8 +5150,22 @@ const App = {
   // One predicate, because the tab that lights and the back slot's glyph are
   // two answers to the same question and have to agree.
   _isMessagesThread() {
-    return App.currentTab === 'dev'
-      && (App.currentSubTab === 'chat' || App.currentSubTab === 'sessions');
+    return App.currentTab === 'dev' && App.currentSubTab === 'sessions';
+  },
+
+  // The project's CHANNEL at `/app/<slug>/dev/chat`: a level inside the
+  // project's hub, not a thread of Messages. It was one (#2718 review) while
+  // the channels were listed in Messages; they live on each community's hub
+  // now, so it lights Communities and its chevron goes back up to the hub.
+  _isChannelThread() {
+    return App.currentTab === 'dev' && App.currentSubTab === 'chat';
+  },
+
+  // The address of a project's hub, the page its channel hangs off. A HASH,
+  // because the back button follows its href only when it is one (the
+  // #back-btn listener below); `#app/<slug>/workshop` is the same route.
+  _hubHref(slug) {
+    return slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#communities';
   },
 
   // The screen root _showOnlyScreen last revealed, or null before the first
@@ -5589,7 +5692,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('workshop-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Workshop');
+      App.setHeaderTitle('Communities');
       // Nothing in the left slot: the Workshop is a tab root, and its tab is
       // on screen beside it. _showOnlyScreen publishes that from App._BACK_SLOT
       // — see the table for why a root shows no glyph at all.
@@ -6788,6 +6891,8 @@ const App = {
       // header resolves its destination from the session's captured origin
       // first (features/header/platform-header.tsx), and Messages otherwise.
       if (App._isMessagesThread()) return ['arrow', '#messages'];
+      // THE CHANNEL hangs off its project's hub (see _isChannelThread).
+      if (App._isChannelThread()) return ['arrow', App._hubHref(App.currentApp)];
       // AN APP'S WORKSHOP IS NOT AN APP TO STEP OUT OF — any app's (#2740
       // review), not only the platform's own (#2799). The ✕ is the RUNNING
       // app's control; on the `dev` tab #app-view is the platform's Workshop

@@ -42,7 +42,8 @@
  * Improve panel, and came back as an App | Workshop segmented control when
  * that panel retired (#2718 review). The owner's call in #2761 was that it
  * should not be a toggle at all: the Workshop is one more place this menu
- * goes, so it is a "Go to workshop" row in the list like the others, and
+ * goes, so it is a row in the list like the others ("Go to community hub"
+ * since #3287, the page it opens on), and
  * nothing replaces the App segment — the parked app on the bar (#2762) is
  * how you get back to a running app.
  *
@@ -117,18 +118,20 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
 import {
-  BoardIcon,
   ChatIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   InfoCircleIcon,
+  LinkIcon,
   PlusWideIcon,
   SparklesIcon,
   TerminalIcon,
+  UserGroupIcon,
   XIcon,
 } from '@/components/ui/icons';
 
 import { AboutPane } from './about-pane';
+import { InvitePane } from './invite-pane';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
 import { improveStore } from '../improve/improve-store.js';
@@ -282,7 +285,7 @@ export function AppsSwitcherSheet(): ReactNode {
   } = useStoreState(improveStore);
   const agentSessions = useAgentSessions();
   // Votes this viewer owes on the app in context — the badge on the
-  // "Go to workshop" row. See the fetch below.
+  // "Go to community hub" row. See the fetch below.
   const [owed, setOwed] = useState<number | null>(null);
 
   // HOMEROOM FOR A VIEWER WHO IS NOT SERVED ITS ROW (SELF_APP_PUBLIC_VOTING
@@ -301,8 +304,10 @@ export function AppsSwitcherSheet(): ReactNode {
   // would come back without its `hidden`.
   const workshopRowRef = useRef<HTMLAnchorElement | null>(null);
   const discussionRowRef = useRef<HTMLAnchorElement | null>(null);
+  // The invite row goes with them: its links are to the same project.
+  const inviteRowRef = useRef<HTMLButtonElement | null>(null);
   useIsomorphicLayoutEffect(() => {
-    for (const el of [workshopRowRef.current, discussionRowRef.current]) {
+    for (const el of [workshopRowRef.current, discussionRowRef.current, inviteRowRef.current]) {
       if (el && el.classList.contains('hidden') !== !!restricted) {
         el.classList.toggle('hidden', !!restricted);
       }
@@ -341,7 +346,7 @@ export function AppsSwitcherSheet(): ReactNode {
   useEffect(() => {
     if (open && window.App?.user) void loadAgentSessions();
   }, [open]);
-  const continuing = mounted && view !== 'about'
+  const continuing = mounted && view === 'menu'
     ? continueRows(agentSessions || [])
     : { rows: [], more: false };
 
@@ -439,13 +444,14 @@ export function AppsSwitcherSheet(): ReactNode {
             the class string cannot be. */}
         <div className="flex items-center gap-3 px-5 pt-4 pb-1 shrink-0">
           {/*
-              THE BACK ARROW IS THE ABOUT PANE'S, and it replaces the label
+              THE BACK ARROW IS THE SECOND PANES' (About, Invite), and it
+              replaces the label
               rather than sitting beside it: About is one level inside this
               sheet, so the row that names the level has to be the row that
               leaves it. On the menu it is the "Apps" label it has always
               been.
           */}
-          {view === 'about' ? (
+          {view !== 'menu' ? (
             <button
               id="app-about-back"
               type="button"
@@ -511,12 +517,12 @@ export function AppsSwitcherSheet(): ReactNode {
             scroll as it is. Back on the menu pane they are where they were.
             `view` is 'menu' in the prerender, so the hydrating render is the
             same markup. */}
-        {view === 'about' ? null : <UpdateStatus />}
-        {view === 'about' ? null : <ImproveQuickActions />}
+        {view !== 'menu' ? null : <UpdateStatus />}
+        {view !== 'menu' ? null : <ImproveQuickActions />}
         {/* THE App | Workshop STRIP IS RETIRED (#2761). It sat here as a
             segmented control, and a toggle was the wrong shape for it: this
             menu is a list of places, and the strip's one real job was
-            getting you to the Workshop. That is the "Go to workshop" row at
+            getting you to the Workshop. That is the "Go to community hub" row at
             the top of the list below now, carrying the vote-count badge the
             strip's Workshop segment carried. Nothing replaces the App
             segment — the parked app on the bar (#2762) is the way back to a
@@ -528,7 +534,9 @@ export function AppsSwitcherSheet(): ReactNode {
           id="switcher-nav"
           className="flex-1 min-h-0 overflow-y-auto pb-2 platform-safe-sheet"
         >
-          {view === 'about' ? <AboutPane label={appLabel} /> : (
+          {view === 'about' ? <AboutPane label={appLabel} /> : view === 'invite' ? (
+            <InvitePane slug={slug || null} label={appLabel} />
+          ) : (
           <>
           {/*
               ── THE APP'S OPTIONS, and nothing else ────────────────────
@@ -618,6 +626,12 @@ export function AppsSwitcherSheet(): ReactNode {
               `data-context-row="workshop"` is the key the strip's segment
               carried, kept so the row still names its destination.
 
+              GO TO COMMUNITY HUB is its words since #3287: a project's page
+              opens on its hub (the project's channel, Needs you, who is
+              here) beside its Workshop, so the row says where it lands, with
+              the Communities tab's glyph. The address, id and key are the
+              Workshop's still, as every other door to the hub's are.
+
               THE BADGE IS THE ONE THING CONDITIONAL, and only in a subtree
               React already owns: `owed` is null in the prerender and arrives
               from the fetch above after the sheet opens.
@@ -627,8 +641,8 @@ export function AppsSwitcherSheet(): ReactNode {
             dataContextRow="workshop"
             elRef={workshopRowRef}
             href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
-            icon={<BoardIcon />}
-            label="Go to workshop"
+            icon={<UserGroupIcon />}
+            label="Go to community hub"
             trailing={owed ? (
               <span
                 id="app-menu-workshop-owed"
@@ -639,6 +653,12 @@ export function AppsSwitcherSheet(): ReactNode {
                 {owed}
               </span>
             ) : null}
+            // It says community hub, so it opens the hub, not whichever tab
+            // the page was last left on (AppView._landOnHub).
+            onClick={(e) => {
+              if (slug) (window as any).AppView?._landOnHub?.(slug);
+              followThenDismiss(e, slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#');
+            }}
           />
           {/*
               #2763: the TWO-PANE route. `#app/<slug>/dev/chat` was the old
@@ -661,6 +681,24 @@ export function AppsSwitcherSheet(): ReactNode {
             icon={<ChatIcon />}
             label={mounted && target === 'platform' ? 'Go to platform discussion' : 'Go to app discussion'}
           />
+          {/*
+              INVITE TO COMMUNITY: a link to this project anyone can use to
+              join it (./invite-pane.tsx, the third pane, for About's
+              reason). On Home the project in context is Homeroom's own, so
+              the row invites people to Homeroom. A button, not an anchor:
+              what it opens is this sheet in another state, not an address.
+              Rendered unconditionally, like the rows above it; the pane
+              says so when the viewer cannot invite anyone yet.
+          */}
+          <button
+            id="app-menu-row-invite"
+            ref={inviteRowRef}
+            type="button"
+            className={`${ROW} w-full text-left`}
+            onClick={() => AppContext.showInvite()}
+          >
+            <RowBody icon={<LinkIcon />} label="Invite to community" />
+          </button>
           {/*
               The terminal is the one Improve row that stays TOP LEVEL rather
               than moving into About: it is something you do, not a fact about

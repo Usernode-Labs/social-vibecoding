@@ -765,6 +765,9 @@ function chatRoutes(config) {
         if (result?.code === 'invalid_thread') {
           return res.status(400).json({ error: 'Invalid thread_type/thread_ref' });
         }
+        if (result?.code === 'channel_moved') {
+          return res.status(409).json({ error: communities.CHANNEL_MOVED, code: 'channel_moved' });
+        }
         log.error('chat', 'Canonical chat write returned no result', {
           slug: req.params.slug, code: result?.code,
         });

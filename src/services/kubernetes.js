@@ -798,8 +798,12 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
 async function deployApplication(config, {
   app, environment, sessionId, imageRef, env, cpus = null,
   labels: extraLabels = {}, runtimeName = null, internalOnly = false,
+  command = [],
 }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
+  if (!Array.isArray(command) || command.some((part) => typeof part !== 'string' || !part)) {
+    throw new Error('Kubernetes container command must be an array of non-empty strings');
+  }
   const cfg = config.kubernetes;
   const namespace = cfg.appNamespace;
   const name = runtimeName || appResourceName(app, environment, sessionId);
@@ -841,6 +845,7 @@ async function deployApplication(config, {
           ...previewDatabaseAffinity(cfg, environment),
           containers: [{
             name: 'app', image: imageRef, imagePullPolicy: 'IfNotPresent',
+            ...(command.length ? { command } : {}),
             ports: [{ name: 'http', containerPort: 3000 }],
             env: app.slug === config.selfAppSlug
               ? [{ name: 'USERNODE_SHELL_ASSETS_PREBUILT', value: '1' }]
@@ -1636,16 +1641,18 @@ async function runUnitSuiteJob(config, options) {
 
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
-async function cancelPreviewChecks(config, sessionId) {
+async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
   const { batch, core } = getClients();
   const namespace = config.kubernetes.workerNamespace;
-  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`
+    + (previewRunId ? `,social.usernode.io/preview-run-id=${previewRunId}` : '');
   const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
   await Promise.all((jobs.items || []).map(async job => {
     const name = job.metadata.name;
     if (!name.startsWith(`sv-capture-s${sessionId}-`)
         && !name.startsWith(`sv-evidence-s${sessionId}-`)
         && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
+    if (previewRunId && job.metadata.labels?.['social.usernode.io/preview-run-id'] !== previewRunId) return;
     const podsStopped = async () => {
       const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
       return (pods.items || []).every(pod => ['Succeeded', 'Failed'].includes(pod.status?.phase));

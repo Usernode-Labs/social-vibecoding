@@ -165,6 +165,39 @@ test('stuck-check recovery includes submitted active CLI handoffs without wideni
   } finally { restore(); }
 });
 
+test('markInterruptedBuilds makes a killed build overdue now, and only a build that was still building', async () => {
+  // Proposal 5125, 2026-09-26: its staging build started at 14:55:38, a
+  // deploy's SIGTERM killed the platform at 14:55:51, and the run read as a
+  // live 'building' check until CHECKS_STALE_MS passed. A cleared clock is
+  // what checkRunOverdue and findStuckCheckSessions read as overdue.
+  const { subject, restore } = loadRecovery();
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      return { rows: [{ id: 5125 }] };
+    },
+  };
+  try {
+    assert.deepEqual(await subject.markInterruptedBuilds(pool, [5125, '5125', 7, 'x', null]), [5125]);
+    assert.equal(queries.length, 1);
+    assert.match(queries[0].sql, /SET checks_checked_at = NULL/);
+    assert.match(queries[0].sql, /check_state = 'pending' AND check_phase = 'building'/,
+      'a capture the harvest can re-seat, or a verdict that landed, is left alone');
+    assert.deepEqual(queries[0].params, [[5125, 7]], 'each session once, and only real ids');
+
+    queries.length = 0;
+    assert.deepEqual(await subject.markInterruptedBuilds(pool, []), []);
+    assert.deepEqual(await subject.markInterruptedBuilds(pool, undefined), []);
+    assert.equal(queries.length, 0, 'nothing in flight, nothing written');
+
+    const now = Date.now();
+    assert.equal(subject.checkRunOverdue({
+      check_state: 'pending', check_phase: 'building', checks_commit_sha: 'head', checks_checked_at: null,
+    }, { now, staleMs: 600000 }), true, 'the marked row is overdue at once');
+  } finally { restore(); }
+});
+
 test('checkRunOverdue requires a submitted head and treats a missing timestamp as stalled', () => {
   const { subject, restore } = loadRecovery();
   try {

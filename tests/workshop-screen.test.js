@@ -518,6 +518,22 @@ test('a section shows its three most recent and folds the rest under "Show N mor
   assert.match(html, /aria-label="5 in Communities"/, 'the header counts the whole section');
 });
 
+test('"Show N more" reveals five at a time, then folds back (#3269)', () => {
+  const { sectionFold, SECTION_STEP } = loadTsx('frontend/src/features/workshop/index.tsx');
+  assert.equal(SECTION_STEP, 5);
+  // Twelve rows: 3, then 8, then 12, then back to 3.
+  let fold = sectionFold(12, 3);
+  assert.deepEqual(fold, { shown: 3, label: 'Show 5 more', next: 8 });
+  fold = sectionFold(12, fold.next);
+  assert.deepEqual(fold, { shown: 8, label: 'Show 4 more', next: 13 }, 'the last press names what is left');
+  fold = sectionFold(12, fold.next);
+  assert.deepEqual(fold, { shown: 12, label: 'Show fewer', next: 3 });
+  assert.deepEqual(sectionFold(12, fold.next), { shown: 3, label: 'Show 5 more', next: 8 });
+  // Three or fewer: no fold at all.
+  assert.deepEqual(sectionFold(3, 3), { shown: 3, label: null, next: 3 });
+  assert.equal(sectionFold(0, 3).label, null);
+});
+
 test('rowSubtitle: one short fact, members for a community or group, recency for "Just you"', () => {
   const { rowSubtitle } = loadTsx('frontend/src/features/workshop/index.tsx');
   const now = Date.parse('2026-09-25T12:00:00Z');
@@ -629,17 +645,16 @@ test('coming back from an app re-reveals the screen', () => {
     'entering an app must not clear _inWorkshop — the way back reads it');
 });
 
-test('#workshop is a route of its own', () => {
-  assert.match(appJs, /if \(parts\[0\] === 'workshop'\) \{[\s\S]*?App\.navigateToWorkshop\(\);/,
-    'restoreFromHash resolves it, so a bookmark and a cold boot both land here');
+test('#communities is a route of its own, and #workshop still lands there', () => {
+  assert.match(appJs, /if \(parts\[0\] === 'communities' \|\| parts\[0\] === 'workshop'\) \{[\s\S]*?App\.navigateToWorkshop\(\);/,
+    'restoreFromHash resolves both, so an old bookmark and a cold boot land here');
   assert.match(appJs, /navigateToWorkshop\(\) \{/);
   assert.match(appJs, /_exitWorkshop\(\) \{[\s\S]*?App\._inWorkshop = false;/);
-  assert.match(appJs, /App\.setHeaderTitle\('Workshop'\)/);
-  // THE DOOR IS A TAB (#2718). It was a menu row between Home and Discover,
-  // on the rule that the app chip's menu listed every destination; the bar
-  // carries them now, and Workshop is the fourth of five.
+  assert.match(appJs, /App\.setHeaderTitle\('Communities'\)/);
+  // THE DOOR IS A TAB (#2718), the middle one of five since the rename: the
+  // screen is Communities to the people who use it, and keeps its key.
   const html = read('public/index.html');
-  assert.match(html, /id="platform-tab-workshop"[^>]*href="#workshop"/,
+  assert.match(html, /id="platform-tab-workshop"[^>]*href="#communities"/,
     'the unscoped screen is a tab');
   // The app menu keeps the SCOPED entrance — the link-out every mini-app host
   // in the study draws under a mini-app — as a plain "Go to workshop" row
@@ -758,19 +773,21 @@ test('the app\'s own Workshop keeps the rail, and lights the tab it came through
     /--ws-area: calc\([\s\S]*?max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom, 0px\)\)\s*\);/);
 });
 
-test('the app\'s own Workshop wears the same scope chip, read from the other end', () => {
+test('the app\'s own Workshop wears the same scope panel, read from the other end', () => {
   // "should preserve the app switcher". The all-apps screen's chip says "All
-  // apps" and picking one navigates here; this one names the app and its
-  // panel offers the others — and All apps, which is the way back up and the
-  // other half of why the back arrow is gone.
+  // apps" and picking one navigates here; here the header's tile and name are
+  // the chip (#2768, and at every width since #3295) and the panel offers the
+  // others — and All apps, which is the way back up and the other half of why
+  // the back arrow is gone.
   const chrome = read('frontend/src/features/workshop/workshop-chrome.tsx');
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
 
   assert.match(ws, /import \{ AppWorkshopScope \} from '\.\.\/\.\.\/workshop\/workshop-chrome';/,
     'ONE component, not a second chip that can drift from the first');
-  assert.match(ws, /<AppWorkshopScope\n\s+slug=\{slug\}/);
-  // Its name and artwork come from the store the header's own tile reads, so
-  // the two cannot disagree about which app this is, and no second fetch.
+  assert.match(ws, /<AppWorkshopScope slug=\{slug\} \/>/);
+  // The page's own picture of the app (the hero) reads its name and artwork
+  // from the store the header's tile reads, so the two cannot disagree about
+  // which app this is, and no second fetch.
   assert.match(ws, /name=\{app\.name \|\| undefined\}/);
   assert.match(ws, /iconUrl=\{app\.iconUrl\}/);
   assert.match(ws, /const app = useStoreState\(improveStore\);/);
@@ -778,16 +795,16 @@ test('the app\'s own Workshop wears the same scope chip, read from the other end
   // THE PANEL'S "All apps" ROW IS THE WAY BACK UP — from an app's Workshop.
   // On the all-apps screen itself (#3051, `scope === null`) it only closes.
   assert.match(chrome, /onClose\(\);\n\s*if \(scope === null\) return;\n\s*goToAllApps\(\);/);
-  assert.match(chrome, /function goToAllApps\(\): void \{[\s\S]{0,200}window\.location\.hash = '#workshop';/,
-    'a hash assignment, so the rail\'s Workshop tab and this are one route');
+  assert.match(chrome, /function goToAllApps\(\): void \{[\s\S]{0,200}window\.location\.hash = '#communities';/,
+    'a hash assignment, so the rail\'s Communities tab and this are one route');
   // The app you are already in closes the panel and goes nowhere: a row that
   // re-navigated to the current route would throw this screen's scroll
   // position and its open windows away to arrive where it started.
   assert.match(chrome, /onClose\(\);\n\s*if \(scope\?\.slug === app\.slug\) return;/);
 
-  // ITS OPEN STATE IS A STORE OF ITS OWN (#2768): two controls open this
-  // panel — the chip above 700px, the header's tile and name below it — so
-  // the flag cannot be the chip's `useState`. And it is still not
+  // ITS OPEN STATE IS A STORE OF ITS OWN (#2768): the control that opens this
+  // panel is the header's tile and name, in another React root, so the flag
+  // cannot be a `useState` here. And it is still not
   // workshopStore: the all-apps screen's chip (#3051) keeps its flag there,
   // and a flag shared between two screens is a panel left open on one
   // greeting the other.
@@ -798,7 +815,7 @@ test('the app\'s own Workshop wears the same scope chip, read from the other end
   assert.match(island, /useEffect\(\(\) => \{\n\s*appScopeStore\.set\(\{ open: false \}\);\n\s*return \(\) => appScopeStore\.set\(\{ open: false \}\);\n\s*\}, \[slug\]\);/);
   // The list loads in an effect and never during render.
   assert.match(island, /useEffect\(\(\) => \{[\s\S]{0,600}fetch\(`\/api\/apps\$\{demoQuery\(\)\}`\)/);
-  assert.match(island, /catch \{/, 'and offline leaves the chip working');
+  assert.match(island, /catch \{/, 'and offline leaves the panel working');
 });
 
 // ── 4. The rows behind the counts (#3051) ──────────────────────────────
@@ -814,11 +831,14 @@ test('#3051: the items query reads the counts\' own five predicates, once each',
   for (const name of ['MY_SESSIONS_WHERE', 'MY_PROPOSALS_WHERE', 'MY_GOVERNANCE_WHERE',
     'OWED_PROPOSALS_WHERE', 'OWED_GOVERNANCE_WHERE']) {
     assert.equal((src.match(new RegExp(`const ${name} = `, 'g')) || []).length, 1, `${name} is defined once`);
-    assert.equal((src.match(new RegExp(`\\$\\{${name}\\}`, 'g')) || []).length, 2,
-      `${name} is read by COUNTS_SQL and ITEMS_SQL alike`);
+    // The owed populations are read a third time, by the Needs you feed
+    // (#3270), so the tab's cards and the counts beside it cannot disagree.
+    const reads = name.startsWith('OWED_') ? 3 : 2;
+    assert.equal((src.match(new RegExp(`\\$\\{${name}\\}`, 'g')) || []).length, reads,
+      `${name} is read by COUNTS_SQL and ITEMS_SQL alike${reads === 3 ? ', and by NEEDS_FEED_SQL' : ''}`);
   }
-  assert.equal((src.match(/\$\{VISIBLE_APP_WHERE\}/g) || []).length, 2,
-    'and both apply GET /api/apps\'s visibility filter');
+  assert.equal((src.match(/\$\{VISIBLE_APP_WHERE\}/g) || []).length, 3,
+    'and all three apply GET /api/apps\'s visibility filter');
   const items = route.ITEMS_SQL;
   assert.ok(items.includes(require('../src/services/pr-vote-revision').currentVotePredicateSql('pv', 'cs')));
   assert.equal((items.match(new RegExp(require('../src/services/governance-kinds')
@@ -911,29 +931,38 @@ test('#3051: each tab lists its items under each of your apps, in the list\'s or
   assert.equal(mod.tabFromQuery(''), null);
 });
 
-test('#3051: the Needs you pane draws its items, and a quiet line when there are none', () => {
+test('#3270: the Needs you pane is one feed, every project mixed, one card per screen', () => {
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
+  const card = (kind, id, slug, extra = {}) => ({
+    kind, id, title: `Item ${id}`, summary: null, author: 'ada', number: null, epoch: 2,
+    at: null, yes: 1, no: 0, app: { slug, name: slug.toUpperCase(), icon_url: null, icon_emoji: null }, ...extra,
+  });
   mod.workshopStore.set({
-    open: true, error: false, tab: 'needs', scopeOpen: false, itemsError: false,
-    rows: [{ slug: 'staging-demo-your-app', name: 'Your app', working: 0, needs: 1 }],
-    items: { 'staging-demo-your-app': { working: [], needs: [
-      { kind: 'proposal', id: 8, title: 'Sort by rating', status: 'promoted', at: null },
-    ] } },
+    open: true, error: false, tab: 'needs', scopeOpen: false, itemsError: false, items: {},
+    rows: [{ slug: 'garden', name: 'Garden', working: 0, needs: 2 }, { slug: 'swap', name: 'Swap', working: 0, needs: 1 }],
+    feed: [card('proposal', 8, 'garden'), card('governance', 9, 'swap'), card('proposal', 7, 'garden')],
+    feedError: false, feedCapped: false,
   });
   let out = html();
   const pane = out.slice(out.indexOf('data-workshop-pane="needs"'));
-  assert.match(pane, /<section data-workshop-group="staging-demo-your-app">/);
-  assert.match(pane, /<a[^>]*href="#app\/staging-demo-your-app\/dev\/proposals\/8"[^>]*data-workshop-item="proposal"/);
-  assert.match(pane, /Sort by rating/);
+  assert.match(pane, /<div class="workshop-reel" data-needs-reel="" role="feed" aria-label="Decisions waiting on you">/);
+  assert.deepEqual([...pane.matchAll(/data-needs-card="(\w+)" data-needs-app="([\w-]+)"/g)].map((m) => `${m[2]}:${m[1]}`),
+    ['garden:proposal', 'swap:governance', 'garden:proposal'], 'in the order the server mixed them, not grouped');
+  assert.doesNotMatch(pane, /data-workshop-group=/, 'no list of lists any more');
+  assert.match(pane, /href="#app\/garden\/dev\/proposals\/8"/);
+  assert.match(pane, /data-needs-answer="yes"/, 'a change is answered on its card');
+  assert.match(pane, /<a class="workshop-reel-decide" href="#app\/swap\/dev\/governance\/9" data-needs-answer="open">/,
+    'a group decision opens its own page');
+  assert.match(pane, />1 of 3</);
 
-  mod.workshopStore.set({ items: {} });
+  mod.workshopStore.set({ feed: [] });
   out = html();
-  assert.match(out.slice(out.indexOf('data-workshop-pane="needs"')), /data-workshop-items-empty=""/);
-  mod.workshopStore.set({ items: null, itemsError: true });
+  assert.match(out.slice(out.indexOf('data-workshop-pane="needs"')), /data-needs-empty="">Nothing is waiting on your vote in any of your projects\./);
+  mod.workshopStore.set({ feed: null, feedError: true });
   out = html();
-  assert.match(out.slice(out.indexOf('data-workshop-pane="needs"')), /data-workshop-items-error=""/);
-  mod.workshopStore.set({ open: false, tab: 'status', rows: null, items: null, itemsError: false });
+  assert.match(out.slice(out.indexOf('data-workshop-pane="needs"')), /data-needs-error=""/);
+  mod.workshopStore.set({ open: false, tab: 'status', rows: null, items: null, itemsError: false, feed: null, feedError: false });
 });
 
 test('#3051: the controller reads the items alongside, and survives losing them', async () => {
@@ -947,6 +976,7 @@ test('#3051: the controller reads the items alongside, and survives losing them'
       ['/api/apps', { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A', is_member: true }] }) }],
       ['/api/workshop/counts', { ok: true, json: async () => ({ counts: { a: { working: 0, needs: 1 } } }) }],
       ['/api/workshop/items', { ok: true, json: async () => ({ items: { a: { working: [], needs: [{ kind: 'proposal', id: 1 }] } } }) }],
+      ['/api/workshop/needs-feed', { ok: true, json: async () => ({ items: [{ kind: 'proposal', id: 1, app: { slug: 'a' } }], max: 60 }) }],
     ]);
     const asked = [];
     global.fetch = async (url) => { asked.push(url); return answers.get(url) || { ok: false, json: async () => ({}) }; };
@@ -954,11 +984,18 @@ test('#3051: the controller reads the items alongside, and survives losing them'
     assert.ok(asked.includes('/api/workshop/items'), 'the items are read with the other two');
     assert.equal(workshopStore.get().itemsError, false);
     assert.equal(workshopStore.get().items.a.needs.length, 1);
+    assert.ok(asked.includes('/api/workshop/needs-feed'), 'and the Needs you feed with them (#3270)');
+    assert.equal(workshopStore.get().feed.length, 1);
+    assert.equal(workshopStore.get().feedCapped, false);
 
     answers.set('/api/workshop/items', { ok: false, json: async () => ({}) });
     await workshopController.reload();
     assert.equal(workshopStore.get().error, false, 'losing the items is not the error card');
     assert.equal(workshopStore.get().itemsError, true, 'the tabs say so instead');
+    answers.set('/api/workshop/needs-feed', { ok: false, json: async () => ({}) });
+    await workshopController.reload();
+    assert.equal(workshopStore.get().error, false, 'losing the feed is not the error card either');
+    assert.equal(workshopStore.get().feedError, true);
     assert.deepEqual(workshopStore.get().rows.map((r) => r.slug), ['a']);
     workshopController.close();
   } finally {

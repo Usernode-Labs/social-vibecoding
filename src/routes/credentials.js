@@ -90,6 +90,8 @@ function credentialRoutes(config) {
         ? overrides.get(model.id)
         : model.isRecommended === true,
       isDefaultFavorite: !overrides.has(model.id) && model.isRecommended === true,
+      // #3296: which CLI a turn on this model runs in ('claude' or 'codex').
+      harness: registry.openRouterHarnessForModel(model.id, config),
     }));
     return { ...catalog, totalModels: models.length, models };
   }

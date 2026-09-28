@@ -1,6 +1,9 @@
 /**
  * #platform-mark-btn — the Homeroom mark, and the menu behind it.
  *
+ * The button now draws a sparkle glyph where the "H" brand tile was (see
+ * the comment above the glyph); the id and the argument below still hold.
+ *
  * ── What it replaces, and why the chip could not keep the job ──────────
  *
  * #1443's charter put one control at the top-left of every screen: the
@@ -47,28 +50,20 @@
  * with a chevron and no frame at all. That is the arrangement that reads as
  * "two buttons" without either of them having to shout.
  *
- * ── The artwork is inline source now, not a raster ─────────────────────
+ * ── The artwork is a raster, deliberately ─────────────────────────────
  *
- * This used to be `<img src="/brand/homeroom-mark.png">`, a two-colour
- * lockup baked to pixels because "a brand tile does not re-colour per theme
- * any more than an app's own icon does." The TILE is still true of that: it
- * is drawn here as a plain `bg-black` square, unrelated to either theme. The
- * ink stopped being true of it the day the mark's own colour became the
- * platform accent (`violet-600` / `--accent`, `#0a6ee0`) rather than a fixed
- * brand cream — a raster and a Tailwind config are two sources of truth for
- * the same colour, and they will drift the next time the accent moves.
- * `LogoMark` (@/components/ui/logo-mark.tsx) is `fill="currentColor"`, same
- * convention as `Wordmark` above it, so `text-violet-600` here is the only
- * place the colour is spelled. `public/brand/homeroom-mark.png` itself is
- * unchanged and still committed — ../app-context/about-pane.tsx and
- * ../profile/profile-view.tsx still draw it — only the header's own use is
- * retired. public/brand/README.md carries the provenance.
+ * @/components/ui/wordmark.tsx inlines the LOGOTYPE as paths because
+ * `fill="currentColor"` lets one drawing take the ink of wherever it sits.
+ * The mark is the opposite case: it is a two-colour lockup — a cream figure
+ * on the brand's near-black tile — and a brand tile does not re-colour per
+ * theme any more than an app's own icon does. So it is a file, next to the
+ * landing's illustration, precached by the service worker because it is drawn
+ * on every route. public/brand/README.md carries its provenance.
  */
 
 import { useRef } from 'react';
 
-import { LogoMark } from '@/components/ui/logo-mark';
-import { ChevronDownIcon, SpinnerRingIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, SparklesIcon, SpinnerRingIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -159,23 +154,24 @@ export function PlatformMark() {
       }).AppContext?.toggle?.()}
     >
       {/*
-          `aria-hidden` on the mark itself: the button's aria-label above is
-          the only producer of this control's accessible name, exactly as the
-          chevron below. A named glyph here would be read twice.
+          A sparkle, not the "H" tile it replaced: what this menu leads with
+          is making the app better (Give feedback, the Improve row, a new
+          change), and the sparkle is the icon that job already wears
+          elsewhere in the shell. Same 26px box the raster occupied, so the
+          #909 row height and the two corner dots below are unchanged.
 
-          The rounded corner is drawn, not clipped from a file — `bg-black
-          rounded-[7px]` is the whole tile now. The hairline is what keeps a
-          near-black tile from disappearing into the dark bar behind it, and
-          it is the same inset hairline .app-icon-tile draws for the same
-          reason one screen down.
+          aria-hidden: the button's aria-label above is the only producer of
+          this control's accessible name, exactly as the chevron below.
+
+          It takes the bar's brand ink from the button (`currentColor`) and
+          stays unframed, so it still differs in KIND from the framed bell
+          beside it rather than reading as one segmented control with it.
       */}
       <span className="relative shrink-0 inline-flex">
-        <span
-          className="platform-mark-tile w-[26px] h-[26px] rounded-[7px] shrink-0
-                      inline-flex items-center justify-center bg-black"
-        >
-          <LogoMark aria-hidden="true" className="w-[18px] h-auto text-violet-600" />
-        </span>
+        <SparklesIcon
+          className="platform-mark-glyph w-[26px] h-[26px] shrink-0"
+          aria-hidden="true"
+        />
         {/* Bottom-LEFT: an unsent feedback draft, waiting for a connection. */}
         <span
           ref={dotRef}

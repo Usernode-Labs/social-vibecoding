@@ -882,6 +882,11 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A platform event in #general (a proposal up for a vote, a merge): the
+   platform's own line, so it reads as a notice rather than a person — the
+   words muted, the author plain, and the proposal's card under it. */
+.messages-message-system .messages-message-author { color: var(--text-muted); }
+.messages-message-system .messages-markdown.gc-msg-content { color: var(--text-secondary); }
 /* The body at the language's reading size. Doubled up with .gc-msg-content
    because format.tsx puts both classes on the node — that one is the
    markdown vocabulary (its list, code and table rules), and it sets 13px
@@ -1403,8 +1408,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-object-card:hover { background: var(--messages-surface-2); }
 .messages-object-unavailable { opacity: .6; }
 /* #2884: under the first card of a folded run, in the column the message
-   writes in (16px inset + 36px avatar + 12px gap). The pill is shared with
-   the app channel's `.gc-card-run-more`. */
+   writes in (16px inset + 36px avatar + 12px gap). */
 .messages-card-run { padding: 0 16px 6px 64px; }
 
 .messages-typing {
@@ -5148,8 +5152,16 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   .browse-row + .browse-row:hover { border-color: var(--accent-light); }
 }
 
-/* ── The phone directory as ONE PANE (#1919) ────────────────────────────
-   Below md the search bar, the Sort control and the list they narrow wear
+/* ── The phone directory: controls on the ground, the list in a card ────
+   SINCE THE COMMUNITIES PROTOTYPE the search, the filter chips and Sort sit
+   on the ground above the card rather than as its head: the card holds what
+   it lists, and the controls over it read as the control rows over Home's
+   and the Communities screen's cards do. What follows is #1919's reasoning
+   for the one-pane shape it replaces; the parts, the page-scoped classes
+   and the empty-note rule still hold, and the split ring does not (the
+   body and the note are whole cards now).
+
+   #1919: below md the search bar, the Sort control and the list they narrow wear
    the Workshop's working pane (`.dev-ws-pane`, further down): one frosted
    sheet (`--dc-sheet-fill` over `--dc-frost`), a 22px radius and a hairline
    ring, with the head pinned at the top and the rows sliding under its
@@ -5187,38 +5199,36 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
    (767px), the mirror of the min-width query above — keep the two in step
    if the container's breakpoint ever moves. */
 @media (max-width: 767px) {
-  #browse-screen .browse-pane-head,
+  /* The controls on the ground (the prototype's Discover): no sheet, no
+     ring, no fill, and NOT PINNED on a phone. A pinned head has to hide the
+     rows sliding under it, which takes a fill, and a fill is a band across
+     the wallpaper's washes and star that no flat colour matches (the header
+     fakes its glass for the same reason; a fixed layer inside this
+     scroller is not safe to fake, since the screen transitions transform
+     it). So on a phone the controls scroll away with the list, as a search
+     over a store list does. md+ keeps its pinned bar as it was. */
+  #browse-screen .browse-pane-head {
+    position: static;
+    margin: 0;
+    padding: 12px 12px 10px;
+    background: transparent;
+  }
   #browse-screen .browse-pane-body,
   #browse-screen .browse-pane-note {
     background-color: var(--dc-sheet-fill);
     backdrop-filter: var(--dc-frost);
     -webkit-backdrop-filter: var(--dc-frost);
     border: 1px solid var(--app-sheet-line);
-  }
-  #browse-screen .browse-pane-head {
-    margin: 12px 12px 0;
-    padding: 8px 10px;
-    border-bottom: 0;
-    border-radius: 22px 22px 0 0;
-  }
-  #browse-screen .browse-pane-body,
-  #browse-screen .browse-pane-note {
     margin: 0 12px 12px;
-    border-top: 0;
-    border-radius: 0 0 22px 22px;
+    border-radius: 22px;
     /* The rows' hover fill and the hairlines would otherwise poke out of
-       the bottom corners. Nothing in the body positions itself outside it
-       (the "+" menu the Workshop pane keeps `overflow: visible` for has no
+       the corners. Nothing in the body positions itself outside it (the
+       "+" menu the Workshop pane keeps `overflow: visible` for has no
        counterpart here). */
     overflow: hidden;
   }
   #browse-screen .browse-pane-body:empty { display: none; }
   #browse-screen .browse-pane-note { padding: 12px 14px 16px; }
-  /* Nothing below the head to close the pane: round it off on its own. */
-  #browse-screen .browse-pane-head:has(+ #browse-list-level > .browse-pane-body:empty + .browse-pane-note.hidden) {
-    border-bottom: 1px solid var(--app-sheet-line);
-    border-radius: 22px;
-  }
 }
 /* Where there is no backdrop-filter the fill is all there is, and 50% white
    with rows sliding crisply under the pinned head is the rendering fault the
@@ -5229,7 +5239,6 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
    three parts are one pane, so they stay one colour (see --dc-sheet-solid).
    md+ is untouched: there the bar wears the wallpaper's own ground. */
 @media (max-width: 767px) {
-  #browse-screen .browse-pane-head,
   #browse-screen .browse-pane-body,
   #browse-screen .browse-pane-note { background-color: var(--dc-sheet-solid); }
 }
@@ -7974,6 +7983,14 @@ span.gc-vote-btn-icon { cursor: default; }
   vertical-align: middle;
 }
 .gc-vote-inline:empty { display: none; }
+/* #3288: the same card under a message bubble (the Homeroom bot's proposal
+   post), on its own line below the text rather than trailing it. */
+.gc-vote-inline.gc-vote-inline-block {
+  display: flex;
+  margin-left: 0;
+  margin-top: 6px;
+}
+.gc-vote-inline.gc-vote-inline-block:empty { display: none; }
 /* ── The status band, full width ───────────────────────────
    The state bar, the 💬 count, the Closes-#N pills and the metadata chips
    (priority / assignee / category). These used to ride on the title's own
@@ -8691,13 +8708,10 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 a.gc-event-box { cursor: pointer; }
 
-/* #2884: the folded rest of a run of cards — "… 4 more" under the first
-   card, in the column its box writes in (16px row inset + the 44px avatar +
-   the 12px gap), and a tap draws the rest in place. The pill is the
-   Messages sheet's "Load earlier messages" control, at the event box's
-   13px. The Messages conversation's version is `.messages-card-run`. */
-.gc-card-run { padding: 0 16px 6px 72px; }
-.gc-card-run-more,
+/* #2884: a conversation's folded run of shared cards — "… 4 more" under the
+   first card, and a tap draws the rest in place (`.messages-card-run`). The
+   pill is the Messages sheet's "Load earlier messages" control, at 13px. An
+   app's channel no longer folds: it has no proposal cards to fold. */
 .messages-card-run-more {
   display: inline-flex;
   align-items: center;
@@ -8710,9 +8724,7 @@ a.gc-event-box { cursor: pointer; }
   font-weight: 600;
   transition: background 150ms, color 150ms;
 }
-.gc-card-run-more:hover,
 .messages-card-run-more:hover { color: var(--text-primary); background: var(--messages-surface-2, var(--bg-tertiary)); }
-.gc-card-run-more:focus-visible,
 .messages-card-run-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 a.gc-event-box:hover { text-decoration: none; }
 a.gc-event-box:hover > .gc-event-text { color: var(--text-primary); }
@@ -15145,10 +15157,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
   color: var(--text-muted);
 }
-/* WHICH WORKSHOP YOU ARE IN (#2718 review) — the scope chip, and the panel
-   it opens. The chip itself is the shared component's, styled there; what
-   this owns is where the pair SITS on this screen, which the all-apps screen
-   answers with its own page padding.
+/* WHICH WORKSHOP YOU ARE IN (#2718 review) — the panel the header's app
+   switcher opens (features/header/header-title.tsx). It renders only while
+   open, at the head of the column, right under the bar. There is no chip
+   here any more at any width (#3295): a phone lost it to the header in
+   #2768, and a desktop, which drew it above the tabs or beside them on a
+   wide window (#2837), has now too.
 
    The panel's own `mx-4` is cancelled: it was written for a screen whose
    column runs to the window's edge, and this column is already inset. A
@@ -15157,48 +15171,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-scope {
   display: flex;
   flex-direction: column;
-  gap: 6px;
   align-items: stretch;
-}
-.dev-ws-scope > button {
-  align-self: flex-start;
-  max-width: 100%;
 }
 .dev-ws-scope > [role='menu'] {
   margin-inline: 0;
   margin-bottom: 0;
 }
-/* #2837: ON A LARGE DESKTOP WINDOW THE CHIP JOINS THE TAB PILL'S ROW. Above,
-   it had a row to itself. On a wide window that row put it alone in the
-   middle of the page, lined up with nothing around it. workshop.tsx's
-   `useScopeInline` checks whether the space left of the reading column is
-   wide enough for the chip. If it is, it sets `data-ws-scope-inline` on the
-   Workshop root, and these rules move the chip into that space. It sits on
-   the pill's row, its right edge 12px from the pill's left edge.
-
-   The pill does not move. The chip's wrapper loses its height and gives back
-   the 10px column gap under it (`.dev-ws { gap: 10px }`), so the tabs row sits
-   exactly where it would with no chip at all. The ear and the selection
-   marker measure from the pill, so they are unchanged too. The chip is 36px
-   tall (`h-9`), the same as the pill's track (32px tabs plus 2px padding on
-   each side), so `top: 0` lines them up.
-
-   With the panel open the wrapper keeps its height. The panel opens in place
-   at the top of the column, level with the chip, and pushes the tabs down,
-   the same way it does on its own row. Its width is capped so it reads as the
-   chip's menu, not as a bar across the whole column. */
-.dev-ws[data-ws-scope-inline] > .dev-ws-scope { position: relative; }
-.dev-ws[data-ws-scope-inline] > .dev-ws-scope:not(:has(> [role='menu'])) {
-  height: 0;
-  margin-bottom: -10px;
-}
-.dev-ws[data-ws-scope-inline] > .dev-ws-scope > button {
-  position: absolute;
-  top: 0;
-  right: calc(100% + 12px);
-  max-width: 220px;
-}
-.dev-ws[data-ws-scope-inline] > .dev-ws-scope > [role='menu'] { max-width: 420px; }
 .dev-ws-strip {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -15213,6 +15191,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    baseline aligned to the bottom of the ring and the two read as two rows. */
 .dev-ws-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dev-ws-strip-text { margin: 0; font-size: 14px; color: var(--text-primary); }
+/* LATELY IN THIS PROJECT (dev-board/workshop/notices.tsx): this week's card
+   and the settings changed lately, one line each, 15 over 13 like a list
+   row — what changed, then who and when, muted. */
+.dev-ws-notices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dev-ws-notice { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dev-ws-notice-text { font-size: 15px; line-height: 1.4; color: var(--text-primary); overflow-wrap: anywhere; }
+.dev-ws-notice-text b { font-weight: 650; }
+.dev-ws-notice-meta { font-size: 13px; color: var(--text-muted); }
 /* ── ONE HEADING, FOR EVERY SECTION ON THE TAB ───────────────────────────
    There were two vocabularies doing one job: three panes wore
    `.dev-ws-eyebrow` — 11px, caps, letterspaced, muted — and the fourth wore
@@ -15962,15 +15948,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     min-height: var(--ws-fit);
   }
 }
-/* ON A PHONE THE HEADER IS THE CHIP (#2768) — the `.dev-ws-scope` chip
-   from the Workshop's head, far above. The bar already shows
-   this app's tile and name, and below 700px those two ARE the switcher
-   (features/header/header-title.tsx), opening this same panel. So the chip
-   goes, and the wrapper with it while the panel is shut — an empty flex item
-   would still cost `.dev-ws` a 10px gap at the top of the page. */
+/* ON A PHONE THE HEADER IS THE CHIP on the Communities screen (#3271), as it
+   is on an app's Workshop at every width (#2768, #3295): the header's title
+   is the all-apps chip there (#header-scope-switch,
+   features/header/header-title.tsx), and its panel still opens in the
+   chip's row, which the tabs now lead. */
 @media (max-width: 699.98px) {
-  .dev-ws-scope > button { display: none; }
-  .dev-ws-scope:not(:has(> [role='menu'])) { display: none; }
+  #workshop-screen #workshop-scope { display: none; }
 }
 /* ═══════════════════════════════════════════════════════════════════════
    NEEDS YOU: A FEED OF DECISIONS. One item per screen, the rail of
@@ -15992,6 +15976,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-needs-scroll {
   flex: 1 1 auto; min-height: 0;
   overflow-y: auto; overscroll-behavior: contain;
+  /* #3052: a swiped card travels sideways; the feed must not scroll with it. */
+  overflow-x: hidden;
   scroll-snap-type: y mandatory;
   scrollbar-width: none;
   border-radius: 22px;
@@ -16023,6 +16009,30 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-item[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .10), rgba(255, 255, 255, 0) 55%, rgba(251, 191, 36, .08)); }
 .dark .dev-ws-item[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .16), rgba(0, 0, 0, 0) 55%, rgba(244, 114, 182, .10)); }
 .dark .dev-ws-item[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .16), rgba(0, 0, 0, 0) 55%, rgba(251, 191, 36, .08)); }
+/* #3052: swipe to vote. A card this viewer can vote on carries
+   `data-ws-swipe`: `touch-action: pan-y` hands vertical drags to the feed's
+   own scroll (the browser pans them and cancels the gesture), and only a
+   clearly sideways drag moves the card. `data-ws-swiping` is set while the
+   finger is down, so the card tracks it with no lag; on release it springs
+   back to rest, and only where motion is welcome. Under reduced motion the
+   card never moves at all (swipe-vote.ts draws no transform); the note alone
+   says what a release will do. */
+.dev-ws-item[data-ws-swipe] { touch-action: pan-y; }
+.dev-ws-swipe-note {
+  position: absolute; left: 50%; top: 42%; z-index: 2;
+  transform: translate(-50%, -50%);
+  padding: 10px 20px; border-radius: 14px;
+  border: 2px solid currentColor; background: var(--dc-sheet);
+  font-size: 22px; font-weight: 800; letter-spacing: .02em; white-space: nowrap;
+  opacity: 0; pointer-events: none;
+}
+.dev-ws-swipe-yes { color: var(--state-ok); }
+.dev-ws-swipe-no { color: var(--state-blocked); }
+.dev-ws-item[data-ws-swiping="armed"] .dev-ws-swipe-note { box-shadow: 0 0 0 4px var(--dc-sheet); }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) { transition: transform .22s ease-out; }
+  .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) .dev-ws-swipe-note { transition: opacity .18s ease-out; }
+}
 .dev-ws-item-progress {
   position: absolute; left: 22px; right: 22px; top: 9px; height: 3px;
   border-radius: 2px; background: var(--state-neutral-bg);
@@ -16088,6 +16098,176 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-chip-warn { background: var(--state-attention-bg); color: var(--state-attention); }
 .dev-ws-chip-blocked { background: var(--state-blocked-bg); color: var(--state-blocked); }
 .dev-ws-chip-info { background: var(--accent-tint); color: var(--accent-wash-ink); }
+/* ── The Communities screen's two views (features/workshop/index.tsx) ──
+   Current status and Needs you switch the way a project's own page switches
+   Hub and Workshop: the raised track and the lit tab of `.dev-ws-tablist`
+   and `.dev-ws-tab` at their desktop size, at every width here, because
+   this strip shares a row with the All apps chip rather than spanning the
+   screen. The selected tab carries the marker's fill itself: two tabs, and
+   nothing to slide. */
+.workshop-scope-tabs {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px; border-radius: 9999px;
+  background-color: var(--dc-sheet-raise);
+}
+.workshop-scope-tab {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 32px; padding: 0 16px; border: 0; border-radius: 9999px;
+  background: transparent; color: var(--text-muted);
+  font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer;
+}
+.workshop-scope-tab-on {
+  background: var(--lit-tint); color: var(--lit-ink);
+  box-shadow: inset 0 0 0 1px var(--lit-line);
+}
+@media (hover: hover) {
+  .workshop-scope-tab:not(.workshop-scope-tab-on):hover { color: var(--text-primary); }
+}
+/* ── The Communities screen's Needs you feed (#3270, workshop/needs-reel.tsx) ──
+   One decision per screen, like a project's own Needs you page: the reel is
+   its own scroller, a screen tall less the bars around it, and snaps a card
+   to the top as it moves. A card is the plane colour, 20px, one hairline —
+   the language's card — with the project it belongs to leading it, the
+   question and its two answers at its foot. */
+.workshop-reel {
+  height: calc(100dvh - 232px); min-height: 360px;
+  margin: 4px 16px 0; overflow-y: auto; overscroll-behavior: contain;
+  scroll-snap-type: y mandatory; scroll-padding-top: 0;
+  display: flex; flex-direction: column; gap: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+@media (min-width: 768px) {
+  .workshop-reel { height: calc(100dvh - 190px); max-width: 560px; }
+}
+.workshop-reel-loading { background: var(--dc-sheet-solid); border-radius: 20px; }
+.workshop-reel-card {
+  flex: 0 0 100%; box-sizing: border-box; scroll-snap-align: start;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 16px 18px 18px; border-radius: 20px;
+  background: var(--dc-sheet-solid); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  overflow: hidden;
+}
+.workshop-reel-top { display: flex; align-items: center; gap: 8px; }
+.workshop-reel-app {
+  display: inline-flex; align-items: center; gap: 8px; min-width: 0;
+  font-size: 13px; font-weight: 650; color: var(--text-primary); text-decoration: none;
+}
+.workshop-reel-tile {
+  width: 26px; height: 26px; flex: none; border-radius: 8px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
+}
+.workshop-reel-pos { margin-left: auto; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.workshop-reel-what { margin: 0; font-size: 13px; color: var(--text-muted); }
+.workshop-reel-title { margin: 0; font-size: 22px; line-height: 1.25; font-weight: 700; letter-spacing: -.01em; text-wrap: balance; }
+.workshop-reel-title a { color: var(--text-primary); text-decoration: none; }
+.workshop-reel-summary {
+  margin: 0; font-size: 16px; line-height: 1.45; color: var(--text-secondary);
+  display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden;
+}
+.workshop-reel-by { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--text-muted); }
+.workshop-reel-spacer { flex: 1 1 auto; min-height: 0; }
+.workshop-reel-answers { display: flex; flex-direction: column; gap: 10px; }
+.workshop-reel-ask { margin: 0; font-size: 15px; font-weight: 650; color: var(--text-primary); }
+.workshop-reel-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.workshop-reel-no, .workshop-reel-yes {
+  height: 48px; border: 0; border-radius: 14px; cursor: pointer;
+  font-family: inherit; font-size: 16px; font-weight: 650;
+}
+.workshop-reel-no { background: var(--state-neutral-bg); color: var(--text-primary); }
+.workshop-reel-yes { background: var(--accent); color: #fff; }
+.workshop-reel-no:disabled, .workshop-reel-yes:disabled { opacity: .6; cursor: default; }
+.workshop-reel-open, .workshop-reel-decide {
+  display: inline-flex; align-items: center; gap: 2px; align-self: flex-start;
+  font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none;
+}
+.workshop-reel-decide {
+  align-self: stretch; justify-content: center; height: 48px; border-radius: 14px;
+  background: var(--accent); color: #fff;
+}
+.workshop-reel-voted { margin: 0; font-size: 15px; font-weight: 600; color: var(--text-secondary); }
+.workshop-reel-voted a { color: var(--accent); }
+/* ── THE PROJECT HUB'S OWN CARDS (features/dev-board/workshop/hub-cards.tsx) ──
+   The channel, Needs you, and Members & activity, on the hub tab under the
+   hero. They are `.dev-ws-strip` cards with the tab's one heading, and what
+   is new here is only what they hold: a few messages, a door, a count. */
+.dev-ws-head-end, .dev-ws-hub-head-end { margin-left: auto; }
+.dev-ws-hub-head-end { display: inline-flex; align-items: center; gap: 8px; }
+.dev-ws-hub-handle {
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
+  padding: 1px 7px; border-radius: 999px; background: var(--state-neutral-bg);
+}
+/* A number that asks for the viewer: the accent, in words. */
+.dev-ws-hub-new {
+  height: 19px; padding: 0 7px; border-radius: 999px;
+  display: inline-grid; place-items: center;
+  background: var(--accent); color: #fff;
+  font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.dev-ws-hub-open {
+  display: inline-flex; align-items: center; gap: 2px;
+  font-size: 13px; font-weight: 600; color: var(--accent);
+  background: none; border: 0; padding: 0; cursor: pointer;
+}
+.dev-ws-hub-msgs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.dev-ws-hub-msg { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
+.dev-ws-hub-avatar {
+  width: 26px; height: 26px; border-radius: 9999px; flex: none;
+  display: grid; place-items: center;
+  color: #fff; font-size: 11.5px; font-weight: 700;
+}
+.dev-ws-hub-msg-head { display: flex; align-items: baseline; gap: 6px; font-size: 13px; }
+.dev-ws-hub-msg-by { font-weight: 650; color: var(--text-primary); }
+.dev-ws-hub-msg-head time { font-size: 12px; color: var(--text-muted); }
+.dev-ws-hub-msg-text {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  font-size: 14px; line-height: 1.4; color: var(--text-primary); overflow-wrap: anywhere;
+}
+/* The composer: one line that sends from here, into the room's own write
+   route. A pill with a hairline, the send disc inside its right end, lit
+   only when there is something to send. */
+.dev-ws-hub-compose {
+  position: relative; display: flex; align-items: center; flex-wrap: wrap;
+  margin-top: 2px; border-radius: 999px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+}
+.dev-ws-hub-compose:focus-within { box-shadow: 0 0 0 1.5px var(--accent) inset; }
+.dev-ws-hub-compose-input {
+  flex: 1 1 0; min-width: 0; height: 42px; padding: 0 6px 0 14px;
+  border: 0; outline: 0; background: transparent;
+  font-size: 15px; color: var(--text-primary);
+}
+.dev-ws-hub-compose-input::placeholder { color: var(--text-muted); }
+.dev-ws-hub-compose-send {
+  flex: none; width: 32px; height: 32px; margin-right: 5px; border-radius: 999px;
+  display: grid; place-items: center; border: 0; cursor: pointer;
+  background: var(--accent); color: #fff;
+}
+.dev-ws-hub-compose-send:disabled { background: var(--state-neutral-bg); color: var(--text-muted); cursor: default; }
+.dev-ws-hub-compose-error {
+  flex-basis: 100%; margin: 0; padding: 0 14px 8px;
+  font-size: 12.5px; color: var(--state-blocked);
+}
+.dev-ws-hub-archive {
+  display: inline-flex; align-items: center; gap: 2px; align-self: flex-start;
+  font-size: 12.5px; color: var(--text-muted);
+}
+/* Needs you is one door: the whole card opens the queue. */
+.dev-ws-hub-row {
+  display: flex; flex-direction: column; gap: 6px; width: 100%;
+  text-align: left; background: none; border: 0; padding: 0; color: inherit; cursor: pointer;
+}
+.dev-ws-hub-row:disabled { cursor: default; }
+.dev-ws-hub-chev { width: 16px; height: 16px; margin-left: auto; color: var(--text-muted); }
+.dev-ws-hub-needs-first { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dev-ws-hub-needs-title { font-size: 15px; font-weight: 650; color: var(--text-primary); }
+.dev-ws-hub-needs-sub { font-size: 13px; color: var(--text-muted); }
+.dev-ws-hub-needs-join { margin: 0; font-size: 12.5px; color: var(--text-muted); }
+/* The way back from Needs you or All items to the tab they belong to. */
+.dev-ws-page-back {
+  display: inline-flex; align-items: center; gap: 2px; align-self: flex-start;
+  background: none; border: 0; padding: 2px 0; cursor: pointer;
+  font-size: 14px; font-weight: 600; color: var(--accent);
+}
 
 /* ── Swipe to vote, on a phone (#3052) ─────────────────────────────────
    workshop.tsx's `useSwipeVote` is the gesture; this is how it looks. A
@@ -16410,6 +16590,57 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-hero-actions:empty { display: none; }
 .dev-ws-hero-desc { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
 .dev-ws-hero-line { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
+/* WHO IS HERE, IN THE HERO (#3268). The people row: up to five faces,
+   the member count, and the actions pushed to its far end. The activity
+   line under it: this week in words, and the last fourteen days as a small
+   bar chart at its end, the busiest day the tallest bar.
+
+   THE ROW WRAPS (#3276). Nothing in it can shrink: the faces are a fixed
+   stack, the count is `nowrap`, and each pill is its own word. So when five
+   faces, "13 members", Joined, Invite and "Make it a group" came to more
+   than a phone's width, the row ran past the screen's edge and the whole
+   hub scrolled sideways. Now the actions drop to a line of their own under
+   the faces, still at its far end, and wrap among themselves if even that
+   line is too short. They stay right-aligned on purpose: the Join and
+   "Open it up" popups below hang from the right of their button, and a
+   button at the left edge would send them off the screen. */
+.dev-ws-hero-people { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-height: 32px; }
+.dev-ws-hero-people > .dev-ws-hero-actions { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.dev-ws-hero-faces { display: inline-flex; align-items: center; flex: none; }
+.dev-ws-hero-face {
+  width: 26px; height: 26px; margin-right: -6px; border-radius: 9999px;
+  display: grid; place-items: center;
+  color: #fff; font-size: 11.5px; font-weight: 700;
+  box-shadow: 0 0 0 2px var(--home-ground, var(--bg-primary));
+}
+.dev-ws-hero-face:last-child { margin-right: 0; }
+.dev-ws-hero-count { font-size: 14px; font-weight: 650; color: var(--text-primary); white-space: nowrap; }
+.dev-ws-hero-activity { display: flex; align-items: flex-end; gap: 14px; }
+.dev-ws-hero-activity-words { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dev-ws-hero-activity-line { font-size: 14px; line-height: 19px; color: var(--text-primary); }
+.dev-ws-hero-activity-line b { font-weight: 650; }
+.dev-ws-hero-activity-cap { font-size: 12px; color: var(--text-muted); }
+.dev-ws-hero-spark { flex: none; width: 112px; height: 30px; display: flex; align-items: flex-end; gap: 2px; }
+.dev-ws-hero-spark-bar {
+  flex: 1 1 0; min-width: 0; border-radius: 2px 2px 1px 1px;
+  background: var(--accent); opacity: .72;
+}
+.dev-ws-hero-spark-bar:last-child { opacity: 1; }
+.dev-ws-hero-spark-bar-quiet { background: var(--app-sheet-line); opacity: 1; }
+/* The Join and "Open it up" popups hang from the RIGHT here: the actions
+   end the people row, so a popup opening rightward would leave the screen. */
+.dev-ws-hero .dev-ws-hero-people .dev-ws-join-pop { left: auto; right: -6px; }
+.dev-ws-hero .dev-ws-hero-people .dev-ws-join-pop::before { left: auto; right: 26px; }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-hero .dev-ws-hero-people .dev-ws-join-pop { transform-origin: calc(100% - 32px) 0; }
+}
+/* A change to who it is for, up for a vote: the one line on the hero that
+   asks for something, so it carries the accent and goes to the proposal. */
+a.dev-ws-hero-pending {
+  display: inline-flex; align-items: center; gap: 2px; align-self: flex-start;
+  color: var(--accent); font-weight: 600; text-decoration: none;
+}
+.dev-ws-audience-error { margin: 0; font-size: 12.5px; color: var(--state-blocked); }
 .dev-ws-hero-channel {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 12px; border-radius: 14px;
@@ -16847,6 +17078,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   .dev-ws-keys-hint { display: block; align-self: center; margin: 4px 0 0; font-size: 11px; color: var(--text-faint); font-family: ui-monospace, Menlo, monospace; }
   .dev-ws-ask-msg { font-size: 14px; }
   .dev-ws-ask-log { max-height: none; }
+
+  /* THE SWITCHER'S PANEL (#3295), which the header's app switcher drops at
+     the head of the column (see `.dev-ws-scope`, far above). The column is
+     760px here, and a menu of names across all of it reads as a bar rather
+     than as the switcher's list; the cap is the one the wide-window panel had
+     beside the retired chip (#2837). */
+  .dev-ws-scope > [role='menu'] { max-width: 420px; }
 }
 
 /* Between the breakpoint and a wide desktop the panel would push the card
@@ -18169,29 +18407,30 @@ html.un-ios {
   background: var(--lit-tint);
   box-shadow: inset 0 0 0 1px var(--lit-line);
   pointer-events: none;
+  /* The slide scales from the corner the transform places (tab-bar.tsx,
+     slideKeyframes). */
+  transform-origin: 0 0;
   /* Hidden until measured, and while nothing is lit. */
   opacity: 0;
 }
 .platform-tabs-marker[data-marker-at] { opacity: 1; }
 /* ONLY A SELECTION CHANGE SLIDES, as on the Workshop's strip: the first
-   placement and a re-measure of the same tab carry `data-marker-at` without
-   `data-marker-slide`, and land where they are.
+   placement and a re-measure of the same tab land where they are.
+
+   THE SLIDE IS NOT A TRANSITION HERE (#3259). It is an animation useTabMarker
+   plays over the resting style (MARKER_SLIDE in tab-bar.tsx): the Workshop
+   strip's duration and curve, but transform only. A transition of width
+   and height ran on the main thread, and a press now starts the slide
+   before the screen swap, whose long frames froze them mid-slide. Reduced
+   motion is read there too, and gets no slide.
 
    IT SLIDES THROUGH A VIEW TRANSITION TOO. A tab change is a screen swap,
    and the swap runs as a view transition in which #platform-tabs is its own
    group whose OLD image is dropped and whose NEW image is shown at once
    (see the `platform-tabs` group near the top of this file). The new image
-   is a live rendering of the element, not a still, so a CSS transition
-   started by the swap plays inside it; this is the one part of the bar that
-   moves on a tab change, and the label colour still pops, as it should. */
-@media (prefers-reduced-motion: no-preference) {
-  .platform-tabs-marker[data-marker-slide] {
-    transition:
-      transform .26s cubic-bezier(.32, .72, 0, 1),
-      width .26s cubic-bezier(.32, .72, 0, 1),
-      height .26s cubic-bezier(.32, .72, 0, 1);
-  }
-}
+   is a live rendering of the element, not a still, so an animation started
+   by the press plays inside it; this is the one part of the bar that moves
+   on a tab change, and the label colour still pops, as it should. */
 
 /* The badge's anchor. `position: relative` on the glyph's wrapper rather
    than on the whole tab, so the count sits on the ICON's corner and not on
@@ -18229,6 +18468,32 @@ html.un-ios {
      Measured at 1280: an 18px ink box in a 13px line box, 2px over the edge.
      A unitless multiplier is the one value that is correct at both sizes. */
   line-height: 1.35;
+}
+
+/* "COMMUNITIES" IS THE BAR'S LONGEST WORD. Eleven letters at 11px is about
+   a phone's fifth of the screen — a hair over it in some fonts — so at 390px
+   it was clipped to "Communi…". This one label tightens its tracking and is
+   let out of its cell rather than cut: it is centred, and its seat is wider
+   than the others. Narrower than 375px it drops half a point as well. The
+   rail has room and is left alone. */
+@media (max-width: 767.98px) {
+  /* Communities' seat, the fourth, is a little wider than the other four:
+     it holds the longest word, and the bar's other labels (Messages in the
+     middle, your name last, which ellipsizes) have room to spare. */
+  #platform-tabs { grid-template-columns: 1fr 1fr 1fr 1.3fr 1fr; }
+  #platform-tab-workshop { overflow: visible; }
+  #platform-tab-workshop .platform-tab-label {
+    letter-spacing: -.02em;
+    overflow: visible;
+    text-overflow: clip;
+  }
+}
+@media (max-width: 374.98px) {
+  /* The smallest phones: every label drops half a point and tightens, the
+     cells lose their 2px sides, and Communities' seat widens a little less. */
+  #platform-tabs { grid-template-columns: 1fr 1fr 1fr 1.2fr 1fr; }
+  .platform-tab { padding: 0; }
+  .platform-tab .platform-tab-label { font-size: 10.5px; letter-spacing: -.02em; }
 }
 
 /* A QUIET GREY DISC, NOT THE BELL'S RED (#2912). This used to be the same

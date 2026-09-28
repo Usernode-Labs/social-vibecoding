@@ -177,15 +177,16 @@ test('#3051: the all-apps screen wears the All apps chip again (reverses #2759)'
   const html = renderToHtml(createElement(chrome.WorkshopScope, {
     id: 'workshop-scope', open: false, scope: null, onToggle: () => {},
   }));
-  assert.match(html, />All apps</);
+  assert.match(html, />All</, 'the word All (#3277)');
+  assert.match(html, /aria-label="All your projects, or open one"/, 'and what All means, to a screen reader');
   // Its panel ticks All apps, and pressing that row only closes the panel:
   // navigating to the screen you are on would throw its scroll away.
   const panel = renderToHtml(createElement(chrome.WorkshopPicker, {
     id: 'workshop-scope-picker', scope: null, onClose: () => {},
     apps: [{ slug: 'notes-ab12', name: 'Notes' }],
   }));
-  assert.match(panel, /id="workshop-scope-picker-all"[\s\S]*?<\/svg><\/span><span[^>]*><span[^>]*>All apps<\/span><\/span><svg/,
-    'All apps carries the tick');
+  assert.match(panel, /id="workshop-scope-picker-all"[\s\S]*?<\/svg><\/span><span[^>]*><span[^>]*>All<\/span><\/span><svg/,
+    'All carries the tick');
   assert.match(CHROME, /onClose\(\);\n\s*if \(scope === null\) return;\n\s*goToAllApps\(\);/);
   // The chip's row leads the screen now, so it carries the header's notch
   // clearance the legend carried while it led.
@@ -193,64 +194,127 @@ test('#3051: the all-apps screen wears the All apps chip again (reverses #2759)'
   assert.match(SCREEN, /<p className="px-4 pt-1 pb-2 flex flex-wrap/);
 });
 
-// ── The same chip, scoped to one app (#2718 review) ────────────────────
+// ── The same panel, scoped to one app (#2718 review, #3295) ───────────
+//
+// On an app's own Workshop the control is the HEADER's tile and name, at
+// every width (#3295, the owner's request: "on desktop, put the community
+// selector dropdown in the header, not either above the community hub /
+// workshop tabs or to the left of those if the screen is wide"). A phone had
+// that since #2768; a desktop drew its own chip above the tabs, or beside
+// them on a wide window (#2837). That chip is gone, so the Workshop renders
+// the panel alone, and only once the header has opened it.
 
-test('scoped, the chip names the app and never reads as a dead control', () => {
-  // The app's own Workshop wears this, and the first render has no list: the
-  // fetch runs in an effect, so what it draws until then is what the caller
-  // already knows — which is why the name and the artwork are props rather
-  // than something to wait for. A chip that started as a bare slug and
-  // changed under the reader would be worse than one that arrived late.
-  const html = renderToHtml(createElement(chrome.AppWorkshopScope, {
-    slug: 'notes-ab12', name: 'Recipe Box', iconEmoji: '🍲',
-  }));
-  assert.match(html, /id="dev-ws-scope-chip"/);
-  assert.match(html, /Recipe Box/, 'it names the app, not the slug');
-  assert.doesNotMatch(html, /All apps/,
-    'the panel is behind a press, so the first render is the chip alone');
-  // The ATTRIBUTE, not the word: `disabled:opacity-60` is in every one of
-  // these chips' class strings and matching on it would pass either way.
-  assert.doesNotMatch(html, /disabled=""/,
-    'scoped there is always somewhere to go — up to all of them');
-  assert.match(html, /aria-expanded="false"/);
-  assert.match(html, /aria-controls="dev-ws-scope-chip-picker"/,
-    'the panel it names is this surface\'s, not the all-apps screen\'s');
+/** A store that holds one state and never changes, for a static render. */
+const fixed = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
+
+test('#3295: an app\'s Workshop draws no chip; its panel renders only once opened', () => {
+  // Closed, which is every first render: nothing at all. No chip to hide at
+  // one width and show at another, and no empty wrapper to cost `.dev-ws` a
+  // row gap at the top of the page.
+  const closed = renderToHtml(createElement(chrome.AppWorkshopScope, { slug: 'notes-ab12' }));
+  assert.equal(closed, '');
+
+  // Open: the panel, under the id the header's control names.
+  const opened = loadTsx('frontend/src/features/workshop/workshop-chrome.tsx', {
+    stubs: {
+      './app-scope-store.js': {
+        appScopeStore: fixed({ open: true }),
+        APP_SCOPE_PANEL_ID: 'dev-ws-scope-chip-picker',
+      },
+    },
+  });
+  const html = renderToHtml(createElement(opened.AppWorkshopScope, { slug: 'notes-ab12' }));
+  assert.match(html, /^<div class="dev-ws-scope" data-ws-scope=""><div id="dev-ws-scope-chip-picker"[^>]* role="menu"/);
+  // #3302 named the panel "Which project?"; this test landed after it (#3305).
+  assert.match(html, /Which project\?/);
+  assert.match(html, /id="dev-ws-scope-chip-picker-all"/, 'All, the way back up');
+  assert.doesNotMatch(html, /id="dev-ws-scope-chip"/, 'and no chip beside it');
+  assert.doesNotMatch(html, /aria-haspopup/, 'the only control for it is the header\'s');
+});
+
+test('#3295: the Workshop leads with its tabs at every width, with nothing to measure', () => {
+  const WORKSHOP_PATH = 'frontend/src/features/dev-board/workshop/workshop.tsx';
+  const real = loadTsx('frontend/src/features/dev-board/card/cards-store.ts');
+  const view = { ...real.EMPTY_WORKSHOP_VIEW, loading: false, slug: 'notes-ab12', tab: 'all' };
+  const mod = loadTsx(WORKSHOP_PATH, {
+    stubs: { '../card/cards-store': { ...real, devWorkshopStore: fixed(view) } },
+  });
+  const html = renderToHtml(createElement(mod.DevWorkshop, {}));
+  // The panel is shut on arrival, so the tab strip is the root's first child.
+  assert.match(html, /^<div class="dev-ws" data-ws-tab="all"><div class="dev-ws-tabs" data-ws-tabs="">/);
+  assert.doesNotMatch(html, /dev-ws-scope/);
+
+  // #2837's measurement went with the chip it placed: nothing sets
+  // `data-ws-scope-inline` and app.css has no rule for it, nor for a chip
+  // inside `.dev-ws-scope`.
+  const ws = read(WORKSHOP_PATH);
+  assert.doesNotMatch(ws, /useScopeInline|scopeFitsInline|data-ws-scope-inline|SCOPE_INLINE_/);
+  assert.match(ws, /\{slug \? <AppWorkshopScope slug=\{slug\} \/> : null\}/);
+  const css = read('public/css/app.css');
+  assert.doesNotMatch(css, /data-ws-scope-inline/);
+  assert.doesNotMatch(css, /\.dev-ws-scope > button/);
+  // On a desktop the panel keeps the menu's width the wide-window panel had,
+  // in the one block written at that breakpoint (tests/dev-workshop.test.js).
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(css);
+  assert.ok(wide, 'the wide-screen block exists');
+  assert.match(wide[1], /\n  \.dev-ws-scope > \[role='menu'\] \{ max-width: 420px; \}$/);
 });
 
 test('#2768: the panel\'s id is one spelling, shared with the header\'s control', () => {
-  // Below 700px the chip is hidden and the HEADER's tile and name open the
-  // same panel; its `aria-controls` must name the element the chip's does.
+  // The HEADER's tile and name open the panel; its `aria-controls` must name
+  // the element the panel is. The all-apps chip derives its own panel's id
+  // the same way, from its id plus `-picker`.
   const store = read('frontend/src/features/workshop/app-scope-store.js');
   assert.match(store, /export const APP_SCOPE_PANEL_ID = 'dev-ws-scope-chip-picker';/);
   assert.match(CHROME, /id=\{APP_SCOPE_PANEL_ID\}/, 'the panel wears it');
-  assert.match(CHROME, /aria-controls=\{`\$\{id\}-picker`\}/, 'and the chip derives the same string');
+  assert.match(CHROME, /aria-controls=\{`\$\{id\}-picker`\}/, 'and the all-apps chip derives its own the same way');
   const header = read('frontend/src/features/header/header-title.tsx');
-  assert.match(header, /aria-controls=\{APP_SCOPE_PANEL_ID\}/, 'and so does the header');
+  assert.match(header, /aria-controls=\{APP_SCOPE_PANEL_ID\}/, 'and the header names it');
   assert.match(header, /onClick=\{\(\) => appScopeStore\.set\(\{ open: !scopeOpen \}\)\}/);
 });
 
-test('#2768: on the app\'s Workshop the header drops its tile on desktop and IS the switcher on a phone', () => {
+/** #header-title as rendered on an app route, with the stores it reads fixed. */
+function renderHeader({ viewMode = 'workshop', subTab = 'forum' } = {}) {
+  const mod = loadTsx('frontend/src/features/header/header-title.tsx', {
+    stubs: {
+      './header-title-store.js': { headerTitleStore: fixed({ text: 'Recipe Box', subtitle: '' }) },
+      '../nav/nav-store.js': { navStore: fixed({ screen: 'app-view' }) },
+      '../improve/improve-store.js': {
+        improveStore: fixed({ tab: 'dev', subTab, name: 'Recipe Box', iconUrl: null, iconEmoji: '🍲' }),
+      },
+      '../dev-board/view-mode-store': { useDevViewMode: () => viewMode },
+    },
+  });
+  return renderToHtml(createElement(mod.HeaderTitle, { titleRef: { current: null } }));
+}
+
+test('#2768, #3295: on the app\'s Workshop the header IS the switcher, at every width', () => {
   const header = read('frontend/src/features/header/header-title.tsx');
   // Which screen: the Dev half's board route in its Workshop layout.
   assert.match(header,
     /const onWorkshop = inApp && tab === 'dev' && subTab === 'forum' && viewMode === 'workshop';/);
-  // DESKTOP: the chip under the bar is the one picture of the app, so the
-  // bar keeps the name and loses the tile.
-  assert.match(header, /const showTile = inApp && !\(onWorkshop && !phone\);/);
-  // PHONE: the tile and the app's name become a button that opens the panel.
-  assert.match(header, /const switcher = onWorkshop && phone;/);
-  assert.match(header, /id="header-app-switch"/);
-  assert.match(header, /aria-haspopup="menu"/);
-  // `pointer-events-auto`, or the h1's `pointer-events-none` swallows the tap.
-  assert.match(header, /className="pointer-events-auto /);
-  // The width is settled in an EFFECT, false first, so the hydrating render is
-  // the prerender's whatever the window is — a mismatch is a console error on
-  // every route.
+  // NO WIDTH IN IT. Until #3295 this was `onWorkshop && phone`, and a desktop
+  // kept the name alone in the bar beside a chip in the page.
+  assert.match(header, /const switcher = onWorkshop;/);
+  assert.match(header, /const showTile = inApp;/);
+
+  // A static render runs no effects, so the phone flag is still false: this
+  // IS the desktop render. The tile and the app's name are one button that
+  // opens the Workshop's panel.
+  const html = renderHeader();
+  assert.match(html,
+    /<button id="header-app-switch" type="button" class="pointer-events-auto [^"]*" aria-haspopup="menu" aria-expanded="false" aria-controls="dev-ws-scope-chip-picker" aria-label="Recipe Box, switch app"><span id="header-app-tile"[^>]*>[\s\S]*?<\/span><\/span><span id="header-title-name" class="min-w-0 truncate">Recipe Box<\/span><svg/);
+
+  // The Kanban layout has no scope panel, so there the strip is a tile and a
+  // name, not a control.
+  const kanban = renderHeader({ viewMode: 'kanban' });
+  assert.doesNotMatch(kanban, /header-app-switch/);
+  assert.match(kanban, /<span id="header-app-tile"[^>]*>[\s\S]*?<\/span><\/span><span class="min-w-0 flex items-baseline gap-1\.5"><span id="header-title-name" class="min-w-0 truncate">Recipe Box<\/span>/);
+
+  // The phone flag stays for the Communities screen's switcher (#3271), and
+  // is still settled in an EFFECT, false first, so the hydrating render is
+  // the prerender's whatever the window is.
+  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen' && phone;/);
   assert.match(header, /const \[phone, setPhone\] = useState\(false\);/);
   assert.match(header, /const PHONE_QUERY = '\(max-width: 699\.98px\)';/);
-
-  // And below the same breakpoint the Workshop's own chip steps aside, the
-  // wrapper with it while the panel is shut.
-  const css = read('public/css/app.css');
-  assert.match(css, /@media \(max-width: 699\.98px\) \{\n  \.dev-ws-scope > button \{ display: none; \}\n  \.dev-ws-scope:not\(:has\(> \[role='menu'\]\)\) \{ display: none; \}\n\}/);
 });

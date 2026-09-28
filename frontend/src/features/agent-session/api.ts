@@ -55,12 +55,20 @@ export interface AgentSession {
   doneUnseen?: boolean;
   lastActivityAt: string | null;
   createdAt: string | null;
+  /**
+   * The server's count of writes to this conversation (schema.sql, "Keeping
+   * every screen of a conversation in step"): a screen holding an older one
+   * re-reads its state.
+   */
+  version?: number;
 }
 
 export interface AgentTurnState {
+  /** The running turn's id, where it is known: the lease every pod reads. */
+  id?: string | null;
   phase: 'mayor' | 'cc' | 'mayor2';
-  stopping: boolean;
-  changeId: number | null;
+  stopping?: boolean;
+  changeId?: number | null;
   /** Epoch ms the running work started: the build once dispatched, else the turn. */
   startedAt?: number | null;
 }
@@ -76,6 +84,10 @@ export interface AgentMessage {
   costCents?: number | null;
   metadata: Record<string, unknown>;
   createdAt: string | null;
+  /** The sending screen's own id for a user message, when it gave one. */
+  clientMessageId?: string | null;
+  /** When the row was written or last edited, in the database's order. */
+  rev?: number;
 }
 
 /**
@@ -115,7 +127,7 @@ export interface AgentAction {
   toolName: string;
   title: string;
   status: AgentActionStatus;
-  result: { ok?: boolean; text?: string; structured?: Record<string, unknown> | null } | null;
+  result: { ok?: boolean; code?: string | null; text?: string; structured?: Record<string, unknown> | null } | null;
   /** What happened, in plain words: the card's "Confirmed · …" line. */
   outcome?: string | null;
   expiresAt: string;
@@ -183,6 +195,8 @@ export interface OpenRouterModel {
   isRecommended?: boolean;
   isDefaultFavorite?: boolean;
   isFavorite?: boolean;
+  /** Which CLI the platform runs this model in (#3296). */
+  harness?: 'claude' | 'codex';
 }
 
 /** Everything the picker offers, read once per page. */
@@ -264,14 +278,49 @@ export async function setAgentChoice(id: number, agent: AgentChoice): Promise<Ag
   return body.session;
 }
 
+/** The reads the picker is built from, each of which can be asked again on its own. */
+export type CatalogPart = 'models' | 'prefs' | 'notes' | 'openrouter';
+
+export interface CatalogRead {
+  catalog: ModelCatalog;
+  /** The parts that did not answer this time, to ask again later; empty once all have. */
+  missing: CatalogPart[];
+}
+
+// How long the picker waits for one read. A request that never settles (a
+// stalled socket, a phone app resuming on a radio that is still waking) used
+// to hold the whole catalog, and with it the model pill, for the rest of the
+// page. The OpenRouter list waits longer: the server reads the key's own
+// catalogue from OpenRouter for it, and gives that read 20 seconds.
+const CATALOG_READ_MS = 10_000;
+const CATALOG_LIST_MS = 30_000;
+
+/** A read's JSON, or null when it failed, answered an error, or ran out of time. */
+function readWithin(path: string, ms: number): Promise<unknown> {
+  const abort = typeof AbortController === 'function' ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<null>((resolve) => {
+    timer = setTimeout(() => { abort?.abort(); resolve(null); }, ms);
+  });
+  const read = request(path, abort ? { signal: abort.signal } : {})
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+  return Promise.race([read, expired]).finally(() => clearTimeout(timer));
+}
+
 /**
  * The picker's options: the Anthropic models (GET /api/models), the saved
  * default (GET /api/me/coding-agent) and, where OpenRouter is offered, the
  * viewer's OpenRouter catalog. A part that does not load is left out rather
- * than failing the picker; the server validates every pick anyway.
+ * than failing the picker, and named in `missing` so the caller can ask for
+ * it again: pass back the catalog and those parts, and only they are read,
+ * over what was already known. The server validates every pick anyway.
  */
-export async function loadModelCatalog(): Promise<ModelCatalog> {
-  const catalog: ModelCatalog = {
+export async function loadModelCatalog(
+  previous: ModelCatalog | null = null,
+  retry: CatalogPart[] | null = null,
+): Promise<CatalogRead> {
+  const catalog: ModelCatalog = previous ? { ...previous } : {
     anthropic: [],
     anthropicDefault: null,
     defaultBackend: 'claude_code',
@@ -282,10 +331,18 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
     recommendedOpenRouterId: null,
     notes: null,
   };
+  const wanted = (part: CatalogPart) => !previous || !retry || retry.includes(part);
+  const missing: CatalogPart[] = [];
+  const read = (part: CatalogPart, path: string) => (wanted(part)
+    ? readWithin(path, CATALOG_READ_MS).then((body) => {
+      if (!body) missing.push(part);
+      return body;
+    })
+    : Promise.resolve(null));
   const [models, prefs, notes] = await Promise.all([
-    request('/api/models').then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    request('/api/me/coding-agent').then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    request('/api/model-notes').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    read('models', '/api/models'),
+    read('prefs', '/api/me/coding-agent'),
+    read('notes', '/api/model-notes'),
   ]) as [
     { models?: Array<{ id?: unknown; label?: unknown }>; default?: unknown } | null,
     {
@@ -323,16 +380,21 @@ export async function loadModelCatalog(): Promise<ModelCatalog> {
     catalog.codexAvailable = prefs.codexAvailable === true;
     catalog.defaultReasoningEffort = typeof prefs.defaultReasoningEffort === 'string' ? prefs.defaultReasoningEffort : null;
   }
-  if (catalog.codexAvailable) {
-    const list = await request('/api/me/coding-agent/models?backend=codex_openrouter')
-      .then((r) => (r.ok ? r.json() : null)).catch(() => null) as
+  // The list is read once the preferences say OpenRouter is offered. Until
+  // they have answered nobody knows whether it is, so it stays owed.
+  if (missing.includes('prefs')) {
+    if (wanted('openrouter')) missing.push('openrouter');
+  } else if (catalog.codexAvailable && (wanted('openrouter') || prefs)) {
+    const list = await readWithin('/api/me/coding-agent/models?backend=codex_openrouter', CATALOG_LIST_MS) as
       { models?: OpenRouterModel[]; recommendedModelId?: unknown } | null;
     if (list && Array.isArray(list.models)) {
       catalog.openrouter = list.models.filter((m) => m && typeof m.id === 'string');
       catalog.recommendedOpenRouterId = typeof list.recommendedModelId === 'string' ? list.recommendedModelId : null;
+    } else {
+      missing.push('openrouter');
     }
   }
-  return catalog;
+  return { catalog, missing };
 }
 
 export async function listDrafts(id: number): Promise<SavedDraft[]> {
@@ -424,6 +486,36 @@ export async function listSessions(): Promise<AgentSession[]> {
 
 export async function getSession(id: number): Promise<{ session: AgentSession; turn: AgentTurnState | null }> {
   return json(await request(`/api/agent-sessions/${id}`), 'Could not load this agent session.');
+}
+
+/**
+ * A conversation read in one consistent snapshot (GET .../state): what the
+ * screen draws, the version and rev it was read at, and the running turn.
+ * Sent the version it holds, the server answers only `unchanged` (and
+ * `busy`) while that is still current; sent a rev, only the rows written or
+ * edited since (`full: false`).
+ */
+export type AgentStateRead =
+  | { unchanged: true; version: number; busy: boolean; turn: AgentTurnState | null }
+  | {
+    unchanged: false;
+    version: number;
+    busy: boolean;
+    turn: AgentTurnState | null;
+    session: AgentSession;
+    messages: AgentMessage[];
+    full: boolean;
+    nextAfter: number | null;
+    rev: number;
+    actions: AgentAction[];
+  };
+
+export async function getState(id: number, { version = null, rev = null }: { version?: number | null; rev?: number | null } = {}): Promise<AgentStateRead> {
+  const query = new URLSearchParams();
+  if (version != null) query.set('version', String(version));
+  if (rev != null) query.set('rev', String(rev));
+  const suffix = query.toString() ? `?${query}` : '';
+  return json(await request(`/api/agent-sessions/${id}/state${suffix}`), 'Could not load this agent session.');
 }
 
 export async function getMessages(id: number, after = 0): Promise<{ messages: AgentMessage[]; nextAfter: number | null }> {
@@ -571,30 +663,48 @@ export async function readEventStream(
   dispatch();
 }
 
-/** POST a turn and stream its events. Throws with the server's answer when it refuses. */
+/**
+ * POST a turn and stream its events. Throws with the server's answer when it
+ * refuses. `clientMessageId` is this screen's own id for the message: sent
+ * again after a dropped connection, the server recognises it and answers
+ * that it already has it (`duplicate`), with no second turn. `retry` re-runs
+ * a turn that did not finish, with no message of its own.
+ */
 export async function sendTurn(
   id: number,
   message: string,
-  { signal, onEvent, attachmentIds = [] }: {
+  { signal, onEvent, attachmentIds = [], clientMessageId = null, retry = false }: {
     signal?: AbortSignal;
     onEvent: (event: AgentTurnEvent) => void;
     /** Uploads to this conversation (uploadAttachment), sent with the message. */
     attachmentIds?: string[];
+    clientMessageId?: string | null;
+    retry?: boolean;
   },
-): Promise<void> {
+): Promise<{ duplicate: boolean; messageId?: number | null }> {
+  const payload: Record<string, unknown> = retry ? { retry: true } : { message };
+  if (attachmentIds.length) payload.attachmentIds = attachmentIds;
+  if (clientMessageId) payload.clientMessageId = clientMessageId;
   const response = await fetch(`/api/agent-sessions/${id}/turns`, {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify(attachmentIds.length ? { message, attachmentIds } : { message }),
+    body: JSON.stringify(payload),
     signal,
   });
   if (!response.ok) {
     await json(response, 'The Mayor could not take that message.');
-    return;
+    return { duplicate: false };
+  }
+  // The stream is the answer; JSON is the exception: the server already had
+  // this message (a retry after a dropped connection).
+  if (/application\/json/.test(response.headers?.get?.('Content-Type') || '')) {
+    const body = await json<{ duplicate?: boolean; messageId?: number }>(response, 'The Mayor could not take that message.');
+    return { duplicate: !!body.duplicate, messageId: body.messageId ?? null };
   }
   await readEventStream(response, onEvent);
+  return { duplicate: false };
 }
 
 /**

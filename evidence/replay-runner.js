@@ -1142,6 +1142,25 @@ async function startMotionCapture(page) {
   };
 }
 
+// Playwright context init scripts run in every document, including every
+// cross-origin child frame. The deterministic still-capture stylesheet is a
+// platform concern: injecting it into a hosted app both changes somebody
+// else's UI and violates apps that use a nonce-only style policy. Keep the
+// script serializable for addInitScript while accepting an explicit environment
+// in tests so the origin boundary is pinned without a browser fixture.
+function installCaptureStyle(platformOrigin, environment) {
+  var pageLocation = environment ? environment.location : location;
+  var pageDocument = environment ? environment.document : document;
+  if (pageLocation.origin !== platformOrigin) return false;
+  var style = pageDocument.createElement('style');
+  style.dataset.usernodeEvidence = '1';
+  style.textContent = '*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important;transition-delay:0s!important;scroll-behavior:auto!important;caret-color:transparent!important}';
+  var attach = function () { pageDocument.documentElement?.appendChild(style); };
+  if (pageDocument.documentElement) attach();
+  else pageDocument.addEventListener('DOMContentLoaded', attach, { once: true });
+  return true;
+}
+
 function screenshotFingerprint(result) {
   return crypto.createHash('sha256').update(JSON.stringify({
     path: result.path,
@@ -1200,7 +1219,9 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     await installOriginFence(context, allowedOrigins, diagnostics, controlledFailure, {
       hostedOrigins,
       loadHostedOrigins: async () => {
-        hostedAppState.catalog = await loadTrustedHostedAppOrigins(context, origin);
+        hostedAppState.catalog = await loadTrustedHostedAppOrigins(
+          context, origin, null, input.runId
+        );
         return hostedAppState.catalog;
       },
     });
@@ -1211,13 +1232,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     emitEvent({ type: 'session_bootstrap', ...eventBase, ...bootstrap });
     setupPhase = 'install_capture_style';
     if (!motion) {
-      await context.addInitScript(() => {
-        const style = document.createElement('style');
-        style.dataset.usernodeEvidence = '1';
-        style.textContent = '*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important;transition-delay:0s!important;scroll-behavior:auto!important;caret-color:transparent!important}';
-        const attach = () => document.documentElement?.appendChild(style);
-        if (document.documentElement) attach(); else document.addEventListener('DOMContentLoaded', attach, { once: true });
-      });
+      await context.addInitScript(installCaptureStyle, origin);
     }
     setupPhase = 'new_page';
     page = await context.newPage();
@@ -1738,6 +1753,7 @@ module.exports = {
   normalizeCropPair,
   hammingHex,
   captureStableCheckpoint,
+  installCaptureStyle,
   screenshotFingerprint,
   runReplay,
   contextualFailure,

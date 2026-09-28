@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { withStateRead } = require('./lib/agent-session-state-read');
 const { splitSpecSections } = require('../public/js/spec-sections.js');
 
 const ROOT = path.join(__dirname, '..');
@@ -90,13 +91,13 @@ test('two halves are two tabs, plain-language first; one half empty says so; one
 
 test('the tab survives a version switch and starts on the plain-language half for another change', async () => {
   const spec = { 12: TWO_HALVES, 13: '# Other' };
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = withStateRead(async (url) => {
     const m = /^\/api\/sessions\/(\d+)\/spec$/.exec(url);
     const body = m ? { spec: spec[m[1]], versions: [{ version: 2 }, { version: 1 }] }
       : /\/specs\/1$/.test(url) ? { spec: { version: 1, content: '# First draft' } }
         : {};
     return { ok: true, status: 200, json: async () => body };
-  };
+  });
   try {
     const api = loadTsx('tests/fixtures/agent-session-api.ts');
     await api.openSpec(12);

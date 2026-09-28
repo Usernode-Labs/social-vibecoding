@@ -17,7 +17,7 @@ test('exploration resets and deterministic replay cannot race each other', async
     intent: fixtures.intent(),
     context: {},
     expiresAt: Date.now() + 10_000,
-    resetSide: async () => ({ ok: true }),
+    resetPair: async () => ({ origins: { base: 'http://base.test', head: 'http://head.test' } }),
     runPlan: async () => {
       await waiting;
       return { hardVerdict: { passed: true }, planHash };
@@ -36,6 +36,70 @@ test('exploration resets and deterministic replay cannot race each other', async
   });
   assert.equal(finished.status, 'verified');
   assert.equal(finished.planHash, planHash);
+});
+
+test('paired exploration reset returns one coherent base and head generation', async () => {
+  let generation = 0;
+  const control = new RunControl({
+    runId: '0'.repeat(32),
+    sessionId: 42,
+    intent: fixtures.intent(),
+    context: {},
+    expiresAt: Date.now() + 10_000,
+    resetPair: async () => {
+      generation += 1;
+      return {
+        origins: {
+          base: `http://base-${generation}.test`,
+          head: `http://head-${generation}.test`,
+        },
+      };
+    },
+    runPlan: async () => ({ hardVerdict: { passed: true } }),
+  });
+
+  assert.deepEqual(await control.resetPair(), {
+    origins: { base: 'http://base-1.test', head: 'http://head-1.test' },
+  });
+  assert.equal(generation, 1);
+});
+
+test('legacy base and head reset calls share one atomic pair during a rolling deploy', async () => {
+  let generation = 0;
+  const control = new RunControl({
+    runId: '1'.repeat(32),
+    sessionId: 42,
+    intent: fixtures.intent(),
+    context: {},
+    expiresAt: Date.now() + 10_000,
+    resetPair: async () => {
+      generation += 1;
+      return {
+        origins: {
+          base: `http://base-${generation}.test`,
+          head: `http://head-${generation}.test`,
+        },
+      };
+    },
+    runPlan: async () => ({ hardVerdict: { passed: true } }),
+  });
+
+  assert.deepEqual(await control.resetSide('base'), {
+    side: 'base',
+    origin: 'http://base-1.test',
+    origins: { base: 'http://base-1.test', head: 'http://head-1.test' },
+    bothSidesReset: true,
+  });
+  assert.deepEqual(await control.resetSide('head'), {
+    side: 'head',
+    origin: 'http://head-1.test',
+    origins: { base: 'http://base-1.test', head: 'http://head-1.test' },
+    bothSidesReset: true,
+  });
+  assert.equal(generation, 1, 'the companion side does not invalidate the first origin');
+
+  assert.equal((await control.resetSide('base')).origin, 'http://base-2.test');
+  assert.equal(generation, 2, 'a new reset cycle still creates a new pair');
 });
 
 test('the evidence turn stays live after waiting for bounded platform replay', async () => {
@@ -85,7 +149,7 @@ test('hosted plan submission acknowledges while replay is pending and retries ar
   const control = new RunControl({
     runId: 'f'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
     expiresAt: Date.now() + 10_000,
-    resetSide: async () => ({ ok: true }),
+    resetPair: async () => ({ origins: { base: 'http://base.test', head: 'http://head.test' } }),
     runPlan: async () => {
       calls += 1;
       await pendingReplay;
@@ -238,6 +302,77 @@ test('motion timing repair can add a wait but cannot weaken assertions or change
     by: 'role', role: 'button', name: 'Another control', exact: true,
   };
   await assert.rejects(control.runPlan(changedInteraction), { code: 'evidence_timing_repair_changed_flow' });
+  assert.equal(replays, 1, 'invalid corrections never spend a replay');
+
+  await control.runPlan(corrected);
+  assert.equal(replays, 2);
+  assert.equal(control.latestHard.passed, true);
+});
+
+test('an assertion locator repair can change only the failed target', async () => {
+  const rejected = fixtures.plan();
+  const failedAssertion = {
+    type: 'count',
+    target: {
+      by: 'role', role: 'status', name: 'Paused live view · Checks passing', exact: true,
+    },
+    count: 1,
+  };
+  rejected.stories[0].replay.checkpoint.assertions.after.push(failedAssertion);
+  const corrected = structuredClone(rejected);
+  corrected.stories[0].replay.checkpoint.assertions.after[1].target = {
+    by: 'css', value: '#admin-merges-paused-live',
+  };
+  const failure = Object.assign(new Error('count assertion failed.'), {
+    code: 'assertion_failed',
+    detail: {
+      storyId: 'invite-suggestions', side: 'head', phase: 'assertion',
+      assertionIndex: 1, count: 0, actual: 0, assertion: failedAssertion,
+    },
+  });
+  let replays = 0;
+  const control = new RunControl({
+    runId: '7'.repeat(32), sessionId: 42,
+    intent: contract.semanticIntentFromPlan(rejected), context: {},
+    expiresAt: Date.now() + 10_000,
+    runPlan: async (candidate) => {
+      replays += 1;
+      if (replays === 1) throw failure;
+      return { hardVerdict: { passed: true }, planHash: contract.planHash(candidate) };
+    },
+  });
+  await assert.rejects(control.runPlan(rejected), { code: 'assertion_failed' });
+  control.allowRepair('Correct only the failed assertion target.', {
+    kind: 'assertion_locator', code: 'assertion_failed', detail: failure.detail,
+  });
+
+  const weakenedCount = structuredClone(corrected);
+  weakenedCount.stories[0].replay.checkpoint.assertions.after[1].count = 0;
+  await assert.rejects(control.runPlan(weakenedCount), {
+    code: 'evidence_assertion_locator_repair_changed_plan',
+  });
+
+  const removedAssertion = structuredClone(rejected);
+  removedAssertion.stories[0].replay.checkpoint.assertions.after.pop();
+  await assert.rejects(control.runPlan(removedAssertion), {
+    code: 'evidence_assertion_locator_repair_changed_plan',
+  });
+
+  const changedAction = structuredClone(corrected);
+  changedAction.stories[0].replay.after.actions[0].target = {
+    by: 'role', role: 'button', name: 'Another control', exact: true,
+  };
+  await assert.rejects(control.runPlan(changedAction), {
+    code: 'evidence_assertion_locator_repair_changed_plan',
+  });
+
+  const changedSibling = structuredClone(corrected);
+  changedSibling.stories[0].replay.checkpoint.assertions.after[0].target = {
+    by: 'css', value: '.anything-visible',
+  };
+  await assert.rejects(control.runPlan(changedSibling), {
+    code: 'evidence_assertion_locator_repair_changed_plan',
+  });
   assert.equal(replays, 1, 'invalid corrections never spend a replay');
 
   await control.runPlan(corrected);

@@ -1017,6 +1017,88 @@ Rules:
   voted in, merged, and redeployed — not before. Don't mutate the
   icon through any other channel.
 
+#### Icon style: one set on the home screen
+
+When you give an app an icon, draw it in this style unless the group
+has chosen its own artwork. Every app's tile then reads as part of one
+set instead of a mix of emoji, letters and one-off logos.
+
+- **Where the file goes.** Commit it as `brand/icon.png`, declare
+  `{ "icon": { "image": "brand/icon.png" } }`, and add a short
+  `brand/ICON.md` naming the glyph and colour so someone can redraw it.
+  Keep it out of `public/`, `assets/` and other served folders: the
+  platform reads the file at deploy time and the app never serves it,
+  and a file under those folders counts as a browser UI change, so an
+  icon-only proposal there cannot declare `visualEvidence` impact
+  `none`.
+- **Format.** A 512 × 512 PNG: opaque, full bleed, square corners (the
+  tile rounds and crops it), no text or letters. A render in this style
+  is 50–80 KB, well under the 256 KB limit. SVG is not accepted, so
+  render the template below to PNG (for example
+  `rsvg-convert -w 512 -h 512 icon.svg -o brand/icon.png`).
+- **Glyph.** One [Lucide](https://lucide.dev) icon (ISC licence) in
+  white, with Lucide's own 2px round strokes on its 24-unit grid,
+  scaled × 12 into the middle 288 px (112 px of margin on each side)
+  over a soft drop shadow. Pick the object the app is about (a chef hat
+  for recipes, a dumbbell for a gym log), not an abstract mark. When
+  Lucide has nothing that fits, draw one on the same grid with the same
+  strokes; never mix in a filled, multicolour or emoji glyph.
+- **Colour.** A diagonal two-stop gradient, top left to bottom right,
+  from this palette, under a faint white highlight at the top left.
+  Choose by what the app is for:
+
+  | Hue | From | To | For |
+  |---|---|---|---|
+  | orange | `#FFA552` | `#E05A12` | food, making, building |
+  | amber | `#FBB43C` | `#C9570A` | pets, notes, farming, time |
+  | brown | `#C98C5E` | `#6E3F22` | coffee, crafts |
+  | red | `#FF7163` | `#D1321F` | sport, video, voting, places |
+  | magenta | `#FF6AB8` | `#CF1F74` | social, art, people, personal pages |
+  | violet | `#B574FF` | `#7327DB` | games, quests, rankings |
+  | indigo | `#8577FF` | `#4432D1` | lists, work, markets, security |
+  | blue | `#5B9BFF` | `#1F57E6` | tools, lists, language, weather |
+  | teal | `#34D3C3` | `#0B7D84` | kids, drawing, surveys |
+  | green | `#3DD68A` | `#0E8A4C` | money, growth, luck |
+  | slate | `#6A7B93` | `#27313F` | utilities, tests, diagnostics, spooky |
+
+  A fork keeps its parent's glyph on a different hue, so the two tiles
+  can be told apart.
+- **Keep the emoji** beside the image when the app had one
+  (`{ "image": "brand/icon.png", "emoji": "🍳" }`): it is what the tile
+  shows if the image ever fails validation.
+
+The template, with the orange pair filled in and one Lucide glyph's
+`<path>`/`<circle>` elements pasted into the inner group:
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFA552"/><stop offset="1" stop-color="#E05A12"/>
+    </linearGradient>
+    <radialGradient id="gloss" cx="0.25" cy="0.12" r="0.8">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect width="512" height="512" fill="url(#gloss)"/>
+  <g filter="url(#shadow)">
+    <g transform="translate(112 112) scale(12)" fill="none" stroke="#fff"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <!-- the glyph's elements, copied from its Lucide SVG -->
+    </g>
+  </g>
+</svg>
+```
+
+Keep the shadow filter on the outer, unscaled group: on the scaled
+group its offset and blur are multiplied by 12 and leave a visible
+box on the tile.
+
 Per-field rules:
 
 - `key` — `UPPER_SNAKE_CASE`. The literal name `process.env.<KEY>` will be.
@@ -2060,6 +2142,58 @@ Notes:
 - Your app's own viewport meta does **not** need `viewport-fit=cover` for
   the forwarded properties to work (it is still required for bare `env()`
   to work standalone).
+
+## The platform's light/dark theme inside the app frame
+
+Viewers choose Light, Dark or System in the platform's own settings.
+**`prefers-color-scheme` inside your frame cannot see that choice**: in a
+cross-origin iframe it follows the operating system, not the page around
+it. So an app that only reads the media query shows light to a viewer who
+picked Dark on a light-mode OS, and a staging preview does the same.
+
+The platform forwards the **resolved** theme (`light` or `dark`, never
+`system`). The hosted bridge publishes it; no app-side plumbing beyond the
+bridge `<script>`:
+
+- **`usernode.theme`** is `"light"`, `"dark"`, or `null` when the app is
+  opened standalone (outside the platform). It is set synchronously when the
+  bridge loads, from the frame URL's `?un-theme=` parameter, so a bootstrap
+  script placed *after* the bridge tag can read it before first paint.
+- **`usernode:theme-changed`** is a `CustomEvent` on `window` whose `detail`
+  is `{ theme }`. It fires when the viewer changes the platform theme while
+  your app is open. The app is never reloaded for it.
+
+The bridge only reports the value. Your app decides what dark means (a
+`.dark` class on `<html>` for Tailwind's `dark:` variant and the
+usernode-native kit, your own tokens, and so on). Recommended wiring, with
+the OS preference as the standalone fallback:
+
+```html
+<script src="/usernode-bridge/v1/bridge.js"></script>
+<script>
+  (function () {
+    var media = window.matchMedia('(prefers-color-scheme: dark)');
+    function applyTheme() {
+      var theme = (window.usernode && window.usernode.theme)
+        || (media.matches ? 'dark' : 'light');
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      document.documentElement.style.colorScheme = theme;
+    }
+    applyTheme();
+    window.addEventListener('usernode:theme-changed', applyTheme);
+    media.addEventListener('change', applyTheme);
+  })();
+</script>
+```
+
+Notes:
+
+- Read `usernode.theme`, not `?un-theme=` directly: the URL keeps the value
+  the frame loaded with, and the bridge keeps `usernode.theme` current.
+- `un-theme` is namespaced so it never collides with a query parameter your
+  app uses itself. Do not strip it or depend on its position in the URL.
+- An app that offers its own light/dark picker may keep it. Treat the
+  platform theme as the default until the viewer picks something in your app.
 
 ## Staying loaded in the background
 

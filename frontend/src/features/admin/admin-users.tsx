@@ -788,6 +788,30 @@ function UserDetails({ user, allUsers, fullAdminCount, canWrite, notice, onBack,
     }
   };
 
+  // Moving someone else's handle is a moderation action (the format,
+  // reserved-prefix and uniqueness rules all live server-side in
+  // src/services/usernames.js, the same module the self-service rename uses),
+  // so this only sends the new value and lets the server accept, reject, or
+  // report the account as unchanged.
+  const commitUsername = async (next: string, revert: () => void, accept: (v: string) => void) => {
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/username`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        console_()._alert(data.error || `Save failed (HTTP ${res.status})`);
+        revert();
+        return;
+      }
+      accept(data.username);
+      await onReload();
+    } catch (err: any) {
+      console_()._alert(`Save failed: ${err.message}`);
+      revert();
+    }
+  };
+
   const viewAccount = (id: number) => {
     const c = console_();
     if (c && c.isOpen()) c.setSection('onchain-accounts');
@@ -843,6 +867,13 @@ function UserDetails({ user, allUsers, fullAdminCount, canWrite, notice, onBack,
 
       <div className="grid gap-4 lg:grid-cols-2">
         <DetailCard title="Access" id="admin-user-details-access">
+          <Row label="Username" help="Letters, numbers and underscores, 3 to 32 characters. Must not already be in use.">
+            {canWrite ? (
+              <CommitField className={`admin-username-input ${DETAIL_INPUT}`} ariaLabel="Username"
+                type="text" spellCheck={false} disabled={false}
+                committed={user.username} onCommit={commitUsername} />
+            ) : <span>{user.username}</span>}
+          </Row>
           <Row label="Role">
             {canWrite ? (
               <select className={`admin-role-select ${AdminUI.select} max-w-[12rem]`} title={roleTitle}

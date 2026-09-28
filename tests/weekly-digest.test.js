@@ -3,8 +3,10 @@
 // #1688: the Friday card (src/services/weekly-digest.js).
 //
 //   1. nothing happens outside Friday's posting hours;
-//   2. on Friday a due app with something to say gets ONE card in its chat,
-//      carrying the data as metadata, and its active members a notification;
+//   2. on Friday a due app with something to say gets ONE card, recorded as
+//      a `weekly_digest` event carrying the data (a project's Workshop shows
+//      it; a channel carries no activity), and its active members a
+//      notification;
 //   3. a quiet app — nothing merged, nothing open — gets no card at all;
 //   4. the claim is the stamp: an app another instance stamped first is
 //      left alone;
@@ -19,6 +21,7 @@ function stubModule(rel, exportsObj) {
   require.cache[full] = { id: full, filename: full, loaded: true, exports: exportsObj };
 }
 
+// Still stubbed, so a stray chat line would be seen: the card writes none.
 const sent = [];
 stubModule('../src/services/ws', {
   sendSystemMessage: async (pool, appId, content, msgType, metadata, thread) => {
@@ -97,20 +100,21 @@ test('on Friday a due app gets one card with its data, and its active members a 
   assert.equal(r.posted, 1);
   assert.equal(r.quiet, 0);
 
-  assert.equal(sent.length, 1, 'one message');
-  const card = sent[0];
-  assert.equal(card.appId, 3);
-  assert.equal(card.msgType, 'system');
-  assert.equal(card.thread, null, 'general chat, not a thread');
-  assert.equal(card.metadata.weekly.app, 'Community Tier Lists');
-  assert.equal(card.metadata.weekly.slug, 'tiers');
-  assert.equal(card.metadata.weekly.mergedTotal, 2);
-  assert.equal(card.metadata.weekly.openTotal, 1);
-  assert.deepEqual(card.metadata.weekly.merged[0], {
+  assert.equal(sent.length, 0, 'no chat line: a channel carries no activity');
+  const cards = pool.queries.filter((q) => /INSERT INTO events/.test(q.sql));
+  assert.equal(cards.length, 1, 'one card');
+  const [userId, appId, sessionId, type, json] = cards[0].params;
+  assert.deepEqual([userId, appId, sessionId, type], [null, 3, null, 'weekly_digest']);
+  const weekly = JSON.parse(json);
+  assert.equal(weekly.app, 'Community Tier Lists');
+  assert.equal(weekly.slug, 'tiers');
+  assert.equal(weekly.mergedTotal, 2);
+  assert.equal(weekly.openTotal, 1);
+  assert.deepEqual(weekly.merged[0], {
     id: 41, prNumber: 41, title: 'Custom tier colors', author: 'evan', backers: ['alice', 'bob'],
   });
-  assert.equal(card.metadata.weekly.open[0].title, 'Dark mode toggle');
-  assert.equal(card.metadata.weekly.open[0].backers, undefined, 'an open proposal has no backers yet');
+  assert.equal(weekly.open[0].title, 'Dark mode toggle');
+  assert.equal(weekly.open[0].backers, undefined, 'an open proposal has no backers yet');
 
   const claim = pool.queries.find((q) => /UPDATE apps\s+SET weekly_digest_at/.test(q.sql));
   assert.ok(claim, 'the stamp is the claim');
@@ -133,6 +137,7 @@ test('a quiet app gets no card', async () => {
   assert.equal(r.quiet, 1);
   assert.equal(r.posted, 0);
   assert.equal(sent.length, 0);
+  assert.ok(!pool.queries.some((q) => /INSERT INTO events/.test(q.sql)), 'no card recorded');
   assert.ok(!pool.queries.some((q) => /UPDATE apps/.test(q.sql)), 'and is not stamped, so a later merge this week still earns one');
 });
 
@@ -142,6 +147,7 @@ test('an app another instance stamped first is left alone', async () => {
   const r = await digest.sweep(pool, FRIDAY_16_UTC);
   assert.equal(r.posted, 0);
   assert.equal(sent.length, 0);
+  assert.ok(!pool.queries.some((q) => /INSERT INTO events/.test(q.sql)), 'no card recorded');
 });
 
 test('the plain line reads as a sentence and counts what it does not list', () => {

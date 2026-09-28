@@ -13,21 +13,29 @@
 //                   the issue is never closed by the bot
 //   held            a verdict a live cap held back: one line saying why,
 //                   posted once while the issue stays held (#3152)
+//   follow-up       a reply after it proposed, on the issue or in the
+//                   proposal's own discussion: answered, asked about, or
+//                   made on the proposal's branch (#3264, see
+//                   homeroom-bot-followup.js)
 //   ready           one GLM build turn in a dev session of the bot's own,
 //                   then the SAME /promote handler a person's Propose button
 //                   runs — pull request, staging, checks, vote — and a post
 //                   on the issue that links the proposal
 //
-// Every post goes where the platform's "Generate proposal" already posts: a
-// GitHub comment on the issue, and a system message in the issue's Homeroom
-// discussion thread. Every post is recorded in homeroom_bot_posts.
+// Every post goes to two places: a GitHub comment on the issue, and a
+// message from the bot's own user in the issue's Homeroom discussion thread
+// (an ordinary message since #3288, drawn as its bubble; it used to be a
+// system line). Every post is recorded in homeroom_bot_posts.
 //
 // ── The loop this must never start ───────────────────────────────────────
 //
 // A post is issue activity, and issue activity re-queues the issue. Two
 // halves keep the bot from answering itself:
-//   - its Homeroom posts are SYSTEM messages, which the queue's thread-
-//     activity query (msg_type = 'message') has always ignored;
+//   - its Homeroom posts come from a synthetic user, and every "did a person
+//     reply?" check leaves synthetic authors out: the queue's thread-activity
+//     queries by is_synthetic, advanceSeen and the follow-up by BOT_USERNAME.
+//     They are written by ws.sendBotMessage, which, unlike a person's post,
+//     never fires the bot's own wake hooks;
 //   - its GitHub comment moves the issue's updated_at, so the run records
 //     the comment's own created_at as what it has seen (advanceSeen). It
 //     does that only when nobody else posted while it worked: a person's
@@ -48,6 +56,16 @@ const log = require('./logger');
 // list included. Posting on real GitHub issues and pushing real branches
 // from it would be an irreversible side effect of a preview, so on staging a
 // live app is triaged exactly as a shadow one.
+// The bot's platform username. Its Homeroom thread posts are ordinary
+// messages from this user (#3288), so every "did a person reply?" check
+// leaves this author out. The GitHub login it comments as is a different
+// name (github.getBotUsername()).
+const BOT_USERNAME = 'homeroom_bot';
+
+function isOwnMessage(m) {
+  return String(m?.author || '').toLowerCase() === BOT_USERNAME;
+}
+
 function isStaging() {
   return process.env.USERNODE_ENV === 'staging';
 }
@@ -212,7 +230,15 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, senderId = null, notifications = null,
+  proposalSessionId = null, sender = null,
 }) {
+  // #3288: with a sender (the bot's own user), the thread posts are ordinary
+  // messages from it, drawn as its bubbles. `msgType` then no longer picks
+  // the row's kind: the proposal link is a message whose `metadata.vote`
+  // the chat hangs the vote card on. Without one, the old system line.
+  const inThread = (content, thread, meta = metadata, kindOfRow = msgType) => (sender
+    ? ws.sendBotMessage(pool, app.id, { user: sender, content, metadata: meta, thread })
+    : ws.sendSystemMessage(pool, app.id, content, kindOfRow, meta, thread));
   const { rows } = await pool.query(
     `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
      VALUES ($1, $2, $3, $4)
@@ -235,7 +261,7 @@ async function post({
   // author of an issue opened there about comments on it.
   const threadText = mention ? `@${mention} ${text}` : text;
   try {
-    message = await ws.sendSystemMessage(pool, app.id, threadText, msgType, metadata, { type: 'issue', ref: issueNumber });
+    message = await inThread(threadText, { type: 'issue', ref: issueNumber });
   } catch (err) {
     log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
   }
@@ -249,12 +275,23 @@ async function post({
     try {
       const notify = notifications || require('./notifications');
       const rows = await notify.createMentionNotifications(pool, {
-        appId: app.id, chatMessageId: message.id, senderId, content: `@${mention}`,
+        appId: app.id, chatMessageId: message.id, senderId: senderId ?? sender?.id ?? null, content: `@${mention}`,
       });
       await Promise.all(rows.map((row) => notify.hydrateAndPush(pool, row)));
       notified = rows.length;
     } catch (err) {
       log.warn('homeroom-bot', 'Poster mention failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
+  }
+  // #3264: a follow-up answers where it was asked. When somebody wrote in
+  // the proposal's own discussion, the reply goes there too, as a message
+  // from the bot (#3288).
+  let proposalMessage = null;
+  if (proposalSessionId) {
+    try {
+      proposalMessage = await inThread(text, { type: 'session', ref: Number(proposalSessionId) }, null, 'system');
+    } catch (err) {
+      log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
     }
   }
   await pool.query(
@@ -265,6 +302,7 @@ async function post({
   log.info('homeroom-bot', 'Posted on issue', {
     app: app.slug, issueNumber, kind, github: !!comment, thread: !!message,
     ...(mention ? { mentioned: mention, notified } : {}),
+    ...(proposalSessionId ? { proposalThread: !!proposalMessage } : {}),
   });
   return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!message };
 }
@@ -292,19 +330,27 @@ async function botUsernameOf(github) {
  * posted while it worked, in which case the issue is left to be looked at
  * again. `since` is when the run read the thread.
  */
-async function advanceSeen({ pool, github, threadContext, app, repo, issueNumber, runId, since, postedAt }) {
+async function advanceSeen({
+  pool, github, threadContext, app, repo, issueNumber, runId, since, postedAt, proposalSessionId = null,
+}) {
   const times = (postedAt || []).filter(Boolean).map((t) => Date.parse(t)).filter(Number.isFinite);
   if (!runId || !times.length) return { advanced: false, reason: 'nothing_posted' };
   const sinceMs = Date.parse(since);
-  const [{ comments = [] } = {}, thread, login] = await Promise.all([
+  const [{ comments = [] } = {}, thread, login, proposalThread] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
     threadContext.loadIssueThread(pool, app.id, issueNumber),
     botUsernameOf(github),
+    // #3264: on a follow-up, the proposal's own discussion is a third place
+    // a person can have replied while the bot worked.
+    proposalSessionId
+      ? threadContext.loadProposalThread(pool, app.id, proposalSessionId)
+      : Promise.resolve({ messages: [] }),
   ]);
   const botLogin = String(login || '').toLowerCase();
   const newer = (at) => Number.isFinite(Date.parse(at)) && Date.parse(at) > sinceMs;
   const someoneElse = comments.some((c) => String(c.author || '').toLowerCase() !== botLogin && newer(c.createdAt))
-    || (thread?.messages || []).some((m) => newer(m.createdAt));
+    || (thread?.messages || []).some((m) => !isOwnMessage(m) && newer(m.createdAt))
+    || (proposalThread?.messages || []).some((m) => !isOwnMessage(m) && newer(m.createdAt));
   if (someoneElse) {
     log.info('homeroom-bot', 'Someone replied while the bot worked; leaving the issue to be read again', {
       app: app.slug, issueNumber,
@@ -352,7 +398,13 @@ function promoteAsBot({ config, bot, sessionId, router = null }) {
     const req = {
       method: 'POST', url, originalUrl: url, baseUrl: '', path: url,
       headers: {}, query: {}, params: {}, body: {}, cookies: {},
-      user: { id: bot.id, username: bot.username, is_admin: false, is_synthetic: true },
+      // The marker app-access and the membership gate honour for the bot's
+      // own session only: it proposes on apps in its live list whether or
+      // not it is a collaborator or member there. Never an admin.
+      user: {
+        id: bot.id, username: bot.username, is_admin: false, is_synthetic: true,
+        [require('./app-access').HOMEROOM_BOT_PROPOSAL]: true,
+      },
       get() { return undefined; },
       header() { return undefined; },
     };
@@ -540,6 +592,8 @@ async function buildAndPropose({
 }
 
 module.exports = {
+  BOT_USERNAME,
+  isOwnMessage,
   isLiveFor,
   isStaging,
   lookingText,

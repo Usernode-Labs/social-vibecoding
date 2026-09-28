@@ -1012,7 +1012,9 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
         <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} lead={vote} dense={false} />
       </div>
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
-      <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
+      {body.summaryStale
+        ? <p className="dev-topic-hero-summary dev-topic-note" data-topic-part="summary" role="status">The change summary needs an update for this revision.</p>
+        : <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />}
       {hasIssues ? (
         <IssueAssociations
           proposalId={Number(id)}

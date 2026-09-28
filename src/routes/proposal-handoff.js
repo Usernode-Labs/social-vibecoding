@@ -13,6 +13,7 @@ const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
 const prMetadata = require('../services/pr-metadata');
 const prImportSync = require('../services/pr-import-sync');
+const summaryFreshness = require('../services/summary-freshness');
 const branchNames = require('../services/branch-names');
 const externalAgentHead = require('../services/external-agent-head');
 const topicAttrs = require('../services/topic-attributes');
@@ -1460,6 +1461,7 @@ function proposalHandoffRoutes(config) {
             const advanced = await pool.query(
               `UPDATE chat_sessions
                 SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5,
+                    ${summaryFreshness.INVALIDATE_SQL},
                     handoff_upload_checked_sha = checks_commit_sha,
                     check_state = NULL, check_phase = NULL,
                     check_error_detail = NULL, test_results = '[]'::jsonb,
@@ -1674,6 +1676,7 @@ function proposalHandoffRoutes(config) {
             const adopted = await pool.query(
               `UPDATE chat_sessions
                   SET handoff_head_sha = $1,
+                      ${summaryFreshness.INVALIDATE_SQL},
                       handoff_local_commit_sha = CASE
                         WHEN handoff_uploaded_sha = $1 THEN handoff_local_commit_sha
                         ELSE NULL
@@ -1782,6 +1785,7 @@ function proposalHandoffRoutes(config) {
           const adopted = await pool.query(
             `UPDATE chat_sessions
                 SET handoff_head_sha = $1,
+                    ${summaryFreshness.INVALIDATE_SQL},
                     handoff_local_commit_sha = CASE
                       WHEN handoff_uploaded_sha = $1 THEN handoff_local_commit_sha
                       ELSE NULL

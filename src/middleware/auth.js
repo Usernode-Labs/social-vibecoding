@@ -159,6 +159,12 @@ const GATE_OPEN_PATHS = [
   // reaches this gate.)
   '/api/auth/',
   '/api/iframe-token',
+  // Following an invite link from the waiting room queues its community
+  // for the day the account is let in (services/community-invites.js).
+  // Only the by-token reads and redeem, and the queued list the waiting
+  // room shows: making and managing links stays behind the gate.
+  '/api/invite-links/by-token/',
+  '/api/invite-links/queued',
 ];
 
 // Documents owned by the platform SPA. Clean app URLs deliberately live in
@@ -167,9 +173,12 @@ const GATE_OPEN_PATHS = [
 // the routes themselves; this only lets the browser boot the same shell `/`
 // already serves. Keep this narrower than the catch-all so an unrelated typo
 // retains the existing redirect-to-root behaviour.
+// An invite link (`/invite/<token>`, routes/community-invites.js) is one
+// too: a visitor with no account is exactly who it is for.
 function isSpaDocumentPath(pathname) {
   return pathname === '/' || pathname === '/index.html'
-    || /^\/app\/[a-z0-9][a-z0-9-]{0,254}(?:\/.*)?$/.test(pathname);
+    || /^\/app\/[a-z0-9][a-z0-9-]{0,254}(?:\/.*)?$/.test(pathname)
+    || /^\/invite\/[A-Za-z0-9_-]{22}$/.test(pathname);
 }
 
 // Returns true when it handled the response (caller must return).

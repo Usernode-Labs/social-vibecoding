@@ -420,7 +420,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -481,7 +481,9 @@ test('every issue starts a fresh model thread, through the platform\'s own readi
   assert.match(start.s, /agent_thread_id = NULL/, 'and the saved thread is cleared in the row, for every later reader');
 
   // The imitation is only worth something while it matches the platform.
-  assert.match(read('src/services/agent-turn.js'), /resumeThreadId: resumeThreadId \|\| session\.agent_thread_id \|\| null/,
+  // (#3296 added a harness check after this read; it can only drop a thread,
+  // never supply one, so a null here still means the saved thread.)
+  assert.match(read('src/services/agent-turn.js'), /const candidateThreadId = resumeThreadId \|\| session\.agent_thread_id \|\| null;/,
     'if this changes, re-check how a null thread is read before trusting the test above');
   assert.match(read('src/routes/sessions.js'), /resumeThreadId \?\? runtimeContext\.resumeThreadId \?\? null/);
 });
@@ -1006,7 +1008,7 @@ test('parseVerdict accepts empty, and it shares the question tripwire', () => {
     'both are a demand on somebody attention, so they share one daily allowance');
   assert.ok(bot.VERDICTS.includes('empty'));
   const schema = read('src/db/schema.sql');
-  assert.match(schema, /CHECK \(verdict IN \('question', 'ready', 'person', 'empty', 'failed'\)\)/);
+  assert.match(schema, /CHECK \(verdict IN \('question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'\)\)/);
   assert.match(schema, /ALTER TABLE homeroom_bot_runs DROP CONSTRAINT IF EXISTS homeroom_bot_runs_verdict_check/,
     'and a database that predates it is widened on boot');
 });

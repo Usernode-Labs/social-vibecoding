@@ -37,6 +37,14 @@
 #   MODEL                      default: claude-sonnet-5
 #   COMMIT_MSG                 default: "Changes via Homeroom"
 #   CLAUDE_RESUME_SESSION_ID   if set, passes `--resume <id>` to claude
+#   AGENT_PROVIDER             anthropic (default) | openrouter (#3296). With
+#                              openrouter, Claude Code runs a scout or build
+#                              against OpenRouter through the worker-local
+#                              claude-openrouter-request.js adapter, and needs
+#                              OPENROUTER_API_KEY + AGENT_MODEL (MODEL is the
+#                              same slug); OPENROUTER_API_BASE,
+#                              AGENT_MODEL_MAX_OUTPUT_TOKENS and
+#                              AGENT_REASONING_EFFORT are optional.
 #   PAT                        legacy back-compat — not set by the
 #                              current platform. The push step uses
 #                              `usernode-push` (which calls back into
@@ -92,8 +100,35 @@ fi
 : "${EVIDENCE_MEMBER_TOKEN:=}"
 : "${EVIDENCE_ADMIN_TOKEN:=}"
 : "${EVIDENCE_FULL_ADMIN_TOKEN:=}"
+: "${AGENT_PROVIDER:=anthropic}"
 
 SYSTEM_PROMPT_FLAGS=""
+
+# #3296: an OpenRouter turn run by Claude Code. Only the request adapter may
+# hold the user's key, so take it out of this script's exported environment
+# before anything else runs: git, the in-loop database, the commit and the
+# push (and any hook the agent left behind) never see it. run_claude below
+# hands it to the adapter alone.
+OPENROUTER_TURN_KEY=""
+if [ "$AGENT_PROVIDER" = "openrouter" ]; then
+  if [ "$MODE" != "build" ] && [ "$MODE" != "scout" ]; then
+    die "Claude over OpenRouter supports build and scout turns, not $MODE"
+  fi
+  [ -n "${OPENROUTER_API_KEY:-}" ] || die "OPENROUTER_API_KEY required for an OpenRouter turn"
+  [ -n "${AGENT_MODEL:-}" ] || die "AGENT_MODEL required for an OpenRouter turn"
+  OPENROUTER_TURN_KEY="$OPENROUTER_API_KEY"
+  unset OPENROUTER_API_KEY
+elif [ "$AGENT_PROVIDER" != "anthropic" ]; then
+  die "unknown AGENT_PROVIDER: $AGENT_PROVIDER"
+fi
+
+run_claude() {
+  if [ "$AGENT_PROVIDER" = "openrouter" ]; then
+    OPENROUTER_API_KEY="$OPENROUTER_TURN_KEY" node "$(dirname "$0")/claude-openrouter-request.js" "$@"
+  else
+    claude "$@"
+  fi
+}
 
 # Scout is deliberately read-only and receives no general worker token.
 # Build/sync still require the token for their platform push callbacks.
@@ -109,11 +144,14 @@ if [ "$MODE" = "evidence" ]; then
   [ -n "$EVIDENCE_RUN_ID" ] || die "EVIDENCE_RUN_ID required for evidence mode"
 fi
 
-# Every hosted build has a shortened task prompt and therefore requires the
-# separate authoritative system context. Fail before invoking Claude if the
-# host omitted it or failed to materialize it; there is no reduced-context
-# fallback that could silently drop platform rules.
-if { [ "$MODE" = "build" ] || [ "$MODE" = "evidence" ]; } && [ -z "$SYSTEM_PROMPT_FILE" ]; then
+# Every hosted Anthropic build has a shortened task prompt and therefore
+# requires the separate authoritative system context. Fail before invoking
+# Claude if the host omitted it or failed to materialize it; there is no
+# reduced-context fallback that could silently drop platform rules. An
+# OpenRouter build carries the full conventions block in its prompt instead,
+# exactly as a Codex build does, so the system file is optional there.
+if { [ "$MODE" = "build" ] || [ "$MODE" = "evidence" ]; } && [ -z "$SYSTEM_PROMPT_FILE" ] \
+    && [ "$AGENT_PROVIDER" != "openrouter" ]; then
   die "SYSTEM_PROMPT_FILE required for $MODE mode"
 fi
 if [ -n "$SYSTEM_PROMPT_FILE" ]; then
@@ -393,7 +431,7 @@ fi
 # move the host-side E2BIG failure here.
 if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
   echo "__USERNODE_PHASE__ claude (resume $CLAUDE_RESUME_SESSION_ID, mode $MODE)"
-  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
+  run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
     --resume "$CLAUDE_RESUME_SESSION_ID" \
     --model "$MODEL" --include-partial-messages --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
@@ -403,13 +441,13 @@ if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
     if [ -n "$RESUME_FALLBACK_PROMPT_FILE" ]; then
       RETRY_PROMPT_FILE="$RESUME_FALLBACK_PROMPT_FILE"
     fi
-    claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
+    run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
       --model "$MODEL" --include-partial-messages --output-format stream-json < "$RETRY_PROMPT_FILE"
     CC_EXIT=$?
   fi
 else
   echo "__USERNODE_PHASE__ claude (mode $MODE)"
-  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
+  run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
     --model "$MODEL" --include-partial-messages --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
 fi

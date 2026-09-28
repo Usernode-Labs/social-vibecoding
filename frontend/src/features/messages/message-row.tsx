@@ -20,6 +20,7 @@ import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../m
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
 import { EmojiPicker } from '../message-actions/emoji-picker';
+import { ImageViewer, openInViewer } from '../image-viewer/image-viewer';
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadSummaryChip } from '../message-actions/thread-summary';
 import { useDismiss } from '../message-actions/use-dismiss';
@@ -46,9 +47,13 @@ import { useDismiss } from '../message-actions/use-dismiss';
 function Attachment({ attachment }: { attachment: ConversationMessage['attachments'][number] }) {
   const image = attachment.contentType.startsWith('image/');
   const html = attachment.contentType === 'text/html' || /\.html?$/i.test(attachment.name);
+  // #3286: a plain tap opens the picture in the app's own viewer, which has
+  // a way out (../image-viewer/image-viewer.tsx).
+  const [viewing, setViewing] = useState(false);
   return (
     <div className="messages-attachment">
-      {image ? <a href={attachment.url} target="_blank" rel="noopener noreferrer"><img src={attachment.url} alt={attachment.name} loading="lazy" /></a> : <span className="messages-file-icon" aria-hidden="true">{html ? '</>' : '↓'}</span>}
+      {image ? <a href={attachment.url} target="_blank" rel="noopener noreferrer" data-image-open="" onClick={(event) => openInViewer(event, () => setViewing(true))}><img src={attachment.url} alt={attachment.name} loading="lazy" /></a> : <span className="messages-file-icon" aria-hidden="true">{html ? '</>' : '↓'}</span>}
+      {viewing ? <ImageViewer src={attachment.url} alt={attachment.name} onClose={() => setViewing(false)} /> : null}
       <div className="min-w-0 flex-1"><a className="font-medium truncate block" href={attachment.url} download>{attachment.name}</a><span>{fileSize(attachment.size)}</span></div>
       {html && attachment.viewUrl ? <a className="messages-attachment-view" href={attachment.viewUrl} target="_blank" rel="noopener noreferrer">Preview</a> : null}
     </div>
@@ -290,7 +295,7 @@ export const MessageRow = memo(function MessageRow({
     </MessageActionBar>
   ) : null;
 
-  const stateClasses = `${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''} ${message.deleted ? 'messages-message-deleted' : ''} ${focused ? 'messages-message-focus' : ''}`;
+  const stateClasses = `${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''} ${message.deleted ? 'messages-message-deleted' : ''} ${focused ? 'messages-message-focus' : ''} ${message.system ? 'messages-message-system' : ''}`;
 
   // The state word a header carries — edited. A continuation line has no
   // header, so it carries it on a meta line of its own, beside nothing: the

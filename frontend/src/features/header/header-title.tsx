@@ -44,29 +44,44 @@
  * store's INITIAL has no screen at all, so the prerendered document and the
  * first client render agree on no tile, and it arrives with the route.
  *
- * ── On the app's Workshop the strip is the app switcher (#2768) ───────
+ * ── On the app's Workshop the strip is the app switcher (#2768, #3295) ─
  *
- * The Workshop leads with a scope chip — the app's tile, its name and a ⌄ —
- * whose panel lists your other apps (features/workshop/workshop-chrome.tsx).
- * Under this bar that was the same tile and the same name twice, an inch
- * apart, so the two layouts each drop one copy:
+ * The Workshop used to lead with a scope chip — the app's tile, its name and
+ * a ⌄ — whose panel lists your other apps
+ * (features/workshop/workshop-chrome.tsx). Under this bar that was the same
+ * tile and the same name twice, an inch apart. #2768 dropped the chip on a
+ * phone and made the bar's tile and name the control there: a button with
+ * the ⌄ that opens the same panel, through the same flag
+ * (features/workshop/app-scope-store.js). A desktop kept the chip and the
+ * bar dropped its tile instead.
  *
- *   - ABOVE 700px the chip stays and the bar loses the TILE. The name is
- *     still the heading; the chip below is the one picture of the app and
- *     the control.
- *   - BELOW IT the chip goes (app.css) and the bar's tile and name BECOME the
- *     control: a button with the ⌄ that opens the same panel, through the
- *     same flag (features/workshop/app-scope-store.js). A phone gets the row
- *     back and the switcher stays one tap from the top of the screen.
+ * #3295 (the owner's request) makes the desktop the phone's: "on desktop,
+ * put the community selector dropdown in the header, not either above the
+ * community hub / workshop tabs or to the left of those if the screen is
+ * wide". So the switcher is this bar's AT EVERY WIDTH, and the Workshop no
+ * longer draws a chip. The panel still drops down at the top of the page,
+ * right under this bar.
+ *
+ * ── And on the Communities screen, the all-apps chip (#3271) ─────────
+ *
+ * The Communities screen leads with the same kind of chip, "All apps ⌄",
+ * whose panel opens one of your apps. On a phone it sat under a header that
+ * only said "Communities" (which the lit tab already says), costing a whole
+ * row. So it gets the app Workshop's treatment: below 700px the header's
+ * title IS the chip, `#header-scope-switch`, opening the screen's own panel
+ * through the screen's own flag (`workshopStore.scopeOpen`), and app.css
+ * hides the in-page chip. Above 700px nothing changes.
  *
  * The width is a media flag settled in an effect, so the first client render
  * is the prerender's (no button) and nothing here can mismatch hydration; by
- * the time anybody reaches a Workshop the flag has long since landed.
+ * the time anybody reaches the Communities screen the flag has long since
+ * landed. The app's switcher needs no flag: it follows the route, which the
+ * prerender does not have either.
  */
 
 import { useEffect, useState, type RefObject } from 'react';
 
-import { ChevronDownIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, Squares2X2Icon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { useStoreState } from '../../lib/use-store-state';
@@ -78,6 +93,7 @@ import { MergeStatusPill } from '../dev-chat/session-header';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { useDevViewMode } from '../dev-board/view-mode-store';
 import { APP_SCOPE_PANEL_ID, appScopeStore } from '../workshop/app-scope-store.js';
+import { workshopStore } from '../workshop/workshop-store.js';
 
 // The one string that means "this is naming the platform, not an app". It is
 // header-title-store.js's INITIAL, which is why the prerendered document and
@@ -88,7 +104,8 @@ const PLATFORM_NAME = 'Homeroom';
 /**
  * The phone layout, in the spelling app.css uses for the same breakpoint (the
  * Workshop's own `WIDE_QUERY` is its complement). False until mounted, so the
- * hydrating render agrees with the prerender whatever the window is.
+ * hydrating render agrees with the prerender whatever the window is. Only the
+ * Communities screen's switcher reads it now (#3295).
  */
 const PHONE_QUERY = '(max-width: 699.98px)';
 
@@ -112,6 +129,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   const { life } = useStoreState(sessionHeaderStore);
   const viewMode = useDevViewMode();
   const { open: scopeOpen } = useStoreState(appScopeStore) as { open: boolean };
+  const { scopeOpen: allAppsOpen } = useStoreState(workshopStore) as { scopeOpen: boolean };
   const phone = usePhone();
 
   const onSession = tab === 'dev' && subTab === 'sessions';
@@ -127,10 +145,13 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   const record = { icon_url: iconUrl, icon_emoji: iconEmoji, name: name || text };
   // The app's Workshop: the Dev half's board route in its Workshop layout.
   // Its Kanban layout and the sub-views reached from it (a topic, a session,
-  // the general chat) wear no scope chip, so the strip is left alone there.
+  // the general chat) have no scope panel, so the strip is left alone there.
   const onWorkshop = inApp && tab === 'dev' && subTab === 'forum' && viewMode === 'workshop';
-  const switcher = onWorkshop && phone;
-  const showTile = inApp && !(onWorkshop && !phone);
+  // At every width (#3295): the Workshop draws no chip of its own any more.
+  const switcher = onWorkshop;
+  // The Communities screen on a phone: the title is its all-apps chip.
+  const allAppsSwitcher = screen === 'workshop-screen' && phone;
+  const showTile = inApp;
 
   /* `.app-icon-tile` + `data-icon` draw the box, and this call site adds no
      background or text colour of its own — app.css says tile call sites must
@@ -156,7 +177,27 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
     >
       <span className="inline-flex items-center gap-2 max-w-full align-middle">
         {switcher ? null : tile}
-        {switcher ? (
+        {allAppsSwitcher ? (
+          /* THE ALL-APPS CHIP, in the bar (#3271). The same control as the
+             screen's own `#workshop-scope` — the grid, "All" and the ⌄ —
+             opening the same panel, which still drops down at the top of the
+             screen, right under this bar. */
+          <button
+            id="header-scope-switch"
+            type="button"
+            className="pointer-events-auto un-touch-target inline-flex items-center gap-2 min-w-0 max-w-full
+                       text-left font-semibold"
+            aria-haspopup="menu"
+            aria-expanded={allAppsOpen ? 'true' : 'false'}
+            aria-controls="workshop-scope-picker"
+            aria-label="All your projects, or open one"
+            onClick={() => workshopStore.set({ scopeOpen: !allAppsOpen })}
+          >
+            <Squares2X2Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
+            <span id="header-title-name" className="min-w-0 truncate">All</span>
+            <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+          </button>
+        ) : switcher ? (
           /* THE SWITCHER. `pointer-events-auto` because the h1 around it is
              `pointer-events-none` so its overlap never eats a tap meant for a
              control beside it — this is the one part of it that IS a

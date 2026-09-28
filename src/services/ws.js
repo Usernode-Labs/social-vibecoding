@@ -87,6 +87,14 @@ function noteIssueActivityForBot(appId, issueNumber, reason) {
   }
 }
 
+function noteProposalActivityForBot(pool, appId, sessionId) {
+  try {
+    Promise.resolve(require('./homeroom-bot').noteProposalActivity(pool, { appId, sessionId })).catch(() => {});
+  } catch (err) {
+    log.warn('ws', 'homeroom bot wake failed', { err: err.message });
+  }
+}
+
 function disconnectUser(userId) {
   for (const clients of [globalClients, ...rooms.values()]) {
     for (const client of clients) {
@@ -629,6 +637,27 @@ async function handleMessage(pool, client, msg) {
       return { ok: false, code: 'join_required' };
     }
   }
+  // HOMEROOM'S OLD CHANNEL IS READ-ONLY. The platform's own project talks
+  // in #general now (the Homeroom community's channel), and this discussion
+  // is kept as history: its main stream and its reply threads take no new
+  // post. A proposal's or a request's own thread is not the channel and
+  // stays open. Answered, like the join refusal, so the composer can say so.
+  if (msg.type === 'chat' && (!msg.thread || msg.thread.type === 'message')) {
+    let archived = false;
+    try {
+      archived = await communities.channelArchived(pool, client.appId);
+    } catch (err) {
+      log.warn('ws', 'channel archive check failed', { appId: client.appId, err: err.message });
+    }
+    if (archived) {
+      try {
+        if (client.ws && client.ws.readyState === 1) {
+          client.ws.send(JSON.stringify({ type: 'error', code: 'channel_moved', message: communities.CHANNEL_MOVED }));
+        }
+      } catch { /* a closed socket has nobody to tell */ }
+      return { ok: false, code: 'channel_moved' };
+    }
+  }
   switch (msg.type) {
     case 'chat': {
       // #694: optional file attachments, uploaded beforehand via
@@ -847,6 +876,8 @@ async function handleMessage(pool, client, msg) {
       // A person answering on an issue's thread is exactly what the Homeroom
       // bot waits for; a system row (a claim, a bounty) is not a message.
       if (thread && thread.type === 'issue') noteIssueActivityForBot(client.appId, thread.ref, 'thread');
+      // #3264: a reply in the discussion of the bot's own proposal.
+      if (thread && thread.type === 'session') noteProposalActivityForBot(pool, client.appId, thread.ref);
       // #2387: a reply thread grew — every row showing its root redraws its
       // "N replies" line from this frame.
       if (thread && thread.type === appChat.MESSAGE_THREAD) {
@@ -1276,18 +1307,31 @@ async function getReactionsForMessages(pool, messageIds, viewerId = null) {
 // (JSONB) and echoed on the live broadcast. Used e.g. by the vote-activity
 // lines (promote / vote cast) to carry { vote: { sessionId, prNumber } } so
 // the group-chat client can render live vote buttons inline on the row.
-// #194: optional `thread` ({ type: 'issue'|'session'|'governance', ref })
-// scopes the system message into that thread instead of general chat
-// (used by the per-vote activity rows, which post into the proposal's
-// thread). Callers are trusted — no ref validation here.
+// #194: `thread` ({ type: 'issue'|'session'|'governance', ref }) scopes the
+// system message into that thread (used by the per-vote activity rows,
+// which post into the proposal's thread). Callers are trusted — no ref
+// validation here.
+//
+// A CHANNEL IS WHAT PEOPLE SAID. With no thread there is nothing to write:
+// the main stream is the app's channel (the hub's Channel card, the Messages
+// room), and Homeroom's activity — a proposal put up for a vote, a merge, a
+// check verdict, a setting changed, main going red — is no longer a line in
+// it, nor in #general. The story of one proposal, request or decision is
+// told in its own thread, which every caller names. The app-wide notices
+// that have no thread are shown where that state lives: main's suite and a
+// stalled release as banners on the project page (dev-board/board-frame.tsx),
+// and the Friday card and settings changed lately in the Workshop's notices
+// panel (services/app-notices.js, read from `events`). A call with no thread
+// is refused here rather than trusted to the callers.
+// db/migrate.js clearAutomatedChannelLines removes the lines written before.
 async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null, thread = null) {
+  if (!thread) return null;
   const { rows } = await pool.query(
     `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, created_at`,
     // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
-    [appId, content, msgType, JSON.stringify(metadata || {}),
-     thread ? thread.type : null, thread ? thread.ref : null]
+    [appId, content, msgType, JSON.stringify(metadata || {}), thread.type, thread.ref]
   );
 
   broadcast(appId, {
@@ -1298,12 +1342,56 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
     content,
     msgType,
     ...(metadata ? { metadata } : {}),
-    ...(thread ? { thread } : {}),
+    thread,
     createdAt: rows[0].created_at,
   });
   // #1688: the row, for a caller that hangs something off the message — the
   // "needs a conversation" prompt names people, and their mention rows point
   // at it. Every existing caller ignores the return.
+  return { id: rows[0].id, createdAt: rows[0].created_at };
+}
+
+/**
+ * #3288: a thread post from a synthetic account (the Homeroom bot), written
+ * and broadcast as an ORDINARY message from that user, so the chat draws it
+ * as a bubble with a name and not as a centred system line.
+ *
+ * Deliberately NOT handleMessage. That is the path for a person at a
+ * keyboard, and three of its effects are wrong for text a model wrote:
+ *   - it turns every `@name` in the body into a notification, so a reply
+ *     that quoted a handle would notify whoever owns it (the caller writes
+ *     the one mention it means, for the person it answers);
+ *   - it wakes the Homeroom bot on issue and proposal threads, and this is
+ *     the bot talking;
+ *   - its collaborator and join gates are for people; the bot is on an app
+ *     because the app is in its live list.
+ * What it keeps is the row and the frame: `msg_type = 'message'`, the
+ * author's user_id, and the same `chat` payload handleMessage broadcasts,
+ * through broadcastFromSender so a viewer who blocked the account does not
+ * receive it. Thread posts only, like sendSystemMessage.
+ */
+async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null } = {}) {
+  if (!thread || !user || !Number.isInteger(Number(user.id))) return null;
+  const text = String(content || '').trim().slice(0, MAX_CHAT_LEN);
+  if (!text) return null;
+  const { rows } = await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+     VALUES ($1, $2, $3, 'message', $4, $5, $6)
+     RETURNING id, created_at`,
+    [appId, Number(user.id), text, JSON.stringify(metadata || {}), thread.type, thread.ref]
+  );
+  await broadcastFromSender(pool, appId, {
+    type: 'chat',
+    id: rows[0].id,
+    userId: Number(user.id),
+    username: user.username,
+    content: text,
+    msgType: 'message',
+    ...(metadata ? { metadata } : {}),
+    thread,
+    createdAt: rows[0].created_at,
+    postedVia: null,
+  }, Number(user.id));
   return { id: rows[0].id, createdAt: rows[0].created_at };
 }
 
@@ -1625,4 +1713,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
+module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
