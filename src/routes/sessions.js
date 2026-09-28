@@ -1823,6 +1823,23 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // enumerable; missing sessions fall through to each route's own 404.
   router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
 
+  router.get('/api/sessions/:id/usage', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    res.set('Cache-Control', 'private, no-store');
+    if (!/^[1-9][0-9]{0,9}$/.test(req.params.id) || Number(req.params.id) > 2147483647) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    try {
+      const { readSessionUsage } = require('../services/session-usage');
+      const usage = await readSessionUsage(pool, Number(req.params.id), req.user.id);
+      if (!usage) return res.status(404).json({ error: 'Session not found' });
+      return res.json({ usage });
+    } catch (err) {
+      log.warn('sessions', 'Usage read failed', { message: err.message });
+      return res.status(500).json({ error: 'Could not load session usage' });
+    }
+  });
+
   // PATCH /api/sessions/:id/linked-issues (#2028)
   //
   // A proposal's issue links used to be writable only as a side effect of
