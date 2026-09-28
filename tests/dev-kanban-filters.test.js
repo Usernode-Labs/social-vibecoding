@@ -262,18 +262,23 @@ test('review sort still works with unavailable storage and when signed out', () 
   assert.equal(a._reviewSort(), 'newest');
 });
 
-test('only In review renders a two-button sort with selected state and a visible explanation', () => {
+test('only In review renders one sort button naming the current mode and the next action', () => {
   const a = reviewBoard();
   let html = kanbanHtml(a);
-  assert.equal((html.match(/aria-label="Sort In review"/g) || []).length, 1);
-  const control = html.slice(html.indexOf('aria-label="Sort In review"'), html.indexOf('</div>', html.indexOf('aria-label="Sort In review"')));
-  assert.match(control, /aria-pressed="true"[^>]*>Newest<\/button>/);
-  assert.match(control, /aria-pressed="false"[^>]*>Vote priority<\/button>/);
-  assert.ok(html.indexOf('id="dev-kanban-col-inreview"') < html.indexOf('aria-label="Sort In review"'));
+  const control = h => h.match(/<button[^>]*aria-label="Sort In review:[\s\S]*?<\/button>/g) || [];
+  assert.equal(control(html).length, 1);
+  assert.match(control(html)[0], /aria-label="Sort In review: Newest\. Switch to Vote priority\."/);
+  assert.match(control(html)[0], /title="Most recently submitted for review first\. Click to switch to Vote priority\."/);
+  assert.match(control(html)[0], /Newest<\/button>/);
+  assert.doesNotMatch(control(html)[0], /aria-pressed|aria-haspopup/);
+  assert.ok(html.indexOf('id="dev-kanban-col-inreview"') < html.indexOf('aria-label="Sort In review:'));
+  assert.doesNotMatch(html, /Most recently submitted for review first\.<\/p>/);
   a._setReviewSort('priority');
   html = kanbanHtml(a);
-  assert.match(html, /aria-pressed="true"[^>]*>Vote priority<\/button>/);
-  assert.match(html, /Unvoted first, then fewest qualifying votes still needed\.<\/p>/);
+  assert.equal(control(html).length, 1);
+  assert.match(control(html)[0], /aria-label="Sort In review: Vote priority\. Switch to Newest\."/);
+  assert.match(control(html)[0], /Vote priority<\/button>/);
+  assert.doesNotMatch(html, /Unvoted first, then fewest qualifying votes still needed\.<\/p>/);
   const dialog = renderComponent('frontend/src/features/dialogs/board-filters.tsx', 'BoardFiltersDialog', {});
   assert.doesNotMatch(dialog, /Already voted|Proposal order|Fewest votes needed/);
 });
