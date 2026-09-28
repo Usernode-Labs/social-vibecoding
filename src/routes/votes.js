@@ -3050,12 +3050,12 @@ function voteRoutes(config) {
             pr_summary_md, pr_summary_source, pr_summary_source_head_sha,
             pr_summary_source_body_hash, pr_summary_applied_version)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
-            'imported', $8, $9, $10, $11,
+            'imported', $8::text, $9, $10, $11,
             CASE WHEN $7::text = 'promoted' THEN NOW() END,
             CASE WHEN $7::text = 'active' THEN NOW() END,
             NOW(), $12, $13, $14::jsonb, $15, $16, $17,
             CASE WHEN $17::text IS NULL THEN NULL ELSE 'author' END,
-            CASE WHEN $17::text IS NULL THEN NULL ELSE $8 END,
+            CASE WHEN $17::text IS NULL THEN NULL ELSE $8::text END,
             CASE WHEN $17::text IS NULL THEN NULL ELSE $18 END,
             CASE WHEN $17::text IS NULL THEN NULL ELSE 0 END)
            RETURNING id, status`,

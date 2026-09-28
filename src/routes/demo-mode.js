@@ -647,10 +647,10 @@ function demoModeRoutes(config) {
             pr_body, pr_summary_md, pr_summary_source, pr_summary_source_head_sha,
             pr_summary_source_body_hash, pr_summary_applied_version)
          VALUES ($1, $2, $3, $4, $5, $6, $14::text,
-            'imported', $7, $8, $9,
+            'imported', $7::text, $8, $9,
             CASE WHEN $14::text = 'promoted' THEN NOW() END, NOW(), $10, $11::jsonb, '{}', $12, $13,
             CASE WHEN $13::text IS NULL THEN NULL ELSE 'author' END,
-            CASE WHEN $13::text IS NULL THEN NULL ELSE $7 END,
+            CASE WHEN $13::text IS NULL THEN NULL ELSE $7::text END,
             CASE WHEN $13::text IS NULL THEN NULL ELSE $15 END,
             CASE WHEN $13::text IS NULL THEN NULL ELSE 0 END)
          RETURNING id, status`,
