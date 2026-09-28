@@ -27,6 +27,7 @@ const { isCliCredentialManagementSession } = require('../services/cli-api-policy
 const visualEvidencePlan = require('../services/visual-evidence-plan');
 const visualEvidenceState = require('../services/visual-evidence-state');
 const visualEvidenceView = require('../services/visual-evidence-view');
+const proposalDelivery = require('../services/proposal-delivery');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -1292,28 +1293,21 @@ function isAfterDeploymentBoundary(row, boundary) {
 }
 
 // Deployment is deliberately a derived view of a merged proposal, not a
-// second persisted lifecycle. Hosted apps finish their merge only after the
-// production rebuild succeeds, so every merged row there is deployed. The
-// platform app is different: its external release can lag behind the GitHub
-// merge, and apps.main_sha is the build answering this request. Match that SHA
+// second persisted lifecycle. Child apps require runtime revision evidence:
+// a GitHub merge can succeed even when its production rebuild fails. The
+// platform app has its own external release path; apps.main_sha is the build
+// answering this request there. Match that SHA
 // to the exact merged session across the WHOLE history (not just this page),
 // then classify rows by their merge order. If old data cannot establish that
 // boundary, leave the honest `unknown` fallback for the client to render as
 // “Merged”.
-async function annotateDeploymentState(pool, app, rows) {
+async function annotateDeploymentState(config, pool, app, rows) {
+  if (!app?.self_hosted) {
+    return proposalDelivery.annotateChild(config, pool, app, rows);
+  }
+
   const prRows = rows.filter((row) => (row.row_type || 'pr') === 'pr' && row.status === 'merged');
   const runningSha = normalizedSha(app?.main_sha);
-
-  if (!app?.self_hosted) {
-    for (const row of prRows) row.deployment_state = 'deployed';
-    return {
-      state: 'deployed',
-      runningSha,
-      liveSessionId: null,
-      livePrNumber: app?.main_pr_number || null,
-      pendingCount: 0,
-    };
-  }
 
   if (!runningSha) {
     for (const row of prRows) row.deployment_state = 'unknown';
@@ -4210,7 +4204,8 @@ function voteRoutes(config) {
     try {
       const gatedApp = await appAccess.getAppForUser(
         pool, req.params.slug, req.user, 'view',
-        `${appAccess.ACCESS_COLUMNS}, main_sha, main_pr_number, release_stall`
+        `${appAccess.ACCESS_COLUMNS}, repo_url, runtime_kind, runtime_name,
+         main_sha, main_pr_number, last_failure, release_stall`
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
       const appRows = [gatedApp];
@@ -4521,24 +4516,34 @@ function voteRoutes(config) {
       }
 
       for (const row of rows) row.completed_at = completedAt(row);
-      let deployment = await annotateDeploymentState(pool, appRows[0], rows);
+      let deployment = await annotateDeploymentState(config, pool, appRows[0], rows);
       // A proposal preview runs the platform app from the proposal head, so
-      // its boot-time main_sha intentionally has no merged-session match.
-      // Give ?demo=1 a deterministic live boundary and one pending card so
-      // the new Done-column cue is visually reviewable on staging instead of
-      // showing only the honest unmatched-history fallback.
+      // its boot-time main_sha has no merged-session match. Give ?demo=1
+      // deterministic child-delivery fixtures for the Done-column cues;
+      // these mock rows have no real merge commits or running child app.
       if (IS_STAGING && req.query.demo === '1' && isFirstPage) {
         const demoRows = rows.filter((row) => row.row_type === 'pr'
           && Number(row.id) >= 9100000 && Number(row.id) <= 9100034);
         for (const row of demoRows) row.deployment_state = 'deployed';
         const pendingDemo = demoRows.find((row) => Number(row.id) === 9100000);
-        if (pendingDemo) pendingDemo.deployment_state = 'deploying';
+        if (pendingDemo) {
+          pendingDemo.deployment_state = 'pending';
+          pendingDemo.deployment_kind = 'child';
+        }
+        const failedDemo = demoRows.find((row) => Number(row.id) === 9100001);
+        if (failedDemo) {
+          failedDemo.deployment_state = 'failed';
+          failedDemo.deployment_kind = 'child';
+        }
+        const unknownDemo = demoRows.find((row) => Number(row.id) === 9100002);
+        if (unknownDemo) {
+          unknownDemo.deployment_state = 'unknown';
+          unknownDemo.deployment_kind = 'child';
+        }
         deployment = {
-          state: 'deploying',
+          kind: 'child', state: 'pending',
           runningSha: 'dddddddddddddddddddddddddddddddddddddddd',
-          liveSessionId: 9100027,
-          livePrNumber: 910127,
-          pendingCount: 1,
+          liveSessionId: null, livePrNumber: null, pendingCount: null,
         };
       }
 

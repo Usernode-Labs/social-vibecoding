@@ -47,7 +47,8 @@ function makeRows(n) {
   return out;
 }
 
-function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary, legacyCursor }) {
+function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary, legacyCursor,
+  childDeploymentState = 'unknown' }) {
   const routes = [];
   const ids = {
     express: 'express',
@@ -65,6 +66,7 @@ function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary, legacy
     appAccess: require.resolve('../src/services/app-access'),
     topicAttrs: require.resolve('../src/services/topic-attributes'),
     visuals: require.resolve('../src/services/visuals'),
+    delivery: require.resolve('../src/services/proposal-delivery'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
@@ -133,6 +135,16 @@ function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary, legacy
     emptySummary: () => ({ priority: null, assignee: null }),
   });
   stub(ids.visuals, { shapeAgg: () => null });
+  stub(ids.delivery, { annotateChild: async (_config, _pool, _app, rows) => {
+    for (const row of rows) {
+      if ((row.row_type || 'pr') === 'pr') {
+        row.deployment_state = childDeploymentState;
+        row.deployment_kind = 'child';
+      }
+    }
+    return { kind: 'child', state: childDeploymentState, runningSha: null,
+      liveSessionId: null, livePrNumber: null, pendingCount: null };
+  } });
 
   delete require.cache[ids.subject];
   const { voteRoutes } = require('../src/routes/votes');
@@ -249,7 +261,7 @@ test('completed_at exposes merge time and a creation fallback for historical row
   assert.equal(payload.merged[1].completed_at, rows[1].created_at);
 });
 
-test('hosted apps expose every merged proposal as deployed', async () => {
+test('child apps report delivery separately from merged status', async () => {
   const rows = makeRows(2);
   const { routes, captured } = loadVotes({
     mergedRows: rows,
@@ -260,14 +272,14 @@ test('hosted apps expose every merged proposal as deployed', async () => {
     },
   });
   const { payload } = await callMerged(routes, captured, {});
-  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['deployed', 'deployed']);
+  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['unknown', 'unknown']);
   assert.deepEqual(payload.deployment, {
-    state: 'deployed',
-    runningSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    kind: 'child', state: 'unknown', runningSha: null,
     liveSessionId: null,
-    livePrNumber: 500,
-    pendingCount: 0,
+    livePrNumber: null,
+    pendingCount: null,
   });
+  assert.ok(payload.merged.every((row) => row.deployment_kind === 'child'));
 });
 
 test('self-hosted apps derive deployed and deploying rows from the live merge boundary', async () => {
