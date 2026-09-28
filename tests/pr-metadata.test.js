@@ -12,6 +12,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 
 // Install module stubs before requiring the unit under test.
 function loadWithStubs({
@@ -73,12 +74,15 @@ function loadWithStubs({
 function mockPool(rows, {
   specRows = [], liveSpec = '', linkedIssues = [], appliedIssues = [],
   testingMd = null, testingPath = null, appliedTesting = null,
-  appliedSummary = null,
+  appliedSummary = null, summaryStale = false, prBody = null,
 } = {}) {
   return {
     queries: [],
     async query(sql, params) {
       this.queries.push({ sql, params });
+      if (/UPDATE chat_sessions\s+SET pr_summary_source = 'generated'/.test(sql)) {
+        return { rows: [{ pr_summary_md: params[4] }], rowCount: 1 };
+      }
       if (/FROM chat_session_specs/i.test(sql)) return { rows: specRows };
       if (/FROM chat_sessions\b/i.test(sql)) {
         return {
@@ -86,6 +90,7 @@ function mockPool(rows, {
             spec_md: liveSpec, linked_issues: linkedIssues, pr_linked_issues_applied: appliedIssues,
             testing_md: testingMd, testing_path: testingPath, pr_testing_applied: appliedTesting,
             pr_visuals_applied: null, pr_summary_md: appliedSummary,
+            pr_summary_stale: summaryStale, pr_body: prBody,
           }],
         };
       }
@@ -1024,6 +1029,64 @@ test('existing PR makes no GitHub call when summary (and everything else) is unc
       userMessage: 'x', ccSummary: 'y', username: 'evan',
     });
     assert.equal(githubCalls.length, 0, 'no GitHub call when the summary is unchanged too');
+  } finally {
+    restore();
+  }
+});
+
+test('a regenerated summary clears the stale notice even when its words are unchanged', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls, summary: 'Steady summary.',
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [75],
+      appliedSummary: 'Steady summary.', summaryStale: true,
+      prBody: 'The currently published PR body.',
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u',
+      pr_title: 'Cumulative title', pr_summary_stale: true };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 0, 'the unchanged PR body needs no GitHub write');
+    assert.equal(session.pr_summary_stale, false);
+    assert.ok(pool.queries.some((q) => /pr_summary_stale = FALSE/.test(q.sql)
+      && /pr_summary_input_version = \$2/.test(q.sql)),
+    'freshness is recorded only for the version used by generation');
+    const refreshed = pool.queries.find((q) => /SET pr_summary_source = 'generated'/.test(q.sql));
+    assert.equal(refreshed.params[3],
+      crypto.createHash('sha256').update('The currently published PR body.').digest('hex'),
+      'the source hash describes the body on GitHub, not an unwritten draft');
+  } finally {
+    restore();
+  }
+});
+
+test('an empty generated summary keeps prior prose when other PR metadata changes', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls, summary: '',
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [],
+      appliedSummary: 'The earlier explanation.', summaryStale: true,
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u',
+      pr_title: 'Cumulative title', pr_summary_stale: true };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 1, 'the changed issue linkage still updates GitHub');
+    assert.match(githubCalls[0].opts.body, /^The earlier explanation\./);
+    assert.equal(session.pr_summary_md, 'The earlier explanation.');
+    assert.equal(session.pr_summary_stale, true, 'old prose is still marked as needing review');
+    const update = pool.queries.find((q) => /UPDATE chat_sessions SET pr_title/.test(q.sql));
+    assert.equal(update.params[10], false, 'an empty result cannot validate the old summary');
   } finally {
     restore();
   }

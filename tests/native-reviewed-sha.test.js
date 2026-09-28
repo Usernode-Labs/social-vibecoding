@@ -221,7 +221,8 @@ test('an author push clears the approvals and re-runs the checks', async () => {
     assert.equal(out.kind, 'authored');
     assert.equal(out.votesKept, false);
     assert.equal(out.epoch, 1, 'the epoch moves, which is what stops the old votes counting');
-    assert.equal(revised.pr_summary_md, null, 'the previous explanation is not reused for the new commit');
+    assert.equal(revised.pr_summary_md, 'The earlier explanation.',
+      'the previous explanation remains readable while its freshness is reviewed');
     assert.equal(revised.pr_summary_stale, true);
     assert.ok(pool.writes.some((w) => /pr_summary_previous_md = COALESCE/.test(w.sql)),
       'the prior explanation is retained when the reviewed head moves');

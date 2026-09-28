@@ -135,7 +135,6 @@ async function syncImportedProposal({ config, pool, session }) {
           [freshBody, session.id]
         );
         session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
-        session.pr_summary_md = null;
         session.pr_body = freshBody;
       } catch (err) {
         log.warn('pr-import-sync', 'description mirror refresh failed (non-fatal)', {
@@ -301,7 +300,6 @@ async function applyHeadChange({
   const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.imported_pr_head_sha = newHead;
   session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
-  session.pr_summary_md = null;
   session.approval_epoch = epoch;
   if (checksCarry) session.checks_commit_sha = newHead;
   if (session.visual_evidence_state || session.visual_evidence_detail) {

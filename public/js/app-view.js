@@ -3993,7 +3993,7 @@ const AppView = {
       body = {
         actions: AppView._detailActionsView('proposal', item),
         summaryHtml: AppView._proposalSummaryHtml(item),
-        summaryStale: !!item.pr_summary_stale,
+        summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
         // #1370's "Full proposal details" disclosure, between the generated
         // summary and the detail block, exactly where it was inserted.
         proposalBody: AppView._proposalBodyView(item),
@@ -4018,7 +4018,7 @@ const AppView = {
       body = {
         actions: AppView._detailActionsView('session', item),
         summaryHtml: AppView._proposalSummaryHtml(item),
-        summaryStale: !!item.pr_summary_stale,
+        summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
         proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
         transcript: AppView._transcriptSectionView(item),
@@ -4434,11 +4434,11 @@ const AppView = {
     // returns it to the owner of an underway change only.
     const specStandIn = !body.proposalBody && mine && underway && !!item.spec_md;
     if (specStandIn) body.proposalBody = AppView._proposalBodyView({ ...item, pr_body: item.spec_md });
-    if (!body.summaryStale) {
-      body.summaryHtml ||= specStandIn
-        ? '<p>No change summary has been added yet. The spec this change is built from is under Technical details.</p>'
+    body.summaryHtml ||= specStandIn
+      ? '<p>No short summary has been added yet. The spec this change is built from is under Technical details.</p>'
+      : body.proposalBody
+        ? '<p>No short summary has been added yet. The current description is under Technical details.</p>'
         : '<p>No change summary has been added yet.</p>';
-    }
     const md = item.testing_md || '';
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
     body.workspace = mine && item.source !== 'imported' ? item.id : null;
@@ -11667,7 +11667,6 @@ const AppView = {
   // or an LLM-unavailable turn) so nothing renders and the rest of the view
   // is unchanged.
   _proposalSummaryHtml(pr) {
-    if (pr?.pr_summary_stale) return '';
     const md = pr && typeof pr.pr_summary_md === 'string' ? pr.pr_summary_md.trim() : '';
     if (!md) return '';
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)

@@ -803,7 +803,8 @@ test('syncImportedProposal: a changed body is mirrored even when the head has no
     assert.ok(write, 'the row learned the description');
     assert.deepEqual(write.params, ['The description as it now reads on GitHub.', 321]);
     assert.match(write.sql, /pr_summary_previous_md = COALESCE\(pr_summary_md, pr_summary_previous_md\)/);
-    assert.equal(session.pr_summary_md, null, 'older author prose is no longer presented as current');
+    assert.equal(session.pr_summary_md, 'Author-written summary.',
+      'author prose remains readable while the changed description is flagged');
     assert.equal(session.pr_summary_stale, true);
     assert.equal(session.pr_body, 'The description as it now reads on GitHub.',
       'and the in-memory row matches, like every other mirror here');
