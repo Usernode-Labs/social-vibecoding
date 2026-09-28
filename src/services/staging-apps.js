@@ -141,13 +141,12 @@ function catalogFixtures(curation = false) {
 }
 
 const CATALOG_SLUGS = new Set(catalogFixtures(true).map(app => app.slug));
-const PREVIEW_SLUGS = new Set([...CATALOG_SLUGS,
-  'staging-demo-chess-arena', 'staging-demo-puzzle-chain', 'staging-demo-word-garden', 'staging-demo-pixel-racer']);
 
 function isCatalogSlug(slug) { return CATALOG_SLUGS.has(slug); }
 
 function isSample(app) {
-  return process.env.USERNODE_ENV === 'staging' && !!app && PREVIEW_SLUGS.has(app.slug)
+  return process.env.USERNODE_ENV === 'staging' && !!app
+    && (CATALOG_SLUGS.has(app.slug) || String(app.slug).startsWith('staging-demo-'))
     && app.created_by === 900001 && !app.self_hosted && !app.repo_url && !app.container_id && !app.runtime_name
     && app.status === 'running';
 }

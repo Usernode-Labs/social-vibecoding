@@ -25,6 +25,16 @@ test('fixture reconciliation is inert outside staging', async () => {
   } finally { process.env.USERNODE_ENV = 'staging'; }
 });
 
+test('older stored sample apps also avoid nonexistent runtimes, while real deployments are unchanged', () => {
+  const sample = { slug: 'staging-demo-fork', created_by: 900001, status: 'running' };
+  assert.equal(stagingApps.isSample(sample), true);
+  for (const change of [{ created_by: 1 }, { slug: 'real-app' }, { self_hosted: true },
+    { repo_url: 'https://github.com/example/app' }, { container_id: 'live-app' },
+    { runtime_name: 'live-app' }, { status: 'error' }]) {
+    assert.equal(stagingApps.isSample({ ...sample, ...change }), false);
+  }
+});
+
 test('Preview lists and actions share persisted identities, with private viewer isolation (PostgreSQL)', async t => {
   const dsn = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
   const admin = new Client({ connectionString: dsn, connectionTimeoutMillis: 2000 });
