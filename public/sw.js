@@ -291,7 +291,11 @@
 // v36 (home-screen icon on black): the same mark, now cream on a black tile
 // after feedback, so it moves again, /icons/v2/ to /icons/v3/, for the
 // reason v35 gives — and the cached /index.html names the v2 favicon.
-const SW_VERSION = 'v36';
+//
+// v37 (#3331): replace the In review sorting pill with the compact header
+// button. Retire the cached React shell so existing preview browsers receive
+// the same renderer as fresh browsers. The stable API cache keeps sign-in.
+const SW_VERSION = 'v37';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
