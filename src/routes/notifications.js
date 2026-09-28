@@ -8,6 +8,9 @@ const mobilePushPreferences = require('../services/mobile-push-preferences');
 const notificationPreferences = require('../services/notification-preferences');
 const log = require('../services/logger');
 
+// Shared data only; the runtime image includes frontend sources.
+const filterGroups = require('../../frontend/src/features/notifications/filter-groups.json');
+
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // ── Staging mock data ──────────────────────────────────────────────────
@@ -547,9 +550,14 @@ function notificationsRoutes(config) {
       // rather than a free list of kinds: the client does not get to select
       // arbitrary rows out of its own feed, and the grouping stays defined in
       // one place (services/notifications.js).
-      const kinds = req.query.kind === 'conversation'
+      const filter = req.query.kind;
+      if (filter != null && filter !== 'conversation'
+          && (typeof filter !== 'string' || !Object.hasOwn(filterGroups, filter))) {
+        return res.status(400).json({ error: 'Unknown notification filter' });
+      }
+      const kinds = filter === 'conversation'
         ? [...notifications.CONVERSATION_NOTIFICATION_KINDS]
-        : null;
+        : filter ? filterGroups[filter].kinds : null;
 
       const rows = await notifications.listForUser(pool, req.user.id, { limit, before, kinds });
       const serialized = rows.map(notifications.serialize);
@@ -623,7 +631,7 @@ function notificationsRoutes(config) {
         // leaving "Mark all read" enabled with nothing left to mark.
         if (IS_STAGING && req.query.demo === '1') {
           const mocks = stagingMockNotifications();
-          payload.notifications = [...mocks, ...payload.notifications];
+          payload.notifications = [...mocks.filter((row) => !kinds || kinds.includes(row.kind)), ...payload.notifications];
           payload.unread += mocks.filter((m) => !m.readAt).length;
           // Pinned-invite demo row: drives the drawer's Invites section
           // and its swipe Accept/Decline path in a staging preview.
