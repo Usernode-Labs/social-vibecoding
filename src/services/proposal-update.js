@@ -809,7 +809,6 @@ async function applyProposedDescription({ pool, gh, session, owner, repo, descri
   try {
     await summaryFreshness.invalidate(pool, Number(session.id));
     session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
-    session.pr_summary_md = null;
   } catch (err) {
     log.warn('proposal-update', 'could not invalidate the summary before a description edit', {
       sessionId: Number(session.id), err: err.message,
@@ -1395,7 +1394,6 @@ async function advanceAppRepoBranch(ctx) {
     // of every reader even if the later PR metadata or preview work fails.
     await summaryFreshness.invalidate(pool, sessionId);
     session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
-    session.pr_summary_md = null;
   }
 
   // BEFORE the tails, every one of which ends in a capture that reads the

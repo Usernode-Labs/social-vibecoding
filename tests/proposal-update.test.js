@@ -2163,7 +2163,7 @@ test('a failed description refresh leaves the older summary marked stale', async
 
   assert.equal(result.ok, true);
   assert.equal(result.descriptionRejected, 'github_write_failed');
-  assert.equal(session.pr_summary_md, null);
+  assert.equal(session.pr_summary_md, 'The older author summary.');
   assert.equal(session.pr_summary_stale, true);
   assert.ok(pool.queries.some((q) => /pr_summary_previous_md = COALESCE/.test(q.sql)),
     'the author text is preserved before attempting the external write');

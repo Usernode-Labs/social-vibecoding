@@ -1676,7 +1676,6 @@ function proposalHandoffRoutes(config) {
             const adopted = await pool.query(
               `UPDATE chat_sessions
                   SET handoff_head_sha = $1,
-                      ${summaryFreshness.INVALIDATE_SQL},
                       handoff_local_commit_sha = CASE
                         WHEN handoff_uploaded_sha = $1 THEN handoff_local_commit_sha
                         ELSE NULL
@@ -1785,7 +1784,6 @@ function proposalHandoffRoutes(config) {
           const adopted = await pool.query(
             `UPDATE chat_sessions
                 SET handoff_head_sha = $1,
-                    ${summaryFreshness.INVALIDATE_SQL},
                     handoff_local_commit_sha = CASE
                       WHEN handoff_uploaded_sha = $1 THEN handoff_local_commit_sha
                       ELSE NULL

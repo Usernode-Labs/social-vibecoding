@@ -3134,10 +3134,9 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_visuals_applied TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_md TEXT;
 
 -- A summary is a snapshot of proposal inputs, not a timeless description.
--- Keep old author prose when an input changes, but remove it from the live
--- display column so every existing reader fails closed. The input version is
--- advanced with each body, head, or native history change; generated writes
--- may publish only against the version they read before generation.
+-- Keep the last copy visible when inputs change and track its freshness
+-- separately. Generated writes may publish only against the input version
+-- they read before generation.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_source TEXT
   CHECK (pr_summary_source IN ('author', 'generated'));
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_source_head_sha VARCHAR(40);
@@ -3151,9 +3150,15 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_stale BOOLEAN NOT 
 UPDATE chat_sessions
    SET pr_summary_source = CASE WHEN source = 'imported' THEN 'author' ELSE 'generated' END,
        pr_summary_previous_md = pr_summary_md,
-       pr_summary_md = NULL,
        pr_summary_stale = TRUE
  WHERE pr_summary_md IS NOT NULL AND pr_summary_source IS NULL;
+-- The previous freshness migration archived live summaries. Restore them
+-- without claiming they describe the current revision. Normal invalidation
+-- no longer clears this column, so this remains safe on repeated startup.
+UPDATE chat_sessions
+   SET pr_summary_md = pr_summary_previous_md,
+       pr_summary_stale = TRUE
+ WHERE pr_summary_md IS NULL AND pr_summary_previous_md IS NOT NULL;
 
 -- History is an input to generated PR metadata. Invalidate in the same
 -- transaction as a new request or native handoff summary, including context
@@ -3174,8 +3179,7 @@ BEGIN
     UPDATE chat_sessions
        SET pr_summary_input_version = pr_summary_input_version + 1,
            pr_summary_previous_md = COALESCE(pr_summary_md, pr_summary_previous_md),
-           pr_summary_stale = pr_summary_stale OR pr_summary_md IS NOT NULL,
-           pr_summary_md = NULL
+           pr_summary_stale = pr_summary_stale OR pr_summary_md IS NOT NULL
      WHERE id = NEW.session_id;
   END IF;
   RETURN NEW;
