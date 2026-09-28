@@ -40,6 +40,26 @@ test('an uncertain Kubernetes observation prevents preview replacement', async t
   await assert.rejects(kubernetes.cancelPreviewChecks(config, 42), /API unavailable/);
 });
 
+test('run-scoped cancellation leaves successor Jobs alone', async t => {
+  const deleted = [];
+  let selector;
+  const job = (name, runId) => ({
+    metadata: { name, uid: `${name}-uid`, labels: { 'social.usernode.io/preview-run-id': runId } },
+  });
+  kubernetes._setClientsForTest({ batch: {
+    listNamespacedJob: async ({ labelSelector }) => {
+      selector = labelSelector;
+      return { items: [job('sv-capture-s42-old', 'old'), job('sv-unit-suite-s42-new', 'new')] };
+    },
+    deleteNamespacedJob: async ({ name }) => { deleted.push(name); },
+    readNamespacedJob: async () => missing(),
+  }, core: { listNamespacedPod: async () => ({ items: [] }) } });
+  t.after(() => kubernetes._setClientsForTest(null));
+  await kubernetes.cancelPreviewChecks(config, 42, 'old');
+  assert.match(selector, /social\.usernode\.io\/preview-run-id=old/);
+  assert.deepEqual(deleted, ['sv-capture-s42-old']);
+});
+
 test('cancellation interrupts a stalled Job observation without salvaging old results', async t => {
   const controller = new AbortController();
   let created; let polling;

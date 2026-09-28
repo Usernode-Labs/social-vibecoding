@@ -1641,16 +1641,18 @@ async function runUnitSuiteJob(config, options) {
 
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
-async function cancelPreviewChecks(config, sessionId) {
+async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
   const { batch, core } = getClients();
   const namespace = config.kubernetes.workerNamespace;
-  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`
+    + (previewRunId ? `,social.usernode.io/preview-run-id=${previewRunId}` : '');
   const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
   await Promise.all((jobs.items || []).map(async job => {
     const name = job.metadata.name;
     if (!name.startsWith(`sv-capture-s${sessionId}-`)
         && !name.startsWith(`sv-evidence-s${sessionId}-`)
         && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
+    if (previewRunId && job.metadata.labels?.['social.usernode.io/preview-run-id'] !== previewRunId) return;
     const podsStopped = async () => {
       const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
       return (pods.items || []).every(pod => ['Succeeded', 'Failed'].includes(pod.status?.phase));

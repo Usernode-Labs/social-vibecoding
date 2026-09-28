@@ -10366,6 +10366,24 @@ const AppView = {
   _doneDeploymentStatus() {
     const d = AppView._mergedCtx && AppView._mergedCtx.deployment;
     if (!d || typeof d !== 'object') return null;
+    if (d.kind === 'child') {
+      if (d.state === 'failed') return {
+        tone: 'blocked', text: 'Latest merged change · deploy failed',
+        title: 'The latest merged change has not been confirmed in production.',
+      };
+      if (d.state === 'pending') return {
+        tone: 'neutral', text: 'Latest merged change · awaiting deployment',
+        title: 'Production is still serving an earlier revision.',
+      };
+      if (d.state === 'deployed') return {
+        tone: 'ok', text: `Production live at ${String(d.runningSha).slice(0, 7)}`,
+        title: 'The latest merged change is included in the observed production revision.',
+      };
+      return {
+        tone: 'neutral', text: 'Production delivery could not be confirmed',
+        title: 'The running revision or its relationship to the latest merge is unknown.',
+      };
+    }
     const pending = Number.isFinite(Number(d.pendingCount)) ? Math.max(0, Number(d.pendingCount)) : null;
     const noun = pending === 1 ? 'change' : 'changes';
     if (pending > 0) {
@@ -17683,6 +17701,18 @@ const AppView = {
       if (p.deployment_state === 'stalled') {
         return { ...base, tier: 0, key: 'deployment_stalled', label: 'Merged · deployment stalled', tone: 'blocked', lock: false, advisory: 0,
           title: 'This change has merged, but its production deployment is stalled.' };
+      }
+      if (p.deployment_kind === 'child') {
+        if (p.deployment_state === 'pending') {
+          return { ...base, tier: 0, key: 'delivery_pending', label: 'Merged · awaiting deployment', tone: 'neutral', lock: false, advisory: 0,
+            title: 'This change has merged, but production is still serving an earlier revision.' };
+        }
+        if (p.deployment_state === 'failed') {
+          return { ...base, tier: 0, key: 'delivery_failed', label: 'Merged · deploy failed', tone: 'blocked', lock: false, advisory: 0,
+            title: 'The production rebuild failed after this change merged.' };
+        }
+        return { ...base, tier: 0, key: 'delivery_unknown', label: 'Merged · delivery unknown', tone: 'neutral', lock: false, advisory: 0,
+          title: 'The running production revision could not be confirmed.' };
       }
       return { ...base, tier: 0, key: 'merged', label: '✓ Merged', tone: 'ok', lock: false, advisory: 0 };
     }
