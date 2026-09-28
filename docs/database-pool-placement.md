@@ -212,3 +212,38 @@ Existing apps keep their assignments until explicitly reviewed. The staging bulk
 API freezes a distribution, executes sequentially under one maintenance pause, and
 cleans verified sources. See database-pool-operations.md for limits and recovery.
 Production execution and backup/reconstruction remain separate rollout steps.
+
+
+## Migration eligibility and restored statistics
+
+Moves preserve ordinary app-owned schema, data and sequence state. Custom
+permissions and database/role settings are rejected, not silently stripped by
+`pg_dump --no-acl --no-owner`. The canonical contract lives in
+`src/services/database-migration-eligibility.sql`; the operator uses the same file
+from the pinned platform image. Unsupported grants/default grants, owner or role
+attributes/memberships, connection limits, settings, extensions and other objects
+exclude an app. Inspection failures also exclude it.
+
+The admin inventory displays exclusion codes. Automatic suggestions omit excluded
+apps; custom plans reject them. Eligibility is checked again on confirmation and
+for every pending source before the executor pauses the platform, then inside the
+copy snapshot. Already fenced moves and post-cutover cleanup retain their existing
+recovery path. A source can still change between inspection and fencing; the copy
+check then fails closed and requires recovery, rather than activating a lossy copy.
+
+After restore and data/schema verification, ANALYZE runs on app tables,
+materialized views and partitioned parents. Any failure prevents the Verified
+result and cutover. PostgreSQL dumps do not include these optimizer statistics.
+
+An initial read-only production inventory on 2026-09-28 found 51 app databases;
+all were excluded for custom privileges and `pg_stat_statements`, with 49 also
+having foreign object ownership. No production settings or data were changed.
+These exclusions require an explicit preservation or reviewed normalization plan
+before production migration; this release does not automatically remove them.
+
+Tests: opt in to the metadata suite with `SV_ELIGIBILITY_TEST_PORT` pointing at a
+disposable localhost PostgreSQL 17 server. The real copy suite uses
+`SV_COPY_TEST_FIXTURE`, a JSON file containing `source`/`destination` hosts and a
+`ca` certificate path for two disposable TLS-enabled PostgreSQL 17 servers, plus
+PostgreSQL 17 `pg_dump`/`pg_restore` on PATH. Tests use fixed fixture databases and
+must never point at a shared server.

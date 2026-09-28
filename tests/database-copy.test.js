@@ -45,6 +45,9 @@ function clients(c, overrides = {}) {
         if (sql.includes('current_database() AS database')) return {rows: [identity(dest ? c.destination : c.source, dest ? '10.0.0.2' : '10.0.0.1')]};
         if (sql.includes('pg_try_advisory_lock')) return {rows: [{locked: overrides.locked !== false}]};
         if (sql.includes('c.relkind, c.relrowsecurity')) return {rows: dest && overrides.occupied ? [{relkind:'r'}] : []};
+        if (sql.includes('AS inspection')) return {rows: [{inspection: {version:1,reasons:overrides.metadata || [],tables:[],analyzeTables:[{schema:'private schema',name:'quoted\"table'}]}}]};
+        if (sql.startsWith('SET search_path')) return {rows: []};
+        if (sql.startsWith('ANALYZE')) { if(overrides.analyzeFail) throw Error('private diagnostics'); return {rows: []}; }
         if (sql.includes('pg_extension')) return {rows: [{found: !!overrides.unsupported}]};
         if (sql.includes('count(*)::integer AS n')) return {rows: [{n: 0}]};
         if (sql.includes('pg_database_size')) return {rows: [{bytes: String(overrides.bytes || 100)}]};
@@ -109,3 +112,15 @@ test('normal copy entrypoint cannot populate a primary database without explicit
   assert.throws(()=>validateMode(c,'move'));
   assert.throws(()=>validateMode(c,'unknown'));
 });
+
+ test('unsupported metadata stops before transfer and failed ANALYZE prevents verification', async () => {
+  for (const [patch,code] of [[{metadata:['DATABASE_SETTINGS']},'COPY_UNSUPPORTED_METADATA'],[{analyzeFail:true},'COPY_ANALYZE_FAILED']]) {
+    const c=config(), fake=clients(c,patch); let copied=false;
+    await assert.rejects(copyDatabase(c,{...fake,schema:async()=> 'hash',transfer:async()=>{copied=true;}}),{code});
+    assert.equal(copied,!!patch.analyzeFail);
+    assert(!fake.created[0].statements.includes('COMMIT'));
+  }
+  const c=config(),fake=clients(c);
+  await copyDatabase(c,{...fake,schema:async()=> 'hash',transfer:async()=>{}});
+  assert(fake.created[1].statements.includes('ANALYZE "private schema"."quoted""table"'));
+ });

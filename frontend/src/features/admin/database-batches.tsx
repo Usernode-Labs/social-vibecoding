@@ -6,7 +6,7 @@ type Move = { operation: string; slug: string; from: { targetId: string }; to: {
 type Plan = { id: string | null; moves: Move[]; kept: { slug: string; target: string }[] };
 type Batch = { id: string; phase: string; attempt: number; plan: Plan; progress: { stage?: string; children?: Record<string, string> } };
 type Data = { inventoryError?: string; enabled: boolean; canWrite: boolean;
-  apps: { name: string; slug: string; phase: string; current?: { targetId: string }; bytes?: number }[];
+  apps: { name: string; slug: string; phase: string; current?: { targetId: string }; bytes?: number; eligibility?: { eligible: boolean; reasons: string[] } }[];
   targets: { id: string; displayName: string }[]; batches: Batch[] };
 
 function ScopePicker({ label, options, selected, disabled, onChange }: {
@@ -68,7 +68,7 @@ export function DatabaseBatches() {
   }
   const label = (id: string) => id === 'central' ? 'Central database' : data?.targets.find(t => t.id === id)?.displayName || id;
   const active = !!data?.batches.some(b => ['Pending', 'Running', 'NeedsAttention'].includes(b.phase));
-  const ready = data?.apps.filter(a => a.phase === 'Ready') || [];
+  const ready = data?.apps.filter(a => a.phase === 'Ready' && a.eligibility?.eligible === true) || [];
   const disabled = !data?.canWrite || busy || active || !!loadError || !!data?.inventoryError;
   const customValid = apps.length > 0 && apps.length <= 20 && targets.length > 0
     && apps.every(id => ready.some(a => a.name === id)) && targets.every(id => data?.targets.some(t => t.id === id));
@@ -80,7 +80,7 @@ export function DatabaseBatches() {
     {(error || loadError || data?.inventoryError) && <p role="alert" className={AdminUI.muted}>{error || loadError || data?.inventoryError}</p>}
     {!data && !loadError && <p className={AdminUI.loading}>Loading database distribution…</p>}
     {data && <>
-      <p className={AdminUI.muted}>{ready.length} ready apps · {data.targets.length} accepting pools · up to 20 apps per batch</p>
+      <p className={AdminUI.muted}>{ready.length} eligible apps · {data.apps.length - ready.length} excluded apps · {data.targets.length} accepting pools · up to 20 apps per batch</p>
       <div className="flex flex-wrap gap-3">
         <button type="button" className={AdminUI.btn.primary} disabled={disabled || !ready.length || !data.targets.length || ready.length > 20}
           onClick={() => void suggest({ mode: 'balanced' })}>{busy ? 'Working…' : 'Suggest distribution'}</button>
@@ -102,7 +102,7 @@ export function DatabaseBatches() {
         <thead className={AdminUI.thead}><tr>{['App', 'Current pool', 'Database size', 'Status'].map(h => <th key={h} className={AdminUI.th}>{h}</th>)}</tr></thead>
         <tbody>{data.apps.map(a => <tr key={a.name} className={AdminUI.trHover}>
           <td className={`${AdminUI.td} break-words`}>{a.slug}</td><td className={AdminUI.td}>{a.current ? label(a.current.targetId) : 'Unavailable'}</td>
-          <td className={AdminUI.td}>{a.bytes == null ? '—' : `${(a.bytes / 1048576).toFixed(1)} MiB`}</td><td className={AdminUI.td}>{a.phase}</td>
+          <td className={AdminUI.td}>{a.bytes == null ? '—' : `${(a.bytes / 1048576).toFixed(1)} MiB`}</td><td className={AdminUI.td}>{a.phase === 'Ready' && a.eligibility?.eligible !== true ? `Excluded: ${(a.eligibility?.reasons || ['INSPECTION_UNAVAILABLE']).join(', ')}` : a.phase}</td>
         </tr>)}</tbody>
       </table></div>
       {!data.apps.length && !data.inventoryError && <p className={AdminUI.muted}>No apps are registered for migration.</p>}

@@ -11,6 +11,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const exec = promisify(execFile);
+const { requireEligible } = require('./database-migration-eligibility');
 const USER_SCHEMA = "n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp_%'";
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 function failure(code) { return Object.assign(new Error(code), { code }); }
@@ -161,6 +162,7 @@ async function copyDatabase(config, { makeClient = (options) => new Client(optio
     await preflight(destination, true, config.maxBytes);
     await source.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     await preflight(source, false, config.maxBytes);
+    await requireEligible(source);
     const snapshot = (await source.query('SELECT pg_export_snapshot() AS snapshot')).rows[0].snapshot;
     if (!/^[A-Fa-f0-9-]+$/.test(snapshot)) throw failure('COPY_INVALID_SNAPSHOT');
     const sourceTables = await tables(source);
@@ -184,6 +186,14 @@ async function copyDatabase(config, { makeClient = (options) => new Client(optio
       JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${USER_SCHEMA}
       AND pg_get_userbyid(c.relowner) <> current_user) AS found`)).rows[0].found;
     if (foreignOwner) throw failure('COPY_OWNERSHIP_FAILED');
+    // Recheck the restored metadata too: a destination template must not change
+    // the permission/settings contract that the source inspection accepted.
+    const restored = await requireEligible(destination);
+    try {
+      // PostgreSQL 17 dumps omit optimizer statistics. Each statement is bounded
+      // by the copy client timeout; failure must prevent activation.
+      for (const table of restored.analyzeTables) await destination.query(`ANALYZE ${quote(table.schema)}.${quote(table.name)}`);
+    } catch { throw failure('COPY_ANALYZE_FAILED'); }
     await source.query('COMMIT');
     return { schemaDigest: sourceSchema, tableCount: sourceTables.length,
       rowCount: sourceTables.reduce((n,t)=>n+BigInt(t.rows),0n).toString(), sequenceCount: sourceSequences.length,

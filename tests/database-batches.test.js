@@ -3,7 +3,7 @@ const test=require('node:test');const assert=require('node:assert/strict');
 const {distribution,createBatches}=require('../src/services/database-batches');
 const policy={bulk:{enabled:true},capacity:{maxSampleAgeSeconds:180},placement:{admissionRatio:.8,starter:{cpu:.025,memory:64,storage:512}},targets:[{id:'a'},{id:'b'}],pools:[{id:'a',acceptingNewApps:true},{id:'b',acceptingNewApps:true}]};
 const observations=()=>['a','b'].map(id=>({id,phase:'Ready',acceptingNewApps:true,capacity:{state:'available',observedAt:new Date().toISOString(),ratios:{cpu:.1,memory:.1,storage:.1},cpuBudgetCores:.5,memoryBudgetBytes:1024,storageCapacityBytes:10240}}));
-const apps=[1,2].map(appId=>({appId,name:`allocation-${appId}`,slug:`app-${appId}`,phase:'Ready',bytes:100,current:{targetId:'a',revision:0}}));
+const apps=[1,2].map(appId=>({appId,name:`allocation-${appId}`,slug:`app-${appId}`,phase:'Ready',eligibility:{eligible:true,reasons:[]},bytes:100,current:{targetId:'a',revision:0}}));
 test('distribution accounts for the whole selected cohort, balances reservations and preserves existing fits',()=>{
  const result=distribution(policy,apps,observations(),apps.map(a=>({app_id:a.appId,target_id:'a',demand:policy.placement.starter})),['a','b']);
  assert.equal(result.kept.length,1);assert.equal(result.moves.length,1);assert.equal(result.moves[0].target,'b');
@@ -103,4 +103,26 @@ test('automatic suggestions never silently truncate the cohort or bypass capacit
  }
  const f=planningFixture();await assert.rejects(f.service.plan({mode:'balanced',apps:[],targets:[]},42));
  assert.equal(f.calls.length,0);
+});
+
+test('unsupported and uninspected databases are excluded automatically and rejected in custom plans',async()=>{
+ const blocked={...apps[1],eligibility:{eligible:false,reasons:['CUSTOM_PRIVILEGES']}};
+ for (const app of [blocked,{...blocked,eligibility:undefined}]) {
+  const f=planningFixture({inventory:[apps[0],app],closed:true});
+  const plan=await f.service.plan({mode:'balanced'},42);
+  assert.equal(plan.moves.length,1);assert.equal(plan.moves[0].slug,apps[0].slug);
+  assert.equal(f.executed.length,1);
+  await assert.rejects(f.service.plan({apps:[app.name],targets:['b']},42),/unsupported database metadata/);
+  assert.equal(f.executed.length,1);
+ }
+});
+
+
+test('confirmation rechecks eligibility and never queues a stale reviewed plan',async()=>{
+ const id='sv-batch-20260928-abcd1234';const queries=[];
+ const row={id,requested_by:42,phase:'Planned',policy_hash:require('node:crypto').createHash('sha256').update(JSON.stringify(policy)).digest('hex'),plan:{moves:[{binding:apps[0].name,from:apps[0].current}]}};
+ const client={release(){},query:async sql=>{queries.push(sql);return sql.includes('FOR UPDATE')?{rows:[row]}:{rows:[],rowCount:0};}};
+ const service=createBatches({getPolicy:()=>policy,pool:{connect:async()=>client},store:{list:async()=>[]},observe:async()=>observations(),executeBulk:async()=>[{...apps[0],eligibility:{eligible:false,reasons:['DATABASE_SETTINGS']}}]});
+ await assert.rejects(service.start(id,{confirmation:id},42));
+ assert(!queries.some(q=>q.startsWith('UPDATE')));assert(queries.includes('ROLLBACK'));
 });

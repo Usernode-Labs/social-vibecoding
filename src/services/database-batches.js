@@ -45,9 +45,9 @@ function createBatches({execute,executeBulk,store,getPolicy=loadPolicy,pool=getP
   let available;
   if(automatic){
    available=await executeBulk('inventory');
-   body={apps:available.filter(a=>a.phase==='Ready').map(a=>a.name),targets:p.pools.filter(t=>t.acceptingNewApps).map(t=>t.id)};
+   body={apps:available.filter(a=>a.phase==='Ready' && a.eligibility?.eligible===true).map(a=>a.name),targets:p.pools.filter(t=>t.acceptingNewApps).map(t=>t.id)};
    if(body.apps.length>20)throw error('More than 20 apps are ready. Use a custom scope of up to 20 apps.',400);
-   if(!body.apps.length)throw error('No apps are ready for distribution',400);
+   if(!body.apps.length)throw error('No apps passed migration eligibility; inspect the inventory exclusions',400);
    if(!body.targets.length)throw error('No shared pools are accepting apps',400);
   }
   if(!body || Object.keys(body).some(k=>!['apps','targets'].includes(k)) || !Array.isArray(body.apps)||!Array.isArray(body.targets)
@@ -57,6 +57,7 @@ function createBatches({execute,executeBulk,store,getPolicy=loadPolicy,pool=getP
   available ||= await executeBulk('inventory');
   const apps=available.filter(a=>body.apps.includes(a.name));
   if(apps.length!==body.apps.length)throw error('App is outside the selected staging cohort',400);
+  if(apps.some(a=>a.eligibility?.eligible!==true))throw error('Selected app has unsupported database metadata or could not be inspected; inspect the inventory exclusions');
   const assignment=distribution(p,apps,await observations(p),await reservations(pool),body.targets);
   if(!assignment.moves.length)return{id:null,moves:[],kept:assignment.kept.map(k=>({slug:k.app.slug,target:k.target})),targets:body.targets};
   const moves=[];
@@ -85,7 +86,7 @@ function createBatches({execute,executeBulk,store,getPolicy=loadPolicy,pool=getP
    const observed=await observations(p),held=await reservations(client),available=await executeBulk('inventory');
    for(const move of b.plan.moves){
     const app=available.find(a=>a.name===move.binding);
-    if(!app || app.phase!=='Ready'||app.current.revision!==move.from.revision || app.current.targetId!==move.from.targetId)throw error('App placement changed; generate a new plan');
+    if(!app || app.eligibility?.eligible!==true || app.phase!=='Ready'||app.current.revision!==move.from.revision || app.current.targetId!==move.from.targetId)throw error('App placement changed; generate a new plan');
     const index=held.findIndex(r=>Number(r.app_id)===move.appId || r.binding===move.binding);if(index>=0)held.splice(index,1);
     const fits=choose({...p,placement:{...p.placement,starter:move.reservedDemand}},observed.filter(o=>o.id===move.to.targetId),held);
     if(!fits)throw error('Reviewed target no longer has capacity');
