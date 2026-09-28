@@ -1406,6 +1406,24 @@
     },
     {
       "source": "src/routes/admin.js",
+      "method": "POST",
+      "path": "/api/admin/homeroom-bot/shadow-builds/backfill",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.homeroom.bot.shadow.builds.backfill.f46a011a",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
       "method": "GET",
       "path": "/api/admin/storage",
       "expression": null,

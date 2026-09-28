@@ -9248,7 +9248,7 @@ ALTER TABLE homeroom_bot_runs
 
 -- Shadow builds: a ready verdict on an app outside the live list, built on a
 -- branch nobody is shown, so what the bot would have proposed can be
--- spot-checked (see KEY_SHADOW_BUILDS_PER_DAY in services/homeroom-bot.js).
+-- spot-checked (see "The build lane" in services/homeroom-bot.js).
 -- build_ok is NULL on a run that was not built; the branch stays on the
 -- app's repository after the session is archived.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_ok BOOLEAN;
@@ -9259,6 +9259,15 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_error TEXT;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_cost_usd NUMERIC(18,8);
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_at TIMESTAMPTZ;
+-- The build lane's queue is the runs themselves: queued (build_queued_at
+-- set, build_at NULL), building (build_at set, build_ok NULL), then built
+-- or failed. build_attempts counts claims, so a build a restart interrupted
+-- is retried once and then recorded failed.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_queued_at TIMESTAMPTZ;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_attempts INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_build_queue
+  ON homeroom_bot_runs(app_id, build_queued_at)
+  WHERE build_queued_at IS NOT NULL AND build_ok IS NULL;
 
 -- Everything the bot posted on an issue: one row per post, both surfaces
 -- (the GitHub comment and the Homeroom thread message) on the same row.
@@ -9291,7 +9300,9 @@ INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_batch_size', '10'),
   ('homeroom_bot_paused_apps', '[]'),
   ('homeroom_bot_live_apps', '[]'),
-  ('homeroom_bot_shadow_builds_per_day', '0')
+  ('homeroom_bot_shadow_builds', 'off'),
+  ('homeroom_bot_build_concurrency', '2'),
+  ('homeroom_bot_shadow_build_platform', 'off')
 ON CONFLICT (key) DO NOTHING;
 
 -- #2721. Private, durable moderation records; target IDs intentionally have

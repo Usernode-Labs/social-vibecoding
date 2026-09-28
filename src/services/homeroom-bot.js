@@ -80,12 +80,18 @@ const KEY_LIVE_APPS = 'homeroom_bot_live_apps';
 // built, on a branch of its own that nobody is shown: no proposal, no
 // post, nothing in the app. The dashboard and the export carry the branch,
 // so what the bot WOULD have proposed can be spot-checked before an app goes
-// live. A daily count, not a switch: builds cost far more than a triage.
-// 0 is off, which is how it ships.
-const KEY_SHADOW_BUILDS_PER_DAY = 'homeroom_bot_shadow_builds_per_day';
+// live. A switch, bounded by the bot's weekly allowance rather than a daily
+// count, so a backfill of every open ready request can run to the end. It
+// ships off. The builds run in a lane of their own (see "The build lane"),
+// `homeroom_bot_build_concurrency` at a time, and skip the platform's own
+// repository unless `homeroom_bot_shadow_build_platform` is on.
+const KEY_SHADOW_BUILDS = 'homeroom_bot_shadow_builds';
+const KEY_BUILD_CONCURRENCY = 'homeroom_bot_build_concurrency';
+const KEY_SHADOW_BUILD_PLATFORM = 'homeroom_bot_shadow_build_platform';
 const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
-  KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS, KEY_SHADOW_BUILDS_PER_DAY,
+  KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS,
+  KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
 ]);
 
 // batchSize is how many of ONE app's issues a pass takes before the loop
@@ -100,10 +106,12 @@ const DEFAULTS = Object.freeze({
   liveApps: [],
   turnSeconds: 20 * 60,
   turnInputTokens: 10_000_000,
-  shadowBuildsPerDay: 0,
+  shadowBuilds: false,
+  buildConcurrency: 2,
+  shadowBuildPlatform: false,
 });
 const MAX_CONCURRENCY = 4;
-const MAX_SHADOW_BUILDS_PER_DAY = 50;
+const MAX_BUILD_CONCURRENCY = 4;
 const MAX_BATCH_SIZE = 500;
 // The budget a single triage turn may spend (#2737). Measured over the
 // first 213 shadow runs: 7 of the 74 that produced a verdict took $30.04 of
@@ -249,10 +257,15 @@ function parseSettings(rows) {
     map.get(KEY_TURN_INPUT_TOKENS), DEFAULTS.turnInputTokens,
     MIN_TURN_INPUT_TOKENS, MAX_TURN_INPUT_TOKENS,
   );
-  const shadowBuildsPerDay = clampInt(
-    map.get(KEY_SHADOW_BUILDS_PER_DAY), DEFAULTS.shadowBuildsPerDay, 0, MAX_SHADOW_BUILDS_PER_DAY,
+  const shadowBuilds = map.get(KEY_SHADOW_BUILDS) === 'on';
+  const buildConcurrency = clampInt(
+    map.get(KEY_BUILD_CONCURRENCY), DEFAULTS.buildConcurrency, 1, MAX_BUILD_CONCURRENCY,
   );
-  return { mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens, shadowBuildsPerDay };
+  const shadowBuildPlatform = map.get(KEY_SHADOW_BUILD_PLATFORM) === 'on';
+  return {
+    mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens,
+    shadowBuilds, buildConcurrency, shadowBuildPlatform,
+  };
 }
 
 function clampInt(raw, fallback, min, max) {
@@ -334,12 +347,22 @@ function validateSettingsPatch(patch) {
     }
     updates.push([KEY_LIVE_APPS, JSON.stringify([...new Set(body.liveApps)])]);
   }
-  if (body.shadowBuildsPerDay !== undefined) {
-    const n = Number(body.shadowBuildsPerDay);
-    if (!Number.isInteger(n) || n < 0 || n > MAX_SHADOW_BUILDS_PER_DAY) {
-      return { ok: false, error: `shadowBuildsPerDay must be an integer from 0 to ${MAX_SHADOW_BUILDS_PER_DAY}` };
+  if (body.shadowBuilds !== undefined) {
+    if (typeof body.shadowBuilds !== 'boolean') return { ok: false, error: 'shadowBuilds must be true or false' };
+    updates.push([KEY_SHADOW_BUILDS, body.shadowBuilds ? 'on' : 'off']);
+  }
+  if (body.buildConcurrency !== undefined) {
+    const n = Number(body.buildConcurrency);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_BUILD_CONCURRENCY) {
+      return { ok: false, error: `buildConcurrency must be an integer from 1 to ${MAX_BUILD_CONCURRENCY}` };
     }
-    updates.push([KEY_SHADOW_BUILDS_PER_DAY, String(n)]);
+    updates.push([KEY_BUILD_CONCURRENCY, String(n)]);
+  }
+  if (body.shadowBuildPlatform !== undefined) {
+    if (typeof body.shadowBuildPlatform !== 'boolean') {
+      return { ok: false, error: 'shadowBuildPlatform must be true or false' };
+    }
+    updates.push([KEY_SHADOW_BUILD_PLATFORM, body.shadowBuildPlatform ? 'on' : 'off']);
   }
   let weeklyLimitCents;
   if (body.weeklyLimitCents !== undefined) {
@@ -392,6 +415,12 @@ async function writeSettings(pool, patch, actorId, config = {}) {
     // Switched on: rebuild the whole queue now rather than when the next
     // reconcile sweep happens to be due.
     wakeAll();
+  }
+  // A lane turned on, or given more room, starts its next build now, on
+  // whichever Pod is draining it.
+  if (valid.updates.some(([key]) => key === KEY_SHADOW_BUILDS || key === KEY_BUILD_CONCURRENCY)) {
+    wakeBuilds();
+    publishWake({ builds: true });
   }
   return { ok: true };
 }
@@ -1658,6 +1687,11 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   });
   await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
   clearRefusals(app.id);
+  // A newer verdict on the issue replaces any build still waiting for an
+  // older one: the lane builds what the bot thinks now.
+  await supersedeQueuedBuilds(pool, { appId: app.id, issueNumber, runId }).catch((err) => {
+    log.warn('homeroom-bot', 'Could not supersede a queued shadow build', { app: app.slug, issueNumber, err: err.message });
+  });
   log.info('homeroom-bot', 'Triaged', {
     app: app.slug, issueNumber, verdict: parsed.verdict, costUsd, runId,
   });
@@ -1675,51 +1709,189 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     } catch (err) {
       log.error('homeroom-bot', 'Acting on a live verdict failed', { app: app.slug, issueNumber, err: err.message });
     }
-  } else if (parsed.verdict === 'ready' && settings?.shadowBuildsPerDay > 0) {
+  } else if (parsed.verdict === 'ready' && shadowBuildsApply(settings, app, config)) {
+    // Queued, not built here: the build lane runs it beside triage, so the
+    // rest of this app's batch is not held up behind a worker.
     try {
-      const built = await shadowBuild({
-        pool, config, bot, app, repo, issueNumber, issue, seed, parsed, runId, settings,
-        turnBudgetMs, model,
-        deps: {
-          worker, agentTurn, limits, managedOpenRouter, sessions, activeWorkers,
-          sessionLifecycle: deps.sessionLifecycle || require('./session-lifecycle'),
-          github,
-        },
-      });
-      if (built) acted = built;
+      if (await queueShadowBuild(pool, runId)) acted = 'shadow_queued';
     } catch (err) {
-      log.error('homeroom-bot', 'Shadow build failed', { app: app.slug, issueNumber, err: err.message });
+      log.error('homeroom-bot', 'Queueing a shadow build failed', { app: app.slug, issueNumber, err: err.message });
     }
   }
   return { ran: true, verdict: parsed.verdict, runId, ...(acted ? { acted } : {}) };
 }
 
+// ── The build lane ───────────────────────────────────────────────────────
+//
+// Shadow builds run beside triage, not inside it. A build holds a worker for
+// up to a turn's budget; run inline it held up the rest of its app's batch,
+// and one of the loop's few slots with it. So a ready verdict only QUEUES
+// its build (build_queued_at on its run), and this lane drains that queue
+// with a concurrency of its own: `buildConcurrency` builds at once, at most
+// one per app, so one busy board cannot take every slot. Each build is its
+// own session on its own temporary worker, so builds side by side share
+// nothing but the bot's weekly allowance, which every drain checks first.
+//
+// A run's build moves from queued (build_queued_at set, build_at NULL) to
+// building (build_at set, build_ok NULL) to built or failed (build_ok set).
+// A skipped one (the issue closed, the app went live) goes back to not
+// queued, with the reason in build_error. Only the leader drains, like the
+// loop; the claim is still a conditional UPDATE, so a second drainer could
+// not take the same run.
+
+// The fallback poll. Enqueueing and every finished build wake the lane at
+// once; this is only for a wake that was lost.
+const BUILD_IDLE_DELAY_MS = 60 * 1000;
+// A platform fault (no worker, no session) backs the lane off, as #3122
+// does the loop: without it a backfill of a hundred builds fails a hundred
+// times in a minute while the worker quota is full.
+const BUILD_FAULT_BASE_MS = 2 * 60 * 1000;
+const BUILD_FAULT_CEILING_MS = 30 * 60 * 1000;
+// A build interrupted by a restart is retried once, then recorded failed.
+const MAX_BUILD_ATTEMPTS = 2;
+// Where the platform's own code lives when config does not say.
+const DEFAULT_PLATFORM_REPO_URL = 'https://github.com/Usernode-Labs/social-vibecoding';
+
+// runId → { appId, issueNumber, startedAt, promise }. On the leader only.
+const buildsInFlight = new Map();
+let buildLaneOn = false;
+let buildTimer = null;
+let buildDrainRunning = false;
+let buildDrainAgain = false;
+// { attempts, until, error }, like platformFault but for the lane alone.
+let buildFault = null;
+let lastBuildDrain = null;
+
+/** True when `app` is the platform's own repository. */
+function isPlatformRepo(app, config = {}) {
+  const platform = parseRepo(config.platformRepoUrl || DEFAULT_PLATFORM_REPO_URL);
+  const repo = parseRepo(app?.repo_url);
+  if (!platform || !repo) return false;
+  return platform.owner.toLowerCase() === repo.owner.toLowerCase()
+    && platform.repo.toLowerCase() === repo.repo.toLowerCase();
+}
+
 /**
- * A shadow build: a ready verdict on an app outside the live list, built on
- * a branch of its own and recorded on its run, and nothing else. No
- * proposal, no post, nothing in the app: the dashboard and the export carry
- * the branch, for spot-checking what the bot would have proposed before the
- * app goes live. Bounded by `shadowBuildsPerDay` (counted over the last 24
- * hours, attempts included) and by the bot's weekly spend, which the build
- * is debited from like any turn. Resolves 'shadow_built', 'shadow_failed',
- * or null when it did not try.
+ * Why a ready verdict on `app` is not shadow built, or null when it is.
+ * Live apps build for real; the platform's own repository is left out
+ * unless an admin includes it, since every branch there is in the
+ * repository everybody's proposals are made against.
+ */
+function shadowBuildSkipReason(settings, app, config = {}) {
+  if (!settings?.shadowBuilds) return 'shadow builds are off';
+  if (live.isLiveFor(settings, app)) return 'the app is live now';
+  if (!settings.shadowBuildPlatform && isPlatformRepo(app, config)) {
+    return "the platform's own repository is left out";
+  }
+  if ((settings.pausedApps || []).includes(app?.slug)) return 'the app is paused';
+  return null;
+}
+
+function shadowBuildsApply(settings, app, config = {}) {
+  return shadowBuildSkipReason(settings, app, config) === null;
+}
+
+/** Drop a queued, unstarted build of an older verdict on the same issue. */
+async function supersedeQueuedBuilds(pool, { appId, issueNumber, runId }) {
+  await pool.query(
+    `UPDATE homeroom_bot_runs
+        SET build_queued_at = NULL, build_error = 'superseded: a later verdict on the same issue'
+      WHERE app_id = $1 AND issue_number = $2 AND id <> $3
+        AND build_queued_at IS NOT NULL AND build_at IS NULL AND build_ok IS NULL`,
+    [appId, issueNumber, runId],
+  );
+}
+
+/** Queue a run's build and wake the lane. False when it was already queued or built. */
+async function queueShadowBuild(pool, runId) {
+  const { rowCount } = await pool.query(
+    `UPDATE homeroom_bot_runs SET build_queued_at = NOW(), build_error = NULL
+      WHERE id = $1 AND build_queued_at IS NULL AND build_ok IS NULL`,
+    [runId],
+  );
+  if (rowCount) wakeBuilds();
+  return !!rowCount;
+}
+
+/**
+ * Builds a finished process never recorded. One still in this process is
+ * left alone whatever its age; one past a turn's budget and margin is put
+ * back in the queue, or recorded failed once it has had its attempts.
+ */
+async function releaseStaleBuilds(pool, settings) {
+  const seconds = (Number(settings?.turnSeconds) || DEFAULTS.turnSeconds) + STALE_CLAIM_MARGIN_SECONDS;
+  const { rows } = await pool.query(
+    `UPDATE homeroom_bot_runs
+        SET build_at = CASE WHEN build_attempts < $3 THEN NULL ELSE build_at END,
+            build_ok = CASE WHEN build_attempts < $3 THEN NULL ELSE FALSE END,
+            build_error = CASE WHEN build_attempts < $3 THEN NULL
+                               ELSE 'interrupted: the build never finished' END
+      WHERE build_queued_at IS NOT NULL AND build_at IS NOT NULL AND build_ok IS NULL
+        AND build_at < NOW() - make_interval(secs => $1)
+        AND NOT (id = ANY($2::int[]))
+      RETURNING id, build_ok`,
+    [seconds, [...buildsInFlight.keys()], MAX_BUILD_ATTEMPTS],
+  );
+  if (rows.length) {
+    log.info('homeroom-bot', 'Released shadow builds an earlier process never finished', {
+      requeued: rows.filter((r) => r.build_ok == null).length,
+      failed: rows.filter((r) => r.build_ok === false).length,
+    });
+  }
+  return rows.length;
+}
+
+// The oldest queued build of each app with none under way, oldest first,
+// claimed in one statement. `$2` is the paused apps: a paused app's builds
+// wait with its triage.
+const CLAIM_BUILDS_SQL = `WITH building AS (
+    SELECT DISTINCT app_id FROM homeroom_bot_runs
+     WHERE build_queued_at IS NOT NULL AND build_at IS NOT NULL AND build_ok IS NULL
+  ), heads AS (
+    SELECT DISTINCT ON (r.app_id) r.id, r.build_queued_at
+      FROM homeroom_bot_runs r
+      JOIN apps a ON a.id = r.app_id
+     WHERE r.build_queued_at IS NOT NULL AND r.build_at IS NULL AND r.build_ok IS NULL
+       AND a.status = 'running' AND a.repo_url IS NOT NULL
+       AND NOT (a.slug = ANY($2::text[]))
+       AND r.app_id NOT IN (SELECT app_id FROM building)
+     ORDER BY r.app_id, r.build_queued_at, r.id
+  ), picked AS (
+    SELECT id FROM heads ORDER BY build_queued_at, id LIMIT $1
+  )
+  UPDATE homeroom_bot_runs r
+     SET build_at = NOW(), build_attempts = r.build_attempts + 1
+    FROM picked
+   WHERE r.id = picked.id AND r.build_at IS NULL
+  RETURNING r.id, r.app_id, r.issue_number, r.build_note`;
+
+/** A build error the platform, not the model, produced. */
+function isInfraBuildError(error) {
+  const e = String(error || '');
+  if (/^(could not open a session|could not create its branch|the worker would not start)/.test(e)) return true;
+  const m = e.match(/^the build turn failed \((.+)\)$/);
+  return !!m && (INFRA_ERRORS.has(m[1]) || m[1].startsWith('dispatch:'));
+}
+
+function noteBuildFault(error, now = Date.now()) {
+  const attempts = (buildFault?.attempts || 0) + 1;
+  const delayMs = Math.min(BUILD_FAULT_CEILING_MS, BUILD_FAULT_BASE_MS * 2 ** (attempts - 1));
+  buildFault = { attempts, until: now + delayMs, error: summarizeFault(error) };
+  return { ...buildFault, delayMs };
+}
+
+/**
+ * The build itself, for a claimed run: the same build live runs, with
+ * `propose: false`, so the only thing it leaves is its branch. Debited from
+ * the weekly allowance like any turn, and recorded on the run. Resolves
+ * 'shadow_built', 'shadow_failed', or 'infra' when the platform could not
+ * run it (the claim is handed back and the lane backs off).
  */
 async function shadowBuild({
-  pool, config, bot, app, repo, issueNumber, issue, seed, parsed, runId, settings,
+  pool, config, bot, app, repo, issueNumber, issue, seed, parsed, runId,
   turnBudgetMs, model, deps,
 }) {
-  const { limits, managedOpenRouter, github } = deps;
-  if (!repo || !github.isEnabled()) return null;
-  const { rows } = await pool.query(
-    `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs
-      WHERE build_at > NOW() - INTERVAL '24 hours'`,
-  );
-  if ((rows[0]?.n || 0) >= settings.shadowBuildsPerDay) return null;
-  const budget = await limits.checkBudget(pool, bot.id);
-  if (budget.error) return null;
-  // Claimed before the build, so a second pass counts it at once.
-  await pool.query('UPDATE homeroom_bot_runs SET build_at = NOW() WHERE id = $1', [runId]);
-
+  const { limits, managedOpenRouter } = deps;
   const built = await live.buildAndPropose({
     pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
     turnBudgetMs, model, deps, propose: false,
@@ -1733,6 +1905,20 @@ async function shadowBuild({
       log.warn('homeroom-bot', 'Shadow build spend debit failed', { err: err.message });
     }
   }
+  if (!built.ok && isInfraBuildError(built.error)) {
+    await pool.query(
+      `UPDATE homeroom_bot_runs
+          SET build_at = NULL, build_attempts = GREATEST(build_attempts - 1, 0)
+        WHERE id = $1`,
+      [runId],
+    );
+    const fault = noteBuildFault(built.error);
+    log.warn('homeroom-bot', 'Shadow build hit a platform fault; the lane backs off', {
+      app: app.slug, issueNumber, runId, error: built.error, retryInMs: fault.delayMs,
+    });
+    return 'infra';
+  }
+  buildFault = null;
   await pool.query(
     `UPDATE homeroom_bot_runs
         SET build_ok = $2, build_branch = $3, build_sha = $4, build_commits = $5,
@@ -1748,6 +1934,252 @@ async function shadowBuild({
     commits: built.commits ?? null, costUsd: built.costUsd ?? null, error: built.ok ? null : built.error,
   });
   return built.ok ? 'shadow_built' : 'shadow_failed';
+}
+
+/**
+ * One claimed build, start to finish. The issue is read again first: it may
+ * have closed since its verdict, and the build works from the thread as it
+ * is now. Resolves the outcome, or `skipped: <why>`.
+ */
+async function runQueuedBuild(pool, config, { bot, claim, settings, deps = {} }) {
+  const github = deps.github || require('./github');
+  const worker = deps.worker || require('./worker');
+  const agentTurn = deps.agentTurn || require('./agent-turn');
+  const limits = deps.limits || require('./limits');
+  const threadContext = deps.threadContext || require('./thread-context');
+  const managedOpenRouter = deps.managedOpenRouter || require('./openrouter-managed-keys');
+  const sessions = deps.sessions || require('../routes/sessions');
+  const activeWorkers = deps.activeWorkers || require('./active-workers').activeWorkers;
+  const sessionLifecycle = deps.sessionLifecycle || require('./session-lifecycle');
+
+  const runId = claim.id;
+  const issueNumber = Number(claim.issue_number);
+  const skip = async (why) => {
+    await pool.query(
+      `UPDATE homeroom_bot_runs
+          SET build_queued_at = NULL, build_at = NULL, build_error = $2
+        WHERE id = $1`,
+      [runId, clip(`skipped: ${why}`, MAX_ERROR_CHARS)],
+    );
+    log.info('homeroom-bot', 'Shadow build skipped', { runId, issueNumber, why });
+    return `skipped: ${why}`;
+  };
+  const handBack = async (why) => {
+    await pool.query(
+      `UPDATE homeroom_bot_runs
+          SET build_at = NULL, build_attempts = GREATEST(build_attempts - 1, 0)
+        WHERE id = $1`,
+      [runId],
+    );
+    noteBuildFault(why);
+    return 'infra';
+  };
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = $1', [claim.app_id],
+  );
+  const app = appRows[0];
+  if (!app) return skip('the app is gone');
+  const why = shadowBuildSkipReason(settings, app, config);
+  if (why) return skip(why);
+  const repo = parseRepo(app.repo_url);
+  if (!repo) return skip('the app has no GitHub repository');
+  if (!github.isEnabled()) return handBack('github_unavailable');
+
+  const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber);
+  const issue = fetched?.issue || null;
+  if (!issue || (issue.state && issue.state !== 'open')) return skip('the issue is no longer open');
+
+  const [{ comments = [] } = {}, thread, botUsername] = await Promise.all([
+    github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
+    threadContext.loadIssueThread(pool, app.id, issueNumber),
+    live.botUsernameOf(github),
+  ]);
+  const seed = sessions.buildHeadlessSeed(
+    issueNumber, issue, comments, botUsername, thread?.messages || [],
+  );
+  const turnBudgetMs = 1000 * clampInt(
+    settings?.turnSeconds, DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS,
+  );
+  return shadowBuild({
+    pool, config, bot, app, repo, issueNumber, issue, seed,
+    parsed: { buildNote: claim.build_note }, runId, turnBudgetMs,
+    model: config.openrouterDefaultCodexModel || null,
+    deps: {
+      worker, agentTurn, limits, managedOpenRouter, sessions, activeWorkers, sessionLifecycle, github,
+    },
+  });
+}
+
+/**
+ * Fill the lane's free slots and return at once: each build runs on in
+ * the background, and wakes the lane when it ends so the next can start.
+ * Never throws. Returns what it started, for the dashboard and for tests.
+ */
+async function drainBuilds(pool, config, deps = {}) {
+  const out = { started: 0, inFlight: buildsInFlight.size, paused: null };
+  // A pass is already filling the lane: it runs again when it ends.
+  if (buildDrainRunning) { buildDrainAgain = true; return { ...out, busy: true }; }
+  buildDrainRunning = true;
+  try {
+    const settings = await readSettings(pool);
+    if (settings.mode === 'off' || !settings.shadowBuilds) { out.paused = 'off'; return out; }
+    out.released = await releaseStaleBuilds(pool, settings);
+    const now = deps.now ? deps.now() : Date.now();
+    if (buildFault && buildFault.until > now) {
+      out.paused = 'infra';
+      out.detail = buildFault.error;
+      out.retryInMs = buildFault.until - now;
+      return out;
+    }
+    const free = settings.buildConcurrency - buildsInFlight.size;
+    if (free <= 0) return out;
+    const bot = await ensureBotUser(pool, config);
+    const limits = deps.limits || require('./limits');
+    const budget = await limits.checkBudget(pool, bot.id);
+    if (budget.error) {
+      out.paused = 'budget';
+      out.detail = budget.reason || budget.error;
+      return out;
+    }
+    const { rows } = await pool.query(CLAIM_BUILDS_SQL, [free, settings.pausedApps || []]);
+    for (const claim of rows) {
+      const promise = runQueuedBuild(pool, config, { bot, claim, settings, deps })
+        .catch(async (err) => {
+          log.error('homeroom-bot', 'Shadow build threw', { runId: claim.id, err: err.message });
+          await pool.query(
+            'UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2 WHERE id = $1',
+            [claim.id, clip(`threw: ${err.message}`, MAX_ERROR_CHARS)],
+          ).catch(() => {});
+          return 'shadow_failed';
+        })
+        .finally(() => {
+          buildsInFlight.delete(claim.id);
+          wakeBuilds();
+        });
+      buildsInFlight.set(claim.id, {
+        appId: claim.app_id, issueNumber: claim.issue_number, startedAt: new Date().toISOString(), promise,
+      });
+      out.started += 1;
+    }
+    out.inFlight = buildsInFlight.size;
+    return out;
+  } catch (err) {
+    log.error('homeroom-bot', 'Build lane pass failed', { err: err.message });
+    return out;
+  } finally {
+    buildDrainRunning = false;
+    lastBuildDrain = { at: new Date().toISOString(), ...out };
+  }
+}
+
+function scheduleBuilds(config, delayMs) {
+  if (!buildLaneOn) return;
+  if (buildTimer) clearTimeout(buildTimer);
+  buildTimer = setTimeout(() => { buildTimer = null; buildTick(config); }, delayMs);
+  if (typeof buildTimer.unref === 'function') buildTimer.unref();
+}
+
+async function buildTick(config) {
+  let delay = BUILD_IDLE_DELAY_MS;
+  let busy = false;
+  try {
+    const { getPool } = require('../db/pool');
+    const out = await drainBuilds(getPool(config), config);
+    busy = !!out.busy;
+    if (out.paused === 'infra' && out.retryInMs > 0) delay = Math.max(delay, out.retryInMs);
+  } catch (err) {
+    log.error('homeroom-bot', 'Build tick failed', { err: err.message });
+  } finally {
+    // The pass under way schedules the next one itself when it ends.
+    if (!busy) {
+      if (buildDrainAgain) { buildDrainAgain = false; delay = 0; }
+      scheduleBuilds(config, delay);
+    }
+  }
+}
+
+/** Run a lane pass now. A no-op on a Pod that is not draining. */
+function wakeBuilds() {
+  if (!buildLaneOn || !loopConfig) return false;
+  scheduleBuilds(loopConfig, 0);
+  return true;
+}
+
+/**
+ * The admin's "build every open ready request": queue the latest verdict
+ * of every issue whose latest verdict is ready and that has not been built,
+ * queued or skipped. The issue's state is read at build time, so a closed
+ * one is skipped then rather than fetched for here.
+ */
+const BACKFILL_SQL = `SELECT DISTINCT ON (r.app_id, r.issue_number)
+         r.id, r.app_id, r.issue_number, r.verdict, r.build_queued_at, r.build_ok, r.build_error,
+         a.slug, a.repo_url
+    FROM homeroom_bot_runs r
+    JOIN apps a ON a.id = r.app_id
+   WHERE r.verdict IN ('question', 'ready', 'person', 'empty')
+     AND a.status = 'running' AND a.repo_url IS NOT NULL
+   ORDER BY r.app_id, r.issue_number, r.id DESC`;
+
+async function queueShadowBackfill(pool, config = {}) {
+  const settings = await readSettings(pool);
+  if (!settings.shadowBuilds) {
+    return { ok: false, status: 409, error: 'Turn shadow builds on first.' };
+  }
+  const { rows } = await pool.query(BACKFILL_SQL);
+  const left = { live: 0, platform: 0, paused: 0 };
+  const ids = [];
+  for (const r of rows) {
+    if (r.verdict !== 'ready' || r.build_queued_at || r.build_ok != null || r.build_error) continue;
+    const why = shadowBuildSkipReason(settings, { slug: r.slug, repo_url: r.repo_url }, config);
+    if (why === 'the app is live now') { left.live += 1; continue; }
+    if (why === "the platform's own repository is left out") { left.platform += 1; continue; }
+    if (why === 'the app is paused') { left.paused += 1; continue; }
+    if (why) continue;
+    ids.push(r.id);
+  }
+  let queued = [];
+  if (ids.length) {
+    ({ rows: queued } = await pool.query(
+      `UPDATE homeroom_bot_runs SET build_queued_at = NOW()
+        WHERE id = ANY($1::int[]) AND build_queued_at IS NULL AND build_ok IS NULL
+        RETURNING id, app_id`,
+      [ids],
+    ));
+  }
+  if (queued.length) {
+    wakeBuilds();
+    publishWake({ builds: true });
+  }
+  log.info('homeroom-bot', 'Shadow build backfill queued', { queued: queued.length, left });
+  return {
+    ok: true,
+    queued: queued.length,
+    apps: new Set(queued.map((r) => r.app_id)).size,
+    left,
+  };
+}
+
+/** The lane as the dashboard shows it: counts, and what is building now. */
+async function buildLaneSummary(pool) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*) FILTER (WHERE build_queued_at IS NOT NULL AND build_at IS NULL AND build_ok IS NULL)::int AS queued,
+            COUNT(*) FILTER (WHERE build_queued_at IS NOT NULL AND build_at IS NOT NULL AND build_ok IS NULL)::int AS building,
+            COUNT(*) FILTER (WHERE build_ok)::int AS built,
+            COUNT(*) FILTER (WHERE build_ok = FALSE)::int AS failed,
+            COALESCE(SUM(build_cost_usd), 0)::float8 AS cost_usd
+       FROM homeroom_bot_runs`,
+  );
+  const t = rows[0] || {};
+  return {
+    queued: t.queued || 0,
+    building: t.building || 0,
+    built: t.built || 0,
+    failed: t.failed || 0,
+    costUsd: Number(t.cost_usd) || 0,
+    lane: lastBuildDrain,
+    fault: buildFault ? { error: buildFault.error, retryAt: new Date(buildFault.until).toISOString() } : null,
+  };
 }
 
 /**
@@ -2266,12 +2698,22 @@ function start(config) {
   stopped = false;
   loopConfig = config;
   schedule(config, FIRST_PASS_DELAY_MS);
+  // The build lane, on its own timer: a build never holds up a triage pass.
+  buildLaneOn = true;
+  scheduleBuilds(config, FIRST_PASS_DELAY_MS);
 }
 
+/**
+ * Stops both loops. A build already under way runs to its own time limit
+ * and records itself; nothing new starts.
+ */
 function stop() {
   stopped = true;
   if (timer) clearTimeout(timer);
   timer = null;
+  buildLaneOn = false;
+  if (buildTimer) clearTimeout(buildTimer);
+  buildTimer = null;
 }
 
 // ── Wakes ────────────────────────────────────────────────────────────────
@@ -2351,6 +2793,7 @@ async function noteProposalActivity(pool, { appId, sessionId } = {}) {
 /** ws._onBusMessage hands BUS_KIND envelopes here. */
 function onBusMessage(data) {
   if (!data || typeof data !== 'object') return false;
+  if (data.builds) return wakeBuilds();
   return wake({ appId: data.appId, all: !!data.all });
 }
 
@@ -2370,7 +2813,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.created_at,
             r.proposal_session_id,
             r.build_ok, r.build_branch, r.build_sha, r.build_commits, r.build_error,
-            r.build_cost_usd::float8 AS build_cost_usd, r.build_at,
+            r.build_cost_usd::float8 AS build_cost_usd, r.build_at, r.build_queued_at,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -2415,7 +2858,7 @@ const EXPORT_COLUMNS = Object.freeze([
   'proposal_session_id',
   // Shadow builds, after everything else for the same reason.
   'build_ok', 'build_branch', 'build_url', 'build_sha', 'build_commits', 'build_error',
-  'build_cost_usd', 'build_at',
+  'build_cost_usd', 'build_at', 'build_queued_at',
 ]);
 
 /** One run as the values of EXPORT_COLUMNS, in that order. */
@@ -2559,6 +3002,7 @@ async function adminPayload(pool, config, {
     runs: runRows.map((r) => ({ ...r, issueUrl: issueUrlFor(r), buildUrl: buildUrlFor(r) })),
     apps: appRows,
     caps: { proposalsPerApp: PROPOSALS_PER_APP_CAP, questionsPerAppPerDay: QUESTION_TRIPWIRE_PER_DAY },
+    builds: await buildLaneSummary(pool),
   };
 }
 
@@ -2659,7 +3103,21 @@ module.exports = {
   noteIssueActivity,
   noteProposalActivity,
   shadowBuild,
-  MAX_SHADOW_BUILDS_PER_DAY,
+  runQueuedBuild,
+  drainBuilds,
+  queueShadowBuild,
+  supersedeQueuedBuilds,
+  queueShadowBackfill,
+  buildLaneSummary,
+  shadowBuildSkipReason,
+  isPlatformRepo,
+  isInfraBuildError,
+  wakeBuilds,
+  MAX_BUILD_CONCURRENCY,
+  MAX_BUILD_ATTEMPTS,
+  KEY_SHADOW_BUILDS,
+  KEY_BUILD_CONCURRENCY,
+  KEY_SHADOW_BUILD_PLATFORM,
   onBusMessage,
   refreshApps,
   BUS_KIND,
@@ -2688,7 +3146,16 @@ module.exports = {
     appBackoff.clear(); lastRefusals = []; platformFault = null; lastVolumeSweepAt = 0;
     if (timer) clearTimeout(timer);
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
+    buildsInFlight.clear(); buildLaneOn = false; buildDrainRunning = false; buildDrainAgain = false;
+    buildFault = null; lastBuildDrain = null;
+    if (buildTimer) clearTimeout(buildTimer);
+    buildTimer = null;
   },
+  // The build lane runs its builds in the background; a test awaits them.
+  async _awaitBuildsForTests() {
+    await Promise.all([...buildsInFlight.values()].map((b) => b.promise));
+  },
+  _buildsInFlightForTests() { return [...buildsInFlight.keys()]; },
   // Test seams for the wake path.
   _pendingForTests() { return { apps: [...pendingApps], all: refreshAllRequested, wake: wakeRequested, armed: timer !== null }; },
   _armForTests(config) { stopped = false; loopConfig = config; passInFlight = false; timer = setTimeout(() => {}, 1e9); timer.unref(); },

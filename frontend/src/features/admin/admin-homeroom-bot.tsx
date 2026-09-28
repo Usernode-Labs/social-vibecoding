@@ -32,8 +32,21 @@ interface Settings {
   turnSeconds: number;
   turnInputTokens: number;
   // Shadow builds: ready verdicts off the live list built on a branch
-  // nobody is shown, this many a day. 0 is off.
-  shadowBuildsPerDay: number;
+  // nobody is shown, in a lane of their own, this many at once. The
+  // platform's own repository is left out unless included.
+  shadowBuilds: boolean;
+  buildConcurrency: number;
+  shadowBuildPlatform: boolean;
+}
+
+interface BuildLane {
+  queued: number;
+  building: number;
+  built: number;
+  failed: number;
+  costUsd: number;
+  lane: { at: string; started: number; inFlight: number; paused: string | null; detail?: string } | null;
+  fault: { error: string; retryAt: string } | null;
 }
 
 interface Bot {
@@ -101,6 +114,8 @@ interface Run {
   build_commits: number | null;
   build_error: string | null;
   build_cost_usd: number | null;
+  build_at: string | null;
+  build_queued_at: string | null;
   buildUrl: string | null;
   app_slug: string;
   app_name: string;
@@ -144,6 +159,7 @@ interface Payload {
   runs: Run[];
   apps: { slug: string; name: string }[];
   caps: { proposalsPerApp: number; questionsPerAppPerDay: number };
+  builds: BuildLane;
 }
 
 type Tone = 'ok' | 'err';
@@ -211,7 +227,20 @@ const CAP_LABEL: Record<string, string> = {
  * console never renders an API-supplied URL as an anchor.
  */
 function ShadowBuild({ run }: { run: Run }) {
-  if (run.build_ok == null) return null;
+  if (run.build_ok == null) {
+    if (run.build_at) {
+      return <p className={AdminUI.muted} data-shadow-build="building">{`Shadow build under way since ${when(run.build_at)}.`}</p>;
+    }
+    if (run.build_queued_at) {
+      return <p className={AdminUI.muted} data-shadow-build="queued">{`Shadow build queued ${when(run.build_queued_at)}.`}</p>;
+    }
+    // Skipped (the issue closed, the app went live) or replaced by a later
+    // verdict: the reason is kept, and there is no branch.
+    if (run.build_error) {
+      return <p className={`${AdminUI.muted} break-words`} data-shadow-build="skipped">{`Not shadow built: ${run.build_error.replace(/^(skipped|superseded): /, '')}.`}</p>;
+    }
+    return null;
+  }
   if (!run.build_ok) {
     return (
       <p className={`${AdminUI.muted} break-words`} data-shadow-build="failed">
@@ -319,6 +348,22 @@ function VerdictBody({ run }: { run: Run }) {
   return <p className="text-sm text-red-400 break-words">{run.error || 'The run failed before it produced a verdict.'}</p>;
 }
 
+/** The build lane in one line: what is waiting, running, done, and why it idles. */
+function buildLaneLine(b: BuildLane | undefined): string {
+  if (!b) return '';
+  const parts = [
+    `${b.queued} queued`,
+    `${b.building} building`,
+    `${b.built} built`,
+    `${b.failed} failed`,
+    `${money(b.costUsd)} spent on builds`,
+  ];
+  let line = `${parts.join(', ')}.`;
+  if (b.fault) line += ` Backing off after a platform fault until ${when(b.fault.retryAt)}: ${b.fault.error}.`;
+  else if (b.lane?.paused === 'budget') line += ' Waiting on the weekly cap.';
+  return line;
+}
+
 function HomeroomBotSection() {
   const console_ = () => (window as any).AdminConsole;
   const canWrite = !!console_()?.canWrite();
@@ -416,6 +461,26 @@ function HomeroomBotSection() {
     if (data) { setRunIssue(''); load(); }
   };
 
+  // Every open request whose latest verdict is ready and that has no build
+  // yet, into the build lane. The lane works through it at its own pace.
+  const backfill = async () => {
+    const data = await write('/api/admin/homeroom-bot/shadow-builds/backfill', 'POST', {}, 'Queued.');
+    if (!data || !alive.current) return;
+    const left = data.left || {};
+    const notes = [
+      left.live ? `${left.live} on live apps` : null,
+      left.platform ? `${left.platform} on the platform's own repository` : null,
+      left.paused ? `${left.paused} on paused apps` : null,
+    ].filter(Boolean);
+    setStatus({
+      text: data.queued
+        ? `Queued ${data.queued} build${data.queued === 1 ? '' : 's'} across ${data.apps} app${data.apps === 1 ? '' : 's'}.${notes.length ? ` Left out: ${notes.join(', ')}.` : ''}`
+        : `Nothing new to build.${notes.length ? ` Left out: ${notes.join(', ')}.` : ''}`,
+      tone: 'ok',
+    });
+    load();
+  };
+
   const savedLive = payload?.settings.liveApps || [];
   const liveRows = liveDraft ?? savedLive;
   const liveChosen = [...new Set(liveRows.filter(Boolean))];
@@ -468,8 +533,8 @@ function HomeroomBotSection() {
         <p className={`${AdminUI.muted} mb-4`} id="admin-homeroom-bot-intro">
           In shadow mode the bot reads each open request, its discussion and the app’s code, and records what it
           would do: the one question it would ask, that the request is ready to build, or that a person has to decide.
-          It posts nothing, claims nothing and builds nothing. Rate its verdicts here; that is what decides whether it
-          is ever allowed to post.
+          It posts nothing and claims nothing, and builds nothing unless shadow builds are on below. Rate its verdicts
+          here; that is what decides whether it is ever allowed to post.
         </p>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -600,32 +665,63 @@ function HomeroomBotSection() {
           </div>
 
           <div>
-            <label className={AdminUI.label} htmlFor="admin-homeroom-bot-shadow-builds">Shadow builds per day</label>
-            <div className="flex items-center gap-2 mt-1">
+            <label className={AdminUI.label} htmlFor="admin-homeroom-bot-shadow-builds">Shadow builds</label>
+            <select
+              id="admin-homeroom-bot-shadow-builds"
+              className={`${AdminUI.select} mt-1`}
+              value={settings?.shadowBuilds ? 'on' : 'off'}
+              disabled={!canWrite || busy !== ''}
+              onChange={(e) => saveSettings({ shadowBuilds: e.target.value === 'on' }, e.target.value === 'on'
+                ? 'Shadow builds on: each new ready request is built on a branch nobody is shown.'
+                : 'Shadow builds are off. A build under way finishes; nothing new starts.')}
+            >
+              <option value="off">Off</option>
+              <option value="on">On</option>
+            </select>
+            <label className={`${AdminUI.label} block mt-3`} htmlFor="admin-homeroom-bot-build-concurrency">Builds at once</label>
+            <input
+              id="admin-homeroom-bot-build-concurrency"
+              type="number" min="1" max="4" step="1"
+              className={`${AdminUI.input} mt-1`}
+              defaultValue={settings?.buildConcurrency ?? 2}
+              key={`builds-${settings?.buildConcurrency ?? 2}`}
+              disabled={!canWrite}
+              onBlur={(e) => {
+                const n = Number(e.target.value);
+                if (n === settings?.buildConcurrency) return;
+                if (!Number.isInteger(n) || n < 1 || n > 4) {
+                  setStatus({ text: 'Builds at once must be a whole number from 1 to 4.', tone: 'err' });
+                  return;
+                }
+                saveSettings({ buildConcurrency: n }, `The bot now runs up to ${n} shadow build${n === 1 ? '' : 's'} at once, one per app.`);
+              }}
+            />
+            <label className="flex items-center gap-2 mt-3 text-sm" htmlFor="admin-homeroom-bot-shadow-build-platform">
               <input
-                id="admin-homeroom-bot-shadow-builds"
-                type="number" min="0" max="50" step="1"
-                className={AdminUI.input}
-                defaultValue={settings?.shadowBuildsPerDay ?? 0}
-                key={`shadow-${settings?.shadowBuildsPerDay ?? 0}`}
-                disabled={!canWrite}
-                onBlur={(e) => {
-                  const n = Number(e.target.value);
-                  if (n === settings?.shadowBuildsPerDay) return;
-                  if (!Number.isInteger(n) || n < 0 || n > 50) {
-                    setStatus({ text: 'Shadow builds per day must be a whole number from 0 to 50.', tone: 'err' });
-                    return;
-                  }
-                  saveSettings({ shadowBuildsPerDay: n }, n
-                    ? `The bot now builds up to ${n} ready requests a day on apps it does not act on.`
-                    : 'Shadow builds are off.');
-                }}
+                id="admin-homeroom-bot-shadow-build-platform" type="checkbox"
+                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                checked={!!settings?.shadowBuildPlatform}
+                disabled={!canWrite || busy !== ''}
+                onChange={(e) => saveSettings({ shadowBuildPlatform: e.target.checked }, e.target.checked
+                  ? "The platform's own repository is shadow built too."
+                  : "The platform's own repository is left out of shadow builds.")}
               />
-            </div>
+              <span>Include the platform's own repository</span>
+            </label>
+            <p className={`${AdminUI.muted} mt-2`} id="admin-homeroom-bot-build-lane">{buildLaneLine(payload?.builds)}</p>
+            {canWrite ? (
+              <button
+                type="button" id="admin-homeroom-bot-shadow-backfill"
+                className={`${AdminUI.btn.outlineSm} mt-2`}
+                disabled={busy !== '' || !settings?.shadowBuilds}
+                onClick={backfill}
+              >Build every open ready request</button>
+            ) : null}
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-shadow-builds-note">
               On apps outside the live list, a ready request is also built on a branch
               of the app's repository, and nothing else happens: no proposal, no post,
-              nothing in the app. Each run below shows its branch for a spot check. 0 is off.
+              nothing in the app. Builds run beside triage, never in its way, and are paid
+              from the weekly cap above. Each run below shows its branch for a spot check.
             </p>
           </div>
 

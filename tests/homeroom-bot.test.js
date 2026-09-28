@@ -116,7 +116,8 @@ test('settings default to off and clamp their numbers', () => {
   const s = bot.parseSettings([]);
   assert.deepEqual(s, {
     mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [], liveApps: [],
-    turnSeconds: 20 * 60, turnInputTokens: 10_000_000, shadowBuildsPerDay: 0,
+    turnSeconds: 20 * 60, turnInputTokens: 10_000_000,
+    shadowBuilds: false, buildConcurrency: 2, shadowBuildPlatform: false,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },
