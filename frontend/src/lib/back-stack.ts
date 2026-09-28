@@ -42,7 +42,9 @@
  *
  * Only the TOP entry consumes a record. Releasing one underneath (two
  * surfaces closing out of order) would otherwise eat a record belonging to
- * something still open.
+ * something still open. The address and marker must also still belong to
+ * that entry: blocking an app navigates Home while its report receipt stays
+ * open, and closing the receipt must not undo that newer navigation.
  *
  * ── Refusing to close ──────────────────────────────────────────────────
  *
@@ -60,6 +62,8 @@ export interface BackStackEntry {
   close: () => DismissResult;
   /** The address the surface opened at — the one its record was pushed at. */
   href?: string | null;
+  /** The marker written by a successful push, absent if history refused it. */
+  depth?: number;
 }
 
 export interface BackStack {
@@ -106,10 +110,13 @@ export function createBackStack(win: WindowLike): BackStack {
     }
   };
 
-  const record = () => {
+  const record = (entry: BackStackEntry) => {
+    entry.depth = undefined;
     try {
       const prev = (win.history.state ?? null) as Record<string, unknown> | null;
-      win.history.pushState({ ...(prev || {}), [DISMISS_STATE_KEY]: stack.length }, '');
+      const depth = stack.length;
+      win.history.pushState({ ...(prev || {}), [DISMISS_STATE_KEY]: depth }, '');
+      entry.depth = depth;
     } catch {
       /* A history a sandbox will not let us write is not worth throwing over. */
     }
@@ -119,7 +126,7 @@ export function createBackStack(win: WindowLike): BackStack {
     const entry: BackStackEntry = { close, href: href() };
     stack.push(entry);
     selfSpent = false;
-    record();
+    record(entry);
     return () => release(entry);
   }
 
@@ -132,9 +139,13 @@ export function createBackStack(win: WindowLike): BackStack {
     // Not the top — somebody else's record is newer than ours. Dropping the
     // entry is enough; spending a record here would steal theirs.
     if (at !== stack.length) return;
-    selfSpent = true;
-    spentFrom = href();
     try {
+      const state = win.history.state as Record<string, unknown> | null;
+      const currentHref = href();
+      if (entry.depth === undefined || state?.[DISMISS_STATE_KEY] !== entry.depth
+          || (entry.href != null && currentHref !== entry.href)) return;
+      selfSpent = true;
+      spentFrom = currentHref;
       win.history.back();
     } catch {
       selfSpent = false;
@@ -153,7 +164,7 @@ export function createBackStack(win: WindowLike): BackStack {
     // and does not spend a second record.
     if (top.close() === false) {
       stack.push(top);
-      record();
+      record(top);
     }
     return true;
   }

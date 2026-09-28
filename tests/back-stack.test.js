@@ -210,6 +210,68 @@ function fixtureAt(href) {
   return f;
 }
 
+test('closing a report receipt after blocking an app preserves navigation to Home', () => {
+  const appUrl = 'https://x.test/app/example';
+  const homeUrl = 'https://x.test/';
+  const f = fixtureAt(appUrl);
+  const release = f.stack.push(() => {});
+  // Blocking navigates Home before the receipt's Done button closes it.
+  f.win.history.pushState(null);
+  f.win.location.href = homeUrl;
+  let backCalls = 0;
+  f.win.history.back = () => {
+    backCalls += 1;
+    f.pushes.pop();
+    f.win.location.href = appUrl;
+    f.stack.handlePopstate();
+  };
+
+  release();
+
+  assert.equal(f.stack.size, 0, 'Done releases the dialog');
+  assert.equal(backCalls, 0, 'Done must not undo the navigation to Home');
+  assert.equal(f.win.location.href, homeUrl);
+  assert.equal(f.stack.handlePopstate(), false, 'later navigation still reaches the router');
+});
+
+test('closing after navigation with copied history state preserves the new route', () => {
+  const f = fixtureAt('https://x.test/app/example');
+  const release = f.stack.push(() => {});
+  f.win.history.pushState({ ...f.win.history.state });
+  f.win.location.href = 'https://x.test/';
+
+  release();
+
+  assert.equal(f.stack.size, 0);
+  assert.equal(f.pushes.length, 2, 'a copied dialog marker does not make a different route ours');
+});
+
+test('a same-address route record replacing a dialog record is not consumed on close', () => {
+  const f = fixtureAt('https://x.test/app/example');
+  const release = f.stack.push(() => {});
+  // Router replaceState(null, ...) can change ownership without changing URL.
+  f.win.history.state = null;
+
+  release();
+
+  assert.equal(f.stack.size, 0);
+  assert.equal(f.pushes.length, 1, 'only the dialog-owned record may be spent');
+});
+
+test('a dialog that failed to write its record does not consume an underlying dialog', () => {
+  const { stack, win, pushes } = fixture();
+  let underClosed = 0;
+  stack.push(() => { underClosed += 1; });
+  win.history.pushState = () => { throw new Error('denied'); };
+  const release = stack.push(() => {});
+
+  release();
+
+  assert.equal(stack.size, 1);
+  assert.equal(pushes.length, 1, 'the underlying record still belongs to its dialog');
+  assert.equal(underClosed, 0);
+});
+
 test('#2811: a release spending its own record is reported as in place', () => {
   const f = fixtureAt('https://x.test/app/demo/dev/sessions/1');
   const release = f.stack.push(() => {});

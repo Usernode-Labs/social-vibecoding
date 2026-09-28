@@ -294,7 +294,9 @@
 // v37 (message reporting): retire the shell that still rendered Report user
 // beside Report message. Preview builds can identify themselves as "dev",
 // so the page's build comparison cannot refresh that cached React bundle.
-const SW_VERSION = 'v37';
+// v38 (app blocking): refresh the bundled dialog history fix so dismissing
+// the report receipt keeps the viewer on Home after blocking the open app.
+const SW_VERSION = 'v38';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
