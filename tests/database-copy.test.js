@@ -45,7 +45,7 @@ function clients(c, overrides = {}) {
         if (sql.includes('current_database() AS database')) return {rows: [identity(dest ? c.destination : c.source, dest ? '10.0.0.2' : '10.0.0.1')]};
         if (sql.includes('pg_try_advisory_lock')) return {rows: [{locked: overrides.locked !== false}]};
         if (sql.includes('c.relkind, c.relrowsecurity')) return {rows: dest && overrides.occupied ? [{relkind:'r'}] : []};
-        if (sql.includes('AS inspection')) return {rows: [{inspection: {version:1,reasons:overrides.metadata || [],tables:[],analyzeTables:[{schema:'private schema',name:'quoted\"table'}]}}]};
+        if (sql.includes('AS inspection')) return {rows: [{inspection: {version:2,legacyPublic:false,statistics:null,reasons:(!dest && overrides.metadata) || [],tables:[],analyzeTables:[{schema:'private schema',name:'quoted\"table'}]}}]};
         if (sql.startsWith('SET search_path')) return {rows: []};
         if (sql.startsWith('ANALYZE')) { if(overrides.analyzeFail) throw Error('private diagnostics'); return {rows: []}; }
         if (sql.includes('pg_extension')) return {rows: [{found: !!overrides.unsupported}]};

@@ -13,6 +13,8 @@ const path = require('node:path');
 const exec = promisify(execFile);
 const { requireEligible } = require('./database-migration-eligibility');
 const USER_SCHEMA = "n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp_%'";
+const statisticsMember = (catalog, alias) => `EXISTS(SELECT 1 FROM pg_depend dep JOIN pg_extension ext ON ext.oid=dep.refobjid WHERE dep.refclassid='pg_extension'::regclass AND dep.deptype='e' AND ext.extname='pg_stat_statements' AND dep.classid='${catalog}'::regclass AND dep.objid=${alias}.oid)`;
+const APP_RELATIONS = `${USER_SCHEMA} AND NOT ${statisticsMember('pg_class','c')}`;
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 function failure(code) { return Object.assign(new Error(code), { code }); }
 function quote(name) { return '"' + String(name).replace(/"/g, '""') + '"'; }
@@ -47,10 +49,13 @@ function toolEnv(conn, caFile, readOnly) {
 }
 function normalizeSchema(sql) {
   // PostgreSQL generates fresh psql restriction tokens for each plain dump.
-  return sql.replace(/^\\(?:un)?restrict [^\r\n]*\r?\n/gm, '');
+  return sql.replace(/^\\(?:un)?restrict [^\r\n]*\r?\n/gm, '')
+    // pg_dump emits this comment-only block for the legacy public owner.
+    // The actual ownership/ACL normalization is checked separately by the contract.
+    .replace(/^--\n-- Name: public; Type: SCHEMA; Schema: -; Owner: -\n--\n\n-- \*not\* creating schema, since initdb creates it\n\n\n/gm, '');
 }
 async function schemaHash(env, snapshot, timeoutMs) {
-  const args = ['--schema-only', '--no-owner', '--no-privileges', '--no-tablespaces', '--quote-all-identifiers'];
+  const args = ['--schema-only', '--no-owner', '--no-privileges', '--no-tablespaces', '--exclude-extension=pg_stat_statements', '--quote-all-identifiers'];
   if (snapshot) args.push(`--snapshot=${snapshot}`);
   try {
     const { stdout } = await exec('pg_dump', args, { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
@@ -59,7 +64,7 @@ async function schemaHash(env, snapshot, timeoutMs) {
 }
 async function streamCopy(sourceEnv, destinationEnv, snapshot, timeoutMs) {
   const signal = AbortSignal.timeout(timeoutMs);
-  const dump = spawn('pg_dump', ['--format=custom', '--no-owner', '--no-privileges', '--no-tablespaces', `--snapshot=${snapshot}`],
+  const dump = spawn('pg_dump', ['--format=custom', '--no-owner', '--no-privileges', '--no-tablespaces', '--exclude-extension=pg_stat_statements', `--snapshot=${snapshot}`],
     { env: sourceEnv, signal, stdio: ['ignore','pipe','pipe'] });
   const restore = spawn('pg_restore', ['--dbname', destinationEnv.PGDATABASE, '--no-owner', '--no-privileges', '--no-tablespaces', '--single-transaction', '--exit-on-error'],
     { env: destinationEnv, signal, stdio: ['pipe','ignore','pipe'] });
@@ -102,9 +107,9 @@ async function preflight(client, destination, maxBytes) {
     if (BigInt(size) > BigInt(maxBytes)) throw failure('COPY_SIZE_LIMIT');
   }
   const objects = (await client.query(`SELECT c.relkind, c.relrowsecurity, c.relforcerowsecurity
-    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${USER_SCHEMA}`)).rows;
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${APP_RELATIONS}`)).rows;
   const unsupported = (await client.query(`SELECT
-    EXISTS(SELECT 1 FROM pg_extension WHERE extname <> 'plpgsql')
+    EXISTS(SELECT 1 FROM pg_extension WHERE extname NOT IN ('plpgsql','pg_stat_statements'))
     OR EXISTS(SELECT 1 FROM pg_largeobject_metadata)
     OR EXISTS(SELECT 1 FROM pg_foreign_server)
     OR EXISTS(SELECT 1 FROM pg_publication)
@@ -112,11 +117,11 @@ async function preflight(client, destination, maxBytes) {
   if (unsupported || objects.some(o => ['f'].includes(o.relkind) || o.relrowsecurity || o.relforcerowsecurity)) throw failure('COPY_UNSUPPORTED_OBJECTS');
   if (destination) {
     const routines = (await client.query(`SELECT count(*)::integer AS n FROM pg_proc p
-      JOIN pg_namespace n ON n.oid=p.pronamespace WHERE ${USER_SCHEMA}`)).rows[0].n;
+      JOIN pg_namespace n ON n.oid=p.pronamespace WHERE ${USER_SCHEMA} AND NOT ${statisticsMember('pg_proc','p')}`)).rows[0].n;
     const schemas = (await client.query(`SELECT count(*)::integer AS n FROM pg_namespace n
       WHERE ${USER_SCHEMA} AND n.nspname <> 'public'`)).rows[0].n;
     const types = (await client.query(`SELECT count(*)::integer AS n FROM pg_type t
-      JOIN pg_namespace n ON n.oid=t.typnamespace WHERE ${USER_SCHEMA}`)).rows[0].n;
+      JOIN pg_namespace n ON n.oid=t.typnamespace WHERE ${USER_SCHEMA} AND NOT ${statisticsMember('pg_type','t')}`)).rows[0].n;
     if (objects.length || routines || schemas || types) throw failure('COPY_DESTINATION_NOT_EMPTY');
   }
 }
@@ -159,10 +164,13 @@ async function copyDatabase(config, { makeClient = (options) => new Client(optio
     assertIdentities(await identity(source), await identity(destination), config);
     const locked = (await destination.query('SELECT pg_try_advisory_lock(193713,1) AS locked')).rows[0].locked;
     if (!locked) throw failure('COPY_DESTINATION_BUSY');
+    const prepared = await requireEligible(destination);
+    if (prepared.legacyPublic) throw failure('COPY_DESTINATION_METADATA');
     await preflight(destination, true, config.maxBytes);
     await source.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     await preflight(source, false, config.maxBytes);
-    await requireEligible(source);
+    const original = await requireEligible(source);
+    if (JSON.stringify(original.statistics) !== JSON.stringify(prepared.statistics)) throw failure('COPY_DESTINATION_METADATA');
     const snapshot = (await source.query('SELECT pg_export_snapshot() AS snapshot')).rows[0].snapshot;
     if (!/^[A-Fa-f0-9-]+$/.test(snapshot)) throw failure('COPY_INVALID_SNAPSHOT');
     const sourceTables = await tables(source);
@@ -183,12 +191,13 @@ async function copyDatabase(config, { makeClient = (options) => new Client(optio
       || JSON.stringify(sourceSequences) !== JSON.stringify(copiedSequences)
       || sourceSchema !== copiedSchema) throw failure('COPY_VERIFICATION_FAILED');
     const foreignOwner = (await destination.query(`SELECT EXISTS(SELECT 1 FROM pg_class c
-      JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${USER_SCHEMA}
+      JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${APP_RELATIONS}
       AND pg_get_userbyid(c.relowner) <> current_user) AS found`)).rows[0].found;
     if (foreignOwner) throw failure('COPY_OWNERSHIP_FAILED');
     // Recheck the restored metadata too: a destination template must not change
     // the permission/settings contract that the source inspection accepted.
     const restored = await requireEligible(destination);
+    if (restored.legacyPublic || JSON.stringify(restored.statistics) !== JSON.stringify(original.statistics)) throw failure('COPY_DESTINATION_METADATA');
     try {
       // PostgreSQL 17 dumps omit optimizer statistics. Each statement is bounded
       // by the copy client timeout; failure must prevent activation.

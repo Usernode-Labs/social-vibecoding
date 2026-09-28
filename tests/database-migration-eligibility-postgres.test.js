@@ -35,13 +35,33 @@ test('PostgreSQL 17 contract accepts ordinary objects and rejects lossy metadata
   [admin,'ALTER DATABASE app_eligibility_fixture CONNECTION LIMIT 12','ALTER DATABASE app_eligibility_fixture CONNECTION LIMIT -1','CONNECTION_LIMITS'],
   [admin,'ALTER ROLE app_eligibility_fixture_owner VALID UNTIL \'2030-01-01\'','ALTER ROLE app_eligibility_fixture_owner VALID UNTIL \'infinity\'','ROLE_ATTRIBUTES'],
   [db,'ALTER TABLE private.items ENABLE ROW LEVEL SECURITY','ALTER TABLE private.items DISABLE ROW LEVEL SECURITY','ROW_SECURITY'],
-  [privileged,'CREATE EXTENSION pg_stat_statements','DROP EXTENSION pg_stat_statements','EXTENSIONS'],
+  [privileged,'CREATE EXTENSION hstore','DROP EXTENSION hstore','EXTENSIONS'],
  ];
  for(const [client,change,reset,reason] of cases){
   await client.query(change);
   try { assert((await inspect(db)).reasons.includes(reason),reason); } finally {await client.query(reset);}
   assert.deepEqual((await inspect(db)).reasons,[],reset);
  }
+ await privileged.query("CREATE EXTENSION pg_stat_statements VERSION '1.11'");
+ assert.deepEqual((await inspect(db)).reasons,[]);
+ assert.deepEqual((await inspect(db)).statistics,{version:'1.11',resetAccess:false});
+ const badExtension=[
+  ['GRANT EXECUTE ON FUNCTION public.pg_stat_statements_reset(oid,oid,bigint,boolean) TO eligibility_reader','REVOKE EXECUTE ON FUNCTION public.pg_stat_statements_reset(oid,oid,bigint,boolean) FROM eligibility_reader'],
+  ['GRANT INSERT ON public.pg_stat_statements TO PUBLIC','REVOKE INSERT ON public.pg_stat_statements FROM PUBLIC'],
+  ['ALTER FUNCTION public.pg_stat_statements(boolean) SECURITY DEFINER','ALTER FUNCTION public.pg_stat_statements(boolean) SECURITY INVOKER'],
+  ['ALTER EXTENSION pg_stat_statements ADD TABLE private.items','ALTER EXTENSION pg_stat_statements DROP TABLE private.items'],
+ ];
+ for(const [change,reset] of badExtension){
+  await privileged.query(change);
+  try{assert((await inspect(db)).reasons.includes('STATISTICS_EXTENSION'),change);}finally{await privileged.query(reset);}
+  assert.deepEqual((await inspect(db)).reasons,[]);
+ }
+ // An app-owned historical reset function has the same app access as an
+ // operator-owned destination with this one explicit EXECUTE grant.
+ await privileged.query('GRANT EXECUTE ON FUNCTION public.pg_stat_statements_reset(oid,oid,bigint,boolean) TO app_eligibility_fixture_owner');
+ assert.deepEqual((await inspect(db)).statistics,{version:'1.11',resetAccess:true});
+ assert.deepEqual((await inspect(db)).reasons,[]);
+ await privileged.query('DROP EXTENSION pg_stat_statements');
  // An explicit infinity expiration is equivalent to no expiration.
  assert.deepEqual((await inspect(db)).reasons,[]);
  await db.query('INSERT INTO private.items(value) SELECT \'row\' FROM generate_series(1,100000)');

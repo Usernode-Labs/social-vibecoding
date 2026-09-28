@@ -247,3 +247,24 @@ disposable localhost PostgreSQL 17 server. The real copy suite uses
 `ca` certificate path for two disposable TLS-enabled PostgreSQL 17 servers, plus
 PostgreSQL 17 `pg_dump`/`pg_restore` on PATH. Tests use fixed fixture databases and
 must never point at a shared server.
+
+
+### Compatibility for existing production databases
+
+Contract v2 recognizes pg_stat_statements 1.11 in public and the exact legacy
+usernode-owned public schema discovered in the production inventory. Extension
+members are checked independently: membership, function/view fingerprints and
+permissions must match supported patterns. They are not treated as app tables.
+`pg_dump --exclude-extension=pg_stat_statements` leaves installation to the
+operator; the source and prepared destination must agree on version and app reset
+access. Historical app-owned extension objects become operator-owned, with an
+explicit reset-function EXECUTE grant when needed. Statistics counters start fresh.
+
+The legacy public schema becomes the normal pg_database_owner schema on the
+fresh destination, retaining app CREATE/USAGE and removing obsolete usernode and
+PUBLIC CREATE grants. Source metadata remains unchanged. Schema comparison ignores
+only pg_dump's exact comment-only public-schema marker; actual SQL and app-object
+comments remain verified. Other settings, grants, owners and extensions still
+fail closed. New plans freeze this metadata and are invalidated before maintenance
+if it changes. Pool operators must load the extension library before migration;
+this requires a PostgreSQL restart and is not performed by app provisioning.
