@@ -1023,6 +1023,25 @@
     },
     {
       "source": "src/routes/admin.js",
+      "method": "PUT",
+      "path": "/api/admin/users/:id/username",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.put.admin.users.item.username.dc9abfd8",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-users.tsx",
+        "frontend/src/features/admin/admin-users.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
       "method": "DELETE",
       "path": "/api/admin/users/:id",
       "expression": null,
