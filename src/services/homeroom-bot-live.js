@@ -17,6 +17,8 @@
 //                   proposal's own discussion: answered, asked about, or
 //                   made on the proposal's branch (#3264, see
 //                   homeroom-bot-followup.js)
+//   blocked         the spec found a ready request impossible as written:
+//                   nothing is built, and the post says why
 //   ready           a spec, then one GLM build turn in a dev session of the
 //                   bot's own, then the SAME /promote handler a person's
 //                   Propose button runs — pull request, staging, checks,
@@ -204,11 +206,38 @@ function specPrompt({ seed, buildNote }) {
     `- ${SPEC_DESIGN_BRIEF}`,
     '',
     'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
-    'Where something is open, make the sensible choice and say which you made. Do not write a "### Questions"',
+    'Where something is open, make the sensible choice yourself. End the "User-facing changes" half with a',
+    '"### Assumptions" subsection: every assumption listed in the plan above and every choice you made, one',
+    'plain-language line each, so the group can see them and object in review. Do not write a "### Questions"',
     'section.',
     '',
-    'Your final message must be ONLY the markdown spec, as raw markdown: no preamble, and not wrapped in a code',
-    'fence. It is captured verbatim.',
+    'There is one exception. If reading the code shows the request is IMPOSSIBLE as written (it depends on',
+    'something that does not exist and cannot be built here, or the code contradicts what it asks), do not write',
+    'a spec: reply with a single line that starts with "BLOCKED:" and says why in one sentence. That is for',
+    'impossible only. A choice, however unsure you are about it, is an assumption, never a BLOCKED.',
+    '',
+    'Otherwise your final message must be ONLY the markdown spec, as raw markdown: no preamble, and not wrapped',
+    'in a code fence. It is captured verbatim.',
+  ].join('\n');
+}
+
+// The spec turn's one way out: a first line "BLOCKED: <why>".
+const BLOCKED_RE = /^\s*BLOCKED:\s*(.+)/i;
+
+/** Why the spec turn found the request impossible, or null. */
+function specBlocked(text) {
+  const firstLine = String(text || '').trim().split('\n')[0] || '';
+  const m = BLOCKED_RE.exec(firstLine);
+  return m ? clipText(m[1], 500) : null;
+}
+
+function blockedText(reason) {
+  return [
+    'Homeroom bot started on this and found it cannot be built as asked:',
+    '',
+    clipText(reason, 500) || '(no reason given)',
+    '',
+    REPLY_HINT,
   ].join('\n');
 }
 
@@ -316,7 +345,7 @@ async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec
 // The kinds of post that ask something of the person who filed the issue.
 // Not "looking" (a notice, before anything is known) and not a held note
 // (nothing for them to do; the bot comes back on its own).
-const POSTER_KINDS = new Set(['question', 'person', 'empty', 'proposal', 'build_failed']);
+const POSTER_KINDS = new Set(['question', 'person', 'empty', 'proposal', 'build_failed', 'blocked']);
 
 function tagsPoster(kind) {
   return POSTER_KINDS.has(kind);
@@ -676,6 +705,8 @@ async function draftSpec({
   if (routed.error) return { ok: false, costUsd, error: `the spec turn failed (${routed.error})` };
   const specMd = stripSpecWrapperFence(String(routed.result?.lastResultText || '').trim());
   if (!specMd) return { ok: false, costUsd, error: 'the spec turn returned nothing' };
+  const blocked = specBlocked(specMd);
+  if (blocked) return { ok: false, blocked, costUsd, error: `blocked: ${blocked}` };
   // A run that died on the wire can report the failure as its final message,
   // which would otherwise be stored as the spec.
   if (agentApiFailure(specMd)) return { ok: false, costUsd, error: 'the spec turn ended on an API error' };
@@ -776,6 +807,13 @@ async function buildAndPropose({
   spec = await draftSpec({
     pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
   });
+  if (spec.blocked) {
+    // Impossible as written: nothing is built, and the caller says why.
+    log.info('homeroom-bot', 'The spec found the request impossible; not building', {
+      sessionId: session.id, why: spec.blocked,
+    });
+    return { ...(await fail(spec.error)), blocked: spec.blocked, costUsd: spec.costUsd };
+  }
   if (spec.ok) {
     if (onSpec) {
       // Posted, not waited on: the build starts whatever happens to the post.
@@ -916,6 +954,8 @@ module.exports = {
   specSnippet,
   specCommentText,
   specCard,
+  specBlocked,
+  blockedText,
   shareSpecVersion,
   postSpecOnProposal,
   SPEC_TURN_MAX_MS,

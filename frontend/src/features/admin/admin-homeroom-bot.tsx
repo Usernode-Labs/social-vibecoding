@@ -264,6 +264,15 @@ function ShadowBuild({ run }: { run: Run }) {
   );
 }
 
+/** A question's "user_facing: why" as words. */
+function blockerLabel(reason: string): string {
+  const [kind, ...rest] = reason.split(': ');
+  const why = rest.join(': ');
+  if (kind === 'user_facing') return `it changes what people see, and the default could be the wrong build. ${why}`;
+  if (kind === 'impossible') return `it may not be buildable as asked. ${why}`;
+  return reason;
+}
+
 /**
  * The spec the bot wrote just before it built, folded away: on a live app it
  * was also posted on the issue and the proposal, on a shadow one it was
@@ -288,6 +297,9 @@ function VerdictBody({ run }: { run: Run }) {
         {run.question_default ? (
           <p className={AdminUI.muted}>Suggested default: {run.question_default}</p>
         ) : null}
+        {run.reason ? (
+          <p className={AdminUI.muted} data-question-blocker>{`Why it is a blocker: ${blockerLabel(run.reason)}`}</p>
+        ) : null}
       </div>
     );
   }
@@ -295,6 +307,7 @@ function VerdictBody({ run }: { run: Run }) {
     return (
       <div className="space-y-1">
         <p className="text-sm whitespace-pre-line">{run.build_note || '(no build note)'}</p>
+        {run.reason ? <p className={AdminUI.muted} data-demoted-question>{run.reason}</p> : null}
         <ShadowBuild run={run} />
         <BuildSpec run={run} />
         {run.proposal_session_id ? (
@@ -494,6 +507,20 @@ function HomeroomBotSection() {
       text: data.queued
         ? `Queued ${data.queued} build${data.queued === 1 ? '' : 's'} across ${data.apps} app${data.apps === 1 ? '' : 's'}.${notes.length ? ` Left out: ${notes.join(', ')}.` : ''}`
         : `Nothing new to build.${notes.length ? ` Left out: ${notes.join(', ')}.` : ''}`,
+      tone: 'ok',
+    });
+    load();
+  };
+
+  // The questions the bot asked under an older bar, triaged again under the
+  // current prompt: old and new verdicts sit side by side in the export.
+  const retriage = async () => {
+    const data = await write('/api/admin/homeroom-bot/retriage-questions', 'POST', {}, 'Queued.');
+    if (!data || !alive.current) return;
+    setStatus({
+      text: data.queued
+        ? `${data.queued} question${data.queued === 1 ? '' : 's'} will be triaged again.${data.live ? ` ${data.live} on live apps left alone.` : ''}`
+        : `No questions to triage again.${data.live ? ` ${data.live} on live apps left alone.` : ''}`,
       tone: 'ok',
     });
     load();
@@ -906,6 +933,12 @@ function HomeroomBotSection() {
             </div>
             <button type="button" className={AdminUI.btn.outlineSm} disabled={busy !== ''} onClick={runNow}>
               Queue it first
+            </button>
+            <button
+              type="button" id="admin-homeroom-bot-retriage"
+              className={AdminUI.btn.outlineSm} disabled={busy !== ''} onClick={retriage}
+            >
+              Triage every open question again
             </button>
           </div>
         ) : null}

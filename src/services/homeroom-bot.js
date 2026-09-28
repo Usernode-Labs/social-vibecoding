@@ -506,6 +506,25 @@ function clip(value, max = MAX_FIELD_CHARS) {
  * is recorded as `failed` with the tail of the text — never a guessed
  * verdict.
  */
+// A posted question is for a real blocker only. The triage names which one
+// and why its default could waste the build; the two blockers are these.
+const BLOCKERS = Object.freeze(['user_facing', 'impossible']);
+const MAX_ASSUMPTIONS = 12;
+
+function parseAssumptions(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((a) => clip(typeof a === 'string' ? a.replace(/\s+/g, ' ') : '', 300))
+    .filter(Boolean)
+    .slice(0, MAX_ASSUMPTIONS);
+}
+
+/** The build note, with the choices the triage made written under it. */
+function noteWithAssumptions(note, assumptions) {
+  if (!assumptions.length) return note;
+  return clip(`${note || ''}\n\nAssumptions:\n${assumptions.map((a) => `- ${a}`).join('\n')}`.trim());
+}
+
 function parseVerdict(text) {
   const raw = String(text || '');
   const candidates = [];
@@ -522,19 +541,44 @@ function parseVerdict(text) {
     let obj;
     try { obj = JSON.parse(candidates[i]); } catch { continue; }
     if (!obj || typeof obj !== 'object') continue;
-    const verdict = typeof obj.verdict === 'string' ? obj.verdict.trim().toLowerCase() : '';
+    let verdict = typeof obj.verdict === 'string' ? obj.verdict.trim().toLowerCase() : '';
     if (!VERDICTS.includes(verdict)) continue;
     const missing = clip(obj.missing_fact, 1000);
+    const assumptions = parseAssumptions(obj.assumptions);
+    const blocker = typeof obj.blocker === 'string' ? obj.blocker.trim().toLowerCase() : '';
+    const whyDefaultFails = clip(obj.why_default_fails, 1000);
+    let demoted = null;
+    if (verdict === 'question' && !(BLOCKERS.includes(blocker) && whyDefaultFails)) {
+      // A question that cannot say which blocker it is, or why its own
+      // default would fail, is a choice the bot makes itself: it is built
+      // with that default, written down as an assumption. Only when there
+      // is no plan to build from does it stay a question.
+      const question = clip(obj.question, 500);
+      const fallback = clip(obj.default, 500);
+      if (clip(obj.build_note) && fallback) {
+        verdict = 'ready';
+        demoted = { question, default: fallback };
+        assumptions.unshift(`${fallback} (the triage asked "${question}", but it was not a blocker)`);
+        if (assumptions.length > MAX_ASSUMPTIONS) assumptions.length = MAX_ASSUMPTIONS;
+      }
+    }
     return {
       verdict,
       determined: typeof obj.determined === 'boolean' ? obj.determined : null,
       missingFact: missing && /^none\.?$/i.test(missing) ? null : missing,
       question: verdict === 'question' ? clip(obj.question, 2000) : null,
       questionDefault: verdict === 'question' ? clip(obj.default, 1000) : null,
-      buildNote: verdict === 'ready' ? clip(obj.build_note) : null,
+      buildNote: verdict === 'ready' ? noteWithAssumptions(clip(obj.build_note), assumptions) : null,
+      assumptions: verdict === 'ready' ? assumptions : [],
       // `person` says which criterion fails; `empty` says what a person
-      // should do with a request that has nothing in it. Same field.
-      reason: (verdict === 'person' || verdict === 'empty') ? clip(obj.reason, 2000) : null,
+      // should do with a request that has nothing in it; a `question` says
+      // which blocker it is and why its default could waste the build; a
+      // `ready` that was asked as a question says so. Same field.
+      reason: (verdict === 'person' || verdict === 'empty') ? clip(obj.reason, 2000)
+        : verdict === 'question' ? (BLOCKERS.includes(blocker) && whyDefaultFails ? `${blocker}: ${whyDefaultFails}` : null)
+          : demoted ? clip(`Asked "${demoted.question}", but it was not a blocker: built with its default, "${demoted.default}".`, 2000)
+            : null,
+      demoted: !!demoted,
     };
   }
   return null;
@@ -1694,6 +1738,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   });
   log.info('homeroom-bot', 'Triaged', {
     app: app.slug, issueNumber, verdict: parsed.verdict, costUsd, runId,
+    ...(parsed.demoted ? { demotedQuestion: true } : {}),
   });
   let acted = null;
   if (liveMode) {
@@ -2503,6 +2548,11 @@ async function actOnVerdict({
           app: app.slug, issueNumber, sessionId: built.sessionId, err: err.message,
         }));
       }
+    } else if (built.blocked) {
+      // Impossible as written, which only reading the code showed: said on
+      // the issue like a question, so a reply sends it round again.
+      acted = 'blocked';
+      await say('blocked', live.blockedText(built.blocked));
     } else {
       acted = 'build_failed';
       log.warn('homeroom-bot', 'Live build did not become a proposal', {
@@ -3049,6 +3099,42 @@ async function rateRun(pool, { id, rating, note, actorId }) {
   return { ok: true, run: rows[0] };
 }
 
+/**
+ * Every issue whose latest verdict is a question, triaged again: how the
+ * bar for asking is compared, old verdict against new, in the export. Shadow
+ * apps only: on a live app the question was posted, and a new verdict would
+ * act (build, or post again) on the strength of a comparison.
+ */
+const LATEST_VERDICTS_SQL = `SELECT DISTINCT ON (r.app_id, r.issue_number)
+         r.app_id, r.issue_number, r.verdict, a.slug
+    FROM homeroom_bot_runs r
+    JOIN apps a ON a.id = r.app_id
+   WHERE r.verdict IN ('question', 'ready', 'person', 'empty')
+     AND a.status = 'running' AND a.repo_url IS NOT NULL
+   ORDER BY r.app_id, r.issue_number, r.id DESC`;
+
+async function retriageQuestions(pool, { actorId = null } = {}) {
+  const settings = await readSettings(pool);
+  const { rows } = await pool.query(LATEST_VERDICTS_SQL);
+  const questions = rows.filter((r) => r.verdict === 'question');
+  const picked = questions.filter((r) => !live.isLiveFor({ ...settings, mode: 'shadow' }, { slug: r.slug }));
+  if (picked.length) {
+    await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, requested_by)
+       SELECT app_id, issue_number, 0, 'retriage', $3
+         FROM UNNEST($1::int[], $2::int[]) AS q(app_id, issue_number)
+       ON CONFLICT (app_id, issue_number) DO UPDATE
+         SET priority = 0, reason = 'retriage', requested_by = EXCLUDED.requested_by,
+             started_at = NULL, enqueued_at = NOW()`,
+      [picked.map((r) => r.app_id), picked.map((r) => r.issue_number), actorId],
+    );
+  }
+  log.info('homeroom-bot', 'Questions queued to be triaged again', {
+    queued: picked.length, live: questions.length - picked.length,
+  });
+  return { ok: true, queued: picked.length, live: questions.length - picked.length };
+}
+
 /** An admin's "run now": the issue goes to the head of the queue. */
 async function enqueueNow(pool, { slug, issueNumber, actorId }) {
   const n = Number(issueNumber);
@@ -3093,6 +3179,7 @@ module.exports = {
   EXPORT_CHUNK,
   rateRun,
   enqueueNow,
+  retriageQuestions,
   wake,
   wakeAll,
   backoffFor,
@@ -3146,6 +3233,7 @@ module.exports = {
   MAX_BATCH_SIZE,
   // Pure, exported for tests.
   classifyIssue,
+  BLOCKERS,
   capRoomFor,
   parseVerdict,
   parseRepo,
