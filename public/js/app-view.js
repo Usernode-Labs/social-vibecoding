@@ -21357,6 +21357,15 @@ const AppView = {
 // top-level listener; handleLlmBridgeMessage verifies the source is an
 // iframe this shell owns and ignores everything else.
 if (typeof window !== 'undefined') {
+  // Both the report receipt and live block events announce this before
+  // navigating Home. Drop the pending activity first: close() normally
+  // flushes it, but the blocked app no longer accepts that request.
+  window.addEventListener('app-blocks-changed', (event) => {
+    if (!event.detail?.blocked || !AppView.appData
+        || event.detail.slug !== AppView.appData.slug) return;
+    AppView.activeSeconds = 0;
+    AppView.stopActivityTracking();
+  });
   window.addEventListener('message', (e) => {
     try { AppView.handleLlmBridgeMessage(e); } catch {}
     // #2219: the gated browser capabilities (geolocation, microphone,
