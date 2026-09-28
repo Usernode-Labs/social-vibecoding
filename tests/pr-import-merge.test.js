@@ -491,6 +491,7 @@ test('finalizeMerge: the merge line names who built, backed and shaped it, in wo
     const announced = systemMessages.filter((m) => m.content === line);
     assert.equal(announced.length, 1, 'the proposal\'s thread only; a channel carries no activity');
     assert.deepEqual(announced[0].meta, {
+      mergeAnnouncement: { sessionId: 11 },
       merged: {
         sessionId: 11, prNumber: 30, title: 'Native change',
         author: 'evan', backers: ['alice', 'bob'], shapers: ['carol', 'frank'], votes: '3/4',

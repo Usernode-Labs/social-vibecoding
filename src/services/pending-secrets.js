@@ -238,8 +238,10 @@ async function rawValuesForSession(pool, sessionId, dataKey, { includePrivate = 
 
 /**
  * Merge-time apply. Claims each pending row for this session with a
- * status flip so a re-run (recoverStuckMerges) can never double-apply,
- * then writes the held value into the scope's real store.
+ * status flip, then writes the held value into the scope's real store.
+ * A crash between those operations leaves the ciphertext on an 'applied'
+ * row, so a resumed finalizer must also select that row. setValue is an
+ * idempotent upsert; the ciphertext is cleared only after it succeeds.
  *
  * Called from routes/votes.js finalizeMerge() BEFORE the production
  * rebuild: a newly `required` child-app secret whose value arrived with
@@ -257,7 +259,8 @@ async function applyForSession(config, pool, sessionId) {
   const { rows } = await pool.query(
     `UPDATE pending_secret_declarations
         SET status = 'applied'
-      WHERE session_id = $1 AND status = 'pending'
+      WHERE session_id = $1 AND (status = 'pending' OR
+        (status = 'applied' AND value_enc IS NOT NULL))
       RETURNING id, app_id, scope, key, declaration, value_enc,
                 value_applied_at, created_by`,
     [sessionId]

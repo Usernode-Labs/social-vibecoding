@@ -135,14 +135,21 @@ test('recoverStuckMerges heals merged-on-GitHub rows, demotes stuck merging, lea
   assert.deepEqual(getPRCalls.sort(), [39, 52, 99]);
 });
 
-test('recoverStuckMerges without GitHub auth only demotes merging rows', async () => {
+test('recoverStuckMerges without GitHub auth preserves unknown merge outcomes', async () => {
   const pool = makePool(ROWS.map((r) => ({ ...r })));
   await withStubs(pool, {
     isEnabled: () => false,
     getPR: async () => { throw new Error('should not be called'); },
   }, () => recoverStuckMerges({}));
 
-  // Fallback path: a single bulk flip of 'merging' rows (id 2); promoted
-  // rows (1, 3) are left untouched because we can't ask GitHub the truth.
-  assert.deepEqual(pool.updates, [{ to: 'promoted', bulk: true, ids: [2] }]);
+  assert.deepEqual(pool.updates, [], 'an unseen successful merge must not become retryable');
+});
+
+test('recoverStuckMerges keeps merging when the GitHub lookup fails', async () => {
+  const pool = makePool([{ ...ROWS[1] }]);
+  await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async () => { throw new Error('GitHub unavailable'); },
+  }, () => recoverStuckMerges({}));
+  assert.deepEqual(pool.updates, []);
 });

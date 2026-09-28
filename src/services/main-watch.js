@@ -223,7 +223,7 @@ async function writeState(pool, app, mergeSha, state, detail) {
  * (resumeInterrupted below): the first red's detail, already recorded, so
  * this run starts at the re-run instead of asking the suite twice more.
  */
-async function afterMerge(config, pool, { app, session = null, mergeSha, confirmationOf = null } = {}) {
+async function afterMerge(config, pool, { app, session = null, mergeSha, confirmationOf = null, onClaim = null } = {}) {
   if (!isEnabled() || !pool || !app || !mergeSha) return null;
   const parsed = parseRepo(app.repo_url);
   if (!parsed) return null;
@@ -255,6 +255,7 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
     log.warn('main-watch', 'claim failed; not running', { appId: app.id, err: err.message });
     return null;
   }
+  if (onClaim) onClaim();
   const wasPaused = !!previous && (!!previous.was_paused_sha
     || previous.was_state === 'failing' || previous.was_state === 'confirming');
 

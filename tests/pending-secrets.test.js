@@ -239,9 +239,11 @@ test('applyForSession claims rows once and writes through the scope DAO', async 
   assert.equal(appWrites.length, 1);
   assert.equal(appWrites[0].opts.sensitive, true, 'a private app secret is stored as sensitive');
 
-  // The claim IS the status flip, so a second run finds nothing.
+  // An applied row retaining ciphertext is selected again after a crash
+  // between the claim and the value write.
   const claim = pool.calls.find((c) => /SET status = 'applied'/.test(c.sql));
-  assert.match(claim.sql, /WHERE session_id = \$1 AND status = 'pending'/);
+  assert.match(claim.sql, /status = 'pending' OR/);
+  assert.match(claim.sql, /status = 'applied' AND value_enc IS NOT NULL/);
   assert.match(claim.sql, /RETURNING/);
 });
 

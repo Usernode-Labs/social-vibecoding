@@ -46,7 +46,7 @@ function makePool(handlers) {
 // Loads routes/votes with every collaborator stubbed and a mergePR that
 // throws `mergeError`. Drives checkAndMerge with force:true so the vote
 // gates are skipped and the run goes straight to the GitHub merge.
-function loadVotesWithFailingMerge(mergeError) {
+function loadVotesWithFailingMerge(mergeError, getPR = async () => ({ merged: false })) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
@@ -74,6 +74,7 @@ function loadVotesWithFailingMerge(mergeError) {
   stub(ids.github, {
     isEnabled: () => true,
     mergePR: async () => { throw mergeError; },
+    getPR,
   });
   stub(ids.staging, {});
   stub(ids.docker, {});
@@ -228,6 +229,29 @@ test('checkAndMerge catch: generic failure broadcasts mergeFailed with resolving
     assert.equal(failed[0].resolving, false, 'no resolver coming → clients cancel as before');
     assert.equal(resolverCalls.length, 0, 'generic failures never fire the resolver');
     assert.equal(retryCalls.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('an ambiguous merge response stays in recovery when GitHub cannot answer', async () => {
+  const { subject, voteUpdates, restore } = loadVotesWithFailingMerge(
+    new Error('network timeout'), async () => { throw new Error('GitHub unavailable'); }
+  );
+  try {
+    const calls = [];
+    const recordingPool = {
+      async query(sql, params) {
+        calls.push({ sql: String(sql), params });
+        if (/SET status = 'merging'/.test(sql)) return { rows: [{ id: 7 }] };
+        if (/SELECT COUNT\(\*\) as cnt FROM pr_votes/.test(sql)) return { rows: [{ cnt: '1' }] };
+        return { rows: [] };
+      },
+    };
+    const result = await subject.checkAndMerge({ jwtSecret: 's' }, recordingPool, { ...session }, { force: true });
+    assert.equal(result.mergeOutcomeUnknown, true);
+    assert.ok(!calls.some((c) => /SET status = 'promoted'/.test(c.sql)));
+    assert.ok(!voteUpdates.some((u) => u.mergeFailed));
   } finally {
     restore();
   }
