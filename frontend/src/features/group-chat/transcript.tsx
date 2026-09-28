@@ -310,10 +310,9 @@ export function Reactions({ msg }: { msg: TranscriptMessage }) {
  * every message in the group chat quietly lost all three. Found by seeding a
  * chat and counting the buttons, not by a test.
  */
-function RowActions({ msg, onReportMessage, onReportUser }: {
+function RowActions({ msg, onReportMessage }: {
   msg: TranscriptMessage;
   onReportMessage?: () => void;
-  onReportUser?: () => void;
 }) {
   if (!(msg.showEdit || msg.showBookmark || msg.showReact || (msg.senderId && !msg.mine && msg.kind === 'message'))) return null;
   const saved = msg.bookmarked;
@@ -352,8 +351,6 @@ function RowActions({ msg, onReportMessage, onReportUser }: {
         <>
           {onReportMessage ? <button type="button" className="text-[11px] text-zinc-600 hover:underline dark:text-zinc-300"
             onClick={onReportMessage} aria-label="Report message">Report message</button> : null}
-          {onReportUser ? <button type="button" className="text-[11px] text-zinc-600 hover:underline dark:text-zinc-300"
-            onClick={onReportUser} aria-label={`Report @${msg.username}`}>Report user</button> : null}
           <button type="button" className="text-[11px] text-red-600 hover:underline" onClick={() => { void blockSender(); }}
             title={`Block @${msg.username}`} aria-label={`Block @${msg.username}`}>
             Block
@@ -568,8 +565,7 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
           ) : null}
         </>
       )}
-      actions={<RowActions msg={msg} onReportMessage={msg.id ? () => openReport({ targetType: 'app_message', target: msg.id!, label: `Message from @${msg.username}`, userId: msg.senderId! }) : undefined}
-        onReportUser={() => openReport({ targetType: 'user', target: msg.username, label: `@${msg.username}`, userId: msg.senderId! })} />}
+      actions={<RowActions msg={msg} onReportMessage={msg.id ? () => openReport({ targetType: 'app_message', target: msg.id!, label: `Message from @${msg.username}`, userId: msg.senderId! }) : undefined} />}
     >
       {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
       <Body html={msg.bodyHtml} />

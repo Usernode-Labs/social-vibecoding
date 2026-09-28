@@ -159,13 +159,11 @@ export function MessageRow({ message, conversationId, grouped = false, channels 
     >{message.saved ? <BookmarkSolidIcon /> : <BookmarkIcon strokeWidth="1.5" />}</button>
     {mine && message.content && !message.moderated ? <button type="button" onClick={() => { setEditValue(message.content); setEditing(true); }} title="Edit" aria-label="Edit">✎</button> : null}
     {!mine ? <button type="button" onClick={() => openReport({ targetType: 'conversation_message', target: message.id, label: `Message from @${message.sender.username}`, userId: message.sender.id })} title="Report message" aria-label="Report message">!</button> : null}
-    {!mine && message.sender.id ? <button type="button" onClick={() => openReport({ targetType: 'user', target: message.sender.username, label: `@${message.sender.username}`, userId: message.sender.id })} title="Report user" aria-label="Report user">⚑</button> : null}
     {!mine && message.sender.id ? <button type="button" disabled={busy} onClick={() => void blockSender()} title={`Block @${message.sender.username}`} aria-label={`Block @${message.sender.username}`}>⊘</button> : null}
   </div> : null;
 
   const pickerNode = picker ? <div className="messages-reaction-picker messages-report-picker" role="menu" aria-label="Message actions">
     {!mine ? <button type="button" role="menuitem" data-report-action="message" onClick={() => { setPicker(false); openReport({ targetType: 'conversation_message', target: message.id, label: `Message from @${message.sender.username}`, userId: message.sender.id }); }}>Report message</button> : null}
-    {!mine && message.sender.id ? <button type="button" role="menuitem" data-report-action="user" onClick={() => { setPicker(false); openReport({ targetType: 'user', target: message.sender.username, label: `@${message.sender.username}`, userId: message.sender.id }); }}>Report user</button> : null}
     {REACTIONS.map((emoji) => <button key={emoji} type="button" role="menuitem" onClick={() => void toggle(emoji)}>{emoji}</button>)}
   </div> : null;
 
