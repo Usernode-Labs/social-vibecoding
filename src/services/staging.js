@@ -931,6 +931,31 @@ async function rebuildProductionInner(config, app, options = {}) {
   const containerName = `usernode-app-${app.slug}`;
   const imageName = `usernode-app-${app.slug}:latest`;
 
+  // Recovery may arrive after the runtime switched successfully but before
+  // apps.main_sha was saved. Read the running revision under the production
+  // rebuild lock before doing another external deploy. Ordinary/manual
+  // rebuilds never pass this option: they may need to apply changed secrets.
+  if (options.reuseRunningRevision) {
+    const expected = String(options.reuseRunningRevision).toLowerCase();
+    const ref = applicationRuntime.productionRef(config, app);
+    try {
+      const live = await applicationRuntime.inspect(config, ref);
+      if (live.status === 'running'
+          && live.labels?.['social.usernode.io/source-revision'] === expected
+          && await applicationRuntime.probeHealth(config, ref)) {
+        return {
+          containerId: ref.runtimeKind === 'docker' ? ref.runtimeName : null,
+          runtimeKind: ref.runtimeKind, runtimeName: ref.runtimeName,
+          sha: expected, recovered: true,
+        };
+      }
+    } catch (err) {
+      log.warn('staging', 'Could not inspect production for merge recovery', {
+        app: app.slug, err: err.message,
+      });
+    }
+  }
+
   log.info('staging', 'Rebuilding production', { app: app.slug });
 
   // Single chokepoint for "this app is being rebuilt right now": every

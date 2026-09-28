@@ -83,7 +83,11 @@ stub(ids.notifications, {
 stub(ids.caddy, {});
 stub(ids.dbManager, { appDbName: slug => `app_${slug}`, connectionUrl: () => 'postgres://app' });
 let deployedOptions = null;
+let observedLive = null;
 stub(ids.applicationRuntime, {
+  productionRef: () => ({ runtimeKind: 'docker', runtimeName: 'usernode-app-falling-sands' }),
+  inspect: async () => observedLive || { status: 'not_found', labels: {} },
+  probeHealth: async () => true,
   build: async () => ({ imageRef: 'image@sha256:abc', buildRef: 'build-1' }),
   deploy: async (_config, options) => {
     deployedOptions = options;
@@ -144,6 +148,7 @@ function reset() {
   logged.length = 0;
   headSha = RED;
   deployedOptions = null;
+  observedLive = null;
   buildError = new Error('docker build failed: E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease Connection timed out');
 }
 
@@ -180,6 +185,17 @@ test('a successful rebuild stamps the cloned source revision on production', asy
   assert.equal(deployedOptions.labels['social.usernode.io/source-revision'], RED);
   assert.equal(appRow.last_failure, null, 'the successful retry clears the old failure');
   assert.equal(notified.length, 0);
+});
+
+test('merge recovery observes a healthy deployed revision after a lost database write', async () => {
+  reset();
+  observedLive = { status: 'running', labels: { 'social.usernode.io/source-revision': RED } };
+  const result = await staging.rebuildProduction(config, app, { reuseRunningRevision: RED });
+  assert.equal(result.sha, RED);
+  assert.equal(result.recovered, true);
+  assert.equal(result.containerId, 'usernode-app-falling-sands');
+  assert.equal(deployedOptions, null, 'the external deployment is not repeated');
+  assert.equal(queries.length, 0, 'the running result is discovered before a new build');
 });
 
 test('the same commit failing again at the same stage is recorded but not re-notified', async () => {

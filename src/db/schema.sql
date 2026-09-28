@@ -1001,6 +1001,9 @@ ALTER TABLE apps                   ADD COLUMN IF NOT EXISTS unit_suite_last_test
 --   revert PR — the UI hides chat input + the undo button on
 --   reverts so we can't vote-to-undo-an-undo from the merged list.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_commit_sha    VARCHAR(40);
+-- A recovery sweep may release a failed merge claim only after its GitHub
+-- request has had time to finish. The timestamp is set with the claim.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_attempt_at   TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS revert_of_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS chat_sessions_revert_of_idx ON chat_sessions(revert_of_session_id);
 

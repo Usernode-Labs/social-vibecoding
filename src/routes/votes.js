@@ -5029,6 +5029,19 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE id = $1', [session.app_id]);
     const app = appRows[0];
 
+    // Start the combined-main check as soon as GitHub has returned its merge
+    // SHA. A deploy failure or interruption later in this finalizer must not
+    // prevent the check from being claimed; recovery picks up a missing claim.
+    if (app && mergeCommitSha) {
+      require('../services/main-watch').afterMerge(config, pool, {
+        app, session, mergeSha: mergeCommitSha,
+      }).catch((err) => {
+        log.warn('votes', 'Main watch failed to run (non-fatal)', {
+          appId: session.app_id, sha: mergeCommitSha, err: err.message,
+        });
+      });
+    }
+
     // Apply any values this proposal carried for the variables it
     // DECLARES (services/pending-secrets.js — the "+ New variable" panel
     // flow). BEFORE the rebuild, deliberately: a newly `required` child-app
@@ -5450,19 +5463,6 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     checkAndResolveConflicts(config, { app_id: session.app_id, excludeSessionId: session.id }).catch((err) => {
       log.error('votes', 'Conflict resolution check failed', { err: err.message });
     });
-
-    // The whole-tree check under direct merges (services/main-watch.js): the
-    // repo's unit suite on the merge commit, red pausing the app's merges.
-    // Fire-and-forget; a merge never waits on it and never fails because of it.
-    if (app && mergeCommitSha) {
-      require('../services/main-watch').afterMerge(config, pool, {
-        app, session, mergeSha: mergeCommitSha,
-      }).catch((err) => {
-        log.warn('votes', 'Main watch failed to run (non-fatal)', {
-          appId: session.app_id, sha: mergeCommitSha, err: err.message,
-        });
-      });
-    }
 
     dstep({ phase: 'merged', message: `Marked session merged${mergeCommitSha ? ` (commit ${String(mergeCommitSha).slice(0, 9)})` : ''}.`, detail: { sha: mergeCommitSha, yesCount, majority } });
     // Optional: finalizeMerge is exported and called directly (the imported-PR
@@ -6227,7 +6227,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
   }
 
   const { rows: claim } = await pool.query(
-    `UPDATE chat_sessions SET status = 'merging'
+    `UPDATE chat_sessions SET status = 'merging', merge_attempt_at = NOW()
      WHERE id = $1 AND status = 'promoted'
      RETURNING id`,
     [session.id]
@@ -6292,8 +6292,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // e.g. a newly-required secret with no production value — yet the merge is
   // done). See the catch block below.
   let githubMerged = false;
+  let releaseMergeLock = null;
 
   try {
+    releaseMergeLock = await require('../services/merge-finalization-lock').acquire(pool, session.id);
     // Merge PR on GitHub
     // Pin every GitHub merge to the exact reviewed commit so GitHub refuses
     // (409) if the head moved. Imported staging previews still use their
@@ -6799,6 +6801,12 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dend('error', `Merge failed: ${err.message}`);
     }
     return { merged: false, error: err.message, conflict: isConflict };
+  } finally {
+    if (releaseMergeLock) await releaseMergeLock().catch((err) => {
+      log.warn('votes', 'Could not release merge finalization lock', {
+        sessionId: session.id, err: err.message,
+      });
+    });
   }
 }
 

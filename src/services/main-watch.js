@@ -223,7 +223,7 @@ async function writeState(pool, app, mergeSha, state, detail) {
  * (resumeInterrupted below): the first red's detail, already recorded, so
  * this run starts at the re-run instead of asking the suite twice more.
  */
-async function afterMerge(config, pool, { app, session = null, mergeSha, confirmationOf = null } = {}) {
+async function afterMerge(config, pool, { app, session = null, mergeSha, confirmationOf = null, resume = false } = {}) {
   if (!isEnabled() || !pool || !app || !mergeSha) return null;
   const parsed = parseRepo(app.repo_url);
   if (!parsed) return null;
@@ -246,15 +246,18 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
           SET main_check_state = 'running', main_check_sha = $2,
               main_check_at = NOW(), main_check_detail = $3::jsonb
         WHERE id = $1
+          AND ($4::boolean OR main_check_sha IS DISTINCT FROM $2
+               OR main_check_state IS NULL OR main_check_state = 'error')
     RETURNING (SELECT was_state FROM prev) AS was_state, (SELECT was_sha FROM prev) AS was_sha,
               (SELECT was_paused_sha FROM prev) AS was_paused_sha`,
-      [app.id, mergeSha, JSON.stringify(startedDetail)]
+      [app.id, mergeSha, JSON.stringify(startedDetail), resume]
     );
     previous = rows[0] || null;
   } catch (err) {
     log.warn('main-watch', 'claim failed; not running', { appId: app.id, err: err.message });
     return null;
   }
+  if (!previous) return null; // Already claimed or completed for this SHA.
   const wasPaused = !!previous && (!!previous.was_paused_sha
     || previous.was_state === 'failing' || previous.was_state === 'confirming');
 
@@ -411,7 +414,7 @@ async function resumeInterrupted(config, { pool = null, olderThanMs = staleMs() 
       resumingConfirmation: !!confirmationOf,
     });
     resumed.push({ appId: row.id, sha: row.main_check_sha, was: row.main_check_state });
-    runs.push(afterMerge(config, db, { app, session, mergeSha: row.main_check_sha, confirmationOf })
+    runs.push(afterMerge(config, db, { app, session, mergeSha: row.main_check_sha, confirmationOf, resume: true })
       .catch((err) => {
         log.warn('main-watch', 'Re-drive failed (non-fatal)', { appId: row.id, err: err.message });
         return null;
