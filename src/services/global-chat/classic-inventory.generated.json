@@ -473,7 +473,8 @@
         "frontend/src/features/admin/account-deletions.tsx",
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -512,6 +513,177 @@
       "clientReferences": []
     },
     {
+      "source": "src/routes/admin-database-migrations.js",
+      "method": "GET",
+      "path": "/api/admin/database-migrations/batches",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.database.migrations.batches.6768f9be",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/database-batches.tsx",
+        "frontend/src/features/admin/database-batches.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin-database-migrations.js",
+      "method": "POST",
+      "path": "/api/admin/database-migrations/batches/plan",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.database.migrations.batches.plan.4dd4b517",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/admin-database-migrations.js",
+      "method": "POST",
+      "path": "/api/admin/database-migrations/batches/:id/start",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.database.migrations.batches.item.start.cc2cea41",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/admin-database-migrations.js",
+      "method": "POST",
+      "path": "/api/admin/database-migrations/batches/:id/action",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.database.migrations.batches.item.action.477ef616",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/admin-database-migrations.js",
+      "method": "GET",
+      "path": "/api/admin/database-migrations",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.database.migrations.76e9ee34",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin-database-migrations.js",
+      "method": "POST",
+      "path": "/api/admin/database-migrations/plan",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.database.migrations.plan.84e7e1f4",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/database-batches.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin-database-migrations.js",
+      "method": "POST",
+      "path": "/api/admin/database-migrations",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.database.migrations.4044613a",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin-database-migrations.js",
+      "method": "POST",
+      "path": "/api/admin/database-migrations/:id/action",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.database.migrations.item.action.65f7e1cf",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/admin-databases.js",
+      "method": "GET",
+      "path": "/api/admin/database-migrations",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.database.migrations.cb43b0a3",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
+      ]
+    },
+    {
       "source": "src/routes/admin-databases.js",
       "method": "GET",
       "path": "/api/admin/database-clusters",
@@ -529,7 +701,8 @@
         "frontend/src/features/admin/admin-databases.tsx",
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -550,7 +723,8 @@
         "frontend/src/features/admin/admin-databases.tsx",
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -788,7 +962,8 @@
       "clientReferences": [
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -809,7 +984,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-overview.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -848,7 +1024,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -869,7 +1046,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -890,7 +1068,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -911,7 +1090,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -932,7 +1112,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx",
-        "frontend/src/features/admin/admin-users.tsx"
+        "frontend/src/features/admin/admin-users.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1157,7 +1338,8 @@
         "frontend/src/features/admin/admin-codes.tsx",
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1178,7 +1360,8 @@
         "frontend/src/features/admin/admin-codes.tsx",
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1218,7 +1401,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-limits.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1240,7 +1424,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-limits.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1261,7 +1446,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-limits.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1282,7 +1468,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-limits.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1303,7 +1490,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-model-costs.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1324,7 +1512,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-model-costs.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1344,7 +1533,8 @@
       "clientReferences": [
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1439,7 +1629,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx",
-        "frontend/src/features/admin/admin-storage.tsx"
+        "frontend/src/features/admin/admin-storage.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1498,7 +1689,8 @@
         "frontend/src/features/admin/admin-featured-apps.tsx",
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1537,7 +1729,8 @@
         "frontend/src/features/admin/admin-featured-apps.tsx",
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1558,7 +1751,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-limits.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1579,7 +1773,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-limits.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1655,7 +1850,8 @@
         "frontend/src/features/admin/admin-features.tsx",
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -1729,7 +1925,8 @@
       "clientReferences": [
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -4998,7 +5195,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-reports.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -5019,7 +5217,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-reports.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -5600,7 +5799,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-reports.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {
@@ -8536,7 +8736,8 @@
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-reports.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
-        "frontend/src/features/admin/admin-staging-reap.tsx"
+        "frontend/src/features/admin/admin-staging-reap.tsx",
+        "frontend/src/features/admin/database-migrations.tsx"
       ]
     },
     {

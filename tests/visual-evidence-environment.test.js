@@ -97,11 +97,14 @@ test('each paired reset serializes clones and adds the same member fixture to bo
       cloneActive = false;
       return { password: 'disposable' };
     };
-    dbManager.connectionUrl = (dbName) => `postgres://fixture@db/${dbName}`;
-    fixtures.ensureFullAdminIdentity = async ({ side }) => ({
-      id: fixtures.FULL_ADMIN_PROFILE, persona: 'full_admin', path: '/#admin/users',
-      appMembership: { appId: 42, slug, status: 'member' }, side,
-    });
+    dbManager.connectionUrl = async (dbName) => `postgres://fixture@db/${dbName}`;
+    fixtures.ensureFullAdminIdentity = async ({ side, databaseUrl }) => {
+      assert.equal(databaseUrl, `postgres://fixture@db/${pair.sides[side].dbName}`);
+      return {
+        id: fixtures.FULL_ADMIN_PROFILE, persona: 'full_admin', path: '/#admin/users',
+        appMembership: { appId: 42, slug, status: 'member' }, side,
+      };
+    };
     fixtures.canCopyMemberAgentSession = async () => true;
     fixtures.ensureHostedAppFixture = async () => ({
       id: fixtures.HOSTED_APP_PROFILE, persona: 'member', startPath: '/#apps',

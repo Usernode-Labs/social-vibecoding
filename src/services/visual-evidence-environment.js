@@ -407,10 +407,10 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
     let availableFixtures = [];
     if (pair.app.slug === config.selfAppSlug) {
       const fixtureProfiles = [];
-      const fixtureInputs = Object.fromEntries(['base', 'head'].map((side) => [side, {
-        databaseUrl: dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password),
+      const fixtureInputs = Object.fromEntries(await allSettledValues(['base', 'head'].map(async (side) => [side, {
+        databaseUrl: await dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password),
         slug: pair.app.slug, runId: pair.runId, side,
-      }]));
+      }])));
       onProgress?.({ stage: 'seed_evidence_identities' });
       const admins = await allSettledValues(['base', 'head'].map((side) =>
         evidenceFixtures.ensureFullAdminIdentity(fixtureInputs[side])));
