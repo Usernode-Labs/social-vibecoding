@@ -435,6 +435,24 @@ function profileRoutes(config) {
     return next();
   };
 
+  router.get('/api/me/challenges/:challengeId/activities', requireUser, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    const raw = req.params.challengeId;
+    const cursor = req.query.before;
+    if (!/^[1-9][0-9]{0,9}$/.test(raw) || Number(raw) > 2147483647
+        || (cursor != null && (typeof cursor !== 'string' || !/^[1-9][0-9]{0,15}$/.test(cursor)
+          || !Number.isSafeInteger(Number(cursor))))) {
+      return res.status(400).json({ error: 'Invalid challenge or activity cursor' });
+    }
+    try {
+      const { personalChallengeActivities } = require('../services/topochain/personal-challenge-activities');
+      return res.json(await personalChallengeActivities(pool, req.user, Number(raw), cursor || null));
+    } catch (err) {
+      log.error('profile', 'challenge activities failed', { message: err.message });
+      return res.status(500).json({ error: 'Could not load your counted activities' });
+    }
+  });
+
   router.get('/api/me/email', requireUser, async (req, res) => {
     try {
       const { rows } = await pool.query(
