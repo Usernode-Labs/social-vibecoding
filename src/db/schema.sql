@@ -7332,6 +7332,22 @@ CREATE INDEX IF NOT EXISTS idx_conversation_objects_message
 CREATE INDEX IF NOT EXISTS idx_conversation_objects_app
   ON conversation_message_objects (app_id, object_type, object_ref);
 
+-- Staging's old /messages/91000x links name recipes, not shared private
+-- conversations. Each viewer gets separate persisted rows; every subsequent
+-- action uses the ordinary conversation/message IDs and permission checks.
+CREATE TABLE IF NOT EXISTS staging_conversation_fixtures (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  legacy_id INTEGER NOT NULL CHECK (legacy_id BETWEEN 910001 AND 910004),
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, legacy_id)
+);
+COMMENT ON TABLE staging_conversation_fixtures IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS staging_app_fixtures (
+  app_id INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE
+);
+COMMENT ON TABLE staging_app_fixtures IS 'staging:private';
+
 -- Sharing an exact immutable spec version into a conversation grants it to
 -- current members. Membership is checked at every read, so leaving/removal
 -- immediately revokes both retained-history and full-spec access.

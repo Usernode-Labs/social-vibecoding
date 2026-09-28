@@ -289,6 +289,13 @@ export async function loadThread(conversationId: number, force = false): Promise
     // retained history is not. Resolve membership first and never request
     // message bytes for an invitee.
     const active = await api.getConversation(conversationId);
+    if (request !== threadRequest || state.route.conversationId !== conversationId) return;
+    // Old Preview links resolve to the viewer's persisted sample thread.
+    // Use its canonical address for messages, writes, drafts and WS events.
+    if (active.id !== conversationId) {
+      open(active.id);
+      return;
+    }
     const page = active.membershipStatus === 'member'
       ? await api.listMessages(conversationId)
       : { messages: [], nextBefore: null };

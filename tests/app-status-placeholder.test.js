@@ -73,6 +73,16 @@ test('spinning up: the amber dot and nothing to act on', () => {
   assert.doesNotMatch(out, /<button/);
 });
 
+test('a persisted Preview sample explains its content without a failed runtime or retry spinner', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, { status: 'running', url: null, staging_sample: true });
+  assert.equal(v.dot, null);
+  assert.equal(v.detail, null);
+  assert.match(html(v), /Preview sample app/);
+  assert.match(html(v), /No live app is deployed here/);
+  assert.doesNotMatch(html(v), /App not available|spinner|status-dot/);
+});
+
 test('#1883: HTTP reconciliation clears a stale creating placeholder without a WebSocket event', async () => {
   const running = {
     slug: 'recipebot', name: 'Recipebot', status: 'running',

@@ -2469,6 +2469,12 @@ const AppView = {
   // a copy to drift. `tests/app-frame-identity.test.js` holds the real store
   // and asserts on the view instead.
   _appStatusView(appData) {
+    if (appData?.staging_sample) return {
+      dot: null,
+      message: 'Preview sample app. You can try its discussion, favorites, reporting and blocking. No live app is deployed here.',
+      detail: null,
+      action: null,
+    };
     if (appData?.status === 'creating') {
       return { dot: 'creating', message: 'App is spinning up...', detail: null, action: null };
     }

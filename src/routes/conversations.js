@@ -54,203 +54,20 @@ async function pushNotifications(pool, rows) {
   for (const row of rows) await notificationSvc.hydrateAndPush(pool, row);
 }
 
-function demoUser(id, username) {
-  return { id, username, avatarUrl: null };
-}
-
-// Use the real, non-login fixture accounts seeded by seedStagingGeneralChannel.
-// An invented handle such as "ada" can be absent from the database (or belong
-// to an unrelated cloned account), so it cannot be a report/block target.
-const DEMO_ADA = demoUser(902783, 'staging-demo-general-ada');
-const DEMO_LIN = demoUser(902784, 'staging-demo-general-lin');
-
-// A 96x64 solid PNG for the staging demo's screenshot attachment (#2113).
-const DEMO_SCREENSHOT_NAME = 'Screenshot 2026-08-13 at 12.44.10\u202fPM.png';
-const DEMO_SCREENSHOT_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAAAaUlEQVR42u3QMQ0AAAgDsPnECsq5cMDN0aQKmurhEAWCBAkSJEiQIEEIEiRIkCBBggQhSJAgQYIECRKEIEGCBAkSJEiQIAQJEiRIkCBBghAkSJAgQYIECUKQIEGCBAkSJEgQggQJEvTPAqsgmoaz8xeCAAAAAElFTkSuQmCC',
-  'base64'
-);
-
-function demoConversations(user) {
-  const self = demoUser(user.id, user.username || 'you');
-  const ada = DEMO_ADA;
-  const lin = DEMO_LIN;
-  return [
-    {
-      id: 910001, kind: 'direct', title: 'ada', status: 'active', archived: false,
-      members: [
-        { ...self, role: 'member', status: 'member', joinedAt: '2026-08-11T12:00:00Z' },
-        { ...ada, role: 'member', status: 'member', joinedAt: '2026-08-11T12:01:00Z' },
-      ],
-      memberCount: 2, membershipStatus: 'member', myRole: 'member', requester: null, peer: ada,
-      latestMessage: null, latestSummary: 'The proposal card is ready to review.',
-      lastActivityAt: '2026-08-13T13:30:00Z', unreadCount: 2,
-      canSend: true, canInvite: false, canManage: false,
-    },
-    {
-      id: 910002, kind: 'group', title: 'Launch crew', status: 'active', archived: false,
-      members: [
-        { ...self, role: 'owner', status: 'member', joinedAt: '2026-08-10T10:00:00Z' },
-        { ...ada, role: 'member', status: 'member', joinedAt: '2026-08-10T10:02:00Z' },
-        { ...lin, role: 'member', status: 'member', joinedAt: '2026-08-10T10:03:00Z' },
-      ],
-      memberCount: 3, membershipStatus: 'member', myRole: 'owner', requester: null, peer: null,
-      latestMessage: null, latestSummary: 'I attached the launch checklist.',
-      lastActivityAt: '2026-08-13T12:45:00Z', unreadCount: 0,
-      canSend: true, canInvite: true, canManage: true,
-    },
-    {
-      id: 910003, kind: 'group', title: 'Design review', status: 'active', archived: false,
-      members: [], memberCount: 4, membershipStatus: 'invited', myRole: 'member',
-      requester: lin, peer: null, latestMessage: null, latestSummary: '',
-      // Fixed, and therefore always further back than the relative form's
-      // seven-day floor (#1808): this row's stamp is a DATE, not an age. It
-      // used to read "412d ago" here, which is a duration and not an answer.
-      lastActivityAt: '2026-08-13T11:00:00Z', unreadCount: 0,
-      canSend: false, canInvite: false, canManage: false,
-    },
-    {
-      // #2783: the platform-wide room. A channel carries no roster (it is
-      // everybody) — only the count — and nobody owns or manages it.
-      id: 910004, kind: 'channel', title: 'general', channelKey: 'general',
-      status: 'active', archived: false,
-      members: [], memberCount: 128, membershipStatus: 'member', myRole: 'member',
-      requester: null, peer: null, latestMessage: null,
-      latestSummary: 'Anyone else trying the new #general room?',
-      lastActivityAt: '2026-08-13T13:10:00Z', unreadCount: 1,
-      canSend: true, canInvite: false, canManage: false,
-    },
-  ];
-}
-
-function demoMessages(user, conversationId) {
-  const self = demoUser(user.id, user.username || 'you');
-  const ada = DEMO_ADA;
-  if (conversationId === 910001) return [
-    {
-      // #1808: the thread's oldest row, fixed in an earlier YEAR so the
-      // transcript's third stamp branch is on screen in every preview. The
-      // rows below it are this year's, so one scroll of this pane shows all
-      // three spellings the transcript uses. It used to print "08:40 AM"
-      // here and "01:20 PM" below, with nothing to say the two were two
-      // years apart.
-      id: 9100100, conversationId, sender: ada,
-      content: 'This is where the thread started, back in 2024.',
-      createdAt: '2024-11-02T08:40:00Z', editedAt: null,
-      reply: null, reactions: [], attachments: [], objects: [],
-    },
-    {
-      // `saved: true` on exactly one demo row, so the staging preview and the
-      // declared checks show BOTH states of the save button on one screen —
-      // filled here, empty on every other row. The real flag is hydrated per
-      // viewer in services/conversations.js; this is the ?demo=1 stand-in,
-      // because `conversation_message_bookmarks` is staging:private and a
-      // staging clone therefore has the table and none of the rows.
-      id: 9100101, conversationId, sender: ada, saved: true,
-      content: 'Can you look at the latest proposal?', createdAt: '2026-08-13T13:20:00Z', editedAt: null,
-      reply: null, reactions: [{ emoji: '👍', count: 2, reacted: false, users: [ada.username, self.username] }],
-      attachments: [], objects: [{
-        type: 'proposal', appId: 1, appSlug: 'usernode', available: true,
-        sessionId: 3327, title: 'Platform Messages', subtitle: 'Homeroom', state: 'active',
-        author: 'ada', href: '#app/usernode/dev/proposals/3327',
-      }],
-    },
-    {
-      id: 9100102, conversationId, sender: self,
-      content: 'Yes — the consent and privacy boundary looks right.', createdAt: '2026-08-13T13:25:00Z', editedAt: '2026-08-13T13:26:00Z',
-      reply: { id: 9100101, sender: ada, content: 'Can you look at the latest proposal?' },
-      reactions: [], attachments: [], objects: [{
-        type: 'app', appId: 1, appSlug: 'usernode', available: true,
-        title: 'Homeroom', subtitle: 'Platform app', state: 'active', author: 'ada',
-        href: '#app/usernode',
-      }, {
-        type: 'issue', appId: 1, appSlug: 'usernode', issueNumber: 488, available: true,
-        title: 'Platform-wide private messaging', subtitle: 'Homeroom · Issue #488',
-        state: 'open', author: 'ada', href: '#app/usernode/dev/issues/488',
-      }],
-    },
-    {
-      id: 9100103, conversationId, sender: ada,
-      content: 'The proposal card is ready to review.', createdAt: '2026-08-13T13:30:00Z', editedAt: null,
-      reply: null, reactions: [], attachments: [], objects: [{
-        type: 'spec', appId: 1, appSlug: 'usernode', sessionId: 3327, version: 1,
-        available: true, title: 'Platform Messages spec v1', subtitle: 'Homeroom',
-        state: 'v1', author: 'ada', href: '#app/usernode/dev/sessions/3327',
-      }, {
-        type: 'governance', appId: 1, appSlug: 'usernode', proposalId: 701,
-        available: true, title: 'Enable Messages rollout', subtitle: 'Homeroom governance',
-        state: 'open', author: 'ada', href: '#app/usernode/dev/governance/701',
-      }, { type: 'spec', available: false }],
-    },
-  ];
-  if (conversationId === 910002) return [{
-    id: 9100201, conversationId, sender: ada,
-    content: 'I attached the launch checklist.', createdAt: '2026-08-13T12:45:00Z', editedAt: null,
-    reply: null, reactions: [], attachments: [{
-      id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', name: 'launch-checklist.md', size: 842,
-      contentType: 'text/markdown', kind: 'markdown',
-      url: `/api/conversations/${conversationId}/attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?demo=1`,
-      viewUrl: null,
-    }, {
-      // #2113: a screenshot named the way macOS names them, with a narrow
-      // no-break space before "PM". Serving it used to 500 because that
-      // character cannot travel in a Content-Disposition header, so the
-      // preview shows the fix: the image renders instead of breaking.
-      id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', name: DEMO_SCREENSHOT_NAME,
-      size: DEMO_SCREENSHOT_PNG.length, contentType: 'image/png', kind: 'image',
-      url: `/api/conversations/${conversationId}/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1`,
-      viewUrl: null,
-    }], objects: [],
-  }];
-  if (conversationId === 910004) {
-    const lin = DEMO_LIN;
-    // Three from ada in a row, then lin: the transcript draws ada's name and
-    // face ONCE and her next two as continuation lines (#2783), which is the
-    // grouping the declared checks look for.
-    return [
-      {
-        id: 9100401, conversationId, sender: ada,
-        content: 'Morning all! The Messages list is sectioned now.', createdAt: '2026-08-13T13:00:00Z', editedAt: null,
-        reply: null, reactions: [{ emoji: '🎉', count: 3, reacted: false, users: [lin.username] }], attachments: [], objects: [],
-      },
-      {
-        id: 9100402, conversationId, sender: ada,
-        content: 'Direct messages and agents on top, channels underneath.', createdAt: '2026-08-13T13:01:00Z', editedAt: null,
-        reply: null, reactions: [], attachments: [], objects: [],
-      },
-      {
-        id: 9100403, conversationId, sender: ada,
-        content: 'Issue #488 has the background.', createdAt: '2026-08-13T13:02:00Z', editedAt: null,
-        reply: null, reactions: [], attachments: [], objects: [],
-      },
-      {
-        id: 9100404, conversationId, sender: lin,
-        content: 'Anyone else trying the new #general room?', createdAt: '2026-08-13T13:10:00Z', editedAt: null,
-        reply: null, reactions: [], attachments: [], objects: [],
-      },
-      {
-        id: 9100405, conversationId, sender: self,
-        content: 'Yes, from here.', createdAt: '2026-08-13T13:12:00Z', editedAt: null,
-        reply: null, reactions: [], attachments: [], objects: [],
-      },
-    ];
-  }
-  return [];
-}
+const stagingMessages = require('../services/staging-messages');
 
 function isDemo(req) {
   return IS_STAGING && req.query.demo === '1';
 }
 
-function conversationRoutes(config) {
+function conversationRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
-  const pool = getPool(config);
   router.use('/api/conversations', privateJson);
   router.use('/api/me/blocks', privateJson);
 
   router.get('/api/conversations', async (req, res) => {
     try {
-      if (isDemo(req)) return res.json({ conversations: demoConversations(req.user), demo: true });
+      if (isDemo(req)) await stagingMessages.ensureFixtures(pool, req.user);
       return res.json({ conversations: await conversations.listConversations(pool, req.user) });
     } catch (err) {
       log.error('conversations', 'list failed', { err: err.message, userId: req.user.id });
@@ -260,7 +77,6 @@ function conversationRoutes(config) {
 
   router.post('/api/conversations', conversationInviteLimiter, async (req, res) => {
     try {
-      if (isDemo(req)) return res.status(201).json({ conversation: demoConversations(req.user)[0], demo: true });
       const result = req.body?.kind === 'direct'
         ? await conversations.createDirect(pool, req.user, conversations.strictId(req.body.user_id))
         : req.body?.kind === 'group'
@@ -277,13 +93,10 @@ function conversationRoutes(config) {
   });
 
   router.get('/api/conversations/:id', async (req, res) => {
-    const id = conversations.strictId(req.params.id);
+    let id = conversations.strictId(req.params.id);
     if (!id) return sendNotFound(res);
     try {
-      if (isDemo(req)) {
-        const item = demoConversations(req.user).find((row) => row.id === id);
-        return item ? res.json({ conversation: item, demo: true }) : sendNotFound(res);
-      }
+      if (isDemo(req)) id = await stagingMessages.resolveLegacyLink(pool, req.user, id);
       const conversation = await conversations.getConversation(pool, req.user, id);
       return conversation ? res.json({ conversation }) : sendNotFound(res);
     } catch (err) {
@@ -370,10 +183,6 @@ function conversationRoutes(config) {
     const before = req.query.before == null ? null : conversations.strictId(req.query.before);
     if (!id || (req.query.before != null && !before)) return sendNotFound(res);
     try {
-      if (isDemo(req)) {
-        if (!demoConversations(req.user).some((row) => row.id === id && row.membershipStatus === 'member')) return sendNotFound(res);
-        return res.json({ messages: demoMessages(req.user, id), nextBefore: null, demo: true });
-      }
       const page = await conversations.listMessages(pool, req.user, id, { before, limit: req.query.limit });
       return page ? res.json(page) : sendNotFound(res);
     } catch (err) {
@@ -386,7 +195,6 @@ function conversationRoutes(config) {
     const id = conversations.strictId(req.params.id);
     if (!id) return sendNotFound(res);
     try {
-      if (isDemo(req)) return res.status(201).json({ message: demoMessages(req.user, 910001)[1], demo: true });
       const result = await conversations.sendMessage(pool, req.user, id, req.body || {});
       if (!result) return sendNotFound(res);
       if (!result.duplicate) {
@@ -515,21 +323,6 @@ function conversationRoutes(config) {
     const id = conversations.strictId(req.params.id);
     const messageId = conversations.strictId(req.body?.message_id);
     if (!id || !messageId) return sendNotFound(res);
-    // ?demo=1 has no rows behind it, so the real markRead below finds no
-    // conversation 910001 and answers 404 — and opening a thread ALWAYS
-    // marks it read (loadThread's last line), so every demo Messages route
-    // logged a console error on load. The client swallows the failure, which
-    // is why this survived: nothing on screen looked wrong. A console error
-    // on any route fails proposal checks, so the first declared check to load
-    // this screen is the first thing that could have caught it.
-    //
-    // Read state is per viewer and the demo conversations are request-time
-    // fictions, so there is nothing to record: acknowledging it is the whole
-    // correct behaviour, exactly as the other demo branches do.
-    if (isDemo(req)) {
-      if (!demoConversations(req.user).some((row) => row.id === id)) return sendNotFound(res);
-      return res.json({ ok: true, demo: true });
-    }
     try {
       const result = await conversations.markRead(pool, req.user, id, messageId);
       if (!result) return sendNotFound(res);
@@ -659,22 +452,6 @@ function conversationRoutes(config) {
     const id = conversations.strictId(req.params.id);
     const attachmentId = String(req.params.attachmentId || '');
     if (!id || !/^[a-f0-9]{32}$/.test(attachmentId)) return null;
-    if (isDemo(req) && id === 910002 && !htmlOnly) {
-      if (attachmentId === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') {
-        return {
-          id: attachmentId, kind: 'markdown', filename: 'launch-checklist.md',
-          content_type: 'text/markdown', message_id: 9100201, user_id: DEMO_ADA.id,
-          data: Buffer.from('# Launch checklist\n\n- Verify consent states\n- Verify private cards\n'),
-        };
-      }
-      if (attachmentId === 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') {
-        return {
-          id: attachmentId, kind: 'image', filename: DEMO_SCREENSHOT_NAME,
-          content_type: 'image/png', message_id: 9100201, user_id: DEMO_ADA.id,
-          data: DEMO_SCREENSHOT_PNG,
-        };
-      }
-    }
     const membership = await conversations.loadMembership(pool, id, req.user.id);
     if (!membership || !(await conversations.canDirectInteract(pool, membership, req.user.id))) return null;
     const { rows } = await pool.query(
@@ -917,8 +694,8 @@ function conversationRoutes(config) {
 module.exports = {
   conversationRoutes,
   privateJson,
-  demoConversations,
-  demoMessages,
+  demoConversations: stagingMessages.demoConversations,
+  demoMessages: stagingMessages.demoMessages,
   MAX_CONVERSATION_ATTACHMENT_BYTES,
   MAX_USER_ATTACHMENT_BYTES,
 };

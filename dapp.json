@@ -2843,7 +2843,7 @@
     {
       "name": "A direct conversation is the same Discord-style named-row transcript as every chat: your own turn has your avatar, name and time, and no bubble (#2783)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) #messages-message-9100102.messages-message-self > span[aria-hidden] + .min-w-0 > .messages-message-head time"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) .messages-message-self > span[aria-hidden] + .min-w-0 > .messages-message-head time"
     },
     {
       "name": "...and the sheet carries the conversation's own title row",
@@ -2859,7 +2859,7 @@
       "id": "messages.channels",
       "name": "#2783: the Messages list is sectioned Discord-style — chats on top, then a Channels heading led by #general",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll h3.messages-section-head[data-inbox-section=\"chats\"] ~ h3.messages-section-head[data-inbox-section=\"channels\"] + a.messages-channel-row[data-inbox-channel=\"general\"][href=\"#messages/910004\"]",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll h3.messages-section-head[data-inbox-section=\"chats\"] ~ h3.messages-section-head[data-inbox-section=\"channels\"] + a.messages-channel-row[data-inbox-channel=\"general\"][href^=\"#messages/\"]",
       "expectText": "Channels",
       "visual": true,
       "impact": [
@@ -2883,7 +2883,7 @@
     {
       "name": "#2783: #general groups one person's consecutive messages under a single name, the later ones as continuation lines",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-channel #messages-message-9100401:not(.messages-message-grouped) + #messages-message-9100402.messages-message-grouped > time.messages-message-gutter + .min-w-0"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-channel .messages-message:not(.messages-message-grouped) + .messages-message-grouped > time.messages-message-gutter + .min-w-0"
     },
     {
       "name": "#2783: the #general thread names itself as a channel everyone is in",
@@ -2894,18 +2894,18 @@
     {
       "name": "#2783: #name in a message is a link to that channel",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-message-9100404 .messages-markdown a.gc-channel-ref[href=\"#messages/channel/general\"]",
+      "expectSelector": ".messages-message .messages-markdown a.gc-channel-ref[href=\"#messages/channel/general\"]",
       "expectText": "#general"
     },
     {
       "name": "#2783: ...while #123 in a message still reads as an issue reference, not a channel",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-message-9100403 .messages-markdown span.gc-ref.gc-ref-issue[data-ref-number=\"488\"]"
+      "expectSelector": ".messages-message .messages-markdown span.gc-ref.gc-ref-issue[data-ref-number=\"488\"]"
     },
     {
       "name": "A group conversation renders an attached screenshot with a macOS-style name (#2113)",
       "path": "/?demo=1#messages/910002",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-attachment a[href*=\"/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1\"] img[alt]"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-attachment a[href*=\"/attachments/\"] img[alt*=\"Screenshot\"]"
     },
     {
       "name": "The notifications strip reads Unread, Messages, All — agents live under Messages, and it opens on Unread (#2718 review, #2815)",
@@ -2954,12 +2954,12 @@
     {
       "name": "A message in Messages offers a save button",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-message-9100102 .messages-message-actions button[aria-label=\"Save message\"]"
+      "expectSelector": ".messages-message-self .messages-message-actions button[aria-label=\"Save message\"]"
     },
     {
       "name": "An already-saved message offers to unsave instead, and says so to a screen reader",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-message-9100101 .messages-message-actions button[aria-label=\"Unsave message\"][aria-pressed=\"true\"]"
+      "expectSelector": ".messages-message .messages-message-actions button[aria-label=\"Unsave message\"][aria-pressed=\"true\"]"
     },
     {
       "name": "The Me tab lists Challenges above Settings (#1823, #2718)",
@@ -3414,9 +3414,9 @@
       "expectSelector": ".app-card[data-yours].cursor-grab"
     },
     {
-      "name": "Staging demo tiles are tagged drag-inert (#746)",
+      "name": "A persisted staging sample appears in Your apps",
       "path": "/?demo=1",
-      "expectSelector": ".app-card[data-demo='true']"
+      "expectSelector": ".app-card[data-slug='staging-demo-your-app']"
     },
     {
       "name": "Applied close-issue proposal renders as an Issue close card in Completed/Done",
@@ -4522,7 +4522,7 @@
     {
       "name": "#1808: a DM from an earlier year is stamped with that year, not a bare time of day",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen #messages-message-9100100 .messages-message-head time[title]",
+      "expectSelector": "#messages-screen .messages-message .messages-message-head time[title*=\"2024\"]",
       "expectText": "2024"
     },
     {

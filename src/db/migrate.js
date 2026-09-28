@@ -113,6 +113,7 @@ async function migrate(config) {
   await seedStagingReadonlyDevTab(pool);
   await seedStagingQuietDiscussion(pool);
   await seedStagingYourApps(pool, config);
+  await require('../services/staging-apps').seedCatalog(pool, config);
   await seedStagingBrowseCardBranches(pool, config);
   // #1383: must run AFTER seedStagingBrowseCardBranches (it ranks that
   // fixture's four apps) and AFTER seedStagingMergedPrs, which owns the
@@ -1149,10 +1150,8 @@ async function seedStagingGeneralChannel(pool) {
               (902784, 'staging-demo-general-lin', 'staging-demo-not-a-login', TRUE)
        ON CONFLICT DO NOTHING`
     );
-    // The ?demo=1 inbox uses these same identities. Its synthetic direct/group
-    // memberships are not database rows; a public fixture profile makes the
-    // ordinary reporting and blocking APIs usable without an authorization
-    // bypass. Repair older previews too, preserving any moderation decision.
+    // The persisted demo inbox uses these same identities. Repair profiles
+    // from older previews, preserving any moderation decision.
     await pool.query(
       `UPDATE users SET profile_published = TRUE
         WHERE (id, username) IN ((902783, 'staging-demo-general-ada'),

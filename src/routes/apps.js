@@ -232,194 +232,8 @@ function compactGlobalChatApp(app, user, adminAppIds = new Set()) {
 const IS_LOCAL_DEV = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
-// Staging-gated (?demo=1) home-feed rows so a tester can see the new
-// homescreen icon tiles (emoji / custom image / letter fallback) — the
-// staging clone's real app rows predate the feature and would all
-// render letter tiles. Read-only request-time injection per the
-// "Staging mock data" convention: never persisted, strictly a no-op
-// outside staging. The image row carries a tiny inline data-URI PNG so
-// no app_icons blob needs to exist in the clone (the client renders
-// whatever icon_url it's given).
-const DEMO_ICON_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAg0lEQVR42r3NuRGAMAwEQNdFbXRAIVRHAyQwDmB4/MjS3QUbb5qn7VBKymxddl2YM1l4ZZLwmdHDb0YNSxktrGWUsJXBw14GDS0ZLLRmkHAkC4ejWSj0ZO7Qm7nCSDYcRrOhEJGZQ1RmCpFZN0RnzZCRVUNWVgyZ2S9kZ69Qkd2hKstOLPva44BQr+EAAAAASUVORK5CYII=';
-// Relative ISO timestamp for the demo rows below, so their ages read the
-// same however long the staging container has been up.
-function demoAgo(hours) {
-  return new Date(Date.now() - hours * 3600 * 1000).toISOString();
-}
-
-function demoIconApps(curation = false) {
-  const base = {
-    status: 'running',
-    self_hosted: false,
-    locked: false,
-    collab_visibility: 'public',
-    view_visibility: 'public',
-    created_at: new Date().toISOString(),
-    last_deploy_at: new Date().toISOString(),
-    // Synthetic preview reviews, never assigned to real apps.
-    main_sha: '0000000000000000000000000000000000000001',
-    directory_reviewed_sha: '0000000000000000000000000000000000000001',
-    directory_reviewed_at: new Date().toISOString(),
-    directory_review_status: 'working',
-    url: null,
-    version: null,
-    deployProgress: null,
-    missingSecrets: null,
-    active_users: 0,
-    is_favorited: false,
-    your_apps_hidden: false,
-    favorite_order: null,
-    featured: false,
-    featured_order: null,
-    is_collaborator: false,
-    open_prs: 0,
-    active_sessions: 0,
-    merged_prs: 0,
-    merged_prs_recent: 0,
-    last_merged_at: null,
-    open_issues: 0,
-    icon_emoji: null,
-    icon_url: null,
-    can_collaborate: false,
-    can_manage: false,
-    can_report: false,
-    // Marks the tile inert for client gestures: these slugs don't
-    // exist in the DB, so drag-to-favorite (issue #746) would 404 —
-    // home.js excludes [data-demo] cards from the kit drag.
-    demo: true,
-  };
-  const apps = [
-    { ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮' },
-    {
-      ...base,
-      id: 900002,
-      slug: 'staging-demo-image-icon',
-      name: 'Staging demo image icon',
-      icon_url: DEMO_ICON_PNG,
-      // Deterministic tile for the home screen's "Find more apps" row
-      // and the browse screen's featured-first ordering: featured_apps
-      // is created by this change, so a prod-cloned staging DB has no
-      // real rows to show there (migrate.js also seeds a few from real
-      // cloned apps for the no-?demo=1 case).
-      featured: true,
-      featured_order: 0,
-    },
-    {
-      ...base,
-      id: 900003,
-      slug: 'staging-demo-featured',
-      name: 'Staging demo featured app',
-      icon_emoji: '⭐',
-      featured: true,
-      featured_order: 1,
-    },
-    // A deliberately LONG name (#951). The tile label is two 11px lines
-    // clamped with an ellipsis, and the only way a reviewer can see that
-    // working — here and in the before/after screenshots — is a name that
-    // actually overflows one line at phone width.
-    {
-      ...base,
-      id: 900012,
-      slug: 'staging-demo-long-name',
-      name: 'Staging demo photo album and journal',
-      icon_emoji: '📔',
-    },
-    // #1838: the ONE demo row that lands in "Your apps". Every other row
-    // here inherits is_favorited/is_collaborator false from `base`, so
-    // Home.isYours excludes them all and the launcher grid under ?demo=1
-    // holds only whatever the checks clone happens to have — which is why
-    // the card-menu deep link carries a featured-row fallback at all. The
-    // gesture-driven variants of that link have to dispatch onto a real
-    // launcher tile, so seed one deterministically.
-    //
-    // favorite_order 99 sorts it LAST inside Your apps, so the existing
-    // shot=home-apps / shot=home-grid expectations keep their leading tiles;
-    // demo:true keeps it out of the kit's placement selector
-    // (.app-card[data-yours]:not([data-demo])) so no drag shot changes.
-    {
-      ...base,
-      id: 900013,
-      slug: 'staging-demo-your-app',
-      name: 'Staging demo your app',
-      icon_emoji: '🏠',
-      is_favorited: true,
-      favorite_order: 99,
-    },
-    // Four more featured rows so the Discover widget's curated lane is
-    // reviewable AT ITS CAP (#949): the lane holds six tiles — one per
-    // Home.FEATURED_LIMIT slot — and the whole point of the six-track grid
-    // is that all six fit on ONE row. With only the two rows above, a
-    // staging capture showed a third-full lane and proved nothing.
-    {
-      ...base, id: 900004, slug: 'staging-demo-featured-2',
-      name: 'Staging demo featured 2', icon_emoji: '🎲',
-      featured: true, featured_order: 2,
-    },
-    {
-      ...base, id: 900005, slug: 'staging-demo-featured-3',
-      name: 'Staging demo featured 3', icon_emoji: '🧩',
-      featured: true, featured_order: 3,
-    },
-    {
-      ...base, id: 900006, slug: 'staging-demo-featured-4',
-      name: 'Staging demo featured 4', icon_emoji: '🚀',
-      featured: true, featured_order: 4,
-    },
-    {
-      ...base, id: 900007, slug: 'staging-demo-featured-5',
-      name: 'Staging demo featured 5', icon_emoji: '🎨',
-      featured: true, featured_order: 5,
-    },
-    // ...and four NON-featured rows carrying an active-user count, for the
-    // desktop widget's second lane (Home.popularApps ranks by
-    // `active_users` and drops anything at zero). Without these the Popular
-    // lane is empty in every staging preview — the clone's own rows keep
-    // their real counts, but a check runs against a fresh database.
-    // Numbers here where production sends bigint STRINGS; the client
-    // coerces either, and tests cover both shapes.
-    //
-    // The four also carry deliberately DIFFERENT merged-proposal and age
-    // profiles, so the #apps sort control (#1383) puts a different row on
-    // top under each of its five orders instead of looking broken against
-    // an otherwise uniform fixture set. Read them as: 1 = popular but
-    // dormant, 2 = the workhorse, 3 = brand new and busy, 4 = neither.
-    {
-      ...base, id: 900008, slug: 'staging-demo-popular-1',
-      name: 'Staging demo popular 1', icon_emoji: '🔥', active_users: 12,
-      merged_prs: 3, merged_prs_recent: 0, last_merged_at: demoAgo(90 * 24),
-      created_at: demoAgo(200 * 24), last_deploy_at: demoAgo(60 * 24),
-    },
-    {
-      ...base, id: 900009, slug: 'staging-demo-popular-2',
-      name: 'Staging demo popular 2', icon_emoji: '📈', active_users: 9,
-      merged_prs: 41, merged_prs_recent: 11, last_merged_at: demoAgo(2),
-      created_at: demoAgo(120 * 24), last_deploy_at: demoAgo(2),
-    },
-    {
-      ...base, id: 900010, slug: 'staging-demo-popular-3',
-      name: 'Staging demo popular 3', icon_emoji: '🎧', active_users: 7,
-      merged_prs: 6, merged_prs_recent: 5, last_merged_at: demoAgo(24),
-      created_at: demoAgo(3 * 24), last_deploy_at: demoAgo(24),
-    },
-    {
-      ...base, id: 900011, slug: 'staging-demo-popular-4',
-      name: 'Staging demo popular 4', icon_emoji: '🗺️', active_users: 5,
-      created_at: demoAgo(400 * 24), last_deploy_at: demoAgo(300 * 24),
-    },
-  ];
-  if (curation) apps.push(
-    { ...base, id: 990031, slug: 'directory-sample-working', name: 'Directory sample working',
-      icon_emoji: '🧩', featured: true, featured_order: -1 },
-    { ...base, id: 990032, slug: 'directory-sample-unreviewed', name: 'Directory sample unreviewed',
-      icon_emoji: '🌱', directory_review_status: 'unreviewed', directory_reviewed_at: null },
-    { ...base, id: 990033, slug: 'directory-sample-demo', name: 'Directory sample demo',
-      icon_emoji: '🎭', directory_review_status: 'demo', active_users: 9999 },
-    { ...base, id: 990034, slug: 'directory-sample-broken', name: 'Directory sample needs fixes',
-      icon_emoji: '🔧', directory_review_status: 'broken', active_users: 9998 },
-    { ...base, id: 990035, slug: 'directory-sample-no-icon', name: 'Directory sample needs an icon' },
-  );
-  return apps.map((app) => ({ ...app, directory: discoveryCuration.describe(app) }));
-}
+// Catalog samples are stored rows; all app APIs use the same identity.
+const stagingApps = require('../services/staging-apps');
 
 // SELF-HOSTING.md sub-step 2k: helper for the import-flow guards.
 // Compares a parsed {owner, repo} against config.platformRepoUrl,
@@ -696,9 +510,8 @@ function activitySeconds(raw) {
   return Math.min(rounded, ACTIVITY_MAX_PER_POST);
 }
 
-function appRoutes(config) {
+function appRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
-  const pool = getPool(config);
 
   router.get('/api/apps', async (req, res) => {
     try {
@@ -842,7 +655,7 @@ function appRoutes(config) {
         pool, rows.map((a) => a.id)
       );
 
-      const apps = await Promise.all(rows.map(async (a) => {
+      let apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
         // each) and lets the home tile show a "fix secrets" warning
         // without each card making its own /secrets fetch on render.
@@ -873,8 +686,9 @@ function appRoutes(config) {
           }
         }
 
+        const stagingSample = stagingApps.isSample(a);
         let url = null;
-        if (a.status === 'running') {
+        if (!stagingSample && a.status === 'running') {
           if (IS_LOCAL_DEV) {
             const containerName = `usernode-app-${a.slug}`;
             const hostPort = await docker.getHostPort(containerName, 3000);
@@ -941,6 +755,7 @@ function appRoutes(config) {
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,
           url,
+          staging_sample: stagingSample,
           version,
           deployProgress: appDeployStatus.read(a.slug),
           missingSecrets,
@@ -966,9 +781,11 @@ function appRoutes(config) {
       // Resolve fork lineage (live source-name lookup, "<deleted>"
       // fallback) for every serialized app in one batched query.
       await attachForkLineage(pool, apps);
-      // Staging demo tiles for the icon feature (see demoIconApps above).
-      if (IS_STAGING && req.query.demo === '1') {
-        apps.unshift(...demoIconApps(req.query.curation === '1'));
+      // Keep optional catalog samples behind their display flags, after the
+      // same visibility and block filters as every stored app.
+      if (IS_STAGING) {
+        apps = apps.filter(app => !stagingApps.isCatalogSlug(app.slug)
+          || (req.query.demo === '1' && (req.query.curation === '1' || !app.slug.startsWith('directory-sample-'))));
       }
       res.json({ apps });
     } catch (err) {
@@ -1303,8 +1120,9 @@ function appRoutes(config) {
       if (!req.user?.isAdmin && appRow.view_visibility === 'private' && !isCollaborator) {
         return res.status(404).json({ error: 'App not found' });
       }
+      const stagingSample = stagingApps.isSample(appRow);
       let url = null;
-      if (appRow.status === 'running') {
+      if (!stagingSample && appRow.status === 'running') {
         if (IS_LOCAL_DEV) {
           const containerName = `usernode-app-${appRow.slug}`;
           const hostPort = await docker.getHostPort(containerName, 3000);
@@ -1379,6 +1197,7 @@ function appRoutes(config) {
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
           ? appRow.last_failure : null,
         url,
+        staging_sample: stagingSample,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
         missingSecrets,
         // Reviewer copy needs to distinguish an advisory evidence run from

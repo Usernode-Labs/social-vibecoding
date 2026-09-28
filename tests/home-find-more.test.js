@@ -737,8 +737,10 @@ test('staging seeds featured rows both ways (boot seed + ?demo=1 tiles)', () => 
   assert.match(seed, /ON CONFLICT \(app_id\) DO NOTHING/, 'idempotent across rebuilds');
   assert.match(seed, /NULL/, 'created_by never references a real user');
   // Request-time demo tiles for the ?demo=1 path.
-  assert.match(APPS_ROUTE, /staging-demo-featured/);
-  assert.match(APPS_ROUTE, /featured: true/);
+  const fixtures = read('src/services/staging-apps.js');
+  assert.match(fixtures, /staging-demo-featured/);
+  assert.match(fixtures, /INSERT INTO featured_apps/);
+  assert.match(APPS_ROUTE, /stagingApps.isCatalogSlug/);
 });
 
 function stagingFeaturedSeed(env = 'staging') {
