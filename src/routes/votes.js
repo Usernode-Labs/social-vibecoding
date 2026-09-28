@@ -284,11 +284,10 @@ function stagingMockProposals(viewer) {
         '[Mock] Long-title test: walk brand-new collaborators through '
         + 'voting, kudos and dev sessions step by step',
         11, 1, 1, 0, { required: 5, windowEndsAt: hoursAhead(120) }),
-      // The same row has a current summary on the base build. On this build,
-      // its description changed and the prior author summary is retained in
-      // provenance only, so ?demo=1 shows the honest stale state to reviewers.
-      pr_summary_md: null,
-      pr_summary_previous_md: 'The earlier proposal summary, kept for its author.',
+      // The description changed after this summary was written. Keep its
+      // useful words beside a freshness note on the ?demo=1 proposal page.
+      pr_summary_md: 'Makes vote buttons easier to read on long proposal titles.',
+      pr_summary_previous_md: 'Makes vote buttons easier to read on long proposal titles.',
       pr_summary_stale: true,
       pr_body: '## What changed\n\nThe proposal now covers the newer revision.',
     },
@@ -1597,7 +1596,6 @@ async function reconcileNativeReviewedHead({
     );
     session.reviewed_head_sha = liveHead;
     session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
-    session.pr_summary_md = null;
     if (session.visual_evidence_state || session.visual_evidence_detail) {
       await visualEvidenceState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
         log.warn('votes', 'Visual evidence invalidation after revision bind failed', {
@@ -1660,7 +1658,6 @@ async function reconcileNativeReviewedHead({
   session.reviewed_head_sha = liveHead;
   session.approval_epoch = epoch;
   session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
-  session.pr_summary_md = null;
   if (session.visual_evidence_state || session.visual_evidence_detail) {
     await visualEvidenceState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
       log.warn('votes', 'Visual evidence invalidation after head move failed', {
