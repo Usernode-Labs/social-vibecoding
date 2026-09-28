@@ -156,6 +156,16 @@ reservations using the new-app allocator. Planning creates no PostgreSQL objects
 The administrator confirms the batch ID to accept one platform maintenance pause
 and deletion of verified source copies. Apps move sequentially.
 
+**Suggest distribution** reviews all currently Ready apps in the approved migration
+cohort against all pools accepting apps, including newly registered empty pools.
+It uses the existing capacity/reservation heuristic, retaining current placement
+when scores tie; it does not promise a globally optimal distribution. Suggestions
+never start a move. The review shows current and proposed pools, moves and stays.
+An already suitable distribution returns **No moves needed** without creating a
+batch. For a restricted review, **Customize scope** provides app/pool dropdowns
+and removable selections. More than 20 Ready apps requires a custom batch scope;
+automatic suggestions never silently truncate the cohort.
+
 `app_database_batches` persists the mapping, policy checksum and child checkpoints.
 The separate migration deployment survives the web platform pause. Restarted or
 failed work enters `NeedsAttention`; use **Resume batch** or **Cancel remaining

@@ -49,3 +49,58 @@ test('bulk mutation routes retain exact-origin and full-admin enforcement',async
  assert.equal(writes,0);
  assert.equal((await fetch(url,{method:'POST',headers:{'x-write':'yes',origin:'https://staging.example','content-type':'application/json'},body:'{}'})).status,200);assert.equal(writes,1);
 });
+
+test('distribution includes an empty third pool and keeps equally good existing assignments',()=>{
+ const p={...policy,pools:[...policy.pools,{id:'c',acceptingNewApps:true}]};
+ const observed=[...observations(),{...observations()[0],id:'c'}];
+ // A single app already on b should not move just because a sorts first.
+ const unchanged=distribution(p,[{...apps[0],current:{targetId:'b',revision:0}}],observed,[],['a','b','c']);
+ assert.equal(unchanged.moves.length,0);
+ const result=distribution(p,[...apps,{...apps[0],appId:3,name:'allocation-3',slug:'app-3'}],observed,[],['a','b','c']);
+ assert(result.moves.some(m=>m.target==='c'));
+ assert.equal(result.moves.length+result.kept.length,3);
+});
+
+function planningFixture({inventory=apps,observed=observations(),closed=false}={}){
+ const calls=[];const p={...policy,pools:policy.pools.map(t=>({...t,acceptingNewApps:!closed||t.id==='b'}))};
+ const pool={query:async(sql,args=[])=>{
+  calls.push({sql,args});
+  if(sql.startsWith('SELECT'))return{rows:[]};
+  if(sql.startsWith('INSERT INTO app_database_batches'))return{rows:[],rowCount:1};
+  throw Error('Unexpected write');
+ }};
+ const executed=[];
+ const service=createBatches({getPolicy:()=>p,pool,store:{},observe:async()=>observed,
+  executeBulk:async command=>{assert.equal(command,'inventory');return inventory;},
+  execute:async(command,args)=>{executed.push({command,args});assert.equal(command,'plan');return{operation:args.id,slug:inventory.find(a=>a.name===args.binding).slug,to:{targetId:args.target},platformUid:'platform',platformReplicas:1};},
+ });
+ return{service,calls,executed};
+}
+
+test('automatic suggestion uses current eligible inventory and open pools but never queues a move',async()=>{
+ const f=planningFixture({inventory:[...apps,{appId:3,name:'allocation-3',slug:'busy-app',phase:'Moving'}],closed:true});
+ const result=await f.service.plan({mode:'balanced'},42);
+ assert.equal(result.moves.length,2);assert(result.moves.every(m=>m.to.targetId==='b'));
+ assert.equal(f.executed.length,2);
+ const writes=f.calls.filter(c=>!c.sql.startsWith('SELECT'));
+ assert.equal(writes.length,1);assert(writes[0].sql.includes("'Planned'"));
+ assert.equal(writes[0].args[2],42);
+});
+
+test('an already balanced suggestion is successful without creating a batch',async()=>{
+ const f=planningFixture({inventory:[apps[0]]});
+ const result=await f.service.plan({mode:'balanced'},42);
+ assert.equal(result.id,null);assert.equal(result.moves.length,0);assert.equal(result.kept.length,1);
+ assert.equal(f.executed.length,0);assert(f.calls.every(c=>c.sql.startsWith('SELECT')));
+});
+
+test('automatic suggestions never silently truncate the cohort or bypass capacity checks',async()=>{
+ const oversized=Array.from({length:21},(_,i)=>({...apps[0],name:`allocation-${i}`,appId:i}));
+ for(const settings of [{inventory:oversized},{observed:[]},{inventory:[]}]){
+  const f=planningFixture(settings);
+  await assert.rejects(f.service.plan({mode:'balanced'},42));
+  assert.equal(f.executed.length,0);assert(f.calls.every(c=>c.sql.startsWith('SELECT')));
+ }
+ const f=planningFixture();await assert.rejects(f.service.plan({mode:'balanced',apps:[],targets:[]},42));
+ assert.equal(f.calls.length,0);
+});

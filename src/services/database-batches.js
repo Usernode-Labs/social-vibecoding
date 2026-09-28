@@ -18,7 +18,9 @@ function distribution(policy,apps,observations,reservations,targets){
   if(app.phase!=='Ready' || !Number.isFinite(app.bytes) || app.bytes<0 || app.bytes>256*1024*1024)throw error('App is not ready or exceeds the staging copy budget');
   const prior=reservations.find(r=>Number(r.app_id)===app.appId || r.binding===app.name);
   const demand={...policy.placement.starter,...prior?.demand};demand.storage=Math.max(demand.storage,Math.ceil(app.bytes*1.5));
-  const selected=choose({...policy,placement:{...policy.placement,starter:demand}},allowed,held);
+  const candidates=allowed.map(o=>choose({...policy,placement:{...policy.placement,starter:demand}},[o],held)).filter(Boolean);
+  // Keep an existing assignment when its projected pressure is equally good.
+  const selected=candidates.sort((a,b)=>a.score-b.score || Number(b.id===app.current.targetId)-Number(a.id===app.current.targetId) || a.id.localeCompare(b.id))[0];
   if(!selected)throw error('Selected pools do not have enough fresh, reserved capacity');
   held.push({target_id:selected.id,demand});
   (selected.id===app.current.targetId?kept:moves).push({app,target:selected.id,demand});
@@ -39,14 +41,24 @@ function createBatches({execute,executeBulk,store,getPolicy=loadPolicy,pool=getP
  }
  async function plan(body,userId){
   const p=getPolicy();if(!p.bulk?.enabled)throw error('Bulk migrations disabled',503);
+  const automatic=body?.mode==='balanced' && Object.keys(body).length===1;
+  let available;
+  if(automatic){
+   available=await executeBulk('inventory');
+   body={apps:available.filter(a=>a.phase==='Ready').map(a=>a.name),targets:p.pools.filter(t=>t.acceptingNewApps).map(t=>t.id)};
+   if(body.apps.length>20)throw error('More than 20 apps are ready. Use a custom scope of up to 20 apps.',400);
+   if(!body.apps.length)throw error('No apps are ready for distribution',400);
+   if(!body.targets.length)throw error('No shared pools are accepting apps',400);
+  }
   if(!body || Object.keys(body).some(k=>!['apps','targets'].includes(k)) || !Array.isArray(body.apps)||!Array.isArray(body.targets)
     || !body.apps.length || body.apps.length>20 || !body.targets.length || body.targets.length>32
     || new Set(body.apps).size!==body.apps.length || new Set(body.targets).size!==body.targets.length
     || body.targets.some(id=>!p.pools.some(t=>t.id===id&&t.acceptingNewApps)))throw error('Select apps and approved shared pools',400);
-  const available=await executeBulk('inventory'),apps=available.filter(a=>body.apps.includes(a.name));
+  available ||= await executeBulk('inventory');
+  const apps=available.filter(a=>body.apps.includes(a.name));
   if(apps.length!==body.apps.length)throw error('App is outside the selected staging cohort',400);
   const assignment=distribution(p,apps,await observations(p),await reservations(pool),body.targets);
-  if(!assignment.moves.length)throw error('Selected apps already fit the proposed distribution');
+  if(!assignment.moves.length)return{id:null,moves:[],kept:assignment.kept.map(k=>({slug:k.app.slug,target:k.target})),targets:body.targets};
   const moves=[];
   for(const move of assignment.moves){
    const operation=newId('sv-move-');
