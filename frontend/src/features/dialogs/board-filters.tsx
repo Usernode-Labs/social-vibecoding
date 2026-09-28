@@ -35,6 +35,8 @@ export interface BoardFilterValues {
   category: string | null;
   assignee: string | null;
   needsVote: boolean;
+  votedByMe?: boolean;
+  proposalSort?: 'newest' | 'closest' | null;
   /**
    * The two quick filters, present only while the DIALOG owns them — the
    * filter strip measures its own row and hands them over when they will not
@@ -72,6 +74,8 @@ export function BoardFiltersDialog() {
   const [category, setCategory] = useState('');
   const [assignee, setAssignee] = useState('');
   const [needsVote, setNeedsVote] = useState(false);
+  const [votedByMe, setVotedByMe] = useState(false);
+  const [proposalSort, setProposalSort] = useState<'newest' | 'closest' | ''>('');
   const [assignedToMe, setAssignedToMe] = useState(false);
   const [createdByMe, setCreatedByMe] = useState(false);
   const [quick, setQuick] = useState(false);
@@ -86,6 +90,8 @@ export function BoardFiltersDialog() {
       setCategory(payload.filters.category || '');
       setAssignee(payload.filters.assignee || '');
       setNeedsVote(!!payload.filters.needsVote);
+      setVotedByMe(!!payload.filters.votedByMe);
+      setProposalSort(payload.filters.proposalSort || '');
       setAssignedToMe(!!payload.filters.assignedToMe);
       setCreatedByMe(!!payload.filters.createdByMe);
       setQuick(!!payload.quick);
@@ -104,6 +110,8 @@ export function BoardFiltersDialog() {
       category: category || null,
       assignee: assignee || null,
       needsVote,
+      votedByMe,
+      proposalSort: proposalSort || null,
       assignedToMe,
       createdByMe,
     });
@@ -203,8 +211,26 @@ export function BoardFiltersDialog() {
             <Switch
               id="board-filters-needsvote"
               checked={needsVote}
-              onChange={(event) => setNeedsVote(event.target.checked)}
+              onChange={(event) => { setNeedsVote(event.target.checked); if (event.target.checked) setVotedByMe(false); }}
             />
+          </label>
+          <label className="flex items-center justify-between gap-3 cursor-pointer select-none">
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Already voted</span>
+              <span className="block text-xs text-zinc-500">Open proposals you voted on in their current revision</span>
+            </span>
+            <Switch checked={votedByMe} onChange={event => {
+              setVotedByMe(event.target.checked); if (event.target.checked) setNeedsVote(false);
+            }} />
+          </label>
+          <label className="block">
+            <span className={FIELD_LABEL_CLS}>Proposal order</span>
+            <Select value={proposalSort} onChange={event => setProposalSort(event.target.value as typeof proposalSort)}>
+              <option value="">Default order</option>
+              <option value="newest">Newest proposal</option>
+              <option value="closest">Fewest votes needed</option>
+            </Select>
+            <span className="mt-1 block text-xs text-zinc-500">Choosing an order shows only open proposals. Votes needed uses qualifying votes; checks and other merge requirements still apply.</span>
           </label>
           {/* THE TWO QUICK FILTERS, when the strip could not keep them. They
               are switches here rather than the strip's chips because that is
