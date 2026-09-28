@@ -110,8 +110,8 @@ test('sanitizeModel converts per-token prices and uses reasoning metadata', () =
 });
 
 test('catalog exposes every key-visible model and sorts known prices low to high', async (t) => {
-  const originalFetch = openrouterClient.fetchUserModels;
-  openrouterClient.fetchUserModels = async () => [
+  const originalFetch = openrouterClient.fetchModels;
+  openrouterClient.fetchModels = async () => [
     {
       id: 'vendor/high-limited', name: 'High Limited',
       pricing: { prompt: '0.00002', completion: '0.00004' },
@@ -139,7 +139,7 @@ test('catalog exposes every key-visible model and sorts known prices low to high
   ];
   agentModels.invalidateAll();
   t.after(() => {
-    openrouterClient.fetchUserModels = originalFetch;
+    openrouterClient.fetchModels = originalFetch;
     agentModels.invalidateAll();
   });
 
@@ -179,8 +179,8 @@ test('catalog exposes every key-visible model and sorts known prices low to high
 });
 
 test('resolveModelPricing preserves the sanitized per-million catalog prices', async (t) => {
-  const originalFetch = openrouterClient.fetchUserModels;
-  openrouterClient.fetchUserModels = async () => [{
+  const originalFetch = openrouterClient.fetchModels;
+  openrouterClient.fetchModels = async () => [{
     id: 'openai/test-codex',
     name: 'Test Codex',
     pricing: { prompt: '0.00000125', completion: '0.00001' },
@@ -190,7 +190,7 @@ test('resolveModelPricing preserves the sanitized per-million catalog prices', a
   }];
   agentModels.invalidateAll();
   t.after(() => {
-    openrouterClient.fetchUserModels = originalFetch;
+    openrouterClient.fetchModels = originalFetch;
     agentModels.invalidateAll();
   });
 

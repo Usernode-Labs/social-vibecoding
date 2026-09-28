@@ -57,10 +57,18 @@ workflow. The deploy writes the management key into `/opt/usernode/.env`,
 which remains mode `0600`, and restarts the platform. No database seed or
 manual per-user key creation is required.
 
-If `z-ai/glm-5.3-flash` is not present in a particular key's live OpenRouter model
-catalog, Homeroom selects the normal compatible fallback for that user. The
-model picker is never restricted to GLM: every model exposed by the user's
-key remains available.
+If `z-ai/glm-5.3-flash` is not present in the OpenRouter model catalog,
+Homeroom selects the normal compatible fallback. The model picker is never
+restricted to GLM: every model in the catalog remains available.
+
+The catalog is one list for the whole platform, not each key's: OpenRouter's
+public `GET /models`, held in memory and in `openrouter_model_catalog`, and
+refreshed in the background once it is 15 minutes old
+(`src/services/agent-models.js`). Every model menu answers from it at once;
+only the first read on a database that has never stored one waits for
+OpenRouter. A model a personal key's OpenRouter account policy excludes is
+still listed, and OpenRouter refuses it when the turn starts. Settings'
+Refresh asks OpenRouter again, at most once a minute.
 
 ## Verification after deployment
 
@@ -71,7 +79,7 @@ key remains available.
    account. The raw company-funded credential is stored internally and is
    never sent to the user's browser.
 3. Confirm OpenRouter is selected as the user's default and that the model
-   picker contains the full key-visible catalog.
+   picker contains the full OpenRouter catalog.
 5. As an admin, open **Admin → Users**. The user's row should show the local
    owner, remote key hash, limit, verification state, and Block/Enable/Delete
    controls. Admin notifications also link to this screen.
