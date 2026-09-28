@@ -8,8 +8,9 @@ const mobilePushPreferences = require('../services/mobile-push-preferences');
 const notificationPreferences = require('../services/notification-preferences');
 const log = require('../services/logger');
 
-// Shared data only; the runtime image includes frontend sources.
-const filterGroups = require('../../frontend/src/features/notifications/filter-groups.json');
+// The frontend bundle and runtime image have separate source trees.
+// notification-kind-filters.test.js pins the two data copies to the same groups.
+const filterGroups = require('../services/notification-filter-groups.json');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 

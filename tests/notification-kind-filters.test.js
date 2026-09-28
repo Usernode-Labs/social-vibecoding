@@ -19,6 +19,10 @@ const response = (notifications, hasMore = false, nextBefore = null) => ({
 });
 const row = (id, kind) => ({ id, kind, createdAt: `2026-09-28T10:00:${String(id).padStart(2, '0')}Z` });
 
+test('frontend and server ship the same filter groups in their respective build contexts', () => {
+  assert.deepEqual(groups, require('../src/services/notification-filter-groups.json'));
+});
+
 test('types have specific membership, including conversation mentions and revised votes', () => {
   assert.deepEqual(groups.mentions.kinds, ['mention', 'conversation_mention']);
   assert.ok(groups.votes.kinds.includes('revision_recheck'));

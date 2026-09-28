@@ -1,0 +1,46 @@
+{
+  "votes": {
+    "label": "Votes",
+    "kinds": [
+      "pr_proposed",
+      "proposal_vote",
+      "vote_digest",
+      "revision_recheck",
+      "stale_pr",
+      "pr_merged"
+    ]
+  },
+  "mentions": {
+    "label": "Mentions",
+    "kinds": [
+      "mention",
+      "conversation_mention"
+    ]
+  },
+  "kudos": {
+    "label": "Kudos",
+    "kinds": [
+      "kudos"
+    ]
+  },
+  "invitations": {
+    "label": "Invitations",
+    "kinds": [
+      "collab_invite",
+      "collab_invite_accepted",
+      "approver_invite",
+      "approver_invite_accepted",
+      "conversation_invite",
+      "friend_request",
+      "friend_accept"
+    ]
+  },
+  "allowance": {
+    "label": "App allowance",
+    "kinds": [
+      "app_quota_changed",
+      "app_quota_requested",
+      "app_quota_request_declined"
+    ]
+  }
+}
