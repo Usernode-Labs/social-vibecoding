@@ -233,7 +233,8 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
     await db.query(`DELETE FROM chat_session_messages WHERE session_id IN
       (SELECT id FROM chat_sessions WHERE user_id = $1 AND transcript_shared_at IS NULL)`, [userId]);
     await db.query(`UPDATE chat_sessions SET spec_md = '', pr_title = NULL, session_title = NULL, proposed_pr_title = NULL,
-      pr_summary_md = NULL, pr_body = NULL, testing_md = NULL, local_agent_label = NULL
+      pr_summary_md = NULL, pr_summary_previous_md = NULL, pr_body = NULL,
+      testing_md = NULL, local_agent_label = NULL
       WHERE user_id = $1 AND shared_at IS NULL AND pr_number IS NULL`, [userId]);
     await db.query(`DELETE FROM chat_session_specs WHERE session_id IN
       (SELECT id FROM chat_sessions WHERE user_id = $1 AND shared_at IS NULL AND pr_number IS NULL

@@ -3117,6 +3117,59 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_visuals_applied TEXT;
 -- omits the summary paragraph in that case.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_md TEXT;
 
+-- A summary is a snapshot of proposal inputs, not a timeless description.
+-- Keep old author prose when an input changes, but remove it from the live
+-- display column so every existing reader fails closed. The input version is
+-- advanced with each body, head, or native history change; generated writes
+-- may publish only against the version they read before generation.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_source TEXT
+  CHECK (pr_summary_source IN ('author', 'generated'));
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_source_head_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_source_body_hash VARCHAR(64);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_input_version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_applied_version BIGINT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_previous_md TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_stale BOOLEAN NOT NULL DEFAULT FALSE;
+-- Existing summaries have no recorded input revision. Preserve their words,
+-- but do not assert that they describe today's branch or description.
+UPDATE chat_sessions
+   SET pr_summary_source = CASE WHEN source = 'imported' THEN 'author' ELSE 'generated' END,
+       pr_summary_previous_md = pr_summary_md,
+       pr_summary_md = NULL,
+       pr_summary_stale = TRUE
+ WHERE pr_summary_md IS NOT NULL AND pr_summary_source IS NULL;
+
+-- History is an input to generated PR metadata. Invalidate in the same
+-- transaction as a new request or native handoff summary, including context
+-- that arrives after the PR was first written. Hosted turn summaries are
+-- saved after PR generation; that generation already receives the in-flight
+-- text, so saving the same text must not invalidate its new summary.
+CREATE OR REPLACE FUNCTION invalidate_pr_summary_on_history() RETURNS TRIGGER AS $$
+DECLARE relevant BOOLEAN := FALSE;
+BEGIN
+  IF NEW.session_id IS NULL THEN RETURN NEW; END IF;
+  IF TG_OP = 'INSERT' THEN
+    relevant := NEW.role = 'user' OR NEW.metadata->>'handoffSummary' = 'true';
+  ELSE
+    relevant := (NEW.role = 'user' AND NEW.content IS DISTINCT FROM OLD.content)
+      OR NEW.metadata->>'handoffSummary' IS DISTINCT FROM OLD.metadata->>'handoffSummary';
+  END IF;
+  IF relevant THEN
+    UPDATE chat_sessions
+       SET pr_summary_input_version = pr_summary_input_version + 1,
+           pr_summary_previous_md = COALESCE(pr_summary_md, pr_summary_previous_md),
+           pr_summary_stale = pr_summary_stale OR pr_summary_md IS NOT NULL,
+           pr_summary_md = NULL
+     WHERE id = NEW.session_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_pr_summary_history ON chat_session_messages;
+CREATE TRIGGER trg_pr_summary_history
+  AFTER INSERT OR UPDATE OF content, metadata ON chat_session_messages
+  FOR EACH ROW EXECUTE FUNCTION invalidate_pr_summary_on_history();
+
 -- App access to user LLM budgets (issue #34). One row per (app, user)
 -- consent: the user explicitly allowed this app to spend from their
 -- daily AI budget through the platform proxy (/api/app-llm), up to
