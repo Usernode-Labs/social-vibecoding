@@ -615,7 +615,9 @@ const AppView = {
       if (mode === 'newest') window.sessionStorage.removeItem(key);
       else window.sessionStorage.setItem(key, mode);
     } catch {}
-    AppView._repaintKanbanBoard();
+    // The same column also lives inside Workshop's By stage view, where
+    // the standalone board host does not exist. Repaint its active owner.
+    AppView._repaintBoardSurface();
   },
   _reviewVotesNeeded(entry) {
     const item = entry.item || {};

@@ -111,7 +111,7 @@ const merged = (over) => ({
 // #3199: sorting is local to In review and must never become a filter.
 const reviewColumn = a => a._kanbanView().cols.find(c => c.key === 'inreview');
 const reviewKeys = a => Array.from(reviewColumn(a).rows, row => row.key);
-function reviewBoard() {
+function reviewBoard({ livePaint = false } = {}) {
   const a = makeAppView();
   a.appData = { slug: 'first-app' };
   a._ghIssues = [issue({ number: 1 })];
@@ -122,7 +122,7 @@ function reviewBoard() {
   a._mySessions = [{ id: 90, session_title: 'Working', status: 'active' }];
   a._sharedSessions = [];
   a._kanbanFilters = { ...none };
-  a._repaintKanbanBoard = () => {};
+  if (!livePaint) a._repaintBoardSurface = () => {};
   return a;
 }
 
@@ -195,11 +195,10 @@ test('changing review order leaves filters, every other column, feed and categor
   assert.equal(reviewColumn(a).reviewSort, 'priority', 'empty filtered columns still offer the toggle');
 });
 
-test('review sort persists per app, survives reload, validates values and repaints only the board', () => {
+test('review sort persists per app, survives reload, validates values and repaints once per change', () => {
   const a = reviewBoard();
   let repaints = 0;
-  a._repaintKanbanBoard = () => { repaints++; };
-  a._repaintBoardSurface = () => { throw new Error('must not repaint other surfaces'); };
+  a._repaintBoardSurface = () => { repaints++; };
   a._setReviewSort('priority');
   a._setReviewSort('priority');
   a._setReviewSort('invalid');
@@ -217,6 +216,34 @@ test('review sort persists per app, survives reload, validates values and repain
   store.setItem(`${a.REVIEW_SORT_KEY}:third-app`, 'invalid');
   a.appData = { slug: 'third-app' };
   assert.equal(a._reviewSort(), 'newest');
+});
+
+test('selecting either sort immediately republishes the visible column in Workshop and standalone board', () => {
+  for (const mode of ['workshop', 'kanban']) {
+    const a = reviewBoard({ livePaint: true });
+    a._proposals = [prop({ id: 1, votes_required: 5, yes_count: 4, promoted_at: '2026-09-01' }),
+      prop({ id: 2, votes_required: 5, yes_count: 1, promoted_at: '2026-09-20' })];
+    const hostId = mode === 'workshop' ? 'dev-workshop' : 'dev-kanban-board';
+    a.__sandbox.document.getElementById = id => id === hostId ? {} : null;
+    a._getViewMode = () => mode;
+    a._getWorkshopGroup = () => 'stage';
+    a._workshopView = () => ({});
+    for (const fn of ['_wireFeedComments', '_fillKudosHosts', '_refreshAiAvailability',
+      '_startMergeCountdownTimer', '_reanchorCardMenu']) a[fn] = () => {};
+    const published = [];
+    a._reactDevBoard = () => ({
+      mountWorkshop() {}, publishWorkshop() {}, publishWorkshopGroup() {}, mountKanban() {},
+      publishKanban(view) { published.push(view.cols.find(c => c.key === 'inreview')); },
+    });
+    a._setReviewSort('priority');
+    assert.equal(published.length, 1, `${mode} must update without a reload`);
+    assert.equal(published[0].reviewSort, 'priority');
+    assert.deepEqual(Array.from(published[0].rows, r => r.key), ['proposal:1', 'proposal:2']);
+    a._setReviewSort('newest');
+    assert.equal(published.length, 2);
+    assert.equal(published[1].reviewSort, 'newest');
+    assert.deepEqual(Array.from(published[1].rows, r => r.key), ['proposal:2', 'proposal:1']);
+  }
 });
 
 test('review sort still works with unavailable storage and when signed out', () => {
