@@ -7347,6 +7347,8 @@ CREATE TABLE IF NOT EXISTS staging_app_fixtures (
   app_id INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE
 );
 COMMENT ON TABLE staging_app_fixtures IS 'staging:private';
+ALTER TABLE staging_app_fixtures
+  ADD COLUMN IF NOT EXISTS home_favorite_seeded BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Sharing an exact immutable spec version into a conversation grants it to
 -- current members. Membership is checked at every read, so leaving/removal

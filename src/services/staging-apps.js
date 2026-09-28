@@ -214,6 +214,27 @@ async function seedCatalog(pool, config = {}) {
            ON CONFLICT DO NOTHING`, [app.id, actorId]);
       }
     }
+    // The demo layout names these real apps, but a layout cell alone does
+    // not add an app to Your apps. Seed actual favorites, leaving featured
+    // and popular apps available in Discover. Track this separately so
+    // existing Previews get the missing favorites once, and removing one
+    // survives a restart just like removing any other app.
+    const homeApps = await db.query(
+      `INSERT INTO staging_app_fixtures (app_id, home_favorite_seeded)
+       SELECT id, TRUE FROM apps WHERE slug = ANY($1::text[])
+         AND created_by = 900001 AND NOT self_hosted AND repo_url IS NULL
+         AND container_id IS NULL AND runtime_name IS NULL AND status = 'running'
+       ON CONFLICT (app_id) DO UPDATE SET home_favorite_seeded = TRUE
+         WHERE NOT staging_app_fixtures.home_favorite_seeded
+       RETURNING app_id`,
+      [['staging-demo-long-name', 'staging-demo-pixel-racer',
+        'staging-demo-puzzle-chain', 'staging-demo-word-garden']]);
+    for (const { app_id: appId } of homeApps.rows) {
+      await db.query(
+        `INSERT INTO app_favorites (app_id, user_id, sort_order)
+         SELECT $1, id, 99 FROM users WHERE username = ANY($2::text[]) ON CONFLICT DO NOTHING`,
+        [appId, [config.adminUsername, 'usernode-capture', 'usernode-capture-admin'].filter(Boolean)]);
+    }
   });
 }
 

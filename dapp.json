@@ -2843,7 +2843,7 @@
     {
       "name": "A direct conversation is the same Discord-style named-row transcript as every chat: your own turn has your avatar, name and time, and no bubble (#2783)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) .messages-message-self > span[aria-hidden] + .min-w-0 > .messages-message-head time"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) .messages-message-self > :is(span[aria-hidden], img[alt=\"\"]) + .min-w-0 > .messages-message-head time"
     },
     {
       "name": "...and the sheet carries the conversation's own title row",

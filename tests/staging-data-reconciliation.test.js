@@ -56,6 +56,9 @@ test('Preview lists and actions share persisted identities, with private viewer 
     const viewers = (await pool.query(
       "INSERT INTO users (username, password) VALUES ('viewer-one', 'unused'), ('viewer-two', 'unused') RETURNING id, username")).rows;
     await pool.query("INSERT INTO users (id, username, password) VALUES (900001, 'staging-demo-user', 'staging-demo-not-a-login')");
+    const launcherSlugs = ['staging-demo-pixel-racer', 'staging-demo-puzzle-chain', 'staging-demo-word-garden'];
+    for (const slug of launcherSlugs) await pool.query(
+      "INSERT INTO apps (name, slug, status, view_visibility, created_by) VALUES ($1, $1, 'running', 'public', 900001)", [slug]);
     await seedStagingGeneralChannel(pool);
     await stagingApps.seedCatalog(pool, { adminUsername: viewers[0].username });
     // Concurrent first loads must create one set, not duplicate private rooms.
@@ -133,7 +136,7 @@ test('Preview lists and actions share persisted identities, with private viewer 
 
     const catalog = await api('/api/apps?demo=1&curation=1');
     assert.equal(catalog.status, 200, JSON.stringify(catalog.body));
-    assert.equal(catalog.body.apps.length, stagingApps.catalogFixtures(true).length);
+    assert.equal(catalog.body.apps.length, stagingApps.catalogFixtures(true).length + launcherSlugs.length);
     for (const app of catalog.body.apps) {
       const detail = await api(`/api/apps/${app.slug}`);
       assert.equal(detail.status, 200, JSON.stringify(detail.body));
@@ -144,12 +147,24 @@ test('Preview lists and actions share persisted identities, with private viewer 
       assert.equal(detail.body.app.staging_sample, true);
 
     }
+    const launcherApps = [...launcherSlugs, 'staging-demo-long-name'];
+    for (const slug of launcherApps) {
+      assert.equal(catalog.body.apps.find(app => app.slug === slug).is_favorited, true,
+        'launcher samples are backed by actual favorites');
+      assert.equal((await api(`/api/apps/${slug}/favorite`, 'POST', { favorited: false })).status, 200);
+    }
+    assert.ok(catalog.body.apps.some(app => app.featured && !app.is_favorited), 'Discover retains featured samples');
+    assert.ok(catalog.body.apps.some(app => Number(app.active_users) > 0 && !app.featured && !app.is_favorited),
+      'Discover retains popular samples');
     const sample = catalog.body.apps.find(app => app.slug === 'staging-demo-emoji-icon');
     const appReport = await api('/api/reports', 'POST', { targetType: 'app', target: sample.slug, reason: 'spam' });
     assert.equal(appReport.status, 202, JSON.stringify(appReport.body));
     assert.equal(appReport.body.blockAppSlug, sample.slug);
     await pool.query('INSERT INTO user_app_blocks (user_id, app_id) VALUES ($1, $2)', [viewers[0].id, sample.id]);
     await stagingApps.seedCatalog(pool, { adminUsername: viewers[0].username });
+    const afterRestart = (await api('/api/apps?demo=1')).body.apps;
+    for (const slug of launcherApps) assert.equal(afterRestart.find(app => app.slug === slug).is_favorited, false,
+      'restarting Preview must not undo removing an app');
     const blocked = await api(`/api/apps/${sample.slug}`);
     assert.equal(blocked.status, 403);
     assert.equal(blocked.body.code, 'app_blocked');
