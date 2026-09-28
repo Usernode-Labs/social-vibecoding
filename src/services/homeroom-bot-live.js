@@ -17,10 +17,13 @@
 //                   proposal's own discussion: answered, asked about, or
 //                   made on the proposal's branch (#3264, see
 //                   homeroom-bot-followup.js)
-//   ready           one GLM build turn in a dev session of the bot's own,
-//                   then the SAME /promote handler a person's Propose button
-//                   runs — pull request, staging, checks, vote — and a post
-//                   on the issue that links the proposal
+//   ready           a spec, then one GLM build turn in a dev session of the
+//                   bot's own, then the SAME /promote handler a person's
+//                   Propose button runs — pull request, staging, checks,
+//                   vote — and a post on the issue that links the proposal.
+//                   The spec is posted on the issue as soon as it is written
+//                   and on the proposal once it is up, for reference: the
+//                   build does not wait for anybody to approve it
 //
 // Every post goes to two places: a GitHub comment on the issue, and a
 // message from the bot's own user in the issue's Homeroom discussion thread
@@ -51,6 +54,9 @@
 // stays exactly one implementation of "put a change up for a vote".
 
 const log = require('./logger');
+const { stripSpecWrapperFence } = require('./spec-format');
+const { agentApiFailure } = require('./agent-result-text');
+const { SPEC_DESIGN_BRIEF } = require('./prompts');
 
 // A staging copy of the platform starts from production's settings, live
 // list included. Posting on real GitHub issues and pushing real branches
@@ -159,6 +165,141 @@ function proposalLink(domain, appSlug, sessionId) {
   return `https://${domain}/#app/${encodeURIComponent(appSlug)}/dev/proposals/${Number(sessionId)}`;
 }
 
+// ── The spec ─────────────────────────────────────────────────────────────
+//
+// Before it builds a ready request, the bot writes a spec for it, the way a
+// person's dev session does: a read-only scout turn in the build's own
+// session, whose final message IS the spec, stored as that session's spec
+// doc (spec_md and a numbered version). The build then works from it. On a
+// live app it is posted on the issue as soon as it exists, and on the
+// proposal once it is up. For reference only: nothing waits on it.
+
+// The spec gets a clock of its own, shorter than a build's: the triage has
+// already read the code, so this is writing down a plan, not discovering one.
+const SPEC_TURN_MAX_MS = 10 * 60 * 1000;
+// GitHub refuses a comment over 65,536 characters.
+const MAX_SPEC_COMMENT_CHARS = 60_000;
+
+function specPrompt({ seed, buildNote }) {
+  return [
+    seed,
+    '',
+    'You are the Homeroom bot. Your triage of this request concluded it is ready to build, with this plan:',
+    '',
+    clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
+    '',
+    'Before it is built, write the SPEC for it: a markdown document the app\'s group can read, and that the build',
+    'that follows will work from. You are running in PLAN MODE: read and search the repository with read-only',
+    'shell commands (for example `rg`, `ls`, `sed -n`, `cat`), but do not edit, create, delete, commit, or push',
+    'anything; anything this run changes in the repository is discarded when it ends.',
+    '',
+    'The spec must be:',
+    '- Grounded in the real code: name actual files and describe current behaviour, not guesses.',
+    '- Two halves under these exact H2 headings, in this order: "## User-facing changes" then',
+    '  "## Technical implementation". Start with a "# " title line; keep everything else inside one of the',
+    '  two halves, and use ### or deeper for any other heading. "User-facing changes" is for a non-developer:',
+    '  what people will see and do differently, no file paths or code. "Technical implementation" holds the',
+    '  files, data, edge cases and tests.',
+    '- As small as the request: the plan above, no refactoring or extra features.',
+    `- ${SPEC_DESIGN_BRIEF}`,
+    '',
+    'Nobody is available to answer questions: this run is unattended, and the build starts as soon as you finish.',
+    'Where something is open, make the sensible choice and say which you made. Do not write a "### Questions"',
+    'section.',
+    '',
+    'Your final message must be ONLY the markdown spec, as raw markdown: no preamble, and not wrapped in a code',
+    'fence. It is captured verbatim.',
+  ].join('\n');
+}
+
+/** The spec's "# " title, as routes/sessions.js extractSpecTitle reads it. */
+function specTitle(spec) {
+  const lines = String(spec || '').split('\n');
+  for (let i = 0; i < Math.min(lines.length, 30); i += 1) {
+    const line = lines[i].trim();
+    if (line.startsWith('# ') && line.slice(2).trim()) return line.slice(2).trim().slice(0, 120);
+  }
+  return null;
+}
+
+/** The card's preview: the body after the title, as the share route cuts it. */
+function specSnippet(spec, title) {
+  const lines = String(spec || '').split('\n');
+  let start = 0;
+  if (title) {
+    while (start < lines.length && !lines[start].trim()) start += 1;
+    if (start < lines.length && lines[start].trim().startsWith('# ')) start += 1;
+  }
+  while (start < lines.length && !lines[start].trim()) start += 1;
+  return lines.slice(start).join('\n').slice(0, 280);
+}
+
+/** The spec as a GitHub comment: said what it is for, then the document. */
+function specCommentText(spec) {
+  return [
+    'Homeroom bot wrote a spec for this request and is building it now. It is here for reference: nobody needs '
+      + 'to approve it, and the proposal will be linked here when it is up.',
+    '',
+    '<details><summary>The spec</summary>',
+    '',
+    clipText(spec, MAX_SPEC_COMMENT_CHARS),
+    '',
+    '</details>',
+  ].join('\n');
+}
+
+/**
+ * The spec as a thread message: the same spec card a person's "Share"
+ * posts (metadata.specShare), opening the version the build worked from.
+ */
+function specCard({ sessionId, version, spec, bot, proposed = false }) {
+  const title = specTitle(spec);
+  const content = proposed
+    ? `📋 The spec this proposal was built from${title ? `: "${title}"` : ''}.`
+    : `📋 Homeroom bot's spec for this request${title ? `: "${title}"` : ''}. It is building it now; this is for reference, not for approval.`;
+  return {
+    content,
+    msgType: 'spec_share',
+    metadata: {
+      specShare: {
+        sessionId: Number(sessionId),
+        version: Number(version),
+        builtAt: null,
+        commitSha: null,
+        prNumber: null,
+        title,
+        snippet: specSnippet(spec, title),
+        totalChars: String(spec || '').length,
+        sharedBy: { id: bot.id, username: bot.username },
+      },
+    },
+  };
+}
+
+/**
+ * Make the spec version readable by everyone who can see the card: a
+ * version is private to its session's owner until it is shared, exactly as
+ * the share route marks it.
+ */
+async function shareSpecVersion(pool, sessionId, version) {
+  await pool.query(
+    `UPDATE chat_session_specs SET shared_to_group_at = NOW()
+      WHERE session_id = $1 AND version = $2 AND shared_to_group_at IS NULL`,
+    [Number(sessionId), Number(version)],
+  );
+}
+
+/** The spec card in the proposal's own discussion, once it is up. */
+async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec }) {
+  if (!spec || !version || !sessionId) return null;
+  await shareSpecVersion(pool, sessionId, version);
+  const card = specCard({ sessionId, version, spec, bot, proposed: true });
+  return ws.sendBotMessage(pool, app.id, {
+    user: bot, content: card.content, metadata: card.metadata,
+    thread: { type: 'session', ref: Number(sessionId) }, msgType: card.msgType,
+  });
+}
+
 // ── Who filed the issue ──────────────────────────────────────────────────
 //
 // An issue filed from Homeroom is authored on GitHub by the platform's bot
@@ -230,7 +371,7 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, senderId = null, notifications = null,
-  proposalSessionId = null, sender = null,
+  proposalSessionId = null, sender = null, threadMessage = null,
 }) {
   // #3288: with a sender (the bot's own user), the thread posts are ordinary
   // messages from it, drawn as its bubbles. `msgType` then no longer picks
@@ -261,7 +402,14 @@ async function post({
   // author of an issue opened there about comments on it.
   const threadText = mention ? `@${mention} ${text}` : text;
   try {
-    message = await inThread(threadText, { type: 'issue', ref: issueNumber });
+    // A spec is a card in the thread (its full text is on GitHub, and one
+    // click away from the card), not a wall of markdown in a chat bubble.
+    message = threadMessage && sender
+      ? await ws.sendBotMessage(pool, app.id, {
+        user: sender, content: threadMessage.content, metadata: threadMessage.metadata,
+        thread: { type: 'issue', ref: issueNumber }, msgType: threadMessage.msgType,
+      })
+      : await inThread(threadText, { type: 'issue', ref: issueNumber });
   } catch (err) {
     log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
   }
@@ -431,7 +579,20 @@ function promoteAsBot({ config, bot, sessionId, router = null }) {
   });
 }
 
-function buildPrompt({ seed, buildNote }) {
+function buildPrompt({ seed, buildNote, spec = null }) {
+  const specBlock = spec
+    ? [
+      '',
+      '==== SPEC (written for this request just before this build; authoritative for what to build) ====',
+      '',
+      String(spec),
+      '',
+      '==== END SPEC ====',
+      '',
+      'Build what the SPEC describes. The plan above is the triage\'s short version of it: where they differ,',
+      'the spec wins. The repository\'s own agent instructions still come first.',
+    ]
+    : [];
   return [
     seed,
     '',
@@ -439,6 +600,7 @@ function buildPrompt({ seed, buildNote }) {
     'Your triage of the request concluded it is ready to build, with this plan:',
     '',
     clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
+    ...specBlock,
     '',
     'Make exactly that change, and nothing else:',
     '- Read the repository\'s own agent instructions (AGENTS.md, CLAUDE.md) first, and follow them.',
@@ -454,9 +616,87 @@ function buildPrompt({ seed, buildNote }) {
  * Build the change in a dev session of the bot's own and put it up for a
  * vote. Resolves { ok, sessionId, prNumber, costUsd, error }; never throws.
  */
+/**
+ * The spec turn: read-only, in the build's own session and worker, its
+ * final message stored as the session's spec doc. Resolves
+ * { ok, specMd, version, costUsd, error, stopped }; never throws. A spec
+ * that fails is not a failed build: the build goes ahead from the plan.
+ */
+async function draftSpec({
+  pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
+}) {
+  const { worker, sessions, agentTurn, activeWorkers } = deps;
+  const budgetMs = Math.min(turnBudgetMs, SPEC_TURN_MAX_MS);
+  let stopped = false;
+  let stopping = null;
+  const timer = setTimeout(() => {
+    stopped = true;
+    stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
+  }, budgetMs);
+  if (typeof timer.unref === 'function') timer.unref();
+  activeWorkers.add(session.id);
+  const prompt = specPrompt({ seed, buildNote });
+  let routed;
+  try {
+    routed = await sessions.runCodexAttemptLoop({
+      pool, session, userId: bot.id, config, isCodexSession: true,
+      turnModel: model, resumeThreadId: null, mode: 'scout',
+      telemetryComponent: 'homeroom_bot_spec',
+      resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+        pool, session, userId: bot.id, model, resumeThreadId: null, config,
+      }),
+      dispatchOnce: (ctx) => worker.execInWorker(session.id, {
+        mode: 'scout',
+        prompt,
+        model,
+        commitMsg: '',
+        resumeSessionId: null,
+        branchName: session.branch_name,
+        ...(ctx || {}),
+        telemetryComponent: 'homeroom_bot_spec',
+        onProgress: () => {},
+      }),
+      retryPredicate: () => null,
+      sendStatus: async () => {},
+      waitForStopped: async () => {},
+      prepareRetry: async () => false,
+      classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
+      containerName,
+    });
+  } catch (err) {
+    routed = { error: `dispatch: ${err.message}` };
+  } finally {
+    clearTimeout(timer);
+    if (stopping) await stopping;
+    activeWorkers.delete(session.id);
+  }
+  const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
+  if (stopped) return { ok: false, stopped: true, costUsd, error: 'the spec ran past its time limit' };
+  if (!routed) return { ok: false, costUsd, error: 'the spec turn did not run' };
+  if (routed.error) return { ok: false, costUsd, error: `the spec turn failed (${routed.error})` };
+  const specMd = stripSpecWrapperFence(String(routed.result?.lastResultText || '').trim());
+  if (!specMd) return { ok: false, costUsd, error: 'the spec turn returned nothing' };
+  // A run that died on the wire can report the failure as its final message,
+  // which would otherwise be stored as the spec.
+  if (agentApiFailure(specMd)) return { ok: false, costUsd, error: 'the spec turn ended on an API error' };
+  let version = null;
+  try {
+    // The same three effects a person's scout has: spec_md, a numbered
+    // version, and the spec card in the session's own transcript.
+    const published = await sessions.persistScoutPublication({
+      pool, sessionId: session.id, content: specMd, hadSpec: false,
+      agentBackend: 'codex_openrouter', agentModel: model,
+    });
+    version = published?.specVersion ?? null;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not store the spec; building from it anyway', { sessionId: session.id, err: err.message });
+  }
+  return { ok: true, specMd, version, costUsd };
+}
+
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
-  turnBudgetMs, model, deps, propose = true,
+  turnBudgetMs, model, deps, propose = true, onSpec = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -488,6 +728,10 @@ async function buildAndPropose({
     return { ok: false, error: `could not open a session: ${err.message}` };
   }
 
+  // What the spec turn wrote, carried on every outcome below so a run that
+  // failed to build still shows what it meant to build.
+  let spec = null;
+  const specOut = () => (spec?.ok ? { specMd: spec.specMd, specVersion: spec.version } : {});
   const fail = async (error) => {
     // The bot's own failed attempt. Archived so it never reads as work
     // under way; its branch stays on GitHub for a person to look at.
@@ -496,7 +740,7 @@ async function buildAndPropose({
         WHERE id = $1 AND user_id = $2 AND status IN ('active', 'paused')`,
       [session.id, bot.id],
     ).catch(() => {});
-    return { ok: false, sessionId: session.id, branchName: session.branch_name || null, error };
+    return { ok: false, sessionId: session.id, branchName: session.branch_name || null, error, ...specOut() };
   };
 
   let branchName;
@@ -529,6 +773,33 @@ async function buildAndPropose({
     return fail(`the worker would not start: ${err.message}`);
   }
 
+  spec = await draftSpec({
+    pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
+  });
+  if (spec.ok) {
+    if (onSpec) {
+      // Posted, not waited on: the build starts whatever happens to the post.
+      try {
+        await onSpec({ sessionId: session.id, version: spec.version, specMd: spec.specMd });
+      } catch (err) {
+        log.warn('homeroom-bot', 'Posting the spec failed (building anyway)', { sessionId: session.id, err: err.message });
+      }
+    }
+  } else {
+    log.warn('homeroom-bot', 'No spec; building from the plan', { sessionId: session.id, error: spec.error });
+    if (spec.stopped) {
+      // Stopping a turn takes its container down with it.
+      try {
+        containerName = await worker.ensureWorker(session.id, {
+          repoOwner: repo.owner, repoName: repo.repo, branchName,
+          temporary: true, onProgress: () => {},
+        });
+      } catch (err) {
+        return { ...(await fail(`the worker would not start: ${err.message}`)), costUsd: spec.costUsd };
+      }
+    }
+  }
+
   // The same wall clock a triage turn has, ended the same way.
   let stopped = false;
   let stopping = null;
@@ -538,7 +809,7 @@ async function buildAndPropose({
   }, turnBudgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
-  const prompt = buildPrompt({ seed, buildNote });
+  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null });
   let routed;
   try {
     routed = await sessions.runCodexAttemptLoop({
@@ -579,7 +850,11 @@ async function buildAndPropose({
   }
 
   const result = (routed && routed.result) || {};
-  const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
+  const buildCostUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
+  // Both turns, the spec's and the build's, are the build's cost.
+  const costUsd = buildCostUsd == null && spec.costUsd == null
+    ? null
+    : (buildCostUsd || 0) + (spec.costUsd || 0);
   if (stopped) return { ...(await fail('the build ran past its time limit')), costUsd };
   if (routed?.error) return { ...(await fail(`the build turn failed (${routed.error})`)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
@@ -596,7 +871,7 @@ async function buildAndPropose({
     ).catch(() => {});
     return {
       ok: true, sessionId: session.id, branchName: session.branch_name,
-      sha: result.sha || null, commits: Number(result.ahead) || 0, costUsd,
+      sha: result.sha || null, commits: Number(result.ahead) || 0, costUsd, ...specOut(),
     };
   }
 
@@ -606,9 +881,9 @@ async function buildAndPropose({
     // Built but not proposed: the branch holds the work. Left paused, not
     // archived, so a person can open the session and propose it.
     log.warn('homeroom-bot', 'Built but could not propose', { app: app.slug, issueNumber, sessionId: session.id, why });
-    return { ok: false, sessionId: session.id, costUsd, error: `the change was built but could not be proposed: ${why}` };
+    return { ok: false, sessionId: session.id, costUsd, error: `the change was built but could not be proposed: ${why}`, ...specOut() };
   }
-  return { ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, costUsd };
+  return { ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, costUsd, ...specOut() };
 }
 
 module.exports = {
@@ -635,4 +910,14 @@ module.exports = {
   promoteAsBot,
   buildPrompt,
   buildAndPropose,
+  draftSpec,
+  specPrompt,
+  specTitle,
+  specSnippet,
+  specCommentText,
+  specCard,
+  shareSpecVersion,
+  postSpecOnProposal,
+  SPEC_TURN_MAX_MS,
+  MAX_SPEC_COMMENT_CHARS,
 };

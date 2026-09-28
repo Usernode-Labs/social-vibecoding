@@ -9265,6 +9265,10 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_at TIMESTAMPTZ;
 -- is retried once and then recorded failed.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_queued_at TIMESTAMPTZ;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_attempts INTEGER NOT NULL DEFAULT 0;
+-- The spec the bot wrote just before building (live or shadow): the same
+-- text is the build session's spec doc; kept here for the dashboard and the
+-- export, since a shadow build's session is archived and nobody opens it.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_spec_md TEXT;
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_build_queue
   ON homeroom_bot_runs(app_id, build_queued_at)
   WHERE build_queued_at IS NOT NULL AND build_ok IS NULL;

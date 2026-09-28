@@ -98,6 +98,8 @@ function buildHarness(result = { pushOk: true, ahead: 2, sha: 'c'.repeat(40) }) 
     sessions: {
       async runCodexAttemptLoop(args) {
         const r = await args.dispatchOnce({});
+        // The spec turn (tests/homeroom-bot-spec.test.js) writes nothing here.
+        if (args.mode === 'scout') return { result: {}, error: null, estimatedCostUsd: null };
         return { result: r, error: null, estimatedCostUsd: 0.04 };
       },
     },
@@ -281,7 +283,7 @@ test('a claimed build reads the thread as it is now, builds without proposing, a
   assert.equal(args.seed, 'ISSUE #12 1c 1t', 'the issue, its comments and its thread, read at build time');
   assert.deepEqual(args.repo, REPO);
   assert.equal(args.turnBudgetMs, 1_200_000, 'the same wall clock a triage turn has');
-  assert.deepEqual(recorded(h).params, [900, true, 'dev/homeroom_bot-s6001', 'c'.repeat(40), 2, null, 0.04, 6001]);
+  assert.deepEqual(recorded(h).params, [900, true, 'dev/homeroom_bot-s6001', 'c'.repeat(40), 2, null, 0.04, 6001, null]);
   assert.deepEqual(h.calls.spend, [4], 'paid from the weekly allowance');
 });
 
@@ -503,7 +505,7 @@ test('the backfill refuses while shadow builds are off', async () => {
 
 test('the export carries the branch, with a compare address to open, after every older column', () => {
   const header = bot.EXPORT_COLUMNS;
-  assert.deepEqual(header.slice(-9), ['build_ok', 'build_branch', 'build_url', 'build_sha', 'build_commits', 'build_error', 'build_cost_usd', 'build_at', 'build_queued_at']);
+  assert.deepEqual(header.slice(-10), ['build_ok', 'build_branch', 'build_url', 'build_sha', 'build_commits', 'build_error', 'build_cost_usd', 'build_at', 'build_queued_at', 'build_spec_md']);
   assert.ok(header.indexOf('proposal_session_id') < header.indexOf('build_ok'), 'appended, so older analyses do not shift');
   const row = bot.exportRow({
     id: 1, issue_number: 12, repo_url: 'https://github.com/usernode-bot/todo.git',

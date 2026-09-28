@@ -439,8 +439,10 @@ test('an issue with an open bot proposal is left alone', () => {
 
 // ── The build ────────────────────────────────────────────────────────────
 
-function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }, promote = { status: 200, body: { ok: true, prNumber: 42 } }, hang = false } = {}) {
-  const calls = { queries: [], ensured: [], loop: null, exec: null, stopped: [], promoted: [] };
+// The spec turn comes first (mode 'scout', see tests/homeroom-bot-spec.test.js);
+// `loop` and `exec` are the BUILD turn's.
+function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }, promote = { status: 200, body: { ok: true, prNumber: 42 } }, hang = false, spec = '' } = {}) {
+  const calls = { queries: [], ensured: [], loop: null, exec: null, stopped: [], promoted: [], modes: [] };
   const pool = {
     async query(sql, params) {
       calls.queries.push({ sql: String(sql), params });
@@ -459,16 +461,23 @@ function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }
     worker: {
       async ensureWorkerImage() {},
       async ensureWorker(id, opts) { calls.ensured.push({ id, opts }); return 'usernode-worker-5001'; },
-      async execInWorker(id, opts) { calls.exec = { id, opts }; return result; },
+      async execInWorker(id, opts) {
+        calls.modes.push(opts.mode);
+        if (opts.mode === 'scout') return { lastResultText: spec };
+        calls.exec = { id, opts };
+        return result;
+      },
       stopTurn(id) { calls.stopped.push(id); release(); return Promise.resolve(); },
     },
     sessions: {
       async runCodexAttemptLoop(args) {
-        calls.loop = args;
         const r = await args.dispatchOnce({ openrouterApiKey: 'k' });
+        if (args.mode === 'scout') return { result: r, error: null, estimatedCostUsd: null };
+        calls.loop = args;
         if (hang) await hung;
         return { result: r, error: null, estimatedCostUsd: 0.05 };
       },
+      async persistScoutPublication() { return { specVersion: 1 }; },
     },
     agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
     sessionLifecycle: { async ensureSessionBranch({ sessionId }) { return { branchName: `homeroom_bot/s${sessionId}` }; } },
@@ -504,6 +513,7 @@ test('a ready request is built in a session of its own and proposed', async () =
   assert.match(h.calls.exec.opts.prompt, /Add an hourly refresh to the feed poller\./);
   assert.match(h.calls.exec.opts.prompt, /Do not commit or push yourself/);
   assert.deepEqual(h.calls.promoted, [{ id: '5001', user: BOT.id }], 'proposed once, as the bot');
+  assert.deepEqual(h.calls.modes, ['scout', 'build'], 'a spec first; with none written, the build goes ahead from the plan');
   assert.ok(!h.calls.queries.some((q) => /status = 'archived'/.test(q.sql)));
 });
 

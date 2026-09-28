@@ -87,11 +87,18 @@ test('sendBotMessage writes an ordinary message authored by the bot, and nothing
   });
   assert.deepEqual(out, { id: 555, createdAt: '2026-09-27T10:00:00.000Z' });
   const insert = seen.find((q) => /INSERT INTO chat_messages/.test(q.sql));
-  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, 'message', \$4, \$5, \$6\)/, 'a message row, not a system line');
+  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$7, \$4, \$5, \$6\)/);
+  assert.equal(insert.params[6], 'message', 'a message row, not a system line');
   assert.deepEqual(insert.params.slice(0, 3), [9, 77, '@evan Homeroom bot built this: https://x'], 'authored by the bot');
   assert.equal(insert.params[3], JSON.stringify({ vote: { sessionId: 5128, prNumber: 25 } }), 'the card rides in its metadata');
-  assert.deepEqual(insert.params.slice(4), ['issue', 24]);
+  assert.deepEqual(insert.params.slice(4, 6), ['issue', 24]);
   assert.deepEqual(calls, [], 'no @-parsing of model-written text, no event, no reply notification');
+
+  // The spec card is the one other kind it may write; anything else is a message.
+  await ws.sendBotMessage(pool, 9, { user: BOT, content: 'spec', thread: { type: 'issue', ref: 24 }, msgType: 'spec_share' });
+  await ws.sendBotMessage(pool, 9, { user: BOT, content: 'x', thread: { type: 'issue', ref: 24 }, msgType: 'system' });
+  const kinds = seen.filter((q) => /INSERT INTO chat_messages/.test(q.sql)).map((q) => q.params[6]);
+  assert.deepEqual(kinds, ['message', 'spec_share', 'message'], 'never a system line, vote or anything else');
 
   assert.equal(await ws.sendBotMessage(pool, 9, { user: BOT, content: 'x' }), null, 'thread posts only');
   assert.equal(await ws.sendBotMessage(pool, 9, { user: BOT, content: '   ', thread: { type: 'issue', ref: 24 } }), null);
@@ -101,7 +108,7 @@ test('sendBotMessage broadcasts the frame a person\'s post does, and never wakes
   const src = read('src/services/ws.js');
   const body = src.slice(src.indexOf('async function sendBotMessage'), src.indexOf('function getOnlineUsers'));
   assert.match(body, /await broadcastFromSender\(pool, appId, \{/, 'a viewer who blocked the account does not receive it');
-  for (const field of ["type: 'chat'", 'userId: Number(user.id)', 'username: user.username', "msgType: 'message'", 'postedVia: null']) {
+  for (const field of ["type: 'chat'", 'userId: Number(user.id)', 'username: user.username', 'msgType: kind', 'postedVia: null']) {
     assert.ok(body.includes(field), `the frame carries ${field}`);
   }
   assert.doesNotMatch(body, /noteIssueActivityForBot|noteProposalActivityForBot/, 'this is the bot talking');

@@ -116,6 +116,8 @@ interface Run {
   build_cost_usd: number | null;
   build_at: string | null;
   build_queued_at: string | null;
+  // The spec the bot wrote before building, live or shadow.
+  build_spec_md: string | null;
   buildUrl: string | null;
   app_slug: string;
   app_name: string;
@@ -262,6 +264,21 @@ function ShadowBuild({ run }: { run: Run }) {
   );
 }
 
+/**
+ * The spec the bot wrote just before it built, folded away: on a live app it
+ * was also posted on the issue and the proposal, on a shadow one it was
+ * shown to nobody. Plain text, as the rest of this table is.
+ */
+function BuildSpec({ run }: { run: Run }) {
+  if (!run.build_spec_md) return null;
+  return (
+    <details className="text-sm" data-build-spec>
+      <summary className={`${AdminUI.muted} cursor-pointer`}>The spec it built from</summary>
+      <p className="mt-1 whitespace-pre-wrap break-words">{run.build_spec_md}</p>
+    </details>
+  );
+}
+
 /** What the bot would have posted, as one block of plain text per verdict. */
 function VerdictBody({ run }: { run: Run }) {
   if (run.verdict === 'question') {
@@ -279,6 +296,7 @@ function VerdictBody({ run }: { run: Run }) {
       <div className="space-y-1">
         <p className="text-sm whitespace-pre-line">{run.build_note || '(no build note)'}</p>
         <ShadowBuild run={run} />
+        <BuildSpec run={run} />
         {run.proposal_session_id ? (
           <p className={AdminUI.muted}>
             {'Built and '}
@@ -720,8 +738,9 @@ function HomeroomBotSection() {
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-shadow-builds-note">
               On apps outside the live list, a ready request is also built on a branch
               of the app's repository, and nothing else happens: no proposal, no post,
-              nothing in the app. Builds run beside triage, never in its way, and are paid
-              from the weekly cap above. Each run below shows its branch for a spot check.
+              nothing in the app. Each build first writes a spec and then works from it.
+              Builds run beside triage, never in its way, and are paid from the weekly cap
+              above. Each run below shows its branch and its spec for a spot check.
             </p>
           </div>
 

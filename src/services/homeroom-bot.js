@@ -1922,12 +1922,12 @@ async function shadowBuild({
   await pool.query(
     `UPDATE homeroom_bot_runs
         SET build_ok = $2, build_branch = $3, build_sha = $4, build_commits = $5,
-            build_error = $6, build_cost_usd = $7, build_session_id = $8
+            build_error = $6, build_cost_usd = $7, build_session_id = $8, build_spec_md = $9
       WHERE id = $1`,
     [runId, !!built.ok, built.branchName || null, built.sha || null,
       Number.isFinite(built.commits) ? built.commits : null,
       built.ok ? null : clip(built.error || 'unknown', MAX_ERROR_CHARS),
-      built.costUsd ?? null, built.sessionId || null],
+      built.costUsd ?? null, built.sessionId || null, built.specMd || null],
   );
   log.info('homeroom-bot', 'Shadow build', {
     app: app.slug, issueNumber, runId, ok: !!built.ok, branch: built.branchName || null,
@@ -2459,10 +2459,22 @@ async function actOnVerdict({
   } else if (parsed.verdict === 'empty') {
     await say('empty', live.emptyText(parsed));
   } else if (parsed.verdict === 'ready') {
+    // The spec is posted on the issue the moment it is written, and the
+    // build goes straight on: it is there for reference, not for approval.
+    const onSpec = async ({ sessionId, version, specMd }) => {
+      if (version) await live.shareSpecVersion(pool, sessionId, version);
+      await say('spec', live.specCommentText(specMd), {
+        threadMessage: version ? live.specCard({ sessionId, version, spec: specMd, bot }) : null,
+      });
+    };
     const built = await live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-      turnBudgetMs, model, deps,
+      turnBudgetMs, model, deps, onSpec,
     });
+    if (built.specMd) {
+      await pool.query('UPDATE homeroom_bot_runs SET build_spec_md = $2 WHERE id = $1', [runId, built.specMd])
+        .catch(() => {});
+    }
     if (built.costUsd > 0) {
       try {
         if (await deps.managedOpenRouter.usesIncludedKey(pool, bot.id)) {
@@ -2483,6 +2495,14 @@ async function actOnVerdict({
       await say('proposal', live.proposalText({
         link: live.proposalLink(deps.domain, app.slug, built.sessionId), prNumber: built.prNumber,
       }), { msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } } });
+      // And the spec on the proposal itself, where the group votes.
+      if (built.specMd && built.specVersion) {
+        await live.postSpecOnProposal({
+          pool, ws, app, bot, sessionId: built.sessionId, version: built.specVersion, spec: built.specMd,
+        }).catch((err) => log.warn('homeroom-bot', 'Could not post the spec on the proposal', {
+          app: app.slug, issueNumber, sessionId: built.sessionId, err: err.message,
+        }));
+      }
     } else {
       acted = 'build_failed';
       log.warn('homeroom-bot', 'Live build did not become a proposal', {
@@ -2813,7 +2833,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.created_at,
             r.proposal_session_id,
             r.build_ok, r.build_branch, r.build_sha, r.build_commits, r.build_error,
-            r.build_cost_usd::float8 AS build_cost_usd, r.build_at, r.build_queued_at,
+            r.build_cost_usd::float8 AS build_cost_usd, r.build_at, r.build_queued_at, r.build_spec_md,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -2859,6 +2879,8 @@ const EXPORT_COLUMNS = Object.freeze([
   // Shadow builds, after everything else for the same reason.
   'build_ok', 'build_branch', 'build_url', 'build_sha', 'build_commits', 'build_error',
   'build_cost_usd', 'build_at', 'build_queued_at',
+  // The spec the build worked from, live or shadow.
+  'build_spec_md',
 ]);
 
 /** One run as the values of EXPORT_COLUMNS, in that order. */
