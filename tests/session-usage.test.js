@@ -118,3 +118,17 @@ test('a timed-out fetch offers retry and permits a later successful refresh', as
   assert.equal(h.states[1], false);
   h.stop();
 });
+
+test('the shared-session composer never mounts an owner-only usage reader', () => {
+  let header, mounts = 0, reads = 0;
+  const { BudgetPill } = loadTsx('frontend/src/features/dev-chat/budget-pill.tsx', { stubs: {
+    '../../lib/use-store-state': { useStoreState: () => (++reads % 2) ? header : { parts: [] } },
+    './session-usage': { SessionUsage: () => { mounts++; return null; } },
+  } });
+  header = { sessionId: 51, ownsSession: false };
+  renderToHtml(createElement(BudgetPill));
+  assert.equal(mounts, 0);
+  header = { sessionId: 51, ownsSession: true };
+  renderToHtml(createElement(BudgetPill));
+  assert.equal(mounts, 1);
+});

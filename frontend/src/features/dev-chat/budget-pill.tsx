@@ -43,7 +43,7 @@ export function BudgetPillView({ title, parts }: BudgetPillState) {
 export function BudgetPill() {
   const header = useStoreState(sessionHeaderStore);
   const budget = useStoreState<BudgetPillState>(budgetPillStore);
-  return <><BudgetPillView {...budget} />{header.sessionId ? <SessionUsage key={header.sessionId} sessionId={header.sessionId} /> : null}</>;
+  return <><BudgetPillView {...budget} />{header.ownsSession && header.sessionId ? <SessionUsage key={header.sessionId} sessionId={header.sessionId} /> : null}</>;
 }
 
 /**

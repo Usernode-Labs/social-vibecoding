@@ -870,3 +870,12 @@ test('#1941: every fact stays on the strip — nothing is folded away to make it
   assert.deepEqual(ids, ['dc-session-title', 'dc-pr-header-link', 'dc-venue-select', 'dc-mode-switch', 'dc-session-actions']);
   for (const c of top) assert.doesNotMatch(c.class || '', /\bhidden\b|max-sm:hidden/);
 });
+
+test('session ownership is published for private composer reads', () => {
+  const { sandbox, view } = makeDevChat();
+  sandbox.App.user = { id: 42, isAdmin: true };
+  assert.equal(view({ ...SESSION, user_id: 42 }).ownsSession, true);
+  assert.equal(view({ ...SESSION, user_id: 9, shared_at: '2026-09-28' }).ownsSession, false);
+  delete sandbox.App.user;
+  assert.equal(view({ ...SESSION, user_id: 42 }).ownsSession, false);
+});
