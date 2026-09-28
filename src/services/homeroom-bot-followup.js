@@ -125,9 +125,9 @@ function followUpPrompt({ seed, proposalBlock = '', prNumber = null, replies = [
     '- "person": what they want is a decision for a person (taste, policy, something outside this app), or it would change what the proposal is. Say so and why. Change no files.',
     '',
     `END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it:`,
-    `{"action": ${actions}, "reply": "what to post back to them, in plain language", "summary": "for revise only: one sentence on what you changed", "stop_mentioning": ["name of each person who asked the bot to stop tagging them"]}`,
+    `{"action": ${actions}, "reply": "what to post back to them, in plain language", "summary": "for revise only: one sentence on what you changed", "stop_mentioning": ["name of each person who asked the bot to stop tagging them"], "resume_mentioning": ["name of each person who asked to be tagged again"]}`,
     '',
-    '`stop_mentioning`: the names, exactly as the replies show them, of anybody who asked the Homeroom bot itself to stop tagging, messaging or notifying them. Only a person asking for themselves, and only about the bot, not about the app\'s own notifications. Usually empty. If that is all a reply says, "answer" with a short acknowledgement.',
+    '`stop_mentioning`: the names, exactly as the replies show them, of anybody who asked the Homeroom bot itself to stop tagging, messaging or notifying them. Only a person asking for themselves, and only about the bot, not about the app\'s own notifications. Usually empty. `resume_mentioning`: anybody who, after asking the bot to stop, asked to be tagged again; list a person in whichever they asked for most recently, never both. If that is all a reply says, "answer" with a short acknowledgement.',
   );
   return lines.join('\n');
 }
@@ -155,6 +155,7 @@ function parseFollowUp(text) {
     return {
       action, reply, summary: clipText(obj.summary, 600) || null,
       stopMentioning: parseStopMentioning(obj.stop_mentioning),
+      resumeMentioning: parseStopMentioning(obj.resume_mentioning),
     };
   }
   return null;

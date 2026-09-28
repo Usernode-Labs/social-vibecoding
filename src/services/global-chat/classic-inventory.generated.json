@@ -1407,6 +1407,24 @@
     {
       "source": "src/routes/admin.js",
       "method": "POST",
+      "path": "/api/admin/homeroom-bot/mention-optouts/remove",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.homeroom.bot.mention.optouts.remove.2931b0a5",
+      "domain": "admin",
+      "risk": "destructive",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "POST",
       "path": "/api/admin/homeroom-bot/retriage-questions",
       "expression": null,
       "status": "mapped",

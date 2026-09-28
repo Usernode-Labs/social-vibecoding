@@ -1171,6 +1171,21 @@ function adminRoutes(config) {
     }
   });
 
+  // An ask to stop tagging that the bot misread: the person is tagged again
+  // on that issue.
+  router.post('/api/admin/homeroom-bot/mention-optouts/remove', requireAdminWrite, async (req, res) => {
+    try {
+      const { slug, issueNumber, username } = req.body || {};
+      const result = await homeroomBot.removeMentionOptOut(pool, { slug, issueNumber, username });
+      if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
+      log.info('admin', 'Homeroom bot mention opt-out removed', { by: req.user.username, slug, issueNumber: Number(issueNumber), username });
+      res.json({ ok: true, mentionOptOuts: await homeroomBot.mentionOptOutList(pool) });
+    } catch (err) {
+      log.error('admin', 'Homeroom bot mention opt-out removal failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Every question verdict on a shadow app, triaged again under the current
   // prompt, so the old and new verdicts can be compared in the export.
   router.post('/api/admin/homeroom-bot/retriage-questions', requireAdminWrite, drainGuard, async (req, res) => {

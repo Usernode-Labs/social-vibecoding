@@ -580,6 +580,7 @@ function parseVerdict(text) {
             : null,
       demoted: !!demoted,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
+      resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
     };
   }
   return null;
@@ -1738,10 +1739,11 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     log.warn('homeroom-bot', 'Could not supersede a queued shadow build', { app: app.slug, issueNumber, err: err.message });
   });
   // Before anything is posted: whoever asked the bot to stop tagging them
-  // is left out of this post and every later one on the issue.
-  if (parsed.stopMentioning?.length) {
-    await live.recordMentionOptOuts({
-      pool, github, app, repo, issueNumber, names: parsed.stopMentioning, runId,
+  // is left out of this post and every later one on the issue, and whoever
+  // asked to be tagged again is back in.
+  if (parsed.stopMentioning?.length || parsed.resumeMentioning?.length) {
+    await live.applyMentionAsks({
+      pool, github, app, repo, issueNumber, stop: parsed.stopMentioning, resume: parsed.resumeMentioning, runId,
     }).catch((err) => log.warn('homeroom-bot', 'Could not record a mention opt-out', { app: app.slug, issueNumber, err: err.message }));
   }
   log.info('homeroom-bot', 'Triaged', {
@@ -2360,9 +2362,10 @@ async function runFollowUp(pool, config, {
   }
 
   const parsed = followup.parseFollowUp(result.lastResultText);
-  if (parsed?.stopMentioning?.length) {
-    await live.recordMentionOptOuts({
-      pool, github, app, repo, issueNumber, names: parsed.stopMentioning, proposalSessionId: session.id,
+  if (parsed?.stopMentioning?.length || parsed?.resumeMentioning?.length) {
+    await live.applyMentionAsks({
+      pool, github, app, repo, issueNumber, stop: parsed.stopMentioning, resume: parsed.resumeMentioning,
+      proposalSessionId: session.id,
     }).catch((err) => log.warn('homeroom-bot', 'Could not record a mention opt-out', { app: app.slug, issueNumber, err: err.message }));
   }
   const moved = followup.headMoved({
@@ -3096,7 +3099,49 @@ async function adminPayload(pool, config, {
     apps: appRows,
     caps: { proposalsPerApp: PROPOSALS_PER_APP_CAP, questionsPerAppPerDay: QUESTION_TRIPWIRE_PER_DAY },
     builds: await buildLaneSummary(pool),
+    mentionOptOuts: await mentionOptOutList(pool),
   };
+}
+
+const MENTION_OPTOUTS_PAGE = 100;
+
+/** Who asked the bot to stop tagging them, newest first, for the dashboard. */
+async function mentionOptOutList(pool) {
+  const { rows } = await pool.query(
+    `SELECT o.issue_number, o.created_at, u.username, a.slug AS app_slug, a.name AS app_name,
+            COUNT(*) OVER ()::int AS total
+       FROM homeroom_bot_mention_optouts o
+       JOIN users u ON u.id = o.user_id
+       JOIN apps a ON a.id = o.app_id
+      ORDER BY o.created_at DESC, o.issue_number
+      LIMIT $1`,
+    [MENTION_OPTOUTS_PAGE],
+  );
+  return {
+    total: rows[0]?.total || 0,
+    items: rows.map(({ total, ...r }) => r),
+  };
+}
+
+/**
+ * An admin's "tag again", for an ask the bot misread: the person goes back
+ * into that issue's mentions. The person themselves does this by saying so
+ * on the issue.
+ */
+async function removeMentionOptOut(pool, { slug, issueNumber, username }) {
+  const n = Number(issueNumber);
+  if (!Number.isInteger(n) || n <= 0) return { ok: false, status: 400, error: 'Invalid issue number' };
+  if (typeof slug !== 'string' || !/^[a-z0-9-]{1,120}$/.test(slug)) return { ok: false, status: 400, error: 'Invalid app slug' };
+  if (typeof username !== 'string' || !username || username.length > 64) return { ok: false, status: 400, error: 'Invalid username' };
+  const { rowCount } = await pool.query(
+    `DELETE FROM homeroom_bot_mention_optouts o
+      USING apps a, users u
+      WHERE o.app_id = a.id AND o.user_id = u.id
+        AND a.slug = $1 AND o.issue_number = $2 AND LOWER(u.username) = LOWER($3)`,
+    [slug, n, username],
+  );
+  if (!rowCount) return { ok: false, status: 404, error: 'No such opt-out' };
+  return { ok: true };
 }
 
 async function rateRun(pool, { id, rating, note, actorId }) {
@@ -3201,6 +3246,8 @@ module.exports = {
   rateRun,
   enqueueNow,
   retriageQuestions,
+  mentionOptOutList,
+  removeMentionOptOut,
   wake,
   wakeAll,
   backoffFor,

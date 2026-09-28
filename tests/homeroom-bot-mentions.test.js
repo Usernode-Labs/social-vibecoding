@@ -52,6 +52,29 @@ test('the names are cleaned: one each, no @, nothing that is not a handle', () =
   assert.deepEqual(followup.parseFollowUp('```json\n{"action":"answer","reply":"Will do.","stop_mentioning":["maya"]}\n```').stopMentioning, ['maya']);
 });
 
+test('asking to be tagged again is read the same way, from both turns', () => {
+  const triage = read('src/prompts/homeroom-bot-triage.md');
+  assert.match(triage, /`resume_mentioning`: the names of anybody who, after asking the bot to stop, asked to be tagged again/);
+  assert.match(triage, /List a person in whichever of the two they asked for most recently, never in both\./);
+  assert.match(triage, /"resume_mentioning": \[/);
+  assert.match(read('src/services/homeroom-bot-followup.js'), /`resume_mentioning`: anybody who, after asking the bot to stop, asked to be tagged again/);
+  assert.deepEqual(bot.parseVerdict('```json\n{"verdict":"person","reason":"x","resume_mentioning":["@maya"]}\n```').resumeMentioning, ['maya']);
+  assert.deepEqual(followup.parseFollowUp('```json\n{"action":"answer","reply":"Sure.","resume_mentioning":["maya"]}\n```').resumeMentioning, ['maya']);
+});
+
+test('the dashboard lists who asked, and an admin can tag somebody again after a misread', () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(tsx, /id="admin-homeroom-bot-optouts"/);
+  assert.match(tsx, /<h3 className=\{AdminUI\.cardTitle\}>Asked not to be tagged<\/h3>/);
+  assert.match(tsx, /\{`@\$\{o\.username\} on \$\{o\.app_name\} #\$\{o\.issue_number\}`\}/);
+  assert.match(tsx, /write\('\/api\/admin\/homeroom-bot\/mention-optouts\/remove', 'POST',/);
+  assert.match(tsx, /Tag again from here only\n\s+when the bot misread what somebody said\./);
+  assert.match(tsx, /\{canWrite \? \(\n\s+<button type="button" className=\{AdminUI\.btn\.outlineSm\} disabled=\{busy !== ''\} onClick=\{\(\) => tagAgain\(o\)\}>/,
+    'a view-only admin sees the list, not the button');
+  const routes = read('src/routes/admin.js');
+  assert.match(routes, /router\.post\('\/api\/admin\/homeroom-bot\/mention-optouts\/remove', requireAdminWrite,/);
+});
+
 // ── Posting to several people ───────────────────────────────────────────
 
 test('a post tags everyone in the thread and notifies each of them; GitHub gets no platform handles', async () => {
@@ -89,9 +112,9 @@ test('a post tags everyone in the thread and notifies each of them; GitHub gets 
 
 test('triage records the ask before the verdict is posted, so that very post leaves them out', async (t) => {
   const order = [];
-  const realRecord = live.recordMentionOptOuts;
-  t.after(() => { live.recordMentionOptOuts = realRecord; });
-  live.recordMentionOptOuts = async (args) => { order.push(['optout', args.names, args.runId]); return args.names; };
+  const realApply = live.applyMentionAsks;
+  t.after(() => { live.applyMentionAsks = realApply; });
+  live.applyMentionAsks = async (args) => { order.push(['asks', args.stop, args.resume, args.runId]); return {}; };
   const pool = {
     async query(sql) {
       const s = String(sql);
@@ -109,7 +132,7 @@ test('triage records the ask before the verdict is posted, so that very post lea
     },
     worker: {
       async ensureWorkerImage() {}, async ensureWorker() { return 'w'; },
-      async execInWorker() { return { lastResultText: '```json\n{"verdict":"person","reason":"Taste.","stop_mentioning":["maya"]}\n```' }; },
+      async execInWorker() { return { lastResultText: '```json\n{"verdict":"person","reason":"Taste.","stop_mentioning":["maya"],"resume_mentioning":["sam"]}\n```' }; },
       isInFlight: () => false, async clearActiveTurn() {},
     },
     agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
@@ -127,12 +150,12 @@ test('triage records the ask before the verdict is posted, so that very post lea
     item: { id: 1, issue_number: 12 }, mode: 'shadow', settings: { mode: 'shadow', liveApps: [], turnSeconds: 60 }, deps,
   });
   assert.equal(out.verdict, 'person');
-  assert.deepEqual(order, [['run'], ['optout', ['maya'], 900]]);
+  assert.deepEqual(order, [['run'], ['asks', ['maya'], ['sam'], 900]]);
   const src = read('src/services/homeroom-bot.js');
   const tri = src.slice(src.indexOf('await supersedeQueuedBuilds(pool, { appId: app.id, issueNumber, runId })'), src.indexOf("log.info('homeroom-bot', 'Triaged', {"));
-  assert.match(tri, /live\.recordMentionOptOuts\(/, 'recorded before actOnVerdict runs, in the same run');
+  assert.match(tri, /live\.applyMentionAsks\(/, 'recorded before actOnVerdict runs, in the same run');
   const fu = src.slice(src.indexOf('const parsed = followup.parseFollowUp(result.lastResultText);'), src.indexOf('const moved = followup.headMoved({'));
-  assert.match(fu, /live\.recordMentionOptOuts\(\{\n\s+pool, github, app, repo, issueNumber, names: parsed\.stopMentioning, proposalSessionId: session\.id,/,
+  assert.match(fu, /live\.applyMentionAsks\(\{\n\s+pool, github, app, repo, issueNumber, stop: parsed\.stopMentioning, resume: parsed\.resumeMentioning,\n\s+proposalSessionId: session\.id,/,
     'a follow-up reads it too, from the proposal\'s thread as well');
   assert.match(src, /mentions: live\.tagsPoster\(kind\) \? targets : \[\], notifications: deps\.notifications \|\| null,/,
     'follow-up replies tag the same people');
@@ -255,5 +278,37 @@ test('who is tagged, and who can opt out, against the full PostgreSQL schema', {
     await pool.query('DELETE FROM homeroom_bot_mention_optouts');
     const all = await targets();
     assert.ok(!all.includes('demo_partner') && !all.includes('homeroom_bot'));
+  });
+
+  await t.test('somebody who asked to stop can ask to be tagged again, and only for themselves', async () => {
+    await live.recordMentionOptOuts({ pool, github, app, repo, issueNumber: 24, names: ['maya', 'OctoCat'] });
+    assert.deepEqual(await targets(), ['evan']);
+    assert.deepEqual(await live.clearMentionOptOuts({ pool, github, app, repo, issueNumber: 24, names: ['maya', 'sam', 'nobody'] }), ['maya'],
+      'sam never wrote on #24, nobody never wrote at all');
+    assert.deepEqual(await targets(), ['evan', 'maya']);
+    assert.deepEqual(await live.clearMentionOptOuts({ pool, github, app, repo, issueNumber: 24, names: ['maya'] }), [], 'nothing left to clear');
+  });
+
+  await t.test('stop and resume together: a name in both is left as it was', async () => {
+    const out = await live.applyMentionAsks({ pool, github, app, repo, issueNumber: 24, stop: ['maya', 'evan'], resume: ['Maya', 'octocat'] });
+    assert.deepEqual(out, { stopped: ['evan'], resumed: ['octo'] });
+    const { rows } = await pool.query(
+      `SELECT u.username FROM homeroom_bot_mention_optouts o JOIN users u ON u.id = o.user_id WHERE o.issue_number = 24 ORDER BY 1`,
+    );
+    assert.deepEqual(rows.map((r) => r.username), ['evan'], 'maya untouched (tagged), octo back in, evan out');
+  });
+
+  await t.test('the dashboard\'s list, and an admin\'s tag again', async () => {
+    const list = await bot.mentionOptOutList(pool);
+    assert.equal(list.total, 1);
+    assert.deepEqual(list.items.map((o) => [o.app_slug, o.issue_number, o.username]), [['rss', 24, 'evan']]);
+    assert.ok(list.items[0].created_at);
+    await live.recordMentionOptOuts({ pool, github, app, repo, issueNumber: 24, names: ['maya'] });
+    assert.deepEqual(await bot.removeMentionOptOut(pool, { slug: 'rss', issueNumber: 24, username: 'EVAN' }), { ok: true });
+    assert.deepEqual((await bot.mentionOptOutList(pool)).items.map((o) => o.username), ['maya'], 'that one person only');
+    await pool.query('DELETE FROM homeroom_bot_mention_optouts');
+    assert.equal((await bot.removeMentionOptOut(pool, { slug: 'rss', issueNumber: 24, username: 'evan' })).status, 404);
+    assert.equal((await bot.removeMentionOptOut(pool, { slug: 'Bad Slug', issueNumber: 24, username: 'evan' })).status, 400);
+    assert.equal((await bot.removeMentionOptOut(pool, { slug: 'rss', issueNumber: 0, username: 'evan' })).status, 400);
   });
 });

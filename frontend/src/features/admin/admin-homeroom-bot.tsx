@@ -162,6 +162,16 @@ interface Payload {
   apps: { slug: string; name: string }[];
   caps: { proposalsPerApp: number; questionsPerAppPerDay: number };
   builds: BuildLane;
+  mentionOptOuts: { total: number; items: MentionOptOut[] };
+}
+
+// Somebody who asked the bot to stop tagging them on one issue.
+interface MentionOptOut {
+  app_slug: string;
+  app_name: string;
+  issue_number: number;
+  username: string;
+  created_at: string;
 }
 
 type Tone = 'ok' | 'err';
@@ -524,6 +534,14 @@ function HomeroomBotSection() {
       tone: 'ok',
     });
     load();
+  };
+
+  // An ask the bot misread: tag this person on this issue again.
+  const tagAgain = async (o: MentionOptOut) => {
+    const data = await write('/api/admin/homeroom-bot/mention-optouts/remove', 'POST',
+      { slug: o.app_slug, issueNumber: o.issue_number, username: o.username },
+      `@${o.username} is tagged again on ${o.app_name} #${o.issue_number}.`);
+    if (data && alive.current && payload) setPayload({ ...payload, mentionOptOuts: data.mentionOptOuts });
   };
 
   const savedLive = payload?.settings.liveApps || [];
@@ -942,6 +960,38 @@ function HomeroomBotSection() {
             </button>
           </div>
         ) : null}
+      </div>
+
+      <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-optouts">
+        <div className={AdminUI.cardHeader}>
+          <h3 className={AdminUI.cardTitle}>Asked not to be tagged</h3>
+          <span className={AdminUI.cardDescription} id="admin-homeroom-bot-optouts-count">
+            {payload ? `${payload.mentionOptOuts.total} ${payload.mentionOptOuts.total === 1 ? 'person' : 'people'}` : ''}
+          </span>
+        </div>
+        <p className={`${AdminUI.muted} mb-2`}>
+          The bot tags whoever filed an issue and whoever took part in it, except these people, who asked
+          it to stop on that issue. They are tagged again when they say so there. Tag again from here only
+          when the bot misread what somebody said.
+        </p>
+        {payload && payload.mentionOptOuts.items.length ? (
+          <ul className="text-sm space-y-1" id="admin-homeroom-bot-optouts-list">
+            {payload.mentionOptOuts.items.map((o) => (
+              <li key={`${o.app_slug}-${o.issue_number}-${o.username}`} className="flex flex-wrap items-center gap-2"
+                data-optout={`${o.app_slug}#${o.issue_number}@${o.username}`}>
+                <span>{`@${o.username} on ${o.app_name} #${o.issue_number}`}</span>
+                <span className={AdminUI.muted}>{`since ${when(o.created_at)}`}</span>
+                {canWrite ? (
+                  <button type="button" className={AdminUI.btn.outlineSm} disabled={busy !== ''} onClick={() => tagAgain(o)}>
+                    Tag again
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className={AdminUI.muted} id="admin-homeroom-bot-optouts-none">Nobody has asked.</p>
+        )}
       </div>
 
       <div className={`${AdminUI.card} p-4`}>

@@ -437,18 +437,15 @@ function parseStopMentioning(value) {
 }
 
 /**
- * The people a triage or follow-up turn read asking the bot to stop tagging
- * them on this issue, recorded so no later post does. A name counts only if
- * it is somebody who actually wrote there: a Homeroom username from the
- * issue's or the proposal's thread, or a GitHub login linked to a Homeroom
- * account that commented on the issue. Nobody can opt somebody else out.
- * Resolves the usernames recorded.
+ * Of the names a turn read, the people who actually wrote on this issue: a
+ * Homeroom username from the issue's thread (or the proposal's, on a
+ * follow-up), or a GitHub login linked to a Homeroom account that commented
+ * on the issue. Only they can change whether the bot tags them here, and
+ * only for themselves. Resolves Map(user id → username).
  */
-async function recordMentionOptOuts({
-  pool, github, app, repo, issueNumber, names, runId = null, proposalSessionId = null,
-}) {
+async function issueAuthorsNamed({ pool, github, app, repo, issueNumber, names, proposalSessionId = null }) {
   const asked = [...new Set((names || []).map((n) => String(n || '').replace(/^@/, '').trim().toLowerCase()).filter(Boolean))];
-  if (!asked.length) return [];
+  if (!asked.length) return new Map();
   const { rows: fromThread } = await pool.query(
     `SELECT DISTINCT u.id, u.username
        FROM chat_messages m
@@ -472,7 +469,18 @@ async function recordMentionOptOuts({
   } catch {
     fromGithub = [];
   }
-  const people = new Map([...fromThread, ...fromGithub].map((u) => [u.id, u.username]));
+  return new Map([...fromThread, ...fromGithub].map((u) => [u.id, u.username]));
+}
+
+/**
+ * The people a triage or follow-up turn read asking the bot to stop tagging
+ * them on this issue, recorded so no later post does. Resolves the
+ * usernames recorded.
+ */
+async function recordMentionOptOuts({
+  pool, github, app, repo, issueNumber, names, runId = null, proposalSessionId = null,
+}) {
+  const people = await issueAuthorsNamed({ pool, github, app, repo, issueNumber, names, proposalSessionId });
   if (!people.size) return [];
   await pool.query(
     `INSERT INTO homeroom_bot_mention_optouts (app_id, issue_number, user_id, run_id)
@@ -482,6 +490,47 @@ async function recordMentionOptOuts({
   );
   log.info('homeroom-bot', 'Stopped tagging people who asked', { app: app.slug, issueNumber, people: [...people.values()] });
   return [...people.values()];
+}
+
+/**
+ * The people a turn read asking to be tagged again on this issue, after
+ * they had asked it to stop. The same rule: only somebody who wrote there,
+ * only for themselves. Resolves the usernames tagged again.
+ */
+async function clearMentionOptOuts({
+  pool, github, app, repo, issueNumber, names, proposalSessionId = null,
+}) {
+  const people = await issueAuthorsNamed({ pool, github, app, repo, issueNumber, names, proposalSessionId });
+  if (!people.size) return [];
+  const { rows } = await pool.query(
+    `DELETE FROM homeroom_bot_mention_optouts
+      WHERE app_id = $1 AND issue_number = $2 AND user_id = ANY($3::int[])
+      RETURNING user_id`,
+    [app.id, issueNumber, [...people.keys()]],
+  );
+  const back = rows.map((r) => people.get(r.user_id));
+  if (back.length) log.info('homeroom-bot', 'Tagging people again who asked', { app: app.slug, issueNumber, people: back });
+  return back;
+}
+
+/**
+ * What a turn read about tagging, applied before anything from that run is
+ * posted. A name in both lists is left as it was: the turn could not tell
+ * which ask came last, and the prompt forbids listing anybody twice.
+ */
+async function applyMentionAsks({
+  pool, github, app, repo, issueNumber, stop = [], resume = [], runId = null, proposalSessionId = null,
+}) {
+  const lower = (list) => new Set((list || []).map((n) => String(n).toLowerCase()));
+  const both = [...lower(stop)].filter((n) => lower(resume).has(n));
+  const keep = (list) => (list || []).filter((n) => !both.includes(String(n).toLowerCase()));
+  const stopped = keep(stop).length
+    ? await recordMentionOptOuts({ pool, github, app, repo, issueNumber, names: keep(stop), runId, proposalSessionId })
+    : [];
+  const resumed = keep(resume).length
+    ? await clearMentionOptOuts({ pool, github, app, repo, issueNumber, names: keep(resume), proposalSessionId })
+    : [];
+  return { stopped, resumed };
 }
 
 /** The Homeroom username of whoever filed the issue, or null. */
@@ -1081,6 +1130,8 @@ module.exports = {
   issuePoster,
   mentionTargets,
   recordMentionOptOuts,
+  clearMentionOptOuts,
+  applyMentionAsks,
   parseStopMentioning,
   MAX_MENTIONS,
   post,

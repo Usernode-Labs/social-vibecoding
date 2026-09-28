@@ -36,6 +36,7 @@ Also state, whatever the verdict:
 - `determined`: true when a competent developer could build this now without asking anyone anything (this can be true even when you answer `person`).
 - `missing_fact`: the ONE fact that would most change your verdict, in one sentence. When nothing is missing, say "none".
 - `stop_mentioning`: the names, exactly as the discussion shows them, of anybody who asked the Homeroom bot itself to stop tagging, messaging or notifying them ("you can stop messaging me", "no need to ping me"). Only a person asking for themselves, and only about the bot: a request about the app's own notifications ("stop the app notifying me at night") is part of the request, not this. Usually empty.
+- `resume_mentioning`: the names of anybody who, after asking the bot to stop, asked to be tagged again ("actually, keep me posted"). The same rules. List a person in whichever of the two they asked for most recently, never in both. Usually empty.
 
 Work quietly and briefly: read what you need, then answer. Do not narrate. A triage takes a handful of reads, not a tour of the repository:
 - Do not read a file or line range you have already read. You still have it.
@@ -56,6 +57,7 @@ END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it. Keep ev
   "build_note": "a few lines: files and approach (verdict ready; for question, the build if the default were accepted)",
   "assumptions": ["one short line per choice you made (verdict ready)"],
   "stop_mentioning": ["name of each person who asked the bot to stop tagging them, usually none"],
+  "resume_mentioning": ["name of each person who asked to be tagged again, usually none"],
   "reason": "which criterion fails (person), or what a person should do with it (empty)"
 }
 ```
