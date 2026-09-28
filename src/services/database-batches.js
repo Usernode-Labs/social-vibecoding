@@ -9,6 +9,11 @@ const ACTIVE=['Pending','Running','NeedsAttention'];
 const error=(message,status=409)=>Object.assign(new Error(message),{status});
 const hash=p=>crypto.createHash('sha256').update(JSON.stringify(p)).digest('hex');
 const newId=prefix=>prefix+new Date().toISOString().slice(0,10).replaceAll('-','')+'-'+crypto.randomBytes(4).toString('hex');
+function batchLimit(policy) {
+ const limit=policy.bulk?.maxApps ?? 20;
+ if(!Number.isSafeInteger(limit)||limit<1||limit>100)throw error('Invalid migration batch limit',503);
+ return limit;
+}
 function distribution(policy,apps,observations,reservations,targets){
  const ids=new Set(apps.map(a=>a.appId));
  const held=reservations.filter(r=>!ids.has(Number(r.app_id)) && !apps.some(a=>a.name===r.binding));
@@ -41,17 +46,18 @@ function createBatches({execute,executeBulk,store,getPolicy=loadPolicy,pool=getP
  }
  async function plan(body,userId){
   const p=getPolicy();if(!p.bulk?.enabled)throw error('Bulk migrations disabled',503);
+  const limit=batchLimit(p);
   const automatic=body?.mode==='balanced' && Object.keys(body).length===1;
   let available;
   if(automatic){
    available=await executeBulk('inventory');
    body={apps:available.filter(a=>a.phase==='Ready' && a.eligibility?.eligible===true).map(a=>a.name),targets:p.pools.filter(t=>t.acceptingNewApps).map(t=>t.id)};
-   if(body.apps.length>20)throw error('More than 20 apps are ready. Use a custom scope of up to 20 apps.',400);
+   if(body.apps.length>limit)throw error(`More than ${limit} apps are ready. Use a custom scope of up to ${limit} apps.`,400);
    if(!body.apps.length)throw error('No apps passed migration eligibility; inspect the inventory exclusions',400);
    if(!body.targets.length)throw error('No shared pools are accepting apps',400);
   }
   if(!body || Object.keys(body).some(k=>!['apps','targets'].includes(k)) || !Array.isArray(body.apps)||!Array.isArray(body.targets)
-    || !body.apps.length || body.apps.length>20 || !body.targets.length || body.targets.length>32
+    || !body.apps.length || body.apps.length>limit || !body.targets.length || body.targets.length>32
     || new Set(body.apps).size!==body.apps.length || new Set(body.targets).size!==body.targets.length
     || body.targets.some(id=>!p.pools.some(t=>t.id===id&&t.acceptingNewApps)))throw error('Select apps and approved shared pools',400);
   available ||= await executeBulk('inventory');
@@ -111,4 +117,4 @@ function createBatches({execute,executeBulk,store,getPolicy=loadPolicy,pool=getP
  }
  return{inventory,plan,start,action,tick,get,active:async()=>!!(await pool.query('SELECT 1 FROM app_database_batches WHERE phase=ANY($1) LIMIT 1',[ACTIVE])).rowCount};
 }
-module.exports={createBatches,distribution};
+module.exports={createBatches,distribution,batchLimit};

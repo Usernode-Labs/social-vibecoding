@@ -61,8 +61,8 @@ test('distribution includes an empty third pool and keeps equally good existing 
  assert.equal(result.moves.length+result.kept.length,3);
 });
 
-function planningFixture({inventory=apps,observed=observations(),closed=false}={}){
- const calls=[];const p={...policy,pools:policy.pools.map(t=>({...t,acceptingNewApps:!closed||t.id==='b'}))};
+function planningFixture({inventory=apps,observed=observations(),closed=false,maxApps}={}){
+ const calls=[];const p={...policy,bulk:{...policy.bulk,...(maxApps===undefined?{}:{maxApps})},pools:policy.pools.map(t=>({...t,acceptingNewApps:!closed||t.id==='b'}))};
  const pool={query:async(sql,args=[])=>{
   calls.push({sql,args});
   if(sql.startsWith('SELECT'))return{rows:[]};
@@ -125,4 +125,20 @@ test('confirmation rechecks eligibility and never queues a stale reviewed plan',
  const service=createBatches({getPolicy:()=>policy,pool:{connect:async()=>client},store:{list:async()=>[]},observe:async()=>observations(),executeBulk:async()=>[{...apps[0],eligibility:{eligible:false,reasons:['DATABASE_SETTINGS']}}]});
  await assert.rejects(service.start(id,{confirmation:id},42));
  assert(!queries.some(q=>q.startsWith('UPDATE')));assert(queries.includes('ROLLBACK'));
+});
+
+
+test('configured production batch admits all 51 apps without truncation',async()=>{
+ const fleet=Array.from({length:51},(_,i)=>({...apps[0],name:`app-${i+100}-production`,appId:i+100,slug:`app-${i+100}`,current:{targetId:'central',revision:0}}));
+ const observed=observations().map(o=>({...o,capacity:{...o.capacity,cpuBudgetCores:100,memoryBudgetBytes:1024**4,storageCapacityBytes:1024**4}}));
+ const f=planningFixture({inventory:fleet,observed,maxApps:64});
+ const result=await f.service.plan({mode:'balanced'},42);
+ assert.equal(result.moves.length,51);assert.equal(f.executed.length,51);
+ assert.equal(f.calls.filter(c=>c.sql.startsWith('INSERT')).length,1);
+});
+
+test('batch limit rejects invalid policy and oversized reviewed scope',()=>{
+ const {batchLimit}=require('../src/services/database-batches');
+ assert.equal(batchLimit({}),20);assert.equal(batchLimit({bulk:{maxApps:64}}),64);
+ for(const maxApps of [0,101,2.5,'64'])assert.throws(()=>batchLimit({bulk:{maxApps}}),/Invalid/);
 });

@@ -225,3 +225,12 @@ Release `0.0.951001-feat-k8s` pins source
 
 All 16 staging Argo applications are Healthy/Synced. These results do not authorize
 or certify a production migration.
+
+## Larger production batches
+
+The operator policy may set `bulk.maxApps` from 1 to 100 (default 20). The prepared
+production configuration uses 64, allowing the reviewed 51-app cohort in one
+batch without silent truncation. Bulk execution is bounded to four hours, and
+read-only inventory to ten minutes. Timeout still requires explicit recovery;
+completed children are skipped. Scope, capacity and metadata checks remain in
+force. The executor uses the operator-configured job namespace for recovery.

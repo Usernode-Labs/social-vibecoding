@@ -33,7 +33,7 @@ function createStore(namespace) {
     get: id => get(RESOURCE, id),
     cluster: (namespace,name) => get('clusters.postgresql.cnpg.io',name,namespace),
     binding: name => get('appdatabasebinding', name),
-    hasJob: async id => !!await get('job', id, 'sv-db-stockroom'),
+    hasJob: async id => !!await get('job', id, loadPolicy().operator?.jobNamespace || 'sv-db-stockroom'),
     list: async () => JSON.parse(await kube(['get', RESOURCE, '-n', namespace, '-o', 'json'])).items,
     create: async (id, spec) => JSON.parse(await kube(['create', '-f', '-', '-o', 'json'], {
       apiVersion: GROUP + '/v1alpha1', kind: 'AppDatabaseMigration', metadata: { name: id, namespace }, spec })),
@@ -55,7 +55,7 @@ async function execute(command, { id, binding, target, expectedRevision }) {
 async function executeBulk(command,{id}={}) {
   const args=['/opt/sv-database-operator/bulk-app-databases.py',command,'--kubeconfig',KUBECONFIG,'--cache-dir','/tmp/kube-cache'];
   if(id)args.push('--batch',id);
-  const output=await run('python3',args,undefined,command==='inventory'?60000:60*60*1000);
+  const output=await run('python3',args,undefined,command==='inventory'?10*60*1000:4*60*60*1000);
   return JSON.parse(output.trim().split('\n').at(-1));
 }
 async function main() {
