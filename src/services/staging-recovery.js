@@ -57,6 +57,29 @@ function isStuckCheckRecoveryScope(session) {
   return !hasUnsubmittedUpload;
 }
 
+// A deploy's SIGTERM kills the staging builds its process was running
+// (server.js cleanup), and nothing on the cluster outlives a build: the
+// check harvest (check-harvest.js) re-seats capture and unit-suite Jobs, not
+// builds. Left alone, the run reads as a live 'pending' build until
+// CHECKS_STALE_MS passes, and on a day that merges every few minutes the
+// next deploy often lands first. Clearing checks_checked_at makes it overdue
+// now (checkRunOverdue and findStuckCheckSessions read a missing clock as
+// overdue), so the next leader's reconcile re-drives it as it takes over.
+// Only a run still pending in its build phase: a run that reached its
+// capture is the harvest's, and a verdict that landed meanwhile is kept.
+async function markInterruptedBuilds(pool, sessionIds) {
+  const ids = [...new Set((sessionIds || []).map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+  if (!ids.length) return [];
+  const { rows } = await pool.query(
+    `UPDATE chat_sessions SET checks_checked_at = NULL
+      WHERE id = ANY($1::int[])
+        AND check_state = 'pending' AND check_phase = 'building'
+      RETURNING id`,
+    [ids]
+  );
+  return rows.map((r) => Number(r.id));
+}
+
 // One query shared by boot reconciliation and the live sweeper. Keeping the
 // scope here prevents the two recovery paths from drifting back to the old
 // promoted-only rule that stranded pre-vote CLI handoffs after a restart.
@@ -846,6 +869,7 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
 }
 
 module.exports = {
+  markInterruptedBuilds,
   DEFAULT_CHECKS_STALE_MS,
   checksStaleMs,
   checkRunOverdue,

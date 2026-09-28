@@ -70,7 +70,15 @@ If a story opens a running app, choose a public app with a deployed commit in
 the actual app list. evidence_get_context includes eligibleHostedAppSlugs
 from the paired app catalogs; these are candidate slugs, not proof that their
 documents and scripts load. Browse the All apps directory and search a
-candidate slug there. Do not conclude that no usable app exists after trying
+candidate slug there. For a claim about Homeroom's generic hosted-app frame,
+launch, or bridge, use the evidence-owned hosted app named in
+availableFixtures. It is a real short-lived deployment reached through the
+ordinary app directory, HTTPS edge, managed iframe, and bridge. Verify it on
+both revisions like any other candidate. If that fixture itself fails, report
+the failure instead of trying arbitrary user apps. Do not substitute the
+fixture for a claim about one specific user app's own content or behavior;
+that claim must use the named app.
+Do not conclude that no usable app exists after trying
 only the Home or demo cards, or one or two failing apps while other candidates
 remain. A staging demo card without a deployment is not an app
 runtime. After clicking the app tile, use waitForHostedApp with that app's
@@ -116,11 +124,22 @@ Verify the data behind the claimed screen loaded for the story's persona.
 A plan must execute every accepted interaction step on both revisions and
 assert the accepted checkpoint after the last step. Before calling
 evidence_run_plan, compare the numbered intent.steps with the before and after
-action lists one by one. A visible control is not proof that clicking it
+action lists one by one. Exercise the final action lists on the initially
+authenticated base and head pair, then submit them directly through
+evidence_run_plan. Do not try to reset the exploration environments: replacing
+their databases invalidates the long-lived browser sessions. The platform
+resets both sides itself and bootstraps fresh persona sessions before each
+deterministic replay. Do
+not rely on a tour, dialog, banner, or saved preference you dismissed during
+earlier exploration staying dismissed after reset; encode the observed
+semantic dismissal or completion action in the replay when it blocks the
+claimed flow. A visible control is not proof that clicking it
 reaches the claimed destination: actually click it on both revisions and
 assert the resulting page or URL. If the frozen story cannot prove its full
-claim with the available fixture and replay actions, report that blocker
-instead of submitting a narrower plan that happens to pass.
+claim with the available fixture and replay actions, call
+evidence_report_blocker instead of submitting a narrower plan that happens to
+pass. Name the concrete observed missing state or capability; do not use the
+blocker tool for uncertainty or a plan validation error.
 A visible page shell, composer, or heading does not prove that an owner-scoped
 record exists. If the page says "not found", a required list is empty, or an
 API request for the record fails unexpectedly, do not submit that route. Follow the actual
@@ -178,10 +197,34 @@ validated submission; it does not wait for replay or return a verdict. After
 acceptance, finish your turn. The platform waits for replay, starts a separate
 correction turn for a repairable replay failure, and makes passing media available to human
 reviewers. You do not need image understanding or a relevance verdict. Do not
-merely narrate the replays in your final answer: submit them through the tool.`;
+merely narrate the replays in your final answer: submit them through the tool.
+Do not say that you are about to submit them. If the complete flow is known,
+your next action must be evidence_run_plan. If direct observations prove that
+an honest replay cannot be made, use evidence_report_blocker with the concrete
+reason. Do not finish with prose before one of those terminal tool calls.`;
 
-function promptFor({ repair = false } = {}) {
-  const task = repair
+function promptFor({ repair = false, completionReminder = false } = {}) {
+  const task = completionReminder && repair
+    ? `Your bounded repair exploration ended without calling
+evidence_run_plan or evidence_report_blocker. Use the rejected-plan context
+and browser observations already in this thread. Do not reset the exploration
+pair, repeat completed inspection, broaden the accepted claim, or merely say
+that you will submit. Call evidence_run_plan now with the complete corrected
+replays, preserving every accepted interaction and assertion unrelated to the
+exact replay failure. If the observations show that no honest correction is
+possible, call evidence_report_blocker with the concrete reason. This recovery
+turn exposes only those two terminal tools and requires one tool call before
+any prose.`
+    : completionReminder
+    ? `Your previous turn ended normally without calling evidence_run_plan.
+Use the browser observations already in this thread. Do not reset the
+exploration pair, repeat completed exploration, or merely say that you will
+submit. If the complete accepted flow is known, call evidence_run_plan now
+with one typed replay per story. If a real blocker prevents a valid plan,
+call evidence_report_blocker with the concrete observation instead of claiming
+that a submission happened. This recovery turn exposes only those two terminal
+tools and requires one tool call before any prose.`
+    : repair
     ? `The first submitted plan failed deterministic replay. Call
 evidence_get_context to read the rejected plan and the exact replay failure.
 Inspect the failed action or checkpoint in the live browser on BOTH exact
@@ -193,6 +236,9 @@ not remove its interactions, focus, or assertions. If a hosted app had
 browser errors or blocked external requests, inspect another deployed public app on both
 revisions and select it only if its runtime loads cleanly. Do not allow new
 origins or suppress browser errors to make the replay pass.
+The exception is the evidence-owned hosted app for a generic frame, launch,
+or bridge claim: a failure there is an infrastructure blocker to report and
+must not be hidden by switching to a user app.
 Same-origin API 404s mean the planned data route was unavailable: inspect the
 account and available fixtures, then follow a real list row to a loaded record.
 If the claim cannot be reached with that persona, report the missing fixture
@@ -201,6 +247,25 @@ If a declared controlled failure was unused, keep its exact accepted API path
 and inspect the real triggering action on both revisions. Move the failure
 toggle before that action; do not invent another path or claim success until
 the browser shows the intended error state.
+If the failure says one visible target timed out while becoming actionable,
+inspect both freshly reset revisions for the surface that intercepts it, a
+disabled state, or an unfinished transition. Add the real semantic action that
+dismisses or completes that blocker, or a bounded wait for an observed state,
+then retain and exercise the original claimed interaction. Never force-click,
+mutate the DOM, use coordinates to slip past an overlay, or navigate directly
+to skip the accepted user flow.
+If the repair context names supporting_visibility, the accepted change is
+absent on base and a separate assertion already proves that absence. Inspect
+the failed supporting target on both fresh revisions. Correct or remove only
+that unsupported context assertion if it was not a real visible prerequisite;
+retain the separate base absence proof, every accepted interaction, and the
+head-side claim. If the hidden element is required for the claimed flow, call
+evidence_report_blocker instead of weakening the claim.
+If the repair context names assertion_locator, inspect the failed assertion's
+target on both fresh revisions and change only that target. The control plane
+locks the assertion type and expected count or value, every action and route,
+the focus targets, all sibling assertions, and every other story. Do not
+remove a redundant-looking assertion or rewrite the flow to make it pass.
 Review the remaining actions, assertions, and focus targets before resubmitting.
 Do not guess a replacement from the error text alone. Submit one complete
 corrected set of replays through evidence_run_plan. An accepted response means
@@ -287,7 +352,10 @@ async function dispatchClaude(config, options, deps) {
   let result;
   try { result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
     mode: 'evidence',
-    prompt: promptFor({ repair: options.repairAttempt > 0 }),
+    prompt: promptFor({
+      repair: options.repairAttempt > 0,
+      completionReminder: options.completionReminder === true,
+    }),
     systemPrompt: SYSTEM_PROMPT,
     model,
     resumeSessionId: resumeThreadId === undefined
@@ -299,6 +367,7 @@ async function dispatchClaude(config, options, deps) {
     evidenceOrigins: origins,
     evidenceAuthTokens: authTokens,
     evidenceNavigationHints: options.navigationHints,
+    evidenceCompletionReminder: options.completionReminder === true,
     telemetryComponent: 'visual_evidence_agent',
     telemetryCorrelationId: runId,
     telemetryAttemptNumber: 1,
@@ -344,9 +413,11 @@ async function dispatchClaude(config, options, deps) {
 async function dispatchCodex(config, options, runtimeContext, deps) {
   const { pool, session, runId, origins, authTokens, onProgress, resumeThreadId } = options;
   const logicalTurnId = crypto.randomUUID();
-  let attemptResume = resumeThreadId === undefined
-    ? (session.agent_thread_id || null)
-    : resumeThreadId;
+  // Evidence always runs the Codex CLI. A build thread Claude Code wrote
+  // (#3296) is not one Codex can resume, and the runtime says so.
+  let attemptResume = runtimeContext.resumeThreadDropped
+    ? null
+    : (resumeThreadId === undefined ? (session.agent_thread_id || null) : resumeThreadId);
   let lastResult = null;
   reportDiagnostic(options, { kind: 'backend_selected', backend: 'codex_openrouter' });
 
@@ -382,7 +453,10 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
       reportDiagnostic(options, { kind: 'turn_start' });
       result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
         mode: 'evidence',
-        prompt: promptFor({ repair: options.repairAttempt > 0 }),
+        prompt: promptFor({
+          repair: options.repairAttempt > 0,
+          completionReminder: options.completionReminder === true,
+        }),
         systemPrompt: SYSTEM_PROMPT,
         branchName: session.branch_name,
         agentBackend: 'codex_openrouter',
@@ -396,6 +470,7 @@ async function dispatchCodex(config, options, runtimeContext, deps) {
         evidenceOrigins: origins,
         evidenceAuthTokens: authTokens,
         evidenceNavigationHints: options.navigationHints,
+        evidenceCompletionReminder: options.completionReminder === true,
         turnUuid: attempt.turnUuid,
         logicalTurnId,
         attemptNumber,

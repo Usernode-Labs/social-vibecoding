@@ -205,10 +205,10 @@ test('create: happy path files a vote-only proposal on the self-app, admin-autho
     // Vote-only: no GitHub twin.
     assert.equal(spies.ghCalls.filter((c) => c.type === 'createIssue').length, 0);
 
-    // Group line + governance-thread dual-post.
-    assert.equal(spies.systemMessages.length, 2);
+    // The governance thread only; a channel carries no activity.
+    assert.equal(spies.systemMessages.length, 1);
     assert.match(spies.systemMessages[0][2], /proposed a maintenance campaign: "Switch JWT/);
-    assert.deepEqual(spies.systemMessages[1][5], { type: 'governance', ref: 71 });
+    assert.deepEqual(spies.systemMessages[0][5], { type: 'governance', ref: 71 });
   } finally { restore(); }
 });
 
@@ -300,8 +300,8 @@ test('apply: passing gate creates the campaign row, closes the issue, starts the
     assert.equal(spies.campaignRuns.length, 1);
     assert.equal(spies.campaignRuns[0][2], 33);
 
-    // Group line + governance-thread dual-post.
-    assert.equal(spies.systemMessages.length, 2);
+    // The governance thread only; a channel carries no activity.
+    assert.equal(spies.systemMessages.length, 1);
     assert.match(spies.systemMessages[0][2], /approved by group vote/);
   } finally { restore(); }
 });

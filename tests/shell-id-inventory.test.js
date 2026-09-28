@@ -340,7 +340,6 @@ const ADDED_IDS = {
   // #messages-filter-apps left this map in #2783: "Apps" became "Channels"
   // (#messages-filter-channels, below). It was only ever an ADDED id, so it
   // simply leaves, as #workshop-scope did.
-  'messages-filter-channels': '#2783: the Apps filter, renamed and widened. The inbox is sectioned the way Discord\'s is — the chats (people, groups and agents) on top, then the CHANNELS: #general, a platform-wide room every user is in, and one channel per app the viewer is a member of, including apps nobody has spoken in yet. This filter shows that second section alone. Membership rather than visibility is still the line: a public app you have never joined is something you can go and read, not a channel in your list.',
   'messages-filter-agents': '#2718: the viewer\'s agent chats, read from features/global-chat\'s own store rather than copied into this one — that list is already loaded, merged on every thread event and invalidated by the chat itself. Gated on the same two flags the Improve panel\'s list is, so a shell with the feature off shows no Agents rows.',
   'messages-new': '#2718, then #2778: the "+" at the filter strip\'s trailing end. #2718\'s review took it off the strip because ONE control saying "new" could only mean one of the kinds the inbox holds, and replaced it with a row of compose buttons under the strip (#messages-compose, retired below). #2778 brings it back as a CHOICE: pressing it opens a small popover — the vote picker\'s placement and dismissal, shared through lib/anchor-popover.ts and lib/popover-dismiss.ts — offering a direct message, a group chat or an agent chat, so it no longer has to guess. On touch the choice is the kit\'s action sheet. The popover (#messages-new-menu) renders only once pressed, so it is not in the prerendered document and not in this map.',
   // ── #2718: the Workshop gets a scope, three tabs and a plus ──────
@@ -351,9 +350,10 @@ const ADDED_IDS = {
   // somebody has tapped or once a tab has filtered to nothing, so none of
   // them is in the prerendered document, which is what this map is for.
   // #workshop-scope left this map with the chip itself (#2759), and came
-  // back with it in #3051, below. The chip on an app's own Workshop is
-  // #dev-ws-scope-chip, which renders client-side and was never in the
-  // prerendered document.
+  // back with it in #3051, below. The chip on an app's own Workshop was
+  // #dev-ws-scope-chip, which rendered client-side and was never in the
+  // prerendered document; #3295 retired it for the header's
+  // #header-app-switch, which is conditional and so not in this map either.
   'workshop-scope': '#3051 (the owner\'s request, reversing #2759): the all-apps Workshop\'s scope chip, reading "All apps" with the grid glyph. #2759 took it off because the screen was then only the list of your apps and the chip\'s panel repeated it; the screen now carries the app Workshop\'s own Current status and Needs you tabs read across all of your apps, and the chip is what says so. Rendered unconditionally and closed, so the prerender and the first client render agree; its panel (#workshop-scope-picker) renders only once pressed, so it is not in this map.',
   'workshop-tab-status': '#3051: the all-apps Workshop\'s Current status tab, the default. Its pane is the list of your apps with their two numbers (#workshop-list, unchanged) and, under it, the work you have in flight item by item under each app, from GET /api/workshop/items. #2718\'s review retired an earlier tab of this id because it only FILTERED that list of apps; this one does not filter it.',
   'workshop-tab-needs': '#3051: the all-apps Workshop\'s Needs you tab: the votes waiting on you, item by item, grouped under each of your apps. `?ws=needs` opens the screen on it, the same parameter the app Workshop reads, so a declared check can reach the pane without a click. The pane itself is `[data-workshop-pane="needs"]`, all client data, rendered only while the tab is showing, so it is not in the cold document.',
@@ -370,6 +370,7 @@ const ADDED_IDS = {
   // the same test a stray id does — so a conditional id is recorded in prose
   // rather than in the map. They are listed here so the inventory is still
   // the complete log of what this branch added.
+  'app-menu-row-invite': 'Invite links: "Invite to community" opens the sheet\'s THIRD pane, a link to the project anyone can use to join it (features/app-context/invite-pane.tsx, services/community-invites.js). A button for About\'s reason, and rendered unconditionally, like the rows beside it, so the prerender and the hydrating render agree.',
   'app-menu-row-about': '#2718: the row that opens the sheet\'s SECOND PANE — the repository, sharing, the running version and how to add the app to a home screen. A button and not an anchor, which is the honest shape: there is no address to open in a new tab, because the pane is this sheet in another state. Two panes of one sheet rather than two sheets, because the kit cannot present a sheet while it is still dismissing another.',
   // ── #2718: the platform's five places get a bar ──────────────────
   // The app chip's menu was carrying two unlike lists — the app's own
@@ -928,6 +929,10 @@ const ADDED_IDS = {
   'app-description': 'The create dialog\'s optional "What is it?" line, under Project name in the same card (#create-name-block). A project made new sends it as `description`, which the template writes into the new repository\'s dapp.json — the line the join screen, Discover and the project\'s page show. Hidden for an import (app.css), whose own dapp.json describes it.',
   // ── #3222: the tour banner gets a real guide under it ───────────────
   'settings-tour-guide': 'Settings → Welcome tour: an in-depth written guide sitting under the Replay button, covering Home, finding and starting projects, group chat and dev sessions, the spec and build flow, proposing and voting, and Settings itself. The tour points at where things are; this is what to do once you\'re there, so it answers #3222\'s request for more than a rehash of the tour\'s own eight steps.',
+  // The channels moved out of Messages onto their communities' hubs, so the
+  // Channels filter (#2783, added above as messages-filter-channels) is gone
+  // with the section it narrowed to; it was never in the baseline.
+  'platform-tabs-badge-communities': 'The Communities tab\'s quiet count: how many of your communities\' channels (#general, Homeroom\'s, among them) have unread messages. The channels live on each community\'s hub now rather than in Messages, so the count moved with them. Rendered always, hidden at zero, for the same reason as #platform-tabs-badge.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

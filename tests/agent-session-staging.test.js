@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { withStateRead } = require('./lib/agent-session-state-read');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -166,12 +167,12 @@ test('Open preview docks the platform\'s preview in the pane, signed in to the c
     },
   };
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = async (url) => ({
+  globalThis.fetch = withStateRead(async (url) => ({
     ok: true,
     status: 200,
     json: async () => (/\/messages\?/.test(url) ? { messages: [], nextAfter: null }
       : /\/actions$/.test(url) ? { actions: [] } : { session, turn: null }),
-  });
+  }));
   try {
     const api = loadTsx('tests/fixtures/agent-session-api.ts');
     await api.openAgentSession({ id: 7, host: 'messages' });
@@ -228,7 +229,7 @@ test('narrow: the preview opens over the chat, signed in; Expand carries it and 
   };
   globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {} }, UsernodeReact: {}, AppView: appView };
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = fetchFor;
+  globalThis.fetch = withStateRead(fetchFor);
   let carried;
   try {
     // The panel's document.
@@ -264,7 +265,7 @@ test('narrow: the preview opens over the chat, signed in; Expand carries it and 
   // The top document, after Expand: the same conversation, full width.
   globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {} }, UsernodeReact: {}, AppView: appView };
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = fetchFor;
+  globalThis.fetch = withStateRead(fetchFor);
   try {
     const top = loadTsx('frontend/src/features/agent-session/store.ts');
     top.adoptPane(carried);
@@ -319,14 +320,14 @@ test('Propose (once its panel is confirmed) uses the owner\'s propose route; Ret
     PlatformUI: { confirm: async (opts) => { confirms.push(opts); return answer; }, toast() {} },
   };
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = async (url, init = {}) => {
+  globalThis.fetch = withStateRead(async (url, init = {}) => {
     requests.push([url, init.method || 'GET']);
     const body = /\/messages\?/.test(url) ? { messages: [], nextAfter: null }
       : /\/actions$/.test(url) ? { actions: [] }
         : /ensure-staging$/.test(url) ? { status: 'rebuilding' }
           : /promote$/.test(url) ? { ok: true } : { session, turn: null };
     return { ok: true, status: 200, json: async () => body };
-  };
+  });
   try {
     const api = loadTsx('tests/fixtures/agent-session-api.ts');
     await api.openAgentSession({ id: 7, host: 'messages' });

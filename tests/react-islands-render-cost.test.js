@@ -92,7 +92,9 @@ test('the open reply thread lights its chip through a prop, read on every render
 
   const summary = { replyCount: 2, lastReplyAt: null, participants: ['ana'] };
   const view = { messages: [row(5, { thread: summary }), row(6, { thread: summary })], lead: { earlier: false, placeholder: null } };
-  globalThis.window = { GroupChat: { isReplyThreadOpen: (id) => Number(id) === 5, _readOnly: () => false } };
+  // addEventListener because the bundle now reaches lib/back-stack.ts (the
+  // image viewer, #3286), which listens for popstate when it loads.
+  globalThis.window = { GroupChat: { isReplyThreadOpen: (id) => Number(id) === 5, _readOnly: () => false }, addEventListener() {} };
   try {
     const html = renderComponent(TRANSCRIPT, 'TranscriptRows', { view, source: 'main' });
     const chips = html.match(/msgx-thread-chip[^"]*/g) || [];

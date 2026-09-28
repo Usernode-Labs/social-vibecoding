@@ -61,6 +61,7 @@ function dnsAlias({ environment, sessionId, dockerName }) {
 async function deploy(config, {
   app, environment, sessionId, imageRef, env, dockerName,
   port = 3000, memory, cpus, labels, runtimeName = null, internalOnly = false,
+  command = [],
 }) {
   if (mode(config) === 'docker') {
     const name = runtimeName || dockerName;
@@ -70,6 +71,7 @@ async function deploy(config, {
     await docker.runContainer(name, {
       image: imageRef, env, port, memory, cpus, labels,
       aliases: alias ? [alias] : [],
+      command,
     });
     await docker.waitForHealthy(name, port, '/health');
     if (internalOnly) {
@@ -96,6 +98,7 @@ async function deploy(config, {
   }
   return kubernetes.deployApplication(config, {
     app, environment, sessionId, imageRef, env, cpus, labels, runtimeName, internalOnly,
+    command,
   });
 }
 

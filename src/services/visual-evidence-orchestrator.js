@@ -19,6 +19,7 @@ const identities = require('./visual-evidence-identities');
 const planContract = require('./visual-evidence-plan');
 const replay = require('./visual-evidence-replay');
 const state = require('./visual-evidence-state');
+const turnLifecycle = require('./turn-lifecycle');
 const { isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
 const worker = require('./worker');
 
@@ -41,8 +42,26 @@ const MAX_AGENT_EVENTS = 128;
 const REPAIRABLE_LOCATOR_CODES = new Set([
   'ambiguous_locator', 'locator_not_found', 'locator_not_visible',
 ]);
+const ACTIONABILITY_METHODS = Object.freeze({
+  click: 'click',
+  fill: 'fill',
+  press: 'press',
+  select: 'selectOption',
+  check: 'check',
+  uncheck: 'uncheck',
+  hover: 'hover',
+  drag: 'dragTo',
+});
 const MAX_REPAIR_ATTEMPTS = 2;
 const MAX_TRANSIENT_REPLAY_RETRIES = 1;
+const MAX_REPAIR_COMPLETION_RESERVE_MS = 90_000;
+const SESSION_IDLE_WAIT_MS = 120_000;
+const EVIDENCE_RECOVERY_WAIT_MS = 240_000;
+
+function repairCompletionReserveMs(budgetMs) {
+  const bounded = Math.max(2, Number(budgetMs) || 2);
+  return Math.min(MAX_REPAIR_COMPLETION_RESERVE_MS, Math.floor(bounded / 2));
+}
 
 function transientNetworkReplayFailure(error) {
   const diagnostics = error?.detail?.browserDiagnostics;
@@ -78,6 +97,24 @@ function replayRepairKind(error, plan) {
   // correction turn on a locator that only disappeared with the page bundle.
   if (transientNetworkReplayFailure(error)) return null;
   if (REPAIRABLE_LOCATOR_CODES.has(code)) return 'locator';
+  // Playwright can resolve one attached, visible target and still time out
+  // waiting for it to become actionable. A modal, tour, disabled state, or
+  // moving surface usually means the replay omitted an observed setup action
+  // or readiness wait. Give the planner the exact fresh-page diagnostics so
+  // it can correct that flow. Keep arbitrary replay failures hard: page exits,
+  // browser crashes, network faults, and missing/ambiguous locators must use
+  // their own classifications instead of spending a model repair turn here.
+  const actionabilityMethod = ACTIONABILITY_METHODS[error?.detail?.actionType];
+  const targetStates = Array.isArray(error?.detail?.targetStates)
+    ? error.detail.targetStates : [];
+  if (code === 'replay_failed'
+      && error?.detail?.phase === 'action'
+      && actionabilityMethod
+      && targetStates.length > 0
+      && targetStates.every((target) => target?.matchedCount === 1
+        && target.visibleCount === 1 && target.attachedCount === 1)
+      && new RegExp(`^locator\\.${actionabilityMethod}: Timeout \\d+ms exceeded\\b`)
+        .test(String(error?.message || ''))) return 'actionability';
   if (code === 'controlled_failure_unused') return 'controlled_failure';
   if (code === 'browser_diagnostics' && error?.detail?.phase === 'browser_diagnostics') {
     const diagnostics = error.detail.browserDiagnostics || error.detail;
@@ -111,27 +148,49 @@ function replayRepairKind(error, plan) {
     if (story && story.intent.animation !== 'motion') return 'static_timing';
   }
   // A missing element in a positive assertion or more than one match for an
-  // assertion that requires a unique target is another locator error. Keep
-  // count assertions as claims about cardinality, and keep detached failures
-  // hard: narrowing a selector until nothing matches would not prove that the
-  // intended element disappeared. Wrong values and states remain hard
-  // failures except for an exact motion checkpoint that can be verified after
-  // an observed, bounded state wait.
+  // assertion that requires a unique target is another locator error. A
+  // positive count assertion may also have selected the wrong accessible
+  // target. Its correction is safe only because RunControl pins every plan
+  // field except this exact failed assertion's target: the expected count,
+  // value, actions, focus, and sibling assertions cannot be weakened. Keep
+  // negative count and detached failures hard; changing their selector until
+  // nothing matches would not prove the intended element disappeared. Wrong
+  // values and states remain hard except for the bounded cases below.
   if (code !== 'assertion_failed' || error?.detail?.phase !== 'assertion') return null;
-  const assertionType = error.detail.assertion?.type;
-  const uniqueAssertion = ['visible', 'hidden', 'attached', 'checked', 'text', 'value', 'focusWithin']
-    .includes(assertionType);
-  if (uniqueAssertion && error.detail.count > 1) return 'locator';
-  if (error.detail.count === 0
-    && ['visible', 'attached', 'checked', 'text', 'value', 'focusWithin']
-      .includes(assertionType)) return 'locator';
   const detail = error.detail;
   const story = plan?.stories?.find((item) => item.id === detail.storyId);
   const side = detail.side === 'base' ? 'before' : detail.side === 'head' ? 'after' : null;
   const assertion = side && Number.isInteger(detail.assertionIndex)
     ? story?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex] : null;
-  if (story?.intent?.animation !== 'motion' || !assertion
+  if (!assertion
       || planContract.canonicalJson(assertion) !== planContract.canonicalJson(detail.assertion)) return null;
+  const positiveUniqueAssertion = ['visible', 'attached', 'checked', 'text', 'value', 'focusWithin']
+    .includes(assertion.type);
+  if ((Number.isInteger(detail.count) && detail.count > 1
+        && (positiveUniqueAssertion || assertion.type === 'hidden'))
+      || (detail.count === 0 && positiveUniqueAssertion)
+      || (assertion.type === 'count' && assertion.count > 0
+        && Number.isInteger(detail.count) && detail.count !== assertion.count)) {
+    return 'assertion_locator';
+  }
+  const siblingBaseAssertions = Array.isArray(story?.replay?.checkpoint?.assertions?.before)
+    ? story.replay.checkpoint.assertions.before : [];
+  const preservesBaseAbsenceProof = siblingBaseAssertions.some((candidate, index) =>
+    index !== detail.assertionIndex && (
+      candidate?.type === 'hidden'
+      || candidate?.type === 'detached'
+      || (candidate?.type === 'count' && candidate.count === 0)
+    ));
+  if (detail.side === 'base'
+      && story?.intent?.baseState === 'not_present'
+      && assertion.type === 'visible'
+      && detail.count === 1
+      && targetStates.length === 1
+      && targetStates[0]?.matchedCount === 1
+      && targetStates[0]?.attachedCount === 1
+      && targetStates[0]?.visibleCount === 0
+      && preservesBaseAbsenceProof) return 'supporting_visibility';
+  if (story?.intent?.animation !== 'motion') return null;
   // A motion marker can still be visible at the checkpoint even though it
   // will settle moments later. Permit one bounded plan correction, but only
   // when the exact recorded assertion failed for that transient state.
@@ -563,20 +622,89 @@ function replayInput({ run, plan, deployment, authTokens, provenance, pass }) {
 
 async function waitForSessionIdle(pool, sessionId, {
   timeoutMs = 120_000,
+  recoveryTimeoutMs = timeoutMs,
   workerService = worker,
   intervalMs = 500,
+  now = Date.now,
+  wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+  onObservation = null,
 } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  const normalLimitMs = Math.max(1, Number(timeoutMs) || 120_000);
+  const recoveryLimitMs = Math.max(normalLimitMs, Number(recoveryTimeoutMs) || normalLimitMs);
+  const pollIntervalMs = Math.max(1, Number(intervalMs) || 500);
+  const startedAt = now();
+  let polls = 0;
+  let recoveryReason = null;
+  let busyObserved = false;
+  let lastObservation = null;
+  const safeTurnField = (value) => {
+    const text = String(value || '');
+    return /^[a-z][a-z0-9_-]{0,63}$/.test(text) ? text : null;
+  };
+  const observe = (patch) => {
+    lastObservation = {
+      version: 1,
+      outcome: 'waiting',
+      waitClass: recoveryReason ? 'evidence_recovery' : busyObserved ? 'session_busy' : 'none',
+      recoveryReason,
+      normalLimitMs,
+      recoveryLimitMs,
+      waitedMs: Math.max(0, now() - startedAt),
+      polls,
+      activeTurnPresent: false,
+      activeTurnMode: null,
+      activeTurnPhase: null,
+      workerInFlight: false,
+      workerMode: null,
+      ...patch,
+    };
+    if (typeof onObservation === 'function') onObservation({ ...lastObservation });
+    return lastObservation;
+  };
+
+  while (true) {
     const { rows } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [sessionId]);
     if (!rows[0]) throw new VisualEvidenceOrchestrationError('session_not_found', 'Proposal session not found.');
-    if (!rows[0].active_turn && !workerService.isInFlight(sessionId)) return true;
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    polls += 1;
+    const activeTurnPresent = !!rows[0].active_turn;
+    const activeTurn = turnLifecycle.parseActiveTurn(rows[0].active_turn);
+    const activeTurnMode = safeTurnField(activeTurn?.mode);
+    const activeTurnPhase = safeTurnField(turnLifecycle.phaseOf(activeTurn));
+    const workerInFlight = !!(await workerService.isInFlight(sessionId));
+    const workerMode = safeTurnField(await workerService.getActiveTurnMode?.(sessionId));
+    if (activeTurnPresent || workerInFlight) busyObserved = true;
+    if (!recoveryReason) {
+      if (activeTurnMode === 'evidence') recoveryReason = 'evidence_turn';
+      else if (activeTurnPhase === turnLifecycle.PHASE_CLEANUP_PENDING) {
+        recoveryReason = 'cleanup_pending';
+      } else if (workerMode === 'evidence') recoveryReason = 'evidence_worker';
+    }
+    const observation = observe({
+      activeTurnPresent,
+      activeTurnMode,
+      activeTurnPhase,
+      workerInFlight,
+      workerMode,
+    });
+    if (!activeTurnPresent && !workerInFlight) {
+      const result = { ...observation, outcome: 'idle' };
+      if (typeof onObservation === 'function') onObservation({ ...result });
+      return result;
+    }
+    const activeLimitMs = recoveryReason ? recoveryLimitMs : normalLimitMs;
+    if (observation.waitedMs >= activeLimitMs) {
+      const result = { ...observation, outcome: 'timeout' };
+      if (typeof onObservation === 'function') onObservation({ ...result });
+      throw new VisualEvidenceOrchestrationError(
+        'evidence_agent_busy',
+        recoveryReason
+          ? 'The previous visual evidence worker did not finish restart cleanup within the bounded retry window.'
+          : 'The proposal agent stayed busy past the visual change preview start window.',
+        { idleWait: result }
+      );
+    }
+    await wait(Math.min(pollIntervalMs, activeLimitMs - observation.waitedMs));
   }
-  throw new VisualEvidenceOrchestrationError(
-    'evidence_agent_busy',
-    'The proposal agent stayed busy past the visual change preview start window.'
-  );
 }
 
 function errorCode(error) {
@@ -742,6 +870,7 @@ function replayProgressEvent(event, pass) {
 const AGENT_DIAGNOSTIC_KINDS = new Set([
   'worker_prepare_start', 'worker_prepare_end', 'backend_selected',
   'turn_start', 'turn_end', 'provider_dispatched', 'provider_init',
+  'provider_tool_config',
   'first_stream', 'first_output', 'provider_result', 'provider_notice', 'provider_usage',
   'context_result',
   'runner_phase', 'runner_result', 'runner_exit', 'resume_retry',
@@ -758,11 +887,12 @@ const AGENT_DIAGNOSTIC_PHASES = new Set([
   'evidence_mcp_ready', 'claude', 'agent', 'done',
 ]);
 const AGENT_DIAGNOSTIC_TOOLS = new Set([
-  'evidence_get_context', 'evidence_reset_side', 'evidence_set_request_failure', 'evidence_run_plan',
+  'evidence_get_context', 'evidence_reset_pair', 'evidence_reset_side',
+  'evidence_set_request_failure', 'evidence_run_plan', 'evidence_report_blocker',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
-  'browser_hover', 'browser_drag', 'browser_resize', 'browser_wait_for',
+  'browser_hover', 'browser_mouse_move_xy', 'browser_drag', 'browser_resize', 'browser_wait_for',
   'browser_console_messages', 'browser_network_requests', 'browser_tabs',
   'browser_close', 'other',
 ]);
@@ -784,11 +914,15 @@ function recordAgentDiagnostic(metrics, raw) {
     'http_error', 'network_error', 'stream_error', 'cancelled'].includes(raw.outcome)) {
     event.outcome = raw.outcome;
   }
-  for (const key of ['mcpServerCount', 'toolDefinitionCount', 'browserMemberToolCount',
+  for (const key of ['mcpServerCount', 'toolDefinitionCount', 'topLevelFunctionToolCount',
+    'topLevelNamespaceToolCount', 'topLevelCustomToolCount', 'topLevelOtherToolCount',
+    'nestedToolDefinitionCount', 'nestedFunctionToolCount', 'nestedCustomToolCount',
+    'nestedOtherToolCount', 'evidenceToolDefinitionCount', 'otherMcpServerCount',
+    'forwardedToolDefinitionCount', 'removedToolDefinitionCount', 'browserMemberToolCount',
     'browserAdminToolCount', 'browserFullAdminToolCount', 'storyCount', 'callOrdinal', 'headingCount',
     'buttonCount', 'linkCount', 'imageBlocks', 'exitCode', 'checkRank',
     'documentOrdinal', 'httpStatus', 'requestOrdinal', 'chunkCount', 'hitOrdinal',
-    'count', 'catalogCount']) {
+    'count', 'catalogCount', 'terminalToolDefinitionCount']) {
     if (Number.isSafeInteger(raw[key]) && raw[key] >= 0 && raw[key] <= 1000) {
       event[key] = raw[key];
     }
@@ -818,8 +952,13 @@ function recordAgentDiagnostic(metrics, raw) {
   if (['await_headers', 'await_first_byte', 'streaming'].includes(raw.stage)) {
     event.stage = raw.stage;
   }
-  for (const key of ['evidenceGetContextAvailable', 'evidenceRunPlanAvailable']) {
+  for (const key of ['evidenceGetContextAvailable', 'evidenceRunPlanAvailable',
+    'evidenceReportBlockerAvailable', 'completionReminder', 'terminalToolChoiceRequired',
+    'toolSurfaceFiltered']) {
     if (typeof raw[key] === 'boolean') event[key] = raw[key];
+  }
+  if (raw.terminalToolWireFormat === 'namespace' || raw.terminalToolWireFormat === 'flat') {
+    event.terminalToolWireFormat = raw.terminalToolWireFormat;
   }
   for (const key of ['jsonValid', 'acceptedIntentPresent', 'originsPresent', 'revisionsPresent']) {
     if (typeof raw[key] === 'boolean') event[key] = raw[key];
@@ -877,6 +1016,10 @@ function recordAgentDiagnostic(metrics, raw) {
         { ...activity.providerPending.get(event.requestOrdinal), ...event });
     }
   }
+  if (kind === 'provider_tool_config') {
+    activity.providerToolConfigs.push(event);
+    if (activity.providerToolConfigs.length > 8) activity.providerToolConfigs.shift();
+  }
   activity.counts[kind] = (activity.counts[kind] || 0) + 1;
   activity.events.push(event);
   if (activity.events.length > MAX_AGENT_EVENTS) activity.events.shift();
@@ -900,15 +1043,17 @@ function newRunMetrics() {
     replayEvents: [],
     agentAttempts: 0,
     agentDispatches: [],
+    agentFinalResponses: [],
     agentActivity: { events: [], counts: {}, toolCounts: {}, pending: new Map(),
       browserCallCounts: {}, browserPending: new Map(), documentPending: new Map(),
-      providerPending: new Map(), budgetMs: null },
+      providerPending: new Map(), providerToolConfigs: [], budgetMs: null },
     agentFinalResponse: null,
     repairCount: 0,
     repairTrigger: null,
     repairTriggers: [],
     fixtureResets: [],
     artifactBytes: 0,
+    idleWait: null,
     tokenUsage: {},
   };
 }
@@ -945,6 +1090,9 @@ function agentActivitySummary(metrics) {
     pendingBrowserCalls: [...metrics.agentActivity.browserPending.values()].slice(-8),
     pendingDocumentRequests: [...metrics.agentActivity.documentPending.values()].slice(-8),
     pendingProviderRequests: [...metrics.agentActivity.providerPending.values()].slice(-8),
+    ...(metrics.agentActivity.providerToolConfigs.length ? {
+      providerToolConfigs: metrics.agentActivity.providerToolConfigs.slice(-8),
+    } : {}),
   };
 }
 
@@ -958,11 +1106,14 @@ function traceSummary(metrics, extra = {}) {
     replayPasses: metrics.replayPasses.slice(0, 12),
     replayRetries: metrics.replayRetries.slice(0, 6),
     replayRuntime: metrics.replayRuntime,
+    idleWait: metrics.idleWait,
     lastReplayEvent: metrics.lastReplayEvent,
     replayEvents: metrics.replayEvents.slice(-MAX_REPLAY_EVENTS),
     fixtureResets: metrics.fixtureResets.slice(0, 12),
     agentAttempts: metrics.agentAttempts,
-    agentDispatches: metrics.agentDispatches.slice(0, 4),
+    agentDispatches: metrics.agentDispatches.slice(0, 8),
+    ...(metrics.agentFinalResponses.length
+      ? { agentFinalResponses: metrics.agentFinalResponses.slice(0, 8) } : {}),
     agentActivity: agentActivitySummary(metrics),
     repairCount: metrics.repairCount,
     ...(metrics.repairTrigger ? { repairTrigger: metrics.repairTrigger } : {}),
@@ -1034,6 +1185,7 @@ async function executeRun(config, options, injected = {}) {
     evidenceAgent: injected.evidenceAgent || evidenceAgent,
     evidenceControl: injected.evidenceControl || evidenceControl,
     worker: injected.worker || worker,
+    waitForSessionIdle: injected.waitForSessionIdle || waitForSessionIdle,
   };
   const { pool, revision, onProgress = null } = options;
   let run = options.run;
@@ -1106,11 +1258,29 @@ async function executeRun(config, options, injected = {}) {
     failurePhase = 'wait_for_idle';
     stage(failurePhase);
     const idleStartedAt = Date.now();
-    await waitForSessionIdle(pool, session.id, {
-      timeoutMs: Math.min(config.visualEvidence?.maxRunMs || 1_440_000, 120_000),
-      workerService: deps.worker,
-    });
-    addTiming(metrics, 'idleWait', idleStartedAt);
+    const runBudgetMs = config.visualEvidence?.maxRunMs || 1_440_000;
+    const idleTimeoutMs = Math.min(runBudgetMs, SESSION_IDLE_WAIT_MS);
+    const recoveryTimeoutMs = Math.min(runBudgetMs, EVIDENCE_RECOVERY_WAIT_MS);
+    let recoveryWaitReported = false;
+    try {
+      metrics.idleWait = await deps.waitForSessionIdle(pool, session.id, {
+        timeoutMs: idleTimeoutMs,
+        recoveryTimeoutMs,
+        workerService: deps.worker,
+        onObservation: (observation) => {
+          metrics.idleWait = observation;
+          if (observation.waitClass === 'evidence_recovery' && !recoveryWaitReported) {
+            recoveryWaitReported = true;
+            progress('Waiting for the interrupted visual evidence worker to finish cleanup…');
+          }
+        },
+      });
+    } catch (error) {
+      if (error?.detail?.idleWait) metrics.idleWait = error.detail.idleWait;
+      throw error;
+    } finally {
+      addTiming(metrics, 'idleWait', idleStartedAt);
+    }
     if (!authorPlan) {
       // A timeout stops the prior hosted turn and leaves its worker stop
       // marker intact. This is a new evidence run, so retire that marker
@@ -1173,12 +1343,12 @@ async function executeRun(config, options, injected = {}) {
       intent,
       context,
       expiresAt: Date.now() + (config.visualEvidence?.maxRunMs || 1_440_000),
-      resetSide: async (side) => {
+      resetPair: async () => {
         const reset = await deps.environment.resetPair(config, pair, { onProgress });
         if (!sameProvenance(reset, expectedProvenance)) {
           throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'The exploration reset changed the paired fixture or image.');
         }
-        return { side, origin: reset.origins[side], bothSidesReset: true };
+        return { origins: reset.origins, bothSidesReset: true };
       },
       runPlan: async (plan, { attempt }) => {
         const replayStartedAt = Date.now();
@@ -1329,7 +1499,12 @@ async function executeRun(config, options, injected = {}) {
       },
     });
 
-    const dispatchOnce = async (forceBackend = null, repairAttempt = 0) => {
+    const dispatchOnce = async (
+      forceBackend = null,
+      repairAttempt = 0,
+      completionReminder = false,
+      timeoutLimitMs = null
+    ) => {
       if (stopRequested.has(run.id)) {
         throw new VisualEvidenceOrchestrationError('evidence_stopped', EVIDENCE_STOPPED_REASON);
       }
@@ -1345,6 +1520,7 @@ async function executeRun(config, options, injected = {}) {
         requestedBackend: String(forceBackend || session.agent_backend || 'unknown').slice(0, 64),
         requestedModel: safeModelId(session.agent_model || session.model),
         repairAttempt,
+        ...(completionReminder ? { completionReminder: true } : {}),
         budgetMs: repairAttempt > 0 ? repairAgentBudgetMs : agentBudgetMs,
       };
       metrics.agentDispatches.push(dispatchTrace);
@@ -1355,7 +1531,14 @@ async function executeRun(config, options, injected = {}) {
         const remainingAgentMs = dispatchTrace.budgetMs
           - (Date.now() - window.startedAt
             - (suspendedMs() - window.suspendedAt));
-        dispatchTrace.timeoutMs = Math.max(0, remainingAgentMs);
+        const dispatchTimeoutMs = timeoutLimitMs == null
+          ? remainingAgentMs
+          : Math.min(remainingAgentMs, Math.max(1, Number(timeoutLimitMs) || 1));
+        dispatchTrace.timeoutMs = Math.max(0, dispatchTimeoutMs);
+        if (repairAttempt > 0 && !completionReminder && timeoutLimitMs != null) {
+          dispatchTrace.completionReserveMs = Math.max(0,
+            dispatchTrace.budgetMs - dispatchTrace.timeoutMs);
+        }
         if (remainingAgentMs <= 0) {
           throw new VisualEvidenceOrchestrationError(
             'evidence_agent_timeout',
@@ -1378,7 +1561,8 @@ async function executeRun(config, options, injected = {}) {
           resumeThreadId: agentThreadId,
           forceBackend,
           repairAttempt,
-          timeoutMs: remainingAgentMs,
+          completionReminder,
+          timeoutMs: dispatchTimeoutMs,
           suspendedMs,
         }, injected.agentDependencies || {});
         addAgentUsage(metrics, dispatched);
@@ -1391,6 +1575,11 @@ async function executeRun(config, options, injected = {}) {
           metrics.agentFinalResponse = agentFinalResponseSummary(
             dispatched.result, authTokens, exploration.origins
           );
+          metrics.agentFinalResponses.push({
+            dispatch: metrics.agentDispatches.length,
+            ...(completionReminder ? { completionReminder: true } : {}),
+            ...metrics.agentFinalResponse,
+          });
           options.onAgentFinalResponse?.(metrics.agentFinalResponse);
         }
         return { dispatched, error: null };
@@ -1430,6 +1619,22 @@ async function executeRun(config, options, injected = {}) {
         progress('The selected Codex model could not start the evidence flow; using the platform evidence planner…');
         agentOutcome = await dispatchOnce('claude_code');
       }
+      if (!agentOutcome.error && !latestHardVerdict
+          && registration.control.planCalls === 0
+          && !registration.control.finished
+          && agentOutcome.dispatched?.result && agentThreadId) {
+        // Some tool-capable models finish with prose saying they are about to
+        // submit, but omit the tool call. Reuse the same thread and the
+        // remainder of the original agent budget for one explicit reminder;
+        // this is not another full exploration allowance.
+        progress('The evidence planner finished without submitting its replay; asking it to complete the tool call…');
+        const priorBackend = metrics.agentDispatches.at(-1)?.backend;
+        agentOutcome = await dispatchOnce(
+          priorBackend === 'claude_code' ? 'claude_code' : null,
+          0,
+          true
+        );
+      }
       // The hosted tool acknowledges an accepted plan immediately. Its HTTP
       // request must never wait through a full paired browser replay, which
       // can exceed ingress and MCP idle timeouts. The platform owns and awaits
@@ -1443,15 +1648,21 @@ async function executeRun(config, options, injected = {}) {
             registration.control.lastSubmittedPlan)) {
         const replayFailure = registration.control.lastReplayFailure.error;
         const repairKind = replayRepairKind(replayFailure, registration.control.lastSubmittedPlan);
-        // A wrong locator or premature motion checkpoint can get a bounded
-        // correction turn. No failed media is published; the replacement must
-        // still pass both clean, provenance-fenced replay passes.
+        // A wrong locator, non-actionable control, or premature checkpoint can
+        // get a bounded correction turn. No failed media is published; the
+        // replacement must still pass both clean, provenance-fenced passes.
         const failureDetail = boundedReplayDetail(replayFailure);
         registration.control.allowRepair(
           repairKind === 'motion_timing'
             ? 'A motion checkpoint ran while an observed element was still visible. Inspect both revisions and add an observed, bounded wait without changing the checkpoint assertions or interactions.'
             : repairKind === 'static_timing'
               ? 'The static checkpoint kept changing after at least three pixel samples. Inspect both revisions and wait for an observed settled state. Keep the original interactions, focus, and assertions.'
+            : repairKind === 'assertion_locator'
+              ? 'A positive checkpoint assertion selected the wrong element or cardinality. Inspect the failed target on both fresh revisions and correct only that assertion target. Its assertion type and expected count or value, every action, route, focus target, and every other assertion are locked.'
+            : repairKind === 'supporting_visibility'
+              ? 'A supporting base-side visibility assertion matched one attached but hidden element while another assertion still proves the accepted change is absent on base. Inspect both fresh revisions. Correct or remove only that unsupported context assertion, retain the separate base absence proof and every accepted interaction and claim, and report a blocker if the hidden element is actually required.'
+            : repairKind === 'actionability'
+              ? 'The planned target existed and was visible, but it did not become actionable. Inspect both fresh revisions for a blocking dialog, tour, disabled state, or unfinished transition. Add explicit semantic actions or bounded observed-state waits, then keep the original claimed interaction. Do not force the action or bypass the user flow.'
             : repairKind === 'hosted_app'
               ? 'The selected hosted app loaded but had browser errors or blocked external requests. Inspect a different deployed public app on both revisions, keep the original platform interaction and assertions, and use it only if its runtime loads cleanly. Do not widen the network policy or suppress browser errors.'
             : repairKind === 'route_data'
@@ -1481,7 +1692,7 @@ async function executeRun(config, options, injected = {}) {
         // pinned pair before the planner inspects the control again.
         failurePhase = 'repair_reset';
         const repairResetStartedAt = Date.now();
-        try { await registration.control.resetSide('base'); }
+        try { await registration.control.resetPair(); }
         finally { replaySuspendedMs += Date.now() - repairResetStartedAt; }
         metrics.repairCount += 1;
         failurePhase = 'agent_repair';
@@ -1489,14 +1700,47 @@ async function executeRun(config, options, injected = {}) {
           ? 'A motion checkpoint ran before the animation settled; the evidence agent is checking the timing…'
           : repairKind === 'static_timing'
             ? 'The static checkpoint kept changing; the evidence agent is checking the settled state…'
+          : repairKind === 'assertion_locator'
+            ? 'A checkpoint assertion selected the wrong element; the evidence agent is correcting only that locator…'
+          : repairKind === 'supporting_visibility'
+            ? 'A supporting base checkpoint assertion was hidden; the evidence agent is checking the real surrounding state…'
+          : repairKind === 'actionability'
+            ? 'A visible control was blocked or not ready; the evidence agent is correcting the setup flow…'
           : repairKind === 'hosted_app'
             ? 'The selected app had browser errors; the evidence agent is checking another deployed app…'
           : repairKind === 'route_data'
             ? 'The planned route could not load its data; the evidence agent is checking the account and fixture…'
           : 'A planned control did not match the page; the evidence agent is inspecting and correcting it…');
         const priorBackend = metrics.agentDispatches.at(-1)?.requestedBackend;
-        agentOutcome = await dispatchOnce(priorBackend === 'claude_code' ? 'claude_code' : null, metrics.repairCount);
+        const repairBackend = priorBackend === 'claude_code' ? 'claude_code' : null;
+        const completionReserveMs = repairCompletionReserveMs(repairAgentBudgetMs);
+        agentOutcome = await dispatchOnce(
+          repairBackend,
+          metrics.repairCount,
+          false,
+          repairAgentBudgetMs - completionReserveMs
+        );
         await awaitSubmittedReplay();
+        if (!latestHardVerdict
+            && registration.control.planCalls === metrics.repairCount
+            && !registration.control.finished
+            && agentThreadId
+            && (!agentOutcome.error
+              || errorCode(agentOutcome.error) === 'evidence_agent_timeout')) {
+          // A slower tool-capable model may use the whole repair exploration
+          // window while actively inspecting the failed target. Reserve part
+          // of the same bounded budget for a terminal-only continuation so it
+          // must submit the correction it found or report the blocker. This
+          // does not grant a second exploration allowance or weaken replay.
+          progress('The evidence correction did not submit its replay; asking it to complete the tool call…');
+          agentOutcome = await dispatchOnce(
+            repairBackend,
+            metrics.repairCount,
+            true,
+            completionReserveMs
+          );
+          await awaitSubmittedReplay();
+        }
         if (registration.control.planCalls === metrics.repairCount) break;
       }
       if (agentOutcome.error && !latestHardVerdict) {
@@ -1546,10 +1790,11 @@ async function executeRun(config, options, injected = {}) {
       repairAttempt: Math.max(0, registration.control.planCalls - 1),
       traceSummary: finalTrace,
     });
+    const { agentFinalResponses: _privateResponses, ...logFinalTrace } = finalTrace;
     log.info('visual-evidence', 'Visual evidence captures stored', {
       sessionId: session.id,
       runId: run.id,
-      trace: finalTrace,
+      trace: logFinalTrace,
     });
     notifyEvidence(session, app, 'verified');
     progress('Visual evidence captured for human review.');
@@ -1588,7 +1833,11 @@ async function executeRun(config, options, injected = {}) {
     }
     // The final model answer is for the proposal owner and app managers only;
     // do not copy its potentially app-derived text into the general log ring.
-    const { agentFinalResponse: _privateResponse, ...logTrace } = failureTrace;
+    const {
+      agentFinalResponse: _privateResponse,
+      agentFinalResponses: _privateResponses,
+      ...logTrace
+    } = failureTrace;
     log.warn('visual-evidence', 'Visual evidence run ended without captured evidence', {
       sessionId: session?.id || null,
       runId: run?.id || options.runId || null,
@@ -1851,6 +2100,7 @@ module.exports = {
   progressPhase,
   replayProgressEvent,
   replayRepairKind,
+  repairCompletionReserveMs,
   transientNetworkReplayFailure,
   startRunHeartbeat,
   liveRunObserver,

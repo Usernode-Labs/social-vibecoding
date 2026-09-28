@@ -128,7 +128,7 @@ test('Q18: the Workshop "+" menu closes on Escape and on a press anywhere, and r
   assert.doesNotMatch(fn, /content\.addEventListener\('click'/, 'the content-only dismisser, which a header press skipped, is gone');
 });
 
-test('Q18: the "Which workshop?" panel and the Homeroom menu take focus, rove, and give it back on Escape', () => {
+test('Q18: the "Which project?" panel and the Homeroom menu take focus, rove, and give it back on Escape', () => {
   const ws = read('frontend/src/features/workshop/workshop-chrome.tsx');
   assert.match(ws, /<button id=\{id\} type="button" role="menuitem"/);
   assert.match(ws, /onKeyDown=\{\(event\) => \{ roveMenuFocus\(event, event\.currentTarget\); \}\}/);

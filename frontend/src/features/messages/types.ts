@@ -75,6 +75,12 @@ export interface ConversationMessage {
    * sender and its thread, with no words, files, cards or reactions left.
    */
   deleted?: boolean;
+  /**
+   * A platform line rather than a person's message. Homeroom no longer
+   * writes any into a channel; one kept as the root of somebody's thread is
+   * deleted (services/conversations.js). Its sender reads Homeroom.
+   */
+  system?: boolean;
   /** A reply inside a thread: the id of the message the thread hangs off. */
   threadRootId?: number | null;
   /**
@@ -224,6 +230,8 @@ export interface DiscussionContext {
   name: string;
   /** `can_collaborate === false` — the composer does not render. */
   readOnly: boolean;
+  /** Homeroom's old project discussion, kept read-only (#general is its channel now). */
+  archived?: boolean;
   /**
    * The app's artwork, for the pane header's tile when the inbox has no row
    * to take it from (a discussion opened from a link by a non-member). The

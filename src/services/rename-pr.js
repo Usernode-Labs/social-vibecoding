@@ -144,7 +144,8 @@ async function createManifestPR(config, pool, app, actor, opts) {
   await sendSystemMessage(pool, app.id,
     opts.chatText(prData, majority, activeUsers),
     'vote',
-    { vote: { sessionId, prNumber: prData.number } }
+    { vote: { sessionId, prNumber: prData.number } },
+    { type: 'session', ref: sessionId }
   ).catch((err) => log.warn('rename-pr', 'Manifest-PR chat msg failed', { err: err.message }));
 
   pushVoteUpdate({ sessionId, appSlug: app.slug, merged: false });

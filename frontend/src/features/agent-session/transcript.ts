@@ -28,6 +28,11 @@ export interface CardView {
   rows: Array<[string, string]>;
   status: AgentActionStatus;
   outcome: string | null;
+  /**
+   * The project a membership refusal named (`join_required`), so the card
+   * offers Join where it would otherwise only say it did not go through.
+   */
+  join: { slug: string; name: string } | null;
 }
 
 export type TranscriptItem =
@@ -52,6 +57,12 @@ export type TranscriptItem =
     tone: 'ok' | 'error' | 'muted';
     /** A turn that did not finish: the reply suggestions offer to try again. */
     turnFailed?: boolean;
+    /**
+     * The conversation's last word is this turn not finishing, and the
+     * server can run it again (its note says `retryable`): the note offers
+     * Retry, which re-runs the turn with no new message.
+     */
+    retry?: boolean;
   }
   | RunItem
   | {
@@ -173,7 +184,20 @@ export function cardView(card: AgentCard, actions: Map<string, AgentAction>, now
     rows: cardRows(card.input),
     status,
     outcome: actionOutcome(action),
+    join: status === 'failed' ? joinFor(action) : null,
   };
+}
+
+/** The app a `join_required` refusal names, off the stored tool result. */
+export function joinFor(action: AgentAction | undefined): { slug: string; name: string } | null {
+  const result = action && action.result;
+  if (!result) return null;
+  const structured = (result.structured || {}) as { code?: unknown; app?: { slug?: unknown; name?: unknown } | null };
+  if (result.code !== 'join_required' && structured.code !== 'join_required') return null;
+  const slug = structured.app && typeof structured.app.slug === 'string' ? structured.app.slug : '';
+  if (!slug) return null;
+  const name = typeof structured.app?.name === 'string' && structured.app.name ? structured.app.name : slug;
+  return { slug, name };
 }
 
 // The server's stand-in for a message that was only files (attachments.js
@@ -213,12 +237,14 @@ export function prettyModel(id: unknown): string {
 
 /**
  * The agent a row says ran: Codex for an OpenRouter change (its runner is the
- * Codex CLI), Claude Code otherwise, or the user's own machine.
+ * Codex CLI) unless the row says Claude Code ran it (#3296: the platform runs
+ * some OpenRouter models in Claude Code), Claude Code otherwise, or the
+ * user's own machine.
  */
 export function agentLabel(meta: Record<string, unknown>): string {
   if (typeof meta.localAgentLabel === 'string' && meta.localAgentLabel) return `${meta.localAgentLabel} · your machine`;
   if (typeof meta.agentBackend !== 'string' && typeof meta.agentModel !== 'string') return '';
-  const agent = meta.agentBackend === 'codex_openrouter' ? 'Codex' : 'Claude Code';
+  const agent = meta.agentBackend === 'codex_openrouter' && meta.agentHarness !== 'claude' ? 'Codex' : 'Claude Code';
   const model = prettyModel(meta.agentModel);
   return model ? `${agent} · ${model}` : agent;
 }
@@ -315,8 +341,8 @@ export function buildTranscript(
       items.push({ kind: 'note', key, text: row.content, tone: meta.ok === false ? 'error' : 'ok' });
       continue;
     }
-    if (event === 'turn_failed') {
-      items.push({ kind: 'note', key, text: row.content, tone: 'error', turnFailed: true });
+    if (event === 'turn_failed' || event === 'turn_interrupted') {
+      items.push({ kind: 'note', key, text: row.content, tone: 'error', turnFailed: true, ...(meta.retryable === true ? { retry: true } : {}) });
       continue;
     }
     if (event) {
@@ -436,6 +462,12 @@ export function buildTranscript(
   unfinished.forEach((run, index) => {
     if (!liveRun || index !== unfinished.length - 1) run.status = 'ended';
   });
+  // Retry belongs to the conversation's last word only: a turn that did not
+  // finish and has been answered since is history.
+  for (let at = 0; at < items.length - 1; at += 1) {
+    const item = items[at];
+    if (item.kind === 'note' && item.retry) items[at] = { ...item, retry: false };
+  }
   return items;
 }
 

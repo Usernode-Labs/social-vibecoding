@@ -489,14 +489,14 @@ test('finalizeMerge: the merge line names who built, backed and shaped it, in wo
     });
     const line = 'Native change is live (PR #30). Built by evan, backed by alice and bob, shaped by carol and frank. (3/4 votes)';
     const announced = systemMessages.filter((m) => m.content === line);
-    assert.equal(announced.length, 2, 'general chat and the proposal\'s thread, the same line');
+    assert.equal(announced.length, 1, 'the proposal\'s thread only; a channel carries no activity');
     assert.deepEqual(announced[0].meta, {
       merged: {
         sessionId: 11, prNumber: 30, title: 'Native change',
         author: 'evan', backers: ['alice', 'bob'], shapers: ['carol', 'frank'], votes: '3/4',
       },
-    }, 'the names ride as data too, so the general chat draws from them rather than the wording');
-    assert.deepEqual(announced[1].thread, { type: 'session', ref: 11 });
+    }, 'the names ride as data too, so a reader draws from them rather than the wording');
+    assert.deepEqual(announced[0].thread, { type: 'session', ref: 11 });
   } finally {
     restore();
   }
@@ -533,7 +533,7 @@ test('finalizeMerge: a self-hosted merge says it will be live in a few minutes, 
     assert.equal(rebuildCalls.length, 0, 'the platform is released outside the process, never rebuilt here');
     const line = 'Native change merged (PR #30) and will be live in a few minutes. Built by evan, backed by alice. (2/2 votes)';
     const announced = systemMessages.filter((m) => m.content === line);
-    assert.equal(announced.length, 2, 'general chat and the proposal\'s thread, the same line');
+    assert.equal(announced.length, 1, 'the proposal\'s thread only; a channel carries no activity');
     assert.equal(announced[0].meta.merged.liveSoon, true);
     assert.ok(!systemMessages.some((m) => /is live \(PR #30\)/.test(m.content)), 'no claim it is live yet');
   } finally {

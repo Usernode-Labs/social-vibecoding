@@ -74,10 +74,14 @@ test('a conversation, a group and #general: at the right of the header, just bef
   assert.match(header, /<header className="messages-thread-header">\s*\{channel/, 'no longer leading the row');
 });
 
-test('an app\'s channel: at the end of its header', () => {
+test('an app\'s channel: at the end of its header, where it draws nothing — a channel is always full width', () => {
   const pane = fn('AppDiscussionThread');
-  assert.match(pane, /Everyone building this app<\/span>\s*<\/span>\s*<FullWidthToggle \/>\s*<\/header>/);
+  assert.match(pane, /Everyone building this project`\}\s*<\/span>\s*<\/span>\s*<FullWidthToggle \/>\s*<\/header>/);
   assert.match(pane, /<header className="messages-thread-header">\s*<span\s+data-icon=/, 'no longer leading the row');
+  // A channel is its community's room and opens with no list beside it, so
+  // the toggle for that list stands down on it.
+  assert.match(fn('FullWidthToggle'),
+    /if \(snap\.route\.appSlug \|\| \(snap\.active\?\.kind === 'channel' && snap\.active\.id === snap\.route\.conversationId\)\) return null;/);
 });
 
 test('a dev session: in the pane\'s bar, after "Open full view"', () => {
@@ -106,8 +110,8 @@ test('an agent chat and a Mayor session: handed to their panels, drawn at the en
 
 test('the list folds for an agent thread too; a reply thread still belongs to a chat', () => {
   assert.match(SCREEN, /const chatOpen = !!\(snap\.route\.conversationId \|\| snap\.route\.appSlug\);\s*const discussionOpen = chatOpen \|\| !!snap\.route\.agent;/);
-  assert.match(SCREEN, /\$\{snap\.listCollapsed && discussionOpen \? ' messages-list-collapsed' : ''\}/,
-    'a toggle that does nothing on half the panes is worse than none');
+  assert.match(SCREEN, /\$\{\(snap\.listCollapsed && discussionOpen\) \|\| channelOpen \? ' messages-list-collapsed' : ''\}/,
+    'a toggle that does nothing on half the panes is worse than none; a channel has no list beside it');
   assert.match(SCREEN, /\$\{chatOpen && snap\.route\.threadRootId \? ' messages-has-reply-thread' : ''\}/);
 });
 

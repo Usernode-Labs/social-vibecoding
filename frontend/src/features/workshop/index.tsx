@@ -82,16 +82,15 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
   BallotIcon, HandRaisedIcon, LockIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
 } from '@/components/ui/icons';
-import {
-  SECTION_TABS_LIST_BASE, SECTION_TAB_ACTIVE, SECTION_TAB_BASE, SECTION_TAB_INACTIVE,
-  Tabs, TabsList, TabsTrigger,
-} from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { channelUnread, useMessagesSnapshot } from '../messages/store';
 import { AllAppsScope } from './workshop-chrome';
+import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import { workshopStore } from './workshop-store.js';
 
 // The legacy router reads the DOM on the line after it routes — the ?shot=
@@ -110,6 +109,8 @@ type WorkshopRow = {
   audience?: Audience | string;
   member_count?: number;
   last_active_at?: string | null;
+  /** Homeroom's own row: its channel is #general. */
+  self_hosted?: boolean;
   /** A ?demo=1 fixture row (see orderRows). */
   demo?: boolean;
   working: number;
@@ -130,6 +131,27 @@ export const SECTIONS: ReadonlyArray<{ key: Audience; label: string; noun: strin
 
 /** How many rows a section shows before "Show N more". */
 export const SECTION_LIMIT = 3;
+
+/**
+ * How many more rows each press of "Show N more" reveals (#3269). A long
+ * section opened all at once turned three rows into thirty, and the next
+ * section went off the bottom of the screen; five at a time keeps the list
+ * something you read down rather than something you scroll past.
+ */
+export const SECTION_STEP = 5;
+
+/**
+ * The fold for a section of `total` rows with `limit` of them out: how many
+ * show, what the fold row says, and the limit a press moves to. Pure, so the
+ * three-then-five-then-fewer sequence is tested without a click.
+ */
+export function sectionFold(total: number, limit: number): { shown: number; label: string | null; next: number } {
+  const shown = Math.min(total, Math.max(SECTION_LIMIT, limit));
+  if (total <= SECTION_LIMIT) return { shown: total, label: null, next: SECTION_LIMIT };
+  const hidden = total - shown;
+  if (!hidden) return { shown, label: 'Show fewer', next: SECTION_LIMIT };
+  return { shown, label: `Show ${Math.min(hidden, SECTION_STEP)} more`, next: shown + SECTION_STEP };
+}
 
 function SectionGlyph({ audience }: { audience: Audience }) {
   const cls = 'w-4 h-4 shrink-0';
@@ -411,7 +433,7 @@ function ItemPane({ rows, items, itemsError, section, emptyText, heading }: {
 }): ReactNode {
   const NOTE = 'px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400';
   if (itemsError) {
-    return <p className={NOTE} data-workshop-items-error="">Couldn't load these items. Each app's own Workshop still has them.</p>;
+    return <p className={NOTE} data-workshop-items-error="">Couldn't load these items. Each project's own Workshop still has them.</p>;
   }
   if (!rows || !items) {
     if (heading) return null;
@@ -516,6 +538,12 @@ export function StatusLine({ working, needs }: { working: number; needs: number 
 function AppRow({ row }: { row: WorkshopRow }) {
   const fact = rowSubtitle(row);
   const busy = row.working > 0 || row.needs > 0;
+  // THE CHANNEL'S UNREAD, on the row that opens it. A project's channel
+  // lives on its hub, not in Messages, so "something was said" is shown
+  // where the room is — read from the Messages store, which loads both the
+  // channels and #general on every signed-in page for the tab badges.
+  useMessagesSnapshot();
+  const unread = channelUnread(row.slug, !!row.self_hosted);
   return (
     <ListRow
       as="a"
@@ -526,6 +554,8 @@ function AppRow({ row }: { row: WorkshopRow }) {
         const win = window as any;
         if (win.NavLink?.isNativeClick?.(event)) return;
         event.preventDefault();
+        // A row opens the project's hub, whatever tab it was last left on.
+        win.AppView?._landOnHub?.(row.slug);
         win.App?.navigateToApp?.(row.slug, 'dev');
       }}
       leading={(
@@ -538,6 +568,11 @@ function AppRow({ row }: { row: WorkshopRow }) {
         </div>
       )}
       title={row.name || row.slug}
+      trailing={unread > 0 ? (
+        <span className="messages-unread" data-workshop-unread={String(unread)} aria-label={`${unread} unread in the channel`}>
+          {unread > 99 ? '99+' : unread}
+        </span>
+      ) : null}
       // THE STATUS LEADS THE SECOND LINE, then the quiet fact after it, so a
       // narrow screen truncates the fact and never the part that changes.
       // The status spans are always here (see StatusLine) so the checks'
@@ -589,14 +624,19 @@ function RowSkeletons(): ReactNode {
  *
  * THE FOLD IS A ROW OF THE CARD, not a link under it: the language's "Show
  * more" (Messages' channels, Discover's tiers) is the last row of the group it
- * extends, full-width with no tile, so it reads as more of the same list. A
+ * extends, full-width with no tile, so it reads as more of the same list. It
+ * reveals SECTION_STEP rows a press and says how many ("Show 5 more"), and
+ * becomes "Show fewer" once the section is all out (#3269). A
  * `button`, not an anchor, because it navigates nowhere — which also keeps it
  * out of `a[data-workshop-app]:first-of-type` for good.
  */
 function Section({ audience, label, rows }: { audience: Audience; label: string; rows: WorkshopRow[] }) {
-  const [expanded, setExpanded] = useState(false);
-  const shown = expanded ? rows : rows.slice(0, SECTION_LIMIT);
-  const hidden = rows.length - shown.length;
+  // How many rows are out. Each press of "Show N more" adds SECTION_STEP;
+  // once every row is out the same row folds the section back to three.
+  const [limit, setLimit] = useState(SECTION_LIMIT);
+  const fold = sectionFold(rows.length, limit);
+  const shown = rows.slice(0, fold.shown);
+  const expanded = fold.shown === rows.length;
   const headingId = `workshop-section-${audience}`;
   return (
     <section data-workshop-section={audience} aria-labelledby={headingId}>
@@ -614,8 +654,8 @@ function Section({ audience, label, rows }: { audience: Audience; label: string;
             chevron={false}
             data-workshop-more={audience}
             aria-expanded={expanded}
-            onClick={() => setExpanded((open) => !open)}
-            title={expanded ? 'Show fewer' : `Show ${hidden} more`}
+            onClick={() => setLimit(fold.next)}
+            title={fold.label || ''}
             titleClassName="text-center font-semibold text-violet-700 dark:text-violet-300"
           />
         ) : null}
@@ -629,6 +669,7 @@ export function WorkshopScreen() {
   const state = useStoreState(workshopStore) as {
     open: boolean; rows: WorkshopRow[] | null; error: boolean;
     tab: TabKey; scopeOpen: boolean; items: Items | null; itemsError: boolean;
+    feed: NeedsFeedItem[] | null; feedError: boolean; feedCapped: boolean;
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   // TWO TABS, READ ACROSS EVERY APP (#3051). #2718's review took the app
@@ -740,15 +781,21 @@ export function WorkshopScreen() {
             onToggle={(next) => workshopStore.set({ scopeOpen: next })}
           />
           <Tabs value={state.tab} onValueChange={(v) => workshopController.setTab(v as TabKey)}>
-            <TabsList className={SECTION_TABS_LIST_BASE} aria-label="Workshop sections">
+            {/* THE PROJECT PAGE'S STRIP, NOT THE BLACK PILL. A community's
+                own page switches Hub and Workshop on a raised track with the
+                selected tab lit (app.css .dev-ws-tablist / .dev-ws-tab), and
+                the screen that lists those communities switches its two
+                views the same way, so "where you are" is one look across
+                the tab. See .workshop-scope-tabs in app.css. */}
+            <TabsList className="workshop-scope-tabs" aria-label="Communities sections">
               <TabsTrigger
                 id="workshop-tab-status"
                 type="button"
                 value="status"
                 data-workshop-tab="status"
-                className={SECTION_TAB_BASE}
-                activeClassName={SECTION_TAB_ACTIVE}
-                inactiveClassName={SECTION_TAB_INACTIVE}
+                className="workshop-scope-tab"
+                activeClassName="workshop-scope-tab-on"
+                inactiveClassName=""
               >
                 Current status
               </TabsTrigger>
@@ -757,9 +804,9 @@ export function WorkshopScreen() {
                 type="button"
                 value="needs"
                 data-workshop-tab="needs"
-                className={SECTION_TAB_BASE}
-                activeClassName={SECTION_TAB_ACTIVE}
-                inactiveClassName={SECTION_TAB_INACTIVE}
+                className="workshop-scope-tab"
+                activeClassName="workshop-scope-tab-on"
+                inactiveClassName=""
               >
                 Needs you
               </TabsTrigger>
@@ -838,7 +885,7 @@ export function WorkshopScreen() {
               ? (
                 <GroupedList tone="plane">
                   <AppsLoadError
-                    title="Couldn't load your workshop"
+                    title="Couldn't load your communities"
                     onRetry={() => { void workshopController.reload(); }}
                   />
                 </GroupedList>
@@ -864,14 +911,11 @@ export function WorkshopScreen() {
         </div>
         {state.tab === 'needs' ? (
           <div data-workshop-pane="needs">
+            {/* ONE FEED, EVERYTHING MIXED (#3270): every decision owed by you
+                across your projects, one per screen, newest first — the
+                shape a project's own Needs you page has. See ./needs-reel.tsx. */}
             {state.error ? null : (
-              <ItemPane
-                rows={rows}
-                items={state.items}
-                itemsError={state.itemsError}
-                section="needs"
-                emptyText="Nothing is waiting on your vote in any of your apps."
-              />
+              <NeedsReel items={state.feed} error={state.feedError} capped={state.feedCapped} />
             )}
           </div>
         ) : null}
@@ -919,11 +963,14 @@ export const workshopController = {
     let apps: Array<Omit<WorkshopRow, 'working' | 'needs'>> | null = null;
     let counts: Counts = {};
     let items: Items | null = null;
+    let feed: NeedsFeedItem[] | null = null;
+    let feedCapped = false;
     try {
-      const [appsRes, countsRes, itemsRes] = await Promise.all([
+      const [appsRes, countsRes, itemsRes, feedRes] = await Promise.all([
         fetch(`/api/apps${demo}`),
         fetch(`/api/workshop/counts${demo}`).catch(() => null),
         fetch(`/api/workshop/items${demo}`).catch(() => null),
+        fetch(`/api/workshop/needs-feed${demo}`).catch(() => null),
       ]);
       if (appsRes.ok) {
         const data = await appsRes.json();
@@ -946,6 +993,15 @@ export const workshopController = {
         const data = await itemsRes.json().catch(() => null);
         if (data && data.items && typeof data.items === 'object') items = data.items;
       }
+      // The Needs you feed, optional in the same way: losing it costs that
+      // tab its cards (it says so), never the screen.
+      if (feedRes && feedRes.ok) {
+        const data = await feedRes.json().catch(() => null);
+        if (data && Array.isArray(data.items)) {
+          feed = data.items as NeedsFeedItem[];
+          feedCapped = Number(data.max) > 0 && feed.length >= Number(data.max);
+        }
+      }
     } catch {
       // Offline is a state, not a crash: fall through to the error card,
       // which offers the same load again rather than a page reload.
@@ -964,6 +1020,9 @@ export const workshopController = {
       error: false,
       items: items || {},
       itemsError: !items,
+      feed: feed || [],
+      feedError: !feed,
+      feedCapped,
     });
   },
 };

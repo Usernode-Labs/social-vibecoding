@@ -211,7 +211,7 @@ test('the preview iframe is the SAME element across every overlay state change',
   assert.equal(iframe.loads, 1, 'one navigation for the open');
   assert.equal(bridge.stats().navigations, 1, 'and the bridge counted exactly one');
   const win = iframe.contentWindow;
-  assert.match(iframe.src, /^https:\/\/preview\.example\/\?token=tok-1$/,
+  assert.match(iframe.src, /^https:\/\/preview\.example\/\?token=tok-1&un-theme=dark$/,
     'src composed through the URL API, token attached as a query param');
 
   // The steps that must NOT reload: every one of them is a store write that the
@@ -258,7 +258,7 @@ test('a "Test this change" retarget navigates once, and only when the src differ
   // link and auto-shows the panel.
   await AppView.swapToStaging('https://preview.example', { md: 'do the thing', path: '/deep' }, { verified: true, jump: true });
   assert.equal(iframe.loads, 1, 'one navigation to the deep link');
-  assert.match(iframe.src, /\/deep\?token=tok-1$/, 'jumped to the testing path');
+  assert.match(iframe.src, /\/deep\?token=tok-1&un-theme=dark$/, 'jumped to the testing path');
   assert.equal(bridge.isTestPanelHidden(), false, 'the panel auto-opened for the jump path');
   const afterJump = iframe.contentWindow;
 
@@ -308,7 +308,7 @@ test('a token refresh re-points the SAME element, and only for its own app', asy
   assert.equal(next, true, 'the bridge performed the write');
   assert.equal(bridge.frame(), iframe, 'the element is the same object');
   assert.equal(iframe.loads, 2, 'exactly one further navigation');
-  assert.match(iframe.src, /token=tok-2$/, 'now carrying the refreshed token');
+  assert.match(iframe.src, /token=tok-2&un-theme=dark$/, 'now carrying the refreshed token');
 
   // The audience guard: a token minted for another app is not attached.
   AppView.iframeTokenSlug = 'someone-elses-app';
@@ -492,7 +492,7 @@ test('#1993 React bridge exposes retry state and clears it without replacing the
   assert.equal(h.store.get().loaderRetry, false);
   assert.equal(h.iframe.loads, 1);
   assert.equal(h.bridge.frame(), h.iframe, 'retry keeps the same React-owned iframe');
-  assert.match(h.iframe.src, /token=retry-token$/);
+  assert.match(h.iframe.src, /token=retry-token&un-theme=dark$/);
   assert.match(OVERLAY, /useHiddenClass\(retryRef, !state\.loaderRetry\)/);
   assert.match(OVERLAY, /stagingHandlers\.onRetry\?\.\(\)/);
 });

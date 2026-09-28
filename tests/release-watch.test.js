@@ -118,7 +118,7 @@ test('the PR comes off the squash subject, and only from its first line', () => 
   assert.equal(releaseWatch.prNumberFrom(null), null);
 });
 
-test('a red release workflow is reported at once: record, group message, admins notified', async () => {
+test('a red release workflow is reported at once: the record and the admins notified', async () => {
   reset();
   const pool = makePool();
   const now = T0 + 90 * 1000; // ninety seconds in — well inside the grace
@@ -137,12 +137,9 @@ test('a red release workflow is reported at once: record, group message, admins 
   });
   assert.equal(pool.queries.find((q) => /SET release_stall = \$1/.test(q.sql)).params[1], 10);
 
-  assert.equal(posted.length, 1);
-  assert.equal(posted[0].appId, 10);
-  assert.equal(posted[0].kind, 'system');
-  assert.equal(posted[0].content,
-    '⚠️ PR #2589 merged (7817d05) 2 minutes ago but was not released: the "Build Kubernetes images" workflow did not complete. '
-    + `${RUN_URL} The platform is still running 741b8f7. Run it on main to release the latest commit; a later merge would also carry this change.`);
+  // No channel line: a channel carries no activity. The board's banner words
+  // the record (dev-board/release-stall-store.ts) and the admins are told.
+  assert.equal(posted.length, 0);
   assert.deepEqual(notified, [{ appId: 10, detail: 'release_stalled' }]);
   assert.equal(pushed.length, 1, 'the notification is pushed, not only inserted');
 });
@@ -163,12 +160,13 @@ test('a release still within its normal time says nothing', async () => {
 });
 
 test('past the grace, the workflow\'s own state names the stall', async () => {
+  // What each kind SAYS is the board banner's (release-stall-store.ts).
   const cases = [
-    [{ status: 'in_progress', conclusion: null }, 'workflow_running', /release workflow is still running; a release normally takes a couple of minutes\. https:/],
-    [{ status: 'completed', conclusion: 'success' }, 'rollout_missing', /release workflow succeeded, but the platform has not rolled onto it\. The platform is still running 741b8f7\. Check Argo CD/],
-    [null, 'unknown', /no release workflow run could be found for it\. The platform is still running 741b8f7\. Check the repository's Actions\./],
+    [{ status: 'in_progress', conclusion: null }, 'workflow_running'],
+    [{ status: 'completed', conclusion: 'success' }, 'rollout_missing'],
+    [null, 'unknown'],
   ];
-  for (const [run, kind, message] of cases) {
+  for (const [run, kind] of cases) {
     reset();
     const pool = makePool();
     const result = await releaseWatch.observe({}, pool, selfApp(), HEAD, {
@@ -177,9 +175,7 @@ test('past the grace, the workflow\'s own state names the stall', async () => {
     assert.equal(result.status, 'release_stalled', kind);
     assert.equal(result.kind, kind);
     assert.equal(written(pool)[0].kind, kind);
-    assert.equal(posted.length, 1, kind);
-    assert.match(posted[0].content, /^⚠️ PR #2589 merged \(7817d05\) 12 minutes ago/);
-    assert.match(posted[0].content, message);
+    assert.equal(posted.length, 0, kind);
     assert.equal(notified.length, 1, kind);
   }
 });
@@ -218,7 +214,6 @@ test('the same stall is said once; a later tick for the same commit and kind is 
   });
   assert.equal(asText.reported, false);
   assert.equal(written(pool).length, 1);
-  assert.equal(posted.length, 1);
   assert.equal(notified.length, 1);
 });
 
@@ -235,7 +230,7 @@ test('the same commit escalating to a different kind is news again', async () =>
   assert.equal(failed.kind, 'workflow_failed');
   assert.equal(failed.reported, true);
   assert.deepEqual(written(pool).map((r) => r.kind), ['workflow_running', 'workflow_failed']);
-  assert.equal(posted.length, 2);
+  assert.equal(notified.length, 2, 'the admins are told of each');
 });
 
 test('main moving on to a further commit starts over for that commit', async () => {
@@ -272,7 +267,7 @@ test('a head the API could not date is measured from when this process first saw
   assert.equal(written(pool)[0].since, new Date(t).toISOString());
 });
 
-test('converged: the recorded stall is cleared and the thread closed; nothing recorded, nothing said', async () => {
+test('converged: the recorded stall is cleared; nothing recorded, nothing written', async () => {
   reset();
   const pool = makePool();
   const record = {
@@ -284,13 +279,13 @@ test('converged: the recorded stall is cleared and the thread closed; nothing re
   assert.equal(result.cleared, true);
   assert.match(pool.queries[0].sql, /SET release_stall = NULL WHERE id = \$1 AND release_stall IS NOT NULL/);
   assert.deepEqual(pool.queries[0].params, [10]);
-  assert.deepEqual(posted.map((p) => p.content), ['✅ PR #2589 (7817d05) is live now.']);
+  assert.equal(posted.length, 0, 'the banner goes; no channel line says so');
 
   // A later merge carried it.
   reset();
   result = await releaseWatch.converged({}, pool, selfApp({ main_sha: 'c8462e98aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', release_stall: record }));
   assert.equal(result.cleared, true);
-  assert.deepEqual(posted.map((p) => p.content), ['✅ PR #2589 (7817d05) is live now, carried by c8462e9.']);
+  assert.equal(posted.length, 0);
 
   // Nothing recorded: no query, no message.
   reset();

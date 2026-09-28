@@ -361,12 +361,19 @@ async function setVerifiedHandle(pool, token, provider, handle) {
 // original granted_at). Used by the release paths and by the signup
 // surfaces that are invite-equivalent (activation codes, genesis wallet
 // registration).
+//
+// Every one of those is US letting somebody in, so it is generation 0 of
+// the invite tree (schema.sql, "Communities, stage 6"): the lowest, which
+// is why it also moves somebody an invite let in earlier down to 0 when we
+// release them ourselves. The invite tree writes its own generations and
+// never comes through here.
 async function grantPlatformAccess(pool, userId) {
   await pool.query(
     `UPDATE users
         SET has_platform_access = TRUE,
-            platform_access_granted_at = COALESCE(platform_access_granted_at, NOW())
-      WHERE id = $1 AND has_platform_access = FALSE`,
+            platform_access_granted_at = COALESCE(platform_access_granted_at, NOW()),
+            invite_generation = 0
+      WHERE id = $1 AND (has_platform_access = FALSE OR invite_generation IS DISTINCT FROM 0)`,
     [userId]
   );
 }

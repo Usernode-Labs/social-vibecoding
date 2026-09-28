@@ -1591,6 +1591,8 @@ const AppView = {
     }
     const token = AppView.tokenForSlug(AppView.appData && AppView.appData.slug);
     if (token) url.searchParams.set('token', token);
+    // #3257: the platform's resolved theme, for the app's pre-paint read.
+    url.searchParams.set(AppView.THEME_PARAM, AppView.resolvedTheme());
     const src = url.toString();
     return AppView._isSafeAppIframeSrc(src) ? src : null;
   },
@@ -2751,7 +2753,7 @@ const AppView = {
     const adopts = !!adopt
       && adopt.launchId === AppView._launchId
       && adopt.slug === appData.slug
-      && adopt.src === iframeSrc
+      && AppView.sameFrameSrc(adopt.src, iframeSrc)
       && frame.hasFrame();
 
     // #1085 chunk H generalises that one-shot into a standing rule: if the
@@ -3214,14 +3216,14 @@ const AppView = {
     if (subTab === 'chat') {
       // The app's name stays the chip's label and the subtitle qualifies it —
       // replacing the name here was the chip forgetting which app it was in.
-      App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Discussion');
-      // A LEVEL INSIDE MESSAGES (#2718 review). This thread is a row in the
-      // Messages inbox, beside the people and the agent chats — which is why
-      // the Workshop stopped offering it — so the Messages tab is what lights
-      // for it (App._syncPlatformTabs) and #messages is what it hangs off.
-      // The reset above publishes 'none', which is right for the Workshop and
-      // the board; this thread has somewhere to go up TO, and said nothing.
-      App.setBackIcon?.('arrow', '#messages');
+      App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Channel');
+      // A LEVEL INSIDE THE PROJECT'S HUB. This was a row in the Messages
+      // inbox (#2718 review) and hung off #messages; the channels live on
+      // each community's hub now, so the Communities tab is what lights for
+      // it (App._syncPlatformTabs, App._isChannelThread) and the hub is what
+      // it hangs off. The reset above publishes 'none', which is right for
+      // the hub and the board; this thread has somewhere to go up TO.
+      App.setBackIcon?.('arrow', App._hubHref?.(App.currentApp) || '#communities');
       AppView._renderChatSubView(content);
       return;
     }
@@ -3289,7 +3291,9 @@ const AppView = {
     // app's own artwork, and a menu of the others — so the bar spending its
     // width on the same name made the two read as a breadcrumb with a
     // repeated segment. The bar names the SECTION, the chip names the scope.
-    App.setHeaderTitle?.('Workshop');
+    // COMMUNITIES since the tab was renamed: the page is a community's hub
+    // and its Workshop, both inside the Communities section.
+    App.setHeaderTitle?.('Communities');
 
     // THE APP'S RECORD MAY NOT BE HERE — the #2879 case, on the board. A
     // failed or superseded GET /api/apps/<slug> leaves AppView.appData empty
@@ -6282,10 +6286,17 @@ const AppView = {
     if (!content) return;
     // The app this mount is ABOUT. AppView.appData is the app view's answer
     // and the default; a caller that named one owns its own.
+    // HOMEROOM'S OLD PROJECT DISCUSSION IS ARCHIVED: the platform's own
+    // project talks in #general now, the Homeroom community's channel, and
+    // this room is kept read-only as history (the server refuses a post in
+    // its main stream too — services/communities.js channelArchived).
+    const archived = (ctx && ctx.slug)
+      ? !!ctx.archived
+      : !!(AppView.appData && AppView.appData.self_hosted);
     const app = (ctx && ctx.slug)
-      ? { slug: ctx.slug, name: ctx.name || ctx.slug, readOnly: !!ctx.readOnly }
+      ? { slug: ctx.slug, name: ctx.name || ctx.slug, readOnly: !!ctx.readOnly || archived }
       : (AppView.appData
-        ? { slug: AppView.appData.slug, name: AppView.appData.name, readOnly: !!AppView.readOnly }
+        ? { slug: AppView.appData.slug, name: AppView.appData.name, readOnly: !!AppView.readOnly || archived }
         : null);
 
     // (#3) First-arrival framing: name what Group Chat is for. Group chat
@@ -6320,6 +6331,9 @@ const AppView = {
     AppView._reactGroupChat()?.mountGeneralChat(content, {
       introAppName,
       readOnly: !!(app && app.readOnly),
+      notice: archived
+        ? 'This was Homeroom\u2019s project discussion. It is read-only now: Homeroom\u2019s channel is #general.'
+        : null,
       maxLength: typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000,
     });
 
@@ -7491,11 +7505,12 @@ const AppView = {
   // they are placed here, by the issue they link.
 
   WORKSHOP_SEEN_KEY: 'workshopSeen',
-  // The lander's three tabs. A query param reaches one directly (`?ws=needs`)
-  // because the platform's own rule is that a screen only reachable by
-  // interacting needs a URL: the declared checks select against it and the
-  // proposal screenshots are shot from it.
-  WORKSHOP_TABS: ['status', 'needs', 'all'],
+  // The lander's two tabs, the hub (`status`) and the Workshop, and the two
+  // pages under them, Needs you and All items. A query param reaches each
+  // directly (`?ws=needs`) because the platform's own rule is that a screen
+  // only reachable by interacting needs a URL: the declared checks select
+  // against it and the proposal screenshots are shot from it.
+  WORKSHOP_TABS: ['status', 'workshop', 'needs', 'all'],
   _workshopModels() {
     const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
     if (!src || typeof src !== 'object') return { list: [], selected: null };
@@ -7550,6 +7565,8 @@ const AppView = {
     if (url) return url;
     try {
       const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
+      // A remembered page (Needs you, All items) reopens as itself, with its
+      // way back to the tab it hangs off above it.
       if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1) return stored;
       // A viewer who last left the Dev screen on the Board gets the tab those
       // columns live in, for the same reason _getWorkshopGroup gives them the
@@ -7650,6 +7667,24 @@ const AppView = {
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
     try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
+  },
+  /**
+   * A DOOR TO A PROJECT'S HUB OPENS THE HUB. The page reopens on the tab you
+   * last chose (_workshopTab), which is right when you come BACK to it and
+   * wrong when you follow a link that says "community hub": the logo menu's
+   * row, a Discover row, a Communities row, a Needs you card's project name.
+   * Each of those calls this before it navigates, so the page it lands on
+   * opens on its hub, and a page already open for that project (the menu
+   * row, pressed on the page itself, changes no address) is told to switch.
+   * It writes the remembered tab rather than a one-off, so the hub it shows
+   * is also what the page reopens on next. Back and Forward are not doors:
+   * they reopen on the tab last shown, which the page reads when it mounts.
+   */
+  _landOnHub(slug) {
+    AppView._setWorkshopTab('status');
+    try {
+      window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: 'status' } }));
+    } catch {}
   },
   // Rows per lane per theme before "+N more · Open on Board".
   WORKSHOP_LANE_MAX: 8,
@@ -7880,15 +7915,23 @@ const AppView = {
     // dropped rather than rendered blank; a week that is genuinely empty is
     // the server's to describe ("nothing landed"), because the client cannot
     // tell an empty week from a week it was never told about.
+    //
+    // #3293: the server derives these (what landed, by title) back to the
+    // project's first week, and `closed` is how many changes landed in the
+    // window, counted over the whole history, so exact. Anything but a
+    // non-negative integer is no count, and the card then draws its line
+    // alone rather than a zero it cannot stand behind.
+    const count = (x) => (Number.isInteger(x) && x >= 0 ? x : null);
     const older = (Array.isArray(v.older) ? v.older : [])
-      .map((w) => ({ start: AppView._ms(w && w.start), line: line(w && w.line) }))
+      .map((w) => ({ start: AppView._ms(w && w.start), line: line(w && w.line), closed: count(w && w.closed) }))
       .filter((w) => w.start && w.line)
       .sort((a, b) => b.start - a.start);
-    // The Monday of the first week this app had any activity: where the
-    // walk-back stops offering another step. Null when the server has not
-    // said, which reads as "there may be more" — the button then disappears
-    // when `older` runs out instead, which is the same stop one week late
-    // rather than a false floor.
+    // The Monday of the week the project began: the walk's floor. The
+    // server sends it only beside a COMPLETE `older` (#3293), so reaching
+    // the end of the walk with it set is reaching the project's start. Null
+    // when the server has not said, which reads as "there may be more": the
+    // walk then ends where `older` does and says only that the summary goes
+    // no further, which is a true statement rather than a false floor.
     const firstWeek = AppView._ms(v.firstWeek) || null;
     return (cards.lastWeek || cards.thisWeek || cards.open || older.length)
       ? { ...cards, older, firstWeek }
@@ -7990,12 +8033,14 @@ const AppView = {
       const n = Math.round((thisStart - w.start) / WEEK);
       if (n < 2) continue;
       older.push({
-        // Its dates, as above. The server has never written a count for a
-        // window this old, so it carries none — the pane draws the line
-        // alone rather than a zero it cannot stand behind.
+        // Its dates, as above. #3293: the server counts what landed in it
+        // over the whole history, the same rows the tiles count, so the
+        // figure is exact and never a floor. A window it sent no count for
+        // (a cache from before that) carries none, and the pane draws the
+        // line alone rather than a zero it cannot stand behind.
         key: `week:${w.start}`, title: '', line: w.line,
         startMs: w.start, endMs: w.start + WEEK,
-        counts: null,
+        counts: Number.isInteger(w.closed) ? { closed: w.closed, partial: false } : null,
       });
     }
     // Newest of the older windows first, continuing the walk backwards.
@@ -8686,10 +8731,11 @@ const AppView = {
         thisWeek: { closed: shippedThisWeek, partial: weekCountsPartial },
         lastWeek: { closed: shippedPrev, partial: weekCountsPartial },
       }),
-      // The Monday of the app's first week of activity, when the server has
-      // said. The walk stops when `weeks` runs out either way; this is only
-      // how the pane can tell "that is the whole history" from "that is all
-      // that has been written so far".
+      // The Monday of the week the project began, when the server has said
+      // (#3293: beside a complete history of older weeks). The walk stops
+      // when `weeks` runs out either way; this is only how the pane can tell
+      // "that is the whole history" from "that is all that has been written
+      // so far".
       firstWeek: (tData && tData.digestCards && tData.digestCards.firstWeek) || null,
       summary: (tData && tData.digest) || null,
       // The merged history is paged. With more behind it, page-counted week
@@ -20304,10 +20350,15 @@ const AppView = {
       // testing deep link), so without this flag a reviewer can see an empty
       // production-shaped screen and conclude that the submitted UI did not
       // land.  Keep this self-app-only: apps built on the platform own their
-      // own query-string semantics and must continue to receive an untouched
-      // preview URL. The URL API preserves an existing path/hash/query.
+      // own query-string semantics and must receive their preview URL with
+      // nothing added but the platform's own namespaced parameters (`token`,
+      // and `un-theme` below). The URL API preserves an existing path/hash/query.
       if (selfHosted) url.searchParams.set('demo', '1');
       url.searchParams.set('token', token);
+      // #3257: namespaced, like `token`, so it cannot collide with a query
+      // parameter the app gives meaning to (the platform's own shell pins its
+      // theme from a bare `?theme=`, which a preview must not do).
+      url.searchParams.set(AppView.THEME_PARAM, AppView.resolvedTheme());
       return url.toString();
     };
     const jump = !!(opts && opts.jump) && !!safePath;
@@ -20682,7 +20733,7 @@ const AppView = {
           // only if it isn't already pointing there, so re-opening the
           // panel doesn't reload the iframe.
           const target = buildSrc(t.path);
-          if (pending.src !== target) {
+          if (!AppView.sameFrameSrc(pending.src, target)) {
             pending.src = target;
             const frame = staging.frame();
             if (frame && frame.src) staging.setSrc(target);
@@ -21457,6 +21508,93 @@ const AppView = {
         '*'
       );
     } catch {}
+  },
+
+  // ── Platform theme forwarding (issue #3257) ────────────────────────
+  //
+  // WHY THIS EXISTS. An app in a cross-origin frame cannot see the viewer's
+  // Light/Dark choice: `prefers-color-scheme` inside the frame follows the
+  // OS, not the page embedding it (measured in Chromium 141: toggling the
+  // shell's `color-scheme` never moved the frame's media query, at load or
+  // live). So a viewer who picked Dark on a light-mode OS got light apps and
+  // light previews. The shell forwards the RESOLVED theme instead, the same
+  // two ways it forwards safe-area insets and the locale:
+  //
+  //   - `?un-theme=light|dark` on the app frame and staging preview URLs,
+  //     so an app's pre-paint bootstrap can read it with no flash;
+  //   - a `__usernode_theme` message family: the bridge asks once at load
+  //     (`get` → `response`), and the shell pushes `changed` on every theme
+  //     change (the drawer, an OS flip in System mode, another tab). Never a
+  //     src rewrite: that would reload the app mid-use.
+  //
+  // The bridge turns both into `usernode.theme` and a
+  // `usernode:theme-changed` event. It reports; it never restyles the app.
+  THEME_PARAM: 'un-theme',
+
+  // The legacy copy of sameFrameSrc in
+  // frontend/src/features/app-frame/app-frame-policy.js: a render compares
+  // the url it would build with the one the frame holds, and a theme toggle
+  // in between changes only `un-theme`, which the bridge already delivered.
+  // Comparing raw strings would reload the app. tests/app-theme-forwarding
+  // runs both copies against one table.
+  sameFrameSrc(a, b) {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    const strip = (src) => {
+      try {
+        const url = new URL(src);
+        url.searchParams.delete(AppView.THEME_PARAM);
+        return url.toString();
+      } catch {
+        return src;
+      }
+    };
+    return strip(a) === strip(b);
+  },
+
+  resolvedTheme() {
+    try {
+      return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+    } catch {
+      return 'light';
+    }
+  },
+
+  // The owned frames by id, plus the parked ones a kept app keeps alive
+  // (#2902): those have no id, and a theme change while an app is parked
+  // must still reach it, since nothing reloads it on resume.
+  _themeFrames() {
+    if (typeof document === 'undefined') return [];
+    const frames = new Set();
+    AppView.SAFE_AREA_FRAME_IDS.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) frames.add(el);
+    });
+    document.querySelectorAll('.app-launch-host iframe').forEach((el) => frames.add(el));
+    return [...frames];
+  },
+
+  handleThemeBridgeMessage(e) {
+    const data = e.data;
+    if (!data || !data.id || data.__usernode_theme !== 'get') return;
+    const frame = AppView._themeFrames().find((el) => e.source === el.contentWindow);
+    if (!frame) return;
+    try {
+      e.source.postMessage(
+        { __usernode_theme: 'response', id: data.id, value: { theme: AppView.resolvedTheme() } },
+        '*'
+      );
+    } catch {}
+  },
+
+  broadcastTheme() {
+    const theme = AppView.resolvedTheme();
+    AppView._themeFrames().forEach((el) => {
+      if (!el.contentWindow) return;
+      try {
+        el.contentWindow.postMessage({ __usernode_theme: 'changed', value: { theme } }, '*');
+      } catch {}
+    });
   },
 
   // #1581: WebKit exposes the IFRAME ELEMENT's background during a child
@@ -22254,8 +22392,16 @@ if (typeof window !== 'undefined') {
     try { AppView.handleLocaleBridgeMessage(e); } catch {}
     // #970: the bridge's startup request for this frame's safe-area insets.
     try { AppView.handleSafeAreaBridgeMessage(e); } catch {}
+    // #3257: the bridge's startup request for the platform's theme.
+    try { AppView.handleThemeBridgeMessage(e); } catch {}
     try { AppView.handleBackgroundBridgeMessage(e); } catch {}
   });
+
+  // #3257: Theme.onChange fires after the new theme is on <html>, for the
+  // drawer's segments, an OS flip in System mode and another tab's write.
+  if (window.Theme && typeof window.Theme.onChange === 'function') {
+    window.Theme.onChange(() => AppView.broadcastTheme());
+  }
 
   // #970: anything that can change a frame's rect relative to the page's
   // safe area re-broadcasts. Rotation and window resizes change the insets

@@ -61,13 +61,45 @@ function preservesTimingRepair(rejected, corrected, failure) {
     && planContract.canonicalJson(action.target) === planContract.canonicalJson(failedAssertion.target));
 }
 
+function preservesAssertionLocatorRepair(rejected, corrected, failure) {
+  const detail = failure?.detail;
+  const side = detail?.side === 'base' ? 'before' : detail?.side === 'head' ? 'after' : null;
+  if (!rejected || !side || !Number.isInteger(detail?.assertionIndex)) return false;
+  const oldStory = rejected.stories.find((story) => story.id === detail.storyId);
+  const newStory = corrected.stories.find((story) => story.id === detail.storyId);
+  const oldAssertion = oldStory?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex];
+  const newAssertion = newStory?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex];
+  if (!oldAssertion?.target || !newAssertion?.target
+      || planContract.canonicalJson(oldAssertion) !== planContract.canonicalJson(detail.assertion)
+      || planContract.canonicalJson(oldAssertion.target)
+        === planContract.canonicalJson(newAssertion.target)) return false;
+
+  // A failed positive assertion may have pointed at the wrong element, but
+  // that does not authorize the repair turn to rewrite what the checkpoint
+  // proves. Put the old target back into a copy of the proposed correction;
+  // the entire plan must then be byte-for-byte equivalent to the rejected
+  // plan. This pins the assertion type and expected count/value as well as
+  // every action, route, focus target, sibling assertion, and other story.
+  const normalized = cloneJson(corrected);
+  const normalizedStory = normalized.stories.find((story) => story.id === detail.storyId);
+  normalizedStory.replay.checkpoint.assertions[side][detail.assertionIndex].target
+    = cloneJson(oldAssertion.target);
+  return planContract.canonicalJson(normalized) === planContract.canonicalJson(rejected);
+}
+
 class RunControl {
-  constructor({ runId, sessionId, intent, context, resetSide, runPlan, expiresAt }) {
+  constructor({ runId, sessionId, intent, context, resetPair, runPlan, expiresAt }) {
     this.runId = runId;
     this.sessionId = Number(sessionId);
     this.intent = planContract.parseIntent(intent);
     this.context = cloneJson(context);
-    this.resetSideCallback = resetSide;
+    this.resetPairCallback = resetPair;
+    // During a rolling deploy an older evidence worker may still call the
+    // retired one-side endpoint twice, once for base and once for head. Keep
+    // the first atomic pair available for the companion call so that the
+    // second request cannot invalidate the origin returned by the first.
+    this.legacyResetPair = null;
+    this.legacyResetSides = new Set();
     this.runPlanCallback = runPlan;
     this.expiresAt = Number(expiresAt || Date.now() + 8 * 60_000);
     this.planCalls = 0;
@@ -109,24 +141,55 @@ class RunControl {
     });
   }
 
-  async resetSide(side) {
+  async resetPair() {
     try {
       this.assertLive();
-      if (!['base', 'head'].includes(side)) throw new EvidenceControlError('invalid_evidence_side', 'Side must be base or head.', 400);
       if (this.finished) throw new EvidenceControlError('evidence_turn_finished', 'This evidence turn is already finished.');
-      if (typeof this.resetSideCallback !== 'function') {
-        throw new EvidenceControlError('evidence_reset_unavailable', 'Side reset is unavailable for this run.', 503);
+      if (typeof this.resetPairCallback !== 'function') {
+        throw new EvidenceControlError('evidence_reset_unavailable', 'Paired reset is unavailable for this run.', 503);
       }
       if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
       this.busy = 'resetting paired state';
-      try { return await this.resetSideCallback(side); }
+      try {
+        const result = await this.resetPairCallback();
+        if (!result?.origins?.base || !result?.origins?.head) {
+          throw new EvidenceControlError(
+            'invalid_evidence_reset', 'Paired reset did not return both replacement origins.', 500
+          );
+        }
+        this.legacyResetPair = null;
+        this.legacyResetSides.clear();
+        return cloneJson(result);
+      }
       finally { this.busy = null; }
     } catch (error) {
       if (this.lastToolFailure?.operation !== 'run-plan') {
-        this.lastToolFailure = { operation: 'reset-side', error };
+        this.lastToolFailure = { operation: 'reset-pair', error };
       }
       throw error;
     }
+  }
+
+  async resetSide(side) {
+    if (!['base', 'head'].includes(side)) {
+      throw new EvidenceControlError('invalid_evidence_side', 'Side must be base or head.', 400);
+    }
+    this.assertLive();
+    if (this.finished) throw new EvidenceControlError('evidence_turn_finished', 'This evidence turn is already finished.');
+    if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
+    let pair = this.legacyResetPair;
+    if (!pair || this.legacyResetSides.has(side)) {
+      pair = await this.resetPair();
+      this.legacyResetPair = pair;
+      this.legacyResetSides.clear();
+    }
+    this.legacyResetSides.add(side);
+    return {
+      side,
+      origin: pair.origins[side],
+      origins: cloneJson(pair.origins),
+      bothSidesReset: true,
+    };
   }
 
   queuePlan(rawPlan) {
@@ -160,6 +223,14 @@ class RunControl {
         throw new EvidenceControlError(
           'evidence_timing_repair_changed_flow',
           'A motion timing correction may change waits only. Keep the original interactions, routes, and assertions, then wait for the failed marker to become hidden before the checkpoint.',
+          400
+        );
+      }
+      if (this.repairFailure?.kind === 'assertion_locator'
+          && !preservesAssertionLocatorRepair(this.rejectedPlan, plan, this.repairFailure)) {
+        throw new EvidenceControlError(
+          'evidence_assertion_locator_repair_changed_plan',
+          'An assertion locator correction may change only the failed assertion target. Keep its type and expected value or count, plus every action, route, focus target, and other assertion unchanged.',
           400
         );
       }

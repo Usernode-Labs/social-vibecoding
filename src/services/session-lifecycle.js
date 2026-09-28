@@ -247,7 +247,6 @@ async function unpromoteSession({ pool, sessionId, userId, actorUsername = null 
   const content = `${actorUsername || 'The author'} moved ${label} back to Underway. Its votes were cleared, and it goes up for a fresh vote when it is proposed again`;
   try {
     const { sendSystemMessage } = require('./ws');
-    await sendSystemMessage(pool, session.app_id, content, 'system');
     await sendSystemMessage(pool, session.app_id, content, 'system', null,
       { type: 'session', ref: session.id }).catch(() => {});
   } catch (err) {
@@ -518,9 +517,10 @@ async function finalizeArchivedSession({
       log.warn('session-lifecycle', 'Failed to close PR on archive', { sessionId, err: err.message });
     });
 
-    // #200: announce the withdrawal in group chat, completing the PR
-    // lifecycle feed (promote/merge already post there — a withdrawn PR
-    // otherwise vanishes silently). Posted regardless of closePR's
+    // #200: say the withdrawal in the proposal's own thread, completing its
+    // story (promote/merge already post there — a withdrawn PR otherwise
+    // vanishes silently; a channel carries no activity, ws.sendSystemMessage).
+    // Posted regardless of closePR's
     // outcome: the close is best-effort and the PR leaves the vote
     // panel either way. Own catch so a chat failure never fails the
     // archive itself.
@@ -538,7 +538,7 @@ async function finalizeArchivedSession({
         : `${label} went quiet and was set aside. It can always come back as a new proposal`;
     try {
       const { sendSystemMessage } = require('./ws');
-      await sendSystemMessage(pool, session.app_id, content, 'system');
+      await sendSystemMessage(pool, session.app_id, content, 'system', null, { type: 'session', ref: session.id });
     } catch (err) {
       log.warn('session-lifecycle', 'Failed to post PR-withdrawn chat message', { sessionId, err: err.message });
     }

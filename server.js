@@ -68,6 +68,7 @@ const { reportAiRoutes } = require('./src/routes/report-ai');
 const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { workshopOverviewRoutes } = require('./src/routes/workshop-overview');
+const { appNoticesRoutes } = require('./src/routes/app-notices');
 const { messagesOverviewRoutes } = require('./src/routes/messages-overview');
 const { platformAboutRoutes } = require('./src/routes/platform-about');
 const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
@@ -81,6 +82,7 @@ const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
 const { galleryRoutes } = require('./src/routes/gallery');
 const { appInstallRoutes } = require('./src/routes/app-install');
+const communityInviteRoutes = require('./src/routes/community-invites');
 const {
   cliAuthGate,
   cliApiBearerAuth,
@@ -612,6 +614,9 @@ app.use(workshopThemesRoutes(config));
 // every app the viewer can see. Me-scoped like the ordering routes, so it
 // sits behind authMiddleware and refuses an anonymous caller outright.
 app.use(workshopOverviewRoutes(config));
+// A project's notices on its Workshop tab: settings changed lately and this
+// week's card (services/app-notices.js). View access, as its chat is.
+app.use(appNoticesRoutes(config));
 app.use(messagesOverviewRoutes(config));
 // The mark menu's "About Homeroom" pane: the platform's name, tagline and
 // version, and its apps / members / merged figures. One cached answer for
@@ -696,6 +701,12 @@ app.use(topochainAdminRoutes(config));
 // serve index.html for these clean app paths. The shell's own manifest
 // link and public/manifest.webmanifest are untouched — see the route.
 app.use(appInstallRoutes(config));
+// Invite links (routes/community-invites.js): the API, the anonymous
+// preview under /api/public/, and the `/invite/<token>` page. AFTER
+// authMiddleware (every route but the preview needs req.user) and BEFORE the
+// `app.get('*')` catch-all, which would otherwise answer the page with a
+// plain index.html and no link preview.
+app.use(communityInviteRoutes(config));
 
 // Mint the iframe identity token the shell injects into an app iframe.
 //
@@ -1277,6 +1288,13 @@ async function becomeLeader() {
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.
   startLocalAgentLeaseSweeper(config);
+
+  // Agent sessions: a Mayor turn whose process died (a crash, a kill) left
+  // its lease to go stale; say in its conversation that it was interrupted,
+  // with Retry, and hand the lease back (services/mayor/agent-turn.js).
+  require('./src/services/mayor/agent-turn').startInterruptedTurnSweeper({
+    pool: require('./src/db/pool').getPool(config),
+  });
 
   // #1010: fast, gate-first governance applies (minute-scale). Complements
   // the hourly sweeper's Pass 0b, which keeps ownership of the close-issue
@@ -5606,6 +5624,7 @@ const DRAIN_TIMEOUT_MS = 5000;
 // pool that refuses to settle can never push the exit past the SIGKILL.
 const POOL_CLOSE_TIMEOUT_MS = 1000;
 const EVIDENCE_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
+const BUILD_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
 
 // ── The process being replaced tells its tabs where traffic went (#2545) ─
 //
@@ -5663,6 +5682,14 @@ async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
   lifecycle.setShuttingDown();
+  // The Mayor's turns in agent sessions end with this process: each one
+  // records what it had said and that it was interrupted (with Retry), and
+  // hands its lease back, so the conversation is never left looking busy
+  // with nobody working. A turn whose coding agent is running is left to
+  // restart recovery. Awaited with the drain below, before the pool closes.
+  const agentTurnsEnded = require('./src/services/mayor/agent-turn').interruptLocalTurns({ timeoutMs: 3000 })
+    .catch((err) => log.warn('server', 'Interrupting agent turns failed', { err: err.message }));
+  require('./src/services/mayor/agent-turn').stopInterruptedTurnSweeper();
   const retentionStop = require('./src/services/build-retention').stop();
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
@@ -5763,6 +5790,7 @@ async function cleanup() {
     log.info('server', 'All handlers and visual evidence runs drained');
   }
   await pushStop;
+  await agentTurnsEnded;
 
   // A planned replay is hosted by this server process. If it is still active
   // when the drain expires, record the actual shutdown now so its owner can
@@ -5788,6 +5816,33 @@ async function cleanup() {
       attempted: interruptedEvidence.length,
       marked: result?.filter((entry) => entry.status === 'fulfilled').length || 0,
       timedOut: result === null,
+    });
+  }
+
+  // Staging builds this process was running die with it, and nothing on the
+  // cluster outlives a build to be harvested. Mark their check runs
+  // interrupted (staging-recovery.markInterruptedBuilds) so the next leader
+  // re-drives them as it takes over, BEFORE the leader lock is released
+  // below, instead of the proposal reading "building" until CHECKS_STALE_MS.
+  // Bounded like the evidence write above; the sweep stays the fallback.
+  const interruptedBuilds = require('./src/services/staging').inFlightBuildSessionIds();
+  if (interruptedBuilds.length && shutdownPool) {
+    let markTimer = null;
+    const marked = await Promise.race([
+      require('./src/services/staging-recovery').markInterruptedBuilds(shutdownPool, interruptedBuilds)
+        .catch((err) => {
+          log.warn('server', 'Could not mark interrupted staging builds', { err: err.message });
+          return [];
+        }),
+      new Promise((resolve) => {
+        markTimer = setTimeout(() => resolve(null), BUILD_SHUTDOWN_MARK_TIMEOUT_MS);
+      }),
+    ]);
+    if (markTimer) clearTimeout(markTimer);
+    log.info('server', 'Marked interrupted staging builds for re-drive on shutdown', {
+      building: interruptedBuilds.slice(0, 20),
+      marked: marked ? marked.length : 0,
+      timedOut: marked === null,
     });
   }
 

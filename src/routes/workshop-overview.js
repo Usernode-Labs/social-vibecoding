@@ -265,6 +265,90 @@ const ITEMS_SQL = `
    LIMIT $5
 `;
 
+// GET /api/workshop/needs-feed (#3270)
+//      → { items: FeedItem[] }
+//   FeedItem = { kind: 'proposal'|'governance', id, title, summary, author,
+//                number, epoch, at, yes, no,
+//                app: { slug, name, icon_url, icon_emoji } }
+//
+// The Communities screen's Needs you tab as ONE FEED: every decision owed by
+// the viewer, across all the projects they are a member of, newest first and
+// mixed together rather than grouped under each project, so the tab reads
+// like a project's own Needs you page (one decision per screen) instead of a
+// list of lists. The SAME owed predicates as the counts and ITEMS_SQL above,
+// so the number on a row and the feed agree; narrowed to MEMBER projects,
+// because a vote is a member's (communities.requireSessionMembership) and a
+// feed of cards the viewer could not answer would be a feed of Join prompts.
+//
+// What a card needs to be decided from its own screen: the words (the
+// proposal's summary, or a group decision's description), who asked, the
+// tally so far, and the approval epoch a vote must carry (#2038). Bounded to
+// NEEDS_FEED_MAX; the tab says so when it stops there.
+const NEEDS_FEED_MAX = 60;
+
+const NEEDS_FEED_SQL = `
+  WITH owed AS (
+    SELECT 'proposal'::text AS kind, cs.app_id, cs.id,
+           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text AS title,
+           LEFT(COALESCE(cs.pr_summary_md, ''), 700)::text AS summary,
+           u.username::text AS author,
+           cs.pr_number AS number,
+           cs.approval_epoch AS epoch,
+           cs.last_activity_at AS at,
+           (SELECT COUNT(*) FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+               AND ${currentVotePredicateSql('pv', 'cs')})::int AS yes,
+           (SELECT COUNT(*) FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.vote = 'no'
+               AND ${currentVotePredicateSql('pv', 'cs')})::int AS no
+      FROM chat_sessions cs
+      LEFT JOIN users u ON u.id = cs.user_id
+     WHERE ${OWED_PROPOSALS_WHERE}
+    UNION ALL
+    SELECT 'governance', i.app_id, i.id, i.title::text,
+           LEFT(COALESCE(i.description, ''), 700)::text,
+           u.username::text, NULL::int, NULL::int, i.created_at,
+           NULL::int, NULL::int
+      FROM issues i
+      LEFT JOIN users u ON u.id = i.created_by
+     WHERE ${OWED_GOVERNANCE_WHERE}
+  )
+  SELECT a.slug, a.name, a.icon_image_id, a.icon_emoji,
+         o.kind, o.id, o.title, o.summary, o.author, o.number, o.epoch,
+         o.at, o.yes, o.no
+    FROM owed o
+    JOIN apps a ON a.id = o.app_id
+    LEFT JOIN app_collaborators me
+      ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
+   WHERE ${VISIBLE_APP_WHERE}
+     AND EXISTS (SELECT 1 FROM community_members cm
+                  WHERE cm.community_id = a.community_id AND cm.user_id = $1)
+   ORDER BY o.at DESC NULLS LAST, o.id DESC
+   LIMIT $4
+`;
+
+/** Shape NEEDS_FEED_SQL's rows for the client. Exported for tests. */
+function shapeNeedsFeed(rows) {
+  return rows.map((row) => ({
+    kind: row.kind === 'governance' ? 'governance' : 'proposal',
+    id: Number(row.id),
+    title: row.title || '',
+    summary: (row.summary || '').trim() || null,
+    author: row.author || null,
+    number: row.number == null ? null : Number(row.number),
+    epoch: row.epoch == null ? null : Number(row.epoch),
+    at: row.at instanceof Date ? row.at.toISOString() : (row.at || null),
+    yes: row.yes == null ? null : Number(row.yes),
+    no: row.no == null ? null : Number(row.no),
+    app: {
+      slug: row.slug,
+      name: row.name || row.slug,
+      icon_url: row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null,
+      icon_emoji: row.icon_emoji || null,
+    },
+  }));
+}
+
 /**
  * The demo overlay under the real counts.
  *
@@ -297,6 +381,38 @@ const DEMO_ITEMS = {
     ],
   },
 };
+
+// The feed's ?demo=1 rows on staging, drawn from DEMO_ITEMS' needs so the
+// tab and the counts beside it tell one story. Negative ids, as there: a
+// vote on one is refused, never cast on a real proposal. They come AFTER
+// the real rows (withDemoNeedsFeed), the same "real rows win" rule the
+// counts and items overlays keep, and the demo slug is in no database.
+const DEMO_NEEDS_FEED = [
+  {
+    kind: 'proposal', id: -103, title: 'Sort recipes by rating',
+    summary: 'Adds a Rating option to the sort menu, highest first, and remembers the choice per person.',
+    author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-24T12:00:00Z', yes: 2, no: 0,
+    app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
+  },
+  {
+    kind: 'proposal', id: -104, title: 'Let members share a shopping list',
+    summary: 'A shared list on the app\'s home screen that any member can add to and tick off.',
+    author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-22T10:00:00Z', yes: 1, no: 1,
+    app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
+  },
+  {
+    kind: 'governance', id: -105, title: 'Rename the app to Recipe Box',
+    summary: 'A group decision: the new name shows everywhere once it passes.',
+    author: 'staging-demo-partner', number: null, epoch: null, at: '2026-09-21T08:00:00Z', yes: null, no: null,
+    app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
+  },
+];
+
+/** The feed's demo overlay: the real feed first, then the demo cards. */
+function withDemoNeedsFeed(items) {
+  const seen = new Set(items.map((it) => `${it.kind}:${it.id}`));
+  return [...items, ...DEMO_NEEDS_FEED.filter((it) => !seen.has(`${it.kind}:${it.id}`))];
+}
 
 /**
  * The demo overlay under the real items. Same rule as withDemoCounts: an app
@@ -371,10 +487,29 @@ function workshopOverviewRoutes(config) {
     }
   });
 
+  router.get('/api/workshop/needs-feed', async (req, res) => {
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      const showSelfHosted = !!req.user.isAdmin || !!config.selfAppPublicVoting;
+      const { rows } = await pool.query(NEEDS_FEED_SQL, [
+        req.user.id, showSelfHosted, !!req.user.isAdmin, NEEDS_FEED_MAX,
+      ]);
+      const items = shapeNeedsFeed(rows);
+      if (IS_STAGING && req.query.demo === '1') {
+        return res.json({ items: withDemoNeedsFeed(items), max: NEEDS_FEED_MAX });
+      }
+      return res.json({ items, max: NEEDS_FEED_MAX });
+    } catch (err) {
+      log.error('workshop-overview', 'Failed to read the needs feed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }
 
 module.exports = {
   workshopOverviewRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
+  NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, DEMO_NEEDS_FEED, withDemoNeedsFeed,
 };

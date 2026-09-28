@@ -139,6 +139,9 @@
     // (`/app/...`). Restored right before the authed boot so the router lands
     // on the exact app instead of the platform home.
     _pendingHash: '',
+    // The token of an invite link an account still waiting opened, kept by
+    // showWaiting for the waiting room (features/auth/waiting.tsx).
+    _waitingInvite: '',
     _wired: {},           // per-screen one-shot wiring markers
     _waitingTimer: null,
 
@@ -198,6 +201,9 @@
     deepLinkUrl(target) {
       const value = String(target || '');
       if (value.startsWith('/app/')) return value;
+      // An invite link a visitor signed in from (App.restoreFromHash
+      // remembers it): back to it, so it is followed as the new session.
+      if (/^\/invite\/[A-Za-z0-9_-]{22}$/.test(value)) return value;
       if (value.startsWith('#')) return '/' + value;
       return '/';
     },
@@ -237,6 +243,11 @@
 
     // Waiting-room entry (App.enterAuthed with hasPlatformAccess=false).
     showWaiting() {
+      // An invite link opened by an account still waiting: the address is
+      // about to become /#waiting, so its token is kept for the waiting room,
+      // which follows it (features/auth/waiting.tsx) and clears this.
+      const invite = /^\/invite\/([A-Za-z0-9_-]{22})$/.exec(location.pathname);
+      if (invite) AuthScreens._waitingInvite = invite[1];
       if (AuthScreens.routeFromHash(location.hash.replace('#', '')) !== 'waiting') {
         const target = window.App?._rootUrl?.('#waiting') || '#waiting';
         history.replaceState(null, '', target);

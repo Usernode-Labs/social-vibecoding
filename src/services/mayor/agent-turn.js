@@ -50,8 +50,15 @@ const MAX_TOOL_ROUNDS = 6;
 // history well under it in practice.
 const HISTORY_ROWS = 400;
 const TITLE_MAX = 80;
-const LEASE_RENEW_MS = 30_000;
+const LEASE_RENEW_MS = 15_000;
 const EMPTY_REPLY_TEXT = 'I could not put an answer together that time. Could you say that again?';
+// What the conversation says about a turn that ended with its process: a
+// deploy replacing the platform's pod, or a crash. The screen offers Retry.
+const INTERRUPTED_TEXT = 'The Mayor was interrupted by a platform update before it finished. Retry to pick it up again.';
+// What the model is told on Retry: its last attempt at this turn left no
+// answer, and the user asked for one.
+const RETRY_NOTE = '[HOMEROOM] Your last answer to this was cut off by a platform restart before it finished, and '
+  + 'the user pressed Retry. Answer their last message now. Do not mention the restart unless it matters.';
 
 // The wrap-up is offered no tool but suggest_replies, so it cannot act on a
 // dispatch that failed. Without this it has promised "Retrying now."
@@ -382,6 +389,13 @@ async function runAgentTurn({
   // The files sent with messageText, already checked as this user's own,
   // unsent uploads to this conversation (routes/agent-sessions.js).
   attachments = [],
+  // The user's row when the route already wrote it with the lease
+  // (agentSessions.startTurnWithMessage): `{ id, clientMessageId }`. The turn
+  // then writes no row of its own and starts by saying it has the message.
+  recorded = null,
+  // Retry of a turn that did not finish: no new message, the model is told
+  // to answer the last one.
+  retry = false,
   followUp = null,
   mayor,
   res,
@@ -402,8 +416,14 @@ async function runAgentTurn({
   };
   const stop = {
     abort: new AbortController(), stopped: false, stoppedBy: null, send, phase: 'mayor', change: null,
-    startedAt: Date.now(), buildStartedAt: null,
+    startedAt: Date.now(), buildStartedAt: null, turnId,
+    // Set when this process is shutting down (interruptLocalTurns): the turn
+    // ends as interrupted, with Retry, not as failed.
+    interrupted: false,
+    ended: null,
   };
+  let markEnded = () => {};
+  stop.ended = new Promise((resolve) => { markEnded = resolve; });
   const prior = stopRegistry.get(agentSessionId);
   if (prior && prior !== stop) { try { prior.abort.abort(); } catch { /* already gone */ } }
   stopRegistry.set(agentSessionId, stop);
@@ -413,6 +433,14 @@ async function runAgentTurn({
     stop.phase = phase;
     if (phase === 'cc') stop.buildStartedAt = Date.now();
     send('phase', { phase, ...(phase === 'cc' ? { startedAt: stop.buildStartedAt } : {}), ...extra });
+    // On the lease too, so a screen that did not hear this event (another
+    // pod, one opened mid-turn) reads where the turn is. Best effort: the
+    // event already said it to the screens following this turn.
+    if (typeof d.agentSessions.setTurnPhase === 'function') {
+      Promise.resolve(d.agentSessions.setTurnPhase(pool, {
+        agentSessionId, turnId, phase, startedAt: phase === 'cc' ? stop.buildStartedAt : null,
+      })).catch(() => {});
+    }
   };
 
   // The turn keeps its lease fresh while it runs: a dispatch can outlast the
@@ -727,8 +755,16 @@ async function runAgentTurn({
     const session = await d.agentSessions.getAgentSession(pool, { userId: user.id, id: agentSessionId });
     if (!session || session.status !== 'open') throw new Error('agent session is not open');
 
-    if (messageText) {
-      // The user's message: on the active change's slice when there is one,
+    if (recorded) {
+      // Written with the lease, before the stream opened: say so first, so
+      // the screen settles its "Sending" copy on this row.
+      send('accepted', { messageId: recorded.id, clientMessageId: recorded.clientMessageId || null, turnId });
+    } else if (retry) {
+      send('accepted', { retry: true, turnId });
+    } else if (messageText) {
+      // A caller that has not written the row itself (the route writes it
+      // with the lease, agentSessions.startTurnWithMessage) gets it written
+      // here. The user's message: on the active change's slice when there is one,
       // so the change page reads the conversation that shaped it, and on the
       // conversation always.
       const { rows: inserted } = await pool.query(
@@ -762,7 +798,8 @@ async function runAgentTurn({
     compactionPlan = d.compaction.planCompaction(history);
     const historyAttachments = await d.attachments.loadForHistory(pool, history);
     let convo = historyToMessages(history, d.buildMayorMessages, historyAttachments);
-    if (!messageText) convo = withTrailingUserText(convo, followUpNote(followUp));
+    if (retry) convo = withTrailingUserText(convo, RETRY_NOTE);
+    else if (!messageText) convo = withTrailingUserText(convo, followUpNote(followUp));
     const systemPrompt = d.getAgentMayorPrompt({ username: user.username, session, summary: summary.text });
     shim = await d.openMayorMcp({ pool, config, userId: user.id, agentSessionId });
 
@@ -875,14 +912,23 @@ async function runAgentTurn({
   } catch (err) {
     failed = true;
     await flushSpend();
-    if (stop.stopped) keepStreamedText();
-    const messageId = await persistReply(stop.stopped ? { stopped: true } : { failed: true }).catch((persistErr) => {
+    if (stop.stopped || stop.interrupted) keepStreamedText();
+    const flag = stop.stopped ? { stopped: true } : (stop.interrupted ? { interrupted: true } : { failed: true });
+    const messageId = await persistReply(flag).catch((persistErr) => {
       log.warn('agent-mayor', 'Could not record a cut-short reply', { agentSessionId, err: persistErr.message });
       return null;
     });
     if (messageId) send('mayor_reasoning', { text: visibleText, messageId, cards });
     if (stop.stopped) {
       send('stopped', { by: stop.stoppedBy });
+    } else if (stop.interrupted) {
+      log.info('agent-mayor', 'Agent turn interrupted by shutdown', { agentSessionId });
+      await d.agentSessions.appendConversationEvent(pool, {
+        agentSessionId,
+        content: INTERRUPTED_TEXT,
+        event: 'turn_interrupted',
+        metadata: { agentTurnId: turnId, retryable: true },
+      }).catch(() => {});
     } else {
       log.error('agent-mayor', 'Agent turn failed', { agentSessionId, err: err.message });
       send('error', { error: 'The Mayor could not finish this turn. Try again.' });
@@ -890,7 +936,7 @@ async function runAgentTurn({
         agentSessionId,
         content: 'The last turn did not finish.',
         event: 'turn_failed',
-        metadata: { agentTurnId: turnId },
+        metadata: { agentTurnId: turnId, retryable: true },
       }).catch(() => {});
     }
   } finally {
@@ -903,7 +949,13 @@ async function runAgentTurn({
     listChanged(false);
     send('done', {});
     try { if (res) res.end(); } catch { /* already closed */ }
-    setTimeout(() => d.sessionBus.clearSession(busKey(agentSessionId)), 30_000).unref?.();
+    markEnded();
+    // The buffer lets a screen that reconnects moments later replay the end
+    // of this turn. A turn that started since owns it now: clearing it would
+    // throw that turn's first events away.
+    setTimeout(() => {
+      if (!stopRegistry.has(agentSessionId)) d.sessionBus.clearSession(busKey(agentSessionId));
+    }, 30_000).unref?.();
   }
 
   // After the turn, and off its critical path: fold the oldest turns into
@@ -962,6 +1014,7 @@ function turnState(agentSessionId) {
   const handle = stopRegistry.get(agentSessionId);
   if (!handle) return null;
   return {
+    id: handle.turnId || null,
     phase: handle.phase,
     stopping: !!handle.stopped,
     changeId: handle.change ? handle.change.changeId : null,
@@ -1019,7 +1072,7 @@ async function handBackAfterRecovery({ pool, changeId, deps = {}, retryMs = null
     d.sessionBus.publish(busKey(agentSessionId), {
       type: 'done', _seq: `recovered-${Date.now().toString(36)}`, agentSessionId,
     });
-    const wait = retryMs ?? (d.agentSessions.TURN_LEASE_STALE_MINUTES * 60_000 + LEASE_RENEW_MS);
+    const wait = retryMs ?? (d.agentSessions.TURN_LEASE_STALE_SECONDS * 1000 + LEASE_RENEW_MS);
     const timer = setTimeout(() => {
       handBackOrphanedTurn({ pool, agentSessionId, userId, finished: true, deps }).catch((err) => {
         log.warn('agent-mayor', 'Could not hand back an orphaned turn lease', { agentSessionId, err: err.message });
@@ -1027,6 +1080,93 @@ async function handBackAfterRecovery({ pool, changeId, deps = {}, retryMs = null
     }, wait);
     if (typeof timer.unref === 'function') timer.unref();
   }
+}
+
+// ── Turns that end with their process ──────────────────────────────────
+//
+// Every deploy replaces the platform's one pod, and the turns running in it
+// end with it. Two things make sure a conversation is never left looking
+// busy with nobody working, and never silently without its answer:
+
+// 1. A process that is shutting down ends its own Mayor turns as
+// interrupted: what was said so far is kept, the conversation says the turn
+// was interrupted (with Retry), and the lease is handed back. A turn whose
+// coding agent is running is left alone: the build belongs to the change,
+// and restart recovery adopts it (handBackAfterRecovery). Resolves once each
+// ended turn has written its end, or after `timeoutMs`.
+async function interruptLocalTurns({ timeoutMs = 3000 } = {}) {
+  const ending = [];
+  for (const handle of stopRegistry.values()) {
+    if (handle.phase === 'cc' || handle.stopped || handle.interrupted) continue;
+    handle.interrupted = true;
+    try { handle.abort.abort(); } catch { /* already aborted */ }
+    if (handle.ended) ending.push(handle.ended);
+  }
+  if (!ending.length) return 0;
+  let timer = null;
+  await Promise.race([
+    Promise.allSettled(ending),
+    new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
+  ]);
+  if (timer) clearTimeout(timer);
+  return ending.length;
+}
+
+// 2. A process that died without that (a crash, a kill) leaves its leases to
+// go stale. The sweeper, on every pod, ends each stale one as interrupted, in
+// one transaction with the note (agentSessions.endInterruptedTurn), and the
+// database's version bump tells every screen. A conversation whose active
+// change still has a run on record is left to restart recovery, which hands
+// it back when the build ends.
+// `agentSessionId` sweeps that one conversation only: a read of it that
+// found its lease stale ends the turn there and then (routes/agent-sessions.js
+// GET /:id/state), rather than showing an idle conversation with no answer
+// until the next sweep.
+async function sweepInterruptedTurns({ pool, agentSessionId = null, deps = {} } = {}) {
+  const d = defaults(deps);
+  const stale = await d.agentSessions.staleTurnLeases(pool, agentSessionId == null ? {} : { agentSessionId });
+  let ended = 0;
+  for (const lease of stale) {
+    if (stopRegistry.has(lease.agentSessionId)) continue;
+    if (lease.changeTurn || recoveredRunState(lease.agentSessionId, lease.activeChangeId, deps)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const done = await d.agentSessions.endInterruptedTurn(pool, {
+      agentSessionId: lease.agentSessionId, turnId: lease.turnId, content: INTERRUPTED_TEXT,
+    }).catch((err) => {
+      log.warn('agent-mayor', 'Could not end an interrupted turn', { agentSessionId: lease.agentSessionId, err: err.message });
+      return false;
+    });
+    if (!done) continue;
+    ended += 1;
+    log.info('agent-mayor', 'Ended a turn its process left behind', { agentSessionId: lease.agentSessionId });
+    try { d.notifyUser(lease.userId, { type: 'agent_session_changed', agentSessionId: lease.agentSessionId, busy: false }); } catch { /* the version notice says it too */ }
+    d.sessionBus.publish(busKey(lease.agentSessionId), {
+      type: 'done', _seq: `interrupted-${Date.now().toString(36)}`, agentSessionId: lease.agentSessionId,
+    });
+  }
+  return ended;
+}
+
+const SWEEP_EVERY_MS = 30_000;
+let sweepTimer = null;
+
+// Started once per process, after boot (server.js). The first sweep waits a
+// window, so a turn another pod is still finishing during a rollout has had
+// every chance to renew.
+function startInterruptedTurnSweeper({ pool, everyMs = SWEEP_EVERY_MS } = {}) {
+  if (sweepTimer) return;
+  const tick = () => {
+    sweepInterruptedTurns({ pool }).catch((err) => {
+      log.warn('agent-mayor', 'Interrupted-turn sweep failed', { err: err.message });
+    });
+  };
+  sweepTimer = setInterval(tick, everyMs);
+  if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
+}
+
+function stopInterruptedTurnSweeper() {
+  if (sweepTimer) clearInterval(sweepTimer);
+  sweepTimer = null;
 }
 
 function newTurnId() {
@@ -1038,6 +1178,8 @@ module.exports = {
   HISTORY_ROWS,
   LEASE_RENEW_MS,
   EMPTY_REPLY_TEXT,
+  INTERRUPTED_TEXT,
+  RETRY_NOTE,
   IMMEDIATE_WRITE_TOOLS,
   SWITCH_ACTIVE_CHANGE_TOOL,
   SET_FOCUS_APP_TOOL,
@@ -1061,6 +1203,10 @@ module.exports = {
   handBackOrphanedTurn,
   handBackAfterRecovery,
   recoveredRunState,
+  interruptLocalTurns,
+  sweepInterruptedTurns,
+  startInterruptedTurnSweeper,
+  stopInterruptedTurnSweeper,
   newTurnId,
   _stopRegistry: stopRegistry,
 };

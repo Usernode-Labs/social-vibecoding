@@ -27,6 +27,7 @@ const platformLimits = require('../services/platform-limit-alerts');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
 const onboarding = require('../services/onboarding');
+const usernames = require('../services/usernames');
 // The CSV writer the topochain admin's two exports share: quoting plus the
 // spreadsheet formula-injection guard, documented where it is defined.
 const { csvField } = require('./topochain/helpers');
@@ -631,6 +632,81 @@ function adminRoutes(config) {
     }
   });
 
+  // Admin-issued rename (issue tracked in the header of routes/profile.js,
+  // which used to say this was unimplemented). Moving someone else's handle
+  // is a moderation action, so it skips the self-service route's password
+  // check and its 30-day cooldown: those two protections exist to stop a
+  // hijacked SESSION from walking the namespace, a threat model that does
+  // not apply to a full admin acting through their own gate. Format,
+  // reserved-prefix and service-identity protection, and the
+  // live-plus-retired-history uniqueness check all still run unchanged,
+  // through the same src/services/usernames.js the self-service route uses,
+  // so the two paths can never disagree about what a valid rename is.
+  router.put('/api/admin/users/:id/username', requireAdminWrite, async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId) || userId <= 0 || userId > 2147483647) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+
+    const check = usernames.validateUsername(req.body?.username);
+    if (!check.ok) return res.status(400).json({ error: check.error });
+    const next = check.value;
+
+    try {
+      const { rows } = await pool.query('SELECT username FROM users WHERE id = $1', [userId]);
+      if (!rows.length) return res.status(404).json({ error: 'User not found' });
+      const current = rows[0].username;
+
+      // Seeded service accounts (usernode-capture and friends) are found BY
+      // NAME at runtime; renaming one breaks a subsystem rather than moving
+      // an identity. See usernames.isServiceIdentity's own comment.
+      if (usernames.isServiceIdentity(current)) {
+        return res.status(403).json({ error: 'This account cannot be renamed.' });
+      }
+
+      // An exact no-op is a success, not an error. A case-only change falls
+      // through: renameUser treats it as a re-case, which retires nothing.
+      if (current === next) {
+        return res.json({ ok: true, username: current, retired: null, unchanged: true });
+      }
+      const recase = current.toLowerCase() === next.toLowerCase();
+
+      const free = await usernames.checkAvailability(pool, next, userId);
+      if (!free.available) {
+        return res.status(409).json({ error: free.error });
+      }
+
+      const result = await usernames.renameUser(pool, userId, next);
+      if (!result) return res.status(404).json({ error: 'User not found' });
+
+      log.info('admin', 'Username changed', {
+        id: userId, from: current, to: result.username, recase, by: req.user.username,
+      });
+      if (!recase) {
+        try {
+          events.record(pool, {
+            type: events.EVENT_TYPES.USERNAME_CHANGED,
+            userId,
+            metadata: { from: current, to: result.username, admin: true, by: req.user.username },
+          });
+        } catch (err) {
+          log.warn('admin', 'Username event record failed', { err: err.message });
+        }
+      }
+
+      return res.json({ ok: true, username: result.username, retired: result.retired });
+    } catch (err) {
+      // The unique indexes on users.username and username_history are the
+      // backstop behind the availability check above; a race with someone
+      // else claiming the same handle lands here.
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'That username is taken.' });
+      }
+      log.error('admin', 'Username change failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.delete('/api/admin/users/:id', requireAdminWrite, async (req, res) => {
     try {
       const result = await require('../services/account-deletion').deleteAccount(pool, {
@@ -987,7 +1063,7 @@ function adminRoutes(config) {
   // control on the screen — one "what am I looking at" picker.
   const botRunFilters = (q) => ({
     app: typeof q.app === 'string' && /^[a-z0-9-]{1,120}$/.test(q.app) ? q.app : null,
-    verdict: ['question', 'ready', 'person', 'empty', 'failed'].includes(q.verdict) ? q.verdict : null,
+    verdict: ['question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'].includes(q.verdict) ? q.verdict : null,
     budgetOnly: q.verdict === 'budget',
   });
 

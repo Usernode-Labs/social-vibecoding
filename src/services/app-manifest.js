@@ -1217,11 +1217,7 @@ async function applyVisibilityChange(pool, app, { collab, view }, { actorLabel =
   }
 
   try {
-    const { sendSystemMessage, pushAppUpdate } = require('./ws');
-    await sendSystemMessage(pool, app.id,
-      `This app's visibility changed to ${describeVisibility(collab, view)} (set by ${actorLabel})`,
-      'system'
-    ).catch((err) => log.warn('app-manifest', 'Visibility chat msg failed', { err: err.message }));
+    const { pushAppUpdate } = require('./ws');
     pushAppUpdate({
       action: 'visibility_changed',
       appSlug: app.slug,
@@ -1384,11 +1380,7 @@ async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequi
   }
 
   try {
-    const { sendSystemMessage, pushAppUpdate } = require('./ws');
-    await sendSystemMessage(pool, app.id,
-      `This app's proposal-approval settings changed to ${describeGovernance(approverPolicy, approvalsRequired)} (set by ${actorLabel})`,
-      'system'
-    ).catch((err) => log.warn('app-manifest', 'Governance chat msg failed', { err: err.message }));
+    const { pushAppUpdate } = require('./ws');
     pushAppUpdate({
       action: 'governance_changed',
       appSlug: app.slug,
@@ -1531,11 +1523,7 @@ async function applyAdminsChange(pool, app, { usernames, userIds }, { actorLabel
   }
 
   try {
-    const { sendSystemMessage, pushAppUpdate } = require('./ws');
-    await sendSystemMessage(pool, app.id,
-      `This app's admins changed to ${describeAdmins(declared)} (set by ${actorLabel})`,
-      'system'
-    ).catch((err) => log.warn('app-manifest', 'Admins chat msg failed', { err: err.message }));
+    const { pushAppUpdate } = require('./ws');
     pushAppUpdate({
       action: 'admins_changed',
       appSlug: app.slug,

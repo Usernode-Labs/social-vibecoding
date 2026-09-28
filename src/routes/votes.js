@@ -2566,16 +2566,8 @@ function voteRoutes(config) {
       const promoLabel = session.pr_title
         ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
-      await sendSystemMessage(pool, session.app_id,
-        `${req.user.username} promoted ${promoLabel} for voting`,
-        'vote',
-        // Lets the group-chat client render live vote buttons inline on
-        // this activity row (see group-chat.js renderMessageHtml).
-        { vote: { sessionId: session.id, prNumber: session.pr_number || null } }
-      );
-      // Dual-post into the proposal's own thread so the topic discussion
-      // carries its lifecycle in context (general chat stays the
-      // app-wide entry point).
+      // Into the proposal's own thread, so the topic discussion carries its
+      // lifecycle in context (a channel carries no activity).
       await sendSystemMessage(pool, session.app_id,
         `${req.user.username} promoted ${promoLabel} for voting`,
         'vote',
@@ -3157,11 +3149,6 @@ function voteRoutes(config) {
       if (promote) {
         // Explicit submissions still announce the vote exactly as before.
         const label = pr.title ? `PR #${prNumber}: ${pr.title}` : `PR #${prNumber}`;
-        await sendSystemMessage(pool, app.id,
-          `${req.user.username} imported ${label} for voting`,
-          'vote',
-          { vote: { sessionId, prNumber } }
-        ).catch(() => {});
         await sendSystemMessage(pool, app.id,
           `${req.user.username} imported ${label} for voting`,
           'vote',
@@ -5044,7 +5031,6 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
           const msg = a.scope === 'platform'
             ? `Platform variable "${a.key}" was declared and set by this proposal; takes effect on the platform's next deploy.`
             : `Secret "${a.key}" was declared and set by this proposal; redeploying…`;
-          await sendSystemMessage(pool, session.app_id, msg, 'system').catch(() => {});
           await sendSystemMessage(pool, session.app_id, msg, 'system',
             null, { type: 'session', ref: session.id }).catch(() => {});
           if (a.scope === 'platform') {
@@ -5266,8 +5252,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         });
         const recipient = session.user_id ? `<@${session.user_id}>` : 'the author';
         const bountyMsg = `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} for PR #${session.pr_number || session.id}`;
-        await sendSystemMessage(pool, session.app_id, bountyMsg, 'system').catch(() => {});
-        // Dual-post into the proposal's thread (lifecycle in context).
+        // Into the proposal's thread (lifecycle in context).
         await sendSystemMessage(pool, session.app_id, bountyMsg, 'system',
           null, { type: 'session', ref: session.id }).catch(() => {});
       }
@@ -5382,8 +5367,8 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       log.warn('votes', 'Failed to destroy CC volume', { sessionId: session.id, err: err.message });
     }
 
-    // Announce in group chat, and dual-post into the proposal's own
-    // thread so its discussion carries the outcome in context.
+    // Say it in the proposal's own thread, so its discussion carries the
+    // outcome in context (a channel carries no activity).
     // The ordinary line leads with the change and thanks the voters; the
     // "(yes/active votes)" figure stays at the end in the same shape, since
     // migrate.js's votes_required backfill parses it out of historical
@@ -5428,7 +5413,6 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         ...(liveSoon ? { liveSoon: true } : {}),
       },
     } : null;
-    await sendSystemMessage(pool, session.app_id, mergedLine, 'system', mergedMeta);
     await sendSystemMessage(pool, session.app_id, mergedLine,
       'system', mergedMeta, { type: 'session', ref: session.id }
     ).catch(() => {});
@@ -5986,7 +5970,6 @@ async function checkAndMerge(config, pool, session, options = {}) {
         [session.app_id, session.id]
       ).then((r) => !!(r.rows[0] && r.rows[0].content === blockMsg)).catch(() => false);
       if (!alreadySaid) {
-        await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
         await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
           null, { type: 'session', ref: session.id }).catch(() => {});
       }
@@ -6085,7 +6068,6 @@ async function checkAndMerge(config, pool, session, options = {}) {
           ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
           : `PR #${session.pr_number || session.id}`;
         const blockMsg = platformEnvCheck.describeBlock(envVerdict.detail, label);
-        await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
         await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
           null, { type: 'session', ref: session.id }).catch(() => {});
         log.info('votes', 'Merge blocked: platform variables unset', {
@@ -6536,7 +6518,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
       await sendSystemMessage(pool, session.app_id,
         `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
         `The change is on main; an operator can retry the deploy once the cause is resolved.`,
-        'system'
+        'system', null, { type: 'session', ref: session.id }
       ).catch(() => {});
 
       try {
@@ -6618,7 +6600,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
           ).catch(() => {});
           await sendSystemMessage(pool, session.app_id,
             `${closedLabel} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Re-propose it from the session's dev-chat.`,
-            'system'
+            'system', null, { type: 'session', ref: session.id }
           ).catch(() => {});
           try {
             const { pushVoteUpdate, pushSessionUpdate } = require('../services/ws');
@@ -6731,7 +6713,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         (force && autoResolve)
           ? `${label} hit a conflict with main during an admin merge. Resolving the conflict automatically and retrying the merge.`
           : `${label} hit a conflict with main during a merge attempt. ${owner}: finish the merge by running "Sync with main" from the session's dev-chat. (Auto-resolution retries only when the proposal is eligible to merge on votes.)`,
-        'system'
+        'system', null, { type: 'session', ref: session.id }
       );
       // Auto-heal the conflict the same way the behind_main gate does.
       // autoResolve guards against the resolver's own retry re-entering
@@ -6766,7 +6748,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
     } else {
       await sendSystemMessage(pool, session.app_id,
         `Failed to merge PR #${session.pr_number || session.id}: ${err.message}`,
-        'system'
+        'system', null, { type: 'session', ref: session.id }
       );
     }
     if (isConflict) {
@@ -6898,7 +6880,7 @@ async function checkAndOpenRevert(config, pool, session, decider) {
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
         `Couldn't auto-revert ${label}: ${backfillReason}. Please open the revert PR manually.`,
-        'system'
+        'system', null, { type: 'session', ref: session.id }
       );
       return { reverted: false, error: 'no merge_commit_sha', backfillReason };
     }
@@ -6948,7 +6930,7 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     await sendSystemMessage(pool, session.app_id,
       `Couldn't auto-revert ${label}: ${err.message}. ` +
       `Most likely later commits depend on it. Please open the revert PR manually.`,
-      'system'
+      'system', null, { type: 'session', ref: session.id }
     );
     return { reverted: false, error: err.message };
   }
@@ -6981,14 +6963,14 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     [revertSessionId, session.id]
   );
 
-  // Announce in group chat so the new revert PR shows up in the vote
-  // panel with context. Tag the original PR # for breadcrumbs.
+  // Say so in the undone proposal's own thread, the breadcrumb from it to
+  // the revert PR (a channel carries no activity: ws.sendSystemMessage).
   const label = session.pr_title
     ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
     : `PR #${session.pr_number || session.id}`;
   await sendSystemMessage(pool, session.app_id,
     `${decider.username} proposed undoing ${label}. Opened revert PR #${revertInfo.prNumber}, which needs ${majority}/${activeCount} votes to land.`,
-    'system'
+    'system', null, { type: 'session', ref: session.id }
   );
 
   return {

@@ -419,7 +419,7 @@ test('the app frame is the SAME element and the SAME document across every state
   assert.equal(h.mounts(), 1, 'one mount');
   assert.equal(el.loads, 1, 'one document load');
   assert.equal(h.navigations(), 1, 'one navigation');
-  assert.equal(el.src, `${APP_URL}/?token=tok-1`, 'src composed through the URL API');
+  assert.equal(el.src, `${APP_URL}/?token=tok-1&un-theme=dark`, 'src composed through the URL API');
   assert.equal(h.surface(), 'app', '#970: the app surface is asserted');
   assert.equal(renderer.hostHidden, false, 'the frame host is visible');
 
@@ -452,6 +452,15 @@ test('the app frame is the SAME element and the SAME document across every state
     ['activate', () => AppView.renderAppTab()],
     // A safe-area re-broadcast (#970) — it reads the frame, it must not move it.
     ['safe-area broadcast', () => AppView.broadcastSafeArea()],
+    // #3257: a theme toggle reaches the app over the bridge. The url a render
+    // would build now carries the other `un-theme`, and that must not read as
+    // a new url: App → Dev → App after a toggle keeps the document.
+    ['theme → light', () => {
+      h.sandbox.document.documentElement.classList.contains = () => false;
+      AppView.broadcastTheme();
+    }],
+    ['→ Dev after the toggle', async () => { try { await AppView.renderDevView('forum'); } catch { /* stubs */ } }],
+    ['→ App after the toggle', () => AppView.renderAppTab()],
   ];
   for (const [what, run] of steps) {
     await run();
@@ -512,7 +521,7 @@ test('a chromeless enter/exit navigates the SAME element', async () => {
   assert.equal(renderer.creates, 1, 'nothing re-created');
   assert.equal(h.mounts(), 1, 'the mount is the same mount');
   assert.equal(el.loads, 2, 'one navigation to the inner path');
-  assert.match(el.src, /\/settings\?tab=profile&token=tok-1$/,
+  assert.match(el.src, /\/settings\?tab=profile&token=tok-1&un-theme=dark$/,
     'inner path composed against the app origin, token appended via searchParams');
 
   AppView.pendingInnerPath = null;
@@ -520,7 +529,7 @@ test('a chromeless enter/exit navigates the SAME element', async () => {
   assert.equal(bridge.frame(), el, 'leaving chromeless keeps the element');
   assert.equal(renderer.creates, 1, 'still nothing re-created');
   assert.equal(el.loads, 3, 'one navigation back to the root');
-  assert.equal(el.src, `${APP_URL}/?token=tok-1`, 'back at the app root');
+  assert.equal(el.src, `${APP_URL}/?token=tok-1&un-theme=dark`, 'back at the app root');
 
   // A render that would build the same url it is already on does nothing at all.
   const win = el.contentWindow;
@@ -555,7 +564,7 @@ test('a token refresh re-points the SAME element — parked or not', async () =>
   assert.equal(renderer.creates, 1, 'nothing re-created');
   assert.equal(h.mounts(), 1, 'no re-mount');
   assert.equal(el.loads, 2, 'exactly one further navigation');
-  assert.match(el.src, /token=tok-2$/, 'now carrying the refreshed token');
+  assert.match(el.src, /token=tok-2&un-theme=dark$/, 'now carrying the refreshed token');
 
   // A parked frame must refresh too: its app is still running, and a parked app
   // whose token expired is an app whose API calls start failing.
@@ -566,7 +575,7 @@ test('a token refresh re-points the SAME element — parked or not', async () =>
   await intervals[0].fn();
   assert.equal(bridge.frame(), el, 'still the same element');
   assert.equal(el.loads, 3, 'the parked frame was refreshed');
-  assert.match(el.src, /token=tok-3$/, 'with the newest token');
+  assert.match(el.src, /token=tok-3&un-theme=dark$/, 'with the newest token');
 
   // With no frame at all the refresh writes nothing.
   AppView._unmountAppFrame();
@@ -642,7 +651,7 @@ test('a DIFFERENT app is a different frame — slug is the key, and it is honour
   assert.equal(renderer.creates, 2, 'exactly one new element');
   assert.equal(h.mounts(), 2, 'and one new mount');
   assert.equal(second.loads, 1, 'loaded once');
-  assert.match(second.src, /^https:\/\/other-app\.example\/\?token=tok-o$/, 'at its own origin');
+  assert.match(second.src, /^https:\/\/other-app\.example\/\?token=tok-o&un-theme=dark$/, 'at its own origin');
   assert.deepEqual(renderer.history, [`create:${SLUG}`, 'create:other-app'],
     'two creates, one per app');
 });
@@ -824,7 +833,7 @@ test('offline MOUNTS the frame for an app that announced its own service worker'
   assert.equal(h.surface(), 'app', 'the app surface, not the platform one');
   // No mint is possible offline, so the app boots token-less and recovers
   // its identity from its own storage (that is the app-side contract).
-  assert.equal(el.src, `${APP_URL}/`, 'src carries no token offline');
+  assert.equal(el.src, `${APP_URL}/?un-theme=dark`, 'src carries no token offline');
   assert.equal(el.loads, 1, 'exactly one document load');
   assert.equal(AppView.canEagerLaunch(SLUG, 'app'), true, 'eager launch is allowed too');
 });
@@ -834,7 +843,7 @@ test('coming back online re-mints and reloads a frame that was mounted token-les
   const { AppView, bridge, sandbox } = h;
   AppView.renderAppTab();
   const el = bridge.frame();
-  assert.equal(el.src, `${APP_URL}/`, 'token-less to begin with');
+  assert.equal(el.src, `${APP_URL}/?un-theme=dark`, 'token-less to begin with');
 
   // The connection returns. Offline.isOffline() flips and the shell's own
   // `usernode:offline-change` event fires — the same signal the placeholder
@@ -845,7 +854,7 @@ test('coming back online re-mints and reloads a frame that was mounted token-les
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
 
-  assert.equal(bridge.frame().src, `${APP_URL}/?token=tok-2`,
+  assert.equal(bridge.frame().src, `${APP_URL}/?token=tok-2&un-theme=dark`,
     'the app is reloaded with a token so its API calls stop 401-ing');
   assert.equal(bridge.frame().loads, 2, 'one deliberate reload, not a loop');
 });
