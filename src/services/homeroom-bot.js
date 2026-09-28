@@ -55,8 +55,10 @@ const bcrypt = require('bcrypt');
 const log = require('./logger');
 const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
 const live = require('./homeroom-bot-live');
+const followup = require('./homeroom-bot-followup');
 
-const BOT_USERNAME = 'homeroom_bot';
+// One name, in the live module, which compares thread authors against it.
+const { BOT_USERNAME } = live;
 const MODES = Object.freeze(['off', 'shadow', 'live']);
 // `empty` (#2737) is the fourth: a request with nothing in it to build or
 // even to ask about. It exists because the prompt's unclear branch used to
@@ -598,13 +600,47 @@ async function busyIssueNumbers(pool, appId) {
 
 async function threadActivityByIssue(pool, appId) {
   const { rows } = await pool.query(
-    `SELECT thread_ref AS n, MAX(created_at) AS last_at
-       FROM chat_messages
-      WHERE app_id = $1 AND thread_type = 'issue' AND msg_type = 'message'
-      GROUP BY thread_ref`,
+    // #3288: the bot's own posts are ordinary messages now, so "a person
+    // answered" has to say person: a synthetic author is never one.
+    `SELECT m.thread_ref AS n, MAX(m.created_at) AS last_at
+       FROM chat_messages m
+       LEFT JOIN users u ON u.id = m.user_id
+      WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.msg_type = 'message'
+        AND u.is_synthetic IS NOT TRUE
+      GROUP BY m.thread_ref`,
     [appId],
   );
   return new Map(rows.map((r) => [Number(r.n), r.last_at]));
+}
+
+/**
+ * #3264: the newest person's message in the discussion of each of the bot's
+ * open proposals on this app, by the issue it answers. Messages only
+ * (`msg_type = 'message'`), so the promote and vote-reset notices never
+ * re-queue it, and from people only (#3288): the bot's own replies there are
+ * ordinary messages too.
+ */
+async function proposalThreadActivityByIssue(pool, appId, botId) {
+  const { rows } = await pool.query(
+    `SELECT n, MAX(m.created_at) AS last_at
+       FROM chat_sessions cs
+       CROSS JOIN LATERAL UNNEST(cs.linked_issues) AS n
+       JOIN chat_messages m
+         ON m.app_id = cs.app_id AND m.thread_type = 'session' AND m.thread_ref = cs.id
+        AND m.msg_type = 'message' AND m.deleted_at IS NULL
+       LEFT JOIN users author ON author.id = m.user_id
+      WHERE cs.app_id = $1 AND cs.user_id = $2 AND cs.status = 'promoted'
+        AND author.is_synthetic IS NOT TRUE
+      GROUP BY n`,
+    [appId, botId],
+  );
+  return new Map(rows.map((r) => [Number(r.n), r.last_at]));
+}
+
+function latestOf(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return toMs(a) >= toMs(b) ? a : b;
 }
 
 /**
@@ -644,7 +680,7 @@ async function lastRunsByIssue(pool, appId) {
  * for, so a merged proposal brings back one held build rather than all of
  * them at once.
  */
-async function refreshApp(pool, app, { github = require('./github'), capRoom = null } = {}) {
+async function refreshApp(pool, app, { github = require('./github'), capRoom = null, bot = null } = {}) {
   const repo = parseRepo(app.repo_url);
   const out = { app: app.slug, queued: 0, removed: 0, skipped: null };
   if (!repo) { out.skipped = 'no_repo'; return out; }
@@ -652,10 +688,14 @@ async function refreshApp(pool, app, { github = require('./github'), capRoom = n
   const issues = Array.isArray(fetched?.issues) ? fetched.issues : [];
   if (!issues.length && fetched?.note) { out.skipped = 'github_unavailable'; return out; }
 
-  const [busy, threads, lastRuns] = await Promise.all([
+  // #3264: on a live app (capRoom is set only there) a person's reply in the
+  // discussion of the bot's own open proposal is activity on its issue, so
+  // it comes back for a follow-up.
+  const [busy, threads, lastRuns, proposalThreads] = await Promise.all([
     busyIssueNumbers(pool, app.id),
     threadActivityByIssue(pool, app.id),
     lastRunsByIssue(pool, app.id),
+    capRoom && bot ? proposalThreadActivityByIssue(pool, app.id, bot.id) : new Map(),
   ]);
 
   const eligible = [];
@@ -665,7 +705,7 @@ async function refreshApp(pool, app, { github = require('./github'), capRoom = n
     const lastRun = lastRuns.get(n) || null;
     const verdict = classifyIssue({
       issue,
-      threadLastAt: threads.get(n) || null,
+      threadLastAt: latestOf(threads.get(n), proposalThreads.get(n)),
       busy: busy.has(n),
       lastRun,
     });
@@ -836,6 +876,44 @@ function triagePrompt() {
   return triagePromptCache;
 }
 
+// What the triage knows of the platform. A request often turns on it (its
+// native kit, its `--un-*` tokens, what an app may do), and the app's
+// repository does not hold those answers.
+//
+// The conventions are a TOOL CALL away, not inline. #3161 inlined all
+// 150 KB of them, as an agent-chat scout carries them, and on rss-reader #24
+// (2026-09-26) that went wrong twice: once the model took the whole message
+// for one conventions document and never triaged; once every request
+// carried 50k tokens before the first file read, the context crossed the
+// auto-compaction limit after 86 reads, and the model's own summary said
+// the task was "not visible in my surviving context". The Homeroom read
+// tool every scout has serves the same document on demand: the essentials
+// and an index of sections, then one section at a time. The UI design
+// guidance the coding agents build with is small, so it stays inline.
+//
+// It goes AFTER the request and the triage instructions, fenced and
+// labelled as reference, so it is never read as the task.
+function triageReference() {
+  const designGuidance = require('./prompts').getDesignGuidance({ readsImages: false });
+  return `==== PLATFORM REFERENCE (for looking things up; not the request) ====
+
+The Homeroom platform's own conventions (its rules for every app on it: its native UI kit, its \`--un-*\` theme tokens, its APIs and what an app may do) are one tool call away. Call \`get_platform_conventions\` with no arguments for the essentials and an index of its sections, then with a section's slug to read just that section. Use it when the request turns on the platform; nothing in this reference is a task.
+
+The UI design guidance every coding agent here builds with follows, for judging a request that changes what people see.
+
+${designGuidance}
+
+==== END PLATFORM REFERENCE ====`;
+}
+
+// The last thing the model reads says what it is doing and restates the one
+// format parseVerdict accepts, so the verdict does not depend on it
+// remembering instructions from earlier in the turn.
+function triageClosing(issueNumber) {
+  return `That is the end of the reference. Now answer the triage request above, for issue #${issueNumber}: decide which verdict is true, and END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:
+{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "..."}`;
+}
+
 /**
  * The bot's one dev session per app, created on first use. `paused` at
  * rest and `active` only while a turn runs; is_headless FALSE and an empty
@@ -875,8 +953,8 @@ async function insertRun(pool, run) {
     `INSERT INTO homeroom_bot_runs
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
-        input_tokens, output_tokens, duration_ms, error, budget_stop)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
@@ -884,7 +962,7 @@ async function insertRun(pool, run) {
       run.capSuppressed || null, run.threadSeenAt || null, run.model || null,
       run.costUsd ?? null, run.inputTokens ?? null, run.outputTokens ?? null,
       run.durationMs ?? null, run.error ? clip(run.error, MAX_ERROR_CHARS) : null,
-      run.budgetStop || null],
+      run.budgetStop || null, run.proposalSessionId || null],
   );
   return rows[0]?.id || null;
 }
@@ -1263,15 +1341,27 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     if (open) {
       // One proposal per issue: the group is already voting on the bot's
       // answer, and a second build would be a second, competing proposal.
+      // What people said since it proposed is answered ON that proposal
+      // (#3264), while it is still up for a vote.
+      if (open.status === 'promoted') {
+        return runFollowUp(pool, config, {
+          bot, app, repo, item, issue, proposal: open, runMode, model, turnBudgetMs, startedMs,
+          recordFailure,
+          deps: {
+            github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
+            activeWorkers, votes: deps.votes || null, ...liveD,
+          },
+        });
+      }
       await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
-      log.info('homeroom-bot', 'Issue already has a bot proposal; not looking again', {
+      log.info('homeroom-bot', 'Issue\'s bot proposal is merging; not looking again', {
         app: app.slug, issueNumber, sessionId: open.id,
       });
       return { ran: false, reason: 'has_proposal' };
     }
     const looked = await live.post({
       pool, github, ws: liveD.ws, app, repo, issueNumber,
-      kind: 'looking', text: live.lookingText(),
+      kind: 'looking', text: live.lookingText(), sender: bot,
     }).catch((err) => {
       log.warn('homeroom-bot', 'Looking post failed (continuing)', { app: app.slug, issueNumber, err: err.message });
       return null;
@@ -1288,7 +1378,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   const seed = sessions.buildHeadlessSeed(
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
-  const prompt = `${seed}\n\n${triagePrompt()}`;
+  const prompt = [
+    seed, triagePrompt(), triageReference(), triageClosing(issueNumber),
+  ].join('\n\n');
 
   let session;
   try {
@@ -1555,7 +1647,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     try {
       acted = await actOnVerdict({
         pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
-        seed, seedReadAt, postedAt, turnBudgetMs, model,
+        seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin: botUsername,
         deps: {
           github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
           activeWorkers, ...liveD,
@@ -1569,6 +1661,225 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
 }
 
 /**
+ * #3264: a follow-up on the bot's own open proposal for this issue. Runs
+ * where runTriage would otherwise have stopped at "already has a bot
+ * proposal". See homeroom-bot-followup.js for what the turn may do.
+ *
+ * Activity is not the same as somebody talking to the bot: GitHub moves an
+ * issue's updated_at when a pull request references it, and a vote reset
+ * writes to the proposal thread. So the turn runs only when a PERSON said
+ * something since the bot last looked; otherwise that activity is recorded
+ * as seen and nothing is posted or spent.
+ */
+async function runFollowUp(pool, config, {
+  bot, app, repo, item, issue, proposal, runMode, model, turnBudgetMs, startedMs,
+  recordFailure, deps,
+}) {
+  const { github, threadContext, sessions, limits, managedOpenRouter, agentTurn } = deps;
+  const issueNumber = Number(item.issue_number);
+  const fail = (error, extra = {}, opts = {}) => recordFailure(error, { proposalSessionId: proposal.id, ...extra }, opts);
+
+  const { rows: lastRows } = await pool.query(
+    `SELECT id, thread_seen_at FROM homeroom_bot_runs
+      WHERE app_id = $1 AND issue_number = $2
+        AND budget_stop IS DISTINCT FROM 'input tokens'
+        AND (error IS NULL OR error NOT LIKE 'collateral:%')
+      ORDER BY created_at DESC LIMIT 1`,
+    [app.id, issueNumber],
+  );
+  const lastRun = lastRows[0] || null;
+
+  const seedReadAt = new Date().toISOString();
+  const [{ comments = [] } = {}, issueThread, proposalThread, botLogin] = await Promise.all([
+    github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
+    threadContext.loadIssueThread(pool, app.id, issueNumber),
+    threadContext.loadProposalThread(pool, app.id, proposal.id),
+    live.botUsernameOf(github),
+  ]);
+  const replies = followup.newReplies({
+    comments,
+    issueThread: issueThread?.messages || [],
+    proposalThread: proposalThread?.messages || [],
+    botLogin,
+    botUsername: BOT_USERNAME,
+    sinceMs: toMs(lastRun?.thread_seen_at),
+  });
+  if (!replies.length) {
+    if (lastRun && item.thread_seen_at) {
+      await pool.query(
+        `UPDATE homeroom_bot_runs
+            SET thread_seen_at = GREATEST(COALESCE(thread_seen_at, $2::timestamptz), $2::timestamptz)
+          WHERE id = $1`,
+        [lastRun.id, item.thread_seen_at],
+      );
+    }
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    log.info('homeroom-bot', 'Activity on a bot proposal\'s issue, but nobody said anything new', {
+      app: app.slug, issueNumber, sessionId: proposal.id,
+    });
+    return { ran: false, reason: 'no_new_replies' };
+  }
+
+  // The proposal as every revision path reads it (cs.* plus the app's
+  // identity), and only while it is still the bot's open proposal.
+  const { rows: sessionRows } = await pool.query(
+    `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
+       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+      WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'promoted'`,
+    [proposal.id, bot.id],
+  );
+  const session = sessionRows[0];
+  if (!session || !session.branch_name) {
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    return { ran: false, reason: 'has_proposal' };
+  }
+
+  const { rows: revisionRows } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs
+      WHERE proposal_session_id = $1 AND verdict = 'revise'`,
+    [session.id],
+  );
+  const canRevise = (revisionRows[0]?.n || 0) < followup.MAX_REVISIONS;
+  const mode = canRevise ? 'build' : 'scout';
+
+  const seed = sessions.buildHeadlessSeed(
+    issueNumber, issue, comments, botLogin, issueThread?.messages || [],
+  );
+  const proposalBlock = require('./thread-context').buildProposalDiscussionBlock({
+    sessionId: session.id, prNumber: session.pr_number,
+    threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
+  });
+  const prompt = followup.followUpPrompt({
+    seed, proposalBlock, prNumber: session.pr_number, replies, canRevise,
+  });
+
+  const turn = await followup.runFollowUpTurn({
+    pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
+  });
+  const result = turn.result || {};
+  const relay = relaySpend(result.relayUsage, turn.pricing, agentTurn);
+  const costUsd = turn.costUsd ?? relay?.costUsd ?? null;
+  const usage = {
+    inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : (relay?.inputTokens ?? null),
+    outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : (relay?.outputTokens ?? null),
+  };
+  if (costUsd > 0) {
+    try {
+      if (await managedOpenRouter.usesIncludedKey(pool, bot.id)) {
+        await limits.recordSpend(pool, bot.id, Math.round(costUsd * 1e6) / 1e4, { byok: false });
+      }
+    } catch (err) {
+      log.warn('homeroom-bot', 'Spend debit failed', { err: err.message });
+    }
+  }
+  const spent = { sessionId: session.id, costUsd, ...usage };
+
+  if (turn.stopped) {
+    return fail('budget: wall clock', { ...spent, budgetStop: 'wall clock' });
+  }
+  if (turn.routed?.error) {
+    const code = String(turn.routed.error);
+    return fail(code, spent, {
+      infra: !!turn.infra || INFRA_ERRORS.has(code) || code.startsWith('dispatch:'),
+    });
+  }
+
+  const parsed = followup.parseFollowUp(result.lastResultText);
+  const moved = followup.headMoved({
+    mode, result, reviewedHeadSha: session.reviewed_head_sha, action: parsed?.action,
+  });
+  if (!parsed && !moved) {
+    return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, spent);
+  }
+
+  let runId = null;
+  const say = async (kind, text, postedAt) => {
+    const posted = await live.post({
+      pool, github, ws: deps.ws, app, repo, issueNumber, kind, runId, text, sender: bot,
+      // Answered where it was asked: the proposal's thread too, when that
+      // is where somebody wrote.
+      proposalSessionId: replies.some((r) => r.where === 'proposal') ? session.id : null,
+    });
+    if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
+  };
+
+  // Said it would revise, but the push moved nothing.
+  if (parsed && parsed.action === 'revise' && !moved) {
+    const why = mode === 'build' && result.pushOk === false
+      ? 'its change could not be pushed' : 'the turn produced no change';
+    runId = await insertRun(pool, {
+      appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error: `revise: ${why}`,
+      reason: parsed.reply, threadSeenAt: item.thread_seen_at || null, model,
+      durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
+    });
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    const postedAt = [];
+    await say('followup_failed', followup.revisionFailedText({ why, prNumber: session.pr_number }), postedAt)
+      .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
+    await live.advanceSeen({
+      pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
+      proposalSessionId: session.id,
+    }).catch(() => {});
+    return { ran: true, verdict: 'failed', runId };
+  }
+
+  const action = moved ? 'revise' : parsed.action;
+  const reply = parsed?.reply || 'It changed the proposal to follow the latest replies.';
+  if (moved) {
+    // The same reconcile a person's revision reaches: the new head becomes
+    // the reviewed one, earlier votes stop counting, checks and the staging
+    // preview re-run on it, and the thread says so.
+    try {
+      const votes = deps.votes || require('../routes/votes');
+      const { rows: fresh } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
+           FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
+        [session.id],
+      );
+      await votes.reconcileNativeReviewedHead({
+        config, pool, session: fresh[0] || session, fresh: true, notify: true,
+      });
+    } catch (err) {
+      log.error('homeroom-bot', 'Follow-up revision pushed, but reconciling the proposal failed', {
+        app: app.slug, issueNumber, sessionId: session.id, err: err.message,
+      });
+    }
+  }
+
+  runId = await insertRun(pool, {
+    appId: app.id, issueNumber, mode: runMode, verdict: followup.VERDICT_FOR[action],
+    question: action === 'ask' ? reply : null,
+    reason: reply,
+    buildNote: action === 'revise' ? (parsed?.summary || null) : null,
+    threadSeenAt: item.thread_seen_at || null, model,
+    durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
+  });
+  await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+  clearRefusals(app.id);
+  log.info('homeroom-bot', 'Followed up on its proposal', {
+    app: app.slug, issueNumber, sessionId: session.id, action, costUsd, runId,
+  });
+
+  const prNumber = session.pr_number;
+  const text = action === 'revise'
+    ? followup.revisedText({
+      summary: parsed?.summary, reply: parsed?.reply, prNumber,
+      link: deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null,
+    })
+    : action === 'ask' ? followup.askText({ reply, prNumber })
+      : action === 'person' ? followup.personText({ reply, prNumber })
+        : followup.answerText({ reply, prNumber });
+  const postedAt = [];
+  await say(`followup_${action}`, text, postedAt)
+    .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
+  await live.advanceSeen({
+    pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
+    proposalSessionId: session.id,
+  }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
+  return { ran: true, verdict: followup.VERDICT_FOR[action], runId, acted: `followup_${action}` };
+}
+
+/**
  * #3146: what a live verdict does. Posts to the issue, builds and proposes
  * a ready request, then records what the bot has seen so its own comments
  * are not read back as a change. A verdict the live caps hold back posts
@@ -1578,11 +1889,30 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
  */
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
-  seed, seedReadAt, postedAt, turnBudgetMs, model, deps,
+  seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin = null, deps,
 }) {
   const { github, ws } = deps;
+  // Whoever filed the issue is named on the answers that ask something of
+  // them, so they are notified (live.issuePoster). Looked up once, and only
+  // when such an answer is posted.
+  let poster;
+  const posterOnce = async () => {
+    if (poster === undefined) {
+      poster = await live.issuePoster(pool, { app, repo, issueNumber, issue, botLogin })
+        .catch((err) => {
+          log.warn('homeroom-bot', 'Could not find who filed the issue', { app: app.slug, issueNumber, err: err.message });
+          return null;
+        });
+      if (poster && bot.username && poster.toLowerCase() === String(bot.username).toLowerCase()) poster = null;
+    }
+    return poster;
+  };
   const say = async (kind, text, extra = {}) => {
-    const posted = await live.post({ pool, github, ws, app, repo, issueNumber, kind, runId, text, ...extra });
+    const mention = live.tagsPoster(kind) ? await posterOnce() : null;
+    const posted = await live.post({
+      pool, github, ws, app, repo, issueNumber, kind, runId, text, mention, senderId: bot.id, sender: bot,
+      notifications: deps.notifications || null, ...extra,
+    });
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
     return posted;
   };
@@ -1906,6 +2236,28 @@ function noteIssueActivity({ appId, issueNumber, reason = 'activity' } = {}) {
   return true;
 }
 
+/**
+ * #3264: somebody wrote in a proposal's discussion. When that proposal is
+ * the bot's own and still up for a vote, it is activity on the issue it
+ * answers; any other proposal's thread is none of the bot's business and
+ * costs one indexed lookup. Never throws.
+ */
+async function noteProposalActivity(pool, { appId, sessionId } = {}) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT cs.linked_issues FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+        WHERE cs.id = $1 AND cs.app_id = $2 AND cs.status = 'promoted' AND u.username = $3`,
+      [Number(sessionId), Number(appId), BOT_USERNAME],
+    );
+    const issueNumber = Array.isArray(rows[0]?.linked_issues) ? rows[0].linked_issues[0] : null;
+    if (!issueNumber) return false;
+    return noteIssueActivity({ appId, issueNumber, reason: 'proposal_thread' });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal activity check failed', { err: err.message });
+    return false;
+  }
+}
+
 /** ws._onBusMessage hands BUS_KIND envelopes here. */
 function onBusMessage(data) {
   if (!data || typeof data !== 'object') return false;
@@ -2200,6 +2552,7 @@ module.exports = {
   KEY_TURN_INPUT_TOKENS,
   DEFAULTS,
   noteIssueActivity,
+  noteProposalActivity,
   onBusMessage,
   refreshApps,
   BUS_KIND,

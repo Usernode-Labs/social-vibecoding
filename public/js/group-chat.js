@@ -888,7 +888,12 @@ const GroupChat = {
       // pull request it is about — so the pair rides on the view model and
       // lands on the host as the two data-* attributes refreshVoteControls
       // reads back.
-      voteRef: isVote
+      // #3288: an ordinary message can carry one too, when its metadata
+      // names the proposal: the Homeroom bot's "built this" post is a message
+      // from its own user, and its card hangs under the bubble. Only that
+      // metadata, never a "PR #N" in the words, which anybody can type; and
+      // a person's post cannot set it (handleMessage builds its metadata).
+      voteRef: isVote || (kind === 'message' && !deleted && !!(meta.vote && meta.vote.sessionId))
         ? (([sessionId, prNumber]) => ({ sessionId, prNumber }))(GroupChat._voteRef(msg))
         : null,
       specShare: isSpecShare ? GroupChat._specShareView(meta.specShare, msg) : null,

@@ -1067,6 +1067,11 @@ function digestDue(row, now = Date.now()) {
   if (!Number.isFinite(at)) return 'never';
   if (!row.digest && !row.digestError) return 'never';
   if (row.digestError) return now - at >= DIGEST_RETRY_MS ? 'retry' : null;
+  // #3293: a digest written before this Monday names the wrong weeks. Its
+  // "last week" is now the week before, which the derived history behind it
+  // (fetchDigestHistory) also draws, so the walk would show that week twice
+  // until the day's window ran out. Crossing the week boundary ages it too.
+  if (weekStart(at) < weekStart(now)) return 'age';
   return now - at >= DIGEST_MAX_AGE_MS ? 'age' : null;
 }
 function digestStale(row, now = Date.now()) {
@@ -1177,6 +1182,103 @@ async function fetchDigestWeek(pool, appId, fromMs, toMs) {
     }),
   ];
   return { items, truncated };
+}
+
+// ── #3293: the weeks before those two, back to the project's start ────
+//
+// The walk under the Workshop's lead paragraph ended at LAST WEEK, and not
+// by design: the model is asked for two windowed lines, the client was built
+// to walk further (`older`, `firstWeek`) and nothing ever sent it more. So
+// the third press of "Show past week" had nothing behind it, whatever the
+// project's age.
+//
+// The older weeks are DERIVED, not drafted. One model call per week per app
+// per day, for windows nothing will ever change again, is a cost the walk
+// cannot justify — and the rows fetchDigestWeek reads already say what
+// landed: the count, and the titles of the newest few. One grouped query
+// over the whole history answers every week at once, bounded by the
+// project's age (a year is ~52 groups) and by DIGEST_HISTORY_TITLES rows
+// per group, so a busy week costs the payload no more than a quiet one. A
+// week that held nothing has no group and so no card, which is the rule the
+// model's own empty strings follow.
+const DIGEST_HISTORY_TITLES = 3;
+
+const toMs = (v) => (v instanceof Date ? v.getTime() : Date.parse(v || ''));
+
+/**
+ * One derived line: the newest titles, then how many more. The count itself
+ * rides the card's own figure above the line (`closed`), so the line only
+ * owes the reader what the figure cannot say: what the changes WERE.
+ */
+function historyLine(titles, closed) {
+  if (!titles.length) return closed === 1 ? 'One change landed.' : `${closed} changes landed.`;
+  const list = titles.join('; ');
+  const more = closed - titles.length;
+  if (more > 0) return `${list}; and ${more} more.`;
+  return /[.!?]$/.test(list) ? list : `${list}.`;
+}
+
+/**
+ * Every week that landed anything BEFORE last week, newest first, and
+ * `firstWeek`: the Monday of the week the project began, which is where the
+ * walk stops and says so.
+ *
+ * Same rows and same timestamp as fetchDigestWeek and the tiles' shipped
+ * count (routes/votes.js, #1922): a PR's merged_at falling back to
+ * created_at, and an applied close-issue proposal's created_at. Weeks are
+ * date_trunc('week') in UTC, which is `weekStart` above.
+ *
+ * `firstWeek` is the project's creation week, or the oldest week anything
+ * landed in when that is earlier (an import, a skewed clock). It is sent
+ * only beside a COMPLETE `older` (this query has no horizon), which is what
+ * lets the client say "this is where the project started" rather than the
+ * weaker "that is as far back as the summary goes".
+ */
+async function fetchDigestHistory(pool, appId, { now = Date.now(), createdAt = null } = {}) {
+  const before = weekStart(now) - WEEK_MS;
+  const { rows } = await pool.query(
+    `WITH landed AS (
+       SELECT COALESCE(cs.merged_at, cs.created_at) AS t, cs.pr_title AS title, cs.pr_number AS pr
+         FROM chat_sessions cs
+        WHERE cs.app_id = $1 AND cs.status = 'merged'
+          AND COALESCE(cs.merged_at, cs.created_at) < $2::timestamptz
+       UNION ALL
+       SELECT i.created_at AS t, i.title, NULL::int AS pr
+         FROM issues i
+        WHERE i.app_id = $1 AND i.kind = 'close_issue' AND i.status = 'closed'
+          AND i.payload ? 'appliedAt'
+          AND i.created_at < $2::timestamptz
+     ), ranked AS (
+       SELECT date_trunc('week', t AT TIME ZONE 'UTC') AS wk, title, pr,
+              COUNT(*) OVER (PARTITION BY date_trunc('week', t AT TIME ZONE 'UTC'))::int AS n,
+              row_number() OVER (PARTITION BY date_trunc('week', t AT TIME ZONE 'UTC') ORDER BY t DESC) AS rn
+         FROM landed
+     )
+     SELECT wk AT TIME ZONE 'UTC' AS week_start, n, title, pr
+       FROM ranked
+      WHERE rn <= $3
+      ORDER BY wk DESC, rn`,
+    [appId, iso(before), DIGEST_HISTORY_TITLES]
+  );
+  const weeks = new Map();
+  for (const r of rows) {
+    const t = toMs(r.week_start);
+    if (!Number.isFinite(t)) continue;
+    const start = weekStart(t);
+    let w = weeks.get(start);
+    if (!w) weeks.set(start, (w = { start, closed: Math.max(0, Number(r.n) || 0), titles: [] }));
+    const title = clip(r.title, TITLE_MAX) || (r.pr != null ? `PR #${r.pr}` : '');
+    if (title) w.titles.push(title);
+  }
+  const older = [...weeks.values()]
+    .filter((w) => w.closed > 0)
+    .sort((a, b) => b.start - a.start)
+    .map((w) => ({ start: iso(w.start), closed: w.closed, line: historyLine(w.titles, w.closed) }));
+  const starts = [];
+  const created = toMs(createdAt);
+  if (Number.isFinite(created)) starts.push(weekStart(created));
+  if (older.length) starts.push(Date.parse(older[older.length - 1].start));
+  return { older, firstWeek: starts.length ? iso(Math.min(...starts)) : null };
 }
 
 /**
@@ -1698,6 +1800,9 @@ module.exports = {
   // week is never a truncated slice of one. DIGEST_WEEK_MAX is the cap it
   // discloses rather than hides.
   weekStart, weekWindows, fetchDigestWeek, flattenDigest, DIGEST_WEEK_MAX,
+  // #3293: the weeks before those two, derived rather than drafted, back to
+  // the project's start.
+  fetchDigestHistory, historyLine, DIGEST_HISTORY_TITLES,
   _inFlightForTests: inFlight,
   _dirtyForTests: dirty,
   _changeTimersForTests: changeTimers,

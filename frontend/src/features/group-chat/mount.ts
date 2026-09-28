@@ -111,10 +111,7 @@ export function keepUnchanged(previous: TranscriptMessage[] | undefined, next: T
 /** Mount (or re-establish) the transcript inside the host app-view just built. */
 export function mountTranscript(host: Element | null, key = 'main'): void {
   if (!host) return;
-  // #2884: an app's discussion opened as a Messages channel folds its runs of
-  // cards; the same transcript on the app's own Discussion page draws them all.
-  const channel = !!host.closest('#messages-screen');
-  mountLegacyPortal(host, createElement(Transcript, { source: key, foldCards: channel }));
+  mountLegacyPortal(host, createElement(Transcript, { source: key }));
 }
 
 export function unmountTranscript(host: Element | null): void {

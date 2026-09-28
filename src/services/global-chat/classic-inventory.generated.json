@@ -1023,6 +1023,25 @@
     },
     {
       "source": "src/routes/admin.js",
+      "method": "PUT",
+      "path": "/api/admin/users/:id/username",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.put.admin.users.item.username.dc9abfd8",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-users.tsx",
+        "frontend/src/features/admin/admin-users.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
       "method": "DELETE",
       "path": "/api/admin/users/:id",
       "expression": null,
@@ -1047,6 +1066,25 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "admin.post.admin.users.item.reset.password.36385a86",
+      "domain": "admin",
+      "risk": "destructive",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-users.tsx",
+        "frontend/src/features/admin/admin-users.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "POST",
+      "path": "/api/admin/users/:id/reset-first-run",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.users.item.reset.first.run.1270e93f",
       "domain": "admin",
       "risk": "destructive",
       "confirmation": "required",
@@ -1157,6 +1195,48 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-analytics.tsx",
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-limits.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "GET",
+      "path": "/api/admin/app-limit",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.app.limit.23137ca4",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-limits.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "PUT",
+      "path": "/api/admin/app-limit",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.put.admin.app.limit.2e9d07c8",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
         "frontend/src/features/admin/admin-limits.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
@@ -1679,6 +1759,7 @@
       "mobileSupported": true,
       "classicPath": "#apps",
       "clientReferences": [
+        "frontend/src/features/agent-session/api.ts",
         "frontend/src/features/agent-session/api.ts"
       ]
     },
@@ -1697,6 +1778,7 @@
       "mobileSupported": true,
       "classicPath": "#apps",
       "clientReferences": [
+        "frontend/src/features/agent-session/api.ts",
         "frontend/src/features/agent-session/api.ts"
       ]
     },
@@ -1746,6 +1828,14 @@
       "source": "src/routes/agent-sessions.js",
       "method": "GET",
       "path": "/api/agent-sessions/:id",
+      "expression": null,
+      "status": "exempt",
+      "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
+    },
+    {
+      "source": "src/routes/agent-sessions.js",
+      "method": "GET",
+      "path": "/api/agent-sessions/:id/state",
       "expression": null,
       "status": "exempt",
       "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
@@ -1931,6 +2021,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -2009,6 +2100,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2032,6 +2124,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2055,6 +2148,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2078,6 +2172,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2101,6 +2196,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/apps/featured-illustration-editor.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2147,6 +2243,29 @@
       "expression": null,
       "status": "exempt",
       "reason": "child-app provider proxy, not a Classic control"
+    },
+    {
+      "source": "src/routes/app-notices.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/notices",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.apps.item.notices.158654c8",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app",
+      "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
+        "frontend/src/features/dialogs/members-controller.js",
+        "frontend/src/features/messages/api.ts",
+        "public/js/app-view.js"
+      ]
     },
     {
       "source": "src/routes/app-permissions.js",
@@ -2208,6 +2327,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -2331,6 +2451,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2354,6 +2475,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2561,6 +2683,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/fork-app.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2608,6 +2731,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2630,6 +2754,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2690,6 +2815,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2713,6 +2839,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
@@ -2737,6 +2864,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
@@ -2760,6 +2888,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/rename-app.tsx",
         "frontend/src/features/messages/api.ts",
@@ -2783,6 +2912,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
@@ -2824,6 +2954,8 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/community-card.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-settings.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2847,6 +2979,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2869,6 +3002,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -2891,6 +3025,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2914,6 +3049,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -2969,6 +3105,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/create-app.tsx",
         "frontend/src/features/dialogs/fork-app.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -2995,6 +3132,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
@@ -3019,6 +3157,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/workshop/community-card.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -3041,6 +3180,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/home/home.js",
         "frontend/src/features/messages/api.ts",
@@ -3081,6 +3221,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -3775,6 +3916,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -3797,6 +3939,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -4033,6 +4176,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/feed-thread.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -4058,6 +4202,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/feed-thread.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -4174,6 +4319,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -4233,6 +4379,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/mention-typeahead.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -4504,6 +4651,7 @@
       "mobileSupported": true,
       "classicPath": "#profile",
       "clientReferences": [
+        "frontend/src/features/dialogs/create-app.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -4526,6 +4674,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -4549,6 +4698,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -4608,6 +4758,145 @@
       ]
     },
     {
+      "source": "src/routes/community-invites.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/invite-links",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.apps.item.invite.links.7937a553",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app",
+      "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
+        "frontend/src/features/app-context/invite-pane.tsx",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
+        "frontend/src/features/dialogs/members-controller.js",
+        "frontend/src/features/messages/api.ts",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/invite-links",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.apps.item.invite.links.f3306c2e",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app",
+      "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
+        "frontend/src/features/app-context/invite-pane.tsx",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
+        "frontend/src/features/dialogs/members-controller.js",
+        "frontend/src/features/messages/api.ts",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "DELETE",
+      "path": "/api/invite-links/:id",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.delete.invite.links.item.ca5e0a99",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/app-context/invite-pane.tsx",
+        "frontend/src/features/auth/waiting.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "GET",
+      "path": "/api/public/invites/:token",
+      "expression": null,
+      "status": "exempt",
+      "reason": "anonymous public API rather than signed-in Classic"
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "GET",
+      "path": "/api/invite-links/queued",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.invite.links.queued.daada465",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/app-context/invite-pane.tsx",
+        "frontend/src/features/auth/waiting.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "GET",
+      "path": "/api/invite-links/by-token/:token",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.invite.links.by.token.item.3c802365",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "public/js/app.js"
+      ]
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "POST",
+      "path": "/api/invite-links/by-token/:token/redeem",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.invite.links.by.token.item.redeem.694ca705",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/auth/waiting.tsx",
+        "public/js/app.js"
+      ]
+    },
+    {
+      "source": "src/routes/community-invites.js",
+      "method": "GET",
+      "path": "/invite/:token",
+      "expression": null,
+      "status": "exempt",
+      "reason": "invite-link document: the shell with a link preview, represented by the invite-link capabilities"
+    },
+    {
       "source": "src/routes/content-reports.js",
       "method": "POST",
       "path": "/api/apps/:slug/report",
@@ -4625,6 +4914,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse-detail.tsx",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -5765,6 +6055,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -5787,6 +6078,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -5896,6 +6188,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -5971,7 +6264,8 @@
       "mobileSupported": true,
       "classicPath": "#apps",
       "clientReferences": [
-        "frontend/src/features/dialogs/feedback-controller.js"
+        "frontend/src/features/dialogs/feedback-controller.js",
+        "frontend/src/features/profile/profile.js"
       ]
     },
     {
@@ -5990,6 +6284,7 @@
       "classicPath": "#apps",
       "clientReferences": [
         "frontend/src/features/dialogs/feedback-controller.js",
+        "frontend/src/features/profile/profile.js",
         "public/js/feedback-queue.js"
       ]
     },
@@ -6018,6 +6313,24 @@
         "frontend/src/features/workshop/workshop-chrome.tsx",
         "public/js/app-view.js",
         "public/js/feedback-queue.js"
+      ]
+    },
+    {
+      "source": "src/routes/feedback.js",
+      "method": "GET",
+      "path": "/api/feedback/mine",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.feedback.mine.6b924f84",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/profile/profile.js"
       ]
     },
     {
@@ -6461,6 +6774,14 @@
     {
       "source": "src/routes/internal.js",
       "method": "POST",
+      "path": "/api/internal/evidence/:runId/reset-pair",
+      "expression": null,
+      "status": "exempt",
+      "reason": "platform-to-worker/internal service protocol"
+    },
+    {
+      "source": "src/routes/internal.js",
+      "method": "POST",
       "path": "/api/internal/evidence/:runId/reset-side",
       "expression": null,
       "status": "exempt",
@@ -6620,6 +6941,7 @@
         "frontend/src/features/admin/admin-campaigns.tsx",
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/close-issue.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6681,6 +7003,7 @@
         "frontend/src/features/admin/admin-campaigns.tsx",
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-secrets-controller.js",
         "frontend/src/features/dialogs/close-issue.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -6723,6 +7046,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -6747,6 +7071,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/ref-typeahead.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -7188,6 +7513,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -7446,6 +7772,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7470,6 +7797,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7544,6 +7872,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/app-notifications.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -7618,6 +7947,142 @@
       ]
     },
     {
+      "source": "src/routes/onboarding.js",
+      "method": "GET",
+      "path": "/api/me/join-suggestions",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.me.join.suggestions.b4b461ca",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/auth/communities-first-run.js",
+        "frontend/src/features/header/ai-credit.js",
+        "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
+        "frontend/src/features/settings/sections/email.tsx",
+        "frontend/src/features/settings/settings.js",
+        "public/js/app-view.js",
+        "public/js/session-state.js"
+      ]
+    },
+    {
+      "source": "src/routes/onboarding.js",
+      "method": "POST",
+      "path": "/api/me/communities",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.communities.d6145fab",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/auth/communities-first-run.js",
+        "frontend/src/features/header/ai-credit.js",
+        "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
+        "frontend/src/features/settings/sections/email.tsx",
+        "frontend/src/features/settings/settings.js",
+        "public/js/app-view.js",
+        "public/js/session-state.js"
+      ]
+    },
+    {
+      "source": "src/routes/onboarding.js",
+      "method": "POST",
+      "path": "/api/me/tour-done",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.tour.done.f3ca0f23",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/header/ai-credit.js",
+        "frontend/src/features/home/tour/tour-done.ts",
+        "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
+        "frontend/src/features/settings/sections/email.tsx",
+        "frontend/src/features/settings/settings.js",
+        "public/js/app-view.js",
+        "public/js/session-state.js"
+      ]
+    },
+    {
+      "source": "src/routes/onboarding.js",
+      "method": "GET",
+      "path": "/api/me/getting-started",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.me.getting.started.107eca56",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/header/ai-credit.js",
+        "frontend/src/features/home/getting-started.tsx",
+        "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
+        "frontend/src/features/settings/sections/email.tsx",
+        "frontend/src/features/settings/settings.js",
+        "public/js/app-view.js",
+        "public/js/session-state.js"
+      ]
+    },
+    {
+      "source": "src/routes/onboarding.js",
+      "method": "POST",
+      "path": "/api/me/getting-started/seen",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.getting.started.seen.eda38e89",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/home/getting-started.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/onboarding.js",
+      "method": "POST",
+      "path": "/api/me/getting-started/close",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.getting.started.close.3ca690a2",
+      "domain": "apps",
+      "risk": "destructive",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/home/getting-started.tsx"
+      ]
+    },
+    {
       "source": "src/routes/platform-about.js",
       "method": "GET",
       "path": "/api/platform/about",
@@ -7652,6 +8117,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -7674,6 +8140,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -8115,6 +8582,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -8289,6 +8757,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -8328,6 +8797,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -8350,6 +8820,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -8520,6 +8991,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -8543,6 +9015,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -8565,6 +9038,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -8646,6 +9120,7 @@
       "clientReferences": [
         "frontend/src/features/dev-board/topic/topic-head.tsx",
         "frontend/src/features/dev-chat/dev-chat.js",
+        "public/js/app-view.js",
         "public/js/app-view.js"
       ]
     },
@@ -9680,6 +10155,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -12485,6 +12961,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/import-pr.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
@@ -12581,6 +13058,7 @@
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/card/ref-typeahead.tsx",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -12605,6 +13083,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js",
@@ -12769,6 +13248,25 @@
       ]
     },
     {
+      "source": "src/routes/workshop-overview.js",
+      "method": "GET",
+      "path": "/api/workshop/needs-feed",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.workshop.needs.feed.5a596f00",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/app-context/app-context-sheet.tsx",
+        "frontend/src/features/workshop/index.tsx"
+      ]
+    },
+    {
       "source": "src/routes/workshop-themes.js",
       "method": "GET",
       "path": "/api/apps/:slug/workshop-themes",
@@ -12785,6 +13283,7 @@
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
         "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
         "frontend/src/features/messages/api.ts",
         "public/js/app-view.js"
@@ -13041,6 +13540,13 @@
       "path": "/api/public/apps",
       "sources": [
         "frontend/src/features/auth/landing.tsx"
+      ],
+      "reason": "signed-out public surface outside authenticated Global Chat"
+    },
+    {
+      "path": "/api/public/invites/:param",
+      "sources": [
+        "frontend/src/features/auth/invite-card.tsx"
       ],
       "reason": "signed-out public surface outside authenticated Global Chat"
     },

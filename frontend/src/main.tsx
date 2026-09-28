@@ -145,6 +145,9 @@ import './features/dev-chat/dev-chat.js';
 // route, not only on one screen's first reveal. Its listener is guarded, so
 // an anonymous document costs it nothing.
 import './features/auth/username-first-run.js';
+// Communities, stage 5: "What communities do you want to join?", the step
+// after the username and the terms, imported here for the same two reasons.
+import './features/auth/communities-first-run.js';
 
 // ── Every step below is wrapped, and hydration is the one that matters ──
 //

@@ -216,7 +216,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
       const { broadcastGlobal } = require('./ws');
       const sessionBus = require('./session-bus');
       const event = { type, _seq: `${seqPrefix}-${++eventSeq}`, ...data };
-      broadcastGlobal({ type: 'session_event', sessionId: session.id, event: type, ...event });
+      broadcastGlobal({ ...event, type: 'session_event', sessionId: session.id, event: type });
       sessionBus.publish(session.id, event);
     } catch (_) { /* ws/bus failures are non-fatal */ }
   };

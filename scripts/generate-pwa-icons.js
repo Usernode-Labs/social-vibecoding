@@ -17,6 +17,14 @@
 //                                        rounded square, and fills any
 //                                        transparent pixel with black — so no
 //                                        pre-rounded corners and no alpha.
+//                                        SECOND CONSUMER: the root dapp.json's
+//                                        `icon.image` points at this same file
+//                                        — it is Homeroom's own app-tile icon
+//                                        (.app-icon-tile fills a custom image
+//                                        flush, full-bleed, no baked radius,
+//                                        which is exactly this shape). Keep
+//                                        that in mind before re-pathing or
+//                                        reshaping this file.
 //   public/icons/v3/icon-{192,512}.png   manifest `any`: desktop installs and
 //                                        Chrome's fallback. A rounded tile.
 //   public/icons/v3/icon-maskable-512.png manifest `maskable`: Android masks it

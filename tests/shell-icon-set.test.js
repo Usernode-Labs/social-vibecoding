@@ -194,6 +194,12 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // count glyphs are the same pair the app's own Workshop tab uses, which is
   // the point: the number on a row and the pane it counts wear one mark.
   const expected = [
+    // ── The create dialog's rework took four paths OUT of this list ──
+    //
+    // "What are you making?" became rows like "Who is it for?", each with
+    // its glyph, and the dialog prerenders every step: AppWindowIcon (two
+    // paths) on App, NewspaperIcon on Document and PlayIcon on Video are now
+    // in the static document.
     // ── #2718 moved paths across this line, in both directions ───────
     //
     // OUT OF IT, because the navigation change draws them unconditionally:
@@ -250,7 +256,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M16.5 6.5a2.12 2.12 0 0 1 3 3L9 20l-4 1 1-4z',
     'M17 21v-8H7v8',
     'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',
-    'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
     'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z',
     'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6',
     'M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859',
@@ -263,17 +268,18 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M4 20 20 4',
     'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
     'M4 5a8 3 0 1 0 16 0 8 3 0 1 0-16 0',
+    // BoardIcon came back to this list with #3287: the app chip's menu row
+    // is "Go to community hub" and wears the Communities glyph, so the board
+    // mark is drawn only by a project page's Workshop tab, behind state.
+    'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
     'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6',
-    'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
     // THE GRID left this list again with #3051. #2759 had put it behind state
     // when the all-apps Workshop's scope chip went; the owner brought that
     // chip back as "All apps", and it draws the grid unconditionally.
     'M4 6h16M4 12h16M4 18h16',
-    'M4 9.5h16',
     'M4.5 12.75l6 6 9-13.5',
     'M5 13l4 4L19 7',
     'M5 15l7-7 7 7',
-    'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
     'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
     // HashIcon (#2802): a channel's glyph in the desktop rail's Recents,
@@ -300,7 +306,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // exported and still drawn: the Workshop toolbar's "+" menu offers
     // "New change" with it, behind that menu's own state.
     'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
-    'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z',
+    // SparklesIcon LEFT this list when the header menu button traded the
+    // Homeroom "H" tile for a sparkle: #platform-mark-btn renders on every
+    // route, so the glyph is in the cold document.
     // THE MESSAGE ACTIONS (#2387): the hover bar's smile and reply arrow, the
     // ⋯ menu's thread, copy, link, envelope, flag and struck circle, and the
     // emoji picker's heart and cup tabs. Every one draws only once a row is
@@ -313,7 +321,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155',
     'M9 9h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2V9Z',
     'M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4',
-    'M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244',
+    // (LinkIcon left this list with invite links: it is the "Invite to
+    // community" row's mark in the app chip's menu, which prerenders.)
     'M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75',
     'M3 3v1.5M3 21v-6m0 0 2.77-.693a9 9 0 0 1 6.208.682l.108.054a9 9 0 0 0 6.086.71l3.114-.732a48.524 48.524 0 0 1-.005-10.499l-3.11.732a9 9 0 0 1-6.085-.711l-.108-.054a9 9 0 0 0-6.208-.682L3 4.5M3 15V4.5',
     'M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636',

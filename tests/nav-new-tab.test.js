@@ -648,8 +648,8 @@ test('browse list rows open in a new tab under a modifier', () => {
   assert.match(hrefFor, /rowHref\(view\)/);
   const rowHref = browseJs.slice(browseJs.indexOf('rowHref(view) {'),
     browseJs.indexOf('openRow(view) {'));
-  assert.match(rowHref, /#apps\/\$\{encodeURIComponent\(view\.slug\)\}/,
-    'the new tab must open the row\'s own route');
+  assert.match(rowHref, /#app\/\$\{encodeURIComponent\(view\.slug\)\}\/workshop/,
+    'the new tab must open the row\'s own route: the project\'s hub');
   assert.match(rowHref, /view\.demo/, 'a staging demo row has no page to open');
   assert.match(rowHref, /return null/);
   assert.match(browseJs, /openRow\(view\) \{\s*\n\s*const href = Browse\.rowHref\(view\);/,

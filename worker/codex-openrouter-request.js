@@ -30,6 +30,140 @@ const HOP_HEADERS = new Set([
   'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
   'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length',
 ]);
+const EVIDENCE_TERMINAL_TOOL = /(?:^|__)evidence_(?:run_plan|report_blocker)$/;
+const EVIDENCE_TERMINAL_TOOL_NAMES = new Set([
+  'evidence_run_plan', 'evidence_report_blocker',
+]);
+
+function incrementType(counts, type) {
+  const key = type === 'function' || type === 'namespace' || type === 'custom'
+    ? type : 'other';
+  counts[key] += 1;
+}
+
+function flatMcpToolName(name) {
+  if (typeof name !== 'string' || !name.startsWith('mcp__')) return null;
+  const separator = name.indexOf('__', 'mcp__'.length);
+  if (separator <= 'mcp__'.length || separator + 2 >= name.length) return null;
+  return { server: name.slice('mcp__'.length, separator), name: name.slice(separator + 2) };
+}
+
+// Codex 0.146 sends local MCP tools as namespace definitions:
+// {type:"namespace",name:"mcp__evidence",tools:[{type:"function",name:"..."}]}.
+// Older clients flattened them into top-level mcp__server__tool functions.
+// Keep one parser for both shapes so diagnostics describe the actual wire
+// request and the completion guard cannot silently depend on one CLI version.
+function inspectToolDefinitions(tools) {
+  const definitions = Array.isArray(tools) ? tools : [];
+  const topLevelTypes = { function: 0, namespace: 0, custom: 0, other: 0 };
+  const nestedTypes = { function: 0, namespace: 0, custom: 0, other: 0 };
+  const logicalTools = [];
+  const mcpServers = new Set();
+  for (const definition of definitions) {
+    incrementType(topLevelTypes, definition?.type);
+    if (definition?.type === 'namespace' && typeof definition.name === 'string') {
+      const server = definition.name.startsWith('mcp__')
+        ? definition.name.slice('mcp__'.length) : null;
+      if (server) mcpServers.add(server);
+      const children = Array.isArray(definition.tools) ? definition.tools : [];
+      for (const child of children) {
+        incrementType(nestedTypes, child?.type);
+        if (typeof child?.name === 'string') {
+          logicalTools.push({ server, name: child.name, type: child.type });
+        }
+      }
+      continue;
+    }
+    if (typeof definition?.name !== 'string') continue;
+    const mcp = flatMcpToolName(definition.name);
+    if (mcp) mcpServers.add(mcp.server);
+    logicalTools.push({ server: mcp?.server || null, name: mcp?.name || definition.name,
+      type: definition.type });
+  }
+  return { definitions, topLevelTypes, nestedTypes, logicalTools, mcpServers };
+}
+
+function evidenceToolInventory(tools) {
+  const inspected = inspectToolDefinitions(tools);
+  const countFor = server => inspected.logicalTools.filter(tool => tool.server === server).length;
+  const available = name => inspected.logicalTools.some(tool => tool.name === name
+    && (tool.server === 'evidence' || tool.server == null));
+  const knownMcpServers = new Set(['evidence', 'browser_member', 'browser_admin',
+    'browser_full_admin']);
+  return {
+    mcpServerCount: inspected.mcpServers.size,
+    toolDefinitionCount: inspected.definitions.length,
+    topLevelFunctionToolCount: inspected.topLevelTypes.function,
+    topLevelNamespaceToolCount: inspected.topLevelTypes.namespace,
+    topLevelCustomToolCount: inspected.topLevelTypes.custom,
+    topLevelOtherToolCount: inspected.topLevelTypes.other,
+    nestedToolDefinitionCount: Object.values(inspected.nestedTypes).reduce((sum, count) => sum + count, 0),
+    nestedFunctionToolCount: inspected.nestedTypes.function,
+    nestedCustomToolCount: inspected.nestedTypes.custom,
+    nestedOtherToolCount: inspected.nestedTypes.namespace + inspected.nestedTypes.other,
+    evidenceToolDefinitionCount: countFor('evidence'),
+    otherMcpServerCount: [...inspected.mcpServers].filter(server => !knownMcpServers.has(server)).length,
+    evidenceGetContextAvailable: available('evidence_get_context'),
+    evidenceRunPlanAvailable: available('evidence_run_plan'),
+    evidenceReportBlockerAvailable: available('evidence_report_blocker'),
+    browserMemberToolCount: countFor('browser_member'),
+    browserAdminToolCount: countFor('browser_admin'),
+    browserFullAdminToolCount: countFor('browser_full_admin'),
+  };
+}
+
+function hasExactTerminalTools(tools) {
+  return tools.length === EVIDENCE_TERMINAL_TOOL_NAMES.size
+    && tools.every(tool => tool?.type === 'function'
+      && EVIDENCE_TERMINAL_TOOL_NAMES.has(tool.name))
+    && new Set(tools.map(tool => tool.name)).size === EVIDENCE_TERMINAL_TOOL_NAMES.size;
+}
+
+function evidenceCompletionToolSurface(tools) {
+  const definitions = Array.isArray(tools) ? tools : [];
+  if (definitions.length === 0) return { empty: true };
+  const namespaces = [];
+  const flatTools = [];
+  for (const definition of definitions) {
+    if (definition?.type === 'namespace' && typeof definition.name === 'string'
+        && definition.name.startsWith('mcp__')) {
+      if (definition.name !== 'mcp__evidence') return null;
+      namespaces.push(definition);
+      continue;
+    }
+    const flat = flatMcpToolName(definition?.name);
+    if (flat) {
+      if (flat.server !== 'evidence') return null;
+      flatTools.push({ definition, name: flat.name, type: definition.type });
+      continue;
+    }
+    // A terminal-looking top-level function is not the run-scoped evidence
+    // MCP tool and must not be allowed to satisfy the completion contract.
+    if (typeof definition?.name === 'string'
+        && EVIDENCE_TERMINAL_TOOL_NAMES.has(definition.name)) return null;
+  }
+  if (namespaces.length === 1 && flatTools.length === 0
+      && hasExactTerminalTools(Array.isArray(namespaces[0].tools) ? namespaces[0].tools : [])) {
+    return {
+      empty: false,
+      tools: [namespaces[0]],
+      terminalToolDefinitionCount: EVIDENCE_TERMINAL_TOOL_NAMES.size,
+      wireFormat: 'namespace',
+      removedToolDefinitionCount: definitions.length - 1,
+    };
+  }
+  if (namespaces.length === 0
+      && hasExactTerminalTools(flatTools.map(tool => ({ type: tool.type, name: tool.name })))) {
+    return {
+      empty: false,
+      tools: flatTools.map(tool => tool.definition),
+      terminalToolDefinitionCount: EVIDENCE_TERMINAL_TOOL_NAMES.size,
+      wireFormat: 'flat',
+      removedToolDefinitionCount: definitions.length - flatTools.length,
+    };
+  }
+  return null;
+}
 
 async function readBounded(stream, limit) {
   const chunks = [];
@@ -89,7 +223,14 @@ function usageFromResponse(usage) {
   };
 }
 
-async function inspectEvent(event, recordError, recordUsage) {
+function terminalEvidenceToolFromEvent(parsed) {
+  const candidates = [parsed?.item, parsed?.output_item, parsed?.response?.output_item];
+  if (Array.isArray(parsed?.response?.output)) candidates.push(...parsed.response.output);
+  return candidates.some(item => item?.type === 'function_call'
+    && typeof item.name === 'string' && EVIDENCE_TERMINAL_TOOL.test(item.name));
+}
+
+async function inspectEvent(event, recordError, recordUsage, recordTerminalTool = null) {
   const small = event.length <= MAX_ERROR_DIAGNOSTIC_BYTES;
   // A cheap substring test first: only a terminal event is worth parsing at
   // a size no error envelope reaches.
@@ -99,6 +240,9 @@ async function inspectEvent(event, recordError, recordUsage) {
     .map(line => line.slice(5).trimStart()).join('\n');
   let parsed;
   try { parsed = JSON.parse(data); } catch { return; /* Non-JSON events, including [DONE], pass through. */ }
+  if (recordTerminalTool && terminalEvidenceToolFromEvent(parsed)) {
+    try { recordTerminalTool(); } catch { /* Tool-choice tracking cannot affect the response. */ }
+  }
   if (small) {
     try {
       await recordError(parsed?.error || parsed?.response?.error || (parsed?.type === 'error' ? parsed : null));
@@ -112,7 +256,7 @@ async function inspectEvent(event, recordError, recordUsage) {
   }
 }
 
-async function* observeEventStream(body, recordError, recordUsage = null) {
+async function* observeEventStream(body, recordError, recordUsage = null, recordTerminalTool = null) {
   const decoder = new StringDecoder('utf8');
   let pending = '';
   let oversized = false;
@@ -128,7 +272,7 @@ async function* observeEventStream(body, recordError, recordUsage = null) {
       const event = pending.slice(0, boundary.index);
       pending = pending.slice(boundary.index + boundary[0].length);
       boundaryRe.lastIndex = 0;
-      if (!oversized) await inspectEvent(event, recordError, recordUsage);
+      if (!oversized) await inspectEvent(event, recordError, recordUsage, recordTerminalTool);
       oversized = false;
     }
     // Events past the usage cap need no inspection. Retain only enough bytes
@@ -170,7 +314,8 @@ async function readKeyAllowance(base, apiKey, fetchImpl, signal) {
 }
 
 async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
-  onRequest = () => {}, onTiming = null, onUsage = null, timingIntervalMs = 15_000, fetchImpl = fetch }) {
+  onRequest = () => {}, onTiming = null, onUsage = null, timingIntervalMs = 15_000,
+  requireEvidenceTerminalTool = false, reportEvidenceToolConfig = false, fetchImpl = fetch }) {
   const base = new URL(baseUrl);
   if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
     throw new Error('invalid_provider_url');
@@ -181,6 +326,8 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
   const upstreamBase = base.href.replace(/\/+$/, '');
   const active = new Set();
   let requestOrdinal = 0;
+  let terminalToolChoicePending = requireEvidenceTerminalTool === true;
+  let toolConfigReported = false;
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/responses') {
       replyError(res, 404, 'Unsupported OpenRouter adapter route');
@@ -214,6 +361,40 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         replyError(res, 400, 'OpenRouter request model does not match the selected model');
         return;
       }
+      let terminalToolChoiceRequired = false;
+      let terminalToolDefinitionCount = 0;
+      let terminalToolWireFormat = null;
+      let removedToolDefinitionCount = 0;
+      let toolSurfaceFiltered = false;
+      const incomingToolInventory = evidenceToolInventory(body.tools);
+      if (terminalToolChoicePending) {
+        const tools = Array.isArray(body.tools) ? body.tools : [];
+        const completionSurface = evidenceCompletionToolSurface(tools);
+        // Codex may compact a long resumed thread before sending the user's
+        // new prompt. That provider request deliberately has no tools. Let it
+        // finish, keep the requirement pending, then enforce it on the first
+        // request that actually carries the completion turn's MCP surface.
+        if (completionSurface?.empty) {
+          // No terminal decision can be made in a tool-free compaction call.
+        } else if (!completionSurface) {
+          replyError(res, 500, 'Evidence completion tools were not configured safely');
+          return;
+        } else {
+          // This recovery turn exists only because the model already ended
+          // once without a terminal action. Codex always includes its built-in
+          // tools alongside MCP tools, so expose only the validated evidence
+          // namespace to the provider and require one terminal choice on the
+          // first eligible response.
+          body.tools = completionSurface.tools;
+          body.tool_choice = 'required';
+          body.parallel_tool_calls = false;
+          terminalToolChoiceRequired = true;
+          terminalToolDefinitionCount = completionSurface.terminalToolDefinitionCount;
+          terminalToolWireFormat = completionSurface.wireFormat;
+          removedToolDefinitionCount = completionSurface.removedToolDefinitionCount;
+          toolSurfaceFiltered = removedToolDefinitionCount > 0;
+        }
+      }
       const incomingCap = body.max_output_tokens;
       if (incomingCap != null && (!Number.isSafeInteger(incomingCap) || incomingCap < 1)) {
         replyError(res, 400, 'Invalid OpenRouter output limit');
@@ -238,9 +419,27 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
           && body.previous_response_id.length > 0;
         timing = { ordinal, startedAt, stage: 'await_headers', status: null,
           responseBytes: 0, chunks: 0, outcome: 'ok' };
+        if (reportEvidenceToolConfig && !toolConfigReported
+            && Array.isArray(body.tools) && body.tools.length > 0) {
+          toolConfigReported = true;
+          emitTiming({
+            kind: 'provider_tool_config',
+            ...incomingToolInventory,
+            forwardedToolDefinitionCount: body.tools.length,
+            completionReminder: requireEvidenceTerminalTool === true,
+            terminalToolChoiceRequired,
+            toolSurfaceFiltered,
+            ...(terminalToolWireFormat ? { terminalToolWireFormat } : {}),
+            ...(removedToolDefinitionCount > 0 ? { removedToolDefinitionCount } : {}),
+          });
+        }
         emitTiming({ kind: 'provider_request_start', requestOrdinal: ordinal,
           payloadBytes, inputBytes, instructionBytes, inputItems, previousResponseLinked,
-          maxOutputTokens: body.max_output_tokens });
+          maxOutputTokens: body.max_output_tokens,
+          ...(terminalToolChoiceRequired ? {
+            terminalToolChoiceRequired: true,
+            terminalToolDefinitionCount,
+          } : {}) });
         timing.interval = setInterval(() => emitTiming({
           kind: 'provider_request_pending', requestOrdinal: ordinal,
           stage: timing.stage,
@@ -274,6 +473,10 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
         inputItems: Array.isArray(body.input) ? body.input.length : null,
         httpStatus: response.status,
         requestId: safeRequestId(response.headers.get('x-request-id') || response.headers.get('x-openrouter-request-id')),
+        ...(terminalToolChoiceRequired ? {
+          terminalToolChoiceRequired: true,
+          terminalToolDefinitionCount,
+        } : {}),
       };
       const retryAfter = response.headers.get('retry-after');
       if (retryAfter && /^\d+$/.test(retryAfter) && Number.isSafeInteger(Number(retryAfter))) {
@@ -313,7 +516,8 @@ async function startRequestAdapter({ baseUrl, apiKey, model, maxOutputTokens,
       if (response.body) {
         const isEventStream = response.headers.get('content-type')?.includes('text/event-stream');
         const bodyStream = isEventStream
-          ? Readable.from(observeEventStream(response.body, recordError, onUsage))
+          ? Readable.from(observeEventStream(response.body, recordError, onUsage,
+            terminalToolChoiceRequired ? () => { terminalToolChoicePending = false; } : null))
           : response.status === 402
             ? Readable.from(observeErrorBody(response.body, recordError))
             : Readable.fromWeb(response.body);
@@ -386,6 +590,9 @@ async function runCodex(args, env = process.env) {
     // distinguished from a runner that never sent a request.
     onTiming: diagnostic => process.stdout.write(
       `${env.MODE === 'evidence' ? '__USERNODE_EVIDENCE_PROVIDER__' : '__USERNODE_CODING_PROVIDER__'} ${JSON.stringify(diagnostic)}\n`),
+    requireEvidenceTerminalTool: env.MODE === 'evidence'
+      && env.EVIDENCE_COMPLETION_REMINDER === '1',
+    reportEvidenceToolConfig: env.MODE === 'evidence',
   });
   // The override is process-local. Neither the key nor the ephemeral listener
   // is written to the persistent Codex configuration.

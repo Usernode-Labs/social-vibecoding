@@ -35,6 +35,7 @@ const workerProgress = require('../services/worker-progress');
 const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
 const sessionBus = require('../services/session-bus');
+const chatDelivery = require('../services/chat-delivery');
 const { drainGuard } = require('../services/lifecycle');
 const unitSuiteRow = require('../services/unit-suite-row');
 const {
@@ -835,6 +836,20 @@ function extractSpecSnippet(content, title) {
 // longer gates creation. Called fire-and-forget from the chat handler's
 // done hook — never throws into the SSE path.
 async function notifySessionDone(pool, sessionId) {
+  return notifySessionTurnEnd(pool, sessionId, 'session_done');
+}
+
+// #3181: the turn ended WITHOUT finishing — an error, a timeout, a lost
+// worker — so the bell says "stopped before finishing" instead of "finished".
+// Same arming, dedup and push as session_done; only the kind differs. The
+// chat handler's done hook picks this one when the turn persisted a failure
+// row (turnError) and nobody pressed stop; the restart recovery, the
+// stale-turn watchdog and a system pause call it directly.
+async function notifySessionStalled(pool, sessionId) {
+  return notifySessionTurnEnd(pool, sessionId, 'session_stalled');
+}
+
+async function notifySessionTurnEnd(pool, sessionId, kind) {
   try {
     const { rows } = await pool.query(
       `UPDATE chat_sessions SET notify_on_done = FALSE
@@ -843,12 +858,15 @@ async function notifySessionDone(pool, sessionId) {
       [sessionId]
     );
     if (!rows.length) return;
-    const created = await notifications.createSessionDoneNotification(pool, {
+    const create = kind === 'session_stalled'
+      ? notifications.createSessionStalledNotification
+      : notifications.createSessionDoneNotification;
+    const created = await create(pool, {
       userId: rows[0].user_id, appId: rows[0].app_id, sessionId,
     });
     if (created.length) await notifications.hydrateAndPush(pool, created[0]);
   } catch (err) {
-    log.warn('sessions', 'session_done notify failed', { sessionId, err: err.message });
+    log.warn('sessions', `${kind} notify failed`, { sessionId, err: err.message });
   }
 }
 
@@ -4992,6 +5010,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // chatLimiter caps a single user at 30 chat turns/min so a runaway
   // script can't drain their daily LLM cap before checkBudget() can
   // even respond. See src/middleware/rate-limits.js.
+  //
+  // Delivery (#3177, services/chat-delivery.js): the stream's first event
+  // is `accepted` { messageId, clientMessageId }, written once the message
+  // is stored, so a client whose stream breaks after it knows the message
+  // arrived. To resume, open GET /api/sessions/:id/events?since=<that
+  // event's _seq>. An optional `client_message_id` makes a retry safe: the
+  // same id again answers with the stored message's `accepted` event
+  // (duplicate: true) instead of starting a second turn, and
+  // GET /api/sessions/:id/status?client_message_id=<id> looks it up.
   router.post('/api/sessions/:id/chat', chatLimiter, drainGuard, async (req, res) => {
     const { message, model, attachmentIds } = req.body;
 
@@ -5000,6 +5027,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     if (attIds === null) {
       return res.status(400).json({ error: `Bad attachments (max ${attachmentsSvc.MAX_PER_MESSAGE} per message)` });
     }
+    const clientId = chatDelivery.readClientMessageId(req.body);
+    if (clientId.present && !clientId.value) {
+      return res.status(400).json({ error: chatDelivery.BAD_CLIENT_MESSAGE_ID });
+    }
+    const clientMessageId = clientId.value;
     if (!message?.trim() && !attIds.length) {
       return res.status(400).json({ error: 'Message required' });
     }
@@ -5073,6 +5105,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           error: 'This change belongs to an agent session. Continue it there.',
           agentSessionId: session.agent_session_id,
         });
+      }
+      // #3177: ahead of the billing and attachment gates, which a retry
+      // must not trip: its turn was paid for once and its attachments are
+      // already linked to the stored message.
+      if (clientMessageId) {
+        const delivery = await chatDelivery.lookup(pool, {
+          sessionId: session.id, clientMessageId, viewer: req.user,
+        });
+        if (delivery.received) return chatDelivery.answerDuplicate(res, delivery);
       }
       const isOpenRouterSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
 
@@ -5189,11 +5230,22 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           }
         : {};
 
+      // #3177: ON CONFLICT covers two retries racing past the lookup above;
+      // the one that loses answers as a duplicate. A row without a
+      // client_message_id never conflicts.
       const { rows: userMsgRows } = await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'user', $2, $3) RETURNING id`,
-        [session.id, messageText, JSON.stringify(userMeta)]
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id)
+         VALUES ($1, 'user', $2, $3, $4)
+         ON CONFLICT (session_id, client_message_id) WHERE client_message_id IS NOT NULL DO NOTHING
+         RETURNING id`,
+        [session.id, messageText, JSON.stringify(userMeta), clientMessageId]
       );
+      if (clientMessageId && !userMsgRows.length) {
+        return chatDelivery.answerDuplicate(res, await chatDelivery.lookup(pool, {
+          sessionId: session.id, clientMessageId, viewer: req.user,
+        }));
+      }
+      const userMessageId = userMsgRows[0]?.id ?? null;
       if (turnAttachments.length) {
         await pool.query(
           `UPDATE chat_session_attachments SET message_id = $1 WHERE id = ANY($2)`,
@@ -5239,6 +5291,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         turnAttachments,
         scheduleInteractiveRecovery,
         userApiKey,
+        userMessageId,
+        clientMessageId,
       }, MAYOR_TURN_DEPS);
     } catch (err) {
       log.error('sessions', 'Chat setup error', { message: err.message });
@@ -5626,8 +5680,21 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   }
 
   // Check if a session has an active worker + get latest progress
+  //
+  // #3177: `?client_message_id=<id>` (or `clientMessageId`) adds `delivery`,
+  // the lookup for a message sent with that id through POST /chat:
+  // { clientMessageId, received: false } when no such message is stored (or
+  // the caller does not own the session), else { clientMessageId,
+  // received: true, messageId, state: 'received' | 'running' | 'done',
+  // since }. `since` is the message's `accepted` _seq while this process
+  // still buffers it, for GET /events?since=; null means reload the
+  // transcript instead. `delivery` is null when the lookup itself failed.
   router.get('/api/sessions/:id/status', async (req, res) => {
     const sessionId = parseInt(req.params.id);
+    const deliveryId = chatDelivery.readClientMessageId(req.query);
+    if (deliveryId.present && !deliveryId.value) {
+      return res.status(400).json({ error: chatDelivery.BAD_CLIENT_MESSAGE_ID });
+    }
     // "busy" = a CC/scout dispatch is actively running for this
     // session right now. We deliberately do NOT key on
     // `containerStatus === 'running'` here — since the warm-CC commit
@@ -5796,13 +5863,26 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       attached = demo.localAgent;
     }
 
+    let delivery;
+    if (deliveryId.value) {
+      try {
+        delivery = await chatDelivery.lookup(pool, {
+          sessionId, clientMessageId: deliveryId.value, viewer: req.user,
+        });
+      } catch (err) {
+        log.warn('sessions', 'Delivery lookup failed', { sessionId, err: err.message });
+        delivery = null;
+      }
+    }
+
     // #252: in-flight sync-with-main state ({ phase, startedAt } |
     // null) — the dev-chat sync banner's reload recovery and poll
     // fallback read this the same way the resolving banner reads
     // `resolving`.
     // Keys: busy, progress, phase, stopping, stopRequestedAt, stoppable,
     // estimate
-    // (+ resolving, sync, status). `estimate` is { text, remainingSeconds,
+    // (+ resolving, sync, status, and `delivery` when asked for, #3177).
+    // `estimate` is { text, remainingSeconds,
     // estimatedAt } | null — see workerProgress.setEstimate /
     // clearEstimate. `stopRequestedAt` is epoch ms | null (#937) and drives
     // the client's stop-escalation ladder across reloads.
@@ -5815,6 +5895,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       sync: syncMainSvc.getSyncState(sessionId),
       status: mergeStatus,
       runner, runnerLabel, localAgent: attached,
+      ...(delivery !== undefined ? { delivery } : {}),
     });
   });
 
@@ -6070,6 +6151,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // The client may also pass `?since=<seq>` explicitly on the first
   // connect to replay from a specific point (e.g. the last _seq it saw
   // on the POST stream before it died).
+  //
+  // #3177: every turn's first event is `accepted`, so a client whose POST
+  // stream broke after any bytes at all has a `since` to resume from, and
+  // `since=<accepted _seq>` replays the whole turn from its start. The
+  // buffer is per process and cleared ~30s after a turn ends, so a resume
+  // after a restart or long after the turn replays nothing: GET /status
+  // (`busy`, and `delivery` for a client_message_id) says whether the turn
+  // is still running, and GET /api/sessions/:id has the stored transcript.
   router.get('/api/sessions/:id/events', async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     if (!sessionId) return res.status(400).end();
@@ -6291,7 +6380,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // proposal sat merge-blocked on "still running its tests" until a
           // sweep happened to heal it. Fire-and-forget; captureForSession
           // owns all failure handling and is _inFlight-guarded.
-          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: () => {}, trigger: 'manual-recheck' })
+          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: null, trigger: 'manual-recheck' })
             .catch((err) => log.warn('visuals', 'Deploy-staging capture failed (non-fatal)', {
               sessionId: session.id, err: err.message,
             }));
@@ -8698,6 +8787,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       journal: activeTurn.journal,
       turnId: activeTurn.turnId || null,
       agentBackend: activeTurn.backend || 'claude_code',
+      agentHarness: activeTurn.harness || null,
       telemetryComponent: activeTurn.telemetryComponent
         || (activeTurn.mode === 'scout' ? 'coding_agent_scout'
           : activeTurn.mode === 'build' ? 'coding_agent_build' : null),
@@ -8898,9 +8988,10 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
             [session.id, 'Staging preview built',
               JSON.stringify({ stagingUrl: stagingResult.stagingUrl, changesReady: true, prNumber: null })]
           ).catch(() => {});
-          // Before/after visuals: best-effort, never throws; there is no live
-          // client to stream to on a resumed run, so the no-op send is fine.
-          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: () => {}, trigger: 'commit-push' })
+          // Before/after visuals: best-effort, never throws. There is no turn
+          // to stream to on a resumed run, so pass no `send`: the notifiers
+          // then publish to the bus and the global socket for open pages.
+          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: null, trigger: 'commit-push' })
             .catch((err) => log.warn('visuals', 'Resumed headless capture failed (non-fatal)', { sessionId: session.id, err: err.message }));
           dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}, and a staging preview was built. `
             + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
@@ -9192,9 +9283,15 @@ function codingAgentRuntimeIdentity(session, selectedModel, config = {}) {
   const model = isCodex
     ? (session?.agent_model || config.openrouterDefaultCodexModel || null)
     : selectedModel;
+  // #3296: which CLI an OpenRouter turn runs in, from the same per-model map
+  // the dispatch reads, so the transcript names the agent that actually ran.
+  // Rows carry it only for the exception, Claude Code: every reader treats a
+  // row without it as Codex, which is what every earlier OpenRouter row was.
+  const harness = isCodex ? registry.openRouterHarnessForModel(model, config) : null;
   return {
     backend,
     isCodex,
+    harness,
     model,
     modelLabel: isCodex
       ? safeAgentModelLabel(model)
@@ -9203,6 +9300,7 @@ function codingAgentRuntimeIdentity(session, selectedModel, config = {}) {
     metadata: {
       agentBackend: backend,
       agentModel: model || null,
+      ...(harness === 'claude' ? { agentHarness: harness } : {}),
     },
   };
 }
@@ -9448,8 +9546,9 @@ A read-only helper \`usernode-issues\` is available (run it via Bash) — it pri
   // Claude's scout reads with Read/Glob/Grep and run-cc.sh strips its edit
   // tools. A Codex scout reads through shell commands and has no such switch,
   // so it is told plainly, and the runner puts back anything it changes
-  // (worker/run-codex-agent.sh restore_scout_tree, #2810).
-  const scoutPlanModeLine = isCodexSession
+  // (worker/run-codex-agent.sh restore_scout_tree, #2810). An OpenRouter
+  // model that runs in Claude Code (#3296) has Claude's tools and switch.
+  const scoutPlanModeLine = isCodexSession && agentIdentity.harness !== 'claude'
     ? 'You are running in PLAN MODE: read and search the repository with read-only shell commands (for example `rg`, `ls`, `sed -n`, `cat`), but do not edit, create, delete, commit, or push anything. Do not attempt to: anything this run changes in the repository is discarded when it ends.'
     : 'You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.';
   // #2817: every scout settles the design decisions in the spec.
@@ -9777,6 +9876,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: req.user.id, model: turnModel,
           resumeThreadId, config,
+          // #3296: the platform's per-model choice of CLI.
+          harness: 'auto',
         }),
         dispatchOnce: (ctx) => doScout(ctx),
         // Returns the status line rather than a bare boolean, so the loop
@@ -10175,7 +10276,10 @@ async function runCodexAttemptLoop({
       turnUuid: attempt.turnUuid,
       status,
       threadId: result?.agentThreadId || null,
-      usageTotal: agentTurn.usageTotalFromResult(result),
+      usageTotal: agentTurn.usageTotalFromResult(result
+        ? { ...result, agentHarness: runtimeContext.agentHarness }
+        : result),
+      usageScope: agentTurn.usageScopeForHarness(runtimeContext.agentHarness),
       telemetryComponent: result?.providerDispatched === true
         ? (telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'))
@@ -10205,7 +10309,11 @@ async function runCodexAttemptLoop({
   let lastResult = null;
   let lastError = null;
   let attemptNumber = 0;
-  let attemptResumeThreadId = resumeThreadId ?? runtimeContext.resumeThreadId ?? null;
+  // A thread the runtime refused to resume (it was written by the other CLI,
+  // #3296) stays refused even though the caller read it off the session row.
+  let attemptResumeThreadId = runtimeContext.resumeThreadDropped
+    ? null
+    : (resumeThreadId ?? runtimeContext.resumeThreadId ?? null);
   let allowRetryPendingForAttempt = false;
   // #2676: null means "use the runtime's own ceiling". A max_tokens refusal
   // sets it for attempt two so the retry asks for a reply the account can
@@ -11961,6 +12069,8 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: req.user.id, model: turnModel,
           resumeThreadId, config,
+          // #3296: the platform's per-model choice of CLI.
+          harness: 'auto',
         }),
         dispatchOnce: (ctx) => doBuild(ctx),
         retryPredicate: (r) => !!codexMaxTokensRetry(r, stopHandle)
@@ -12227,7 +12337,14 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
         msg = `${executionAgentName} exited with code ${result.exitCode}, so no changes were made.`;
       }
       if (msg) {
-        await sendStatus(msg, executionAgentMeta);
+        // #3181: a clean exit that changed nothing is an answer; a run that
+        // died (markerless: the worker or its process went away) or exited
+        // non-zero is a failure, and is marked as one like the scout's own
+        // markerless exit. That mark is also what tells the turn's done
+        // hook to say "stopped before finishing" rather than "finished".
+        await sendStatus(msg, result.exitCode === 0
+          ? executionAgentMeta
+          : turnFailure(executionAgentMeta));
         summaryParts.push(msg);
       }
     } else if (!result.pushOk && !(await healPush())) {
@@ -12620,8 +12737,7 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
                   merged: false,
                 });
                 const resetMsg = `An update was pushed to PR #${session.pr_number || session.id} (commit ${commitHash.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
-                await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
-                // Dual-post into the proposal's thread (lifecycle in context).
+                // Into the proposal's thread (lifecycle in context).
                 await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
                   null, { type: 'session', ref: session.id }).catch(() => {});
                 log.info('sessions', 'Retired PR votes after new commit', {
@@ -13082,6 +13198,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   invocationTelemetry,
   loadSessionSpec,
   notifySessionDone,
+  notifySessionStalled,
   runClaudeCodeTool,
   runScoutTool,
   safeAgentModelLabel,
@@ -13092,4 +13209,4 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { MAYOR_TURN_DEPS, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { MAYOR_TURN_DEPS, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

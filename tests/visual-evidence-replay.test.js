@@ -18,7 +18,7 @@ function input(overrides = {}) {
       baseSha: 'b'.repeat(40), headSha: 'c'.repeat(40),
       fixtureFingerprint: 'fixture-123', baseImageDigest: 'sha256:base', headImageDigest: 'sha256:head',
     },
-    authTokens: { member: 'member.jwt', read_only_admin: 'admin.jwt' },
+    authTokens: { member: 'member.jwt', read_only_admin: 'admin.jwt', full_admin: 'full-admin.jwt' },
     plan: plan(),
     ...overrides,
   };
@@ -116,6 +116,32 @@ test('hosted app readiness waits for a successful document response', async () =
     { loaded: new Map() }), { code: 'hosted_app_not_loaded' });
   assert.ok((await replay.executeAction(page, action, '', null, '', null,
     { loaded: new Map([['real-app', 'https://real-app.onhomeroom.com']]) })) >= 0);
+});
+
+test('still-capture styling is limited to the platform document', () => {
+  const platform = 'https://app.onhomeroom.com';
+  const created = [];
+  const appended = [];
+  const document = {
+    documentElement: { appendChild: (node) => appended.push(node) },
+    createElement: (tag) => {
+      const node = { tag, dataset: {}, textContent: '' };
+      created.push(node);
+      return node;
+    },
+    addEventListener: () => { throw new Error('documentElement is already present'); },
+  };
+  assert.equal(replay.installCaptureStyle(platform, {
+    location: { origin: 'https://hosted-app.onhomeroom.com' }, document,
+  }), false);
+  assert.equal(created.length, 0, 'a hosted app frame is never modified');
+  assert.equal(replay.installCaptureStyle(platform, {
+    location: { origin: platform }, document,
+  }), true);
+  assert.equal(created.length, 1);
+  assert.equal(appended[0], created[0]);
+  assert.equal(created[0].dataset.usernodeEvidence, '1');
+  assert.match(created[0].textContent, /animation-duration:0s/);
 });
 
 test('relative point hover moves the pointer without clicking the surface', async () => {
@@ -810,6 +836,17 @@ test('capture image contains the separate evidence runtime and its pinned depend
   assert.match(dockerfile, /COPY src\/services\/visual-evidence-plan\.js \/app\/visual-evidence-plan\.js/);
   const visuals = fs.readFileSync(path.join(__dirname, '..', 'src/services/visuals.js'), 'utf8');
   assert.match(visuals, /capture\/Dockerfile/);
+});
+
+test('capture image sets its sans-serif in Inter, not a fallback face', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'capture/Dockerfile'), 'utf8');
+  assert.match(dockerfile, /\bfonts-inter\b/, 'the face is installed');
+  assert.match(dockerfile, /COPY capture\/fonts\.conf \/etc\/fonts\/local\.conf/, 'and preferred');
+  const conf = fs.readFileSync(path.join(__dirname, '..', 'capture/fonts.conf'), 'utf8');
+  for (const generic of ['sans-serif', 'system-ui']) {
+    assert.match(conf, new RegExp(`<family>${generic}</family>\\s*<prefer><family>Inter</family></prefer>`),
+      `${generic} prefers Inter`);
+  }
 });
 
 test('image transforms share one explicitly-owned scratch context', () => {

@@ -568,11 +568,13 @@ async function rerunChecksForNewHead({
   // clone against the new head — record a gate-passing 'skipped' verdict
   // instead of building staging, so the head-change flow stays clickable.
   if (usesMockGithubForImports()) {
-    await visuals.storeChecksSkipped(pool, session.id, newHead,
+    const stored = await visuals.storeChecksSkipped(pool, session.id, newHead,
       'mock GitHub preview: automated checks not run')
       .catch((err) => log.warn('pr-import-sync', 'mock storeChecksSkipped failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
+    // The pending tick above reached every open page; so must the verdict.
+    if (stored) visuals.notifyChecks(session.id, { state: 'skipped', results: [] }, newHead, null);
     return;
   }
 
@@ -607,7 +609,7 @@ async function rerunChecksForNewHead({
     await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
   } catch (_) { /* edge verification is best-effort */ }
 
-  await visuals.captureForSession(config, session, app, newHead || null, result, { send: () => {}, trigger })
+  await visuals.captureForSession(config, session, app, newHead || null, result, { send: null, trigger })
     .catch((err) => log.warn('pr-import-sync', 'checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
@@ -736,11 +738,12 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // verdict — the imported proposal shows a neutral (mergeable) check so
     // the whole preview flow (import → vote → merge) is exercisable.
     if (usesMockGithubForImports()) {
-      await visuals.storeChecksSkipped(pool, session.id, headSha || null,
+      const stored = await visuals.storeChecksSkipped(pool, session.id, headSha || null,
         'mock GitHub preview: automated checks not run')
         .catch((err) => log.warn('pr-import-sync', 'import mock storeChecksSkipped failed (non-fatal)', {
           sessionId: session.id, err: err.message,
         }));
+      if (stored) visuals.notifyChecks(session.id, { state: 'skipped', results: [] }, headSha || null, null);
       noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
       return;
     }

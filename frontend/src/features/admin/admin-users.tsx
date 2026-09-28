@@ -232,6 +232,29 @@ async function resetUserPassword(user: User) {
   }
 }
 
+/**
+ * "Reset first run": the account's next load shows the join screen, the tour
+ * and the Getting started card again, as for a new account (communities,
+ * stage 5; POST /api/admin/users/:id/reset-first-run). For trying
+ * onboarding on a test account, or on yourself. Nothing it owns changes.
+ */
+async function resetFirstRun(user: User) {
+  const ok = await console_()._confirm({
+    title: `Reset ${user.username}'s first run?`,
+    message: 'Next time they open Homeroom they see the join screen, the welcome tour and the Getting started card again, as if they had just signed up. Their communities, Home tiles, username and terms answer stay as they are.',
+    confirmLabel: 'Reset',
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/admin/users/${user.id}/reset-first-run`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { console_()._alert(data.error || `Reset failed (HTTP ${res.status})`); return; }
+    console_()._alert(`${data.username || user.username}'s first run is reset. It starts on their next page load.`);
+  } catch (err: any) {
+    console_()._alert(`Reset failed: ${err.message}`);
+  }
+}
+
 async function deleteUser(user: User): Promise<boolean> {
   const ok = await console_()._confirm({
     title: 'Delete user?',
@@ -267,6 +290,10 @@ function Kebab({ user, open, onToggle, onReload }: {
           onClick={() => { setOpen(false); resetUserPassword(user); }}
           className="admin-reset-pw-btn block w-full text-left px-3 py-2 text-sm text-violet-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-violet-400">
           Reset password</button>
+        <button type="button" data-reset-first-run-id={user.id}
+          onClick={() => { setOpen(false); resetFirstRun(user); }}
+          className="admin-reset-first-run-btn block w-full text-left px-3 py-2 text-sm text-violet-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-violet-400">
+          Reset first run</button>
         {/* Delete stays hidden for admins. */}
         {!user.is_admin ? (
           <button type="button" data-delete-id={user.id}
@@ -761,6 +788,30 @@ function UserDetails({ user, allUsers, fullAdminCount, canWrite, notice, onBack,
     }
   };
 
+  // Moving someone else's handle is a moderation action (the format,
+  // reserved-prefix and uniqueness rules all live server-side in
+  // src/services/usernames.js, the same module the self-service rename uses),
+  // so this only sends the new value and lets the server accept, reject, or
+  // report the account as unchanged.
+  const commitUsername = async (next: string, revert: () => void, accept: (v: string) => void) => {
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/username`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        console_()._alert(data.error || `Save failed (HTTP ${res.status})`);
+        revert();
+        return;
+      }
+      accept(data.username);
+      await onReload();
+    } catch (err: any) {
+      console_()._alert(`Save failed: ${err.message}`);
+      revert();
+    }
+  };
+
   const viewAccount = (id: number) => {
     const c = console_();
     if (c && c.isOpen()) c.setSection('onchain-accounts');
@@ -816,6 +867,13 @@ function UserDetails({ user, allUsers, fullAdminCount, canWrite, notice, onBack,
 
       <div className="grid gap-4 lg:grid-cols-2">
         <DetailCard title="Access" id="admin-user-details-access">
+          <Row label="Username" help="Letters, numbers and underscores, 3 to 32 characters. Must not already be in use.">
+            {canWrite ? (
+              <CommitField className={`admin-username-input ${DETAIL_INPUT}`} ariaLabel="Username"
+                type="text" spellCheck={false} disabled={false}
+                committed={user.username} onCommit={commitUsername} />
+            ) : <span>{user.username}</span>}
+          </Row>
           <Row label="Role">
             {canWrite ? (
               <select className={`admin-role-select ${AdminUI.select} max-w-[12rem]`} title={roleTitle}

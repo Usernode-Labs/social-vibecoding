@@ -400,14 +400,20 @@ async function hydrateMessages(db, user, rows) {
     // removed when it was deleted; the empty values here are the contract
     // even for a report-retained attachment the moderation queue still holds.
     const deleted = !!row.deleted_at;
+    // A platform line has no sender: Homeroom said it. Homeroom writes none
+    // into a channel any more (services/ws.js sendSystemMessage); a line an
+    // earlier version wrote that somebody replied to is kept, deleted, as
+    // the root of their thread (db/migrate.js clearAutomatedChannelLines).
+    const system = row.msg_type === 'system';
     return {
       id: row.id,
       conversationId: row.conversation_id,
       sender: {
         id: row.sender_id || 0,
-        username: row.sender_username || 'Deleted user',
+        username: system ? 'Homeroom' : (row.sender_username || 'Deleted user'),
         avatarUrl: row.sender_avatar_id ? `/avatars/${row.sender_avatar_id}` : null,
       },
+      ...(system ? { system: true } : {}),
       content: deleted ? '' : row.content,
       createdAt: row.created_at,
       editedAt: deleted ? null : row.edited_at,
@@ -442,7 +448,7 @@ async function hydrateMessages(db, user, rows) {
 
 const MESSAGE_SELECT = `
   SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at, m.edited_at,
-         m.deleted_at, m.thread_root_id,
+         m.deleted_at, m.thread_root_id, m.msg_type,
          su.username AS sender_username, sua.id AS sender_avatar_id,
          rm.id AS reply_id, rm.sender_id AS reply_sender_id, rm.content AS reply_content,
          rm.deleted_at AS reply_deleted_at,
@@ -680,6 +686,7 @@ async function countUnread(db, conversationId, userId, cursor) {
     `SELECT COUNT(*)::int AS count FROM conversation_messages m
       WHERE m.conversation_id = $1 AND m.id > COALESCE($2, 0)
         AND m.thread_root_id IS NULL AND m.deleted_at IS NULL
+        AND m.msg_type = 'message'
         AND m.sender_id IS DISTINCT FROM $3
         AND NOT EXISTS (SELECT 1 FROM user_blocks b
                          WHERE b.blocker_id = $3 AND b.blocked_user_id = m.sender_id)`,
@@ -1374,17 +1381,22 @@ async function sendMessage(pool, user, conversationId, input) {
     }
     const notifications = [];
     for (const member of members.rows) {
+      const mentioned = mentionsUsername(content, member.username);
       let kind = 'conversation_message';
-      if (member.user_id === replyAuthorId) kind = 'conversation_reply';
-      else if (mentionsUsername(content, member.username)) kind = 'conversation_mention';
+      if (membership.kind === 'channel') {
+        // A channel is everybody (#2783): anything but an @mention there
+        // rings bells nobody asked for (#3188). An ordinary message, a reply
+        // to yours and a thread you are in stay silent; a reply or thread
+        // reply that @mentions you is a mention.
+        if (!mentioned) continue;
+        kind = 'conversation_mention';
+      } else if (member.user_id === replyAuthorId) kind = 'conversation_reply';
+      else if (mentioned) kind = 'conversation_mention';
       else if (threadRoot) {
         // One row per person: a quote or an @mention above outranks this.
         if (!threadParticipants.has(member.user_id)) continue;
         kind = 'conversation_thread_reply';
       }
-      // A channel is everybody (#2783): an ordinary message there would ring
-      // every bell on the platform. Only a reply or an @mention does.
-      if (membership.kind === 'channel' && kind === 'conversation_message') continue;
       notifications.push(await insertNotification(db, {
         userId: member.user_id, conversationId, messageId,
         sourceUserId: user.id, kind,
@@ -1535,7 +1547,8 @@ async function toggleReaction(pool, user, conversationId, messageId, rawEmoji) {
          VALUES ($1, $2, $3)`, [messageId, user.id, emoji]
       );
       const authorId = message.rows[0].sender_id;
-      if (authorId && authorId !== user.id) {
+      // #3188: a channel rings only for an @mention, and a reaction is not one.
+      if (authorId && authorId !== user.id && membership.kind !== 'channel') {
         notifications.push(await insertNotification(db, {
           userId: authorId, conversationId, messageId,
           sourceUserId: user.id, kind: 'conversation_reaction', detail: emoji,

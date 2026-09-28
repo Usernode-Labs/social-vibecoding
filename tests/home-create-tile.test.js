@@ -338,14 +338,14 @@ test('the tile draws both states, and never the disabled attribute', () => {
   const { CreateTile } = loadTsx(TILE);
   const on = renderToHtml(createElement(CreateTile, { view: { ...CREATE, enabled: true } }));
   assert.match(on, /id="home-create-tile"/);
-  assert.match(on, />Create an app</, 'the prototype\'s label');
+  assert.match(on, />New project</, 'the create dialog\'s own title (communities, stage 4)');
   assert.match(on, /data-create-enabled="true"/);
-  assert.match(on, /title="Create a new app"/);
+  assert.match(on, /title="Start a new project"/);
   assert.doesNotMatch(on, /aria-label=/, 'its name is its visible label');
 
   const off = renderToHtml(createElement(CreateTile, { view: { ...CREATE, enabled: false } }));
   assert.match(off, /data-create-enabled="false"/);
-  assert.match(off, /aria-label="Create an app\. View app quota\. View your app allowance or request more slots\."/,
+  assert.match(off, /aria-label="New project\. View app quota\. View your app allowance or request more slots\."/,
     'the locked name starts with the visible label, then says what a tap does');
   // NOT the disabled ATTRIBUTE: that would swallow the tap that opens the
   // dialog with the quota in it.
@@ -415,7 +415,7 @@ test('the declared Create checks select the grid\'s last child', () => {
   for (const t of creates) {
     assert.match(t.expectSelector, /#app-list > #home-create-tile\.home-create-btn\[data-panel-slot="create"\]\[data-create-enabled="(true|false)"\]:last-child/);
     assert.match(t.name, /re-pointed/i, 'a re-pointed check says so in its name');
-    assert.equal(t.expectText, 'Create an app');
+    assert.equal(t.expectText, 'New project');
   }
   const paths = creates.map((t) => t.path).sort();
   assert.deepEqual(paths, ['/?demo=1&shot=create-disabled', '/?demo=1&shot=create-enabled']);

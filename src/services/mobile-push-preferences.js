@@ -46,8 +46,12 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // exactly what this category's own description already promises. A
     // connector user who wants session pushes wants these; one who turned them
     // off does not, and should not have to find a second switch.
+    // #3181: session_stalled is the other half of session_done (the turn
+    // stopped before finishing), so it rides the same switch, beside it.
+    // Kept in lockstep with the seed in db/schema.sql.
     kinds: Object.freeze([
-      'session_done', 'auto_solve_done', 'connector_submitted', 'agent_awaiting_input', 'test_alert',
+      'session_done', 'session_stalled', 'auto_solve_done', 'connector_submitted',
+      'agent_awaiting_input', 'test_alert',
     ]),
   }),
   Object.freeze({
@@ -82,7 +86,12 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // services/notification-preferences.js, so this being on by default
     // does not make it noisy: no notification is created in the first
     // place unless somebody opted the app in.
-    kinds: Object.freeze(['issue_opened', 'app_health']),
+    //
+    // 'platform_limit' is the same moment one level up, for full admins
+    // only: the SERVER is nearing a cap that stops apps being created or
+    // sessions starting (services/platform-limit-alerts.js). Only full
+    // admins ever receive one, so nobody else's switch is affected.
+    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit']),
   }),
   Object.freeze({
     key: 'lightweight_activity',

@@ -159,6 +159,13 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
+      "fingerprint": "186bdc9221b3dd99e2f1",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted "
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
       "fingerprint": "3ebf0a6fda28d39ecee9",
       "count": 1,
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS} FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
@@ -183,13 +190,6 @@
       "fingerprint": "7b1ff9cff45031446175",
       "count": 1,
       "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
-    },
-    {
-      "source": "src/routes/apps.js",
-      "kind": "structural-template",
-      "fingerprint": "c803ef2d58849531c800",
-      "count": 1,
-      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boo"
     },
     {
       "source": "src/routes/chat.js",
@@ -810,6 +810,13 @@
     {
       "source": "src/routes/workshop-overview.js",
       "kind": "runtime-built-identifier",
+      "fingerprint": "76b99148103cf1d2387f",
+      "count": 1,
+      "preview": "NEEDS_FEED_SQL"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "kind": "runtime-built-identifier",
       "fingerprint": "930ea21d49f9b0b9c5cb",
       "count": 1,
       "preview": "COUNTS_SQL"
@@ -883,6 +890,13 @@
       "fingerprint": "5c0f6f71276d5c1f5622",
       "count": 1,
       "preview": "`SELECT a.community_id, (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS member_count, EXISTS (SELECT 1 FROM community_m"
+    },
+    {
+      "source": "src/services/community-invites.js",
+      "kind": "structural-template",
+      "fingerprint": "b6d1aa5f14b1c9bc2dbc",
+      "count": 1,
+      "preview": "`SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses, i.expires_at, i.revoked_at, a.slug, a.name, a.icon_emoji, a.icon_image_id, a."
     },
     {
       "source": "src/services/connector-limits.js",
@@ -1086,6 +1100,13 @@
       "fingerprint": "eb68b3940172c1cd1033",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail) SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.det"
+    },
+    {
+      "source": "src/services/onboarding.js",
+      "kind": "structural-template",
+      "fingerprint": "0152c7e9ae8c38c179bb",
+      "count": 1,
+      "preview": "`SELECT a.id, a.slug, a.name, a.icon_emoji, a.icon_image_id, a.self_hosted, ${members}::int AS member_count, ${communities.audienceSql('a', members)} AS audienc"
     },
     {
       "source": "src/services/platform-env-check.js",

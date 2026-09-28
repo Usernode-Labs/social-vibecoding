@@ -18,6 +18,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTsx } = require('./lib/render-tsx');
+const { withStateRead } = require('./lib/agent-session-state-read');
 
 const agentTurn = require('../src/services/mayor/agent-turn');
 
@@ -25,7 +26,7 @@ function fakes({ stale = new Set(), conversations = [] } = {}) {
   const calls = { released: [], notified: [], published: [] };
   const deps = {
     agentSessions: {
-      TURN_LEASE_STALE_MINUTES: 3,
+      TURN_LEASE_STALE_SECONDS: 90,
       releaseStaleTurnLease: async (_pool, args) => {
         calls.released.push(args);
         return stale.delete(args.agentSessionId);
@@ -121,8 +122,8 @@ test('a running turn reports when its work started: the build once dispatched, e
 
 test('the default retry waits past the stale window', () => {
   const agentSessions = require('../src/services/agent-sessions');
-  assert.ok(agentSessions.TURN_LEASE_STALE_MINUTES <= 5, 'a dead turn\'s conversation looks busy for minutes, not twenty');
-  assert.ok(agentTurn.LEASE_RENEW_MS * 5 < agentSessions.TURN_LEASE_STALE_MINUTES * 60_000,
+  assert.ok(agentSessions.TURN_LEASE_STALE_SECONDS <= 120, 'a dead turn\'s conversation looks busy for a minute or two, not twenty');
+  assert.ok(agentTurn.LEASE_RENEW_MS * 5 < agentSessions.TURN_LEASE_STALE_SECONDS * 1000,
     'a live turn can miss several renewals before it is taken for dead');
 });
 
@@ -130,10 +131,10 @@ function withStore(respond, run) {
   globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {} }, UsernodeReact: {} };
   globalThis.EventSource = class { close() {} };
   const requests = [];
-  globalThis.fetch = async (url, opts = {}) => {
+  globalThis.fetch = withStateRead(async (url, opts = {}) => {
     requests.push([opts.method || 'GET', url]);
     return { ok: true, status: 200, json: async () => respond(url, opts) };
-  };
+  });
   return Promise.resolve()
     .then(() => run(loadTsx('frontend/src/features/agent-session/store.ts'), requests))
     .finally(() => {

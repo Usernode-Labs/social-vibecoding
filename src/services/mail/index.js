@@ -488,8 +488,19 @@ async function sendWaitlistReleaseMail(config, email, { hasAccount = false, more
   });
 }
 
+/**
+ * A project invite to an address that is not on Homeroom yet
+ * (services/email-invites.js). The link is the waitlist: the invited person
+ * joins it like anyone else, and the invite waits on their account.
+ */
+async function sendProjectInviteMail(config, email, { inviter = null, project = null } = {}) {
+  const { waitlistUrl } = require('../marketing-links');
+  await send(config, { kind: 'project_invite', to: email, inviter, project, url: waitlistUrl(config) });
+}
+
 module.exports = {
   send,
+  sendProjectInviteMail,
   sendTest,
   sendOtpMail,
   sendPasswordResetMail,

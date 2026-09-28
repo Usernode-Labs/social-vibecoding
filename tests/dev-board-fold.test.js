@@ -1310,9 +1310,36 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 818 leaves 22 slots against MAX_DECLARED_TESTS (840), clear of the
   // 20-slot floor.
   //
+  // 818 → 820: +2 (communities, stage 5): a new account's first run. The
+  // join screen ("What communities do you want to join?", ?shot=join-
+  // communities) and Home's Getting started card (?shot=getting-started),
+  // two new routes with nothing already declared on them to fold into.
+  // 820 leaves exactly the 20-slot floor against MAX_DECLARED_TESTS (840):
+  // the next proposal to add a check folds into an existing one or raises
+  // the cap, as tests/lib/check-cap.js says.
+  //
+  // 820 → 820: platform limit alerts FOLDED rather than added, per the note
+  // above. "The Notifications sheet renders notification rows" now also
+  // requires the mock platform_limit row (990210) with :has() and its copy
+  // ("40 of 50 apps in use.") as expectText; its name and path are unchanged,
+  // so its check history carries over.
+  //
+  // 820 → 820: #3186 folded rather than added. Me's "Your feedback" list is
+  // the Me route with `?feedback` on the fragment, so the "More" list check
+  // was REWRITTEN in place to open it (id profile.feedback-list): it still
+  // pins the rows in order, the new one included, and now pins the list's
+  // received and counted rows under a body:has(). The first-feedback check
+  // pins the moment's new "See your feedback" beside the board button.
+  //
+  // 820 → 820: the app limit card on Admin → Limits FOLDED rather than
+  // added. "The admin console's Limits section offers the Anthropic credit
+  // balance fields" now also requires #admin-app-limit (with its usage line)
+  // in the same section via :has(), and the card's description as
+  // expectText; its name and path are unchanged.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 818);
+  checkCap.assertPinned(DAPP.tests.length, 820);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1461,7 +1488,12 @@ test('every pill is foldable: the band shows as many as fit its line and the men
   // from folding (`i > 0`). With "Open card", the hamburger and Preview all
   // fixed at the band's right, a narrow column may leave no room before
   // them, so the fold may take the first pill too; only a kudos host stays.
-  assert.match(CARD, /fold=\{a\.kudos == null \? i \+ 1 : undefined\} hidden=\{i >= bandPrimary\.length - folded\.n\}/);
+  assert.match(CARD, /fold=\{a\.kudos == null \? i \+ 1 : undefined\}\s+hidden=\{folds && foldIndex >= foldable - folded\.n\}/);
+  // The initial `hidden` counts the same window the measurement does: the
+  // last n of the FOLDABLE specs. Counted from the end of every spec, a kudos
+  // slot or a Preview among them put it one pill off, and the next measure
+  // moved the row again.
+  assert.match(CARD, /const foldable = bandPrimary\.filter\(\(a\) => a\.kudos == null && !a\.preview\)\.length;/);
   // The fold window is taken over the specs that DRAW a foldable pill: not
   // the kudos host, and not the topic head's labelled Preview (an action
   // spec too, drawn as the band's fixed control). Counting Preview put the

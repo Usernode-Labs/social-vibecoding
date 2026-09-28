@@ -60,6 +60,8 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 
+import { LockIcon, UserGroupIcon } from '@/components/ui/icons';
+
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
@@ -292,6 +294,24 @@ function AppCardTile({ app, style, yours, live }: {
         ) : null}
         {/* #2902: still loaded — opening it resumes it as it was left. */}
         {live ? <LiveAppDot className="app-card-live-dot" /> : null}
+        {/*
+            WHERE IT LIVES (communities, stage 4): people for a Group, a lock
+            for a project that is Just you, and nothing for a Community, which
+            is what most tiles are. The icon's bottom-right corner, the one
+            the fork tag (bottom-left) and the live dot (top-right) leave.
+        */}
+        {app.audience !== 'open' ? (
+          <span
+            className="app-card-stage absolute -bottom-1 -right-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
+            data-stage={app.audience}
+            title={app.audience === 'invited' ? 'Group' : 'Just you'}
+            aria-label={app.audience === 'invited' ? 'Group' : 'Just you'}
+          >
+            {app.audience === 'invited'
+              ? <UserGroupIcon className="w-3 h-3" aria-hidden="true" />
+              : <LockIcon className="w-3 h-3" aria-hidden="true" />}
+          </span>
+        ) : null}
       </div>
       <div className="w-full min-w-0">
         <div className="app-card-title" title={app.name}>{app.name}</div>

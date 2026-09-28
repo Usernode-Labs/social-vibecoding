@@ -54,6 +54,11 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {Record<string, {working: WorkshopItem[], needs: WorkshopItem[]}>|null} items
  *   GET /api/workshop/items, keyed by slug. Null until it answers.
  * @property {boolean} itemsError  That read failed; the tabs say so.
+ * @property {Array<object>|null} feed  GET /api/workshop/needs-feed: every
+ *   decision owed by the viewer across their projects, newest first, which
+ *   the Needs you tab draws as one feed (#3270). Null until it answers.
+ * @property {boolean} feedError  That read failed; the tab says so.
+ * @property {boolean} feedCapped  The read stopped at its bound.
  */
 
 /**
@@ -71,6 +76,9 @@ const INITIAL = {
   scopeOpen: false,
   items: null,
   itemsError: false,
+  feed: null,
+  feedError: false,
+  feedCapped: false,
 };
 
 export const workshopStore = createStore(INITIAL);

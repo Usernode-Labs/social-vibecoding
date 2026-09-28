@@ -798,8 +798,12 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
 async function deployApplication(config, {
   app, environment, sessionId, imageRef, env, cpus = null,
   labels: extraLabels = {}, runtimeName = null, internalOnly = false,
+  command = [],
 }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
+  if (!Array.isArray(command) || command.some((part) => typeof part !== 'string' || !part)) {
+    throw new Error('Kubernetes container command must be an array of non-empty strings');
+  }
   const cfg = config.kubernetes;
   const namespace = cfg.appNamespace;
   const name = runtimeName || appResourceName(app, environment, sessionId);
@@ -841,6 +845,7 @@ async function deployApplication(config, {
           ...previewDatabaseAffinity(cfg, environment),
           containers: [{
             name: 'app', image: imageRef, imagePullPolicy: 'IfNotPresent',
+            ...(command.length ? { command } : {}),
             ports: [{ name: 'http', containerPort: 3000 }],
             env: app.slug === config.selfAppSlug
               ? [{ name: 'USERNODE_SHELL_ASSETS_PREBUILT', value: '1' }]

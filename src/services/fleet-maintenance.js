@@ -423,7 +423,8 @@ async function openCampaignProposal({ config, pool, campaign, app, files, summar
     `Platform maintenance: "${campaign.title}" opened PR #${prData.number}. ` +
     `Needs ${majority}/${activeUsers} votes to land (or a platform admin merges it once checks pass).`,
     'vote',
-    { vote: { sessionId, prNumber: prData.number } }
+    { vote: { sessionId, prNumber: prData.number } },
+    { type: 'session', ref: sessionId }
   ).catch((err) => log.warn('fleet-maintenance', 'Campaign chat msg failed', { err: err.message }));
 
   pushVoteUpdate({ sessionId, appSlug: app.slug, merged: false });
@@ -636,8 +637,9 @@ async function runCampaign(config, pool, campaignId) {
       [campaignId]
     );
 
-    // Completion note in the platform app's group chat (where the
-    // campaign was voted), with the final tallies.
+    // Completion note in the thread of the decision that voted the
+    // campaign, with the final tallies (a channel carries no activity:
+    // ws.sendSystemMessage).
     try {
       const { rows: counts } = await pool.query(
         `SELECT state, COUNT(*)::int AS n
@@ -654,7 +656,7 @@ async function runCampaign(config, pool, campaignId) {
           `Maintenance campaign "${campaign.title}" finished fanning out: ` +
           `${byState.pr_open || 0} PRs opened, ${byState.skipped || 0} skipped, ` +
           `${byState.failed || 0} failed. Each PR now runs its own checks and merge vote.`,
-          'system');
+          'system', null, { type: 'governance', ref: campaign.issue_id });
       }
     } catch (err) {
       log.warn('fleet-maintenance', 'Campaign completion message failed', { campaignId, err: err.message });

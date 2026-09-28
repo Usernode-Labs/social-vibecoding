@@ -47,19 +47,26 @@ test('every kind is framed, and framed exactly once', () => {
     assert.match(html, /<img\s+src="[^"]*\/brand\/homeroom-logotype-black\.png"[^>]*alt="Homeroom"/,
       `${kind}: carries the logo`);
     assert.match(html, /Homeroom<br>You are receiving this because/, `${kind}: carries the footer`);
-    assert.match(html, /activity on your account or your place on the waitlist/,
-      `${kind}: says why it arrived`);
+    // A project invite goes to an address somebody else typed, so it says
+    // that instead of claiming the recipient asked for it.
+    assert.match(html, kind === 'project_invite'
+      ? /someone on Homeroom invited this address to a project\. You will not hear from us again unless you join, or somebody invites you again\./
+      : /activity on your account or your place on the waitlist/,
+    `${kind}: says why it arrived`);
+    if (kind === 'project_invite') assert.doesNotMatch(html, /mail you asked for/, 'an invite was not asked for');
   }
 });
 
 test('the frame is applied in one place, not by the templates', () => {
   // The arrangement this replaces is the bug: six wrappers plus one in the
   // switch is how a seventh template ships unbranded.
-  assert.match(SRC, /const HTML_SHELL = \(body\) =>/, 'defined once');
+  assert.match(SRC, /const HTML_SHELL = \(body, why = WHY_DEFAULT\) =>/, 'defined once');
   assert.equal((SRC.match(/HTML_SHELL\(/g) || []).length, 1,
     'and called from exactly one place');
   const build = SRC.slice(SRC.indexOf('function buildMessage'));
-  assert.match(build, /return \{ \.\.\.message, html: HTML_SHELL\(message\.html\) \};/);
+  // A template may say why its mail arrived (`why`); the frame still wraps
+  // every kind, here and only here.
+  assert.match(build, /const \{ why, \.\.\.message \} = template\(payload\);\s*return \{ \.\.\.message, html: HTML_SHELL\(message\.html, why\) \};/);
 });
 
 test('an unknown kind still throws rather than sending a blank frame', () => {

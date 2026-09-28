@@ -811,10 +811,12 @@ function broadcast(session, extra) {
   } catch (_) { /* ws non-fatal */ }
 }
 
+// Into the proposal's own thread: a channel carries no activity
+// (ws.sendSystemMessage).
 async function postGroup(pool, session, content) {
   try {
     const { sendSystemMessage } = require('./ws');
-    await sendSystemMessage(pool, session.app_id, content, 'conflict');
+    await sendSystemMessage(pool, session.app_id, content, 'conflict', null, { type: 'session', ref: session.id });
   } catch (err) {
     log.warn('merge-queue', 'group message failed', { sessionId: session?.id, err: err.message });
   }

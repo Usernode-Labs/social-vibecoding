@@ -130,7 +130,8 @@ const DevChat = {
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>',
 
   _titleStatus: null, // null | 'thinking'
-  // null | 'sessionDone' | 'autoSolveDone' | 'autoSolveFailed' (#161).
+  // null | 'sessionDone' | 'sessionStalled' | 'autoSolveDone' | 'autoSolveFailed'
+  // (#161, #3181).
   // Single slot, last-write-wins — the badge count carries multiplicity.
   _titleCompletion: null,
 
@@ -1294,6 +1295,9 @@ const DevChat = {
     const badges = [];
     if (model?.isFavorite) badges.push('★');
     if (model?.isRecommended) badges.push('Recommended');
+    // #3296: the platform runs some OpenRouter models in Claude Code rather
+    // than Codex. Only that exception is named; Codex is every other row.
+    if (model?.harness === 'claude') badges.push('Claude Code');
     if (model?.createdAt) {
       const age = Date.now() - Date.parse(model.createdAt);
       if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
@@ -5079,6 +5083,10 @@ const DevChat = {
     DevChat.scrollToBottom();
 
     DevChat._abortController = new AbortController();
+    // #3177: set by the stream's `accepted` event, which the server writes
+    // once the message is stored. A stream that breaks after it lost a
+    // connection, not the message.
+    let accepted = false;
 
     try {
       const sessionId = DevChat.currentSession.id;
@@ -5248,6 +5256,12 @@ const DevChat = {
             // enabled Send button.
             DevChat._noteLiveTurnEvent(data, sessionId);
             switch (data.type) {
+              case 'accepted':
+                // #3177: the message is stored and its turn has started. Its
+                // _seq, recorded above, is where the resumable stream picks
+                // the turn up if this one breaks.
+                accepted = true;
+                break;
               case 'token':
                 gotFirstToken = true;
                 // #990: the reply is arriving — the dots have done their job.
@@ -5537,7 +5551,11 @@ const DevChat = {
         }
       }
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      // #3177: after `accepted` a broken stream is a delivered message on a
+      // lost connection. The turn is still running, so its live cue stays up
+      // while the fallback below resumes it; only a stream that broke before
+      // the server took the message drops the cue.
+      if (err.name !== 'AbortError' && !accepted) {
         DevChat._removeSpinner();
       }
     }
@@ -6184,6 +6202,8 @@ const DevChat = {
     // #161 completion tier — set by notification arrival (see
     // setCompletionTitle), not by stream end.
     sessionDone: '✅ Session done · ',
+    // #3181: the turn stopped before finishing.
+    sessionStalled: '⏸️ Session stopped · ',
     autoSolveDone: '🤖 Proposal ready · ',
     autoSolveFailed: '⚠️ Proposal failed · ',
   },
