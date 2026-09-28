@@ -104,17 +104,6 @@ test('a proposal with no summary shows no label rather than an invented one', ()
   assert.match(html, /Technical details/, 'the technical half is still there');
 });
 
-test('a stale proposal summary is called out without presenting its old words as current', () => {
-  const html = topicHeadHtml(BLANK_CARD, {
-    actions: null,
-    aboutTitle: 'About this change',
-    summaryStale: true,
-    proposalBody: { id: 7, open: false, html: '<p>Updated details.</p>' },
-  });
-  assert.match(html, /summary needs an update for this revision/i);
-  assert.doesNotMatch(html, /What changes for you/);
-});
-
 // ── The import route: where the user-facing half was being dropped ─────
 
 // The helper is a route-module internal, so it is evaluated from source

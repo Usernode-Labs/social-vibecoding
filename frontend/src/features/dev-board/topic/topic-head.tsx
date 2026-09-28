@@ -1012,7 +1012,9 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
         <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} lead={vote} dense={false} />
       </div>
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
-      <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
+      {body.summaryStale
+        ? <p className="dev-topic-hero-summary dev-topic-note" data-topic-part="summary" role="status">The change summary needs an update for this revision.</p>
+        : <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />}
       {hasIssues ? (
         <IssueAssociations
           proposalId={Number(id)}
@@ -1407,13 +1409,12 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
   // fetch failed, or nobody has voted) must not be what keeps the About
   // sheet open, so it is resolved to null before the test below.
   const roster = body.roster && body.roster.phase !== 'hidden' ? body.roster : null;
-  const hasAbout = !!(summaryHtml || body.summaryStale || issueHtml || issueEditor?.canEdit || tiles || body.proposalBody || body.note || roster);
+  const hasAbout = !!(summaryHtml || issueHtml || issueEditor?.canEdit || tiles || body.proposalBody || body.note || roster);
   return (
     <>
       {hasAbout ? (
         <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about">
           {!issueEditor ? <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4> : null}
-          {body.summaryStale ? <p className="dev-topic-note" role="status">The change summary needs an update for this revision.</p> : null}
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
           {summaryHtml ? (
             <>

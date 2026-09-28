@@ -108,6 +108,15 @@ test('the hero: the eyebrow with the pull request and its state, the age, the ti
   assert.match(html, /<div class="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary">[\s\S]{0,120}Previews wait for sign-in\./);
 });
 
+test('the visible proposal hero flags a stale summary without displaying its old words', () => {
+  const av = context();
+  const { html } = render(av, { ...PR, pr_summary_md: null, pr_summary_stale: true });
+  const hero = html.slice(html.indexOf('data-topic-sheet="hero"'), html.indexOf('data-topic-sheet="steps"'));
+  assert.match(hero, /The change summary needs an update for this revision\./);
+  assert.doesNotMatch(hero, /Previews wait for sign-in\./);
+  assert.doesNotMatch(hero, /No change summary has been added yet\./);
+});
+
 test('the band is the card’s, Vote first, with Preview and the ⋯ at its right end', () => {
   const av = context();
   const { html } = render(av, PR);
