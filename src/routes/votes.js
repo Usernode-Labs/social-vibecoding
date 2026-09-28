@@ -5236,9 +5236,9 @@ async function finalizeMergeUnlocked({ config, pool, session, mergeCommitSha, re
     // not appear twice in analytics.
     await followups.run(pool, session.id, 'merge_event', () => pool.query(
       `INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
-       SELECT $1, $2, $3, $4, $5::jsonb
+       SELECT $1, $2, $3, $4::text, $5::jsonb
         WHERE NOT EXISTS (
-          SELECT 1 FROM events WHERE session_id = $3 AND event_type = $4
+          SELECT 1 FROM events WHERE session_id = $3 AND event_type = $4::text
         )`,
       [session.user_id || null, session.app_id, session.id, events.EVENT_TYPES.PR_MERGED,
         JSON.stringify({ prNumber: session.pr_number || null, forced: !!force,
