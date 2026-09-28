@@ -33,6 +33,12 @@ function normalizeTitle(raw) {
   return title && title.length <= 80 ? title : null;
 }
 
+function normalizeInvitationNote(raw) {
+  if (raw == null) return '';
+  if (typeof raw !== 'string' || raw.length > 500 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(raw)) return null;
+  return raw.trim();
+}
+
 function normalizeContent(raw, { allowEmpty = false } = {}) {
   if (typeof raw !== 'string') return null;
   const content = raw.trim();
@@ -639,7 +645,7 @@ async function conversationRow(db, user, conversationId) {
     `SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer,
             c.channel_key,
             me.role AS my_role, me.status AS membership_status, me.invited_by,
-            me.last_read_message_id,
+            me.last_read_message_id, me.invitation_note,
             inviter.username AS requester_username,
             inviter_avatar.id AS requester_avatar_id,
             peer.user_id AS peer_id, peer.status AS peer_status, peer_user.username AS peer_username,
@@ -752,6 +758,7 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     membershipStatus: row.membership_status,
     myRole: row.my_role,
     requester,
+    invitationNote: row.kind === 'group' && row.membership_status === 'invited' ? row.invitation_note || null : null,
     peer,
     latestMessage: latest,
     latestSummary: accepted ? (latest?.content || '') : '',
@@ -944,7 +951,9 @@ async function ensureEligibleInvitees(db, inviterId, ids) {
   return true;
 }
 
-async function createGroup(pool, user, title, memberIds) {
+async function createGroup(pool, user, title, memberIds, invitationNote) {
+  const note = normalizeInvitationNote(invitationNote);
+  if (note === null) return null;
   const safeTitle = normalizeTitle(title);
   const ids = strictIds(memberIds);
   if (!safeTitle || !ids) return null;
@@ -972,9 +981,9 @@ async function createGroup(pool, user, title, memberIds) {
     for (const inviteeId of invitees) {
       await db.query(
         `INSERT INTO conversation_members
-           (conversation_id, user_id, role, status, invited_by)
-         VALUES ($1, $2, 'member', 'invited', $3)`,
-        [conversationId, inviteeId, user.id]
+           (conversation_id, user_id, role, status, invited_by, invitation_note)
+         VALUES ($1, $2, 'member', 'invited', $3, $4)`,
+        [conversationId, inviteeId, user.id, note || null]
       );
       notifications.push(await insertNotification(db, {
         userId: inviteeId, conversationId, sourceUserId: user.id, kind: 'conversation_invite',
@@ -1053,7 +1062,9 @@ async function respond(pool, user, conversationId, action) {
   };
 }
 
-async function addMembers(pool, user, conversationId, rawIds) {
+async function addMembers(pool, user, conversationId, rawIds, invitationNote) {
+  const note = normalizeInvitationNote(invitationNote);
+  if (note === null) return null;
   const ids = strictIds(rawIds);
   if (!ids?.length) return null;
   const result = await transaction(pool, async (db) => {
@@ -1083,17 +1094,17 @@ async function addMembers(pool, user, conversationId, rawIds) {
       if (statuses.has(id)) {
         await db.query(
           `UPDATE conversation_members
-              SET status = 'invited', role = 'member', invited_by = $3,
+              SET status = 'invited', role = 'member', invited_by = $3, invitation_note = $4,
                   responded_at = NULL, joined_at = NULL, left_at = NULL
             WHERE conversation_id = $1 AND user_id = $2`,
-          [conversationId, id, user.id]
+          [conversationId, id, user.id, note || null]
         );
       } else {
         await db.query(
           `INSERT INTO conversation_members
-             (conversation_id, user_id, role, status, invited_by)
-           VALUES ($1, $2, 'member', 'invited', $3)`,
-          [conversationId, id, user.id]
+             (conversation_id, user_id, role, status, invited_by, invitation_note)
+           VALUES ($1, $2, 'member', 'invited', $3, $4)`,
+          [conversationId, id, user.id, note || null]
         );
       }
       notifications.push(await insertNotification(db, {
@@ -1888,6 +1899,7 @@ module.exports = {
   strictId,
   strictIds,
   normalizeTitle,
+  normalizeInvitationNote,
   normalizeContent,
   normalizeIdempotencyKey,
   normalizeEmoji,

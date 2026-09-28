@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { XIcon } from '@/components/ui/icons';
+import { InvitationNoteField } from './invitation-note';
 import { Input } from '@/components/ui/input';
 import { confirmAction } from '../../lib/confirm';
 import { useDialog } from '../dialogs/use-dialog';
@@ -15,12 +16,13 @@ export function ConversationMembersDialog() {
   const snap = useMessagesSnapshot();
   const active = snap.active;
   const [query, setQuery] = useState('');
+  const [invitationNote, setInvitationNote] = useState('');
   const [results, setResults] = useState<ConversationUser[]>([]);
   const [selected, setSelected] = useState<ConversationUser[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const dialog = useDialog('messagesMembers', {
-    onOpen: () => { setQuery(''); setResults([]); setSelected([]); setError(''); },
+    onOpen: () => { setQuery(''); setResults([]); setInvitationNote(''); setSelected([]); setError(''); },
   });
 
   useEffect(() => {
@@ -42,7 +44,7 @@ export function ConversationMembersDialog() {
   async function invite() {
     if (!selected.length) return;
     setBusy(true); setError('');
-    try { await inviteMembers(selected.map((user) => user.id)); setSelected([]); setQuery(''); }
+    try { await inviteMembers(selected.map((user) => user.id), invitationNote); setSelected([]); setQuery(''); setInvitationNote(''); }
     catch (err) { setError(err instanceof Error ? err.message : 'Couldn’t invite these people.'); }
     finally { setBusy(false); }
   }
@@ -95,6 +97,7 @@ export function ConversationMembersDialog() {
             {selected.length ? <div className="flex flex-wrap gap-1 mb-2">{selected.map((user) => <button type="button" key={user.id} onClick={() => setSelected((current) => current.filter((item) => item.id !== user.id))} className="rounded-full bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300 px-2 py-1 text-xs">@{user.username} ×</button>)}</div> : null}
             <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by username" autoComplete="off" />
             {query.trim() ? <div className="mt-1 max-h-32 overflow-y-auto">{available.map((user) => <button type="button" key={user.id} onClick={() => { setSelected((current) => [...current, user]); setQuery(''); }} className="w-full flex items-center gap-2 py-1.5 px-1 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded"><UserAvatar user={user} size="sm" />@{user.username}<span className="ml-auto text-xs text-violet-700 dark:text-violet-400">Add</span></button>)}</div> : null}
+            <InvitationNoteField value={invitationNote} onChange={setInvitationNote} disabled={busy} />
             <Button type="button" className="mt-3 w-full" disabled={busy || !selected.length} onClick={() => void invite()}>{busy ? 'Inviting…' : `Invite ${selected.length || ''}`.trim()}</Button>
           </div>
         ) : null}

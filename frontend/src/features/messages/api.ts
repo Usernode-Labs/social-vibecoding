@@ -240,6 +240,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
       ? membershipStatus as ConversationDetail['membershipStatus']
       : 'member',
     myRole: text(pick(row, 'myRole', 'my_role', 'role')) === 'owner' ? 'owner' : 'member',
+    invitationNote: kind === 'group' && membershipStatus === 'invited' ? text(pick(row, 'invitationNote', 'invitation_note')).slice(0, 500) || null : null,
     requester: pick(row, 'requester', 'inviter') ? normalizeUser(pick(row, 'requester', 'inviter')) : null,
     peer,
     latestMessage,
@@ -287,10 +288,10 @@ export async function getConversation(id: number): Promise<ConversationDetail> {
   return normalizeConversation(pick(data, 'conversation') ?? data);
 }
 
-export async function createConversation(body: { kind: 'direct'; userId: number } | { kind: 'group'; title: string; memberIds: number[] }): Promise<ConversationDetail> {
+export async function createConversation(body: { kind: 'direct'; userId: number } | { kind: 'group'; title: string; memberIds: number[]; invitationNote?: string }): Promise<ConversationDetail> {
   const payload = body.kind === 'direct'
     ? { kind: 'direct', user_id: body.userId }
-    : { kind: 'group', title: body.title, member_ids: body.memberIds };
+    : { kind: 'group', title: body.title, member_ids: body.memberIds, invitation_note: body.invitationNote };
   const data = record(await request<unknown>('/api/conversations', { method: 'POST', body: JSON.stringify(payload) }));
   return normalizeConversation(pick(data, 'conversation') ?? data);
 }
@@ -308,8 +309,8 @@ export async function respondToInvitation(id: number, action: 'accept' | 'declin
   return conversation.id ? conversation : null;
 }
 
-export async function addMembers(id: number, userIds: number[]): Promise<ConversationDetail> {
-  const data = record(await request<unknown>(`/api/conversations/${id}/members`, { method: 'POST', body: JSON.stringify({ user_ids: userIds }) }));
+export async function addMembers(id: number, userIds: number[], invitationNote?: string): Promise<ConversationDetail> {
+  const data = record(await request<unknown>(`/api/conversations/${id}/members`, { method: 'POST', body: JSON.stringify({ user_ids: userIds, invitation_note: invitationNote }) }));
   return normalizeConversation(pick(data, 'conversation') ?? data);
 }
 

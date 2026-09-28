@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { XIcon } from '@/components/ui/icons';
+import { InvitationNoteField } from './invitation-note';
 import { Input } from '@/components/ui/input';
 import { confirmAction } from '../../lib/confirm';
 import { useDialog } from '../dialogs/use-dialog';
@@ -34,6 +35,7 @@ function useUserSearch(query: string) {
 export function CreateConversationDialog() {
   const [mode, setMode] = useState<'direct' | 'group'>('direct');
   const [query, setQuery] = useState('');
+  const [invitationNote, setInvitationNote] = useState('');
   const [title, setTitle] = useState('');
   const [selected, setSelected] = useState<ConversationUser[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -46,7 +48,7 @@ export function CreateConversationDialog() {
   // nothing and keeps the tab it always opened on).
   const dialog = useDialog<'direct' | 'group'>('messagesCreate', {
     onOpen: (tab) => {
-      setMode(tab === 'group' ? 'group' : 'direct'); setQuery(''); setTitle(''); setSelected([]); setError(''); setShowBlocked(false);
+      setMode(tab === 'group' ? 'group' : 'direct'); setQuery(''); setTitle(''); setInvitationNote(''); setSelected([]); setError(''); setShowBlocked(false);
     },
   });
 
@@ -70,7 +72,7 @@ export function CreateConversationDialog() {
   async function submitGroup() {
     if (!title.trim() || !selected.length) return;
     setSubmitting(true); setError('');
-    try { await createGroup(title.trim(), selected.map((user) => user.id)); dialog.close(); }
+    try { await createGroup(title.trim(), selected.map((user) => user.id), invitationNote); dialog.close(); }
     catch (err) { setError(err instanceof Error ? err.message : 'Couldn’t create this group.'); }
     finally { setSubmitting(false); }
   }
@@ -125,6 +127,7 @@ export function CreateConversationDialog() {
             <Input value={title} onChange={(event) => setTitle(event.target.value.slice(0, 80))} placeholder="Design crew" maxLength={80} autoComplete="off" />
           </label>
         ) : null}
+        {mode === 'group' ? <InvitationNoteField value={invitationNote} onChange={setInvitationNote} disabled={submitting} /> : null}
         {selected.length ? (
           <div className="flex flex-wrap gap-1.5 mb-3" aria-label="Selected members">
             {selected.map((user) => (

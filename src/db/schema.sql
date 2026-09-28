@@ -7335,6 +7335,10 @@ CREATE TABLE IF NOT EXISTS conversation_members (
   PRIMARY KEY (conversation_id, user_id),
   CHECK (role <> 'owner' OR status IN ('member', 'left', 'removed'))
 );
+-- Recipient-specific invitation context; never a retained conversation message.
+ALTER TABLE conversation_members ADD COLUMN IF NOT EXISTS invitation_note TEXT
+  CHECK (char_length(invitation_note) <= 500);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_members_active_owner
   ON conversation_members (conversation_id)
   WHERE role = 'owner' AND status = 'member';

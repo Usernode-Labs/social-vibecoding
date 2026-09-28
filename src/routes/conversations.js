@@ -125,6 +125,7 @@ function demoConversations(user) {
       id: 910003, kind: 'group', title: 'Design review', status: 'active', archived: false,
       members: [], memberCount: 4, membershipStatus: 'invited', myRole: 'member',
       requester: lin, peer: null, latestMessage: null, latestSummary: '',
+      invitationNote: 'Please join us to review the new onboarding screens and share your feedback.',
       // Fixed, and therefore always further back than the relative form's
       // seven-day floor (#1808): this row's stamp is a DATE, not an age. It
       // used to read "412d ago" here, which is a duration and not an answer.
@@ -435,11 +436,14 @@ function conversationRoutes(config) {
 
   router.post('/api/conversations', conversationInviteLimiter, async (req, res) => {
     try {
+      if (req.body?.kind === 'group' && conversations.normalizeInvitationNote(req.body.invitation_note) === null) {
+        return res.status(400).json({ error: 'Invitation note must be plain text of at most 500 characters.' });
+      }
       if (isDemo(req)) return res.status(201).json({ conversation: demoConversations(req.user)[0], demo: true });
       const result = req.body?.kind === 'direct'
         ? await conversations.createDirect(pool, req.user, conversations.strictId(req.body.user_id))
         : req.body?.kind === 'group'
-          ? await conversations.createGroup(pool, req.user, req.body.title, req.body.member_ids)
+          ? await conversations.createGroup(pool, req.user, req.body.title, req.body.member_ids, req.body.invitation_note)
           : null;
       if (!result) return sendNotFound(res);
       await pushNotifications(pool, result.notifications);
@@ -503,7 +507,10 @@ function conversationRoutes(config) {
     const id = conversations.strictId(req.params.id);
     if (!id) return sendNotFound(res);
     try {
-      const result = await conversations.addMembers(pool, req.user, id, req.body?.user_ids);
+      if (conversations.normalizeInvitationNote(req.body?.invitation_note) === null) {
+        return res.status(400).json({ error: 'Invitation note must be plain text of at most 500 characters.' });
+      }
+      const result = await conversations.addMembers(pool, req.user, id, req.body?.user_ids, req.body?.invitation_note);
       if (!result) return sendNotFound(res);
       await pushNotifications(pool, result.notifications);
       pushAudience(result.memberIds, { type: 'conversation_membership_changed', conversationId: id });

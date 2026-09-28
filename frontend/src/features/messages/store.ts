@@ -980,8 +980,8 @@ export async function createDirect(userId: number): Promise<ConversationDetail> 
   return conversation;
 }
 
-export async function createGroup(title: string, memberIds: number[]): Promise<ConversationDetail> {
-  const conversation = await api.createConversation({ kind: 'group', title, memberIds });
+export async function createGroup(title: string, memberIds: number[], invitationNote?: string): Promise<ConversationDetail> {
+  const conversation = await api.createConversation({ kind: 'group', title, memberIds, invitationNote });
   upsertConversation(conversation);
   open(conversation.id);
   return conversation;
@@ -1000,10 +1000,10 @@ export async function respond(action: 'accept' | 'decline'): Promise<void> {
   }
 }
 
-export async function inviteMembers(userIds: number[]): Promise<void> {
+export async function inviteMembers(userIds: number[], invitationNote?: string): Promise<void> {
   const id = state.route.conversationId;
   if (!id) return;
-  const conversation = await api.addMembers(id, userIds);
+  const conversation = await api.addMembers(id, userIds, invitationNote);
   upsertConversation(conversation);
 }
 

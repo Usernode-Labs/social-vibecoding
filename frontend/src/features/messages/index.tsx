@@ -1,3 +1,4 @@
+import { InvitationContext } from './invitation-note';
 import {
   memo, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode,
 } from 'react';
@@ -1002,7 +1003,7 @@ function InvitationBanner() {
   }
   return (
     <div className="messages-invitation">
-      <div className="min-w-0 flex-1"><strong>{active.kind === 'direct' ? 'Message request' : 'Group invitation'}</strong><p>{requester} invited you. Accepting gives you access to the complete retained conversation history.</p>{error ? <span role="alert">{error}</span> : null}</div>
+      <div className="min-w-0 flex-1"><strong>{active.kind === 'direct' ? 'Message request' : 'Group invitation'}</strong><p>{requester} invited you. Accepting gives you access to the complete retained conversation history.</p>{active.kind === 'group' ? <InvitationContext note={active.invitationNote} /> : null}{error ? <span role="alert">{error}</span> : null}</div>
       <div className="messages-invite-actions">
         <button type="button" disabled={busy} onClick={() => void answer('decline')} className="messages-invite-decline">Decline</button>
         {requesterUser?.id ? <button type="button" disabled={busy} onClick={() => void declineAndBlock()} className="messages-invite-block">Decline &amp; block @{requesterUser.username}</button> : null}
