@@ -1327,11 +1327,17 @@ async function becomeLeader() {
   // Job. No-op outside the Kubernetes capture runtime.
   const checkHarvest = require('./src/services/check-harvest');
   const mainWatch = require('./src/services/main-watch');
+  const mergeFollowups = require('./src/services/merge-followup-recovery');
   checkHarvest.sweep(config, { reason: 'boot' })
     .catch((err) => {
       log.warn('server', 'Boot check-harvest sweep failed (non-fatal)', { err: err.message });
     })
     .then(() => recoverStuckMerges(config))
+    .then(() => {
+      mergeFollowups.recover(config).catch((err) => {
+        log.warn('server', 'Boot merge follow-up recovery failed', { err: err.message });
+      });
+    })
     .then(() => reconcileEligibleMerges(config))
     // #447: after reconciling merge state, re-run any stuck/never-recorded
     // proposal checks so PRs left permanently "still running its tests" by a
@@ -1359,6 +1365,7 @@ async function becomeLeader() {
   // out CHECKS_STALE_MS for the stale sweep to start it over.
   checkHarvest.start(config);
   mainWatch.start(config);
+  mergeFollowups.start(config);
 
   // #144: re-arm post-merge issue-close watches a restart killed. The
   // watcher (services/issue-close-watcher.js) is fired-and-forgotten
@@ -1654,19 +1661,23 @@ async function auditExistingRepoPrivacy(pool) {
 // We ask GitHub the truth rather than guessing. Bounded concurrency keeps
 // the boot scan cheap; genuinely-open PRs simply report merged=false and
 // are left untouched (only 'merging' rows are demoted to 'promoted').
-async function recoverStuckMerges(config) {
+async function recoverStuckMerges(config, { attemptedOnly = false } = {}) {
   const { getPool } = require('./src/db/pool');
   const github = require('./src/services/github');
+  const mergeLock = require('./src/services/merge-finalization-lock');
   const pool = getPool(config);
 
   let rows;
   try {
     ({ rows } = await pool.query(
       `SELECT cs.id, cs.status, cs.pr_number, cs.merge_commit_sha,
+              cs.merge_attempt_at,
               a.repo_url
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
-        WHERE cs.status IN ('promoted', 'merging')`
+        WHERE cs.status IN ('promoted', 'merging')
+          AND (NOT $1::boolean OR cs.status = 'merging' OR cs.merge_attempt_at IS NOT NULL)`,
+      [attemptedOnly]
     ));
   } catch (err) {
     log.warn('server', 'recoverStuckMerges query failed', { err: err.message });
@@ -1674,23 +1685,11 @@ async function recoverStuckMerges(config) {
   }
   if (!rows.length) return;
 
-  // Without GitHub auth we can't ask the truth. Preserve the original
-  // crash-recovery behavior for 'merging' rows (flip back to 'promoted')
-  // and leave 'promoted' rows alone.
+  // Without GitHub auth the outcome is unknown. Keep the claim until a
+  // later sweep can ask GitHub; a blind demotion can reopen a merged PR.
   if (!github.isEnabled()) {
-    try {
-      const { rows: flipped } = await pool.query(
-        `UPDATE chat_sessions SET status = 'promoted'
-          WHERE status = 'merging' RETURNING id`
-      );
-      if (flipped.length) {
-        log.info('server', 'Unstuck merging sessions on startup (no GitHub auth)', {
-          count: flipped.length, ids: flipped.map((r) => r.id),
-        });
-      }
-    } catch (err) {
-      log.warn('server', 'recoverStuckMerges fallback flip failed', { err: err.message });
-    }
+    const merging = rows.filter((row) => row.status === 'merging').length;
+    if (merging) log.warn('server', 'Cannot reconcile merging sessions without GitHub auth', { count: merging });
     return;
   }
 
@@ -1705,66 +1704,59 @@ async function recoverStuckMerges(config) {
   async function worker() {
     while (queue.length) {
       const row = queue.shift();
-      const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-      if (!m || !row.pr_number) {
-        // Can't ask GitHub. Only demote 'merging' (crash recovery); leave
-        // 'promoted' rows as-is.
-        if (row.status === 'merging') {
-          await pool.query(
-            `UPDATE chat_sessions SET status = 'promoted'
-              WHERE id = $1 AND status = 'merging'`,
-            [row.id]
-          ).catch(() => {});
-          demoted++;
-        }
-        continue;
-      }
-      const [, owner, repo] = m;
+      const release = await mergeLock.acquire(pool, row.id, { tryOnly: true });
+      if (!release) continue; // A live process still owns this merge.
       try {
-        const pr = await github.getPR(owner, repo, row.pr_number);
-        if (pr && pr.merged) {
-          const { rowCount } = await pool.query(
-            `UPDATE chat_sessions
-                SET status = 'merged',
-                    merged_at = COALESCE(merged_at, $2),
-                    merge_commit_sha = COALESCE(merge_commit_sha, $3)
-              WHERE id = $1 AND status IN ('promoted', 'merging')`,
-            [row.id, pr.merged_at || null, pr.merge_commit_sha || null]
-          );
-          if (rowCount) {
-            healed++;
-            log.info('server', 'Reconciled merged-on-GitHub session to merged', {
-              sessionId: row.id, prNumber: row.pr_number,
-              repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
-            });
+        const oldAttempt = !row.merge_attempt_at
+          || Date.now() - new Date(row.merge_attempt_at).getTime() >= 5 * 60 * 1000;
+        const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+        if (!m || !row.pr_number) {
+          // The repository or PR identity is missing; there is no safe
+          // inference about the irreversible GitHub operation.
+          continue;
+        }
+        const [, owner, repo] = m;
+        try {
+          const pr = await github.getPR(owner, repo, row.pr_number);
+          if (pr && pr.merged) {
+            const { rowCount } = await pool.query(
+              `UPDATE chat_sessions
+                  SET status = 'merged',
+                      merged_at = COALESCE(merged_at, $2, NOW()),
+                      merge_commit_sha = COALESCE(merge_commit_sha, $3)
+                WHERE id = $1 AND status IN ('promoted', 'merging')`,
+              [row.id, pr.merged_at || null, pr.merge_commit_sha || null]
+            );
+            if (rowCount) {
+              healed++;
+              log.info('server', 'Reconciled merged-on-GitHub session to merged', {
+                sessionId: row.id, prNumber: row.pr_number,
+                repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
+              });
+            }
+          } else if (row.status === 'merging' && oldAttempt) {
+            // Not merged on GitHub and stuck in 'merging' (crash mid-merge):
+            // demote so the next vote/retry can redrive.
+            const { rowCount } = await pool.query(
+              `UPDATE chat_sessions SET status = 'promoted'
+                WHERE id = $1 AND status = 'merging'
+                  AND (merge_attempt_at IS NULL OR merge_attempt_at < NOW() - interval '5 minutes')`,
+              [row.id]
+            ).catch(() => ({ rowCount: 0 }));
+            if (rowCount) demoted++;
           }
-        } else if (row.status === 'merging') {
-          // Not merged on GitHub and stuck in 'merging' (crash mid-merge):
-          // demote so the next vote/retry can redrive.
-          await pool.query(
-            `UPDATE chat_sessions SET status = 'promoted'
-              WHERE id = $1 AND status = 'merging'`,
-            [row.id]
-          ).catch(() => {});
-          demoted++;
+          // Not merged + 'promoted' == genuinely open proposal: leave alone.
+        } catch (err) {
+          errors++;
+          log.warn('server', 'recoverStuckMerges: GitHub lookup failed', {
+            sessionId: row.id, prNumber: row.pr_number,
+            repo: `${owner}/${repo}`, err: err.message,
+          });
+          // A failed lookup is not proof the merge failed. The next timer
+          // sweep retries without changing this session's status.
         }
-        // Not merged + 'promoted' == genuinely open proposal: leave alone.
-      } catch (err) {
-        errors++;
-        log.warn('server', 'recoverStuckMerges: GitHub lookup failed', {
-          sessionId: row.id, prNumber: row.pr_number,
-          repo: `${owner}/${repo}`, err: err.message,
-        });
-        // On a lookup error, fall back to the safe crash-recovery move for
-        // 'merging' rows only.
-        if (row.status === 'merging') {
-          await pool.query(
-            `UPDATE chat_sessions SET status = 'promoted'
-              WHERE id = $1 AND status = 'merging'`,
-            [row.id]
-          ).catch(() => {});
-          demoted++;
-        }
+      } finally {
+        await release();
       }
     }
   }
@@ -1976,6 +1968,9 @@ function startEligibleMergeSweeper(config) {
     if (!github.isEnabled()) return;
     running = true;
     Promise.resolve()
+      // A merge request may outlive a leader rollout. Revisit attempts even
+      // after demotion, since GitHub may report their merge a little later.
+      .then(() => recoverStuckMerges(config, { attemptedOnly: true }))
       .then(() => reconcileStuckChecks(config))
       .then(() => reconcileEligibleMerges(config))
       .catch((err) => {

@@ -34,7 +34,7 @@ const SCHEMA_NAME = `unpromote_test_${process.pid}`;
 // The merge claim and the promote CAS, lifted out of routes/votes.js rather
 // than retyped, so this file keeps describing the statements that ship.
 const MERGE_CLAIM_SQL = (() => {
-  const m = VOTES_SRC.match(/`(UPDATE chat_sessions SET status = 'merging'\s+WHERE id = \$1 AND status = 'promoted'\s+RETURNING id)`/);
+  const m = VOTES_SRC.match(/`(UPDATE chat_sessions SET status = 'merging', merge_attempt_at = NOW\(\)\s+WHERE id = \$1 AND status = 'promoted'\s+RETURNING id)`/);
   assert.ok(m, 'the promoted -> merging claim must be findable in routes/votes.js');
   return m[1];
 })();
@@ -89,6 +89,7 @@ async function connectPool() {
       approval_epoch INTEGER NOT NULL DEFAULT 0,
       stale_notified_at TIMESTAMPTZ,
       promoted_at TIMESTAMPTZ,
+      merge_attempt_at TIMESTAMPTZ,
       pr_number INTEGER,
       pr_title TEXT,
       integration_block_reasons JSONB,
