@@ -908,6 +908,53 @@ test('summary is prepended as the first paragraph of the PR body, before bullets
     // The summary is persisted to pr_summary_md on the new-PR write.
     const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
     assert.equal(upd.params[6], 'Adds a dark-mode toggle so people can switch to a dark colour scheme.');
+    assert.match(upd.sql, /pr_summary_input_version = \$11/,
+      'the generated result is published only for the inputs it read');
+    assert.equal(upd.params[10], 0, 'the source input version is recorded');
+    assert.match(upd.params[12], /^[0-9a-f]{64}$/, 'the source body hash is recorded');
+  } finally {
+    restore();
+  }
+});
+
+test('delayed generation cannot publish a summary after newer inputs arrive', async () => {
+  const githubCalls = [];
+  let beginGeneration;
+  const generationStarted = new Promise((resolve) => { beginGeneration = resolve; });
+  let finishGeneration;
+  const generationGate = new Promise((resolve) => { finishGeneration = resolve; });
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls,
+    generate: async () => {
+      beginGeneration();
+      await generationGate;
+      return { title: 'Cumulative title', body: 'Old body', summary: 'Old summary' };
+    },
+  });
+  try {
+    let inputVersion = 2;
+    const pool = mockPool([{ role: 'user', content: 'First request', metadata: {} }]);
+    const originalQuery = pool.query.bind(pool);
+    pool.query = (sql, params) => {
+      if (/SELECT pr_summary_input_version FROM chat_sessions/.test(sql)) {
+        return Promise.resolve({ rows: [{ pr_summary_input_version: inputVersion }] });
+      }
+      if (/FROM chat_sessions\b/.test(sql)) {
+        return Promise.resolve({ rows: [{ pr_summary_input_version: inputVersion }] });
+      }
+      return originalQuery(sql, params);
+    };
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_title: 'Cumulative title' };
+    const work = subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'First request', ccSummary: 'Old work', username: 'evan',
+    });
+    await generationStarted;
+    inputVersion = 3;
+    finishGeneration();
+    assert.equal(await work, null);
+    assert.equal(githubCalls.length, 0, 'the old generation never reaches GitHub');
+    assert.equal(session.pr_summary_md, undefined, 'the old summary never becomes current');
   } finally {
     restore();
   }

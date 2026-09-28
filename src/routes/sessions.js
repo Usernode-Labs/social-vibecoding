@@ -73,7 +73,7 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { al
 
   const { rows } = await pool.query(
     `SELECT cs.id, cs.app_id, cs.pr_number, cs.pr_url, cs.pr_title,
-            cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.branch_name,
+            cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.branch_name,
             cs.staging_url, cs.testing_md, cs.testing_path, cs.testing_paths,
             cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
             cs.source, cs.imported_pr_author, cs.imported_pr_head_repo,

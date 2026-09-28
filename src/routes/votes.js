@@ -27,6 +27,7 @@ const { isCliCredentialManagementSession } = require('../services/cli-api-policy
 const visualEvidencePlan = require('../services/visual-evidence-plan');
 const visualEvidenceState = require('../services/visual-evidence-state');
 const visualEvidenceView = require('../services/visual-evidence-view');
+const summaryFreshness = require('../services/summary-freshness');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -277,10 +278,19 @@ function stagingMockProposals(viewer) {
       my_prior_vote: 'yes',
     },
     // One No vote: eased threshold restored, window pushed back out.
-    mk(9000002, 900102,
-      '[Mock] Long-title test: walk brand-new collaborators through '
-      + 'voting, kudos and dev sessions step by step',
-      11, 1, 1, 0, { required: 5, windowEndsAt: hoursAhead(120) }),
+    {
+      ...mk(9000002, 900102,
+        '[Mock] Long-title test: walk brand-new collaborators through '
+        + 'voting, kudos and dev sessions step by step',
+        11, 1, 1, 0, { required: 5, windowEndsAt: hoursAhead(120) }),
+      // The same row has a current summary on the base build. On this build,
+      // its description changed and the prior author summary is retained in
+      // provenance only, so ?demo=1 shows the honest stale state to reviewers.
+      pr_summary_md: null,
+      pr_summary_previous_md: 'The earlier proposal summary, kept for its author.',
+      pr_summary_stale: true,
+      pr_body: '## What changed\n\nThe proposal now covers the newer revision.',
+    },
     // Contested (No >= 1/3): window no longer applies, pure full-majority
     // count gate — no countdown, "Contested" treatment.
     mk(9000015, 900115,
@@ -1588,10 +1598,12 @@ async function reconcileNativeReviewedHead({
   // must not clear anything.
   if (!oldHead) {
     await pool.query(
-      `UPDATE chat_sessions SET reviewed_head_sha = $1, stale_notified_at = NULL WHERE id = $2`,
+      `UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, stale_notified_at = NULL WHERE id = $2`,
       [liveHead, session.id]
     );
     session.reviewed_head_sha = liveHead;
+    session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+    session.pr_summary_md = null;
     if (session.visual_evidence_state || session.visual_evidence_detail) {
       await visualEvidenceState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
         log.warn('votes', 'Visual evidence invalidation after revision bind failed', {
@@ -1620,6 +1632,7 @@ async function reconcileNativeReviewedHead({
   const { rows: claimed } = await pool.query(
     `UPDATE chat_sessions
         SET reviewed_head_sha = $1,
+            ${summaryFreshness.INVALIDATE_SQL},
             stale_notified_at = NULL,
             approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 0 ELSE 1 END
       WHERE id = $2
@@ -1632,11 +1645,14 @@ async function reconcileNativeReviewedHead({
     // Another verifier installed a revision while we were reading. Re-read
     // rather than reset a second time.
     const { rows } = await pool.query(
-      `SELECT reviewed_head_sha, approval_epoch FROM chat_sessions WHERE id = $1`,
+      `SELECT reviewed_head_sha, approval_epoch, pr_summary_md, pr_summary_stale
+         FROM chat_sessions WHERE id = $1`,
       [session.id]
     );
     session.reviewed_head_sha = rows[0]?.reviewed_head_sha || null;
     session.approval_epoch = rows[0]?.approval_epoch;
+    session.pr_summary_md = rows[0]?.pr_summary_md || null;
+    session.pr_summary_stale = !!rows[0]?.pr_summary_stale;
     if (sameSha(session.reviewed_head_sha, liveHead)) {
       return { enforced: true, headSha: liveHead, epoch: epochOf(session), unchanged: true };
     }
@@ -1649,6 +1665,8 @@ async function reconcileNativeReviewedHead({
   const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.reviewed_head_sha = liveHead;
   session.approval_epoch = epoch;
+  session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+  session.pr_summary_md = null;
   if (session.visual_evidence_state || session.visual_evidence_detail) {
     await visualEvidenceState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
       log.warn('votes', 'Visual evidence invalidation after head move failed', {
@@ -2034,7 +2052,7 @@ async function reconcilePromotedSweepHead({ config, pool, session }) {
 // user id (for the per-viewer my_vote / my_kudos subqueries). Callers
 // append their own WHERE / ORDER / LIMIT.
 function mergedRowSelect() {
-  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.pr_body, cs.user_id, cs.status, cs.linked_issues, cs.merge_commit_sha, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
+  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.user_id, cs.status, cs.linked_issues, cs.merge_commit_sha, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
            -- #1264: the exact merge time (and the promotion time beside it)
            -- so the progress report can date completed work by when it
            -- actually landed instead of when it was started. NULL on rows
@@ -3029,12 +3047,17 @@ function voteRoutes(config) {
             imported_pr_author, imported_pr_head_repo,
             promoted_at, shared_at, created_at,
             testing_md, testing_path, testing_paths, linked_issues, pr_body,
-            pr_summary_md)
+            pr_summary_md, pr_summary_source, pr_summary_source_head_sha,
+            pr_summary_source_body_hash, pr_summary_applied_version)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
             'imported', $8, $9, $10, $11,
             CASE WHEN $7::text = 'promoted' THEN NOW() END,
             CASE WHEN $7::text = 'active' THEN NOW() END,
-            NOW(), $12, $13, $14::jsonb, $15, $16, $17)
+            NOW(), $12, $13, $14::jsonb, $15, $16, $17,
+            CASE WHEN $17::text IS NULL THEN NULL ELSE 'author' END,
+            CASE WHEN $17::text IS NULL THEN NULL ELSE $8 END,
+            CASE WHEN $17::text IS NULL THEN NULL ELSE $18 END,
+            CASE WHEN $17::text IS NULL THEN NULL ELSE 0 END)
            RETURNING id, status`,
           [
             app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
@@ -3055,6 +3078,7 @@ function voteRoutes(config) {
             // sent none: the platform does not generate one here, so a proposal
             // without it renders exactly as it did before this field existed.
             importSummary,
+            summaryFreshness.bodyHash(pr.body || null),
           ]
         ));
         await topicAttrs.selfAssignProposal(
@@ -3847,7 +3871,7 @@ function voteRoutes(config) {
       // majority threshold is crossed and only reappears in the "merged"
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
            cs.visual_evidence_state, cs.visual_evidence_run_id,
            cs.visual_evidence_detail, cs.visual_evidence_updated_at,
            -- #687 (PR-import): provenance so the client can render the
