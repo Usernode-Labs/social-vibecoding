@@ -36,13 +36,19 @@ test('mobile screenshot controls keep 48px tap targets', () => {
     dialog.indexOf('id="feedback-state-row"'),
   );
   assert.match(screenshotMarkup, /min-h-\[48px\]/);
-  assert.match(screenshotMarkup, /w-12 h-12/);
+  // #3027: the remove buttons are per thumbnail now, built by the controller.
+  const thumb = controller.slice(
+    controller.indexOf('const renderScreenshotThumb = (shot) =>'),
+    controller.indexOf('const uploadScreenshot = (blob) =>'),
+  );
+  assert.match(thumb, /removeBtn\.className = 'rounded-full w-12 h-12 /);
 });
 
 test('a degraded native probe is retried and never hides Photos', () => {
   assert.match(controller, /info\?\.degraded === true/);
   assert.match(controller, /probeNativeCaptureSupport\(sequence, false\)/);
-  assert.match(controller, /screenshotPickerBtn\.classList\.toggle\('hidden', attached\)/);
+  // Photos hides only when the image limit is reached (#3027), never on a probe.
+  assert.match(controller, /screenshotPickerBtn\.classList\.toggle\('hidden', full\)/);
 });
 
 // ── #1284: a failed capture must never cost the user their words ─────────
