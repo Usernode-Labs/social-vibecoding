@@ -31,6 +31,9 @@ interface Settings {
   liveApps: string[];
   turnSeconds: number;
   turnInputTokens: number;
+  // Shadow builds: ready verdicts off the live list built on a branch
+  // nobody is shown, this many a day. 0 is off.
+  shadowBuildsPerDay: number;
 }
 
 interface Bot {
@@ -92,6 +95,13 @@ interface Run {
   created_at: string;
   // #3146: the proposal a live `ready` run opened.
   proposal_session_id: number | null;
+  build_ok: boolean | null;
+  build_branch: string | null;
+  build_sha: string | null;
+  build_commits: number | null;
+  build_error: string | null;
+  build_cost_usd: number | null;
+  buildUrl: string | null;
   app_slug: string;
   app_name: string;
   issueUrl: string | null;
@@ -194,6 +204,35 @@ const CAP_LABEL: Record<string, string> = {
   question_tripwire: 'would be held: question tripwire for this app tripped today',
 };
 
+/**
+ * A shadow build of a ready verdict: the branch it left on the app's
+ * repository, for a spot check, or why there is none. The compare address
+ * is text to copy, not a link: it is built from the app's repo_url, and the
+ * console never renders an API-supplied URL as an anchor.
+ */
+function ShadowBuild({ run }: { run: Run }) {
+  if (run.build_ok == null) return null;
+  if (!run.build_ok) {
+    return (
+      <p className={`${AdminUI.muted} break-words`} data-shadow-build="failed">
+        {`Shadow build did not produce a change: ${run.build_error || 'no reason recorded'}.`}
+      </p>
+    );
+  }
+  const parts = [
+    `Shadow build on ${run.build_branch}`,
+    run.build_commits != null ? `${run.build_commits} commit${run.build_commits === 1 ? '' : 's'}` : null,
+    run.build_sha ? `at ${String(run.build_sha).slice(0, 7)}` : null,
+    run.build_cost_usd != null ? money(run.build_cost_usd) : null,
+  ].filter(Boolean);
+  return (
+    <div className="space-y-0.5" data-shadow-build="built">
+      <p className={AdminUI.muted}>{`${parts.join(', ')}. Not proposed, not posted.`}</p>
+      {run.buildUrl ? <p className={`${AdminUI.muted} break-all select-all`}>{run.buildUrl}</p> : null}
+    </div>
+  );
+}
+
 /** What the bot would have posted, as one block of plain text per verdict. */
 function VerdictBody({ run }: { run: Run }) {
   if (run.verdict === 'question') {
@@ -210,6 +249,7 @@ function VerdictBody({ run }: { run: Run }) {
     return (
       <div className="space-y-1">
         <p className="text-sm whitespace-pre-line">{run.build_note || '(no build note)'}</p>
+        <ShadowBuild run={run} />
         {run.proposal_session_id ? (
           <p className={AdminUI.muted}>
             {'Built and '}
@@ -556,6 +596,36 @@ function HomeroomBotSection() {
               A warning, not a stop. The bot only learns what a turn read once the
               turn is over, so a turn past this keeps its verdict and the overrun is
               logged. The minute limit above is what actually ends a runaway turn.
+            </p>
+          </div>
+
+          <div>
+            <label className={AdminUI.label} htmlFor="admin-homeroom-bot-shadow-builds">Shadow builds per day</label>
+            <div className="flex items-center gap-2 mt-1">
+              <input
+                id="admin-homeroom-bot-shadow-builds"
+                type="number" min="0" max="50" step="1"
+                className={AdminUI.input}
+                defaultValue={settings?.shadowBuildsPerDay ?? 0}
+                key={`shadow-${settings?.shadowBuildsPerDay ?? 0}`}
+                disabled={!canWrite}
+                onBlur={(e) => {
+                  const n = Number(e.target.value);
+                  if (n === settings?.shadowBuildsPerDay) return;
+                  if (!Number.isInteger(n) || n < 0 || n > 50) {
+                    setStatus({ text: 'Shadow builds per day must be a whole number from 0 to 50.', tone: 'err' });
+                    return;
+                  }
+                  saveSettings({ shadowBuildsPerDay: n }, n
+                    ? `The bot now builds up to ${n} ready requests a day on apps it does not act on.`
+                    : 'Shadow builds are off.');
+                }}
+              />
+            </div>
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-shadow-builds-note">
+              On apps outside the live list, a ready request is also built on a branch
+              of the app's repository, and nothing else happens: no proposal, no post,
+              nothing in the app. Each run below shows its branch for a spot check. 0 is off.
             </p>
           </div>
 

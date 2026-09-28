@@ -456,10 +456,14 @@ function buildPrompt({ seed, buildNote }) {
  */
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
-  turnBudgetMs, model, deps,
+  turnBudgetMs, model, deps, propose = true,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
+  // A shadow build (`propose: false`) is the same build, on a session of the
+  // bot's own that links no issue, so no board reads it as work under way
+  // on one, and that is archived the moment the build ends. Its branch is
+  // the only thing it leaves, on the app's repository, for spot checks.
   let session;
   try {
     const { rows } = await pool.query(
@@ -467,10 +471,12 @@ async function buildAndPropose({
                                   created_from_issue_number, linked_issues, issue_link_seeded,
                                   session_title, agent_backend, agent_provider, agent_model,
                                   agent_reasoning_effort)
-       VALUES ($1, $2, NULL, 'active', FALSE, $3, ARRAY[$3]::int[], TRUE, $4,
+       VALUES ($1, $2, NULL, 'active', FALSE, $3,
+               CASE WHEN $3::int IS NULL THEN '{}'::int[] ELSE ARRAY[$3::int] END, TRUE, $4,
                'codex_openrouter', 'openrouter', $5, $6)
        RETURNING *`,
-      [app.id, bot.id, issueNumber, `Homeroom bot: #${issueNumber} ${title}`,
+      [app.id, bot.id, propose ? issueNumber : null,
+        `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
         model, config.openrouterDefaultCodexReasoning || 'low'],
     );
     session = rows[0];
@@ -490,7 +496,7 @@ async function buildAndPropose({
         WHERE id = $1 AND user_id = $2 AND status IN ('active', 'paused')`,
       [session.id, bot.id],
     ).catch(() => {});
-    return { ok: false, sessionId: session.id, error };
+    return { ok: false, sessionId: session.id, branchName: session.branch_name || null, error };
   };
 
   let branchName;
@@ -578,6 +584,20 @@ async function buildAndPropose({
   if (routed?.error) return { ...(await fail(`the build turn failed (${routed.error})`)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
     return { ...(await fail('the build produced no change to propose')), costUsd };
+  }
+
+  if (!propose) {
+    // Built, pushed, and put away: the session is archived exactly as a
+    // failed attempt is, and nothing is promoted, posted or shown.
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
+        WHERE id = $1 AND user_id = $2 AND status IN ('active', 'paused')`,
+      [session.id, bot.id],
+    ).catch(() => {});
+    return {
+      ok: true, sessionId: session.id, branchName: session.branch_name,
+      sha: result.sha || null, commits: Number(result.ahead) || 0, costUsd,
+    };
   }
 
   const promoted = await promoteAsBot({ config, bot, sessionId: session.id, router: deps.votesRouter || null });

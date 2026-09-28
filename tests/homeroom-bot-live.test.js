@@ -490,7 +490,8 @@ test('a ready request is built in a session of its own and proposed', async () =
   assert.deepEqual(out, { ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.05 });
 
   const insert = h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
-  assert.match(insert.sql, /ARRAY\[\$3\]::int\[\], TRUE/, 'the issue is linked, so the PR says Closes #12');
+  assert.match(insert.sql, /ELSE ARRAY\[\$3::int\] END, TRUE/, 'the issue is linked, so the PR says Closes #12');
+  assert.equal(insert.params[2], 12, 'a proposing build links its issue');
   assert.match(insert.sql, /'active', FALSE/, 'a normal dev session, never a headless one');
   assert.equal(insert.params[1], BOT.id, 'owned by the bot');
 
@@ -633,7 +634,14 @@ test('runTriage acts only through the live module, and only when the app is live
   for (const forbidden of ['createIssueComment', 'sendSystemMessage', '/promote']) {
     assert.ok(!BOT_SRC.includes(forbidden), `homeroom-bot.js never reaches ${forbidden} itself`);
   }
-  assert.equal((BOT_SRC.match(/buildAndPropose\(/g) || []).length, 1, 'one build call, inside actOnVerdict');
+  // Two build calls: actOnVerdict's, and the shadow build's, which never
+  // proposes and never posts (shadow builds leave a branch and nothing else).
+  assert.equal((BOT_SRC.match(/buildAndPropose\(/g) || []).length, 2, 'actOnVerdict, and the shadow build');
+  const shadow = BOT_SRC.slice(BOT_SRC.indexOf('async function shadowBuild('), BOT_SRC.indexOf('/**', BOT_SRC.indexOf('async function shadowBuild(')));
+  assert.match(shadow, /propose: false,?\s*\}\);/);
+  assert.doesNotMatch(shadow, /live\.post\(|promoteAsBot|advanceSeen/, 'a shadow build says nothing anywhere');
+  assert.match(BOT_SRC, /\} else if \(parsed\.verdict === 'ready' && settings\?\.shadowBuildsPerDay > 0\) \{/,
+    'and it runs only where the live branch does not');
   assert.match(BOT_SRC, /const liveMode = live\.isLiveFor\(settings, app\);/);
   assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+const open = await live\.openBotProposal/);
   assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+try \{\n\s+acted = await actOnVerdict\(/);

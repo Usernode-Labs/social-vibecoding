@@ -76,9 +76,16 @@ const KEY_TURN_INPUT_TOKENS = 'homeroom_bot_turn_input_tokens';
 // #3146: the apps the bot acts on for real — posts on their issues, and
 // builds and proposes the clear ones. Everything else stays in shadow.
 const KEY_LIVE_APPS = 'homeroom_bot_live_apps';
+// Shadow builds: on an app NOT in the live list, a ready verdict is also
+// built, on a branch of its own that nobody is shown: no proposal, no
+// post, nothing in the app. The dashboard and the export carry the branch,
+// so what the bot WOULD have proposed can be spot-checked before an app goes
+// live. A daily count, not a switch: builds cost far more than a triage.
+// 0 is off, which is how it ships.
+const KEY_SHADOW_BUILDS_PER_DAY = 'homeroom_bot_shadow_builds_per_day';
 const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
-  KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS,
+  KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS, KEY_SHADOW_BUILDS_PER_DAY,
 ]);
 
 // batchSize is how many of ONE app's issues a pass takes before the loop
@@ -93,8 +100,10 @@ const DEFAULTS = Object.freeze({
   liveApps: [],
   turnSeconds: 20 * 60,
   turnInputTokens: 10_000_000,
+  shadowBuildsPerDay: 0,
 });
 const MAX_CONCURRENCY = 4;
+const MAX_SHADOW_BUILDS_PER_DAY = 50;
 const MAX_BATCH_SIZE = 500;
 // The budget a single triage turn may spend (#2737). Measured over the
 // first 213 shadow runs: 7 of the 74 that produced a verdict took $30.04 of
@@ -240,7 +249,10 @@ function parseSettings(rows) {
     map.get(KEY_TURN_INPUT_TOKENS), DEFAULTS.turnInputTokens,
     MIN_TURN_INPUT_TOKENS, MAX_TURN_INPUT_TOKENS,
   );
-  return { mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens };
+  const shadowBuildsPerDay = clampInt(
+    map.get(KEY_SHADOW_BUILDS_PER_DAY), DEFAULTS.shadowBuildsPerDay, 0, MAX_SHADOW_BUILDS_PER_DAY,
+  );
+  return { mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens, shadowBuildsPerDay };
 }
 
 function clampInt(raw, fallback, min, max) {
@@ -321,6 +333,13 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: 'liveApps must be an array of up to 50 app slugs' };
     }
     updates.push([KEY_LIVE_APPS, JSON.stringify([...new Set(body.liveApps)])]);
+  }
+  if (body.shadowBuildsPerDay !== undefined) {
+    const n = Number(body.shadowBuildsPerDay);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_SHADOW_BUILDS_PER_DAY) {
+      return { ok: false, error: `shadowBuildsPerDay must be an integer from 0 to ${MAX_SHADOW_BUILDS_PER_DAY}` };
+    }
+    updates.push([KEY_SHADOW_BUILDS_PER_DAY, String(n)]);
   }
   let weeklyLimitCents;
   if (body.weeklyLimitCents !== undefined) {
@@ -1656,8 +1675,79 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     } catch (err) {
       log.error('homeroom-bot', 'Acting on a live verdict failed', { app: app.slug, issueNumber, err: err.message });
     }
+  } else if (parsed.verdict === 'ready' && settings?.shadowBuildsPerDay > 0) {
+    try {
+      const built = await shadowBuild({
+        pool, config, bot, app, repo, issueNumber, issue, seed, parsed, runId, settings,
+        turnBudgetMs, model,
+        deps: {
+          worker, agentTurn, limits, managedOpenRouter, sessions, activeWorkers,
+          sessionLifecycle: deps.sessionLifecycle || require('./session-lifecycle'),
+          github,
+        },
+      });
+      if (built) acted = built;
+    } catch (err) {
+      log.error('homeroom-bot', 'Shadow build failed', { app: app.slug, issueNumber, err: err.message });
+    }
   }
   return { ran: true, verdict: parsed.verdict, runId, ...(acted ? { acted } : {}) };
+}
+
+/**
+ * A shadow build: a ready verdict on an app outside the live list, built on
+ * a branch of its own and recorded on its run, and nothing else. No
+ * proposal, no post, nothing in the app: the dashboard and the export carry
+ * the branch, for spot-checking what the bot would have proposed before the
+ * app goes live. Bounded by `shadowBuildsPerDay` (counted over the last 24
+ * hours, attempts included) and by the bot's weekly spend, which the build
+ * is debited from like any turn. Resolves 'shadow_built', 'shadow_failed',
+ * or null when it did not try.
+ */
+async function shadowBuild({
+  pool, config, bot, app, repo, issueNumber, issue, seed, parsed, runId, settings,
+  turnBudgetMs, model, deps,
+}) {
+  const { limits, managedOpenRouter, github } = deps;
+  if (!repo || !github.isEnabled()) return null;
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs
+      WHERE build_at > NOW() - INTERVAL '24 hours'`,
+  );
+  if ((rows[0]?.n || 0) >= settings.shadowBuildsPerDay) return null;
+  const budget = await limits.checkBudget(pool, bot.id);
+  if (budget.error) return null;
+  // Claimed before the build, so a second pass counts it at once.
+  await pool.query('UPDATE homeroom_bot_runs SET build_at = NOW() WHERE id = $1', [runId]);
+
+  const built = await live.buildAndPropose({
+    pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
+    turnBudgetMs, model, deps, propose: false,
+  });
+  if (built.costUsd > 0) {
+    try {
+      if (await managedOpenRouter.usesIncludedKey(pool, bot.id)) {
+        await limits.recordSpend(pool, bot.id, Math.round(built.costUsd * 1e6) / 1e4, { byok: false });
+      }
+    } catch (err) {
+      log.warn('homeroom-bot', 'Shadow build spend debit failed', { err: err.message });
+    }
+  }
+  await pool.query(
+    `UPDATE homeroom_bot_runs
+        SET build_ok = $2, build_branch = $3, build_sha = $4, build_commits = $5,
+            build_error = $6, build_cost_usd = $7, build_session_id = $8
+      WHERE id = $1`,
+    [runId, !!built.ok, built.branchName || null, built.sha || null,
+      Number.isFinite(built.commits) ? built.commits : null,
+      built.ok ? null : clip(built.error || 'unknown', MAX_ERROR_CHARS),
+      built.costUsd ?? null, built.sessionId || null],
+  );
+  log.info('homeroom-bot', 'Shadow build', {
+    app: app.slug, issueNumber, runId, ok: !!built.ok, branch: built.branchName || null,
+    commits: built.commits ?? null, costUsd: built.costUsd ?? null, error: built.ok ? null : built.error,
+  });
+  return built.ok ? 'shadow_built' : 'shadow_failed';
 }
 
 /**
@@ -2279,6 +2369,8 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.rating, r.rating_note, r.rated_at, r.thread_seen_at, r.model, r.cost_usd::float8 AS cost_usd,
             r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.created_at,
             r.proposal_session_id,
+            r.build_ok, r.build_branch, r.build_sha, r.build_commits, r.build_error,
+            r.build_cost_usd::float8 AS build_cost_usd, r.build_at,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -2289,6 +2381,16 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
         AND (NOT $5::boolean OR r.budget_stop IS NOT NULL)
       ORDER BY r.id DESC
       LIMIT $4`;
+
+/**
+ * A shadow build's branch against the repository's default branch, on
+ * GitHub, for a spot check. Built from the app's own repo_url and the
+ * branch the platform named; null when either is missing.
+ */
+function buildUrlFor(row) {
+  if (!row.repo_url || !row.build_branch) return null;
+  return `${String(row.repo_url).replace(/\.git$/, '')}/compare/${encodeURIComponent(row.build_branch).replace(/%2F/g, '/')}`;
+}
 
 /** The issue this run triaged, on GitHub. Null when the app has no repo. */
 function issueUrlFor(row) {
@@ -2311,11 +2413,14 @@ const EXPORT_COLUMNS = Object.freeze([
   // #3146: the proposal a live `ready` run opened. Last, so an analysis
   // that reads the earlier columns by position is not shifted.
   'proposal_session_id',
+  // Shadow builds, after everything else for the same reason.
+  'build_ok', 'build_branch', 'build_url', 'build_sha', 'build_commits', 'build_error',
+  'build_cost_usd', 'build_at',
 ]);
 
 /** One run as the values of EXPORT_COLUMNS, in that order. */
 function exportRow(row) {
-  const flat = { ...row, issue_url: issueUrlFor(row) };
+  const flat = { ...row, issue_url: issueUrlFor(row), build_url: buildUrlFor(row) };
   return EXPORT_COLUMNS.map((key) => {
     const v = flat[key];
     if (v == null) return '';
@@ -2451,7 +2556,7 @@ async function adminPayload(pool, config, {
     loop: lastPass ? { ...lastPass, refusals: lastRefusals } : lastPass,
     totals,
     queue: { depth: depthRows[0]?.depth || 0, items: queueRows },
-    runs: runRows.map((r) => ({ ...r, issueUrl: issueUrlFor(r) })),
+    runs: runRows.map((r) => ({ ...r, issueUrl: issueUrlFor(r), buildUrl: buildUrlFor(r) })),
     apps: appRows,
     caps: { proposalsPerApp: PROPOSALS_PER_APP_CAP, questionsPerAppPerDay: QUESTION_TRIPWIRE_PER_DAY },
   };
@@ -2553,6 +2658,8 @@ module.exports = {
   DEFAULTS,
   noteIssueActivity,
   noteProposalActivity,
+  shadowBuild,
+  MAX_SHADOW_BUILDS_PER_DAY,
   onBusMessage,
   refreshApps,
   BUS_KIND,
