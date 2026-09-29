@@ -40,6 +40,8 @@ const COMPONENTS = new Set([
   'homeroom_bot_build',
   // Its spec turn, just before that build (live and shadow alike).
   'homeroom_bot_spec',
+  // The hub's since-your-last-visit line (services/since-summary.js).
+  'since_summary',
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([

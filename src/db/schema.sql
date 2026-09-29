@@ -7372,6 +7372,32 @@ ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovery_version INTEG
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS placement_version INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_version INTEGER NOT NULL DEFAULT 1;
 
+-- The hub's since-your-last-visit line (services/since-summary.js). One row
+-- per app per WINDOW, shared by every viewer whose last visit falls in it:
+-- a visit is floored to a six-hour block within the last day, to its UTC
+-- day within two weeks, and to two weeks ago before that, so a project has
+-- about twenty live windows whoever is visiting. Built from merged changes
+-- only, which every viewer of the app may see, exactly like
+-- app_workshop_themes above. head_at is the newest change the line was
+-- written for; a newer merge makes it stale, and a stale line is served as
+-- is while it is rewritten behind the request, at most once an hour.
+--   summary      the one or two sentences (Claude Sonnet 5.5)
+--   error        the last failed attempt, for the hourly retry backoff
+--   version      llm.SINCE_SUMMARY_VERSION the line was written under
+-- Rows for windows older than the longest one are dropped on write.
+CREATE TABLE IF NOT EXISTS app_since_summaries (
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  window_start  TIMESTAMPTZ NOT NULL,
+  head_at       TIMESTAMPTZ NOT NULL,
+  change_count  INTEGER NOT NULL DEFAULT 0,
+  summary       TEXT,
+  error         TEXT,
+  model         VARCHAR(64),
+  version       INTEGER NOT NULL DEFAULT 1,
+  generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, window_start)
+);
+
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,
 -- retention, and realtime audiences are all platform-user concerns.
