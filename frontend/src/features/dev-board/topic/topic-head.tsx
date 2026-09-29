@@ -700,6 +700,96 @@ function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
   );
 }
 
+/**
+ * #3344 — the owner's pencil on the summary paragraph. The IssueBody editor's
+ * pattern, pointed at the proposal's summary route: raw Markdown in, PATCH
+ * out, no draft clobbered while the author is typing. The summary is one
+ * paragraph a voter reads first, so 600 characters — the same bound the
+ * import path applies — and nothing else on the page moves with it.
+ */
+function SummaryEdit({ proposalId, editor, onSaved }: {
+  proposalId: number;
+  editor: NonNullable<TopicBody['summaryEditor']>;
+  onSaved: (summary: string) => void;
+}): ReactNode {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(editor.markdown);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  // A checks poll or WS event repaints the head while the editor is open.
+  // Adopt an incoming summary only while the author is not editing; a draft
+  // being typed is never replaced under them.
+  useEffect(() => {
+    if (editing) return;
+    setDraft(editor.markdown);
+  }, [editor.markdown, editing]);
+
+  const cancel = () => {
+    setDraft(editor.markdown);
+    setError('');
+    setEditing(false);
+  };
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/sessions/${proposalId}/summary`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ summary: draft }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Failed to update the summary.');
+      const saved = typeof result.summary === 'string' ? result.summary : draft;
+      setDraft(saved);
+      setEditing(false);
+      onSaved(saved);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update the summary.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) return (
+    <button
+      type="button"
+      className="shrink-0 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
+      title="Edit the summary (you created this proposal)"
+      aria-label="Edit summary"
+      data-topic-summary-edit={proposalId}
+      onClick={() => { setError(''); setEditing(true); }}
+    >
+      <PencilSquareIcon className="w-4 h-4" aria-hidden="true" />
+    </button>
+  );
+  return (
+    <form className="mt-2 space-y-3" data-topic-summary-editor={proposalId} onSubmit={save}>
+      <Textarea
+        id="dev-topic-summary-input"
+        rows={6}
+        maxLength={600}
+        width="full"
+        className="resize-y"
+        placeholder="Describe what this change does, in a sentence or two."
+        value={draft}
+        autoFocus
+        disabled={saving}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+      />
+      {error ? <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p> : null}
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancel} disabled={saving}>Cancel</Button>
+        <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+      </div>
+    </form>
+  );
+}
+
 function IssueAssociations({
   proposalId,
   issues,
@@ -991,6 +1081,14 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
   const noSpec = all.find((a) => isVoteSpec(a, 'no'));
   const vote = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
   const pills = vote ? all.filter((a) => a !== yesSpec && a !== noSpec) : all;
+  // #3344: the saved summary is stamped onto the cached rows (and any other
+  // open change page) by app-view's _cacheSessionSummary before this head
+  // repaints; the editor's own state closes first.
+  const saveSummary = (summary: string) => {
+    const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+    if (av && typeof av._cacheSessionSummary === 'function') av._cacheSessionSummary(id, summary);
+    if (typeof av?._renderTopicHead === 'function') av._renderTopicHead();
+  };
   // The tags: priority, assignee, category, and the linkage. The state
   // chips — checks, behind main, the shots — stay off: the steps say it.
   const badges = (card.badges || []).filter(Boolean);
@@ -1044,6 +1142,11 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
       </div>
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
       <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
+      {/* #3344: the owner's pencil sits AFTER the summary row — the summary
+          node keeps the hero's own child chain and the pencil is a separate
+          block under it, so neither a pinned markup order nor the summary's
+          own spacing changes. */}
+      {body.summaryEditor?.canEdit && id ? <SummaryEdit proposalId={id} editor={body.summaryEditor} onSaved={saveSummary} /> : null}
       {body.summaryStale && body.summaryHtml
         ? <p className="dev-topic-note" role="note">This summary may describe an earlier revision.</p>
         : null}

@@ -133,6 +133,10 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // or vote. The tool uses the browser's same doorway instead of gaining a
   // parallel metadata writer.
   { method: 'PATCH', pattern: '/api/sessions/:id/linked-issues' },
+  // Post-creation summary correction (#3344). Owner-scoped like the
+  // linked-issues route above it: bounded text, no code, no vote, and the
+  // route — not this matcher — decides who may write.
+  { method: 'PATCH', pattern: '/api/sessions/:id/summary' },
   { method: 'GET', pattern: '/api/me/active-sessions' },
   // The proposal pipeline: submit_work turns a pushed branch into an
   // ordinary imported proposal, and the platform-build fallback runs an
@@ -226,6 +230,9 @@ const AGENT_MAYOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/sessions/:id/status' },
   { method: 'GET', pattern: '/api/sessions/:id/spec' },
   { method: 'PATCH', pattern: '/api/sessions/:id/linked-issues' },
+  // The Mayor's summary correction for the user's own proposal (#3344),
+  // owner-scoped by the route and confirmed before the tool runs.
+  { method: 'PATCH', pattern: '/api/sessions/:id/summary' },
   // The change lifecycle (start_change, promote_change, recheck_change,
   // sync_change, withdraw_change). start_change names the change on the
   // create itself, so the rename route is not on this list.

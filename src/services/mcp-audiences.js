@@ -60,6 +60,7 @@ const AGENT_MAYOR_TOOLS = Object.freeze([
   'release_request',
   'propose_close_request',
   'update_proposal_issues',
+  'update_proposal_summary',
   // The native change lifecycle.
   'start_change',
   'promote_change',
@@ -89,6 +90,7 @@ const MAYOR_CONFIRMED_TOOLS = Object.freeze([
   'release_request',
   'propose_close_request',
   'update_proposal_issues',
+  'update_proposal_summary',
   'start_change',
   'promote_change',
   'sync_change',

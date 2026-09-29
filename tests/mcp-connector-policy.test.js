@@ -65,6 +65,8 @@ test('the allowlist permits exactly the routes the tools need', () => {
     // #2028 — metadata-only deltas on the caller's own proposal. The route
     // (not this matcher) enforces ownership and the 50-issue cap.
     ['PATCH', '/api/sessions/412/linked-issues'],
+    // #3344 — the owner's summary correction, bounded by the route itself.
+    ['PATCH', '/api/sessions/412/summary'],
     ['GET', '/api/me/active-sessions'],
     // #967 pass 2 — the proposal pipeline. Each of these is owner-scoped or
     // access-checked by its own handler; the allowlist only decides whether

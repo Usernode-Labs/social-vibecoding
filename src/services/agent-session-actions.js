@@ -41,6 +41,7 @@ const ACTION_LABELS = Object.freeze({
   release_request: 'Release the request',
   propose_close_request: 'Propose closing the request',
   update_proposal_issues: 'Update the requests the proposal addresses',
+  update_proposal_summary: 'Edit the proposal\'s summary',
 });
 
 class ActionError extends Error {
@@ -157,7 +158,8 @@ async function listActions(pool, { userId, agentSessionId, limit = 50 }) {
 async function bindingFor(pool, { userId, toolName, input }) {
   const changeId = ['promote_change', 'sync_change', 'withdraw_change'].includes(toolName)
     ? input.changeId
-    : toolName === 'update_proposal_issues' ? input.proposalId : null;
+    : (toolName === 'update_proposal_issues' || toolName === 'update_proposal_summary')
+      ? input.proposalId : null;
   if (changeId != null) {
     const id = Number(changeId);
     if (!Number.isSafeInteger(id) || id <= 0) throw new ActionError(400, 'invalid_action', 'The action names no change.');
@@ -253,6 +255,9 @@ function outcomeLine(toolName, stored, { forModel = false } = {}) {
       const pr = requestNumber(s.prNumber);
       return `${pr ? `PR #${pr} (change ${requestNumber(s.changeId)})` : `Change ${requestNumber(s.changeId)}`} `
         + 'is up for the group\'s vote.';
+    }
+    if (toolName === 'update_proposal_summary' && typeof s.summary === 'string') {
+      return `The summary of change ${requestNumber(s.proposalId)} was updated.`;
     }
     if (toolName === 'update_proposal_issues' && Array.isArray(s.linkedIssues)) {
       const added = requestList(s.addedIssues);

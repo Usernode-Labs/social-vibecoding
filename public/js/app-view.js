@@ -4081,6 +4081,10 @@ const AppView = {
         actions: AppView._detailActionsView('proposal', item),
         summaryHtml: AppView._proposalSummaryHtml(item),
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
+        summaryEditor: {
+          markdown: typeof item.pr_summary_md === 'string' ? item.pr_summary_md : '',
+          canEdit: !AppView.readOnly && !!(App.user && Number(item.user_id) === Number(App.user.id)) && ['active', 'paused'].includes(item.status) && item.source !== 'imported',
+        },
         // #1370's "Full proposal details" disclosure, between the generated
         // summary and the detail block, exactly where it was inserted.
         proposalBody: AppView._proposalBodyView(item),
@@ -4106,6 +4110,10 @@ const AppView = {
         actions: AppView._detailActionsView('session', item),
         summaryHtml: AppView._proposalSummaryHtml(item),
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
+        summaryEditor: {
+          markdown: typeof item.pr_summary_md === 'string' ? item.pr_summary_md : '',
+          canEdit: !AppView.readOnly && !!(App.user && Number(item.user_id) === Number(App.user.id)) && ['active', 'paused'].includes(item.status) && item.source !== 'imported',
+        },
         proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
         transcript: AppView._transcriptSectionView(item),
@@ -4502,6 +4510,14 @@ const AppView = {
     body.changeId = item.id;
     AppView._changeItems.set(Number(item.id), item);
     body.canEditIssues = !AppView.readOnly && (mine || !!App.user?.canAdminWrite);
+    // #3344 — the raw Markdown and owner-only edit permission for the
+    // summary. The cached row is the source: /details does not carry
+    // pr_summary_md, so a row without the key is an empty draft (the
+    // add-a-summary case), not a missing feature.
+    body.summaryEditor = {
+      markdown: typeof item.pr_summary_md === 'string' ? item.pr_summary_md : '',
+      canEdit: !AppView.readOnly && mine && ['active', 'paused'].includes(item.status) && item.source !== 'imported',
+    };
     body.issueOptions = (AppView._ghIssues || []).map((issue) => ({
       n: Number(issue.number),
       title: issue.title || `Issue #${issue.number}`,
@@ -16364,6 +16380,34 @@ const AppView = {
         row.pr_title_fallback = false;
       }
     }
+  },
+
+  // #3344: the summary counterpart to _cacheSessionTitle. The server does
+  // the trimming and the 600-char gate; this only stamps the saved text onto
+  // every cached copy of the row, clears the stale flag (an author-written
+  // summary is current for this revision) and lets summaryHtml re-derive.
+  _cacheSessionSummary(sessionId, summary) {
+    const id = Number(sessionId);
+    const rows = [];
+    for (const list of [
+      AppView._mySessions, AppView._sharedSessions, AppView._proposals,
+      AppView._merged,
+    ]) {
+      if (!Array.isArray(list)) continue;
+      for (const row of list) if (row && Number(row.id) === id) rows.push(row);
+    }
+    if (AppView._sharedById && AppView._sharedById[id]) rows.push(AppView._sharedById[id]);
+    if (AppView._topicProposal && Number(AppView._topicProposal.id) === id) {
+      rows.push(AppView._topicProposal);
+    }
+    if (typeof DevChat !== 'undefined' && DevChat.currentSession
+      && Number(DevChat.currentSession.id) === id) rows.push(DevChat.currentSession);
+
+    for (const row of new Set(rows)) {
+      row.pr_summary_md = summary;
+      row.pr_summary_stale = false;
+    }
+    AppView.patchTopicProposal(id, { pr_summary_md: summary, pr_summary_stale: false });
   },
 
   beginSessionTitleEdit(sessionId) {

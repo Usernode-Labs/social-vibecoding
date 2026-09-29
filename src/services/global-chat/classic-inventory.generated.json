@@ -7326,6 +7326,21 @@
     },
     {
       "source": "src/routes/sessions.js",
+      "method": "PATCH",
+      "path": "/api/sessions/:id/summary",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "development.patch.sessions.item.summary.b1cbae5b",
+      "domain": "development",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "session",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#workshop"
+    },
+    {
+      "source": "src/routes/sessions.js",
       "method": "GET",
       "path": "/api/me/active-sessions",
       "expression": null,

@@ -476,6 +476,10 @@ async function scheduleRetainedInteractiveTurn({
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
 const MANUAL_SESSION_TITLE_MAX = 256;
+// The manual summary edit matches the import path's bound
+// (MAX_IMPORT_SUMMARY in routes/votes.js), so one cap covers both ways a
+// summary is written by a person rather than generated.
+const MANUAL_SESSION_SUMMARY_MAX = 600;
 
 // #2779: classic dev sessions — a per-change chat created straight from the
 // browser — are phased out. New work starts in an agent session, whose
@@ -2072,6 +2076,88 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         sessionId, message: err.message,
       });
       return res.status(500).json({ error: 'Could not update the title' });
+    }
+  });
+
+  // PATCH /api/sessions/:id/summary (#3344)
+  //
+  // Fix or add the plain-language paragraph under a proposal's title after
+  // the proposal already exists. Owner-scoped and native-only, exactly like
+  // the title route above it: an imported PR's description stays with its
+  // external author and merged/archived work is settled.
+  //
+  // The app-level collab gate runs first; the UPDATE repeats the narrower
+  // author/lifecycle/source checks atomically and returns the same 404 for
+  // every miss so a foreign private session cannot be enumerated.
+  router.patch('/api/sessions/:id/summary', drainGuard, async (req, res) => {
+    const sessionId = /^[1-9]\d{0,9}$/.test(String(req.params.id || ''))
+      ? Number(req.params.id) : null;
+    if (!sessionId || sessionId > 2147483647) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const rawSummary = req.body?.summary;
+    const summary = typeof rawSummary === 'string'
+      ? rawSummary.replace(/\r\n/g, '\n').trim()
+      : '';
+    if (!summary) return res.status(400).json({ error: 'Summary required' });
+    if (summary.length > MANUAL_SESSION_SUMMARY_MAX) {
+      return res.status(400).json({
+        error: `Summary too long (max ${MANUAL_SESSION_SUMMARY_MAX} chars)`,
+      });
+    }
+
+    try {
+      // Serialize against submit_work's proposal update: a later code
+      // revision may regenerate the summary, and this write has to fence
+      // against a generation pass that read an older input version.
+      const { rows } = await proposalUpdate.withProposalLock(pool, sessionId, () => pool.query(
+        `UPDATE chat_sessions cs
+            SET pr_summary_md = $1::text,
+                pr_summary_source = 'author',
+                pr_summary_stale = FALSE,
+                pr_summary_input_version = pr_summary_input_version + 1,
+                pr_summary_previous_md = COALESCE(cs.pr_summary_md, cs.pr_summary_previous_md),
+                pr_summary_source_head_sha = NULL,
+                pr_summary_source_body_hash = NULL
+           FROM apps a
+          WHERE cs.id = $2 AND cs.user_id = $3 AND a.id = cs.app_id
+            AND cs.status IN ('active', 'paused', 'promoted', 'merging')
+            AND cs.is_headless = FALSE
+            AND cs.source IS DISTINCT FROM 'imported'
+          RETURNING cs.id, cs.app_id, a.slug AS app_slug`,
+        [summary, sessionId, req.user.id]
+      ));
+      const session = rows[0];
+      if (!session) return res.status(404).json({ error: 'Session not found' });
+
+      // No GitHub write here: the summary reaches the pull-request body only
+      // as the preamble applyPrMetadata writes at generation time, and the
+      // title route's GitHub mirror has no summary equivalent.
+      try {
+        const { pushSessionUpdate } = require('../services/ws');
+        pushSessionUpdate({
+          action: 'summary', sessionId, appId: session.app_id,
+          appSlug: session.app_slug, summary,
+        });
+      } catch (err) {
+        log.warn('sessions', 'Proposal summary broadcast failed', {
+          sessionId, message: err.message,
+        });
+      }
+
+      return res.json({
+        ok: true,
+        proposalId: sessionId,
+        summary,
+        source: 'author',
+        stale: false,
+      });
+    } catch (err) {
+      log.error('sessions', 'Proposal summary update failed', {
+        sessionId, message: err.message,
+      });
+      return res.status(500).json({ error: 'Could not update the summary' });
     }
   });
 

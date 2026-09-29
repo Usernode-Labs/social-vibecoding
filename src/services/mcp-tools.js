@@ -174,6 +174,7 @@ const ACTING_TOOLS = Object.freeze([
   'start_platform_build',
   'submit_platform_build',
   'update_proposal_issues',
+  'update_proposal_summary',
   'demo_mode',
   'demo_propose',
   'demo_promote',
@@ -925,6 +926,11 @@ function shapeProposal(session, origin) {
     // which is not the same as an empty description.
     description: untrusted(session.pr_body, MAX_BODY_CHARS) || null,
     status: session.status || null,
+    // #3344. The one paragraph the group reads first, readable for the same
+    // reason linkedIssues below it is: an agent that can edit the summary
+    // must be able to read it before it writes. Null when none was generated
+    // or written yet.
+    summary: untrusted(session.pr_summary_md, 600) || null,
     // #2028. The relationship an agent may now edit after proposal creation
     // has to be readable first; otherwise every update is a blind delta.
     linkedIssues: require('./pr-metadata').sanitizeIssueNumbers(session.linked_issues),
@@ -2818,6 +2824,53 @@ function registerTools(server, ctx) {
       prBodyStatus: String(body.prBodyStatus || 'unknown'),
       webPath: changeWebPath(origin, body.appSlug || '', proposalId),
       nextStep: `The proposal now carries the returned linkedIssues set. No code or votes changed.${prNote}`,
+    });
+  });
+
+  // ── update_proposal_summary (#3344) ──────────────────────────────────
+  //
+  // Prose-only continuation for an existing proposal, the twin of
+  // update_proposal_issues above: a summary correction must not require a
+  // branch push (which would clear votes and rebuild unchanged code) and
+  // must not ride on submit_work. Both the connector and the browser call
+  // the same owner-scoped platform route.
+  server.registerTool('update_proposal_summary', {
+    title: 'Update a proposal’s summary',
+    description: 'Rewrite the short plain-language summary shown under a proposal title — the paragraph the group reads first. Read get_proposal.summary first, then pass the complete replacement text: 1 to 600 characters, longer is refused rather than cut. This changes no code, clears no votes and does not rewrite the pull-request body; the summary reaches it only when the platform regenerates metadata. Only the proposal owner can use this through the connector.',
+    inputSchema: {
+      proposalId: z.number().int().positive()
+        .describe('The existing proposal or in-progress session id returned by get_proposal or list_my_proposals.'),
+      summary: z.string().min(1).max(600)
+        .describe('The complete replacement summary, in one or two plain sentences.'),
+    },
+    outputSchema: {
+      proposalId: z.number(),
+      appSlug: z.string(),
+      summary: z.string(),
+      stale: z.boolean(),
+      webPath: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ proposalId, summary }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const result = await callPlatform(
+      baseUrl,
+      accessToken,
+      'PATCH',
+      `/api/sessions/${proposalId}/summary`,
+      { summary }
+    );
+    if (!result.ok) return platformError(result);
+    const body = result.body || {};
+    return toolResult({
+      proposalId: Number(body.proposalId || proposalId),
+      appSlug: String(body.appSlug || ''),
+      summary: String(body.summary || summary),
+      stale: body.stale === true,
+      webPath: changeWebPath(origin, body.appSlug || '', proposalId),
+      nextStep: 'The summary is saved. A later code revision may regenerate it from the new revision; read get_proposal.summary before editing again.',
     });
   });
 

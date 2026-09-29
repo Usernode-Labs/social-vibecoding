@@ -351,6 +351,47 @@ test('update_proposal_issues sends bounded deltas through the platform route', a
   } finally { c.restore(); }
 });
 
+test('update_proposal_summary sends bounded prose through the platform route', async () => {
+  const c = connector((method, pathname) => {
+    assert.equal(method, 'PATCH');
+    assert.equal(pathname, '/api/sessions/412/summary');
+    return {
+      proposalId: 412,
+      appSlug: 'recipe-box',
+      summary: 'Previews wait for sign-in.',
+      stale: false,
+    };
+  }, { scopes: [READ_SCOPE, WRITE_SCOPE] });
+  try {
+    const result = (await c.handlers.get('update_proposal_summary')({
+      proposalId: 412, summary: 'Previews wait for sign-in.',
+    })).structuredContent;
+    assert.deepEqual(c.calls[0], {
+      method: 'PATCH',
+      pathname: '/api/sessions/412/summary',
+      body: { summary: 'Previews wait for sign-in.' },
+    });
+    assert.equal(result.summary, 'Previews wait for sign-in.');
+    assert.equal(result.stale, false);
+    assert.equal(result.webPath, `${ORIGIN}/#app/recipe-box/dev/proposals/412`);
+    assert.match(result.nextStep, /may regenerate/);
+  } finally { c.restore(); }
+});
+
+test('update_proposal_summary is a write-scoped acting tool', async () => {
+  const c = connector(() => { throw new Error('must not call platform'); });
+  try {
+    const refused = await c.handlers.get('update_proposal_summary')({
+      proposalId: 412, summary: 'x',
+    });
+    assert.equal(refused.isError, true);
+    assert.equal(refused.structuredContent.code, 'insufficient_scope');
+    const spec = c.specs.get('update_proposal_summary');
+    assert.match(spec.description, /Read get_proposal.summary first/);
+    assert.match(spec.description, /600 characters/);
+  } finally { c.restore(); }
+});
+
 test('update_proposal_issues refuses empty deltas and read-only grants before HTTP', async () => {
   const c = connector(() => { throw new Error('must not call platform'); });
   try {
@@ -1776,6 +1817,15 @@ test('proposal shaping returns the platform hash route', () => {
   assert.deepEqual(proposal.linkedIssues, [12, 27]);
   assert.match(proposal.title, /^<untrusted-content>/);
 
+  // #3344: the summary an agent may edit has to be readable first, inside
+  // the same untrusted envelope the rest of the row's free text uses.
+  const summarized = tools.shapeProposal(
+    { id: 58, app_slug: 'recipe-box', pr_summary_md: 'Previews wait for sign-in.' },
+    ORIGIN
+  );
+  assert.equal(summarized.summary, '<untrusted-content>Previews wait for sign-in.</untrusted-content>');
+  assert.equal(tools.shapeProposal({ id: 58, app_slug: 'recipe-box' }, ORIGIN).summary, null);
+
   // A session with no app still shapes, without inventing a link.
   const orphan = tools.shapeProposal({ id: 9 }, ORIGIN);
   assert.equal(orphan.webPath, null);
@@ -1868,7 +1918,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'start_change',
     'start_platform_build', 'submit_platform_build', 'submit_work',
     'sync_change',
-    'update_proposal_issues', 'whoami',
+    'update_proposal_issues', 'update_proposal_summary', 'whoami',
     'withdraw_change',
   ]);
   // Nothing that decides an app's future. The connector hands work to the
@@ -2037,7 +2087,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'prepare_work', 'promote_change', 'propose_close_request', 'recheck_change', 'start_change',
     'start_platform_build',
     'submit_platform_build', 'submit_work', 'sync_change',
-    'update_proposal_issues', 'withdraw_change',
+    'update_proposal_issues', 'update_proposal_summary', 'withdraw_change',
   ]);
   for (const name of tools.ACTING_TOOLS) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
