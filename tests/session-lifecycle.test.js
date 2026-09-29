@@ -518,6 +518,54 @@ test('pauseSession: only targets status=active rows (promoted are refused)', asy
   }
 });
 
+// #3181: a pause the platform makes while a turn is still open on the
+// session ends that turn (the worker goes with it), so its owner is told the
+// session stopped before finishing. A pause the owner asked for, a session
+// with no turn open, and a turn that only has its cleanup left stay silent.
+async function pauseWith({ reason, activeTurn, isHeadless = false }) {
+  const { subject, restore } = loadWithStubs();
+  try {
+    const pool = makePool([
+      [/SET status = 'paused'\s+WHERE/, [{ id: 7 }]],
+      [/SELECT cs\.\*/, [{
+        id: 7, user_id: 3, app_id: 21, app_slug: 'widget', is_headless: isHeadless,
+        active_turn: activeTurn,
+      }]],
+    ]);
+    const res = await subject.pauseSession({ pool, sessionId: 7, reason });
+    assert.equal(res.paused, true);
+    return pool.calls.find((c) => /INSERT INTO notifications[\s\S]*'session_stalled'/.test(c.sql)) || null;
+  } finally {
+    restore();
+  }
+}
+
+const OPEN_TURN = { turnId: 't-1', phase: 'executing', mode: 'build' };
+
+test('pauseSession: a system pause mid-turn tells the owner it stopped before finishing', async () => {
+  for (const reason of ['lru', 'pressure', 'auto-idle']) {
+    const insert = await pauseWith({ reason, activeTurn: OPEN_TURN });
+    assert.ok(insert, `${reason}: a session_stalled notification is created`);
+    assert.deepEqual(insert.params, [3, 21, 7], 'for the owner, on the app, about this session');
+  }
+  // A tail still to run is a turn still open too.
+  assert.ok(await pauseWith({ reason: 'lru', activeTurn: { turnId: 't-1', phase: 'tail_pending' } }));
+});
+
+test('pauseSession: an owner pause, an idle session or a finished turn stays silent', async () => {
+  assert.equal(await pauseWith({ reason: 'manual', activeTurn: OPEN_TURN }), null,
+    'the owner paused it: a deliberate end, like pressing stop');
+  assert.equal(await pauseWith({ reason: 'agent-session-switch', activeTurn: OPEN_TURN }), null,
+    'parking a change is the owner too');
+  assert.equal(await pauseWith({ reason: 'lru', activeTurn: null }), null,
+    'nothing was running: the normal pause of an idle, finished session');
+  assert.equal(await pauseWith({
+    reason: 'lru', activeTurn: { turnId: 't-1', phase: 'cleanup_pending' },
+  }), null, 'only the cleanup was left, so the turn had finished');
+  assert.equal(await pauseWith({ reason: 'lru', activeTurn: OPEN_TURN, isHeadless: true }), null,
+    'headless runs report through auto_solve_done');
+});
+
 test('freeGlobalSlot skips non-worker proposal pipelines that own the session', async () => {
   const { subject, spies, restore } = loadWithStubs();
   try {

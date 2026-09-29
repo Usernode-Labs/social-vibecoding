@@ -49,10 +49,12 @@ export function ReactionBarView({
   grid,
   gridOpen,
   editable,
+  reportable,
+  readOnly,
 }: ReactionBarProps & ReactionBarState) {
   return (
     <>
-      <div className="gc-react-bar-quick">
+      {!readOnly ? <div className="gc-react-bar-quick">
         {/*
             Keyed by position: both lists are module constants, never reordered
             and never filtered, so the index IS the identity — and the two
@@ -72,8 +74,9 @@ export function ReactionBarView({
         >
           ✏️
         </button>
-      </div>
-      <div className={`gc-react-bar-grid${gridOpen ? '' : ' hidden'}`}>
+      </div> : null}
+      {reportable ? <button type="button" className="gc-react-bar-report min-h-[44px] w-full text-sm text-red-700 dark:text-red-400">Report message</button> : null}
+      <div className={`gc-react-bar-grid${gridOpen && !readOnly ? '' : ' hidden'}`} >
         {grid.map((emoji, i) => <EmojiButton key={`${i}:${emoji}`} emoji={emoji} />)}
       </div>
     </>

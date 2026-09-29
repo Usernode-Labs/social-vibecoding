@@ -67,7 +67,9 @@ test('every build and scout gets the design text, whatever the backend', () => {
 });
 
 test('an OpenRouter scout is told it reads through the shell and changes nothing', () => {
-  assert.match(SESSIONS, /const scoutPlanModeLine = isCodexSession\s*\n\s*\? 'You are running in PLAN MODE: read and search the repository with read-only shell commands/);
+  // #3296: only when Codex runs it; a model the platform runs in Claude Code
+  // gets Claude's tools and the Claude wording below.
+  assert.match(SESSIONS, /const scoutPlanModeLine = isCodexSession && agentIdentity\.harness !== 'claude'\s*\n\s*\? 'You are running in PLAN MODE: read and search the repository with read-only shell commands/);
   assert.match(SESSIONS, /: 'You are running in PLAN MODE: you can read files \(Read, Glob, Grep\) but you cannot edit, commit, or push anything\. Do not attempt to\.';/,
     'the Claude scout keeps its exact wording');
 });

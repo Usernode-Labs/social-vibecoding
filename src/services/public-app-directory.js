@@ -35,6 +35,7 @@ async function listPublicApps(pool, { includeWallets = true } = {}) {
          GROUP BY a1.app_id
        ) au ON au.app_id = a.id
       WHERE NOT a.self_hosted
+        AND a.moderation_suspended_at IS NULL
         AND a.view_visibility = 'public'
         AND a.status <> ALL($1::text[])
       ORDER BY COALESCE(au.cnt, 0) DESC,

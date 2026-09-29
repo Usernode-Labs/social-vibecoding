@@ -255,6 +255,7 @@
       // gate lines in _renderLanguageSection.
       { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
       { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
+      { key: 'blocked-apps', label: 'Blocked apps', group: 'Preferences' },
       // The replay control for Home's welcome tour (#2255). Last in
       // Preferences: it configures nothing, it re-runs something, and the
       // tour's own Skip promises this row exists.
@@ -3077,7 +3078,11 @@
       const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
       if (heading) heading.textContent = 'OpenRouter';
       if (intro) {
-        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your account comes with an included OpenRouter key, so OpenRouter is the default and GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
+        // #3296: the one worker detail worth naming. The platform runs some
+        // OpenRouter models in Claude Code, and the model list tags them; the
+        // default runner stays unnamed, like every other implementation
+        // detail. sections/openrouter.tsx renders this same text statically.
+        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your account comes with an included OpenRouter key, so OpenRouter is the default and GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Models marked Claude Code in the model list run in Claude Code. Keys are encrypted at rest and injected only for each turn.';
       }
       if (modelLabel) modelLabel.textContent = 'OpenRouter model';
     },
@@ -3111,6 +3116,9 @@
       const badges = [];
       if (model?.isFavorite) badges.push('★');
       if (model?.isRecommended) badges.push('Recommended');
+      // #3296: the platform runs some OpenRouter models in Claude Code rather
+      // than Codex. Only that exception is named; Codex is every other row.
+      if (model?.harness === 'claude') badges.push('Claude Code');
       if (model?.createdAt) {
         const age = Date.now() - Date.parse(model.createdAt);
         if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
@@ -3186,7 +3194,7 @@
         const age = this._openRouterCatalogAgeText(this._openRouterCatalogRefreshedAt);
         meta.textContent = visibleModels.length
           ? `${visibleModels.length} of ${this._openRouterCatalogTotal || this._openRouterModels.length} models${age ? ` · ${age}` : ''}`
-          : `No key-visible models match. Refresh, then check this key's OpenRouter account policies${age ? ` · ${age}` : ''}`;
+          : `No models match. Clear the search or show all models${age ? ` · ${age}` : ''}`;
       }
       this._syncOpenRouterModelDetails();
     },

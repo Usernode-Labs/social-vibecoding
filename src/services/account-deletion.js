@@ -233,7 +233,8 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
     await db.query(`DELETE FROM chat_session_messages WHERE session_id IN
       (SELECT id FROM chat_sessions WHERE user_id = $1 AND transcript_shared_at IS NULL)`, [userId]);
     await db.query(`UPDATE chat_sessions SET spec_md = '', pr_title = NULL, session_title = NULL, proposed_pr_title = NULL,
-      pr_summary_md = NULL, pr_body = NULL, testing_md = NULL, local_agent_label = NULL
+      pr_summary_md = NULL, pr_summary_previous_md = NULL, pr_body = NULL,
+      testing_md = NULL, local_agent_label = NULL
       WHERE user_id = $1 AND shared_at IS NULL AND pr_number IS NULL`, [userId]);
     await db.query(`DELETE FROM chat_session_specs WHERE session_id IN
       (SELECT id FROM chat_sessions WHERE user_id = $1 AND shared_at IS NULL AND pr_number IS NULL
@@ -280,9 +281,12 @@ async function deleteAccount(pool, { userId, actorId, mode, confirmation, passwo
     await db.query(`UPDATE onchain_accounts SET description = NULL, secret_key = '',
       registration_code = 'deleted-' || id WHERE user_id = $1`, [userId]);
     await db.query('DELETE FROM waitlist_signups WHERE linked_user_id = $1', [userId]);
+    // Addresses this person invited into a project and nobody has claimed:
+    // somebody else's email, typed by the account being deleted.
+    await db.query('DELETE FROM app_email_invites WHERE invited_by = $1 AND claimed_at IS NULL', [userId]);
     // Only a confirmed address proves ownership of records not keyed by id.
     if (user.email && user.email_confirmed) {
-      for (const table of ['waitlist_signups', 'mobile_otp_codes', 'waitlist_verification_codes']) {
+      for (const table of ['waitlist_signups', 'mobile_otp_codes', 'waitlist_verification_codes', 'app_email_invites']) {
         await db.query(`DELETE FROM ${table} WHERE LOWER(email) = LOWER($1)` +
           (table === 'waitlist_signups' ? ' AND linked_user_id IS NULL' : ''), [user.email]);
       }

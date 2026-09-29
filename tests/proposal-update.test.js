@@ -53,6 +53,9 @@ function fakePool(handlers, queries = []) {
           return { rows: typeof rows === 'function' ? rows(params) : rows };
         }
       }
+      if (sql.includes('UPDATE chat_sessions SET pr_summary_input_version')) {
+        return { rows: [], rowCount: 1 };
+      }
       throw new Error(`unstubbed query: ${String(sql).slice(0, 90)}`);
     },
   };
@@ -1188,7 +1191,7 @@ test('an ACTIVE session gets the commit, pending checks and a staging rebuild', 
 test('the checks UPDATE is guarded on the status and the commit it replaces', async () => {
   const log = {};
   await runSession('active', {}, log);
-  const update = queryOf(log, 'UPDATE chat_sessions');
+  const update = queryOf(log, "SET check_state = 'pending'");
   assert.match(update.sql, /status = 'active'/, 'a pause between the lock and here wins');
   assert.match(update.sql, /checks_commit_sha IS NOT DISTINCT FROM \$3/,
     'a newer head that took the session is not regressed to an older pending state');
@@ -1228,7 +1231,7 @@ test('a PAUSED session takes the commit and defers the build to its reopen', asy
   assert.equal(log.pipelineBegan, undefined);
 
   // The stale verdict is cleared and the stale preview torn down.
-  const cleared = queryOf(log, 'UPDATE chat_sessions');
+  const cleared = queryOf(log, 'SET check_state = NULL');
   assert.match(cleared.sql, /status = 'paused'/);
   assert.match(cleared.sql, /check_state = NULL/,
     "a 'pending' no pipeline will resolve is a spinner forever");
@@ -2136,6 +2139,34 @@ test('an author\'s description rewrites the PR body and keeps its managed blocks
   assert.match(written, /<!-- usernode:visuals -->[\s\S]*BEFORE\/AFTER[\s\S]*<!-- \/usernode:visuals -->/);
   assert.match(written, /Closes #91/);
   assert.equal(mirrors[0][0], written, 'and the row mirrors it so get_proposal can report it');
+});
+
+test('a failed description refresh leaves the older summary marked stale', async () => {
+  const log = {};
+  const session = importedSession({
+    imported_pr_head_repo: 'evan-gh/r',
+    pr_summary_md: 'The older author summary.',
+  });
+  const pool = fakePool([['FROM chat_sessions cs JOIN apps a', [session]]]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getBranchSha: async () => NATIVE_HEAD,
+      getPR: async () => ({
+        state: 'open', merged: false, html_url: 'https://github.com/o/r/pull/91',
+        head: { ref: 'usernode/add-a-button', sha: FORK_HEAD, repo: { owner: { login: 'evan-gh' } } },
+        body: 'The old description.',
+      }),
+      updatePR: async () => { throw new Error('GitHub is unavailable'); },
+    },
+  }, { branch: 'usernode/add-a-button', description: 'The new description.' }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.descriptionRejected, 'github_write_failed');
+  assert.equal(session.pr_summary_md, 'The older author summary.');
+  assert.equal(session.pr_summary_stale, true);
+  assert.ok(pool.queries.some((q) => /pr_summary_previous_md = COALESCE/.test(q.sql)),
+    'the author text is preserved before attempting the external write');
 });
 
 test('somebody else\'s pull request keeps its body, and the caller is told', async () => {

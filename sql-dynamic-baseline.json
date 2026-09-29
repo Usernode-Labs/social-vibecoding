@@ -159,6 +159,20 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
+      "fingerprint": "1012d07842e867c85087",
+      "count": 1,
+      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
+      "fingerprint": "186bdc9221b3dd99e2f1",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted "
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
       "fingerprint": "3ebf0a6fda28d39ecee9",
       "count": 1,
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS} FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
@@ -178,25 +192,11 @@
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
     },
     {
-      "source": "src/routes/apps.js",
-      "kind": "structural-template",
-      "fingerprint": "7b1ff9cff45031446175",
-      "count": 1,
-      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
-    },
-    {
-      "source": "src/routes/apps.js",
-      "kind": "structural-template",
-      "fingerprint": "c803ef2d58849531c800",
-      "count": 1,
-      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boo"
-    },
-    {
       "source": "src/routes/chat.js",
       "kind": "structural-template",
-      "fingerprint": "a8088914fba97dc374b7",
+      "fingerprint": "8fa09856905a3850d87a",
       "count": 1,
-      "preview": "`SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via, m.deleted_at FROM "
+      "preview": "`SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via, m.deleted_at, m.mo"
     },
     {
       "source": "src/routes/cli-auth.js",
@@ -449,6 +449,13 @@
       "fingerprint": "637f78fe7afd6e0a2a5b",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done FROM challenges c JOIN season_events se ON se.id = c.season_event_id LEFT JOIN"
+    },
+    {
+      "source": "src/routes/proposal-handoff.js",
+      "kind": "structural-template",
+      "fingerprint": "1b33c1367f728315daa1",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5, ${summaryFreshness.INVALIDATE_SQL}, handoff_upload_checked_sha = checks_comm"
     },
     {
       "source": "src/routes/sessions.js",
@@ -761,13 +768,6 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "14f151af81fb8a4ffe22",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "157017d7b5984923ede2",
       "count": 1,
       "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.status = 'merged' ${prCursorSql} ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, cs.id DESC LIMIT $${prPa"
@@ -803,9 +803,37 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
+      "fingerprint": "6341099aa6cadaa62bea",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, stale_notified_at = NULL WHERE id = $2`"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "a4928abcd2921e892baa",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
       "fingerprint": "c0f8e5747ee725a64c53",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "f608cc463981be2c9bda",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, stale_notified_at = NULL, approval_epoch = approval_epoch + CASE WHEN $3::"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "76b99148103cf1d2387f",
+      "count": 1,
+      "preview": "NEEDS_FEED_SQL"
     },
     {
       "source": "src/routes/workshop-overview.js",
@@ -878,11 +906,32 @@
       "preview": "`INSERT INTO app_check_history (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, consecutive_passes) VALUES ${values.jo"
     },
     {
+      "source": "src/services/cli-handoff-sync.js",
+      "kind": "structural-template",
+      "fingerprint": "468267d2ba00b7bc7ac5",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_uploaded_sha = $1, handoff_local_commit_sha = NULL, handoff_upload_"
+    },
+    {
+      "source": "src/services/cli-handoff-sync.js",
+      "kind": "structural-template",
+      "fingerprint": "dbc430251a0b764b430a",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_uploaded_sha = $1, handoff_local_commit_sha = NULL, handoff_upload_"
+    },
+    {
       "source": "src/services/communities.js",
       "kind": "structural-template",
       "fingerprint": "5c0f6f71276d5c1f5622",
       "count": 1,
       "preview": "`SELECT a.community_id, (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS member_count, EXISTS (SELECT 1 FROM community_m"
+    },
+    {
+      "source": "src/services/community-invites.js",
+      "kind": "structural-template",
+      "fingerprint": "b6d1aa5f14b1c9bc2dbc",
+      "count": 1,
+      "preview": "`SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses, i.expires_at, i.revoked_at, a.slug, a.name, a.icon_emoji, a.icon_image_id, a."
     },
     {
       "source": "src/services/connector-limits.js",
@@ -1032,6 +1081,90 @@
       "preview": "`SELECT cs.id, cs.user_id, cs.source, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, cs.approval_epoch, cs.integration_resolved_epoch, cs.integra"
     },
     {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "356f708962d79716e928",
+      "count": 1,
+      "preview": "`SELECT id, username, display_name, bio, profile_published, profile_disabled_at FROM users WHERE username = $1 ${lock ? 'FOR SHARE' : ''}`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "472233ad7a4b6e23a28b",
+      "count": 1,
+      "preview": "`UPDATE ${table} SET content = $2, moderation_hidden_at = NULL${c.target_type === 'app_message' ? ', metadata = $3' : ''} WHERE id = $1`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "489298861dae26782c81",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS} FROM apps WHERE id = $1`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "4c24d9aa01a7083e3277",
+      "count": 1,
+      "preview": "`UPDATE users SET participation_restricted_at = ${action === 'restrict_user' ? 'NOW()' : 'NULL'} WHERE id = $1 AND participation_restricted_at IS ${action === '"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "6255692e60aeed2a91e4",
+      "count": 1,
+      "preview": "`SELECT * FROM ${table} WHERE id = $1 FOR UPDATE`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "a9dee7364368978b9c59",
+      "count": 1,
+      "preview": "`UPDATE ${table} SET content = $2, moderation_hidden_at = NOW()${c.target_type === 'app_message' ? \", metadata = '{}'::jsonb\" : ''} WHERE id = $1`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "c7ca09cc53008af93cf2",
+      "count": 1,
+      "preview": "`SELECT id, moderation_hidden_at FROM ${c.target_type === 'app_message' ? 'chat_messages' : 'conversation_messages'} WHERE id = $1`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "ca8d147570795698a506",
+      "count": 1,
+      "preview": "`SELECT * FROM ${table} WHERE id = $1 ${lock ? 'FOR SHARE' : ''}`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "d3c71689eb36f6537d03",
+      "count": 1,
+      "preview": "`SELECT id, slug, name, created_by, self_hosted, main_sha, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE slug = $1 ${lock ? 'FOR S"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "d5425a9cf2e8e3ed4a75",
+      "count": 1,
+      "preview": "`SELECT id, filename, content_type, data FROM ${conversation ? 'conversation_message_attachments' : 'chat_message_attachments'} WHERE message_id = $1`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "f9f00f4fe6e3ca37acc6",
+      "count": 1,
+      "preview": "`UPDATE apps SET moderation_suspended_at = ${action === 'suspend_app' ? 'NOW()' : 'NULL'} WHERE id = $1 AND self_hosted IS NOT TRUE AND moderation_suspended_at "
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "ffedbadadf5a3cf89623",
+      "count": 1,
+      "preview": "`DELETE FROM notifications WHERE ${c.target_type === 'app_message' ? 'chat_message_id' : 'conversation_message_id'} = $1`"
+    },
+    {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
       "fingerprint": "14bc9ec7c4bde86c6783",
@@ -1088,11 +1221,32 @@
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail) SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.det"
     },
     {
+      "source": "src/services/onboarding.js",
+      "kind": "structural-template",
+      "fingerprint": "0152c7e9ae8c38c179bb",
+      "count": 1,
+      "preview": "`SELECT a.id, a.slug, a.name, a.icon_emoji, a.icon_image_id, a.self_hosted, ${members}::int AS member_count, ${communities.audienceSql('a', members)} AS audienc"
+    },
+    {
       "source": "src/services/platform-env-check.js",
       "kind": "structural-template",
       "fingerprint": "82e227c3af8b4b0141b0",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET platform_env_state = $2, platform_env_detail = $3::jsonb WHERE id = $1${commitGuard}`"
+    },
+    {
+      "source": "src/services/pr-import-sync.js",
+      "kind": "structural-template",
+      "fingerprint": "36b109513c0a522a23d1",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET imported_pr_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, stale_notified_at = NULL, approval_epoch = approval_epoch + CASE WHEN $"
+    },
+    {
+      "source": "src/services/pr-import-sync.js",
+      "kind": "structural-template",
+      "fingerprint": "dd7dfd2983ae4a231fb1",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`"
     },
     {
       "source": "src/services/preview-lifecycle.js",

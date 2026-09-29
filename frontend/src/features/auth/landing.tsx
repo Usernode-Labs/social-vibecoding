@@ -53,6 +53,7 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
+import { InviteCard } from './invite-card';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
 
 const LANDING_TITLE = 'Homeroom';
@@ -1154,6 +1155,12 @@ export function LandingScreen() {
               Try again
             </button>
           </div>
+          {/*
+              AN INVITE LINK'S CARD (./invite-card.tsx): who invited you to
+              what, and the two ways in. Only on /invite/<token>, and only
+              once its preview is back — nothing here on any other visit.
+          */}
+          <InviteCard primaryClass={PRIMARY_PILL} secondaryClass={SECONDARY_PILL} />
           {/*
               DECORATIVE, so `alt` is empty: everything it says is said again
               in the words below it, and a screen reader announcing a

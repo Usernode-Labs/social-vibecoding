@@ -166,12 +166,12 @@ test('handleVoteUpdate arms no platform-wide banner', () => {
 
 test('handleVoteUpdate still does the per-proposal refresh work it owns', () => {
   // The removal must not have taken the handler's real job with it.
-  assert.match(handleVoteUpdateCode, /refreshDevData\('vote'\)/,
-    'the dev tab still refreshes on a vote update');
+  // Through the one coalesced refresh per burst (App._liveRefresh), which
+  // runs the Workshop's refresh and the drawer's.
+  assert.match(handleVoteUpdateCode, /App\._liveRefresh\('vote', data\.sessionId, \{[^}]*home: true/,
+    'the dev tab and the work drawer still refresh on a vote update');
   assert.match(handleVoteUpdateCode, /refreshCurrentSessionStatus\(data\.sessionId\)/,
     'the open session pill still advances');
-  assert.match(handleVoteUpdateCode, /App\.refreshHomeProposals\(\)/,
-    'the work drawer still tracks tallies live');
 });
 
 // ─── 4. The stale-version nudge that replaces it survived ───────────

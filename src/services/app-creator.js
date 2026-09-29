@@ -51,6 +51,14 @@ function governanceOf(row) {
   return { approverPolicy: row?.approver_policy || 'anyone', approvalsRequired: row?.approvals_required ?? null };
 }
 
+// The create screen's "What is it?" line. POST /api/apps seeds it into the
+// row's manifest snapshot (the dapp.json the template is about to write), so
+// a Retry after a failed create writes it too.
+function descriptionOf(row) {
+  const d = row?.manifest_snapshot?.description;
+  return typeof d === 'string' && d.trim() ? d.trim() : null;
+}
+
 async function createApp(config, appRow) {
   const pool = getPool(config);
   const { id: appId, name, slug } = appRow;
@@ -122,7 +130,7 @@ async function createApp(config, appRow) {
 
         // repoUrl makes the template name this repo as the app's canonical
         // one (.claude/homeroom-canonical-repo, read by the freshness check).
-        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow) });
+        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow) });
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });
@@ -180,6 +188,21 @@ async function createApp(config, appRow) {
         log.warn('app-creator', 'Could not add connector scaffold to imported repo',
                  { appId, slug, repoUrl, error: err.message });
       }
+
+      // The create dialog's answers the repo's dapp.json does not already
+      // give (the one-line description, a non-default approval rule), into
+      // that file, before the clone below reads it. Non-fatal for the same
+      // reason as the scaffold: without them the import still works, and
+      // the repo's own file still decides.
+      try {
+        const added = await require('./import-manifest').commitCreateAnswers({
+          repoUrl, description: descriptionOf(appRow), governance: governanceOf(appRow),
+        });
+        if (added.length) log.info('app-creator', 'Committed create answers into imported dapp.json', { appId, slug, added });
+      } catch (err) {
+        log.warn('app-creator', 'Could not commit create answers into imported dapp.json',
+                 { appId, slug, repoUrl, error: err.message });
+      }
     }
 
     // 3. Clone (or write) the working tree that the shared deploy tail
@@ -229,7 +252,7 @@ async function createApp(config, appRow) {
       fs.mkdirSync(tempDir, { recursive: true });
       fs.mkdirSync(path.join(tempDir, 'public'), { recursive: true });
 
-      const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow) });
+      const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow), description: descriptionOf(appRow) });
       for (const f of files) {
         const filePath = path.join(tempDir, f.path);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });

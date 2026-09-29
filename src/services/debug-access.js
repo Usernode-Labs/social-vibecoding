@@ -74,6 +74,12 @@ const DENIED_TABLES = new Set([
   'cli_access_tokens',   // global CLI bearer hashes and hints
   'cli_auth_audit_events', // security audit trail for CLI credentials
   'cli_auth_rate_limits', // shared security limiter state
+  'moderation_cases',
+  'moderation_reports',
+  'moderation_evidence_files',
+  'moderation_report_files',
+  'moderation_actions',
+  'moderation_message_originals',
   'profile_reports',      // private abuse reports and reporter identities
   'conversations',        // private platform messaging metadata
   'conversation_direct_pairs', // private messaging relationships
@@ -83,6 +89,7 @@ const DENIED_TABLES = new Set([
   'conversation_message_attachments', // private attachment bytes + metadata
   'conversation_message_objects', // private shared-object activity
   'chat_session_spec_conversation_shares', // private spec access grants
+  'user_app_blocks',
   'user_blocks',          // private user safety relationships
   'friendships',          // private friend graph and pending requests (#2386)
   'friend_request_declines', // who declined whom — silent by product rule (#2386)
@@ -148,6 +155,7 @@ const DENIED_COLUMNS = {
     'ip',         // submitter IP — same treatment as users.waitlist_ip
     'more_token', // stage-2 survey capability — editing rights over the signup's answers
     'invite_code', // shareable capability — anyone holding it is attributed as this signup's invitee
+    'project_invite_id', // which private app_email_invites row (project, inviter) brought this address in
   ],
 };
 

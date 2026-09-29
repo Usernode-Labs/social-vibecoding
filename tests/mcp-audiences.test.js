@@ -127,6 +127,7 @@ const SAMPLE_ARGS = {
   create_request: { slug: 'recipe-box', title: 'A request', body: 'Details.' },
   claim_request: { slug: 'recipe-box', number: 12 },
   release_request: { slug: 'recipe-box', number: 12 },
+  propose_close_request: { slug: 'recipe-box', number: 12, reason: 'Shipped in PR #901.' },
   update_proposal_issues: { proposalId: 50, addIssues: [12] },
   start_change: { slug: 'recipe-box', title: 'Dark mode', linkedIssues: [12, 13] },
   promote_change: { changeId: 50 },

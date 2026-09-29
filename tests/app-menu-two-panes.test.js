@@ -76,12 +76,14 @@ test('two panes of ONE sheet, not two sheets', () => {
   // The kit cannot present a sheet while it is still dismissing another —
   // the ordering the wallet row already worked around — and About is where
   // the menu GOES rather than something that opens over it.
-  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} \/> : \(/,
+  // The invite pane is a third, on the same terms (./invite-pane.tsx).
+  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} \/> : view === 'invite' \? \(\s*<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>\s*\) : \(/,
     'the pane replaces the rows inside the same scroller');
   assert.match(SHEET, /id="app-about-back"/, 'and the label row becomes the way back');
   // The label row's own text is the pane switch's other half: the menu names
-  // the app, About's back arrow names it again beside a chevron.
-  assert.match(SHEET, /\{view === 'about' \? \(/, 'one row, two states');
+  // the app, a second pane's back arrow (About's, Invite's) names it again
+  // beside a chevron.
+  assert.match(SHEET, /\{view !== 'menu' \? \(/, 'one row, two states');
   // What used to be tested here — that Create New and the app strip belonged
   // to the MENU pane rather than to About — is gone with both of them
   // (#2718 review). About was never the reason: a rail of other apps at the

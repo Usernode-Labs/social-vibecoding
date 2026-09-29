@@ -26,7 +26,7 @@
 import {
   appFrameRefs, appFrameStore, COVER_DEFAULTS, keepAliveLimit, liveAppSlugs,
 } from './app-frame-store.js';
-import { allowAttribute, BASE_ALLOW, isSafeAppFrameSrc } from './app-frame-policy.js';
+import { allowAttribute, BASE_ALLOW, isSafeAppFrameSrc, sameFrameSrc } from './app-frame-policy.js';
 
 /** Frames created. A tab switch must NEVER move this. */
 let mounts = 0;
@@ -194,7 +194,8 @@ export const appFrameBridge = {
     if (!slug || !src) return false;
     const el = appFrameRefs.iframe;
     if (!el) return false;
-    return appFrameStore.get().slug === slug && srcOf(el) === src;
+    // #3257: a theme toggle since the frame loaded is not a new url.
+    return appFrameStore.get().slug === slug && sameFrameSrc(srcOf(el), src);
   },
 
   /** Reveal the (already mounted) frame host — the App tab is on screen again. */

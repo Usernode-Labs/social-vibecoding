@@ -115,9 +115,23 @@ async function discardHandoffStaging(pool, session, app, result, expectedHeadSha
   }
 }
 
+// Whether the session is still in a lifecycle state this run may publish
+// into. The status it started in, or promoted ON THIS COMMIT: since #3043 a
+// change can be submitted for review while its checks run, and promotion
+// pins reviewed_head_sha to the commit being checked. The vote is waiting on
+// exactly this run's verdict then, so promotion must not cancel it. Any
+// other change (archived, merged, promoted on another commit) still does.
+function publishableStatus(row, expectedStatus, headSha) {
+  if (!row) return false;
+  if (row.status === expectedStatus) return true;
+  return row.status === 'promoted' && !!row.reviewed_head_sha
+    && String(row.reviewed_head_sha).toLowerCase() === String(headSha).toLowerCase();
+}
+
 async function runStaging(config, pool, session, app, headSha, trigger = 'commit-push') {
   // Explicit paused submissions are allowed; a later lifecycle change still
-  // cancels this run's right to publish. Never resume coding here.
+  // cancels this run's right to publish (see publishableStatus). Never resume
+  // coding here.
   const expectedStatus = session.status === 'paused' ? 'paused' : 'active';
   let result;
   try {
@@ -127,10 +141,10 @@ async function runStaging(config, pool, session, app, headSha, trigger = 'commit
     // pending verdict must not be overwritten by a late failure from the old
     // head.
     const { rows } = await pool.query(
-      `SELECT status, checks_commit_sha FROM chat_sessions WHERE id = $1`,
+      `SELECT status, checks_commit_sha, reviewed_head_sha FROM chat_sessions WHERE id = $1`,
       [session.id]
     ).catch(() => ({ rows: [] }));
-    if (rows[0]?.status !== expectedStatus || rows[0]?.checks_commit_sha !== headSha) {
+    if (!publishableStatus(rows[0], expectedStatus, headSha) || rows[0]?.checks_commit_sha !== headSha) {
       log.info('handoff-pipeline', 'Ignoring stale staging failure', {
         sessionId: session.id, headSha,
       });
@@ -152,7 +166,8 @@ async function runStaging(config, pool, session, app, headSha, trigger = 'commit
       `UPDATE chat_sessions
           SET staging_container_id = $1, staging_url = $2, last_activity_at = NOW()
         WHERE id = $3 AND checks_commit_sha = $4
-          AND status = $5 AND ${OWNED_SOURCE_SQL}`,
+          AND (status = $5 OR (status = 'promoted' AND LOWER(reviewed_head_sha) = LOWER($4)))
+          AND ${OWNED_SOURCE_SQL}`,
       [result.containerId, result.stagingUrl, session.id, headSha, expectedStatus]
     );
     // A newer accepted head now owns the session. Its serialized build will
@@ -160,11 +175,11 @@ async function runStaging(config, pool, session, app, headSha, trigger = 'commit
     // newer head's pending check state in the meantime.
     if (!persisted.rowCount) {
       const { rows } = await pool.query(
-        `SELECT status, checks_commit_sha FROM chat_sessions WHERE id = $1`,
+        `SELECT status, checks_commit_sha, reviewed_head_sha FROM chat_sessions WHERE id = $1`,
         [session.id]
       ).catch(() => ({ rows: [] }));
       const current = rows[0];
-      if (!current || current.status !== expectedStatus) {
+      if (!publishableStatus(current, expectedStatus, headSha)) {
         await discardHandoffStaging(pool, session, app, result, headSha);
       }
       return;
@@ -218,5 +233,6 @@ module.exports = {
   beginHandoffPipeline,
   startHandoffPipeline,
   discardHandoffStaging,
+  publishableStatus,
   runStaging,
 };

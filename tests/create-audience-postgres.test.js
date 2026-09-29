@@ -39,16 +39,21 @@ test('creating a project for someone, against the full schema', { timeout: 18000
   require('../src/services/app-creator').createApp = async (_config, row) => { built.push(row); };
   require('../src/services/ws').pushNotificationToUser = () => {};
   require('../src/services/events').record = async () => {};
+  const mailed = [];
+  require('../src/services/mail').sendProjectInviteMail = async (_config, email, payload) => { mailed.push({ email, ...payload }); };
   const { appRoutes } = require('../src/routes/apps');
 
   const { rows: people } = await pool.query(
     `INSERT INTO users (username, password, has_platform_access, app_quota) VALUES
-       ('maker', 'x', TRUE, 10), ('Ada', 'x', TRUE, 2), ('grace', 'x', TRUE, 2), ('other', 'x', TRUE, 10)
+       ('maker', 'x', TRUE, 10), ('Ada', 'x', TRUE, 2), ('grace', 'x', TRUE, 2), ('other', 'x', TRUE, 10),
+       ('writer', 'x', TRUE, 10), ('mailer', 'x', TRUE, 10)
      RETURNING id, username`
   );
-  const [maker, ada, grace, other] = people;
+  const [maker, ada, grace, other, writer, mailer] = people;
+  // Ada has an address confirmed on her account; nobody has sam@.
+  await pool.query(`UPDATE users SET email = 'ada@example.com', email_confirmed = TRUE WHERE id = $1`, [ada.id]);
   // Mutable: the create limiter allows five an hour per user, so the last
-  // subtest creates as a second person.
+  // two subtests create as other people.
   let viewer = { id: maker.id, username: maker.username, isAdmin: false, canAdminWrite: false };
 
   const app = express();
@@ -139,6 +144,40 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     const read = await governance.getGovernance(pool, appId);
     assert.equal(read.approverPolicy, 'invited');
     assert.equal(read.approvalsRequired, 2);
+  });
+
+  await t.test('"What is it?" seeds the manifest snapshot and reaches the template', async () => {
+    viewer = { id: writer.id, username: writer.username, isAdmin: false, canAdminWrite: false };
+    const res = await create({ name: 'Seed swap', audience: 'open', description: '  Swap seeds and\n plan the plots.  ' });
+    assert.equal(res.status, 201, JSON.stringify(res.data));
+    const { rows } = await pool.query(`SELECT manifest_snapshot FROM apps WHERE id = $1`, [res.data.app.id]);
+    assert.deepEqual(rows[0].manifest_snapshot, { description: 'Swap seeds and plan the plots.', secrets: [] });
+    const handed = built.find((row) => row.id === res.data.app.id);
+    assert.equal(handed.manifest_snapshot.description, 'Swap seeds and plan the plots.',
+      'the build receives the described row, for dapp.json');
+    const plain = await create({ name: 'Undescribed', audience: 'open' });
+    const bare = await pool.query(`SELECT manifest_snapshot FROM apps WHERE id = $1`, [plain.data.app.id]);
+    assert.equal(bare.rows[0].manifest_snapshot, null, 'no line, no seeded snapshot');
+    const long = await create({ name: 'Too long', audience: 'open', description: 'x'.repeat(101) });
+    assert.equal(long.status, 400);
+  });
+
+  await t.test('a group invited by address: an account is invited as itself, anyone else is stored and mailed', async () => {
+    viewer = { id: mailer.id, username: mailer.username, isAdmin: false, canAdminWrite: false };
+    const res = await create({
+      name: 'Mail club', audience: 'invited', inviteEmails: ['Ada@Example.com', 'sam@example.com'],
+    });
+    assert.equal(res.status, 201, JSON.stringify(res.data));
+    const appId = res.data.app.id;
+    assert.equal(res.data.invited, 2, 'the count says nothing about who has an account');
+    const collab = await pool.query(`SELECT user_id, status FROM app_collaborators WHERE app_id = $1 AND user_id = $2`, [appId, ada.id]);
+    assert.deepEqual(collab.rows, [{ user_id: ada.id, status: 'invited' }], 'the confirmed address invites that account');
+    const stored = await pool.query(`SELECT email, invited_by, claimed_at FROM app_email_invites WHERE app_id = $1`, [appId]);
+    assert.deepEqual(stored.rows, [{ email: 'sam@example.com', invited_by: mailer.id, claimed_at: null }],
+      'only the address with no account is stored');
+    assert.deepEqual(mailed, [{ email: 'sam@example.com', inviter: 'mailer', project: 'Mail club' }]);
+    const wrong = await create({ name: 'Mail club two', audience: 'open', inviteEmails: ['sam@example.com'] });
+    assert.equal(wrong.status, 400, 'only a group is created with invites');
   });
 
   await t.test('an older client\'s body still works, and a bad choice is a 400 before anything exists', async () => {

@@ -87,6 +87,14 @@ function noteIssueActivityForBot(appId, issueNumber, reason) {
   }
 }
 
+function noteProposalActivityForBot(pool, appId, sessionId) {
+  try {
+    Promise.resolve(require('./homeroom-bot').noteProposalActivity(pool, { appId, sessionId })).catch(() => {});
+  } catch (err) {
+    log.warn('ws', 'homeroom bot wake failed', { err: err.message });
+  }
+}
+
 function disconnectUser(userId) {
   for (const clients of [globalClients, ...rooms.values()]) {
     for (const client of clients) {
@@ -332,7 +340,7 @@ function parseCookies(header) {
 
 async function resolveAppForAccess(pool, slug) {
   const { rows } = await pool.query(
-    'SELECT id, collab_visibility, view_visibility FROM apps WHERE slug = $1',
+    'SELECT id, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE slug = $1',
     [slug]
   );
   return rows[0] || null;
@@ -358,6 +366,10 @@ function leaveRoom(appId, client) {
 function deliverToRoom(appId, data, excludeWs = null, audience = {}) {
   const room = rooms.get(appId);
   if (!room) return;
+  if (data.type === 'app_suspended') {
+    for (const client of room) client.ws.close(4004, 'App suspended by moderation');
+    return;
+  }
   const payload = JSON.stringify(data);
   const hidden = new Set(audience.blockedUserIds || []);
   const quoteHidden = new Set(audience.quoteHiddenUserIds || []);
@@ -579,8 +591,9 @@ async function validateThread(pool, appId, thread, viewerId = null) {
 const WRITE_MSG_TYPES = new Set(['chat', 'edit', 'react', 'typing']);
 
 async function canWriteChat(pool, client) {
+  if (await require('./moderation').isRestricted(pool, client.user.id)) return false;
   const { rows } = await pool.query(
-    'SELECT id, collab_visibility, view_visibility FROM apps WHERE id = $1',
+    'SELECT id, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE id = $1',
     [client.appId]
   );
   if (!rows.length) return false;
@@ -627,6 +640,27 @@ async function handleMessage(pool, client, msg) {
         if (client.ws.readyState === 1) client.ws.send(JSON.stringify({ type: 'join_required', ...join, retry: msg }));
       } catch { /* a closed socket has nobody to ask */ }
       return { ok: false, code: 'join_required' };
+    }
+  }
+  // HOMEROOM'S OLD CHANNEL IS READ-ONLY. The platform's own project talks
+  // in #general now (the Homeroom community's channel), and this discussion
+  // is kept as history: its main stream and its reply threads take no new
+  // post. A proposal's or a request's own thread is not the channel and
+  // stays open. Answered, like the join refusal, so the composer can say so.
+  if (msg.type === 'chat' && (!msg.thread || msg.thread.type === 'message')) {
+    let archived = false;
+    try {
+      archived = await communities.channelArchived(pool, client.appId);
+    } catch (err) {
+      log.warn('ws', 'channel archive check failed', { appId: client.appId, err: err.message });
+    }
+    if (archived) {
+      try {
+        if (client.ws && client.ws.readyState === 1) {
+          client.ws.send(JSON.stringify({ type: 'error', code: 'channel_moved', message: communities.CHANNEL_MOVED }));
+        }
+      } catch { /* a closed socket has nobody to tell */ }
+      return { ok: false, code: 'channel_moved' };
     }
   }
   switch (msg.type) {
@@ -695,7 +729,7 @@ async function handleMessage(pool, client, msg) {
             }
           } else if (['message', 'event', 'spec'].includes(q.source) && Number.isInteger(q.refMsgId)) {
             const { rows: refRows } = await pool.query(
-              `SELECT m.id, m.user_id, m.content, m.msg_type, m.metadata, u.username
+              `SELECT m.id, m.user_id, m.content, m.msg_type, m.metadata, m.moderation_hidden_at, u.username
                FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
                WHERE m.id = $1 AND m.app_id = $2 AND m.deleted_at IS NULL`,
               [q.refMsgId, client.appId]
@@ -847,6 +881,8 @@ async function handleMessage(pool, client, msg) {
       // A person answering on an issue's thread is exactly what the Homeroom
       // bot waits for; a system row (a claim, a bounty) is not a message.
       if (thread && thread.type === 'issue') noteIssueActivityForBot(client.appId, thread.ref, 'thread');
+      // #3264: a reply in the discussion of the bot's own proposal.
+      if (thread && thread.type === 'session') noteProposalActivityForBot(pool, client.appId, thread.ref);
       // #2387: a reply thread grew — every row showing its root redraws its
       // "N replies" line from this frame.
       if (thread && thread.type === appChat.MESSAGE_THREAD) {
@@ -888,6 +924,7 @@ async function handleMessage(pool, client, msg) {
              LEFT JOIN chat_sessions cs ON cs.id = n.session_id
              LEFT JOIN users su ON su.id = n.source_user_id
              WHERE n.id = ANY($1::int[])
+               AND NOT EXISTS (SELECT 1 FROM user_app_blocks app_block WHERE app_block.user_id = n.user_id AND app_block.app_id = n.app_id)
                AND NOT EXISTS (
                  SELECT 1 FROM user_blocks blocked
                   WHERE blocked.blocker_id = n.user_id
@@ -937,6 +974,7 @@ async function handleMessage(pool, client, msg) {
              LEFT JOIN chat_sessions cs ON cs.id = n.session_id
              LEFT JOIN users su ON su.id = n.source_user_id
              WHERE n.id = ANY($1::int[])
+               AND NOT EXISTS (SELECT 1 FROM user_app_blocks app_block WHERE app_block.user_id = n.user_id AND app_block.app_id = n.app_id)
                AND NOT EXISTS (
                  SELECT 1 FROM user_blocks blocked
                   WHERE blocked.blocker_id = n.user_id
@@ -1029,7 +1067,7 @@ async function handleMessage(pool, client, msg) {
       // row): the row must exist in this app, belong to the editor, and be
       // an ordinary 'message'.
       const { rows } = await pool.query(
-        `SELECT user_id, msg_type, thread_type, thread_ref, deleted_at
+        `SELECT user_id, msg_type, thread_type, thread_ref, deleted_at, moderation_hidden_at
            FROM chat_messages WHERE id = $1 AND app_id = $2`,
         [messageId, client.appId]
       );
@@ -1040,7 +1078,7 @@ async function handleMessage(pool, client, msg) {
         return;
       }
       const row = rows[0];
-      if (row.user_id !== client.user.id || row.msg_type !== 'message') {
+      if (row.moderation_hidden_at || row.user_id !== client.user.id || row.msg_type !== 'message') {
         log.warn('ws', 'edit rejected: not author or not an editable message', {
           appId: client.appId, userId: client.user.id, messageId, msgType: row.msg_type,
         });
@@ -1053,7 +1091,7 @@ async function handleMessage(pool, client, msg) {
       // at what it replied to, and reactions (keyed on message id) survive.
       const { rows: upd } = await pool.query(
         `UPDATE chat_messages SET content = $1, edited_at = NOW()
-          WHERE id = $2 AND deleted_at IS NULL RETURNING edited_at`,
+          WHERE id = $2 AND deleted_at IS NULL AND moderation_hidden_at IS NULL RETURNING edited_at`,
         [content, messageId]
       );
       // Deleted between the check and the write.
@@ -1147,6 +1185,7 @@ async function handleMessage(pool, client, msg) {
                LEFT JOIN chat_sessions cs ON cs.id = n.session_id
                LEFT JOIN users su ON su.id = n.source_user_id
                WHERE n.id = ANY($1::int[])
+               AND NOT EXISTS (SELECT 1 FROM user_app_blocks app_block WHERE app_block.user_id = n.user_id AND app_block.app_id = n.app_id)
                  AND NOT EXISTS (
                    SELECT 1 FROM user_blocks blocked
                     WHERE blocked.blocker_id = n.user_id
@@ -1276,18 +1315,31 @@ async function getReactionsForMessages(pool, messageIds, viewerId = null) {
 // (JSONB) and echoed on the live broadcast. Used e.g. by the vote-activity
 // lines (promote / vote cast) to carry { vote: { sessionId, prNumber } } so
 // the group-chat client can render live vote buttons inline on the row.
-// #194: optional `thread` ({ type: 'issue'|'session'|'governance', ref })
-// scopes the system message into that thread instead of general chat
-// (used by the per-vote activity rows, which post into the proposal's
-// thread). Callers are trusted — no ref validation here.
+// #194: `thread` ({ type: 'issue'|'session'|'governance', ref }) scopes the
+// system message into that thread (used by the per-vote activity rows,
+// which post into the proposal's thread). Callers are trusted — no ref
+// validation here.
+//
+// A CHANNEL IS WHAT PEOPLE SAID. With no thread there is nothing to write:
+// the main stream is the app's channel (the hub's Channel card, the Messages
+// room), and Homeroom's activity — a proposal put up for a vote, a merge, a
+// check verdict, a setting changed, main going red — is no longer a line in
+// it, nor in #general. The story of one proposal, request or decision is
+// told in its own thread, which every caller names. The app-wide notices
+// that have no thread are shown where that state lives: main's suite and a
+// stalled release as banners on the project page (dev-board/board-frame.tsx),
+// and the Friday card and settings changed lately in the Workshop's notices
+// panel (services/app-notices.js, read from `events`). A call with no thread
+// is refused here rather than trusted to the callers.
+// db/migrate.js clearAutomatedChannelLines removes the lines written before.
 async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null, thread = null) {
+  if (!thread) return null;
   const { rows } = await pool.query(
     `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, created_at`,
     // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
-    [appId, content, msgType, JSON.stringify(metadata || {}),
-     thread ? thread.type : null, thread ? thread.ref : null]
+    [appId, content, msgType, JSON.stringify(metadata || {}), thread.type, thread.ref]
   );
 
   broadcast(appId, {
@@ -1298,12 +1350,56 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
     content,
     msgType,
     ...(metadata ? { metadata } : {}),
-    ...(thread ? { thread } : {}),
+    thread,
     createdAt: rows[0].created_at,
   });
   // #1688: the row, for a caller that hangs something off the message — the
   // "needs a conversation" prompt names people, and their mention rows point
   // at it. Every existing caller ignores the return.
+  return { id: rows[0].id, createdAt: rows[0].created_at };
+}
+
+/**
+ * #3288: a thread post from a synthetic account (the Homeroom bot), written
+ * and broadcast as an ORDINARY message from that user, so the chat draws it
+ * as a bubble with a name and not as a centred system line.
+ *
+ * Deliberately NOT handleMessage. That is the path for a person at a
+ * keyboard, and three of its effects are wrong for text a model wrote:
+ *   - it turns every `@name` in the body into a notification, so a reply
+ *     that quoted a handle would notify whoever owns it (the caller writes
+ *     the one mention it means, for the person it answers);
+ *   - it wakes the Homeroom bot on issue and proposal threads, and this is
+ *     the bot talking;
+ *   - its collaborator and join gates are for people; the bot is on an app
+ *     because the app is in its live list.
+ * What it keeps is the row and the frame: `msg_type = 'message'`, the
+ * author's user_id, and the same `chat` payload handleMessage broadcasts,
+ * through broadcastFromSender so a viewer who blocked the account does not
+ * receive it. Thread posts only, like sendSystemMessage.
+ */
+async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null } = {}) {
+  if (!thread || !user || !Number.isInteger(Number(user.id))) return null;
+  const text = String(content || '').trim().slice(0, MAX_CHAT_LEN);
+  if (!text) return null;
+  const { rows } = await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+     VALUES ($1, $2, $3, 'message', $4, $5, $6)
+     RETURNING id, created_at`,
+    [appId, Number(user.id), text, JSON.stringify(metadata || {}), thread.type, thread.ref]
+  );
+  await broadcastFromSender(pool, appId, {
+    type: 'chat',
+    id: rows[0].id,
+    userId: Number(user.id),
+    username: user.username,
+    content: text,
+    msgType: 'message',
+    ...(metadata ? { metadata } : {}),
+    thread,
+    createdAt: rows[0].created_at,
+    postedVia: null,
+  }, Number(user.id));
   return { id: rows[0].id, createdAt: rows[0].created_at };
 }
 
@@ -1338,15 +1434,16 @@ function deliverGlobalScoped(payload, { appId = null, appSlug = null } = {}) {
   }
   appAccess.getWsVisibility(_pool, { appId, appSlug })
     .then((info) => {
-      if (!info) return; // app gone — nothing to broadcast
-      if (!info.viewPrivate) {
+      if (!info || info.suspended) return; // no ordinary activity from a suspended app
+      if (!info.viewPrivate && !info.blockedUserIds?.size) {
         deliverGlobal(payload);
         return;
       }
       const json = JSON.stringify(payload);
       for (const client of globalClients) {
         if (client.ws.readyState !== 1) continue;
-        if (client.user.isAdmin || info.memberIds.has(client.user.id)) {
+        if (!info.blockedUserIds?.has(client.user.id)
+            && (!info.viewPrivate || client.user.isAdmin || info.memberIds.has(client.user.id))) {
           client.ws.send(json);
         }
       }
@@ -1556,6 +1653,14 @@ function broadcastToAdmins(payload) {
 // `pushNotificationToUser` is kept as an alias so the notification call sites
 // above (and any external caller) read naturally and don't have to churn.
 function deliverToUser(userId, payload) {
+  if (payload.type === 'app_blocks_changed') {
+    appAccess.invalidateVisibility(payload.appId, payload.slug);
+    if (payload.blocked) {
+      for (const client of rooms.get(payload.appId) || []) {
+        if (client.user.id === userId) client.ws.close(4004, 'App blocked');
+      }
+    }
+  }
   const json = JSON.stringify(payload);
   let sent = 0;
   for (const client of globalClients) {
@@ -1625,4 +1730,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
+module.exports = { connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };

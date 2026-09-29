@@ -1242,7 +1242,6 @@ function issueRoutes(config) {
         chatPrefix = `${req.user.username} created issue: "${title}"`;
       }
       const createdMsg = `${chatPrefix}${githubIssueNumber ? ` (#${githubIssueNumber})` : ''}`;
-      await sendSystemMessage(pool, app.id, createdMsg, 'system');
 
       // #1374: a new issue notified nobody before this. Fanned out to the
       // app's stakeholders and gated on the `new_issues` category, which
@@ -1267,7 +1266,7 @@ function issueRoutes(config) {
       } catch (err) {
         log.error('issues', 'Issue-opened notification threw', { appId: app.id, err: err.message });
       }
-      // Dual-post the creation into the topic's own thread so the
+      // Post the creation into the topic's own thread so the
       // discussion opens with its origin in context: governance proposals
       // (secret_change / rename / close_issue) thread on the local issue
       // id; general issues thread on the GitHub twin number (no twin → no
@@ -2819,11 +2818,9 @@ function issueRoutes(config) {
       );
       if (!rows.length) return res.status(404).json({ error: 'Proposal not open' });
 
-      // Announce the withdrawal in group chat, and dual-post into the
-      // proposal's governance thread (mirrors the create path).
+      // Say the withdrawal in the proposal's governance thread (mirrors the
+      // create path).
       const withdrewMsg = `${req.user.username} withdrew their proposal: "${issue.title}"`;
-      await sendSystemMessage(pool, issue.app_id, withdrewMsg, 'system')
-        .catch((err) => log.warn('issues', 'Withdraw chat message failed', { err: err.message }));
       await sendSystemMessage(pool, issue.app_id, withdrewMsg, 'system',
         null, { type: 'governance', ref: issue.id }).catch(() => {});
 
@@ -2946,9 +2943,7 @@ async function maybeApplyRenameProposal(pool, issue) {
 
     // Side effects (chat + GitHub + WS) are best-effort and live outside the txn.
     const renamedMsg = `App renamed from "${oldName}" to "${newName}" by group vote (${upCount}/${required})`;
-    await sendSystemMessage(pool, app.id, renamedMsg, 'system')
-      .catch((err) => log.warn('issues', 'Rename chat message failed', { err: err.message }));
-    // Dual-post the outcome into the governance proposal's thread.
+    // The outcome, in the governance proposal's thread.
     await sendSystemMessage(pool, app.id, renamedMsg, 'system',
       null, { type: 'governance', ref: locked.id }).catch(() => {});
 
@@ -3097,8 +3092,6 @@ async function maybeApplyFeaturedIllustrationProposal(pool, issue, options = {})
     const msg = illustration
       ? `Featured illustration changed ${appliedHow}`
       : `Featured illustration removed ${appliedHow}`;
-    await sendSystemMessage(pool, app.id, msg, 'system')
-      .catch((err) => log.warn('issues', 'Illustration chat message failed', { err: err.message }));
     await sendSystemMessage(pool, app.id, msg, 'system',
       null, { type: 'governance', ref: locked.id }).catch(() => {});
 
@@ -3234,7 +3227,6 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       });
       const refusedMsg = `Proposal for "${key}" was closed without applying: that variable is `
         + 'now set by the deploy from a GitHub secret and cannot be written here.';
-      await sendSystemMessage(pool, issue.app_id, refusedMsg, 'system').catch(() => {});
       await sendSystemMessage(pool, issue.app_id, refusedMsg, 'system',
         null, { type: 'governance', ref: locked.id }).catch(() => {});
       return { applied: false, refused: true, upCount, majority, active };
@@ -3316,9 +3308,7 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
     const secretMsg = selfHosted
       ? `Platform variable "${key}" ${verb} ${appliedHow}; takes effect on the platform's next deploy.`
       : `Secret "${key}" ${verb} ${appliedHow}; redeploying…`;
-    await sendSystemMessage(pool, issue.app_id, secretMsg, 'system')
-      .catch((err) => log.warn('issues', 'Secret-change chat msg failed', { err: err.message }));
-    // Dual-post the outcome into the governance proposal's thread.
+    // The outcome, in the governance proposal's thread.
     await sendSystemMessage(pool, issue.app_id, secretMsg, 'system',
       null, { type: 'governance', ref: locked.id }).catch(() => {});
 
@@ -3456,8 +3446,6 @@ async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, 
       const msg = cause?.kind === 'pr-merge'
         ? `Close proposal for issue #${n} resolved automatically: PR #${cause.prNumber} closed the issue`
         : `Close proposal for issue #${n} resolved automatically: the issue was closed on GitHub`;
-      await sendSystemMessage(pool, row.app_id, msg, 'system')
-        .catch((err) => log.warn('issues', 'Superseded chat message failed', { err: err.message }));
       await sendSystemMessage(pool, row.app_id, msg, 'system',
         null, { type: 'governance', ref: row.id }).catch(() => {});
       // Same event the withdraw path emits — open clients drop the card and
@@ -3644,10 +3632,8 @@ async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
     ? `by admin override (${options.forceBy?.username || 'admin'})`
     : `by group vote (${upCount}/${required})`;
   const closedMsg = `Issue #${issueNumber} closed ${appliedHow}`;
-  await sendSystemMessage(pool, issue.app_id, closedMsg, 'system')
-    .catch((err) => log.warn('issues', 'Close-issue chat msg failed', { err: err.message }));
-  // Dual-post the outcome into the proposal's governance thread AND the
-  // target issue's thread (mirrors the create path's dual-post).
+  // The outcome, in the proposal's governance thread AND the target
+  // issue's thread (mirrors the create path).
   await sendSystemMessage(pool, issue.app_id, closedMsg, 'system',
     null, { type: 'governance', ref: locked.id }).catch(() => {});
   await sendSystemMessage(pool, issue.app_id, closedMsg, 'system',
@@ -3809,8 +3795,6 @@ async function maybeApplyMaintenanceCampaignProposal(config, pool, issue, option
     : `by group vote (${upCount}/${required})`;
   const startedMsg = `Maintenance campaign "${issue.payload?.title || issue.title}" approved ${appliedHow}. `
     + 'The platform is now opening one PR per app. Progress is on the campaign dashboard.';
-  await sendSystemMessage(pool, issue.app_id, startedMsg, 'system')
-    .catch((err) => log.warn('issues', 'Campaign chat msg failed', { err: err.message }));
   await sendSystemMessage(pool, issue.app_id, startedMsg, 'system',
     null, { type: 'governance', ref: issue.id }).catch(() => {});
 

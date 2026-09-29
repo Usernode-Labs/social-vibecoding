@@ -58,6 +58,10 @@ const RULES = {
   // the route bounds it per-IP; this bounds it per-recipient regardless
   // of which admin or which IP asked.
   admin_test: { minGapMs: 30 * 1000, perWindow: 10, windowMs: HOUR_MS },
+  // A project invite is typed by somebody else, so the recipient did not ask
+  // for it: a few a day, spaced out, whoever sends them. The creator's own
+  // bound is the create limiter and twenty people a project.
+  project_invite: { minGapMs: 10 * 60 * 1000, perWindow: 3, windowMs: DAY_MS },
 };
 
 const DEFAULT_MAX_PER_HOUR = 300;

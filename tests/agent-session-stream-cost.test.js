@@ -26,6 +26,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { withStateRead } = require('./lib/agent-session-state-read');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const STORE = 'frontend/src/features/agent-session/store.ts';
@@ -41,20 +42,23 @@ const SESSION = {
  */
 async function withStreamingStore(run, { stubs } = {}) {
   const frames = [];
+  // The server's word on whether the turn runs: a test ends it here, and
+  // the read `done` makes (the screen settles on the server) then says so.
+  const server = { busy: true };
   globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {} }, UsernodeReact: {} };
   globalThis.EventSource = class { close() {} };
   globalThis.requestAnimationFrame = (cb) => { frames.push({ cb, live: true }); return frames.length; };
   globalThis.cancelAnimationFrame = (handle) => { if (frames[handle - 1]) frames[handle - 1].live = false; };
-  globalThis.fetch = async (url) => ({
+  globalThis.fetch = withStateRead(async (url) => ({
     ok: true,
     status: 200,
     json: async () => {
       if (/\/messages\?/.test(url)) return { messages: [], nextAfter: null };
       if (/\/actions$/.test(url)) return { actions: [] };
       if (/\/drafts/.test(url)) return { drafts: [] };
-      return { session: SESSION, turn: { phase: 'mayor', startedAt: 1 } };
+      return { session: { ...SESSION, busy: server.busy }, turn: server.busy ? { phase: 'mayor', startedAt: 1 } : null };
     },
-  });
+  }));
   const tick = () => {
     const due = frames.filter((frame) => frame.live);
     for (const frame of due) { frame.live = false; frame.cb(); }
@@ -65,7 +69,9 @@ async function withStreamingStore(run, { stubs } = {}) {
     const store = loadTsx(STORE, { stubs });
     await store.openAgentSession({ id: 3, host: 'messages' });
     assert.equal(store.getAgentSessionState().turn.running, true, 'opened on a running turn');
-    await run(store, { tick, pending });
+    // The read an event asked for, landed.
+    const settled = () => store.requestSync(3);
+    await run(store, { tick, pending, server, settled });
   } finally {
     delete globalThis.window;
     delete globalThis.fetch;
@@ -93,8 +99,10 @@ test('a frame of tokens is ONE publish, landed on the next animation frame', asy
 });
 
 test('the first words of a turn show at once, and mark it running', async () => {
-  await withStreamingStore(async (store, { pending }) => {
+  await withStreamingStore(async (store, { pending, server, settled }) => {
+    server.busy = false;
     store.handleEvent(3, { type: 'done', _seq: 'd-0' });
+    await settled();
     assert.equal(store.getAgentSessionState().turn.running, false);
     store.handleEvent(3, token('Hello', 1));
     const { turn } = store.getAgentSessionState();
@@ -147,10 +155,12 @@ test('a phase change reads the reply as it stands, words still in the buffer inc
 });
 
 test('the turn ending, or the screen closing, leaves no words to land later', async () => {
-  await withStreamingStore(async (store, { tick }) => {
+  await withStreamingStore(async (store, { tick, server, settled }) => {
     store.handleEvent(3, token('last words', 1));
+    server.busy = false;
     store.handleEvent(3, { type: 'done', _seq: 'd-1' });
-    assert.equal(store.getAgentSessionState().turn.running, false);
+    await settled();
+    assert.equal(store.getAgentSessionState().turn.running, false, 'the server says it is over');
     assert.equal(tick(), 0);
     assert.equal(store.getAgentSessionState().turn.streamText, '', 'an idle turn, not a reply revived by a late frame');
   });

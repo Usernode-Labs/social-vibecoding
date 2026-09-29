@@ -1,4 +1,5 @@
 const appAllowance = require('../services/app-allowance');
+const appLimit = require('../services/app-limit');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const https = require('https');
@@ -22,6 +23,7 @@ const {
 } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
+const communityInvites = require('../services/community-invites');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
 const usernames = require('../services/usernames');
@@ -313,6 +315,12 @@ function authRoutes(config) {
 
       log.info('auth', 'Login successful', { userId: user.id, username: user.username, matchedBy });
 
+      // An invite link this visitor opened before signing in is NOT followed
+      // here: an existing account is asked first, by the shell, which comes
+      // back to the link as a remembered deep link (App._followInvite). The
+      // carried copy is dropped, so nothing follows it later without asking.
+      communityInvites.clearInviteCookie(res);
+
       res.json({
         // Echo the account's real username, not the raw identifier — the
         // identifier may have been an email.
@@ -349,6 +357,15 @@ function authRoutes(config) {
         req.body?.code,
         { createSession }
       );
+      // An invite link this visitor opened first is followed as the account
+      // the code just CREATED (services/community-invites.js): signing up
+      // from the link is the consent, and the new account's community is
+      // queued for the day it is let in. An account that already existed is
+      // asked by the shell instead, like a password sign-in, so the carried
+      // copy is only dropped. Never throws.
+      const invite = verified.created
+        ? await communityInvites.redeemCarried(pool, req, res, verified.userId)
+        : (communityInvites.clearInviteCookie(res), null);
       if (verified.next === 'signed-in') {
         // The account already has a password, so there is nothing to set up.
         // Clear any stale continuation and hand back the ordinary web session,
@@ -367,6 +384,7 @@ function authRoutes(config) {
             username: verified.user.username,
             ...roleFields(verified.user.isAdmin, verified.user.adminReadonly),
           },
+          ...(invite ? { invite } : {}),
         });
       }
       // #2568: a brand-new account gets its included OpenRouter key here,
@@ -399,6 +417,7 @@ function authRoutes(config) {
         needsUsername: !!verified.needsUsernameChoice,
         suggestedUsername: verified.suggestedUsername || null,
         waitlisted: typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null,
+        ...(invite ? { invite } : {}),
       });
     } catch (error) {
       if (error instanceof emailSignup.EmailSignupError) {
@@ -519,8 +538,11 @@ function authRoutes(config) {
         // services/cli-auth.js). Calling connect() directly turned every
         // valid registration into a 500 on those setups.
         ({ userId, codeId } = await withTransaction(pool, async (client) => {
+          // needs_communities_choice: an account made with a code is asked
+          // which communities to join, like an email sign-up (communities,
+          // stage 5; src/services/onboarding.js).
           const { rows: userRows } = await client.query(
-            'INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id',
+            'INSERT INTO users (username, password, needs_communities_choice) VALUES ($1, $2, TRUE) RETURNING id',
             [username.trim(), hash]
           );
           const uid = userRows[0].id;
@@ -643,7 +665,7 @@ function authRoutes(config) {
       requestedAt: null,
     };
     try {
-      allowance = await appAllowance.read(pool, req.user, { maxApps: config.maxApps });
+      allowance = await appAllowance.read(pool, req.user, { maxApps: await appLimit.effective(pool, config) });
     } catch (err) {
       log.warn('auth', 'App allowance lookup failed', { message: err.message });
     }
@@ -661,11 +683,26 @@ function authRoutes(config) {
     // people in, not strand every signed-in member behind a blocking step
     // the client cannot dismiss.
     let needsUsernameChoice = false;
+    // Communities, stage 5 (src/services/onboarding.js): the join screen a
+    // new account answers after its username and the terms, and the
+    // Getting started card that follows it. Same failure direction as the
+    // flag above: unreadable means no blocking step and no card.
+    let needsCommunitiesChoice = false;
+    let showGettingStarted = false;
+    // Has this account finished (or skipped) the welcome tour, on any
+    // device? The tour ORs it with its own per-browser flag, so the failure
+    // direction here is the one it had before the server kept it: the
+    // browser's answer alone.
+    let tourDone = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
                 u.display_name, u.bio, u.dev_flow_preference,
                 u.needs_username_choice,
+                u.needs_communities_choice,
+                (u.communities_onboarded_at IS NOT NULL
+                  AND u.getting_started_closed_at IS NULL) AS show_getting_started,
+                (u.tour_done_at IS NOT NULL) AS tour_done,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -692,6 +729,9 @@ function authRoutes(config) {
         ? rows[0].dev_flow_preference
         : null;
       needsUsernameChoice = rows[0]?.needs_username_choice === true;
+      needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
+      showGettingStarted = rows[0]?.show_getting_started === true;
+      tourDone = rows[0]?.tour_done === true;
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
@@ -765,6 +805,21 @@ function authRoutes(config) {
         // whatever the account currently holds, so every existing client
         // renders exactly what it rendered before.
         needsUsernameChoice,
+        // Communities, stage 5. TRUE until a new account has answered "What
+        // communities do you want to join?" (set by every sign-up path:
+        // email, an activation code, a wallet; no existing account ever
+        // reads TRUE). The web shell presents that
+        // screen after the username and terms steps
+        // (frontend/src/features/auth/communities-first-run.js).
+        needsCommunitiesChoice,
+        // The Getting started card on Home: shown to an account that came
+        // through the join screen, until it is closed.
+        showGettingStarted,
+        // The welcome tour was finished or skipped on this account, on any
+        // device (POST /api/me/tour-done; cleared by Reset first run). The
+        // tour counts it done when this OR the browser's own flag says so
+        // (frontend/src/features/home/tour/tour-done.ts).
+        tourDone,
         hasApiKey,
         keyLast4,
         // In-chat venue availability: feature flag + beta eligibility + a
@@ -1681,9 +1736,12 @@ function authRoutes(config) {
       const linkToken = crypto.randomBytes(16).toString('hex');
       const linkExpiresAt = new Date(Date.now() + LINK_TOKEN_TTL_MS);
 
+      // needs_communities_choice: asked which communities to join, like
+      // every other new account (communities, stage 5).
       const { rows } = await pool.query(
-        `INSERT INTO users (username, password, usernode_pubkey, wallet_link_token, wallet_link_expires_at)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        `INSERT INTO users (username, password, usernode_pubkey, wallet_link_token, wallet_link_expires_at,
+                            needs_communities_choice)
+         VALUES ($1, $2, $3, $4, $5, TRUE) RETURNING id`,
         [username.trim(), hash, pubkey.trim(), linkToken, linkExpiresAt]
       );
       const userId = rows[0].id;

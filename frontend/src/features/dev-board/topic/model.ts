@@ -470,6 +470,8 @@ export interface TopicBody {
   comments?: boolean;
   /** A proposal's plain-language summary, already rendered. */
   summaryHtml?: string | null;
+  /** The previous summary was retained for provenance but no longer describes this revision. */
+  summaryStale?: boolean;
   /**
    * #1370's "Full proposal details" disclosure — the complete GitHub PR
    * description, deliberately quieter than the generated summary above it.

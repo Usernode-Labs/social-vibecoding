@@ -593,17 +593,16 @@ Returns sanitized run metadata, intent, changed-file summary, base/head labels,
 available viewports/personas, and the allowed origins. It never returns raw
 credentials.
 
-### `evidence_reset_side`
-
-Resets one side's browser context and, when the story performed writes, restores
-its pristine database snapshot. This is for exploration only; the replay tool
-always starts clean.
-
 ### Browser exploration tools
 
 Use the pinned Playwright MCP surface, restricted by a proxy to the two run
 origins. Screenshot results must be emitted as image content so vision-capable
 models can inspect them.
+
+The planner receives one authenticated exploration pair. It does not receive a
+reset tool because replacing a database would invalidate the browser's current
+session. `evidence_run_plan` owns clean resets and creates fresh authenticated
+contexts for deterministic replay.
 
 ### `evidence_run_plan`
 
@@ -729,8 +728,11 @@ Pixel similarity is diagnostic, not a gate:
   checkpoints at the start/end states.
 - **Canvas/game/map:** use relative surface coordinates, fixed fixtures, and
   two successful replays.
-- **Admin/private screen:** use a synthetic read-only admin persona and
-  authenticated artifact delivery. Never place the image in a public PR body.
+- **Admin/private screen:** use the synthetic read-only admin persona for
+  inspection. Use the evidence-only `full_admin` persona only for Homeroom
+  controls that require admin writes. It exists only in the paired disposable
+  databases. Use authenticated artifact delivery and never place the image in
+  a public PR body.
 - **No visual impact:** store the agent rationale and show `not_required`; do
   not run route capture just to fill the card.
 
@@ -1124,7 +1126,8 @@ Add:
 - image cache lookup/build for the exact base SHA;
 - head-image reuse by verified digest;
 - paired internal runtime/service creation for Docker and Kubernetes;
-- equivalent synthetic member and read-only-admin identity setup;
+- equivalent synthetic member, read-only-admin, and evidence-only full-admin
+  identity setup;
 - lifecycle heartbeat, crash recovery, timeout, and orphan sweep integration.
 
 Tests:

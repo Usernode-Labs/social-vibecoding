@@ -68,7 +68,7 @@ async function checkoutRevision(pr, side, sha) {
 
 async function buildImage(pr, side, sha, checkout) {
   const tag = `usernode-evidence-historical-${pr}-${side}:${sha.slice(0, 8)}`;
-  await docker(['build', '-q', '-t', tag, checkout], 600_000);
+  await docker(['build', '-q', '--build-arg', `GIT_SHA=${sha}`, '-t', tag, checkout], 600_000);
   const digest = await docker(['image', 'inspect', '--format', '{{.Id}}', tag]);
   return { tag, digest };
 }

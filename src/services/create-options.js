@@ -26,10 +26,13 @@
  *
  * ── Who is invited ─────────────────────────────────────────────────────
  *
- * `invitees` is a list of usernames, for a Group only: an invite into a
- * project anyone can already build is meaningless (the invites route refuses
- * it for the same reason), and into a Just-me project it would make it a
- * Group, which is a different answer to the first question.
+ * `invitees` is a list of usernames and `inviteEmails` a list of addresses,
+ * both for a Group only: an invite into a project anyone can already build
+ * is meaningless (the invites route refuses it for the same reason), and
+ * into a Just-me project it would make it a Group, which is a different
+ * answer to the first question. An address is for somebody who may not be
+ * on Homeroom yet (services/email-invites.js); together the two lists hold
+ * at most MAX_INVITEES people.
  *
  * ── Who approves ───────────────────────────────────────────────────────
  *
@@ -39,8 +42,21 @@
  * votable later like any other line of the manifest. Strict here where the
  * manifest reader is lenient: a creator who sent a value meant it, and a
  * silently dropped rule would be a project that approves changes
- * differently from what its creator chose. Not for an import: an existing
- * repository's own dapp.json decides that on its first deploy.
+ * differently from what its creator chose. An import sends it only when its
+ * repository's dapp.json does not set one already (the dialog reads it at
+ * the check); the bot then commits it there (services/import-manifest.js),
+ * and where the repo does set one, its own rule still wins on the first
+ * deploy.
+ *
+ * ── What it is ─────────────────────────────────────────────────────────
+ *
+ * `description` is dapp.json's top-level one line about what the project
+ * is, optional, and written where the approval rule is: the new
+ * repository's dapp.json, so a community changes it later with a vote like
+ * any other line there. The join screen, Discover and the project's page
+ * read it off the manifest snapshot. Whitespace collapses to single spaces;
+ * at most DESCRIPTION_MAX characters, the length the join screen shows
+ * whole. An import sends it on the same terms as the rule above.
  */
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
@@ -48,6 +64,9 @@ const VISIBILITIES = new Set(['public', 'private']);
 const MAX_INVITEES = 20;
 const MAX_APPROVALS_REQUIRED = 50;
 const USERNAME_MAX = 64;
+const DESCRIPTION_MAX = 100;
+const EMAIL_MAX = 254;
+const EMAIL_RE = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
 
 /** The two visibility columns an audience implies. */
 function visibilityForAudience(audience) {
@@ -88,6 +107,20 @@ function parseInvitees(raw) {
   return { invitees };
 }
 
+function parseInviteEmails(raw) {
+  if (raw == null) return { emails: [] };
+  if (!Array.isArray(raw)) return { error: 'inviteEmails must be a list of email addresses' };
+  const emails = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string') return { error: 'inviteEmails must be a list of email addresses' };
+    const email = entry.trim().toLowerCase();
+    if (!email) continue;
+    if (email.length > EMAIL_MAX || !EMAIL_RE.test(email)) return { error: `${entry.slice(0, 40)} is not an email address.` };
+    if (!emails.includes(email)) emails.push(email);
+  }
+  return { emails };
+}
+
 /**
  * dapp.json's governance block → the two columns, or an error. `null`
  * (absent) is the default rule: anyone approves, time and majority.
@@ -112,12 +145,25 @@ function parseGovernance(raw) {
   return { governance: { approverPolicy: approvers, approvalsRequired } };
 }
 
+/** The one line, tidied, or null when blank. */
+function parseDescription(raw) {
+  if (raw == null) return { description: null };
+  if (typeof raw !== 'string') return { error: 'description must be a line of text' };
+  const text = raw.replace(/[\s\p{Cc}]+/gu, ' ').trim();
+  if (!text) return { description: null };
+  if (text.length > DESCRIPTION_MAX) {
+    return { error: `Say what it is in ${DESCRIPTION_MAX} characters or fewer.` };
+  }
+  return { description: text };
+}
+
 /**
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
- * `{ audience, collabVisibility, viewVisibility, invitees, governance }`.
+ * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
+ * governance, description }`.
  */
-function parseCreateOptions(body = {}, { imported = false } = {}) {
+function parseCreateOptions(body = {}) {
   let audience = null;
   let collabVisibility;
   let viewVisibility;
@@ -134,22 +180,29 @@ function parseCreateOptions(body = {}, { imported = false } = {}) {
 
   const inv = parseInvitees(body.invitees);
   if (inv.error) return { error: inv.error };
-  if (inv.invitees.length && audience !== 'invited') {
+  const mail = parseInviteEmails(body.inviteEmails);
+  if (mail.error) return { error: mail.error };
+  if ((inv.invitees.length || mail.emails.length) && audience !== 'invited') {
     return { error: 'Only a group is created with invites. Invite people from a project’s page.' };
+  }
+  if (inv.invitees.length + mail.emails.length > MAX_INVITEES) {
+    return { error: `Invite at most ${MAX_INVITEES} people when you create it; add more from its page.` };
   }
 
   const gov = parseGovernance(body.governance);
   if (gov.error) return { error: gov.error };
-  if (gov.governance && imported) {
-    return { error: 'An imported repo’s own dapp.json decides who approves changes.' };
-  }
+
+  const desc = parseDescription(body.description);
+  if (desc.error) return { error: desc.error };
 
   return {
     audience,
     collabVisibility,
     viewVisibility,
     invitees: inv.invitees,
+    inviteEmails: mail.emails,
     governance: gov.governance,
+    description: desc.description,
   };
 }
 
@@ -172,6 +225,7 @@ function governanceBlock(governance) {
 module.exports = {
   AUDIENCES,
   MAX_INVITEES,
+  DESCRIPTION_MAX,
   parseCreateOptions,
   governanceBlock,
   visibilityForAudience,

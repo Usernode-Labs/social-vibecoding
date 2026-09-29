@@ -81,15 +81,6 @@ server.registerTool('evidence_get_context', {
   catch (error) { return toolError(error); }
 });
 
-server.registerTool('evidence_reset_side', {
-  description: 'Restore one exploration side to its pristine paired fixture and return its replacement origin. Deterministic replay resets both sides automatically.',
-  inputSchema: { side: z.enum(['base', 'head']) },
-  annotations,
-}, async ({ side }) => {
-  try { return resultContent((await request('/reset-side', { method: 'POST', body: { side } })).result); }
-  catch (error) { return toolError(error); }
-});
-
 server.registerTool('evidence_set_request_failure', {
   description: 'Only for a story whose accepted intent declares controlledFailurePath: deliberately fail that exact API GET during browser exploration. Applies to both revisions. Set enabled=true before the triggering action, and false afterward. The replay plan must declare the same toggles and a real matching request on each revision; reviewers see a controlled-test label.',
   inputSchema: { path: z.string().min(6).max(512), enabled: z.boolean() },
@@ -129,6 +120,21 @@ server.registerTool('evidence_run_plan', {
 }, async ({ replays }) => {
   try { return resultContent((await request('/run-plan', { method: 'POST', body: { replays } })).result); }
   catch (error) { return toolError(error); }
+});
+
+server.registerTool('evidence_report_blocker', {
+  description: 'End this evidence attempt without a replay only when observations from the supplied revisions prove that an honest plan cannot be submitted. State the concrete missing fixture, inaccessible state, or unsupported interaction. Do not use this for uncertainty, a validation error, or to avoid submitting a known flow.',
+  inputSchema: {
+    reason: z.string().trim().min(1).max(1000)
+      .describe('Concise user-visible explanation of the observed blocker and the exact state or capability that is missing.'),
+  },
+  annotations,
+}, async ({ reason }) => {
+  try {
+    return resultContent((await request('/finish', {
+      method: 'POST', body: { status: 'failed', reason }, timeoutMs: 30_000,
+    })).result);
+  } catch (error) { return toolError(error); }
 });
 
 const transport = new StdioServerTransport();

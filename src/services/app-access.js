@@ -15,7 +15,7 @@
 
 const log = require('./logger');
 
-const ACCESS_COLUMNS = 'id, slug, created_by, self_hosted, collab_visibility, view_visibility';
+const ACCESS_COLUMNS = 'id, slug, created_by, self_hosted, collab_visibility, view_visibility, moderation_suspended_at';
 
 // Credential-bearing `apps` columns that must NEVER reach an HTTP
 // response. Kept in sync with the `staging:private` tags in
@@ -47,7 +47,7 @@ function stripAppSecrets(row) {
 const NON_SECRET_APP_COLUMNS = [
   'id', 'name', 'slug', 'repo_url', 'container_id', 'status', 'retry_count',
   'created_by', 'created_at', 'main_sha', 'main_pr_number', 'last_deploy_at',
-  'manifest_snapshot', 'last_failure', 'locked', 'self_hosted',
+  'manifest_snapshot', 'last_failure', 'locked', 'self_hosted', 'moderation_suspended_at',
   'collab_visibility', 'view_visibility', 'approver_policy',
   'approvals_required', 'screenshot_device_scale', 'icon_emoji',
   'icon_image_id', 'featured_illustration', 'forked_from', 'admin_usernames',
@@ -117,7 +117,7 @@ async function isCollaborator(pool, appId, userId) {
 // so a trimmed projection that only broke for non-admins would keep
 // slipping through the paths most likely to exercise it.
 async function checkAppAccess(pool, app, user, level = 'view') {
-  if (!app) return false;
+  if (!app || app.moderation_suspended_at) return false;
   const column = level === 'collab' ? 'collab_visibility' : 'view_visibility';
   const vis = app[column];
   if (!vis) {
@@ -127,6 +127,7 @@ async function checkAppAccess(pool, app, user, level = 'view') {
       + 'ACCESS_COLUMNS) rather than trimming the projection.'
     );
   }
+  if (await require('./app-blocks').isBlocked(pool, user?.id, app.id)) return false;
   if (user?.isAdmin) return true;
   if (vis === 'public') return true;
   return isCollaborator(pool, app.id, user?.id);
@@ -154,6 +155,31 @@ function guardLevelFor(req) {
   return req.method === 'GET' || req.method === 'HEAD' ? 'view' : 'collab';
 }
 
+// The Homeroom bot puts what it built up for a vote on the apps in its live
+// list whether or not it is a collaborator or a member there: an admin
+// putting an app in that list is the permission. Its promote runs
+// in-process as a synthetic request (homeroom-bot-live.promoteAsBot), and
+// that request alone carries this marker. It is a Symbol, so nothing a
+// client sends can set it: req.user is built by the auth middleware, and no
+// header, body or token becomes a Symbol-keyed property.
+const HOMEROOM_BOT_PROPOSAL = Symbol('homeroom-bot-proposal');
+
+// Only for the bot's OWN session. The marker lets the bot past the access
+// walls to propose what it built, never to act on anybody else's change.
+function isBotOwnProposal(user, sessionUserId) {
+  return !!user && user[HOMEROOM_BOT_PROPOSAL] === true
+    && sessionUserId != null && Number(sessionUserId) === Number(user.id);
+}
+
+// The same, read from the session row. The owner is looked up only for a
+// request that carries the marker, so every other request's guard query is
+// exactly what it was: these guards run on every session route.
+async function isBotOwnSession(pool, user, sessionId) {
+  if (!user || user[HOMEROOM_BOT_PROPOSAL] !== true) return false;
+  const { rows } = await pool.query('SELECT user_id FROM chat_sessions WHERE id = $1', [sessionId]);
+  return isBotOwnProposal(user, rows[0]?.user_id);
+}
+
 // Express middleware factory for routers that address an app through a
 // chat-session id (/api/sessions/:id/...). Resolves session → app and
 // enforces view access on reads / collab access on writes; 404 on deny
@@ -166,12 +192,13 @@ function sessionCollabGuard(pool) {
     if (!Number.isFinite(id)) return next();
     try {
       const { rows } = await pool.query(
-        `SELECT a.id, a.collab_visibility, a.view_visibility
+        `SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1`,
         [id]
       );
       if (!rows.length) return next();
+      if (await isBotOwnSession(pool, req.user, id)) return next();
       if (!(await checkAppAccess(pool, rows[0], req.user, guardLevelFor(req)))) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -191,7 +218,7 @@ function issueCollabGuard(pool) {
     if (!Number.isFinite(id)) return next();
     try {
       const { rows } = await pool.query(
-        `SELECT a.id, a.collab_visibility, a.view_visibility
+        `SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at
            FROM issues i JOIN apps a ON a.id = i.app_id
           WHERE i.id = $1`,
         [id]
@@ -254,7 +281,7 @@ async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
   const cached = visCacheById.get(id);
   if (cached && now - cached.at < VIS_CACHE_TTL_MS) return cached;
 
-  const { rows } = await pool.query('SELECT view_visibility FROM apps WHERE id = $1', [id]);
+  const { rows } = await pool.query('SELECT view_visibility, moderation_suspended_at FROM apps WHERE id = $1', [id]);
   if (!rows.length) return null;
   const viewPrivate = rows[0].view_visibility === 'private';
   let memberIds = new Set();
@@ -265,7 +292,9 @@ async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
     );
     memberIds = new Set(members.map((r) => r.user_id));
   }
-  const entry = { at: now, viewPrivate, memberIds };
+  const { rows: blocks } = await pool.query('SELECT user_id FROM user_app_blocks WHERE app_id = $1', [id]);
+  const blockedUserIds = new Set(blocks.map(row => Number(row.user_id)));
+  const entry = { at: now, viewPrivate, memberIds, blockedUserIds, suspended: !!rows[0].moderation_suspended_at };
   visCacheById.set(id, entry);
   return entry;
 }
@@ -320,7 +349,7 @@ async function getHostVisibility(pool, slug) {
     return cached.appId == null ? null : cached;
   }
   const { rows } = await pool.query(
-    'SELECT id, view_visibility FROM apps WHERE slug = $1',
+    'SELECT id, view_visibility, moderation_suspended_at FROM apps WHERE slug = $1',
     [slug]
   );
   if (!rows.length) {
@@ -332,6 +361,7 @@ async function getHostVisibility(pool, slug) {
     at: now,
     appId: rows[0].id,
     viewPrivate: rows[0].view_visibility === 'private',
+    suspended: !!rows[0].moderation_suspended_at,
   };
   hostVisBySlug.set(slug, entry);
   return entry;
@@ -344,7 +374,7 @@ async function getHostVisibility(pool, slug) {
 async function isViewMember(pool, appId, userId) {
   if (!Number.isInteger(userId)) return false;
   const info = await getWsVisibility(pool, { appId });
-  if (!info) return false;          // app deleted
+  if (!info || info.suspended || info.blockedUserIds?.has(userId)) return false; // app deleted or suspended
   if (!info.viewPrivate) return true; // flipped public since lookup
   if (info.memberIds.has(userId)) return true;
   const { rows } = await pool.query('SELECT is_admin FROM users WHERE id = $1', [userId]);
@@ -361,6 +391,9 @@ module.exports = {
   checkAppAccess,
   getAppForUser,
   guardLevelFor,
+  HOMEROOM_BOT_PROPOSAL,
+  isBotOwnProposal,
+  isBotOwnSession,
   sessionCollabGuard,
   issueCollabGuard,
   getWsVisibility,

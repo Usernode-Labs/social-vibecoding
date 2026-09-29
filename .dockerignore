@@ -10,6 +10,8 @@ runtime
 public/index.html
 public/css/tailwind.css
 public/shell/assets/
+public/shell/release.json
+public/shell/worker.js
 SPEC.md
 TODO
 template/

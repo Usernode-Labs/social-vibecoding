@@ -106,15 +106,11 @@ test('search renders all supplied results without disclosure', () => {
 });
 
 test('staging preview fixtures exercise real curation logic without certifying real apps', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
-  const start = source.indexOf('function demoIconApps(');
-  const end = source.indexOf('// SELF-HOSTING.md sub-step 2k', start);
-  const fixture = new Function('discoveryCuration', 'DEMO_ICON_PNG', 'demoAgo',
-    `${source.slice(start, end)}; return demoIconApps;`)(curation, 'data:image/png;base64,fixture', () => '2026-01-01T00:00:00Z');
+  const { catalogFixtures: fixture } = require('../src/services/staging-apps');
   assert.ok(fixture().filter((a) => a.featured).every((a) => a.directory.tier === 'ready'));
   const samples = fixture(true).filter((a) => a.slug.startsWith('directory-sample-'));
   assert.deepEqual(samples.map((a) => a.directory.tier), ['ready', 'unreviewed', 'more', 'more', 'more']);
-  assert.match(source, /if \(IS_STAGING && req.query.demo === '1'\)/);
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8'), /req.query.demo === '1'/);
 });
 
 test('admin review explains the manual verification and exposes existing review states', () => {

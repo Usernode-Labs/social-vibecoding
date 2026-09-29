@@ -22,8 +22,12 @@ const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const discoveryCuration = require('../services/discovery-curation');
 const appStorageCap = require('../services/app-storage-cap');
+const appLimit = require('../services/app-limit');
+const platformLimits = require('../services/platform-limit-alerts');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
+const onboarding = require('../services/onboarding');
+const usernames = require('../services/usernames');
 // The CSV writer the topochain admin's two exports share: quoting plus the
 // spreadsheet formula-injection guard, documented where it is defined.
 const { csvField } = require('./topochain/helpers');
@@ -587,7 +591,7 @@ function adminRoutes(config) {
       await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
 
       const { rows: existing } = await client.query(
-        'SELECT id, is_admin, admin_readonly FROM users WHERE id = $1',
+        'SELECT id, is_admin, admin_readonly, participation_restricted_at FROM users WHERE id = $1',
         [userId]
       );
       if (!existing.length) {
@@ -595,10 +599,10 @@ function adminRoutes(config) {
         return res.status(404).json({ error: 'User not found' });
       }
 
-      const wasFullAdmin = existing[0].is_admin && !existing[0].admin_readonly;
+      const wasFullAdmin = existing[0].is_admin && !existing[0].admin_readonly && !existing[0].participation_restricted_at;
       if (wasFullAdmin) {
         const { rows: countRows } = await client.query(
-          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE'
+          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE AND participation_restricted_at IS NULL'
         );
         if (countRows[0].n <= 1) {
           await client.query('ROLLBACK');
@@ -625,6 +629,81 @@ function adminRoutes(config) {
       res.status(500).json({ error: 'Internal server error' });
     } finally {
       client.release();
+    }
+  });
+
+  // Admin-issued rename (issue tracked in the header of routes/profile.js,
+  // which used to say this was unimplemented). Moving someone else's handle
+  // is a moderation action, so it skips the self-service route's password
+  // check and its 30-day cooldown: those two protections exist to stop a
+  // hijacked SESSION from walking the namespace, a threat model that does
+  // not apply to a full admin acting through their own gate. Format,
+  // reserved-prefix and service-identity protection, and the
+  // live-plus-retired-history uniqueness check all still run unchanged,
+  // through the same src/services/usernames.js the self-service route uses,
+  // so the two paths can never disagree about what a valid rename is.
+  router.put('/api/admin/users/:id/username', requireAdminWrite, async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId) || userId <= 0 || userId > 2147483647) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+
+    const check = usernames.validateUsername(req.body?.username);
+    if (!check.ok) return res.status(400).json({ error: check.error });
+    const next = check.value;
+
+    try {
+      const { rows } = await pool.query('SELECT username FROM users WHERE id = $1', [userId]);
+      if (!rows.length) return res.status(404).json({ error: 'User not found' });
+      const current = rows[0].username;
+
+      // Seeded service accounts (usernode-capture and friends) are found BY
+      // NAME at runtime; renaming one breaks a subsystem rather than moving
+      // an identity. See usernames.isServiceIdentity's own comment.
+      if (usernames.isServiceIdentity(current)) {
+        return res.status(403).json({ error: 'This account cannot be renamed.' });
+      }
+
+      // An exact no-op is a success, not an error. A case-only change falls
+      // through: renameUser treats it as a re-case, which retires nothing.
+      if (current === next) {
+        return res.json({ ok: true, username: current, retired: null, unchanged: true });
+      }
+      const recase = current.toLowerCase() === next.toLowerCase();
+
+      const free = await usernames.checkAvailability(pool, next, userId);
+      if (!free.available) {
+        return res.status(409).json({ error: free.error });
+      }
+
+      const result = await usernames.renameUser(pool, userId, next);
+      if (!result) return res.status(404).json({ error: 'User not found' });
+
+      log.info('admin', 'Username changed', {
+        id: userId, from: current, to: result.username, recase, by: req.user.username,
+      });
+      if (!recase) {
+        try {
+          events.record(pool, {
+            type: events.EVENT_TYPES.USERNAME_CHANGED,
+            userId,
+            metadata: { from: current, to: result.username, admin: true, by: req.user.username },
+          });
+        } catch (err) {
+          log.warn('admin', 'Username event record failed', { err: err.message });
+        }
+      }
+
+      return res.json({ ok: true, username: result.username, retired: result.retired });
+    } catch (err) {
+      // The unique indexes on users.username and username_history are the
+      // backstop behind the availability check above; a race with someone
+      // else claiming the same handle lands here.
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'That username is taken.' });
+      }
+      log.error('admin', 'Username change failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -678,6 +757,28 @@ function adminRoutes(config) {
       res.json({ ok: true, username: recovery.user.username, tempPassword });
     } catch (err) {
       log.error('admin', 'Password reset failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // "Reset first run" (communities, stage 5): the account's next load shows
+  // the join screen, the tour and the Getting started card again, as for a
+  // new account. For trying onboarding on a test account, or on yourself.
+  // Nothing the account owns is touched (services/onboarding.js
+  // resetFirstRun), so any full admin may do it, to anyone, like a password
+  // reset.
+  router.post('/api/admin/users/:id/reset-first-run', requireAdminWrite, async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    try {
+      const user = await onboarding.resetFirstRun(pool, userId);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      log.info('admin', 'First run reset', { id: user.id, username: user.username, by: req.user.username });
+      res.json({ ok: true, username: user.username });
+    } catch (err) {
+      log.error('admin', 'First run reset failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -848,6 +949,53 @@ function adminRoutes(config) {
     }
   });
 
+  // ── App limit ───────────────────────────────────────────────
+  //
+  // The server-wide cap on live apps (services/app-limit.js): MAX_APPS is
+  // the deploy's default, and a full admin can override it here without a
+  // deploy, which is the only lever the Kubernetes deploy has (its chart
+  // does not pass MAX_APPS through). Read open to view-only admins, like
+  // /limits; the write is requireAdminWrite.
+  //
+  // `limit` is a whole number, or null to clear the setting and fall back
+  // to MAX_APPS. A deploy that set MAX_APPS to 0 has switched the cap off,
+  // and the setting cannot switch it back on (409): see the precedence in
+  // services/app-limit.js.
+  router.get('/api/admin/app-limit', async (_req, res) => {
+    try {
+      res.json(await appLimit.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Read app limit failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/app-limit', requireAdminWrite, async (req, res) => {
+    const body = req.body || {};
+    if (!Object.prototype.hasOwnProperty.call(body, 'limit')) {
+      return res.status(400).json({ error: 'Provide limit: a whole number, or null to use MAX_APPS.' });
+    }
+    const invalid = appLimit.validate(body.limit);
+    if (invalid) return res.status(400).json({ error: invalid });
+    if (appLimit.deployDefault(config) <= 0) {
+      return res.status(409).json({
+        error: 'The deploy has switched the app limit off (MAX_APPS is 0), so there is nothing to set.',
+      });
+    }
+    try {
+      await appLimit.set(pool, { value: body.limit, actorId: req.user.id });
+      log.info('admin', 'App limit updated', { by: req.user.username, limit: body.limit });
+      // Re-measure now: a raise clears a standing warning, and a cut below
+      // the live count tells the other admins at once rather than at the
+      // next sweep.
+      platformLimits.nudge(pool, config, 'apps');
+      res.json(await appLimit.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Update app limit failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── Model costs (#2570) ────────────────────────────────────
   //
   // One row per model: the note the picker shows, the estimate it shows
@@ -915,7 +1063,7 @@ function adminRoutes(config) {
   // control on the screen — one "what am I looking at" picker.
   const botRunFilters = (q) => ({
     app: typeof q.app === 'string' && /^[a-z0-9-]{1,120}$/.test(q.app) ? q.app : null,
-    verdict: ['question', 'ready', 'person', 'empty', 'failed'].includes(q.verdict) ? q.verdict : null,
+    verdict: ['question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'].includes(q.verdict) ? q.verdict : null,
     budgetOnly: q.verdict === 'budget',
   });
 

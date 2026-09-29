@@ -63,7 +63,21 @@ export function findTarget(
   return null;
 }
 
-/** Grow a target's box by the spotlight padding, clamped to the viewport. */
+/**
+ * The padding for a target that is itself one cell of a bar (#3240): a tab.
+ * Tabs sit edge to edge, so the full padding cut the ring into the labels of
+ * the tabs either side; the tab's own tap area is the breathing room.
+ */
+export const BAR_PAD = 2;
+/**
+ * The smallest hole worth painting (#3240). Anything thinner is a target that
+ * is still arriving (below the screen, under a sheet that is still sliding
+ * in) or one the insets have squeezed away, and a ring drawn round it read
+ * as a stray blue line rather than a highlight.
+ */
+export const MIN_HOLE = 24;
+
+/** Grow a target's box by the spotlight padding. */
 export function padRect(rect: Box, pad = SPOTLIGHT_PAD): Box {
   return {
     top: rect.top - pad,
@@ -73,15 +87,48 @@ export function padRect(rect: Box, pad = SPOTLIGHT_PAD): Box {
   };
 }
 
+/** A box on whole pixels, so sub-pixel jitter is not a new geometry every frame. */
+export function roundBox(rect: Box): Box {
+  const top = Math.round(rect.top);
+  const left = Math.round(rect.left);
+  return {
+    top,
+    left,
+    width: Math.round(rect.left + rect.width) - left,
+    height: Math.round(rect.top + rect.height) - top,
+  };
+}
+
+/**
+ * Keep a hole, and the ring drawn just outside it, inside `bound`.
+ *
+ * Only ever shrinks the hole; one the bound would erase comes back with a
+ * zero side rather than a negative one, for `usableHole` to refuse.
+ */
+export function fitHoleIn(hole: Box, bound: Box): Box {
+  const left = Math.max(hole.left, bound.left + RING_WIDTH);
+  const right = Math.max(left, Math.min(hole.left + hole.width, bound.left + bound.width - RING_WIDTH));
+  const top = Math.max(hole.top, bound.top + RING_WIDTH);
+  const bottom = Math.max(top, Math.min(hole.top + hole.height, bound.top + bound.height - RING_WIDTH));
+  return { top, left, width: right - left, height: bottom - top };
+}
+
+/** Is this hole big enough to paint (see MIN_HOLE)? */
+export function usableHole(hole: Box | null): hole is Box {
+  return !!hole && hole.width >= MIN_HOLE && hole.height >= MIN_HOLE;
+}
+
 /**
  * Keep the hole where its whole ring can be seen (QA 2026-09-24 Q30d).
  *
- * Two things clip a ring. The viewport's own edges: a target in a corner
+ * Three things clip a ring. The viewport's own edges: a target in a corner
  * (the Me tab, bottom right) pads past them, and the ring goes with the
- * overflow. And the tab bar: a target taller than the screen (Challenges on
- * a phone) padded straight down over the bar, so the ring was drawn across
- * Home, Discover and the rest. `bottomInset` is the bar's height when the
- * target is NOT in it, and 0 when it is, so the tab step keeps its ring.
+ * overflow. The tab bar: a target taller than the screen (Challenges on a
+ * phone) padded straight down over the bar, so the ring was drawn across
+ * Home, Discover and the rest. And the header (#3240): a target scrolled up
+ * under it had its ring drawn across the header. `bottomInset` is the bar's
+ * height and `topInset` the header's bottom edge, each 0 when the target is
+ * IN that bar, so a step that points into a bar keeps its ring there.
  *
  * Only ever shrinks the hole; a hole the insets would erase is returned as a
  * zero-height box at the band's edge rather than a negative one.
@@ -90,13 +137,28 @@ export function fitHole(
   hole: Box,
   viewport: { width: number; height: number },
   bottomInset = 0,
+  topInset = 0,
 ): Box {
-  const left = Math.max(hole.left, RING_WIDTH);
-  const right = Math.max(left, Math.min(hole.left + hole.width, viewport.width - RING_WIDTH));
-  const top = Math.max(hole.top, RING_WIDTH);
-  const floor = viewport.height - Math.max(0, bottomInset) - RING_WIDTH;
-  const bottom = Math.max(top, Math.min(hole.top + hole.height, floor));
-  return { top, left, width: right - left, height: bottom - top };
+  const top = Math.max(0, topInset);
+  return fitHoleIn(hole, {
+    top,
+    left: 0,
+    width: viewport.width,
+    height: viewport.height - Math.max(0, bottomInset) - top,
+  });
+}
+
+/**
+ * How much of the bottom of the screen a tab bar covers: its height when it
+ * is docked along the bottom edge, and 0 for anything else (#3240). From
+ * 768px up the same `#platform-tabs` is the sidebar RAIL down the left edge,
+ * and reading it as a bottom bar made the inset 748px on a 1280x800 screen,
+ * which clamped every hole below the header to zero height.
+ */
+export function bottomBarInset(bar: Box, viewport: { width: number; height: number }): number {
+  if (bar.width <= 0 || bar.height <= 0) return 0;
+  if (bar.top + bar.height < viewport.height - 1 || bar.width < viewport.width / 2) return 0;
+  return Math.max(0, viewport.height - bar.top);
 }
 
 /** The card's width for a viewport, so a phone gets a full-bleed card. */
@@ -232,11 +294,12 @@ export function roomLeftOfPanel(card: { width: number }, panel: Box): boolean {
  * straight across from the sentence to the control. Clamped to the viewport
  * like everything else here.
  *
- * NARROW, where the panel takes the whole width: there is no "beside" left,
- * so the rule relaxes to the weaker one the design asks for — clear of the
- * ROW rather than clear of the panel. That is exactly what `placeCard`
- * already does (below the hole when it fits, above it when it does not), so
- * the fallback is a call to it rather than a second arrangement to maintain.
+ * NARROW, where the panel takes the whole width: there is no "beside" left.
+ * The card goes above the whole sheet when it fits there (#3240), so the
+ * sheet's own title stays readable; when it does not, the rule relaxes to
+ * the weaker one — clear of the ROW rather than clear of the panel, which is
+ * exactly what `placeCard` already does, so that fallback is a call to it
+ * rather than a second arrangement to maintain.
  */
 export function placeCardForPanel(
   viewport: { width: number; height: number },
@@ -246,10 +309,23 @@ export function placeCardForPanel(
   safeTop = 0,
   bottomInset = 0,
 ): { top: number; left: number } {
-  if (!hole || !panel || !roomLeftOfPanel(card, panel)) {
+  if (!hole || !panel) return placeCard(viewport, card, hole, safeTop, bottomInset);
+  const minTop = VIEWPORT_MARGIN + Math.max(0, safeTop);
+  if (!roomLeftOfPanel(card, panel)) {
+    // Narrow (#3240): clear the whole SHEET when there is room above it, so
+    // the card does not sit on its title and close button while pointing at
+    // a row below them; otherwise clear the row, as placeCard does.
+    const above = panel.top - CARD_GAP - card.height;
+    if (panel.top > minTop && hole.top >= panel.top && above >= minTop) {
+      const maxLeft = Math.max(VIEWPORT_MARGIN, viewport.width - card.width - VIEWPORT_MARGIN);
+      const centred = hole.left + hole.width / 2 - card.width / 2;
+      return {
+        top: Math.round(above),
+        left: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(centred, maxLeft))),
+      };
+    }
     return placeCard(viewport, card, hole, safeTop, bottomInset);
   }
-  const minTop = VIEWPORT_MARGIN + Math.max(0, safeTop);
   const maxTop = Math.max(minTop, viewport.height - card.height - VIEWPORT_MARGIN);
   const centred = hole.top + hole.height / 2 - card.height / 2;
   return {

@@ -147,15 +147,16 @@ export function BrowseScreen() {
           across a cream page. Dark mode reads the same variable, which the
           body's dark rule points at the inverted ground.
 
-          ON A PHONE it is the HEAD of a pane (#1919): the search, the sort
-          and the list they narrow wear the Workshop's working-pane
-          treatment — one frosted sheet, a 22px radius, a hairline ring —
-          with the head pinned at the top and the rows sliding under its
-          frost. The pane is `browse-pane-head` / `browse-pane-body` /
-          `browse-pane-note` in app.css, next to the .browse-row rules, so
-          the phone padding and fill live there and only the md+ utilities
-          stay here. Page-scoped classes rather than the Workshop's own, so
-          the two panes can move independently.
+          ON A PHONE it sits ON THE GROUND, above the list's card, not as
+          the card's head. #1919 drew the search, the sort and the list as
+          one frosted pane; the communities prototype keeps the controls
+          outside the card they narrow, the way Home and the Communities
+          screen put a control row over a card, so the card holds only
+          what it lists. The head still pins at the top, on the ground's own
+          colour, and the rows slide under it. The parts keep their names —
+          `browse-pane-head` / `browse-pane-body` / `browse-pane-note` in
+          app.css, next to the .browse-row rules — so the phone padding and
+          fill live there and only the md+ utilities stay here.
       */}
       <div
         id="browse-search-bar"

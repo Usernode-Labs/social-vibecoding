@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { withStateRead } = require('./lib/agent-session-state-read');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -159,7 +160,7 @@ test('the ⋯ renames, archives and unarchives; Build opens the hand-off; checks
     AppView: { castRecheck: async (id) => { rechecks.push(id); return true; } },
   };
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = async (url, init = {}) => {
+  globalThis.fetch = withStateRead(async (url, init = {}) => {
     const method = init.method || 'GET';
     requests.push([method, url, init.body ? JSON.parse(init.body) : null]);
     if (/\/title$/.test(url)) session = { ...session, title: 'Night mode' };
@@ -171,7 +172,7 @@ test('the ⋯ renames, archives and unarchives; Build opens the hand-off; checks
           : /\/api\/agent-sessions$/.test(url) ? { sessions: [session] }
             : { session, turn: null };
     return { ok: true, status: 200, json: async () => body };
-  };
+  });
   try {
     const api = loadTsx('tests/fixtures/agent-session-api.ts');
     await api.openAgentSession({ id: 7, host: 'messages' });
@@ -201,18 +202,18 @@ test('the ⋯ renames, archives and unarchives; Build opens the hand-off; checks
   }
 });
 
-test('a refused message becomes the credits card and goes back to the box', async () => {
+test('a refused message becomes the credits card, and stays in the conversation as Not sent, with Retry', async () => {
   const session = { id: 7, title: 'x', status: 'open', focusApp: null, focusContext: {}, busy: false, activeChange: null, changes: [] };
   globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {} }, UsernodeReact: {}, PlatformUI: { toast() {} } };
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = async (url, init = {}) => {
+  globalThis.fetch = withStateRead(async (url, init = {}) => {
     if (/\/turns$/.test(url) && init.method === 'POST') {
       return { ok: false, status: 429, json: async () => ({ error: 'Weekly limit reached.', code: 'budget_exceeded' }) };
     }
     const body = /\/messages\?/.test(url) ? { messages: [], nextAfter: null }
       : /\/actions$/.test(url) ? { actions: [] } : /\/drafts$/.test(url) ? { drafts: [] } : { session, turn: null };
     return { ok: true, status: 200, json: async () => body };
-  };
+  });
   try {
     const api = loadTsx('tests/fixtures/agent-session-api.ts');
     await api.openAgentSession({ id: 7, host: 'messages' });
@@ -220,7 +221,11 @@ test('a refused message becomes the credits card and goes back to the box', asyn
     const state = api.getAgentSessionState();
     assert.deepEqual(state.credits, { error: 'Weekly limit reached.', reason: null, verificationRequired: false });
     assert.equal(state.error, '', 'the card, not a red line');
-    assert.equal(state.returnedText, 'Make it blue');
+    // Kept where it was sent, not handed back to the box behind the user's
+    // back: Retry sends it once there is a way, Edit puts it back to reword.
+    assert.deepEqual(state.outbox.map((item) => [item.shown, item.status]), [['Make it blue', 'failed']]);
+    assert.match(state.outbox[0].error, /out of credits/);
+    assert.equal(state.returnedText, null);
     assert.equal(state.turn.running, false);
     api.dismissCredits();
     assert.equal(api.getAgentSessionState().credits, null);

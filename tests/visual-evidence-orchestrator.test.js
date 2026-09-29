@@ -44,6 +44,49 @@ test('run diagnostics retain bounded recovery and controlled-failure counts', ()
   assert.equal(stability.captureWaitMs, 4900);
 });
 
+test('only a pure network-change browser failure qualifies for a deterministic replay retry', () => {
+  const failure = {
+    code: 'locator_not_found',
+    detail: {
+      storyId: 'approve-blank', side: 'base', phase: 'action',
+      browserDiagnostics: {
+        httpErrorCount: 0, blockedRequestCount: 0,
+        failedRequests: [
+          { error: 'net::ERR_NETWORK_CHANGED', location: { pathname: '/shell/assets/shell.js' } },
+          { error: 'net::ERR_NETWORK_CHANGED', location: { pathname: '/usernode-native/v1/native.js' } },
+        ],
+        consoleErrors: [
+          { message: 'Failed to load resource: net::ERR_NETWORK_CHANGED' },
+        ],
+        pageErrors: [{ message: 'Home is not defined', sourceKind: 'platform' }],
+        httpErrors: [], blockedRequests: [],
+      },
+    },
+  };
+  assert.deepEqual(orchestrator.transientNetworkReplayFailure(failure), {
+    kind: 'network_changed', code: 'locator_not_found', storyId: 'approve-blank',
+    side: 'base', failedRequestCount: 2, consoleErrorCount: 1, pageErrorCount: 1,
+  });
+  assert.equal(orchestrator.replayRepairKind(failure, fixtures.plan()), null);
+  assert.equal(orchestrator.transientNetworkReplayFailure({
+    ...failure,
+    detail: { ...failure.detail, browserDiagnostics: {
+      ...failure.detail.browserDiagnostics,
+      failedRequests: [
+        ...failure.detail.browserDiagnostics.failedRequests,
+        { error: 'net::ERR_CONNECTION_RESET' },
+      ],
+    } },
+  }), null);
+  assert.equal(orchestrator.transientNetworkReplayFailure({
+    ...failure,
+    detail: { ...failure.detail, browserDiagnostics: {
+      ...failure.detail.browserDiagnostics,
+      httpErrorCount: 1, httpErrors: [{ status: 503 }],
+    } },
+  }), null);
+});
+
 const RUN_ID = '1'.repeat(32);
 const BASE = 'a'.repeat(40);
 const HEAD = 'b'.repeat(40);
@@ -54,6 +97,112 @@ const provenance = {
   baseImageDigest: 'sha256:base',
   headImageDigest: 'sha256:head',
 };
+
+function virtualWaitClock() {
+  let timeMs = 0;
+  return {
+    now: () => timeMs,
+    wait: async (delayMs) => { timeMs += delayMs; },
+  };
+}
+
+test('an ordinary coding turn keeps the normal evidence start deadline', async () => {
+  const clock = virtualWaitClock();
+  const pool = { query: async () => ({ rows: [{ active_turn: {
+    mode: 'build', phase: 'executing',
+  } }] }) };
+  await assert.rejects(orchestrator.waitForSessionIdle(pool, 42, {
+    timeoutMs: 20,
+    recoveryTimeoutMs: 50,
+    intervalMs: 10,
+    now: clock.now,
+    wait: clock.wait,
+    workerService: { isInFlight: () => true, getActiveTurnMode: () => 'build' },
+  }), (error) => {
+    assert.equal(error.code, 'evidence_agent_busy');
+    assert.deepEqual(error.detail.idleWait, {
+      version: 1, outcome: 'timeout', waitClass: 'session_busy', recoveryReason: null,
+      normalLimitMs: 20, recoveryLimitMs: 50, waitedMs: 20, polls: 3,
+      activeTurnPresent: true, activeTurnMode: 'build', activeTurnPhase: 'executing',
+      workerInFlight: true, workerMode: 'build',
+    });
+    return true;
+  });
+});
+
+test('an interrupted evidence turn may finish cleanup after the normal deadline', async () => {
+  const clock = virtualWaitClock();
+  const pool = { query: async () => ({ rows: [{
+    active_turn: clock.now() < 30
+      ? { mode: 'evidence', phase: 'cleanup_pending' }
+      : null,
+  }] }) };
+  const result = await orchestrator.waitForSessionIdle(pool, 42, {
+    timeoutMs: 20,
+    recoveryTimeoutMs: 50,
+    intervalMs: 10,
+    now: clock.now,
+    wait: clock.wait,
+    workerService: { isInFlight: () => false, getActiveTurnMode: () => null },
+  });
+  assert.deepEqual(result, {
+    version: 1, outcome: 'idle', waitClass: 'evidence_recovery',
+    recoveryReason: 'evidence_turn', normalLimitMs: 20, recoveryLimitMs: 50,
+    waitedMs: 30, polls: 4, activeTurnPresent: false,
+    activeTurnMode: null, activeTurnPhase: null, workerInFlight: false, workerMode: null,
+  });
+});
+
+test('a stuck evidence cleanup fails at the extended deadline with diagnostics', async () => {
+  const clock = virtualWaitClock();
+  const observations = [];
+  const pool = { query: async () => ({ rows: [{ active_turn: {
+    mode: 'evidence', phase: 'cleanup_pending',
+  } }] }) };
+  await assert.rejects(orchestrator.waitForSessionIdle(pool, 42, {
+    timeoutMs: 20,
+    recoveryTimeoutMs: 40,
+    intervalMs: 10,
+    now: clock.now,
+    wait: clock.wait,
+    onObservation: (observation) => observations.push(observation),
+    workerService: { isInFlight: () => false, getActiveTurnMode: () => null },
+  }), (error) => {
+    assert.equal(error.code, 'evidence_agent_busy');
+    assert.equal(error.detail.idleWait.waitClass, 'evidence_recovery');
+    assert.equal(error.detail.idleWait.waitedMs, 40);
+    assert.equal(error.detail.idleWait.polls, 5);
+    assert.equal(error.detail.idleWait.outcome, 'timeout');
+    return true;
+  });
+  assert.equal(observations.at(-1).outcome, 'timeout');
+});
+
+test('an idle-wait failure is retained in the durable run trace before any model call', async () => {
+  const fixture = setup();
+  const waiting = {
+    version: 1, outcome: 'waiting', waitClass: 'evidence_recovery',
+    recoveryReason: 'evidence_turn', normalLimitMs: 120_000, recoveryLimitMs: 240_000,
+    waitedMs: 239_500, polls: 480, activeTurnPresent: true,
+    activeTurnMode: 'evidence', activeTurnPhase: 'cleanup_pending',
+    workerInFlight: false, workerMode: null,
+  };
+  const timeout = { ...waiting, outcome: 'timeout', waitedMs: 240_000, polls: 481 };
+  fixture.dependencies.waitForSessionIdle = async (_pool, _sessionId, options) => {
+    options.onObservation(waiting);
+    throw Object.assign(new Error('The previous evidence worker is still clearing.'), {
+      code: 'evidence_agent_busy', detail: { idleWait: timeout },
+    });
+  };
+
+  await assert.rejects(execute(fixture), { code: 'evidence_agent_busy' });
+  const failure = fixture.transitions.at(-1);
+  assert.equal(failure.next, 'failed');
+  assert.deepEqual(failure.patch.traceSummary.idleWait, timeout);
+  assert.equal(failure.patch.traceSummary.failure.phase, 'wait_for_idle');
+  assert.deepEqual(failure.patch.traceSummary.failure.detail.idleWait, timeout);
+  assert.equal(fixture.calls.dispatches, 0);
+});
 
 function setup({ dispatch, storeArtifacts } = {}) {
   const transitions = [];
@@ -106,7 +255,9 @@ function setup({ dispatch, storeArtifacts } = {}) {
       },
       cleanupPair: async () => { calls.cleaned += 1; },
     },
-    identities: { mintEvidenceAuthTokens: async () => ({ member: 'member.jwt', read_only_admin: 'admin.jwt' }) },
+    identities: { mintEvidenceAuthTokens: async () => ({
+      member: 'member.jwt', read_only_admin: 'admin.jwt', full_admin: 'full-admin.jwt',
+    }) },
     replay: {
       runPass: async (_config, _sessionId, input) => {
         calls.passes.push(input.pass);
@@ -189,6 +340,72 @@ test('a successful agent plan publishes captured media without a model verdict',
     ['provisioning', 'exploring', 'replaying', 'reviewing', 'verified']);
   assert.equal(Object.hasOwn(fixture.transitions.at(-1).patch, 'semanticVerdict'), false);
   assert.equal(fixture.calls.workerReleased, 0, 'an active native coding session retains its memory');
+});
+
+test('a pure network change retries the same pass without spending a model repair', async () => {
+  const networkChanged = Object.assign(new Error('The page bundle changed network during startup.'), {
+    code: 'locator_not_found',
+    detail: {
+      storyId: 'invite-suggestions', viewport: 'desktop', side: 'base',
+      phase: 'action', actionId: 'open-members',
+      browserDiagnostics: {
+        httpErrorCount: 0, blockedRequestCount: 0,
+        failedRequests: [{ error: 'net::ERR_NETWORK_CHANGED',
+          location: { sameOrigin: true, pathname: '/shell/assets/shell.js' } }],
+        consoleErrors: [{ message: 'Failed to load resource: net::ERR_NETWORK_CHANGED' }],
+        pageErrors: [{ message: 'Home is not defined', sourceKind: 'platform' }],
+        httpErrors: [], blockedRequests: [],
+      },
+    },
+  });
+  const fixture = setup();
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      fixture.calls.passes.push(args[2].pass);
+      throw networkChanged;
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 1);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
+  assert.equal(fixture.calls.resets, 4);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 0);
+  const retry = fixture.transitions.at(-1).patch.traceSummary.replayRetries[0];
+  assert.deepEqual(retry, {
+    attempt: 1, pass: 1, retry: 1, durationMs: retry.durationMs,
+    kind: 'network_changed', code: 'locator_not_found', storyId: 'invite-suggestions',
+    side: 'base', failedRequestCount: 1, consoleErrorCount: 1, pageErrorCount: 1,
+  });
+});
+
+test('a repeated pure network change fails without asking the model to edit the plan', async () => {
+  const networkChanged = Object.assign(new Error('The page bundle changed network during startup.'), {
+    code: 'locator_not_found',
+    detail: {
+      storyId: 'invite-suggestions', side: 'base', phase: 'action', actionId: 'open-members',
+      browserDiagnostics: {
+        httpErrorCount: 0, blockedRequestCount: 0,
+        failedRequests: [{ error: 'net::ERR_NETWORK_CHANGED' }],
+        consoleErrors: [{ message: 'Failed to load resource: net::ERR_NETWORK_CHANGED' }],
+        pageErrors: [], httpErrors: [], blockedRequests: [],
+      },
+    },
+  });
+  const fixture = setup();
+  fixture.dependencies.replay.runPass = async (_config, _sessionId, input) => {
+    fixture.calls.passes.push(input.pass);
+    throw networkChanged;
+  };
+  await assert.rejects(execute(fixture), { code: 'locator_not_found' });
+  assert.equal(fixture.calls.dispatches, 1);
+  assert.deepEqual(fixture.calls.passes, [1, 1]);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 0);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.replayRetries.length, 1);
 });
 
 test('imported evidence releases its temporary worker after a passing run', async () => {
@@ -380,6 +597,10 @@ test('a replay failure survives a correction turn that submits no new plan', asy
         await assert.rejects(control.runPlan(fixtures.plan()), { code: 'ambiguous_locator' });
       } else {
         assert.equal(options.repairAttempt, 1);
+        if (dispatchCount === 3) {
+          assert.equal(options.completionReminder, true);
+          assert.equal(options.resumeThreadId, 'thread-1');
+        }
       }
       // The planner can finish its turn normally after receiving the tool
       // error. That must not replace the platform's actual replay failure.
@@ -405,7 +626,7 @@ test('a replay failure survives a correction turn that submits no new plan', asy
     planCalls: 1, finishStatus: null, finishReason: null,
   });
   assert.ok(failure.patch.traceSummary.lastReplayEvent.elapsedMs >= 0);
-  assert.equal(fixture.calls.dispatches, 2);
+  assert.equal(fixture.calls.dispatches, 3);
   assert.equal(fixture.calls.stored, 0);
   assert.equal(fixture.calls.cleaned, 1);
   assert.deepEqual(failure.patch.traceSummary.lastReplayEvent, {
@@ -584,6 +805,85 @@ test('only a loaded hosted app with blocked embedded requests may be replaced in
     } } }, plan), 'hosted_app');
 });
 
+test('only an actionability timeout on one attached visible target may be repaired', () => {
+  const plan = fixtures.plan();
+  const detail = {
+    phase: 'action', side: 'base', actionId: 'open-app', actionType: 'click',
+    targetStates: [{ matchedCount: 1, visibleCount: 1, attachedCount: 1 }],
+    pageState: { visibleDialogCount: 1 },
+  };
+  const failure = Object.assign(
+    new Error('locator.click: Timeout 10000ms exceeded. Call log: target intercepted pointer events'),
+    { code: 'replay_failed', detail }
+  );
+  assert.equal(orchestrator.replayRepairKind(failure, plan), 'actionability');
+  assert.equal(orchestrator.replayRepairKind(Object.assign(
+    new Error('locator.click: Timeout 10000ms exceeded.'),
+    { code: 'replay_failed', detail: { ...detail,
+      targetStates: [{ matchedCount: 0, visibleCount: 0, attachedCount: 0 }] } }
+  ), plan), null);
+  assert.equal(orchestrator.replayRepairKind(Object.assign(
+    new Error('browser was closed'), { code: 'replay_failed', detail }
+  ), plan), null);
+  assert.equal(orchestrator.replayRepairKind(Object.assign(
+    new Error('locator.click: Timeout 10000ms exceeded.'),
+    { code: 'replay_failed', detail: { ...detail, actionType: 'navigate' } }
+  ), plan), null);
+});
+
+test('a blocked visible action starts a correction turn and two clean replays', async () => {
+  const rejected = fixtures.plan();
+  // The fixture deliberately shares its before/after action array. A real
+  // parsed plan has independent JSON arrays, so mirror that shape here before
+  // adding the setup action to both sides.
+  const corrected = JSON.parse(JSON.stringify(fixtures.plan()));
+  const dismissal = {
+    id: 'dismiss-blocker', stage: 'setup', type: 'click',
+    target: { by: 'role', role: 'button', name: 'Skip tour', exact: true },
+  };
+  corrected.stories[0].replay.before.actions.unshift(dismissal);
+  corrected.stories[0].replay.after.actions.unshift({ ...dismissal });
+  const blocked = Object.assign(
+    new Error('locator.click: Timeout 10000ms exceeded. Call log: target intercepted pointer events'),
+    { code: 'replay_failed', detail: {
+      storyId: 'invite-suggestions', viewport: 'desktop', side: 'base',
+      phase: 'action', actionId: 'open-members', actionType: 'click',
+      targetStates: [{ matchedCount: 1, visibleCount: 1, attachedCount: 1 }],
+      pageState: { visibleDialogCount: 1, visibleLandmarkIds: ['home-tour'] },
+    } }
+  );
+  const fixture = setup({ dispatch: async (options, dispatchCount) => {
+    const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+    if (dispatchCount === 1) {
+      await assert.rejects(control.runPlan(rejected), { code: 'replay_failed' });
+    } else {
+      assert.equal(options.repairAttempt, 1);
+      assert.equal(control.getContext().repair.failure.kind, 'actionability');
+      assert.equal(control.getContext().repair.failure.detail.actionId, 'open-members');
+      await control.runPlan(corrected);
+    }
+    return { backend: 'claude_code', threadId: 'evidence-thread' };
+  } });
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      fixture.calls.passes.push(args[2].pass);
+      throw blocked;
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
+  assert.equal(fixture.calls.stored, 1);
+  assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTrigger, {
+    kind: 'actionability', code: 'replay_failed', side: 'base', actionId: 'open-members',
+  });
+});
+
 test('an actually changing static checkpoint can get a bounded observed-state repair', () => {
   const plan = fixtures.plan();
   const failure = { code: 'unstable_checkpoint', detail: {
@@ -592,6 +892,185 @@ test('an actually changing static checkpoint can get a bounded observed-state re
   assert.equal(orchestrator.replayRepairKind(failure, plan), 'static_timing');
   assert.equal(orchestrator.replayRepairKind({ ...failure,
     detail: { ...failure.detail, sampleCount: 2 } }, plan), null);
+});
+
+test('only exact positive assertion locator mismatches become constrained repairs', () => {
+  const plan = fixtures.plan();
+  const story = plan.stories[0];
+  const failure = (assertion, count, actual = null) => {
+    story.replay.checkpoint.assertions.before[0] = assertion;
+    return {
+      code: 'assertion_failed',
+      detail: {
+        storyId: story.id, phase: 'assertion', side: 'base', assertionIndex: 0,
+        count, actual, assertion,
+      },
+    };
+  };
+  const target = { by: 'css', value: '[data-step="approve"]' };
+  const assertions = [
+    { type: 'visible', target },
+    { type: 'hidden', target },
+    { type: 'attached', target },
+    { type: 'checked', target },
+    { type: 'text', target, value: 'Approved', exact: true },
+    { type: 'value', target, value: 'approved' },
+    { type: 'focusWithin', target },
+  ];
+  for (const assertion of assertions) {
+    assert.equal(orchestrator.replayRepairKind(failure(assertion, 2), plan),
+      'assertion_locator', assertion.type);
+  }
+  assert.equal(orchestrator.replayRepairKind(failure({ type: 'attached', target }, 0), plan),
+    'assertion_locator');
+  assert.equal(orchestrator.replayRepairKind(failure({ type: 'hidden', target }, 1, true), plan), null);
+  assert.equal(orchestrator.replayRepairKind(failure({ type: 'detached', target }, 2), plan), null);
+  assert.equal(orchestrator.replayRepairKind(failure({ type: 'count', count: 1, target }, 0), plan),
+    'assertion_locator');
+  assert.equal(orchestrator.replayRepairKind(failure({ type: 'count', count: 1, target }, 2), plan),
+    'assertion_locator');
+  assert.equal(orchestrator.replayRepairKind(failure({ type: 'count', count: 0, target }, 1), plan), null);
+
+  const exact = { type: 'visible', target };
+  const mismatch = failure(exact, 0);
+  mismatch.detail.assertion = { ...exact, target: { by: 'css', value: '.different' } };
+  assert.equal(orchestrator.replayRepairKind(mismatch, plan), null,
+    'the browser failure must identify the exact assertion in the submitted plan');
+});
+
+test('only a hidden supporting base assertion beside an absence proof gets a correction', () => {
+  const plan = fixtures.plan();
+  const story = plan.stories[0];
+  story.intent.baseState = 'not_present';
+  const supporting = {
+    type: 'visible', target: { by: 'css', value: '#admin-merges-runs' },
+  };
+  story.replay.checkpoint.assertions.before.unshift(supporting);
+  const failure = {
+    code: 'assertion_failed',
+    detail: {
+      storyId: story.id, side: 'base', phase: 'assertion', assertionIndex: 0,
+      count: 1, actual: null, assertion: supporting,
+      targetStates: [{ matchedCount: 1, visibleCount: 0, attachedCount: 1 }],
+    },
+  };
+  assert.equal(orchestrator.replayRepairKind(failure, plan), 'supporting_visibility');
+  assert.equal(orchestrator.replayRepairKind({ ...failure,
+    detail: { ...failure.detail, side: 'head' } }, plan), null);
+  story.intent.baseState = 'present';
+  assert.equal(orchestrator.replayRepairKind(failure, plan), null);
+  story.intent.baseState = 'not_present';
+  story.replay.checkpoint.assertions.before.splice(1, 1);
+  assert.equal(orchestrator.replayRepairKind(failure, plan), null);
+});
+
+test('a hidden supporting base assertion gets one bounded correction and fresh passes', async () => {
+  const rejected = fixtures.plan();
+  const story = rejected.stories[0];
+  story.intent.baseState = 'not_present';
+  const supporting = {
+    type: 'visible', target: { by: 'css', value: '#admin-merges-runs' },
+  };
+  story.replay.checkpoint.assertions.before.unshift(supporting);
+  const corrected = JSON.parse(JSON.stringify(rejected));
+  corrected.stories[0].replay.checkpoint.assertions.before.shift();
+  const failure = Object.assign(new Error('visible assertion failed.'), {
+    code: 'assertion_failed',
+    detail: {
+      storyId: story.id, side: 'base', phase: 'assertion', assertionIndex: 0,
+      count: 1, actual: null, assertion: supporting,
+      targetStates: [{ matchedCount: 1, visibleCount: 0, attachedCount: 1 }],
+    },
+  });
+  const fixture = setup({
+    dispatch: async (options, dispatchCount) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      if (dispatchCount === 1) await assert.rejects(control.runPlan(rejected));
+      else {
+        assert.equal(control.getContext().repair.failure.kind, 'supporting_visibility');
+        await control.runPlan(corrected);
+      }
+      return { backend: 'claude_code', threadId: 'evidence-thread' };
+    },
+  });
+  fixture.run.intent = contract.parseIntent(contract.semanticIntentFromPlan(rejected));
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      fixture.calls.passes.push(args[2].pass);
+      throw failure;
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
+  assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTrigger, {
+    kind: 'supporting_visibility', code: 'assertion_failed', side: 'base', assertionIndex: 0,
+  });
+});
+
+test('a positive count assertion with the wrong accessible target gets one constrained correction', async () => {
+  const rejected = fixtures.plan();
+  const failedAssertion = {
+    type: 'count',
+    target: {
+      by: 'role', role: 'status', name: 'Paused live view · Checks passing', exact: true,
+    },
+    count: 1,
+  };
+  rejected.stories[0].replay.checkpoint.assertions.after.push(failedAssertion);
+  const corrected = structuredClone(rejected);
+  corrected.stories[0].replay.checkpoint.assertions.after[1].target = {
+    by: 'css', value: '#admin-merges-paused-live',
+  };
+  const failure = Object.assign(new Error('count assertion failed.'), {
+    code: 'assertion_failed',
+    detail: {
+      storyId: rejected.stories[0].id, side: 'head', phase: 'assertion',
+      assertionIndex: 1, assertionType: 'count', count: 0, actual: 0,
+      assertion: failedAssertion,
+      targetStates: [{
+        kind: 'role', role: 'status', matchedCount: 0, attachedCount: 0, visibleCount: 0,
+        roleHints: {
+          candidateCount: 2,
+          candidates: [{ name: '- status: Paused live view · Checks passing', visible: true }],
+        },
+      }],
+    },
+  });
+  const fixture = setup({
+    dispatch: async (options, dispatchCount) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      if (dispatchCount === 1) await assert.rejects(control.runPlan(rejected));
+      else {
+        assert.equal(control.getContext().repair.failure.kind, 'assertion_locator');
+        await control.runPlan(corrected);
+      }
+      return { backend: 'codex_openrouter', agentThreadId: 'evidence-thread' };
+    },
+  });
+  fixture.run.intent = contract.parseIntent(contract.semanticIntentFromPlan(rejected));
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      fixture.calls.passes.push(args[2].pass);
+      throw failure;
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
+  assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTrigger, {
+    kind: 'assertion_locator', code: 'assertion_failed', side: 'head', assertionIndex: 1,
+  });
 });
 
 test('a missing readiness locator gets one correction turn and fresh replay passes', async () => {
@@ -641,21 +1120,24 @@ test('a missing readiness locator gets one correction turn and fresh replay pass
 });
 
 test('a missing positive assertion locator can receive a second bounded correction', async () => {
-  const plans = [fixtures.plan(), fixtures.plan(), fixtures.plan()];
+  const plans = [fixtures.plan(), fixtures.plan()];
   plans[1].stories[0].replay.before.actions[0].target = {
     by: 'role', role: 'button', name: 'Browse all apps', exact: true,
   };
-  plans[2].stories[0].replay.after.actions[0].target = {
-    by: 'role', role: 'button', name: 'Browse all apps', exact: false,
+  plans.push(structuredClone(plans[1]));
+  plans[2].stories[0].replay.checkpoint.assertions.after[0].target = {
+    by: 'css', value: '[role="listbox"]:not([hidden])',
   };
+  const failedAssertion = contract.parseReplayPlan(plans[1])
+    .stories[0].replay.checkpoint.assertions.after[0];
   const failures = [
     Object.assign(new Error('Action locator missing.'), {
       code: 'locator_not_found', detail: { side: 'base', phase: 'action', actionId: 'wait-ready' },
     }),
     Object.assign(new Error('visible assertion failed.'), {
       code: 'assertion_failed', detail: {
-        side: 'head', phase: 'assertion', assertionIndex: 1, count: 0,
-        assertion: { type: 'visible', target: { by: 'text', value: 'Ready', exact: true } },
+        storyId: 'invite-suggestions', side: 'head', phase: 'assertion',
+        assertionIndex: 0, count: 0, assertion: failedAssertion,
       },
     }),
   ];
@@ -687,6 +1169,64 @@ test('a missing positive assertion locator can receive a second bounded correcti
   assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 2);
   assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTriggers.map((item) => item.code),
     ['locator_not_found', 'assertion_failed']);
+});
+
+test('an ambiguous assertion locator can receive the remaining bounded correction', async () => {
+  const plans = [fixtures.plan(), fixtures.plan()];
+  plans[1].stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  plans.push(structuredClone(plans[1]));
+  plans[2].stories[0].replay.checkpoint.assertions.before[0].target = {
+    by: 'css', value: '[role="listbox"]:not([hidden])',
+  };
+  const failedAssertion = contract.parseReplayPlan(plans[1])
+    .stories[0].replay.checkpoint.assertions.before[0];
+  const ambiguousAssertion = {
+    storyId: 'invite-suggestions', side: 'base', phase: 'assertion', assertionIndex: 0,
+    count: 2, actual: null,
+    assertion: failedAssertion,
+  };
+  const failures = [
+    Object.assign(new Error('Action locator missing.'), {
+      code: 'locator_not_found', detail: { side: 'base', phase: 'action', actionId: 'wait-ready' },
+    }),
+    Object.assign(new Error('hidden assertion failed.'), {
+      code: 'assertion_failed', detail: ambiguousAssertion,
+    }),
+  ];
+  const fixture = setup({
+    dispatch: async (options, dispatchCount) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      assert.equal(options.repairAttempt, dispatchCount - 1);
+      if (dispatchCount === 3) {
+        assert.deepEqual(control.getContext().repair.failure, {
+          kind: 'assertion_locator', code: 'assertion_failed',
+          message: 'hidden assertion failed.', detail: ambiguousAssertion,
+        });
+      }
+      if (dispatchCount < 3) await assert.rejects(control.runPlan(plans[dispatchCount - 1]));
+      else await control.runPlan(plans[2]);
+      return { backend: 'claude_code', threadId: 'evidence-thread' };
+    },
+  });
+  const runPass = fixture.dependencies.replay.runPass;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (failures.length) {
+      fixture.calls.passes.push(args[2].pass);
+      throw failures.shift();
+    }
+    return runPass(...args);
+  };
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 3);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 1, 2]);
+  assert.equal(fixture.transitions.at(-1).patch.traceSummary.repairCount, 2);
+  assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.repairTriggers, [
+    { kind: 'locator', code: 'locator_not_found', side: 'base', actionId: 'wait-ready' },
+    { kind: 'assertion_locator', code: 'assertion_failed', side: 'base', assertionIndex: 0 },
+  ]);
 });
 
 test('a visible element with the wrong asserted state fails without planner repair', async () => {
@@ -814,6 +1354,65 @@ test('a correction turn has time to inspect the page after the first planner bud
   assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
 });
 
+test('a timed-out correction uses its reserved terminal-only reminder without extending the repair budget', async () => {
+  const mismatch = Object.assign(new Error('Outcome did not match an element.'), {
+    code: 'locator_not_found', detail: {
+      side: 'base', phase: 'action', actionId: 'select-outcome', kind: 'label',
+      matchedCount: 0, visibleCount: 0, attachedCount: 0,
+    },
+  });
+  const corrected = fixtures.plan();
+  corrected.stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  const dispatchOptions = [];
+  const fixture = setup({
+    dispatch: async (options, dispatchCount) => {
+      dispatchOptions.push(options);
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      if (dispatchCount === 1) {
+        await assert.rejects(control.runPlan(fixtures.plan()), { code: 'locator_not_found' });
+        return { backend: 'codex_openrouter', threadId: 'evidence-thread', result: { exitCode: 0 } };
+      }
+      if (dispatchCount === 2) {
+        assert.equal(options.repairAttempt, 1);
+        assert.equal(options.completionReminder, false);
+        throw Object.assign(new Error('The repair exploration timed out.'), {
+          code: 'evidence_agent_timeout',
+        });
+      }
+      assert.equal(options.repairAttempt, 1);
+      assert.equal(options.completionReminder, true);
+      assert.equal(options.resumeThreadId, 'evidence-thread');
+      await control.runPlan(corrected);
+      return { backend: 'codex_openrouter', threadId: 'evidence-thread', result: { exitCode: 0 } };
+    },
+  });
+  const runPass = fixture.dependencies.replay.runPass;
+  let failed = false;
+  fixture.dependencies.replay.runPass = async (...args) => {
+    if (!failed) {
+      failed = true;
+      fixture.calls.passes.push(args[2].pass);
+      throw mismatch;
+    }
+    return runPass(...args);
+  };
+
+  const result = await execute(fixture, { maxRepairAgentMs: 200 });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 3);
+  assert.equal(dispatchOptions[1].timeoutMs, 100);
+  assert.ok(dispatchOptions[2].timeoutMs > 0 && dispatchOptions[2].timeoutMs <= 100);
+  const dispatches = fixture.transitions.at(-1).patch.traceSummary.agentDispatches;
+  assert.equal(dispatches[1].budgetMs, 200);
+  assert.equal(dispatches[1].completionReserveMs, 100);
+  assert.equal(dispatches[1].code, 'evidence_agent_timeout');
+  assert.equal(dispatches[2].completionReminder, true);
+  assert.equal(dispatches[2].repairAttempt, 1);
+  assert.deepEqual(fixture.calls.passes, [1, 1, 2]);
+});
+
 test('a retry after a failed replay cannot replace the browser error with the plan limit', async () => {
   const replayError = Object.assign(new Error('The browser Job ended without a verdict.'), {
     code: 'missing_replay_result',
@@ -896,10 +1495,10 @@ test('a planner timeout keeps a bounded, content-free record of its last active 
   assert.doesNotMatch(JSON.stringify(trace.agentActivity), /private|token|secret|url/i);
 });
 
-test('planner authentication records both personas and sides without retaining credentials', async () => {
+test('planner authentication records every persona and side without retaining credentials', async () => {
   const fixture = setup({
     dispatch: async (options) => {
-      for (const persona of ['member', 'admin']) {
+      for (const persona of ['member', 'admin', 'full_admin']) {
         for (const side of ['base', 'head']) {
           options.onEvidenceDiagnostic({
             kind: 'auth_bootstrap', persona, side, attempted: true,
@@ -915,9 +1514,10 @@ test('planner authentication records both personas and sides without retaining c
   await assert.rejects(execute(fixture), { code: 'missing_evidence_replay' });
   const events = fixture.transitions.at(-1).patch.traceSummary.agentActivity.events
     .filter((event) => event.kind === 'auth_bootstrap');
-  assert.equal(events.length, 4);
+  assert.equal(events.length, 6);
   assert.deepEqual(events.map(({ persona, side }) => [persona, side]), [
     ['member', 'base'], ['member', 'head'], ['admin', 'base'], ['admin', 'head'],
+    ['full_admin', 'base'], ['full_admin', 'head'],
   ]);
   assert.ok(events.every((event) => event.responseStatus === 200
     && event.sessionCookieInstalled && event.sessionCookiePresent));
@@ -1007,6 +1607,16 @@ test('a completed planner turn without tool calls retains tool availability and 
       options.onEvidenceDiagnostic({ kind: 'provider_init', mcpServerCount: 3, toolDefinitionCount: 24,
         evidenceGetContextAvailable: true, evidenceRunPlanAvailable: true,
         browserMemberToolCount: 7, browserAdminToolCount: 7 });
+      options.onEvidenceDiagnostic({ kind: 'provider_tool_config', mcpServerCount: 3,
+        toolDefinitionCount: 12, topLevelFunctionToolCount: 8,
+        topLevelNamespaceToolCount: 3, topLevelOtherToolCount: 1,
+        nestedToolDefinitionCount: 24, nestedFunctionToolCount: 24,
+        evidenceToolDefinitionCount: 4, forwardedToolDefinitionCount: 12,
+        evidenceGetContextAvailable: true,
+        evidenceRunPlanAvailable: true, evidenceReportBlockerAvailable: true,
+        browserMemberToolCount: 7, browserAdminToolCount: 7,
+        completionReminder: false, terminalToolChoiceRequired: false,
+        toolSurfaceFiltered: false });
       options.onEvidenceDiagnostic({ kind: 'context_result', outcome: 'ok', responseCharacters: 12000,
         jsonValid: true, acceptedIntentPresent: true, originsPresent: true,
         revisionsPresent: true, storyCount: 3 });
@@ -1020,13 +1630,20 @@ test('a completed planner turn without tool calls retains tool availability and 
   assert.equal(trace.control.planCalls, 0);
   assert.equal(trace.agentDispatches[0].outcome, 'completed');
   assert.deepEqual(trace.agentActivity.events.map((event) => event.kind),
-    ['provider_dispatched', 'provider_init', 'context_result', 'first_output', 'provider_result']);
+    ['provider_dispatched', 'provider_init', 'provider_tool_config',
+      'context_result', 'first_output', 'provider_result']);
   assert.equal(trace.agentActivity.events[0].requestMode, 'agent_resume');
   assert.equal(trace.agentActivity.events[1].evidenceGetContextAvailable, true);
   assert.equal(trace.agentActivity.events[1].evidenceRunPlanAvailable, true);
   assert.equal(trace.agentActivity.events[1].browserMemberToolCount, 7);
-  assert.equal(trace.agentActivity.events[2].responseCharacters, 12000);
-  assert.equal(trace.agentActivity.events[2].storyCount, 3);
+  assert.equal(trace.agentActivity.events[3].responseCharacters, 12000);
+  assert.equal(trace.agentActivity.events[3].storyCount, 3);
+  assert.equal(trace.agentActivity.providerToolConfigs.length, 1);
+  assert.equal(trace.agentActivity.providerToolConfigs[0].evidenceReportBlockerAvailable, true);
+  assert.equal(trace.agentActivity.providerToolConfigs[0].topLevelNamespaceToolCount, 3);
+  assert.equal(trace.agentActivity.providerToolConfigs[0].nestedToolDefinitionCount, 24);
+  assert.equal(trace.agentActivity.providerToolConfigs[0].evidenceToolDefinitionCount, 4);
+  assert.equal(trace.agentActivity.providerToolConfigs[0].toolSurfaceFiltered, false);
   assert.deepEqual(trace.agentActivity.toolCounts, {});
 });
 
@@ -1052,6 +1669,84 @@ test('an unplanned model exit preserves its redacted final explanation for the o
   assert.equal(response.resultSubtype, 'success');
   assert.equal(response.permissionDenialCount, 0);
   assert.deepEqual(observed, [response]);
+});
+
+test('a normal model exit that forgot the plan gets one reminder in the same bounded thread', async () => {
+  const dispatchOptions = [];
+  const fixture = setup({
+    dispatch: async (options, count) => {
+      dispatchOptions.push(options);
+      if (count === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return {
+          backend: 'claude_code', threadId: 'evidence-thread',
+          result: { lastResultText: 'Submitting the validated plan now.', exitCode: 0 },
+        };
+      }
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      await control.runPlan(fixtures.plan());
+      return { backend: 'claude_code', threadId: 'evidence-thread', result: { exitCode: 0 } };
+    },
+  });
+
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  assert.equal(dispatchOptions[0].completionReminder, false);
+  assert.equal(dispatchOptions[1].completionReminder, true);
+  assert.equal(dispatchOptions[1].resumeThreadId, 'evidence-thread');
+  const dispatches = fixture.transitions.at(-1).patch.traceSummary.agentDispatches;
+  assert.equal(dispatches[0].completionReminder, undefined);
+  assert.equal(dispatches[1].completionReminder, true);
+  assert.ok(dispatches[1].timeoutMs < dispatches[0].timeoutMs,
+    'the reminder spends only what remains of the original agent budget');
+  const responses = fixture.transitions.at(-1).patch.traceSummary.agentFinalResponses;
+  assert.equal(responses.length, 1);
+  assert.equal(responses[0].dispatch, 1);
+  assert.equal(responses[0].excerpt, 'Submitting the validated plan now.');
+  assert.deepEqual(fixture.calls.passes, [1, 2]);
+});
+
+test('the completion retry may report a concrete blocker instead of fabricating a plan', async () => {
+  const fixture = setup({
+    dispatch: async (options, count) => {
+      if (count === 1) {
+        return {
+          backend: 'codex_openrouter', threadId: 'evidence-thread',
+          result: { lastResultText: 'I cannot submit this flow yet.', exitCode: 0 },
+        };
+      }
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      control.finish({
+        status: 'failed',
+        reason: 'The accepted full-admin screen has no selectable proposal row in either revision.',
+      });
+      return { backend: 'codex_openrouter', threadId: 'evidence-thread', result: { exitCode: 0 } };
+    },
+  });
+
+  await assert.rejects(execute(fixture), (error) => {
+    assert.equal(error.code, 'evidence_agent_reported_failure');
+    assert.match(error.message, /no selectable proposal row/i);
+    return true;
+  });
+  const trace = fixture.transitions.at(-1).patch.traceSummary;
+  assert.equal(trace.control.planCalls, 0);
+  assert.equal(trace.control.finishStatus, 'failed');
+  assert.match(trace.control.finishReason, /no selectable proposal row/i);
+  assert.equal(trace.agentFinalResponses.length, 2);
+});
+
+test('a concrete blocker reported during exploration does not trigger a redundant reminder', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
+      control.finish({ status: 'failed', reason: 'The required fixture record is absent on both revisions.' });
+      return { backend: 'codex_openrouter', threadId: 'evidence-thread', result: { exitCode: 0 } };
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'evidence_agent_reported_failure' });
+  assert.equal(fixture.calls.dispatches, 1);
 });
 
 test('an author plan uses the same two clean replays without a second model call', async () => {

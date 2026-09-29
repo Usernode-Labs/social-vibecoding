@@ -37,6 +37,8 @@ const EFFORT_LABELS: Record<string, string> = {
 };
 
 const OPENROUTER_TITLE = 'Runs on your OpenRouter key';
+// #3296: the platform runs some OpenRouter models in Claude Code, not Codex.
+const OPENROUTER_CLAUDE_TITLE = 'Runs on your OpenRouter key, in Claude Code';
 const ANTHROPIC_TITLE = 'Runs on the platform Claude allowance, or your own Anthropic key';
 
 export interface PickerOption {
@@ -149,7 +151,8 @@ export function pickerOptions(catalog: ModelCatalog | null, selected: AgentChoic
   const pushOpenRouter = (id: string | null | undefined) => {
     if (!id) return;
     const model = openRouterModel(catalog, id);
-    push(withCost({ value: `${OPENROUTER_PREFIX}${id}`, label: model?.name || id, title: OPENROUTER_TITLE }, modelCost(id, catalog, model)));
+    const title = model?.harness === 'claude' ? OPENROUTER_CLAUDE_TITLE : OPENROUTER_TITLE;
+    push(withCost({ value: `${OPENROUTER_PREFIX}${id}`, label: model?.name || id, title }, modelCost(id, catalog, model)));
   };
   const openRouter = !!catalog && catalog.codexAvailable && catalog.openrouter.length > 0;
 

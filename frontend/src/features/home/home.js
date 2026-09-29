@@ -1004,6 +1004,10 @@ const Home = {
       failureReason: isError && app.last_failure_reason ? String(app.last_failure_reason) : null,
       showRetry,
       forkName,
+      // The tile's audience mark (communities, stage 4): GET /api/apps
+      // derives it per row, and anything it does not say reads as a
+      // community, which draws no mark.
+      audience: app.audience === 'invited' || app.audience === 'solo' ? app.audience : 'open',
     };
   },
 
@@ -1395,6 +1399,7 @@ const Home = {
       // this viewer on this row — the same bit that decides whether starting
       // a session is offered anywhere else.
       readOnly: !row.can_collaborate,
+      canReport: row.can_report === true,
       // Nothing to share through the APP share dialog: the platform row has no
       // per-slug app URL, which is also why opening it lands on Dev rather
       // than the App tab. About Homeroom shares the platform's own address
@@ -1432,6 +1437,7 @@ const Home = {
       version: null,
       deploying: false,
       readOnly: true,
+      canReport: false,
       canShare: false,
     };
   },
@@ -1484,7 +1490,7 @@ const Home = {
     }
     const cached = Home._cachedImproveTarget();
     if (cached) {
-      window.Improve.setTarget(cached);
+      window.Improve.setTarget({ ...cached, canReport: false });
       return;
     }
     const known = resolver?.known?.();
@@ -3718,6 +3724,10 @@ const Home = {
     if (user.canAdminWrite || app.can_manage || app.can_delete || app.delete_block === 'shared') {
       items.push({ key: 'app-settings', label: 'App settings', run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
     }
+    if (App.user && app.slug && app.can_report === true) items.push({
+      key: 'report', label: 'Report app',
+      run: () => window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app', target: app.slug, label: app.name || app.slug }),
+    });
     return items;
   },
 

@@ -7,6 +7,7 @@ const github = require('./github');
 const turnEffects = require('./turn-effects');
 const sessionTitles = require('./session-title');
 const proposalDescription = require('./proposal-description');
+const summaryFreshness = require('./summary-freshness');
 const { visualHeadForSession } = require('./pr-vote-revision');
 
 // Coerce an arbitrary array of "issue numbers" into a clean, deduped,
@@ -589,10 +590,15 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDe
     testingMd: null, testingPath: null, appliedTesting: null,
     visuals: null, appliedVisuals: null,
     visualEvidenceDetail: null, appSlug: null, currentPrBody: null,
-    appliedSummary: null,
+    appliedSummary: null, summaryStale: false,
+    summaryInputVersion: 0, summaryHead: null, summaryInputsChangedDuringGather: false,
     agentSessionChange: false, changeName: null, personTitle: null,
   };
   if (pool && sessionId != null) {
+    const { rows: beforeHistory } = await pool.query(
+      'SELECT pr_summary_input_version FROM chat_sessions WHERE id = $1', [sessionId]
+    );
+    const beforeVersion = beforeHistory[0]?.pr_summary_input_version;
     try {
       const { rows } = await pool.query(
         `SELECT role, content, metadata FROM chat_session_messages
@@ -642,11 +648,12 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDe
       const { rows: liveRows } = await pool.query(
         `SELECT spec_md, linked_issues, pr_linked_issues_applied,
                 testing_md, testing_path, pr_testing_applied,
-                pr_visuals_applied, pr_summary_md, source,
+                pr_visuals_applied, pr_summary_md, pr_summary_stale,
+                pr_summary_input_version, source,
                 visual_evidence_detail, pr_body,
                 (SELECT slug FROM apps WHERE id = chat_sessions.app_id) AS app_slug,
                 imported_pr_head_sha, reviewed_head_sha,
-                checks_commit_sha, handoff_head_sha,
+                checks_commit_sha, handoff_head_sha, handoff_uploaded_sha,
                 agent_session_id, session_title, proposed_pr_title
            FROM chat_sessions WHERE id = $1`,
         [sessionId]
@@ -682,6 +689,13 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDe
       // proposal view's source of truth). Read here so the drift gate below
       // can push a revised summary to GitHub on a title-unchanged turn.
       ctx.appliedSummary = (liveRows[0] && liveRows[0].pr_summary_md) || null;
+      ctx.summaryStale = liveRows[0]?.pr_summary_stale === true;
+      ctx.summaryInputVersion = Number(liveRows[0]?.pr_summary_input_version || 0);
+      ctx.summaryInputsChangedDuringGather = beforeVersion != null
+        && Number(beforeVersion) !== ctx.summaryInputVersion;
+      ctx.summaryHead = liveRows[0]?.source === 'imported'
+        ? (liveRows[0].imported_pr_head_sha || null)
+        : (liveRows[0]?.handoff_uploaded_sha || visualHeadForSession(liveRows[0]) || null);
       try {
         // Lazy require avoids the top-level visuals → pr-metadata cycle.
         // getForSession owns both grouping and the exact-head provenance
@@ -766,6 +780,7 @@ async function applyPrMetadata({
   effectSessionId = null,
   effectBillingByok = !!apiKey,
   metadataMode = null,
+  sourceHeadSha = null,
   allowModelGeneration = true,
   // A title the AUTHOR explicitly submitted with the work (an external
   // agent's submit_work `title`, stored as chat_sessions.proposed_pr_title).
@@ -784,10 +799,16 @@ async function applyPrMetadata({
   const {
     requests, summaries, descriptions, specs, linkedIssues, appliedIssues,
     testingMd, testingPath, appliedTesting,
-    visuals, appliedVisuals, appliedSummary,
+    visuals, appliedVisuals, appliedSummary, summaryStale,
+    summaryInputVersion, summaryHead: recordedHead,
+    summaryInputsChangedDuringGather,
     visualEvidenceDetail, appSlug, currentPrBody,
     agentSessionChange, changeName, personTitle,
   } = await gatherSessionContext(pool, session && session.id, ccSummary, currentDescription);
+  if (summaryInputsChangedDuringGather) {
+    log.info('pr-metadata', 'Proposal inputs changed while metadata context was gathered', { sessionId: session?.id });
+    return null;
+  }
   // An agent-session change is described by itself on every path (the
   // build, recovery, promote, the title heal): its name stands in for the
   // message that triggered this call, and a title a person gave it wins.
@@ -883,7 +904,7 @@ async function applyPrMetadata({
       ...generationArgs, closingBlock, testingBlock, visualsBlock, evidenceBlock,
     });
   }
-  const { title: generatedTitle, body: prBody } = meta;
+  const { title: generatedTitle, body: generatedBody } = meta;
   // An author-submitted title outranks the generated one (see the
   // preferredTitle note in the signature). Normalized the way the route
   // bounded it: trimmed, single-spaced, GitHub's title length.
@@ -897,10 +918,14 @@ async function applyPrMetadata({
   // preferred title is never a fallback: it is the author's own name for
   // the change, and the sweeper must leave it alone.
   const isFallback = chosenTitle ? false : !!meta.fallback;
-  // Plain-language user-facing summary (optional, empty string when absent).
-  // Stored to chat_sessions.pr_summary_md and rendered at the top of the
-  // in-app proposal view; the same string already leads the PR body above.
-  const prSummary = typeof meta.summary === 'string' ? meta.summary.trim() : '';
+  // An empty generated summary cannot revoke the previous explanation. If
+  // other PR metadata changed, carry that explanation in the PR body too,
+  // while leaving its freshness flag set until a real refresh succeeds.
+  const generatedSummary = typeof meta.summary === 'string' ? meta.summary.trim() : '';
+  const retainedSummary = session.pr_number && !generatedSummary ? (appliedSummary || '') : '';
+  const prSummary = generatedSummary || retainedSummary;
+  const prBody = retainedSummary && !String(generatedBody || '').startsWith(retainedSummary)
+    ? `${retainedSummary}\n\n${generatedBody || ''}` : generatedBody;
 
   // Whether the linked-issue set drifted from what's reflected in the live
   // PR body. Drives the existing-PR update gate below so a newly-linked
@@ -946,6 +971,20 @@ async function applyPrMetadata({
     }
   }
 
+  // Generation can wait on a model while a newer body, commit, or native
+  // history event lands. Never publish that older result as current.
+  if (pool) {
+    const { rows: revisionRows } = await pool.query(
+      'SELECT pr_summary_input_version FROM chat_sessions WHERE id = $1', [session.id]
+    );
+    if (revisionRows[0] && Number(revisionRows[0].pr_summary_input_version || 0) !== summaryInputVersion) {
+      log.info('pr-metadata', 'Discarded metadata for changed proposal inputs', { sessionId: session.id });
+      return null;
+    }
+  }
+  const summaryHead = sourceHeadSha || recordedHead || visualHeadForSession(session) || null;
+  const summaryBodyHash = summaryFreshness.bodyHash(prBody);
+
   if (!session.pr_number) {
     // New PR path.
     try {
@@ -961,17 +1000,29 @@ async function applyPrMetadata({
       // #249: once a PR exists its title owns the session's display
       // name — mirror it so every list shows one name everywhere.
       session.session_title = prTitle;
-      session.pr_summary_md = prSummary || null;
       session.pr_title_fallback = isFallback;
       // #1333. Mirror the body too. get_proposal reports it as `description`
       // — what the group is actually voting on — and #1323 wired only the
       // author's own update, so every proposal read back null until somebody
       // happened to send one.
-      session.pr_body = prBody || null;
-      await pool.query(
-        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = $3, pr_linked_issues_applied = $4, pr_testing_applied = $5, pr_visuals_applied = $6, pr_summary_md = $7, pr_title_fallback = $8, pr_body = $9 WHERE id = $10`,
-        [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, visualsBlock || null, prSummary || null, isFallback, prBody || null, session.id]
+      const saved = await pool.query(
+        `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = $3,
+           pr_linked_issues_applied = $4, pr_testing_applied = $5, pr_visuals_applied = $6,
+           pr_summary_md = CASE WHEN pr_summary_input_version = $11 THEN $7 ELSE pr_summary_md END,
+           pr_summary_source = CASE WHEN pr_summary_input_version = $11 AND $7::text IS NOT NULL THEN 'generated' ELSE pr_summary_source END,
+           pr_summary_source_head_sha = CASE WHEN pr_summary_input_version = $11 THEN $12 ELSE pr_summary_source_head_sha END,
+           pr_summary_source_body_hash = CASE WHEN pr_summary_input_version = $11 THEN $13 ELSE pr_summary_source_body_hash END,
+           pr_summary_applied_version = CASE WHEN pr_summary_input_version = $11 THEN $11 ELSE pr_summary_applied_version END,
+           pr_summary_stale = CASE WHEN pr_summary_input_version = $11 THEN FALSE ELSE pr_summary_stale END,
+           pr_title_fallback = $8,
+           pr_body = CASE WHEN pr_summary_input_version = $11 THEN $9 ELSE pr_body END
+         WHERE id = $10 RETURNING pr_summary_md, pr_summary_stale`,
+        [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, visualsBlock || null,
+          prSummary || null, isFallback, prBody || null, session.id, summaryInputVersion, summaryHead, summaryBodyHash]
       );
+      session.pr_summary_md = saved.rows?.length ? saved.rows[0].pr_summary_md : (prSummary || null);
+      session.pr_summary_stale = saved.rows?.length ? saved.rows[0].pr_summary_stale : false;
+      session.pr_body = prBody || null;
       if (broadcast) broadcast('pr_created', { prNumber: pr.number, prUrl: pr.html_url, prTitle });
       return { prNumber: pr.number, prUrl: pr.html_url, prTitle };
     } catch (err) {
@@ -1062,6 +1113,25 @@ async function applyPrMetadata({
   // test" / "Before / after" section off the PR body.
   if (prTitle === session.pr_title && !issuesChanged && !testingChanged && !visualsChanged
       && !evidenceChanged && !summaryChanged) {
+    // Regenerating the same words still validates them against the current
+    // inputs. No GitHub write is needed, but leaving the stale flag set would
+    // make the freshness notice permanent after an unchanged refresh.
+    if (summaryStale && generatedSummary && pool) {
+      const { rows } = await pool.query(
+        `UPDATE chat_sessions
+            SET pr_summary_source = 'generated',
+                pr_summary_source_head_sha = $3,
+                pr_summary_source_body_hash = $4,
+                pr_summary_applied_version = $2,
+                pr_summary_stale = FALSE
+          WHERE id = $1 AND pr_summary_input_version = $2
+            AND pr_summary_md = $5
+          RETURNING pr_summary_md`,
+        [session.id, summaryInputVersion, summaryHead,
+          summaryFreshness.bodyHash(currentPrBody || session.pr_body || prBody), prSummary]
+      );
+      if (rows.length) session.pr_summary_stale = false;
+    }
     // Generation succeeded and landed on the same title — clear a stale
     // fallback marker if one is set (defensive; in practice a generated
     // title never equals the fallback template).
@@ -1080,12 +1150,25 @@ async function applyPrMetadata({
     session.pr_title = prTitle;
     // #249: keep the session display name tracking the PR title.
     session.session_title = prTitle;
-    session.pr_summary_md = prSummary || null;
     session.pr_title_fallback = false;
-    await pool.query(
-      `UPDATE chat_sessions SET pr_title = $1, session_title = $1, pr_linked_issues_applied = $2, pr_testing_applied = $3, pr_visuals_applied = $4, pr_summary_md = $5, pr_body = $6, pr_title_fallback = FALSE WHERE id = $7`,
-      [prTitle, linkedIssues, testingBlock || null, visualsBlock || null, prSummary || null, prBody || null, session.id]
+    const saved = await pool.query(
+      `UPDATE chat_sessions SET pr_title = $1, session_title = $1, pr_linked_issues_applied = $2,
+         pr_testing_applied = $3, pr_visuals_applied = $4,
+         pr_summary_md = CASE WHEN pr_summary_input_version = $8 AND $11::boolean THEN $5 ELSE pr_summary_md END,
+         pr_summary_source = CASE WHEN pr_summary_input_version = $8 AND $11::boolean THEN 'generated' ELSE pr_summary_source END,
+         pr_summary_source_head_sha = CASE WHEN pr_summary_input_version = $8 AND $11::boolean THEN $9 ELSE pr_summary_source_head_sha END,
+         pr_summary_source_body_hash = CASE WHEN pr_summary_input_version = $8 AND $11::boolean THEN $10 ELSE pr_summary_source_body_hash END,
+         pr_summary_applied_version = CASE WHEN pr_summary_input_version = $8 AND $11::boolean THEN $8 ELSE pr_summary_applied_version END,
+         pr_summary_stale = CASE WHEN pr_summary_input_version = $8 AND $11::boolean THEN FALSE ELSE pr_summary_stale END,
+         pr_body = CASE WHEN pr_summary_input_version = $8 THEN $6 ELSE pr_body END,
+         pr_title_fallback = FALSE WHERE id = $7 RETURNING pr_summary_md, pr_summary_stale`,
+      [prTitle, linkedIssues, testingBlock || null, visualsBlock || null,
+        prSummary || null, prBody || null, session.id, summaryInputVersion, summaryHead,
+        summaryBodyHash, !!generatedSummary]
     );
+    session.pr_summary_md = saved.rows?.length ? saved.rows[0].pr_summary_md : (prSummary || null);
+    session.pr_summary_stale = saved.rows?.length
+      ? saved.rows[0].pr_summary_stale : (generatedSummary ? false : summaryStale);
     if (broadcast) broadcast('pr_updated', { prNumber: session.pr_number, prUrl: session.pr_url, prTitle });
     return { prNumber: session.pr_number, prUrl: session.pr_url, prTitle };
   } catch (err) {

@@ -10,7 +10,9 @@
 // logic in routes/sessions.js also leans on pauseSession here.
 
 const log = require('./logger');
+const notifications = require('./notifications');
 const staging = require('./staging');
+const turnLifecycle = require('./turn-lifecycle');
 const worker = require('./worker');
 const { isSessionBusy } = require('./active-workers');
 const workerProgress = require('./worker-progress');
@@ -99,7 +101,42 @@ async function pauseSession({ pool, sessionId, userId = null, reason = 'manual' 
   pushSessionUpdate({ action: 'paused', sessionId, appSlug });
   log.info('session-lifecycle', 'Session paused', { sessionId, reason });
 
+  if (SYSTEM_PAUSE_REASONS.has(reason) && pausedMidTurn(session)) {
+    await notifyPausedMidTurn(pool, session);
+  }
+
   return { paused: true, appSlug };
+}
+
+// #3181: the pauses the platform makes on its own. A pause the owner asked
+// for ('manual', or parking a change from an agent session) is a deliberate
+// end, like pressing stop, and never reports a stall.
+const SYSTEM_PAUSE_REASONS = new Set(['auto-idle', 'pressure', 'lru']);
+
+// Was a turn still open on this session when it was paused? The slot sweeps
+// skip sessions busy in THIS process, but a turn record can outlive that:
+// one running on another process, or one left detached by a restart and not
+// yet recovered. Destroying the worker ends it either way. A record that is
+// only waiting for its final cleanup belongs to a turn that already finished.
+function pausedMidTurn(session) {
+  if (!session || session.is_headless) return false;
+  return turnLifecycle.recoveryAction(session.active_turn) === 'resume';
+}
+
+// Tell the owner, in the bell and as a push, that the session stopped before
+// finishing (same kind and unread dedup the chat turn uses). Best-effort: a
+// failed notification never fails the pause.
+async function notifyPausedMidTurn(pool, session) {
+  try {
+    const created = await notifications.createSessionStalledNotification(pool, {
+      userId: session.user_id, appId: session.app_id, sessionId: session.id,
+    });
+    if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+  } catch (err) {
+    log.warn('session-lifecycle', 'session_stalled notify failed', {
+      sessionId: session.id, err: err.message,
+    });
+  }
 }
 
 // #3114: take a proposal out of review and back to Underway, for when its
@@ -210,7 +247,6 @@ async function unpromoteSession({ pool, sessionId, userId, actorUsername = null 
   const content = `${actorUsername || 'The author'} moved ${label} back to Underway. Its votes were cleared, and it goes up for a fresh vote when it is proposed again`;
   try {
     const { sendSystemMessage } = require('./ws');
-    await sendSystemMessage(pool, session.app_id, content, 'system');
     await sendSystemMessage(pool, session.app_id, content, 'system', null,
       { type: 'session', ref: session.id }).catch(() => {});
   } catch (err) {
@@ -481,9 +517,10 @@ async function finalizeArchivedSession({
       log.warn('session-lifecycle', 'Failed to close PR on archive', { sessionId, err: err.message });
     });
 
-    // #200: announce the withdrawal in group chat, completing the PR
-    // lifecycle feed (promote/merge already post there — a withdrawn PR
-    // otherwise vanishes silently). Posted regardless of closePR's
+    // #200: say the withdrawal in the proposal's own thread, completing its
+    // story (promote/merge already post there — a withdrawn PR otherwise
+    // vanishes silently; a channel carries no activity, ws.sendSystemMessage).
+    // Posted regardless of closePR's
     // outcome: the close is best-effort and the PR leaves the vote
     // panel either way. Own catch so a chat failure never fails the
     // archive itself.
@@ -501,7 +538,7 @@ async function finalizeArchivedSession({
         : `${label} went quiet and was set aside. It can always come back as a new proposal`;
     try {
       const { sendSystemMessage } = require('./ws');
-      await sendSystemMessage(pool, session.app_id, content, 'system');
+      await sendSystemMessage(pool, session.app_id, content, 'system', null, { type: 'session', ref: session.id });
     } catch (err) {
       log.warn('session-lifecycle', 'Failed to post PR-withdrawn chat message', { sessionId, err: err.message });
     }

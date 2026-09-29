@@ -19,7 +19,6 @@ const store = read('frontend/src/features/messages/store.ts');
 const screen = read('frontend/src/features/messages/index.tsx');
 const composer = read('frontend/src/features/messages/composer.tsx');
 const row = read('frontend/src/features/messages/message-row.tsx');
-const reportForm = read('frontend/src/features/reports/report-form.tsx');
 const markdown = read('frontend/src/features/messages/format.tsx');
 const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
 const dapp = JSON.parse(read('dapp.json'));
@@ -41,10 +40,12 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   assert.match(html, /id="platform-tabs-badge"/, 'the tab is what can carry a count');
   // The bar's order, pinned as a declared check. `+` rather than `~`: the
   // five tabs are adjacent siblings, with only the desktop rail's Recents
-  // (#2802) between Workshop and Me — it is never drawn on the phone's bar.
+  // (#2802) between the last section and Me — it is never drawn on the
+  // phone's bar. Messages sits in the middle; Communities (key `workshop`)
+  // comes after it, beside you.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
     === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages'
-      + ' + #platform-tab-workshop + #platform-recents + #platform-tab-me'),
+      + ' + #platform-tab-workshop[href="#communities"] + #platform-recents + #platform-tab-me'),
   'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   // Membership INSIDE the array literal. The previous form,
@@ -62,7 +63,7 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,1400}navigateToMessages/);
 });
 
-test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
+test('an app\'s channel keeps its address here, though it is listed on its hub', () => {
   // #2718 review. The row was listed in this inbox and addressed as
   // `#app/<slug>/dev/chat` — a different SCREEN ROOT — so a row in this list
   // opened a full-window takeover with the app view's own back slot instead
@@ -77,14 +78,15 @@ test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
   // #2813 added the agent thread as a third argument, last in precedence;
   // #2387 the thread/link extras as a fourth.
   assert.match(app, /navigateToMessages\(conversationId, appSlug, agent, extras\)/);
-  // The ROW points here, not at the app view.
-  assert.match(screen, /href=\{`#messages\/app\/\$\{encodeURIComponent\(discussion\.slug\)\}`\}/);
+  // The hub's channel card points here, not at the app view.
+  assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'),
+    /const href = channel\.href \|\| `#messages\/app\/\$\{encodeURIComponent\(slug\)\}`;/);
   // ONE THREAD IS OPEN: naming an app clears the conversation and the other
   // way round, so the pane never holds half of each.
   assert.match(store, /const nextSlug = nextId \? null : validSlug\(appSlug\);/);
   // The pane is a HOST for features/group-chat, not a second transcript.
   assert.match(screen, /function AppDiscussionThread/);
-  assert.match(screen, /renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly \}\)/);
+  assert.match(screen, /renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly, archived \}\)/);
   // …and it drops BOTH portals on the way out, the transcript's first.
   assert.match(screen, /unmountTranscript\?\.\(list\)[\s\S]{0,120}unmountGeneralChat\?\.\(el\)/);
   // The list collapses for a discussion exactly as it does for a thread.
@@ -207,15 +209,12 @@ test('composer and moderation payloads match the backend contracts', () => {
     'mention completion and insertion support hyphenated and other valid usernames');
   assert.match(api, /query\.trim\(\)\.slice\(0, 255\)[\s\S]{0,80}scope=messages/,
     'recipient search excludes users blocked in either direction');
-  for (const reason of ['harassment', 'spam', 'threats', 'hate', 'sexual_content', 'other']) {
-    assert.match(reportForm, new RegExp(`'${reason}'`));
-  }
-  assert.match(row, /<ReportForm kind="message"/);
-  assert.match(row, /<ReportForm kind="user"/);
-  assert.match(reportForm, /maxLength=\{500\}/);
-  assert.match(api, /detail: detail\.slice\(0, 500\)/,
-    'report context matches the backend and schema retention limit');
-  assert.match(api, /JSON\.stringify\(\{ reason, \.\.\.\(detail \? \{ detail:/);
+  const sharedReport = fs.readFileSync(path.join(ROOT, 'frontend/src/features/dialogs/report.tsx'), 'utf8');
+  assert.match(row, /openReport\(\{ targetType: 'conversation_message'/);
+  for (const reason of ['harassment', 'spam', 'threats', 'hate', 'sexual_content', 'other']) assert.ok(sharedReport.includes(`['${reason}',`));
+  assert.match(sharedReport, /maxLength=\{1000\}/);
+  assert.match(sharedReport, /fetch\('\/api\/reports'/);
+
 });
 
 test('blocking and access-revocation purge an active direct thread locally', () => {

@@ -152,7 +152,7 @@ function validateInput(raw) {
   if (!provenance.fixtureFingerprint || typeof provenance.fixtureFingerprint !== 'string') {
     throw new ReplayFailure('invalid_provenance', 'A paired fixture fingerprint is required.');
   }
-  const authTokens = Object.fromEntries(['member', 'read_only_admin'].map((persona) => {
+  const authTokens = Object.fromEntries(['member', 'read_only_admin', 'full_admin'].map((persona) => {
     const token = raw.authTokens?.[persona];
     if (typeof token !== 'string' || token.length === 0 || token.length > 8192
         || !/^[A-Za-z0-9._~-]+$/.test(token)) {
@@ -390,6 +390,19 @@ async function navigateStart(page, url, onRetry = () => {}, wait = (ms) => new P
       await wait(INITIAL_NAVIGATION_RETRY_DELAY_MS);
     }
   }
+}
+
+async function verifyDocumentRevision(page, expectedSha) {
+  const actual = await page.evaluate(() => document.querySelector('meta[name="platform-build"]')?.content || null);
+  // Non-platform apps have no marker; historical images can predate revision
+  // stamping. New hosted shells validate their exact revision at startup.
+  if (!actual || actual === 'dev') return null;
+  if (actual !== expectedSha) {
+    throw new ReplayFailure('document_revision_mismatch',
+      'The browser loaded a different interface revision than the one being verified.',
+      { expectedSha, actualSha: clip(actual, 40) });
+  }
+  return actual;
 }
 
 function recoveredInitialDocumentFailure(request, page, startUrl, retryCodes) {
@@ -1142,6 +1155,25 @@ async function startMotionCapture(page) {
   };
 }
 
+// Playwright context init scripts run in every document, including every
+// cross-origin child frame. The deterministic still-capture stylesheet is a
+// platform concern: injecting it into a hosted app both changes somebody
+// else's UI and violates apps that use a nonce-only style policy. Keep the
+// script serializable for addInitScript while accepting an explicit environment
+// in tests so the origin boundary is pinned without a browser fixture.
+function installCaptureStyle(platformOrigin, environment) {
+  var pageLocation = environment ? environment.location : location;
+  var pageDocument = environment ? environment.document : document;
+  if (pageLocation.origin !== platformOrigin) return false;
+  var style = pageDocument.createElement('style');
+  style.dataset.usernodeEvidence = '1';
+  style.textContent = '*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important;transition-delay:0s!important;scroll-behavior:auto!important;caret-color:transparent!important}';
+  var attach = function () { pageDocument.documentElement?.appendChild(style); };
+  if (pageDocument.documentElement) attach();
+  else pageDocument.addEventListener('DOMContentLoaded', attach, { once: true });
+  return true;
+}
+
 function screenshotFingerprint(result) {
   return crypto.createHash('sha256').update(JSON.stringify({
     path: result.path,
@@ -1200,7 +1232,9 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     await installOriginFence(context, allowedOrigins, diagnostics, controlledFailure, {
       hostedOrigins,
       loadHostedOrigins: async () => {
-        hostedAppState.catalog = await loadTrustedHostedAppOrigins(context, origin);
+        hostedAppState.catalog = await loadTrustedHostedAppOrigins(
+          context, origin, null, input.runId
+        );
         return hostedAppState.catalog;
       },
     });
@@ -1211,13 +1245,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     emitEvent({ type: 'session_bootstrap', ...eventBase, ...bootstrap });
     setupPhase = 'install_capture_style';
     if (!motion) {
-      await context.addInitScript(() => {
-        const style = document.createElement('style');
-        style.dataset.usernodeEvidence = '1';
-        style.textContent = '*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important;transition-delay:0s!important;scroll-behavior:auto!important;caret-color:transparent!important}';
-        const attach = () => document.documentElement?.appendChild(style);
-        if (document.documentElement) attach(); else document.addEventListener('DOMContentLoaded', attach, { once: true });
-      });
+      await context.addInitScript(installCaptureStyle, origin);
     }
     setupPhase = 'new_page';
     page = await context.newPage();
@@ -1363,6 +1391,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       initialNavigationRetries, navigation.status
     );
     await settlePage(page, { motion });
+    navigation.documentRevision = await verifyDocumentRevision(page, input.provenance[`${side}Sha`]);
     emitEvent({
       type: 'navigation_completed', ...eventBase,
       status: navigation.status,
@@ -1429,6 +1458,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     failureStage = { phase: 'browser_diagnostics' };
     assertCleanBrowser();
     failureStage = { phase: 'capture_checkpoint' };
+    await verifyDocumentRevision(page, input.provenance[`${side}Sha`]);
     const { png: contextPng, stability } = await captureStableCheckpoint(page, network, { motion });
     emitEvent({ type: 'checkpoint_stability', ...eventBase, ...stability });
     stages.push({ stage: '__checkpoint__', image: contextPng });
@@ -1717,6 +1747,7 @@ module.exports = {
   authorizedUrl,
   replayNavigationToken,
   navigateStart,
+  verifyDocumentRevision,
   discardRecoveredInitialNavigationFailures,
   discardRecoveredNetworkChanges,
   discardCancelledReads,
@@ -1738,6 +1769,7 @@ module.exports = {
   normalizeCropPair,
   hammingHex,
   captureStableCheckpoint,
+  installCaptureStyle,
   screenshotFingerprint,
   runReplay,
   contextualFailure,

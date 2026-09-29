@@ -89,6 +89,7 @@ import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
 import { AppsMore } from './apps-more';
+import { GettingStarted } from './getting-started';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
 import { WidgetStrip } from './widget-strip';
@@ -183,13 +184,13 @@ export function HomeScreen() {
         {/*
             #1561's once-per-account explainer stood here, above everything,
             because it was the thing a first-time viewer needed before the
-            grid meant anything. #2255 replaced it with the eight-step
-            welcome tour, which says the same two things in its first step
-            and then goes on to POINT at the four places the banner could
-            only name. The tour is a fixed overlay mounted from Shell.tsx
-            (features/home/tour), not a block in this column, so nothing
-            takes its place here: with the tour finished or skipped, Home
-            opens on the widget strip and the grid.
+            grid meant anything. #2255 replaced it with the welcome tour,
+            which goes on to POINT at the places the banner could only name;
+            since #3240 it runs when asked, from the first row of the
+            Getting started card or from Settings. The tour is a fixed
+            overlay mounted from Shell.tsx (features/home/tour), not a block
+            in this column, so nothing takes its place here: Home opens on
+            the widget strip and the grid.
         */}
         {/*
             iOS in-app only: the "Homeroom widget" editing strip, mirroring
@@ -201,6 +202,14 @@ export function HomeScreen() {
             component took over from Home._wireWidgetStrip and what it left
             there.
         */}
+        {/*
+            GETTING STARTED (communities, stage 5): three first steps for an
+            account that has just come through "What communities do you want
+            to join?", on top of everything until it is closed. Ships empty
+            and hidden, like the widget strip below it: whether to draw it is
+            known only after the session is read (./getting-started.tsx).
+        */}
+        <GettingStarted />
         <WidgetStrip />
         {/*
             ── AREA 1 of 4: YOUR APPS ─────────────────────────────────

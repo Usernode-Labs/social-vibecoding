@@ -214,12 +214,18 @@ test('an author push clears the approvals and re-runs the checks', async () => {
   const { votes, restore } = load(r);
   const pool = makePool({ epoch: 0 });
   try {
+    const revised = session(r, { pr_summary_md: 'The earlier explanation.' });
     const out = await votes.reconcileNativeReviewedHead({
-      config: {}, pool, session: session(r), notify: false,
+      config: {}, pool, session: revised, notify: false,
     });
     assert.equal(out.kind, 'authored');
     assert.equal(out.votesKept, false);
     assert.equal(out.epoch, 1, 'the epoch moves, which is what stops the old votes counting');
+    assert.equal(revised.pr_summary_md, 'The earlier explanation.',
+      'the previous explanation remains readable while its freshness is reviewed');
+    assert.equal(revised.pr_summary_stale, true);
+    assert.ok(pool.writes.some((w) => /pr_summary_previous_md = COALESCE/.test(w.sql)),
+      'the prior explanation is retained when the reviewed head moves');
   } finally { restore(); r.cleanup(); }
 });
 
