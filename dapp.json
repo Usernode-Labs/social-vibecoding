@@ -87,7 +87,7 @@
       "key": "VISUAL_EVIDENCE_V2_ENABLED",
       "group": "Platform",
       "default": "true",
-      "description": "Emergency kill switch for agent-authored proposal evidence. The mechanism is enabled by default; set exactly false only to stop intent collection, paired replay, and reviewer presentation together. Proposal checks and previews continue, and legacy default-route screenshots are not restored."
+      "description": "Emergency kill switch for before/after shots of each proposal's declared changes. On by default; set exactly false only to stop collecting the declared changes, taking the shots, and showing them together. Proposal checks and previews continue, and legacy default-route screenshots are not restored."
     },
     {
       "key": "MAX_APPS",

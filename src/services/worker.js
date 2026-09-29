@@ -224,8 +224,10 @@ function buildTurnSecretEnv({
   if (!['scout', 'build', 'sync', 'evidence'].includes(mode)) {
     throw new Error(`buildTurnSecretEnv: unsupported mode ${mode}`);
   }
-  if (isCodex && mode === 'sync') {
-    throw new Error('buildTurnSecretEnv: Codex sync mode is not supported');
+  // Every preview (evidence) turn runs on Claude Code; the Codex runner has
+  // no evidence mode.
+  if (isCodex && (mode === 'sync' || mode === 'evidence')) {
+    throw new Error(`buildTurnSecretEnv: Codex ${mode} mode is not supported`);
   }
   if (isClaudeOpenRouter && (mode === 'sync' || mode === 'evidence')) {
     throw new Error(`buildTurnSecretEnv: Claude over OpenRouter ${mode} mode is not supported`);
@@ -252,15 +254,9 @@ function buildTurnSecretEnv({
     // (review Commit 1 / plan 3.3). It must never receive a general
     // worker:session token, an Anthropic key/base, or a relay token.
     const env = { OPENROUTER_API_KEY: requireNonEmptySecret(openrouterApiKey, 'openrouterApiKey') };
-    if (mode !== 'evidence') env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
+    env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
     if (mode === 'build') {
       env.WORKER_JWT = requireNonEmptySecret(workerPushJwt, 'workerPushJwt');
-    }
-    if (mode === 'evidence') {
-      env.EVIDENCE_JWT = requireNonEmptySecret(evidenceJwt, 'evidenceJwt');
-      env.EVIDENCE_MEMBER_TOKEN = requireNonEmptySecret(evidenceMemberToken, 'evidenceMemberToken');
-      env.EVIDENCE_ADMIN_TOKEN = requireNonEmptySecret(evidenceAdminToken, 'evidenceAdminToken');
-      env.EVIDENCE_FULL_ADMIN_TOKEN = requireNonEmptySecret(evidenceFullAdminToken, 'evidenceFullAdminToken');
     }
     if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
     return env;
@@ -499,12 +495,21 @@ function safeResultSubtype(value) {
   return /^[a-z][a-z0-9_]{0,63}$/.test(subtype) ? subtype : null;
 }
 
+// A preview (evidence) turn runs on its own pinned model
+// (visual-evidence-agent), which the author-facing allowlist does not list:
+// resolve() would turn it back into the author default. Any Claude id is
+// accepted there by shape; every other turn stays on the allowlist.
+const EVIDENCE_AGENT_MODEL_RE = /^claude-[a-z0-9][a-z0-9-]{0,62}$/;
+function claudeTurnModel(mode, model) {
+  return mode === 'evidence' && EVIDENCE_AGENT_MODEL_RE.test(String(model || ''))
+    ? model : models.resolve(model);
+}
+
 // Evidence diagnostics deliberately record only a fixed vocabulary. Page
 // text, tool arguments/results, URLs, provider messages and journal lines can
 // contain private app data or credentials and must never enter a run trace.
 const EVIDENCE_DIAGNOSTIC_TOOLS = new Set([
-  'evidence_get_context', 'evidence_reset_pair', 'evidence_reset_side',
-  'evidence_set_request_failure', 'evidence_run_plan', 'evidence_report_blocker',
+  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'fail_request',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -627,7 +632,7 @@ function evidenceToolAvailable(tools, toolName) {
   const names = Array.isArray(tools)
     ? tools.map((item) => typeof item === 'string' ? item : item?.name)
     : Object.keys(tools);
-  return names.some((name) => name === toolName || name === `mcp__evidence__${toolName}`);
+  return names.some((name) => name === toolName || name === `mcp__shots__${toolName}`);
 }
 
 function mcpToolCount(tools, serverName) {
@@ -649,10 +654,10 @@ function evidenceContextResultShape(content) {
   return {
     responseCharacters,
     jsonValid: !!object,
-    acceptedIntentPresent: !!object?.acceptedIntent,
-    originsPresent: !!(object?.origins?.base && object?.origins?.head),
-    revisionsPresent: !!(object?.revisions?.baseSha && object?.revisions?.headSha),
-    storyCount: Array.isArray(object?.acceptedIntent?.stories) ? object.acceptedIntent.stories.length : null,
+    declaredChangesPresent: Array.isArray(object?.declaredChanges),
+    addressesPresent: !!(object?.addresses?.before && object?.addresses?.after),
+    revisionsPresent: !!(object?.revisions?.before && object?.revisions?.after),
+    storyCount: Array.isArray(object?.declaredChanges) ? object.declaredChanges.length : null,
   };
 }
 
@@ -810,9 +815,9 @@ function applyStreamEvent(event, onProgress, state) {
       kind: 'provider_init',
       mcpServerCount: collectionCount(systemEvent.mcp_servers ?? systemEvent.mcpServers),
       toolDefinitionCount: collectionCount(systemEvent.tools),
-      evidenceGetContextAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_get_context'),
-      evidenceRunPlanAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_run_plan'),
-      evidenceReportBlockerAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_report_blocker'),
+      briefToolAvailable: evidenceToolAvailable(systemEvent.tools, 'get_brief'),
+      saveShotToolAvailable: evidenceToolAvailable(systemEvent.tools, 'save_shot'),
+      skipChangeToolAvailable: evidenceToolAvailable(systemEvent.tools, 'skip_change'),
       browserMemberToolCount: mcpToolCount(systemEvent.tools, 'browser_member'),
       browserAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_admin'),
       browserFullAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_full_admin'),
@@ -889,7 +894,7 @@ function applyStreamEvent(event, onProgress, state) {
       if (block.type !== 'tool_result') continue;
       const diagnosticStart = block.tool_use_id == null ? null
         : state.evidenceDiagnosticStarts?.get(String(block.tool_use_id));
-      if (diagnosticStart?.tool === 'evidence_get_context') {
+      if (diagnosticStart?.tool === 'get_brief') {
         emitEvidenceDiagnostic(state, {
           kind: 'context_result',
           outcome: block.is_error === true ? 'error' : 'ok',
@@ -1081,19 +1086,10 @@ function parseLine(line, onProgress, state) {
   if (!line || !line.trim()) return;
   if (line.startsWith('__USERNODE_CODING_PROVIDER__ ')) {
     try {
-      if (state.agentBackend === 'codex_openrouter' && !state.evidenceDiagnosticObserver) {
+      if (state.agentBackend === 'codex_openrouter') {
         observeCodingProviderTiming(JSON.parse(line.slice('__USERNODE_CODING_PROVIDER__ '.length)), onProgress, state);
       }
     } catch { /* Malformed diagnostics must not change the agent turn. */ }
-    return;
-  }
-  if (line.startsWith('__USERNODE_EVIDENCE_PROVIDER__ ')) {
-    try {
-      const event = JSON.parse(line.slice('__USERNODE_EVIDENCE_PROVIDER__ '.length));
-      if (event && typeof event === 'object' && !Array.isArray(event)) {
-        emitEvidenceDiagnostic(state, event);
-      }
-    } catch { /* A malformed diagnostic must not change the agent turn. */ }
     return;
   }
   if (line.startsWith('__USERNODE_EVIDENCE_BROWSER__ ')) {
@@ -1210,28 +1206,6 @@ function parseLine(line, onProgress, state) {
           || (ev.kind === 'file_changed' && ev.lifecycle === 'started');
         const isToolCompletion = ['command_completed', 'file_read_completed', 'mcp_completed'].includes(ev.kind)
           || (ev.kind === 'file_changed' && ev.lifecycle === 'completed');
-        if (ev.kind === 'phase' && ev.lifecycle === 'turn_started') {
-          const completionReminder = state.evidenceCompletionReminder === true;
-          emitEvidenceDiagnostic(state, {
-            kind: 'provider_init',
-            completionReminder,
-          });
-        }
-        if ((ev.kind === 'agent_message' || isToolStart) && !state.evidenceFirstOutputSeen) {
-          state.evidenceFirstOutputSeen = true;
-          emitEvidenceDiagnostic(state, { kind: 'first_output' });
-        }
-        if (isToolStart) {
-          observeEvidenceTool(state, { phase: 'start', id: ev.itemId, name: ev.toolName,
-            input: event?.item?.arguments });
-        }
-        if (isToolCompletion) {
-          observeEvidenceTool(state, {
-            phase: 'end', id: ev.itemId, name: ev.toolName,
-            failed: (ev.exitCode != null && Number(ev.exitCode) !== 0)
-              || ['failed', 'error', 'cancelled'].includes(String(ev.status || '').toLowerCase()),
-          });
-        }
         if (ev.itemId && (ev.kind === 'command_started' || ev.kind === 'mcp_started')) {
           const open = state.codexOpenTools || (state.codexOpenTools = new Map());
           open.set(ev.itemId, ev.kind === 'command_started'
@@ -1239,12 +1213,6 @@ function parseLine(line, onProgress, state) {
             : { kind: 'mcp', label: ev.toolName });
         }
         if (ev.itemId && isToolCompletion) state.codexOpenTools?.delete(ev.itemId);
-        if (ev.kind === 'error') {
-          emitEvidenceDiagnostic(state, { kind: 'provider_notice' });
-        }
-        if (ev.kind === 'usage') {
-          emitEvidenceDiagnostic(state, { kind: 'provider_usage' });
-        }
         if (observeDiagnostics && isToolStart) noteCodexToolStart(state, ev);
         if (observeDiagnostics && isToolCompletion) {
           // A future CLI may omit item.started for a completed item. Infer the
@@ -2756,9 +2724,8 @@ async function execInWorker(sessionId, {
   // non-Claude backend. This remains user-level input; it is never promoted
   // into the authoritative system-context transport below.
   resumeFallbackPrompt = null,
-  // Hosted Claude system context; Codex evidence turns receive the same
-  // purpose-bound contract as developer instructions. Materialized separately
-  // so it is a stable instruction layer, not another conversation message.
+  // Hosted Claude system context. Materialized separately so it is a stable
+  // instruction layer, not another conversation message.
   systemPrompt = null,
   // Restart recovery can reuse the prompt file deliberately retained by a
   // runner that emitted agent_retry_fresh=1. Live calls keep writing the
@@ -2791,7 +2758,16 @@ async function execInWorker(sessionId, {
   evidenceOrigins = null,
   evidenceAuthTokens = null,
   evidenceNavigationHints = null,
-  evidenceCompletionReminder = false,
+  // Record browser video for this turn: only when a declared change is
+  // motion a still cannot show.
+  evidenceRecordClips = false,
+  // The size clips are recorded at, WIDTHxHEIGHT: the motion screens' own,
+  // so a phone clip is not a phone in the corner of a desktop-sized frame.
+  evidenceClipSize = null,
+  // The app under test is a child app: the evidence proxy serves its
+  // /usernode-bridge|native|tailwind/ requests from the platform, as the
+  // production edge does. The platform's own pairs serve their own.
+  evidencePlatformAssets = false,
   turnUuid = null,
   logicalTurnId = null,
   attemptNumber = null,
@@ -2907,11 +2883,17 @@ async function execInWorker(sessionId, {
     backend: resolvedBackend, harness: resolvedHarness, isCodex, isClaude,
     isClaudeOpenRouter, isOpenRouter, runsClaude,
   } = resolveTurnBackend(agentBackend, agentHarness);
+  // Every preview (evidence) turn runs on Claude Code (visual-evidence-agent
+  // dispatches only claude_code); neither OpenRouter harness has an evidence
+  // mode, so refuse before anything is minted or written.
+  if (mode === 'evidence' && !isClaude) {
+    throw new Error('execInWorker: evidence turns run on Claude Code');
+  }
   if (isClaudeOpenRouter && !['scout', 'build'].includes(mode)) {
     throw new Error(`execInWorker: Claude over OpenRouter supports scout and build turns, not ${mode}`);
   }
-  if (systemPrompt && !runsClaude && !(isCodex && mode === 'evidence')) {
-    throw new Error('execInWorker: systemPrompt is only supported for Claude or Codex evidence turns');
+  if (systemPrompt && !runsClaude) {
+    throw new Error('execInWorker: systemPrompt is only supported for Claude turns');
   }
   if (resumeFallbackPrompt && !isClaude) {
     throw new Error('execInWorker: resumeFallbackPrompt is only supported for Claude turns');
@@ -2925,9 +2907,6 @@ async function execInWorker(sessionId, {
   if (isClaude && ['build', 'evidence'].includes(mode) && !systemPrompt) {
     throw new Error(`execInWorker: hosted Claude ${mode} requires systemPrompt`);
   }
-  if (isCodex && mode === 'evidence' && !systemPrompt) {
-    throw new Error('execInWorker: hosted Codex evidence requires systemPrompt');
-  }
   if (mode === 'evidence') {
     if (!/^[0-9a-f]{32}$/.test(String(evidenceRunId || ''))
         || !evidenceOrigins || !evidenceAuthTokens) {
@@ -2940,8 +2919,14 @@ async function execInWorker(sessionId, {
         throw new Error(`execInWorker: invalid ${side} evidence origin`);
       }
     }
-    if (typeof evidenceCompletionReminder !== 'boolean') {
-      throw new Error('execInWorker: evidence completion reminder must be boolean');
+    if (typeof evidenceRecordClips !== 'boolean') {
+      throw new Error('execInWorker: evidence clip recording must be boolean');
+    }
+    if (evidenceClipSize != null && !/^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(String(evidenceClipSize))) {
+      throw new Error('execInWorker: evidence clip size must be WIDTHxHEIGHT');
+    }
+    if (typeof evidencePlatformAssets !== 'boolean') {
+      throw new Error('execInWorker: evidence platform assets must be boolean');
     }
   }
   const useAnthropicProxy = isClaude && !anthropicApiKey;
@@ -2979,7 +2964,8 @@ async function execInWorker(sessionId, {
     }
   }
 
-  const persistedModel = isOpenRouter ? (agentModel || '') : models.resolve(model);
+  const claudeModel = claudeTurnModel(mode, model);
+  const persistedModel = isOpenRouter ? (agentModel || '') : claudeModel;
 
   // The prompt travels as a file, never as exec argv/env — a single
   // argv/env string is capped at 128 KiB on Linux, and build prompts
@@ -3048,10 +3034,12 @@ async function execInWorker(sessionId, {
       EVIDENCE_BASE_ORIGIN: new URL(evidenceOrigins.base).origin,
       EVIDENCE_HEAD_ORIGIN: new URL(evidenceOrigins.head).origin,
       EVIDENCE_NAVIGATION_HINTS: JSON.stringify(evidenceNavigationHints || {}),
-      EVIDENCE_COMPLETION_REMINDER: evidenceCompletionReminder ? '1' : '0',
+      EVIDENCE_RECORD_CLIPS: evidenceRecordClips ? '1' : '0',
+      ...(evidenceRecordClips && evidenceClipSize ? { EVIDENCE_CLIP_SIZE: String(evidenceClipSize) } : {}),
+      EVIDENCE_PLATFORM_ASSETS: evidencePlatformAssets ? '1' : '0',
     } : {}),
     ...(isClaude ? {
-      MODEL: models.resolve(model),
+      MODEL: claudeModel,
       CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
       RESUME_FALLBACK_PROMPT_FILE: resumeFallbackPrompt
         ? TURN_RESUME_FALLBACK_PROMPT_PATH
@@ -3290,13 +3278,12 @@ async function execInWorker(sessionId, {
     if (mode === 'evidence') {
       state.evidenceOrigins = evidenceOrigins;
       state.evidenceNavigationHints = evidenceNavigationHints;
-      state.evidenceCompletionReminder = evidenceCompletionReminder === true;
     }
     if (mode === 'evidence' && typeof onEvidenceDiagnostic === 'function') {
       state.evidenceDiagnosticObserver = onEvidenceDiagnostic;
       emitEvidenceDiagnostic(state, {
         kind: 'provider_dispatched',
-        backend: isCodex ? 'codex_openrouter' : 'claude_code',
+        backend: 'claude_code',
         requestMode: resumeSessionId ? 'agent_resume' : 'agent_new',
       });
     }
@@ -4536,6 +4523,7 @@ module.exports = {
   mintProdDebugJwt,
   mintEvidenceJwt,
   evidenceControlUrl,
+  claudeTurnModel,
   buildTurnSecretEnv,
   // #3296: harness-aware backend resolution and result shape (for tests)
   resolveTurnBackend,

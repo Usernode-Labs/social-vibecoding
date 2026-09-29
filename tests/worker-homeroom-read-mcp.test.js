@@ -54,7 +54,8 @@ test('the grant rides only on build and scout turns, on either backend', () => {
   }
   assert.ok(!('HOMEROOM_MCP_TOKEN' in claude('sync')));
   assert.ok(!('HOMEROOM_MCP_TOKEN' in claude('evidence')));
-  assert.ok(!('HOMEROOM_MCP_TOKEN' in codex('evidence')));
+  // Every preview (evidence) turn runs on Claude Code; Codex has no evidence mode.
+  assert.throws(() => codex('evidence'), /Codex evidence mode is not supported/);
   const without = worker.buildTurnSecretEnv({
     mode: 'build', agentBackend: 'claude_code', workerSessionJwt: 'w', issuesReadJwt: 'i', anthropicProxyJwt: 'p',
   });

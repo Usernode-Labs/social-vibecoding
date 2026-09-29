@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-// Transparent stdio wrapper around Playwright MCP in evidence turns. Codex
-// can batch its journal events, so host-side tool timestamps do not measure
-// browser-call time. This wrapper observes the JSON-RPC boundary itself and
-// writes only bounded, content-free diagnostics to a worker-local file. The
-// runner tails that file into the ordinary evidence trace.
+// Transparent stdio wrapper around Playwright MCP in evidence turns. The
+// agent's own stream records when a tool call was issued and answered, not
+// how long the browser spent on it. This wrapper observes the JSON-RPC
+// boundary itself and writes only bounded, content-free diagnostics to a
+// worker-local file. The runner tails that file into the evidence trace.
 
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');

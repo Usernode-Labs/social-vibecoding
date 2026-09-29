@@ -17,7 +17,9 @@
 #
 # Required env: PROMPT_FILE, BRANCH, SESSION_ID, PLATFORM_URL,
 #   OPENROUTER_API_KEY, AGENT_MODEL
-# Optional: MODE (build|scout), AGENT_REASONING_EFFORT, AGENT_THREAD_ID,
+# Optional: MODE (build|scout, default build; every preview (evidence) turn
+#   runs on Claude Code through run-cc.sh, so MODE=evidence is refused
+#   before anything starts), AGENT_REASONING_EFFORT, AGENT_THREAD_ID,
 #   AGENT_MODEL_NAME, AGENT_MODEL_CONTEXT_WINDOW,
 #   AGENT_MODEL_SUPPORTS_REASONING, AGENT_MODEL_REASONING_EFFORTS,
 #   COMMIT_MSG, TURN_UUID, OPENROUTER_API_BASE, WORKER_JWT (build-only)
@@ -48,53 +50,34 @@ die() {
 : "${TURN_UUID:=}"
 : "${WORKER_JWT:=}"
 : "${BRANCH:=}"
-: "${EVIDENCE_JWT:=}"
-: "${EVIDENCE_RUN_ID:=}"
-: "${EVIDENCE_BASE_ORIGIN:=}"
-: "${EVIDENCE_HEAD_ORIGIN:=}"
-: "${EVIDENCE_MEMBER_TOKEN:=}"
-: "${EVIDENCE_ADMIN_TOKEN:=}"
-: "${EVIDENCE_FULL_ADMIN_TOKEN:=}"
-: "${EVIDENCE_COMPLETION_REMINDER:=0}"
-: "${SYSTEM_PROMPT_FILE:=}"
+case "$MODE" in
+  build|scout) ;;
+  evidence) die "evidence turns run on Claude Code (run-cc.sh)" ;;
+  *) die "unsupported MODE: $MODE" ;;
+esac
 # Scout must NEVER receive push authority (review #4): WORKER_JWT is
 # required for build (to push) but must be empty for scout.
 if [ "$MODE" = "build" ] && [ -z "$WORKER_JWT" ]; then
   die "WORKER_JWT required for build mode"
 fi
-if [ "$MODE" = "scout" ] || [ "$MODE" = "evidence" ]; then
+if [ "$MODE" = "scout" ]; then
   WORKER_JWT=""
 fi
 export WORKER_JWT
-if [ "$MODE" = "evidence" ]; then
-  [ -n "$EVIDENCE_JWT" ] || die "EVIDENCE_JWT required for evidence mode"
-  [ -n "$EVIDENCE_RUN_ID" ] || die "EVIDENCE_RUN_ID required for evidence mode"
-  [ "$EVIDENCE_COMPLETION_REMINDER" = "0" ] || [ "$EVIDENCE_COMPLETION_REMINDER" = "1" ] \
-    || die "EVIDENCE_COMPLETION_REMINDER must be 0 or 1"
-  [ -n "$SYSTEM_PROMPT_FILE" ] && [ -s "$SYSTEM_PROMPT_FILE" ] \
-    || die "system prompt file required for evidence mode"
-fi
 
-if [ "$MODE" = "evidence" ]; then
-  WORKSPACE_DIR=$(mktemp -d "/tmp/usernode-evidence-agent-${EVIDENCE_RUN_ID}.XXXXXX") \
-    || die "could not create evidence workspace"
-else
-  WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
-fi
+WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
 cd "$WORKSPACE_DIR" || die "no workspace: $WORKSPACE_DIR"
 
 # Pre-exec hygiene: start from a known-good tree (same as run-cc.sh).
 echo "__USERNODE_PHASE__ refresh"
-if [ "$MODE" != "evidence" ]; then
-  if ! git fetch origin --quiet 2>&1; then
-    echo "__USERNODE_WARN__ git fetch failed; continuing with local state"
-  fi
-  if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
-    git reset --hard "origin/$BRANCH" --quiet 2>&1 || \
-      echo "__USERNODE_WARN__ git reset failed"
-  elif [ "$MODE" = "build" ]; then
-    die "branch missing upstream: origin/$BRANCH"
-  fi
+if ! git fetch origin --quiet 2>&1; then
+  echo "__USERNODE_WARN__ git fetch failed; continuing with local state"
+fi
+if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+  git reset --hard "origin/$BRANCH" --quiet 2>&1 || \
+    echo "__USERNODE_WARN__ git reset failed"
+elif [ "$MODE" = "build" ]; then
+  die "branch missing upstream: origin/$BRANCH"
 fi
 
 # The same throwaway Postgres preparation that Claude build turns receive.
@@ -110,49 +93,6 @@ fi
 # OpenRouter config and persistent rollout dir.
 export CODEX_HOME="${CODEX_HOME:-/home/node/.claude/codex-home}"
 mkdir -p "$CODEX_HOME"
-
-EVIDENCE_PROXY_PID=""
-EVIDENCE_TMP=""
-EVIDENCE_DIAGNOSTIC_TAIL_PID=""
-cleanup_evidence() {
-  if [ -n "$EVIDENCE_PROXY_PID" ]; then kill "$EVIDENCE_PROXY_PID" 2>/dev/null || true; fi
-  if [ -n "$EVIDENCE_DIAGNOSTIC_TAIL_PID" ]; then
-    sleep 0.3
-    kill "$EVIDENCE_DIAGNOSTIC_TAIL_PID" 2>/dev/null || true
-  fi
-  if [ -n "$EVIDENCE_TMP" ]; then rm -rf "$EVIDENCE_TMP" 2>/dev/null || true; fi
-}
-if [ "$MODE" = "evidence" ] && [ "$EVIDENCE_COMPLETION_REMINDER" != "1" ]; then
-  command -v mcp-server-playwright >/dev/null 2>&1 \
-    || die "the evidence browser MCP executable is missing"
-  echo "__USERNODE_PHASE__ evidence_proxy"
-  EVIDENCE_TMP=$(mktemp -d "/tmp/usernode-evidence-browser-${EVIDENCE_RUN_ID}.XXXXXX") \
-    || die "could not create evidence browser state"
-  chmod 700 "$EVIDENCE_TMP"
-  export EVIDENCE_BROWSER_STATE_DIR="$EVIDENCE_TMP/state"
-  export EVIDENCE_HOSTED_ORIGINS_FILE="$EVIDENCE_BROWSER_STATE_DIR/hosted-origins.json"
-  export EVIDENCE_BROWSER_DIAGNOSTIC_FILE="$EVIDENCE_TMP/browser-diagnostics.log"
-  : > "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE"
-  tail -n +1 -s 0.2 -f "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE" &
-  EVIDENCE_DIAGNOSTIC_TAIL_PID=$!
-  export EVIDENCE_PROXY_PORT=17891
-  export EVIDENCE_PROXY_SERVER="http://127.0.0.1:$EVIDENCE_PROXY_PORT"
-  export EVIDENCE_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
-  export EVIDENCE_PROXY_READY="$EVIDENCE_TMP/proxy.ready"
-  export EVIDENCE_ALLOWED_ORIGINS="[\"$EVIDENCE_BASE_ORIGIN\",\"$EVIDENCE_HEAD_ORIGIN\"]"
-  node /usr/local/bin/evidence-origin-proxy.js &
-  EVIDENCE_PROXY_PID=$!
-  trap cleanup_evidence EXIT INT TERM
-  i=0
-  while [ ! -f "$EVIDENCE_PROXY_READY" ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.05; done
-  [ -f "$EVIDENCE_PROXY_READY" ] || die "evidence origin proxy failed to start"
-  echo "__USERNODE_PHASE__ evidence_browser_bootstrap"
-  node /usr/local/bin/evidence-browser-bootstrap.js \
-    || die "evidence browser authentication failed"
-fi
-if [ "$MODE" = "evidence" ]; then
-  unset EVIDENCE_MEMBER_TOKEN EVIDENCE_ADMIN_TOKEN EVIDENCE_FULL_ADMIN_TOKEN
-fi
 
 # TOML-safe escaping (quotes/backslashes/newlines) so attacker-controlled
 # model strings cannot inject extra TOML/MCP sections into config.toml.
@@ -213,10 +153,6 @@ if ! {
   fi
   printf '\n'
   printf 'sandbox_mode = "%s"\n' "$SANDBOX_MODE"
-  if [ "$MODE" = "evidence" ]; then
-    printf 'web_search = "disabled"\n'
-    printf 'developer_instructions = "%s"\n' "$(toml_escape "$(cat "$SYSTEM_PROMPT_FILE")")"
-  fi
   cat <<'TOML'
 approval_policy = "never"
 check_for_update_on_startup = false
@@ -227,14 +163,6 @@ enabled = false
 [features]
 apps = false
 plugins = false
-TOML
-  if [ "$MODE" = "evidence" ]; then
-    printf 'shell_tool = false\n'
-    printf 'unified_exec = false\n'
-    printf 'multi_agent = false\n'
-    printf 'skill_mcp_dependency_install = false\n'
-  fi
-  cat <<'TOML'
 
 [shell_environment_policy]
 TOML
@@ -267,8 +195,7 @@ request_max_retries = 3
 TOML
   # #2380: browser parity with hosted Claude build turns. This is the
   # platform-seeded config, never a repository .mcp.toml. Scout remains
-  # browser-free; the dedicated evidence mode receives a stricter run-scoped
-  # server when that mode is dispatched by the evidence orchestrator.
+  # browser-free.
   if [ "$MODE" = "build" ]; then
     ESCAPED_BROWSER_CONFIG=$(toml_escape "${BROWSER_PW_CONFIG:-/home/node/.usernode-playwright.json}")
     cat <<'TOML'
@@ -289,68 +216,6 @@ enabled_tools = ["record_visual_evidence_intent"]
 startup_timeout_sec = 15
 tool_timeout_sec = 30
 TOML
-  elif [ "$MODE" = "evidence" ]; then
-    if [ "$EVIDENCE_COMPLETION_REMINDER" = "1" ]; then
-      cat <<'TOML'
-
-[mcp_servers.evidence]
-command = "node"
-args = ["/usr/local/bin/evidence-mcp.js"]
-env_vars = ["EVIDENCE_JWT", "EVIDENCE_RUN_ID", "PLATFORM_URL"]
-enabled_tools = ["evidence_run_plan", "evidence_report_blocker"]
-startup_timeout_sec = 15
-tool_timeout_sec = 720
-TOML
-    else
-    BROWSER_ALLOWED_ORIGINS=$(node /usr/local/bin/evidence-hosted-origins.js \
-      "$EVIDENCE_BASE_ORIGIN" "$EVIDENCE_HEAD_ORIGIN" "$EVIDENCE_HOSTED_ORIGINS_FILE") \
-      || die "could not load evidence hosted-app catalog"
-    ESCAPED_BROWSER_ALLOWED_ORIGINS=$(toml_escape "$BROWSER_ALLOWED_ORIGINS")
-    ESCAPED_PROXY=$(toml_escape "$EVIDENCE_PROXY_SERVER")
-    ESCAPED_MEMBER_STATE=$(toml_escape "$EVIDENCE_BROWSER_STATE_DIR/member.json")
-    ESCAPED_ADMIN_STATE=$(toml_escape "$EVIDENCE_BROWSER_STATE_DIR/read_only_admin.json")
-    ESCAPED_FULL_ADMIN_STATE=$(toml_escape "$EVIDENCE_BROWSER_STATE_DIR/full_admin.json")
-    cat <<'TOML'
-
-[mcp_servers.evidence]
-command = "node"
-args = ["/usr/local/bin/evidence-mcp.js"]
-env_vars = ["EVIDENCE_JWT", "EVIDENCE_RUN_ID", "PLATFORM_URL", "EVIDENCE_PROXY_SERVER", "EVIDENCE_PROXY_CONTROL_TOKEN", "EVIDENCE_HOSTED_ORIGINS_FILE"]
-enabled_tools = ["evidence_get_context", "evidence_set_request_failure", "evidence_run_plan", "evidence_report_blocker"]
-startup_timeout_sec = 15
-tool_timeout_sec = 720
-
-[mcp_servers.browser_member]
-command = "node"
-TOML
-    printf 'args = ["/usr/local/bin/evidence-browser-observer.js", "member", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--caps", "vision", "--storage-state", "%s", "--allowed-origins", "%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_MEMBER_STATE" "$ESCAPED_BROWSER_ALLOWED_ORIGINS" "$ESCAPED_PROXY"
-    cat <<'TOML'
-env_vars = ["EVIDENCE_ALLOWED_ORIGINS", "EVIDENCE_BROWSER_DIAGNOSTIC_FILE", "EVIDENCE_NAVIGATION_HINTS"]
-enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_mouse_move_xy", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
-startup_timeout_sec = 30
-tool_timeout_sec = 60
-
-[mcp_servers.browser_admin]
-command = "node"
-TOML
-    printf 'args = ["/usr/local/bin/evidence-browser-observer.js", "admin", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--caps", "vision", "--storage-state", "%s", "--allowed-origins", "%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_ADMIN_STATE" "$ESCAPED_BROWSER_ALLOWED_ORIGINS" "$ESCAPED_PROXY"
-    cat <<'TOML'
-env_vars = ["EVIDENCE_ALLOWED_ORIGINS", "EVIDENCE_BROWSER_DIAGNOSTIC_FILE", "EVIDENCE_NAVIGATION_HINTS"]
-enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_mouse_move_xy", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
-startup_timeout_sec = 30
-tool_timeout_sec = 60
-
-[mcp_servers.browser_full_admin]
-command = "node"
-TOML
-    printf 'args = ["/usr/local/bin/evidence-browser-observer.js", "full_admin", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--caps", "vision", "--storage-state", "%s", "--allowed-origins", "%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_FULL_ADMIN_STATE" "$ESCAPED_BROWSER_ALLOWED_ORIGINS" "$ESCAPED_PROXY"
-    cat <<'TOML'
-env_vars = ["EVIDENCE_ALLOWED_ORIGINS", "EVIDENCE_BROWSER_DIAGNOSTIC_FILE", "EVIDENCE_NAVIGATION_HINTS"]
-enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_mouse_move_xy", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
-startup_timeout_sec = 30
-tool_timeout_sec = 60
-TOML
-    fi
   fi
   # #2779: the coding agent's read-only Homeroom tools, for a build or scout
   # turn the platform issued a grant to. The bridge receives the grant from
@@ -387,9 +252,6 @@ fi
 chmod 600 "$CONFIG_TMP" || { rm -f "$CONFIG_TMP"; die "could not secure Codex config"; }
 mv -f "$CONFIG_TMP" "$CODEX_HOME/config.toml" \
   || { rm -f "$CONFIG_TMP"; die "could not install Codex config"; }
-if [ "$MODE" = "evidence" ]; then
-  echo "__USERNODE_PHASE__ evidence_mcp_ready"
-fi
 
 # Export the user's key for this process only.
 export OPENROUTER_API_KEY
@@ -546,7 +408,7 @@ if [ -z "$AGENT_THREAD_OUT" ]; then
 fi
 rm -f "$TMP_JSONL" 2>/dev/null
 
-if [ "$MODE" = "scout" ] || [ "$MODE" = "evidence" ]; then
+if [ "$MODE" = "scout" ]; then
   restore_scout_tree
   echo "__USERNODE_PHASE__ done"
   echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT"

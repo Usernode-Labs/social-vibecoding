@@ -551,7 +551,11 @@ function load() {
         enforce: false,
         maxRunMs: boundedInt('VISUAL_EVIDENCE_MAX_RUN_MS', 1_440_000, 60_000),
         maxAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_AGENT_MS', 480_000, 30_000),
-        maxRepairAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_REPAIR_AGENT_MS', 240_000, 30_000),
+        // The preview agent's own model, not the author's pick: following
+        // declared steps and saving screenshots does not need the model that
+        // wrote the change. A malformed override keeps the default.
+        agentModel: /^claude-[a-z0-9][a-z0-9-]{0,62}$/.test(process.env.VISUAL_EVIDENCE_AGENT_MODEL || '')
+          ? process.env.VISUAL_EVIDENCE_AGENT_MODEL : 'claude-sonnet-5-5',
         failedMetadataRetentionDays: boundedInt('VISUAL_EVIDENCE_FAILED_RETENTION_DAYS', 30, 1),
         failedArtifactRetentionHours: boundedInt('VISUAL_EVIDENCE_FAILED_ARTIFACT_RETENTION_HOURS', 24, 1),
       };

@@ -272,14 +272,12 @@ app.use((req, res, next) => {
   // report HTML, which routinely exceeds 100kb; the route mounts its own
   // 3mb parser (routes/report-snapshots.js).
   if (req.method === 'POST' && /^\/api\/apps\/[^/]+\/report-snapshots$/.test(req.path)) return next();
-  // A bounded executable evidence plan can exceed the global 100kb parser.
-  // PR import parses here; the dedicated plan route mounts its own parser.
+  // A PR import carries the description and the declared changes, which
+  // together can exceed the global 100kb parser.
   if (req.method === 'POST'
       && /^\/api\/apps\/[^/]+\/pr-import$/.test(req.path)) {
     return express.json({ limit: '512kb' })(req, res, next);
   }
-  if (req.method === 'POST'
-      && /^\/api\/apps\/[^/]+\/proposals\/[^/]+\/evidence\/plan$/.test(req.path)) return next();
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -1081,7 +1079,14 @@ async function becomeLeader() {
     .then(({ scheduled }) => {
       if (scheduled) log.info('visual-evidence', 'Recovered unstarted visual evidence claims', { scheduled });
     })
-    .catch((err) => log.warn('visual-evidence', 'Unstarted evidence recovery failed', { err: err.message }));
+    .catch((err) => log.warn('visual-evidence', 'Unstarted evidence recovery failed', { err: err.message }))
+    // A rollout interrupts runs through no fault of the proposal; start the
+    // same head again (bounded) rather than waiting for someone to click Retry.
+    .then(() => visualEvidenceGc.retryInterrupted(config, getPool(config)))
+    .then((result) => {
+      if (result?.scheduled) log.info('visual-evidence', 'Retried interrupted visual evidence runs', result);
+    })
+    .catch((err) => log.warn('visual-evidence', 'Interrupted evidence retry failed', { err: err.message }));
   runUnstartedEvidence();
   setInterval(runUnstartedEvidence, 2 * 60 * 1000).unref?.();
 
@@ -5828,7 +5833,7 @@ async function cleanup() {
     const marking = Promise.allSettled(interruptedEvidence.map((runId) =>
       require('./src/services/visual-evidence-state').transitionRun(shutdownPool, runId, 'failed', {
         failureCode: 'evidence_run_interrupted',
-        failureReason: 'The platform process shut down while this visual change preview was running. You can retry the preview run.',
+        failureReason: 'The platform restarted while these before/after shots were being taken. You can take them again.',
       })
     ));
     const result = await Promise.race([

@@ -35,28 +35,23 @@ test('recovery starts settled intent-only proposals once for their current check
   assert.match(queryText, /recoveryAttemptAt/);
 });
 
-test('recovery also starts an import-time author plan whose checks settled after a restart', async () => {
-  const head = 'a'.repeat(40);
+test('recovery starts only run-less declarations and treats every stalled planned run alike', async () => {
+  // Author-submitted plans are gone, so a planned run is never waiting on an
+  // import-time plan: recovery neither schedules one nor spares it.
   const queries = [];
-  const calls = [];
-  const pool = { query: async (sql) => {
+  await gc.recoverUnstarted({ visualEvidence: { execute: true } }, { query: async (sql) => {
     queries.push(String(sql));
-    return { rows: [{ id: 45, source: 'imported', imported_pr_head_sha: head,
-      checks_commit_sha: head }] };
-  } };
-  const result = await gc.recoverUnstarted({ visualEvidence: { execute: true } }, pool, {
-    schedule: async (_config, options) => { calls.push(options); return { scheduled: true }; },
-  });
-  assert.deepEqual(result, { examined: 1, scheduled: 1 });
-  assert.equal(calls[0].sessionId, 45);
-  assert.match(queries[0], /LEFT JOIN visual_evidence_runs r ON r\.id = cs\.visual_evidence_run_id/);
-  assert.match(queries[0], /r\.state = 'planned' AND r\.author_plan IS NOT NULL/);
+    return { rows: [] };
+  } }, { schedule: async () => { throw new Error('nothing to schedule'); } });
+  assert.match(queries[0], /cs\.visual_evidence_run_id IS NULL/);
+  assert.doesNotMatch(queries[0], /author_plan|JOIN visual_evidence_runs/);
   const interrupted = [];
   await gc.recoverInterrupted({ visualEvidence: {} }, { query: async (sql) => {
     interrupted.push(String(sql));
     return { rows: [] };
   } });
-  assert.match(interrupted[0], /NOT \(r\.state = 'planned' AND r\.author_plan IS NOT NULL\)/);
+  assert.match(interrupted[0], /r\.state IN \('planned','provisioning','exploring','replaying','reviewing'\)/);
+  assert.doesNotMatch(interrupted[0], /author_plan/);
 });
 
 test('an unlaunchable planned claim is deferred so it cannot starve later claims', async () => {
@@ -76,6 +71,58 @@ test('an unlaunchable planned claim is deferred so it cannot starve later claims
   assert.equal(writes.length, 1);
   assert.match(writes[0].sql, /recoveryAttemptAt/);
   assert.equal(writes[0].params[0], 42);
+});
+
+test('a rollout-interrupted run is retried on its current head, a bounded number of times', async () => {
+  const head = 'a'.repeat(40);
+  const newer = 'b'.repeat(40);
+  const queries = [];
+  const pool = { query: async (sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [
+      { run_id: '1'.repeat(32), head_sha: head, id: 42, source: 'imported',
+        imported_pr_head_sha: head, checks_commit_sha: head },
+      // A newer commit owns this proposal; its own checks start evidence.
+      { run_id: '2'.repeat(32), head_sha: head, id: 43, source: 'imported',
+        imported_pr_head_sha: newer, checks_commit_sha: newer },
+      // Someone else retried it first: the rerun is refused and skipped.
+      { run_id: '3'.repeat(32), head_sha: head, id: 44, source: 'native',
+        reviewed_head_sha: head, checks_commit_sha: head },
+    ] };
+  } };
+  const reruns = [];
+  const schedules = [];
+  const result = await gc.retryInterrupted({ visualEvidence: { execute: true } }, pool, {
+    stateService: {
+      rerunSameHead: async (_pool, runId, options) => {
+        reruns.push({ runId, trigger: options.trigger });
+        if (runId === '3'.repeat(32)) {
+          throw Object.assign(new Error('owner changed'), { code: 'stale_evidence_operation' });
+        }
+        return { id: '9'.repeat(32), head_sha: head, state: 'planned' };
+      },
+    },
+    schedule: async (_config, options) => { schedules.push(options); return { scheduled: true }; },
+  });
+  assert.deepEqual(result, { examined: 3, scheduled: 1 });
+  assert.deepEqual(reruns, [
+    { runId: '1'.repeat(32), trigger: 'interrupted-retry' },
+    { runId: '3'.repeat(32), trigger: 'interrupted-retry' },
+  ]);
+  assert.deepEqual(schedules.map(({ sessionId, headSha, trigger }) => ({ sessionId, headSha, trigger })),
+    [{ sessionId: 42, headSha: head, trigger: 'interrupted-retry' }]);
+  const { sql, params } = queries[0];
+  assert.match(sql, /r\.failure_code = 'evidence_run_interrupted'/);
+  assert.match(sql, /JOIN visual_evidence_runs r ON r\.id = cs\.visual_evidence_run_id/);
+  assert.match(sql, /cs\.status NOT IN \('merged', 'archived'\)/);
+  assert.match(sql, /prior\.trigger = \$3\) < \$4/);
+  assert.deepEqual(params.slice(2), ['interrupted-retry', gc.MAX_INTERRUPTED_RETRIES]);
+  assert.equal(gc.MAX_INTERRUPTED_RETRIES, 2);
+
+  const disabled = await gc.retryInterrupted({ visualEvidence: { execute: false } }, {
+    query: async () => { throw new Error('must not query while evidence is disabled'); },
+  });
+  assert.deepEqual(disabled, { examined: 0, scheduled: 0 });
 });
 
 test('recovery releases an abandoned current run while preserving longer grace for pre-heartbeat builds', async () => {

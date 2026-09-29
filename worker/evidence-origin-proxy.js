@@ -73,6 +73,63 @@ function permittedAuthority(authority) {
   loadHostedOrigins();
   return hostedAuthorities.has(authority);
 }
+// A child app's pages load the platform's bridge, native kit and Tailwind
+// build from their own origin, and the production edge routes those paths to
+// the platform. Evidence deployments have no edge in front of them, so these
+// requests would reach the app's SPA fallback, come back as HTML, and leave
+// the page unstyled. Route them to the platform instead, for a child-app pair
+// (EVIDENCE_PLATFORM_ASSETS=1) or a hosted app; the platform's own pairs
+// serve the copies their revision carries. GET/HEAD of these prefixes only,
+// with no cookie or credential of the page's.
+const PLATFORM_ASSET_PREFIXES = Object.freeze(['/usernode-bridge/', '/usernode-native/', '/usernode-tailwind/']);
+const platformAssetsOrigin = (() => {
+  try {
+    const url = new URL(String(process.env.PLATFORM_URL || ''));
+    return ['http:', 'https:'].includes(url.protocol) ? url.origin : null;
+  } catch { return null; }
+})();
+const childAppPair = process.env.EVIDENCE_PLATFORM_ASSETS === '1';
+// A legacy child app still on the Tailwind CDN script renders with it in
+// staging and production; the same one host is reachable for a child-app pair.
+const LEGACY_TAILWIND_CDN = 'cdn.tailwindcss.com:443';
+const FORWARDED_ASSET_HEADERS = Object.freeze(['accept', 'accept-encoding', 'if-none-match', 'if-modified-since', 'user-agent']);
+const RETURNED_ASSET_HEADERS = Object.freeze(['content-type', 'content-length', 'content-encoding', 'cache-control', 'etag', 'last-modified']);
+
+function platformAssetPath(pathname) {
+  if (!PLATFORM_ASSET_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return false;
+  let decoded;
+  try { decoded = decodeURIComponent(pathname); } catch { return false; }
+  return !decoded.split('/').includes('..') && !decoded.includes('\\') && !decoded.includes('\0');
+}
+
+function routesPlatformAsset(target, method) {
+  if (!platformAssetsOrigin || !['GET', 'HEAD'].includes(method) || !platformAssetPath(target.pathname)) return false;
+  if (origins.has(target.origin)) return childAppPair;
+  return hostedOrigins.has(target.origin);
+}
+
+function forwardPlatformAsset(req, res, target, side) {
+  const headers = {};
+  for (const name of FORWARDED_ASSET_HEADERS) if (req.headers[name]) headers[name] = req.headers[name];
+  const source = new URL(`${target.pathname}${target.search}`, platformAssetsOrigin);
+  const transport = source.protocol === 'https:' ? https : http;
+  const upstream = transport.request(source, { method: req.method, headers }, (assetResponse) => {
+    const status = assetResponse.statusCode || 502;
+    diagnostic({ kind: 'platform_asset', side, httpStatus: status });
+    const returned = {};
+    for (const name of RETURNED_ASSET_HEADERS) {
+      if (assetResponse.headers[name] != null) returned[name] = assetResponse.headers[name];
+    }
+    res.writeHead(status, returned);
+    assetResponse.pipe(res);
+  });
+  upstream.on('error', () => {
+    diagnostic({ kind: 'platform_asset', side, httpStatus: 502 });
+    reject(res, 502);
+  });
+  upstream.end();
+}
+
 let documentOrdinal = 0;
 const controlToken = String(process.env.EVIDENCE_PROXY_CONTROL_TOKEN || '');
 const controlPath = '/__usernode_evidence_control/request-failure';
@@ -149,11 +206,12 @@ const server = http.createServer((req, res) => {
       side: target.origin === originList[0] ? 'base' : 'head', hitOrdinal: controlledFailureHits });
     return res.destroy();
   }
+  const side = target.origin === originList[0] ? 'base'
+    : target.origin === originList[1] ? 'head' : 'hosted';
+  if (routesPlatformAsset(target, req.method)) return forwardPlatformAsset(req, res, target, side);
   const isDocument = req.headers['sec-fetch-dest'] === 'document';
   const ordinal = isDocument ? ++documentOrdinal : null;
   const startedAt = performance.now();
-  const side = target.origin === originList[0] ? 'base'
-    : target.origin === originList[1] ? 'head' : 'hosted';
   if (isDocument) diagnostic({ kind: 'document_request', documentOrdinal: ordinal, side });
   const headers = { ...req.headers, host: target.host };
   delete headers['proxy-authorization'];
@@ -183,7 +241,9 @@ const server = http.createServer((req, res) => {
 
 server.on('connect', (req, client, head) => {
   const authority = String(req.url || '').toLowerCase();
-  if (!permittedAuthority(authority)) return reject(client);
+  const legacyCdn = childAppPair && authority === LEGACY_TAILWIND_CDN;
+  if (!legacyCdn && !permittedAuthority(authority)) return reject(client);
+  if (legacyCdn) diagnostic({ kind: 'legacy_tailwind_cdn' });
   const split = authority.lastIndexOf(':');
   const host = authority.slice(0, split);
   const targetPort = Number(authority.slice(split + 1));

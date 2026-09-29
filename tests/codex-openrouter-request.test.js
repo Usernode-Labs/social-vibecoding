@@ -39,12 +39,11 @@ async function json(req) {
   return JSON.parse(Buffer.concat(chunks).toString());
 }
 
-// Sanitized from an actual @openai/codex 0.146.0 request with agents disabled
-// and the completion runner's evidence MCP allowlist. The production trace
-// reported the same 13 top-level definitions. Schemas/descriptions are
-// intentionally omitted because this adapter relies only on type, namespace,
-// and membership.
-function codex0146CompletionTools() {
+// Shaped like an actual @openai/codex 0.146.0 build request with agents
+// disabled: Codex's built-ins beside the build turn's MCP servers, each sent
+// as a namespace. Schemas/descriptions are intentionally omitted; the adapter
+// forwards them untouched either way.
+function codex0146BuildTools() {
   return [
     { type: 'function', name: 'exec_command' },
     { type: 'function', name: 'write_stdin' },
@@ -54,13 +53,19 @@ function codex0146CompletionTools() {
     { type: 'function', name: 'update_plan' },
     { type: 'function', name: 'request_user_input' },
     { type: 'function', name: 'view_image' },
-    { type: 'namespace', name: 'mcp__evidence', tools: [
-      { type: 'function', name: 'evidence_report_blocker' },
-      { type: 'function', name: 'evidence_run_plan' },
+    { type: 'namespace', name: 'mcp__playwright', tools: [
+      { type: 'function', name: 'browser_navigate' },
+      { type: 'function', name: 'browser_take_screenshot' },
+      { type: 'function', name: 'browser_close' },
+    ] },
+    { type: 'namespace', name: 'mcp__visual_intent', tools: [
+      { type: 'function', name: 'record_visual_evidence_intent' },
+    ] },
+    { type: 'namespace', name: 'mcp__homeroom', tools: [
+      { type: 'function', name: 'get_platform_conventions' },
+      { type: 'function', name: 'get_app' },
     ] },
     { type: 'function', name: 'get_goal' },
-    { type: 'function', name: 'create_goal' },
-    { type: 'function', name: 'update_goal' },
     { type: 'web_search' },
   ];
 }
@@ -108,138 +113,41 @@ test('the wire cap is enforced on every GLM request, independently of history si
   assert.doesNotMatch(JSON.stringify(diagnostics), /test-openrouter-key|coding instructions|Short request|long history/);
 });
 
-test('an evidence completion retry must choose one terminal tool on its first provider response', async t => {
+// The adapter changes only the output cap: Codex's whole tool surface, its
+// tool choice and its parallel-call flag reach the provider exactly as sent,
+// and nothing about the tools enters the timing stream. (The tool inventory
+// served only the retired Codex preview agent; every preview turn runs on
+// Claude Code now.)
+test('a request keeps its whole tool surface and the timing stream never describes it', async t => {
   const calls = [];
   const base = await upstream(t, async (req, res) => {
     calls.push(await json(req));
     res.writeHead(200, { 'content-type': 'text/event-stream' });
-    const item = calls.length === 2
-      ? { type: 'function_call', namespace: 'mcp__evidence', name: 'evidence_run_plan' }
-      : { type: 'message', role: 'assistant' };
+    const item = { type: 'function_call', namespace: 'mcp__playwright', name: 'browser_navigate' };
     res.end(`data: ${JSON.stringify({ type: 'response.output_item.done', item })}\n\n`);
   });
   const events = [];
-  const instance = await adapter(t, base, {
-    requireEvidenceTerminalTool: true,
-    reportEvidenceToolConfig: true,
-    onTiming: event => events.push(event),
-  });
-  const tools = codex0146CompletionTools();
-  const compaction = await request(instance, {
-    model: MODEL, stream: true, input: [], tools: [],
-  });
-  assert.equal(compaction.status, 200);
-  await compaction.text();
-  const first = await request(instance, {
-    model: MODEL, stream: true, input: [], tools,
-    tool_choice: 'auto', parallel_tool_calls: true,
-  });
-  assert.equal(first.status, 200);
-  await first.text();
-  const second = await request(instance, {
-    model: MODEL, stream: true, input: [], tools,
-    tool_choice: 'auto', parallel_tool_calls: true,
-  });
-  assert.equal(second.status, 200);
-  await second.text();
-  assert.equal(calls[0].tool_choice, undefined, 'tool-free compaction is allowed before the recovery prompt');
-  assert.equal(calls[1].tool_choice, 'required');
-  assert.equal(calls[1].parallel_tool_calls, false);
-  assert.deepEqual(calls[1].tools, [{ type: 'namespace', name: 'mcp__evidence', tools: [
-    { type: 'function', name: 'evidence_report_blocker' },
-    { type: 'function', name: 'evidence_run_plan' },
-  ] }], 'Codex built-ins are removed from the provider-facing recovery request');
-  assert.equal(calls[2].tool_choice, 'auto', 'only the recovery turn\'s first eligible response is forced');
-  assert.equal(calls[2].parallel_tool_calls, true);
-  assert.equal(calls[2].tools.length, 13, 'the adapter stops filtering after the terminal call');
-  const starts = events.filter(event => event.kind === 'provider_request_start');
-  assert.equal(starts[0].terminalToolChoiceRequired, undefined);
-  assert.equal(starts[1].terminalToolChoiceRequired, true);
-  assert.equal(starts[1].terminalToolDefinitionCount, 2);
-  assert.equal(starts[2].terminalToolChoiceRequired, undefined);
-  const config = events.find(event => event.kind === 'provider_tool_config');
-  assert.equal(config.mcpServerCount, 1);
-  assert.equal(config.toolDefinitionCount, 13);
-  assert.equal(config.topLevelFunctionToolCount, 11);
-  assert.equal(config.topLevelNamespaceToolCount, 1);
-  assert.equal(config.topLevelOtherToolCount, 1);
-  assert.equal(config.nestedToolDefinitionCount, 2);
-  assert.equal(config.nestedFunctionToolCount, 2);
-  assert.equal(config.evidenceToolDefinitionCount, 2);
-  assert.equal(config.evidenceGetContextAvailable, false);
-  assert.equal(config.evidenceRunPlanAvailable, true);
-  assert.equal(config.evidenceReportBlockerAvailable, true);
-  assert.equal(config.completionReminder, true);
-  assert.equal(config.terminalToolChoiceRequired, true);
-  assert.equal(config.terminalToolWireFormat, 'namespace');
-  assert.equal(config.toolSurfaceFiltered, true);
-  assert.equal(config.removedToolDefinitionCount, 12);
-  assert.equal(config.forwardedToolDefinitionCount, 1);
+  const instance = await adapter(t, base, { onTiming: event => events.push(event) });
+  const tools = codex0146BuildTools();
+  for (let i = 0; i < 2; i++) {
+    const response = await request(instance, {
+      model: MODEL, stream: true, input: [], tools,
+      tool_choice: 'auto', parallel_tool_calls: true,
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+  }
+  for (const call of calls) {
+    assert.deepEqual(call.tools, tools, 'Codex built-ins and every MCP server are forwarded');
+    assert.equal(call.tool_choice, 'auto', 'the model is never forced to call a tool');
+    assert.equal(call.parallel_tool_calls, true);
+  }
+  assert.equal(events.filter(event => event.kind === 'provider_request_start').length, 2);
+  assert.equal(events.some(event => event.kind === 'provider_tool_config'), false);
+  assert.doesNotMatch(JSON.stringify(events), /browser_navigate|record_visual_evidence_intent|mcp__/);
 });
 
-test('forced evidence completion refuses an unexpected tool surface', async t => {
-  let upstreamCalls = 0;
-  const base = await upstream(t, async (_req, res) => {
-    upstreamCalls += 1;
-    res.end('{}');
-  });
-  const instance = await adapter(t, base, { requireEvidenceTerminalTool: true });
-  const response = await request(instance, {
-    model: MODEL,
-    tools: [...codex0146CompletionTools(), {
-      type: 'namespace', name: 'mcp__browser_member',
-      tools: [{ type: 'function', name: 'browser_click' }],
-    }],
-  });
-  assert.equal(response.status, 500);
-  assert.match((await response.json()).error.message, /not configured safely/i);
-  assert.equal(upstreamCalls, 0);
-});
-
-test('forced evidence completion refuses a partial terminal namespace', async t => {
-  let upstreamCalls = 0;
-  const base = await upstream(t, async (_req, res) => {
-    upstreamCalls += 1;
-    res.end('{}');
-  });
-  const instance = await adapter(t, base, { requireEvidenceTerminalTool: true });
-  const tools = codex0146CompletionTools();
-  tools.find(tool => tool.name === 'mcp__evidence').tools.pop();
-  const response = await request(instance, { model: MODEL, tools });
-  assert.equal(response.status, 500);
-  assert.match((await response.json()).error.message, /not configured safely/i);
-  assert.equal(upstreamCalls, 0);
-});
-
-test('forced evidence completion still accepts the older flat MCP encoding', async t => {
-  let providerBody;
-  const base = await upstream(t, async (req, res) => {
-    providerBody = await json(req);
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end('{"id":"response-flat"}');
-  });
-  const events = [];
-  const instance = await adapter(t, base, {
-    requireEvidenceTerminalTool: true,
-    reportEvidenceToolConfig: true,
-    onTiming: event => events.push(event),
-  });
-  const response = await request(instance, { model: MODEL, tools: [
-    { type: 'function', name: 'exec_command' },
-    { type: 'function', name: 'mcp__evidence__evidence_run_plan' },
-    { type: 'function', name: 'mcp__evidence__evidence_report_blocker' },
-  ] });
-  assert.equal(response.status, 200);
-  assert.deepEqual(providerBody.tools.map(tool => tool.name), [
-    'mcp__evidence__evidence_run_plan', 'mcp__evidence__evidence_report_blocker',
-  ]);
-  assert.equal(providerBody.tool_choice, 'required');
-  const config = events.find(event => event.kind === 'provider_tool_config');
-  assert.equal(config.terminalToolWireFormat, 'flat');
-  assert.equal(config.removedToolDefinitionCount, 1);
-});
-
-test('evidence timing separates provider wait, first byte, and stream completion without content', async t => {
+test('request timing separates provider wait, first byte, and stream completion without content', async t => {
   const privateText = 'private model output';
   const base = await upstream(t, async (req, res) => {
     await json(req);

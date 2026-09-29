@@ -1,6 +1,6 @@
 'use strict';
 
-const { Router } = require('express');
+const { Router, raw } = require('express');
 const { rateLimit } = require('express-rate-limit');
 const { getPool } = require('../db/pool');
 const { internalAuth, internalAuthPurpose } = require('../middleware/internal-auth');
@@ -187,36 +187,34 @@ function internalRoutes(_config) {
     catch (err) { return evidenceError(res, err); }
   });
 
-  router.post('/api/internal/evidence/:runId/reset-pair', evidenceAuth, evidenceLimiter, async (req, res) => {
+  // One shot or clip the preview agent saved on the before or after build.
+  // The file travels as the raw body (the global JSON parser ignores it) and
+  // its change/screen/side/kind as query fields. The parser limit sits above
+  // the clip limit so the structured clip_too_large code wins.
+  const shotBody = raw({ type: 'application/octet-stream', limit: '21mb' });
+  router.post('/api/internal/evidence/:runId/shot', evidenceAuth, evidenceLimiter, shotBody, (req, res) => {
     try {
-      const result = await evidenceControlForRequest(req).resetPair();
+      const result = evidenceControlForRequest(req).saveShot({
+        change: req.query.change,
+        screen: req.query.screen,
+        side: req.query.side,
+        kind: req.query.kind,
+      }, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
       return res.json({ ok: true, result });
     } catch (err) { return evidenceError(res, err); }
   });
 
-  // Kept for an older worker during a rolling deployment. RunControl serves
-  // the base/head companion calls from one atomic reset so the second request
-  // cannot invalidate the first request's origin.
-  router.post('/api/internal/evidence/:runId/reset-side', evidenceAuth, evidenceLimiter, async (req, res) => {
+  router.post('/api/internal/evidence/:runId/skip', evidenceAuth, evidenceLimiter, (req, res) => {
     try {
-      const result = await evidenceControlForRequest(req).resetSide(req.body?.side);
+      const result = evidenceControlForRequest(req).skipChange(req.body || {});
       return res.json({ ok: true, result });
     } catch (err) { return evidenceError(res, err); }
   });
 
-  router.post('/api/internal/evidence/:runId/run-plan', evidenceAuth, evidenceLimiter, (req, res) => {
+  // What a change's shots leave out, shown beside them on the proposal.
+  router.post('/api/internal/evidence/:runId/note', evidenceAuth, evidenceLimiter, (req, res) => {
     try {
-      const control = evidenceControlForRequest(req);
-      const result = Object.hasOwn(req.body || {}, 'replays')
-        ? control.submitReplays(req.body.replays)
-        : control.submitPlan(req.body?.plan);
-      return res.json({ ok: true, result });
-    } catch (err) { return evidenceError(res, err); }
-  });
-
-  router.post('/api/internal/evidence/:runId/finish', evidenceAuth, evidenceLimiter, (req, res) => {
-    try {
-      const result = evidenceControlForRequest(req).finish(req.body || {});
+      const result = evidenceControlForRequest(req).noteChange(req.body || {});
       return res.json({ ok: true, result });
     } catch (err) { return evidenceError(res, err); }
   });
