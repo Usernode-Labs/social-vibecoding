@@ -180,7 +180,7 @@ test('an orphan whose Jobs finished is settled from their output through settleC
   });
   stub(t, visuals, {
     settleCaptureRun: async (_cfg, _pool, run) => { settledWith = run; return { traceStatus: 'passing', result: { state: 'passing' } }; },
-    scheduleVisualEvidence: (_cfg, _pool, id, head, trigger) => evidence.push({ id, head, trigger }),
+    scheduleShots: (_cfg, _pool, id, head, trigger) => evidence.push({ id, head, trigger }),
   });
 
   const summary = await harvest.sweep(config, { reason: 'boot', pool });
@@ -434,7 +434,7 @@ test('a capture Job that failed with nothing to salvage records an error verdict
     settleCaptureRun: async () => assert.fail('nothing to settle from'),
     storeChecks: async (_pool, sessionId, commitSha, result, detail) => { stores.push({ sessionId, commitSha, result, detail }); return true; },
     storeCaptureOutcome: async () => true,
-    scheduleVisualEvidence: (_cfg, _pool, id, head, trigger) => evidence.push({ id, head, trigger }),
+    scheduleShots: (_cfg, _pool, id, head, trigger) => evidence.push({ id, head, trigger }),
   });
   const summary = await harvest.sweep(config, { reason: 'tick', pool });
   const [result] = await summary.done;

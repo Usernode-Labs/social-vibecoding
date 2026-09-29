@@ -8724,18 +8724,140 @@ CREATE TABLE IF NOT EXISTS check_runs (
 COMMENT ON TABLE check_runs IS 'staging:private';
 CREATE INDEX IF NOT EXISTS idx_check_runs_session ON check_runs (session_id);
 
--- #2380: agent-authored, revision-scoped visual evidence. The hot proposal
+-- Renamed from visual_evidence_* when visual evidence became before & after
+-- shots. Guarded so boot is idempotent either way: an existing deployment
+-- renames in place and keeps its rows, a fresh one falls straight through
+-- to the CREATEs below.
+--
+-- The previous release's pods keep serving through the rolling update after
+-- this runs, and they still name the old tables and columns. So a renamed
+-- deployment also keeps the old names answering for them: a view under each
+-- old table name, and a legacy copy of each chat_sessions column that
+-- chat_sessions_shots_legacy_sync() keeps equal to the new one, in both
+-- directions. Nothing in this release reads either. Once no deployment runs
+-- an older release, drop the three views, the trigger and its function, and
+-- the four chat_sessions.visual_evidence_* columns. A rollback past this
+-- release needs the views dropped and the renames reversed by hand first.
+DO $$
+DECLARE
+  pair TEXT[];
+  rec RECORD;
+BEGIN
+  FOREACH pair SLICE 1 IN ARRAY ARRAY[
+    ['visual_evidence_runs', 'shot_runs'],
+    ['visual_evidence_artifacts', 'shot_artifacts'],
+    ['visual_evidence_diagnostic_artifacts', 'shot_diagnostic_artifacts']
+  ] LOOP
+    IF EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = pair[1]
+                  AND table_type = 'BASE TABLE')
+       AND NOT EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = pair[2])
+    THEN
+      EXECUTE format('ALTER TABLE %I RENAME TO %I', pair[1], pair[2]);
+      EXECUTE format('CREATE VIEW %I AS SELECT * FROM %I', pair[1], pair[2]);
+    END IF;
+  END LOOP;
+  -- Constraint and index names carry the old table names too.
+  FOR rec IN
+    SELECT con.conname, con.conrelid::regclass::text AS rel
+      FROM pg_constraint con
+     WHERE con.conrelid IN (SELECT oid FROM pg_class WHERE relnamespace = current_schema()::regnamespace
+                              AND relname IN ('shot_runs', 'shot_artifacts', 'shot_diagnostic_artifacts'))
+       AND con.conname LIKE 'visual\_evidence\_%'
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                    WHERE conname = replace(rec.conname, 'visual_evidence_', 'shot_')
+                      AND connamespace = current_schema()::regnamespace) THEN
+      EXECUTE format('ALTER TABLE %s RENAME CONSTRAINT %I TO %I',
+        rec.rel, rec.conname, replace(rec.conname, 'visual_evidence_', 'shot_'));
+    END IF;
+  END LOOP;
+  FOR rec IN
+    SELECT indexname FROM pg_indexes
+     WHERE schemaname = current_schema()
+       AND tablename IN ('shot_runs', 'shot_artifacts', 'shot_diagnostic_artifacts')
+       AND indexname LIKE 'idx\_visual\_evidence\_%'
+  LOOP
+    IF to_regclass(replace(rec.indexname, 'idx_visual_evidence_', 'idx_shot_')) IS NULL THEN
+      EXECUTE format('ALTER INDEX %I RENAME TO %I',
+        rec.indexname, replace(rec.indexname, 'idx_visual_evidence_', 'idx_shot_'));
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'chat_sessions'
+                AND column_name = 'visual_evidence_state')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'chat_sessions'
+                AND column_name = 'shots_state')
+  THEN
+    ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_state TO shots_state;
+    ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_run_id TO shots_run_id;
+    ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_detail TO shots_detail;
+    ALTER TABLE chat_sessions RENAME COLUMN visual_evidence_updated_at TO shots_updated_at;
+    ALTER TABLE chat_sessions
+      ADD COLUMN visual_evidence_state VARCHAR(24),
+      ADD COLUMN visual_evidence_run_id VARCHAR(32),
+      ADD COLUMN visual_evidence_detail JSONB,
+      ADD COLUMN visual_evidence_updated_at TIMESTAMPTZ;
+    UPDATE chat_sessions
+       SET visual_evidence_state = shots_state, visual_evidence_run_id = shots_run_id,
+           visual_evidence_detail = shots_detail, visual_evidence_updated_at = shots_updated_at
+     WHERE shots_state IS NOT NULL OR shots_run_id IS NOT NULL
+        OR shots_detail IS NOT NULL OR shots_updated_at IS NOT NULL;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'chat_sessions'
+                AND column_name = 'visual_evidence_state')
+  THEN
+    CREATE OR REPLACE FUNCTION chat_sessions_shots_legacy_sync() RETURNS trigger AS $fn$
+    BEGIN
+      IF TG_OP = 'INSERT' THEN
+        NEW.shots_state := COALESCE(NEW.shots_state, NEW.visual_evidence_state);
+        NEW.shots_run_id := COALESCE(NEW.shots_run_id, NEW.visual_evidence_run_id);
+        NEW.shots_detail := COALESCE(NEW.shots_detail, NEW.visual_evidence_detail);
+        NEW.shots_updated_at := COALESCE(NEW.shots_updated_at, NEW.visual_evidence_updated_at);
+      ELSE
+        IF NEW.shots_state IS NOT DISTINCT FROM OLD.shots_state THEN
+          NEW.shots_state := NEW.visual_evidence_state;
+        END IF;
+        IF NEW.shots_run_id IS NOT DISTINCT FROM OLD.shots_run_id THEN
+          NEW.shots_run_id := NEW.visual_evidence_run_id;
+        END IF;
+        IF NEW.shots_detail IS NOT DISTINCT FROM OLD.shots_detail THEN
+          NEW.shots_detail := NEW.visual_evidence_detail;
+        END IF;
+        IF NEW.shots_updated_at IS NOT DISTINCT FROM OLD.shots_updated_at THEN
+          NEW.shots_updated_at := NEW.visual_evidence_updated_at;
+        END IF;
+      END IF;
+      NEW.visual_evidence_state := NEW.shots_state;
+      NEW.visual_evidence_run_id := NEW.shots_run_id;
+      NEW.visual_evidence_detail := NEW.shots_detail;
+      NEW.visual_evidence_updated_at := NEW.shots_updated_at;
+      RETURN NEW;
+    END $fn$ LANGUAGE plpgsql;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'chat_sessions_shots_legacy_sync'
+                     AND tgrelid = 'chat_sessions'::regclass AND NOT tgisinternal) THEN
+      CREATE TRIGGER chat_sessions_shots_legacy_sync
+        BEFORE INSERT OR UPDATE ON chat_sessions
+        FOR EACH ROW EXECUTE FUNCTION chat_sessions_shots_legacy_sync();
+    END IF;
+  END IF;
+END $$;
+
+-- #2380: agent-authored, revision-scoped before & after shots. The hot proposal
 -- reads need only the current state and a bounded public summary; executable
 -- plans, verdicts and binary artifacts live in their own private tables.
 -- A head change clears these pointers synchronously through
--- services/visual-evidence-state.js so a screenshot from an older revision
--- can never be presented as evidence for newer code.
-ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_state VARCHAR(24);
-ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_run_id VARCHAR(32);
-ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_detail JSONB;
-ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS visual_evidence_updated_at TIMESTAMPTZ;
+-- services/shots-state.js so a screenshot from an older revision
+-- can never be presented as shots of newer code.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS shots_state VARCHAR(24);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS shots_run_id VARCHAR(32);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS shots_detail JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS shots_updated_at TIMESTAMPTZ;
 
-CREATE TABLE IF NOT EXISTS visual_evidence_runs (
+CREATE TABLE IF NOT EXISTS shot_runs (
   id                     VARCHAR(32) PRIMARY KEY
     CHECK (id ~ '^[0-9a-f]{32}$'),
   session_id             INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
@@ -8772,7 +8894,7 @@ CREATE TABLE IF NOT EXISTS visual_evidence_runs (
     'planned', 'provisioning', 'exploring', 'replaying', 'reviewing',
     'verified', 'failed', 'stale', 'cancelled', 'not_required', 'overridden'
   )),
-  CONSTRAINT visual_evidence_runs_verified_integrity_check
+  CONSTRAINT shot_runs_verified_integrity_check
     CHECK (state <> 'verified' OR (plan_hash IS NOT NULL AND hard_verdict IS NOT NULL
       AND completed_at IS NOT NULL)),
   CHECK (state <> 'not_required' OR completed_at IS NOT NULL),
@@ -8780,7 +8902,7 @@ CREATE TABLE IF NOT EXISTS visual_evidence_runs (
     AND NULLIF(BTRIM(override_reason), '') IS NOT NULL AND overridden_at IS NOT NULL
     AND completed_at IS NOT NULL))
 );
-ALTER TABLE visual_evidence_runs ADD COLUMN IF NOT EXISTS author_plan JSONB;
+ALTER TABLE shot_runs ADD COLUMN IF NOT EXISTS author_plan JSONB;
 -- Earlier releases required a model's semantic verdict before captures could
 -- be published. Capture integrity is still enforced; judging relevance now
 -- belongs to the people reviewing the proposal.
@@ -8789,33 +8911,33 @@ DECLARE old_constraint TEXT;
 BEGIN
   FOR old_constraint IN
     SELECT conname FROM pg_constraint
-     WHERE conrelid = 'visual_evidence_runs'::regclass AND contype = 'c'
+     WHERE conrelid = 'shot_runs'::regclass AND contype = 'c'
        AND pg_get_constraintdef(oid) LIKE '%semantic_verdict%'
   LOOP
-    EXECUTE format('ALTER TABLE visual_evidence_runs DROP CONSTRAINT %I', old_constraint);
+    EXECUTE format('ALTER TABLE shot_runs DROP CONSTRAINT %I', old_constraint);
   END LOOP;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'visual_evidence_runs'::regclass
-       AND conname = 'visual_evidence_runs_verified_integrity_check'
+     WHERE conrelid = 'shot_runs'::regclass
+       AND conname = 'shot_runs_verified_integrity_check'
   ) THEN
-    ALTER TABLE visual_evidence_runs
-      ADD CONSTRAINT visual_evidence_runs_verified_integrity_check
+    ALTER TABLE shot_runs
+      ADD CONSTRAINT shot_runs_verified_integrity_check
       CHECK (state <> 'verified' OR (plan_hash IS NOT NULL AND hard_verdict IS NOT NULL
         AND completed_at IS NOT NULL));
   END IF;
 END $$;
-CREATE INDEX IF NOT EXISTS idx_visual_evidence_runs_session_created
-  ON visual_evidence_runs(session_id, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_visual_evidence_runs_current_head
-  ON visual_evidence_runs(session_id, head_sha)
+CREATE INDEX IF NOT EXISTS idx_shot_runs_session_created
+  ON shot_runs(session_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shot_runs_current_head
+  ON shot_runs(session_id, head_sha)
   WHERE state NOT IN ('stale', 'cancelled');
-COMMENT ON TABLE visual_evidence_runs IS 'staging:private';
+COMMENT ON TABLE shot_runs IS 'staging:private';
 
-CREATE TABLE IF NOT EXISTS visual_evidence_artifacts (
+CREATE TABLE IF NOT EXISTS shot_artifacts (
   id                 VARCHAR(32) PRIMARY KEY
     CHECK (id ~ '^[0-9a-f]{32}$'),
-  run_id             VARCHAR(32) NOT NULL REFERENCES visual_evidence_runs(id) ON DELETE CASCADE,
+  run_id             VARCHAR(32) NOT NULL REFERENCES shot_runs(id) ON DELETE CASCADE,
   story_id           VARCHAR(96) NOT NULL,
   viewport           VARCHAR(32) NOT NULL,
   side               VARCHAR(8) NOT NULL CHECK (side IN ('base', 'head', 'paired')),
@@ -8833,15 +8955,15 @@ CREATE TABLE IF NOT EXISTS visual_evidence_artifacts (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(run_id, story_id, viewport, side, variant, media)
 );
-CREATE INDEX IF NOT EXISTS idx_visual_evidence_artifacts_run
-  ON visual_evidence_artifacts(run_id, story_id, viewport);
-COMMENT ON TABLE visual_evidence_artifacts IS 'staging:private';
+CREATE INDEX IF NOT EXISTS idx_shot_artifacts_run
+  ON shot_artifacts(run_id, story_id, viewport);
+COMMENT ON TABLE shot_artifacts IS 'staging:private';
 
 -- A failed two-pass comparison must retain the four images needed to see
--- which pixels changed. These never enter reviewer-visible evidence.
-CREATE TABLE IF NOT EXISTS visual_evidence_diagnostic_artifacts (
+-- which pixels changed. These never enter reviewer-visible shots.
+CREATE TABLE IF NOT EXISTS shot_diagnostic_artifacts (
   id             VARCHAR(32) PRIMARY KEY CHECK (id ~ '^[0-9a-f]{32}$'),
-  run_id         VARCHAR(32) NOT NULL REFERENCES visual_evidence_runs(id) ON DELETE CASCADE,
+  run_id         VARCHAR(32) NOT NULL REFERENCES shot_runs(id) ON DELETE CASCADE,
   attempt        SMALLINT NOT NULL CHECK (attempt BETWEEN 1 AND 8),
   pass           SMALLINT NOT NULL CHECK (pass IN (1, 2)),
   story_id       VARCHAR(96) NOT NULL,
@@ -8856,9 +8978,9 @@ CREATE TABLE IF NOT EXISTS visual_evidence_diagnostic_artifacts (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(run_id, attempt, pass, story_id, viewport, side, variant)
 );
-CREATE INDEX IF NOT EXISTS idx_visual_evidence_diagnostic_artifacts_run
-  ON visual_evidence_diagnostic_artifacts(run_id, attempt);
-COMMENT ON TABLE visual_evidence_diagnostic_artifacts IS 'staging:private';
+CREATE INDEX IF NOT EXISTS idx_shot_diagnostic_artifacts_run
+  ON shot_diagnostic_artifacts(run_id, attempt);
+COMMENT ON TABLE shot_diagnostic_artifacts IS 'staging:private';
 
 -- #2377: experimental Global Chat. These records are deliberately separate
 -- from repository-development chat_sessions and user_agent_preferences: the
@@ -9514,7 +9636,7 @@ CREATE TRIGGER users_deleted_username_guard BEFORE INSERT OR UPDATE OF username 
 -- Mayor, not bound to an app, that never closes on its own. Its changes stay
 -- ordinary chat_sessions rows (one app, one branch, one PR, one vote), linked
 -- back through chat_sessions.agent_session_id, so every downstream system —
--- staging, checks, visual evidence, votes, merge, the sweepers — is untouched.
+-- staging, checks, before & after shots, votes, merge, the sweepers — is untouched.
 --
 -- The retired experimental per-user flag. Agent sessions are on for
 -- everyone and nothing reads this column any more; it stays so a rolling
@@ -9915,8 +10037,8 @@ BEGIN
           OR NEW.check_state IS DISTINCT FROM OLD.check_state
           OR NEW.check_error_detail IS DISTINCT FROM OLD.check_error_detail
           OR NEW.test_results IS DISTINCT FROM OLD.test_results
-          OR NEW.visual_evidence_state IS DISTINCT FROM OLD.visual_evidence_state
-          OR NEW.visual_evidence_run_id IS DISTINCT FROM OLD.visual_evidence_run_id))
+          OR NEW.shots_state IS DISTINCT FROM OLD.shots_state
+          OR NEW.shots_run_id IS DISTINCT FROM OLD.shots_run_id))
       EXECUTE FUNCTION bump_agent_session_version_from_change();
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'agent_sessions_state_touch'
@@ -10422,14 +10544,16 @@ CREATE INDEX IF NOT EXISTS idx_community_invite_redemptions_user
   ON community_invite_redemptions (user_id) WHERE applied_at IS NULL;
 COMMENT ON TABLE community_invite_redemptions IS 'staging:private';
 
--- THE INVITE TREE: who let whom in. Built, and off until
--- INVITE_TREE_ENABLED says otherwise (services/community-invites.js).
--- `invite_generation` 0 is "let in by us" (an admin release, an activation
--- code, a genesis wallet, and everyone who had access before this); 1 is
--- somebody a generation-0 person's link let in, and so on. Skips used is a
--- COUNT of admitted_by, so there is no counter to drift. NULL generation on
--- an account with access reads as 0 (the reads COALESCE it); grantPlatform-
--- Access writes 0, the lowest, whenever we let somebody in ourselves.
+-- THE INVITE TREE: who let whom in. On unless an admin switches it off in
+-- Admin → Waitlist, which writes the `invite_tree_enabled` platform_settings
+-- row (services/community-invites.js; no row is on).
+-- `invite_generation` 0 is "let off the waitlist by us, by hand" (an admin
+-- admitting a waitlist row, or granting an account directly): grantPlatform-
+-- Access writes it only when that grant is what lets them in. 1 is somebody
+-- a link let in (a generation-0 person's, or an admin's), and so on. NULL is
+-- no place in the tree, and no skips: everyone who had access before this,
+-- activation codes, genesis wallets. Skips used is a COUNT of admitted_by,
+-- so there is no counter to drift.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS admitted_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_generation SMALLINT;
 CREATE INDEX IF NOT EXISTS idx_users_admitted_by ON users (admitted_by) WHERE admitted_by IS NOT NULL;

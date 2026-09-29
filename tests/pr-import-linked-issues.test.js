@@ -100,8 +100,8 @@ test('the connector carries the task’s request number into the import', () => 
   );
   assert.match(tasks, /function linkedIssuesFor\(task\)/);
   assert.match(tasks, /importProposal\(slug, pr\.number, \{[\s\S]{0,240}linkedIssues: linkedIssuesFor\(task\)/);
-  assert.match(tasks, /\.\.\.\(params\.visualEvidence \? \{ visualEvidence: params\.visualEvidence \} : \{\}\)/,
-    'the same import envelope may also carry the exact-revision evidence intent');
+  assert.match(tasks, /\.\.\.\(params\.visibleChanges \? \{ visibleChanges: params\.visibleChanges \} : \{\}\)/,
+    'the same import envelope may also carry the declared visible changes');
   // And the closing keyword on the body, from pr-metadata's own builder so
   // the two closing blocks in the codebase cannot disagree.
   assert.match(tasks, /buildClosingBlock\(linkedIssuesFor\(task\)\)/);

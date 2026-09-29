@@ -168,9 +168,9 @@ BROWSER_MCP_CONFIG=/home/node/.usernode-mcp.json
 cat > "$BROWSER_MCP_CONFIG" <<JSON
 {
   "mcpServers": {
-    "visual_intent": {
+    "visible_changes": {
       "command": "node",
-      "args": ["/usr/local/bin/build-evidence-mcp.js"]
+      "args": ["/usr/local/bin/visible-changes-mcp.js"]
     },
     "playwright": {
       "command": "/usr/local/bin/mcp-server-playwright",

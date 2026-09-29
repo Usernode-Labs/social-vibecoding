@@ -3573,8 +3573,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.checks_progress, cs.test_results, cs.checks_base_sha,
                 cs.checks_base_verdict, cs.checks_base_behind_by,
                 cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
-                cs.visual_evidence_state, cs.visual_evidence_run_id,
-                cs.visual_evidence_detail, cs.visual_evidence_updated_at,
+                cs.shots_state, cs.shots_run_id,
+                cs.shots_detail, cs.shots_updated_at,
                 a.slug AS app_slug
            FROM chat_sessions cs
            JOIN apps a ON a.id = cs.app_id
@@ -3605,8 +3605,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           const proposal = require('./proposal-handoff').publicSessionStatus({ ...detail, ...handoffs[0] });
           detail.proposal_state = proposal.revisionState || proposal.state;
         }
-        detail.visualEvidence = config.visualEvidence?.present
-          ? await require('../services/visual-evidence-view')
+        detail.shots = config.shots?.present
+          ? await require('../services/shots-view')
             .getForSession(pool, detail, detail.app_slug)
           : null;
       }
@@ -3814,11 +3814,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         );
       } catch { session.visuals = null; }
       try {
-        session.visualEvidence = config.visualEvidence?.present
-          ? await require('../services/visual-evidence-view')
+        session.shots = config.shots?.present
+          ? await require('../services/shots-view')
             .getForSession(pool, session, session.app_slug)
           : null;
-      } catch { session.visualEvidence = null; }
+      } catch { session.shots = null; }
 
       // #940: the session's saved drafts ride along so opening a session
       // needs no second round trip on the hot path. Best-effort: `null`
@@ -7089,7 +7089,7 @@ async function runHeadlessSession({
   const noteModelFallback = async (result) => {
     if (!result || !result.fallbackServed) return;
     const requested = selectedModel;
-    const served = result.servedModel || llm.FALLBACK_TARGET_MODEL;
+    const served = result.servedModel;
     const category = (result.stopDetails && result.stopDetails.category) || null;
     await modelFallback.record(pool, {
       kind: events.EVENT_TYPES.MODEL_FALLBACK,
@@ -8979,7 +8979,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       await modelFallback.record(pool, {
         kind: events.EVENT_TYPES.MODEL_FALLBACK,
         userId: user.id, appId: session.app_id, sessionId: session.id,
-        requested: selectedModel, served: mayor2.servedModel || llm.FALLBACK_TARGET_MODEL,
+        requested: selectedModel, served: mayor2.servedModel,
         category: (mayor2.stopDetails && mayor2.stopDetails.category) || null,
         source: 'headless-resume',
       });
@@ -10839,13 +10839,13 @@ function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
   including .agents/skills/usernode-proposal, do not apply here. Do not run
   that skill, the social-vibecoding CLI, device login, or external proposal
   submission tools from this worker.
-- For a committed change, call the provided record_visual_evidence_intent MCP
+- For a committed change, call the provided declare_visible_changes MCP
   tool with concrete reviewer-facing claims and real user flows (or impact
   "none" with a specific reason for a non-visual change). If the tool fails,
   report the failure; never claim that intent was recorded when it was not.
 - Implement the change, run focused checks, commit it on the existing session
   branch, and finish the turn. The Homeroom harness handles push, pull request
-  creation, staging, checks, and scheduling the paired evidence run after
+  creation, staging, checks, and scheduling the paired shots run after
   your commit. Do not perform those lifecycle steps yourself.
 - The in-loop browser is optional. If the supplied local runtime or app auth
   cannot be brought up promptly, say the visual check was skipped and commit

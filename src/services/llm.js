@@ -23,9 +23,19 @@ const DEFAULT_MODEL = 'claude-opus-5-5';
 // NOTE: any future direct SDK use outside this module bypasses the
 // fallback config, the detection, and the billing attribution — route
 // new Messages calls through streamChat.
+//
+// The fallback is Anthropic's `"default"`: the API picks the recommended
+// model for each refusal's category (cyber declines go to Opus 4.8, for
+// example), so there is no model list here to keep valid. A pinned array
+// entry has to be in the requested model's `allowed_fallback_models`, and
+// when #2818 moved the pin from Opus 5 to Opus 5.5 — which Fable 5.1 does
+// not allow — every Fable request came back 400 "'claude-opus-5-5' is not a
+// valid fallback target for 'claude-fable-5-1'", shown as "The last turn
+// did not finish." The `"default"` form takes its own beta header; pairing
+// either header with the other form is a 400 too.
 const FABLE_MODEL = 'claude-fable-5-1';
-const FALLBACK_TARGET_MODEL = 'claude-opus-5-5';
-const FALLBACK_BETA = 'server-side-fallback-2026-06-01';
+const FALLBACK_MODE = 'default';
+const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 
 // A fallback-served response is detected reliably ONLY via
 // usage.iterations carrying a 'fallback_message' entry. A sticky-served
@@ -608,8 +618,9 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 
     // One attempt against `runModel`. Fable 5 requests go through the
     // beta surface with the server-side fallback opt-in (see the module
-    // header) so a classifier decline is re-served by Opus 5.5 inside
-    // the same call; every other model keeps the plain path byte-for-byte.
+    // header) so a classifier decline is re-served, inside the same call,
+    // by the model Anthropic recommends for its category; every other model
+    // keeps the plain path byte-for-byte.
     const runStream = async (runModel, { withFallbacks }) => {
       const params = {
         model: runModel,
@@ -647,7 +658,7 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
           ? activeClient.beta.messages.stream({
             ...params,
             betas: [FALLBACK_BETA],
-            fallbacks: [{ model: FALLBACK_TARGET_MODEL }],
+            fallbacks: FALLBACK_MODE,
           }, requestOptions)
           : activeClient.messages.stream(params, requestOptions);
 
@@ -2631,6 +2642,6 @@ module.exports = {
   answerWorkshopQuestion, WORKSHOP_ASK_MODEL, WORKSHOP_ASK_HISTORY_MAX,
   // Fable 5 classifier-fallback surface (+ tests)
   detectFallback, sanitizeFallbackContent, fallbackBoundary,
-  FABLE_MODEL, FALLBACK_TARGET_MODEL, FALLBACK_BETA,
+  FABLE_MODEL, FALLBACK_MODE, FALLBACK_BETA,
   _setClientForTests,
 };

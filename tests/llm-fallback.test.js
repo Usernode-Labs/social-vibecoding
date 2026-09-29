@@ -159,8 +159,11 @@ test('streamChat: fable requests use the beta path with the fallback opt-in', as
     });
     assert.equal(stub.calls.length, 1);
     assert.equal(stub.calls[0].kind, 'beta');
-    assert.deepEqual(stub.calls[0].params.betas, [llm.FALLBACK_BETA]);
-    assert.deepEqual(stub.calls[0].params.fallbacks, [{ model: llm.FALLBACK_TARGET_MODEL }]);
+    // Anthropic's `"default"` form under its own beta header: no model list
+    // to keep in step with Fable's allowed_fallback_models. A pinned
+    // claude-opus-5-5 was rejected with a 400 on every Fable request.
+    assert.deepEqual(stub.calls[0].params.betas, ['server-side-fallback-2026-07-01']);
+    assert.equal(stub.calls[0].params.fallbacks, 'default');
     assert.equal(result.servedModel, 'claude-fable-5-1');
     assert.equal(result.fallbackServed, false);
   });

@@ -81,13 +81,13 @@ const GATES = [
     actor: 'author',
   },
   {
-    key: 'visual_evidence',
-    label: 'Visual change preview is captured',
+    key: 'shots',
+    label: 'Before/after shots are ready',
     actor: 'author',
     // Independently reversible rollout gate. Proposals created before v2
     // enrollment do not acquire a fictional requirement merely because the
     // platform later enables enforcement.
-    applies: (c) => !!c.evidenceEnforced,
+    applies: (c) => !!c.shotsEnforced,
   },
   {
     key: 'platform_env',
@@ -504,24 +504,24 @@ function provisional(session) {
           : check === 'pending' ? { note: 'still running' } : null,
   });
 
-  if (s.evidenceEnforced || s.evidence_enforced) {
-    const detail = s.visual_evidence_detail && typeof s.visual_evidence_detail === 'object'
-      ? s.visual_evidence_detail : {};
-    const evidenceState = s.visual_evidence_state || detail.state || 'planned';
+  if (s.shotsEnforced || s.shots_enforced) {
+    const detail = s.shots_detail && typeof s.shots_detail === 'object'
+      ? s.shots_detail : {};
+    const shotsState = s.shots_state || detail.state || 'planned';
     const currentHead = visualHeadForSession(s);
     const exactHead = !!currentHead && !!detail.headSha
       && String(currentHead).toLowerCase() === String(detail.headSha).toLowerCase();
-    const accepted = exactHead && ['verified', 'not_required', 'overridden'].includes(evidenceState);
+    const accepted = exactHead && ['verified', 'not_required', 'overridden'].includes(shotsState);
     out.push({
-      key: 'visual_evidence',
-      label: 'Visual change preview is captured',
+      key: 'shots',
+      label: 'Before/after shots are ready',
       actor: 'author',
-      state: accepted ? 'done' : evidenceState === 'failed' ? 'blocked' : 'active',
+      state: accepted ? 'done' : shotsState === 'failed' ? 'blocked' : 'active',
       detail: accepted
-        ? { state: evidenceState }
-        : { state: evidenceState, note: exactHead
-          ? (detail.failureReason || `the visual change preview is ${String(evidenceState).replace(/_/g, ' ')}`)
-          : 'the visual change preview has not been captured for the current commit' },
+        ? { state: shotsState }
+        : { state: shotsState, note: exactHead
+          ? (detail.failureReason || `the before/after shots are ${String(shotsState).replace(/_/g, ' ')}`)
+          : 'the before/after shots have not been taken for the current commit' },
     });
   }
 
@@ -562,9 +562,9 @@ function provisional(session) {
 function recordIsSuperseded(record, session) {
   const ctx = (record && record.context) || {};
   const s = session || {};
-  if (s.evidenceEnforced !== undefined || s.evidence_enforced !== undefined) {
-    const live = !!(s.evidenceEnforced || s.evidence_enforced);
-    if (!!ctx.evidenceEnforced !== live) return true;
+  if (s.shotsEnforced !== undefined || s.shots_enforced !== undefined) {
+    const live = !!(s.shotsEnforced || s.shots_enforced);
+    if (!!ctx.shotsEnforced !== live) return true;
   }
   if (ctx.approvalEpoch != null) {
     const then = intOrNull(ctx.approvalEpoch);

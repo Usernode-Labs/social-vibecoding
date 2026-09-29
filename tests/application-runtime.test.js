@@ -109,10 +109,10 @@ test('internal-only Docker deploy uses only its run-scoped name and returns an i
   const { subject, dockerRunOptions, restore } = loadRuntime();
   try {
     const deployed = await subject.deploy({ appRuntime: 'docker' }, {
-      ...input, runtimeName: 'usernode-evidence-deadbeef-base', internalOnly: true,
+      ...input, runtimeName: 'usernode-shots-deadbeef-base', internalOnly: true,
     });
-    assert.equal(deployed.runtimeName, 'usernode-evidence-deadbeef-base');
-    assert.equal(deployed.url, 'http://usernode-evidence-deadbeef-base:3000');
+    assert.equal(deployed.runtimeName, 'usernode-shots-deadbeef-base');
+    assert.equal(deployed.url, 'http://usernode-shots-deadbeef-base:3000');
     assert.deepEqual(dockerRunOptions().aliases, []);
   } finally { restore(); }
 });
@@ -121,9 +121,9 @@ test('internal-only and explicit runtime identity reach the Kubernetes adapter',
   const { subject, kubernetesDeployOptions, restore } = loadRuntime();
   try {
     await subject.deploy({ appRuntime: 'kubernetes' }, {
-      ...input, runtimeName: 'sv-evidence-deadbeef-b', internalOnly: true,
+      ...input, runtimeName: 'sv-shots-deadbeef-b', internalOnly: true,
     });
-    assert.equal(kubernetesDeployOptions().runtimeName, 'sv-evidence-deadbeef-b');
+    assert.equal(kubernetesDeployOptions().runtimeName, 'sv-shots-deadbeef-b');
     assert.equal(kubernetesDeployOptions().internalOnly, true);
   } finally { restore(); }
 });

@@ -90,10 +90,10 @@
       "description": "Log verbosity for the platform process: DEBUG, INFO, WARN or ERROR. Raising it to DEBUG is the one tunable you actually want to change without a code change while chasing something in prod."
     },
     {
-      "key": "VISUAL_EVIDENCE_V2_ENABLED",
+      "key": "SHOTS_ENABLED",
       "group": "Platform",
       "default": "true",
-      "description": "Emergency kill switch for agent-authored proposal evidence. The mechanism is enabled by default; set exactly false only to stop intent collection, paired replay, and reviewer presentation together. Proposal checks and previews continue, and legacy default-route screenshots are not restored."
+      "description": "Emergency kill switch for before/after shots of each proposal's declared changes. On by default; set exactly false only to stop collecting the declared changes, taking the shots, and showing them together. Proposal checks and previews continue, and legacy default-route screenshots are not restored."
     },
     {
       "key": "MAX_APPS",
@@ -573,6 +573,13 @@
       "group": "Waitlist",
       "required": false,
       "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it is this deployment's canonical origin; it is http://localhost:<PORT> only when USERNODE_LOCAL_DEV=1 marks a local run, so a missing variable cannot yield a callback that works only on a laptop. Change it and you must register the matching callback with GitHub, X and LinkedIn, which all validate redirect_uri first."
+    },
+    {
+      "key": "INVITE_TREE_BUDGETS",
+      "group": "Waitlist",
+      "required": false,
+      "default": "10",
+      "description": "Lifetime waitlist skips by invite-tree generation, comma-separated: the first number is for people let off the waitlist by hand, the next for the people their links let in, and so on, with none past the end. The default, 10, is ten each and no chaining. An empty or unreadable value falls back to 10. Whether links skip the waitlist at all is switched in Admin → Waitlist."
     },
     {
       "key": "USERNODE_OPENROUTER_MANAGEMENT_API_KEY",
@@ -3914,9 +3921,10 @@
       "expectText": "non-podium"
     },
     {
-      "name": "Admin Waitlist is a first-class menu section (#1179)",
+      "name": "Admin Waitlist is a first-class menu section (#1179), with its Invites panel loaded",
       "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-content"
+      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-invites-usage)",
+      "expectText": "Invite links"
     },
     {
       "name": "Admin Waitlist says where a signup is in words, not the route's name (#1544)",

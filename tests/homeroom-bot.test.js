@@ -1149,9 +1149,9 @@ test('the triage turn is a read-only scout: no build mode, no push, no posting, 
     assert.ok(!SRC.includes(forbidden), `shadow mode never reaches ${forbidden}`);
   }
   // The runner blanks the push token in scout mode — the structural half of
-  // "nothing is built".
+  // "nothing is built". (The Codex runner refuses shots turns outright.)
   const runner = read('worker/run-codex-agent.sh');
-  assert.match(runner, /if \[ "\$MODE" = "scout" \] \|\| \[ "\$MODE" = "evidence" \]; then\s*\n\s*WORKER_JWT=""/);
+  assert.match(runner, /if \[ "\$MODE" = "scout" \]; then\s*\n\s*WORKER_JWT=""/);
 });
 
 test('the bot session is not work on any issue: is_headless FALSE, empty linked_issues, paused at rest', () => {

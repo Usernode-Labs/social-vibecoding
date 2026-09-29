@@ -357,24 +357,28 @@ async function setVerifiedHandle(pool, token, provider, handle) {
   return merged;
 }
 
-// Grant platform access to a user (idempotent — re-granting keeps the
-// original granted_at). Used by the release paths and by the signup
-// surfaces that are invite-equivalent (activation codes, genesis wallet
-// registration).
+// Grant platform access to a user (idempotent — re-granting an account that
+// already has access changes nothing, so the original granted_at wins). Used
+// by the release paths and by the signup surfaces that are invite-equivalent
+// (activation codes, genesis wallet registration).
 //
-// Every one of those is US letting somebody in, so it is generation 0 of
-// the invite tree (schema.sql, "Communities, stage 6"): the lowest, which
-// is why it also moves somebody an invite let in earlier down to 0 when we
-// release them ourselves. The invite tree writes its own generations and
+// `manualRelease` is us letting somebody off the waitlist by hand: an admin
+// admitting their waitlist row (at once, or when its address signs up
+// later) or granting their account directly. Only that makes them
+// generation 0 of the invite tree (schema.sql, "Communities, stage 6"), the
+// generation with skips to hand out. The invite-equivalent signups leave the
+// generation empty, and so does a grant to an account that already had
+// access: existing users, and anybody an invite link let in, get no skips
+// from being released again. The invite tree writes its own generations and
 // never comes through here.
-async function grantPlatformAccess(pool, userId) {
+async function grantPlatformAccess(pool, userId, { manualRelease = false } = {}) {
   await pool.query(
     `UPDATE users
         SET has_platform_access = TRUE,
             platform_access_granted_at = COALESCE(platform_access_granted_at, NOW()),
-            invite_generation = 0
-      WHERE id = $1 AND (has_platform_access = FALSE OR invite_generation IS DISTINCT FROM 0)`,
-    [userId]
+            invite_generation = CASE WHEN $2::boolean THEN 0 ELSE invite_generation END
+      WHERE id = $1 AND has_platform_access = FALSE`,
+    [userId, manualRelease === true]
   );
 }
 
@@ -395,7 +399,7 @@ async function linkUserByEmail(pool, { userId, email }) {
       [userId, normalized]
     );
     if (rows[0] && rows[0].released_at) {
-      await grantPlatformAccess(pool, userId);
+      await grantPlatformAccess(pool, userId, { manualRelease: true });
       log.info('waitlist', 'Released waitlist email registered — access granted', { userId });
     }
   } catch (err) {
@@ -440,7 +444,7 @@ async function releaseWaitlistSignup(pool, signupId) {
       );
     }
   }
-  if (userId) await grantPlatformAccess(pool, userId);
+  if (userId) await grantPlatformAccess(pool, userId, { manualRelease: true });
   return { ...row, linked_user_id: userId };
 }
 

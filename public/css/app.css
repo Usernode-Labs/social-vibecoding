@@ -14392,12 +14392,12 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-topic-fold-more:hover { text-decoration: underline; }
 .dev-topic-fold[data-folded] + .dev-topic-fold-more { margin-top: -0.5em; }
 /* What the change claims a reader will see, as bullets under the summary,
-   then the evidence run's state as one strip — inside the fold. */
+   then the shots run's state as one strip — inside the fold. */
 .dev-topic-claims-h { margin-top: 12px; }
 .dev-topic-claims { margin: 0; padding-left: 20px; list-style: disc; font-size: 13.5px; line-height: 1.5; color: var(--text-primary); }
 .dev-topic-claims li + li { margin-top: 4px; }
 .dev-topic-fold > .dev-topic-visuals { margin-top: 12px; }
-.dev-topic-evidence {
+.dev-topic-shots {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -14409,7 +14409,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   line-height: 1.4;
   color: var(--text-muted);
 }
-.dev-topic-evidence > .dev-badge { flex: none; }
+.dev-topic-shots > .dev-badge { flex: none; }
 /* Addresses issue, as the sheet's second part: the grey box goes, a hairline
    parts it from the summary, and each issue is a row in the Discussion's
    event-box language — the number where the glyph goes, the title, the
@@ -14963,9 +14963,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-topic-hero-issues form { margin-top: 4px; }
 /* The picture, or the line that says it is coming. */
 .dev-topic-hero .dev-topic-visuals { margin-top: 14px; }
-.dev-topic-hero .dev-topic-evidence { margin-top: 12px; }
-.dev-topic-hero-evidence { display: inline-flex; align-items: center; gap: 8px; margin: 14px 0 0; font-size: 13px; color: var(--text-muted); }
-.dev-topic-hero-evidence > .dc-status-spinner-arc { flex: none; margin: 0; }
+.dev-topic-hero .dev-topic-shots { margin-top: 12px; }
+.dev-topic-hero-shots { display: inline-flex; align-items: center; gap: 8px; margin: 14px 0 0; font-size: 13px; color: var(--text-muted); }
+.dev-topic-hero-shots > .dc-status-spinner-arc { flex: none; margin: 0; }
 .dev-topic-hero > .dev-topic-note { margin-top: 12px; }
 
 /* ── The steps: the card's grey strip, expanded ──

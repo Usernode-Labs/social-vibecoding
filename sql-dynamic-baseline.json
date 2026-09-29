@@ -376,14 +376,14 @@
     {
       "source": "src/routes/gallery.js",
       "kind": "structural-template",
-      "fingerprint": "54dd8eb1a1332fd75652",
+      "fingerprint": "58fb0cf775293b077d85",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.capture_state, cs.capture_detail, cs.captured_at, cs.visual_evidence_sta"
+      "preview": "`SELECT cs.id, cs.merged_at, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.capture_state, cs.capture_detail, cs.captured_at, cs.shots_state, cs.sho"
     },
     {
       "source": "src/routes/gallery.js",
       "kind": "structural-template",
-      "fingerprint": "7a53d4df5fb40b5a2b8a",
+      "fingerprint": "5cb6df6299ca8d8a5b50",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${PROBLEM_FILTERS.missing_recording.sql})::int AS missing_recording, COUNT(*) FILTER (WHERE ${PROBLEM_FIL"
     },
@@ -789,6 +789,13 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
+      "fingerprint": "17fd2fabb9a4800b3c43",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
       "fingerprint": "3474bc02c4800e84c12b",
       "count": 1,
       "preview": "`SELECT pv.vote, pv.reason, u.username, pv.user_id, ${currentVotePredicateSql('pv', 'cs')} AS current FROM pr_votes pv JOIN users u ON pv.user_id = u.id JOIN ch"
@@ -813,13 +820,6 @@
       "fingerprint": "6341099aa6cadaa62bea",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, stale_notified_at = NULL WHERE id = $2`"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
-      "fingerprint": "a4928abcd2921e892baa",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
     },
     {
       "source": "src/routes/votes.js",
@@ -1305,6 +1305,27 @@
       "preview": "`SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE id = $1`"
     },
     {
+      "source": "src/services/shots-state.js",
+      "kind": "structural-template",
+      "fingerprint": "1f1db1e09f25c5c1c7be",
+      "count": 1,
+      "preview": "`SELECT r.*, COALESCE(( SELECT jsonb_agg(jsonb_build_object( 'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport, 'side', a.side, 'variant', a.variant, 'm"
+    },
+    {
+      "source": "src/services/shots-state.js",
+      "kind": "structural-template",
+      "fingerprint": "5b50577c563dc7e02307",
+      "count": 1,
+      "preview": "`UPDATE shot_runs SET ${sets.join(', ')} WHERE id = $1 RETURNING *`"
+    },
+    {
+      "source": "src/services/shots-state.js",
+      "kind": "structural-template",
+      "fingerprint": "e8bc7f464128ab6680c3",
+      "count": 1,
+      "preview": "`SELECT r.*, s.shots_run_id AS current_run_id, s.shots_state AS current_shots_state, s.shots_detail AS current_shots_detail FROM shot_runs r JOIN chat_sessions "
+    },
+    {
       "source": "src/services/topochain/challenge-onboarding.js",
       "kind": "structural-template",
       "fingerprint": "120b9f894f181c7eda95",
@@ -1471,27 +1492,6 @@
       "fingerprint": "952e769794c8bbcad405",
       "count": 1,
       "preview": "`DELETE FROM ${t.sql} WHERE ${quoteIdent(c.name)} = $1::integer`"
-    },
-    {
-      "source": "src/services/visual-evidence-state.js",
-      "kind": "structural-template",
-      "fingerprint": "1f4574f3e4b897aca423",
-      "count": 1,
-      "preview": "`UPDATE visual_evidence_runs SET ${sets.join(', ')} WHERE id = $1 RETURNING *`"
-    },
-    {
-      "source": "src/services/visual-evidence-state.js",
-      "kind": "structural-template",
-      "fingerprint": "6a67945b61daee1ee974",
-      "count": 1,
-      "preview": "`SELECT r.*, s.visual_evidence_run_id AS current_run_id, s.visual_evidence_state AS current_evidence_state, s.visual_evidence_detail AS current_evidence_detail "
-    },
-    {
-      "source": "src/services/visual-evidence-state.js",
-      "kind": "structural-template",
-      "fingerprint": "7e0905f05fc931ffadc4",
-      "count": 1,
-      "preview": "`SELECT r.*, COALESCE(( SELECT jsonb_agg(jsonb_build_object( 'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport, 'side', a.side, 'variant', a.variant, 'm"
     },
     {
       "source": "src/services/workshop-themes.js",

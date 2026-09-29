@@ -8,7 +8,7 @@ An **agent session** is one long-lived conversation per thread, per user, with a
 
 **Goals**
 
-- Reuse the per-change pipeline as it is: the Mayor, scout and spec, the coding agent and worker, staging, checks, visual evidence, promotion, votes, merge.
+- Reuse the per-change pipeline as it is: the Mayor, scout and spec, the coding agent and worker, staging, checks, before & after shots, promotion, votes, merge.
 - Do everything a per-change session does through one shared platform MCP toolset, used by the Mayor and by external Claude or Codex clients.
 - Give the coding agent read-only platform MCP access. Every write goes through the Mayor, and writes that matter are confirmed with the user.
 - Take an app hint from wherever the user starts, without binding the session to that app.
@@ -42,7 +42,7 @@ Today one `chat_sessions` row is both the conversation and the change. A `chat_s
 
 | Surface | What it is | What it lacks for #2779 |
 | --- | --- | --- |
-| Per-change session | Chat, branch, PR, staging, checks, visual evidence and votes all key on `chat_sessions.id` (`change-destination.js:3`, `pr_votes.session_id`). The Mayor loop is written inline in `POST /api/sessions/:id/chat` (`sessions.js:4736`, a 15.9k-line file). One warm worker per session clones the app's repo. | Bound to one app (`app_id`) and one PR; the prompt says "ONE branch and ONE pull request" (`sessions.js:15634`). Chat stops once the status leaves `active`/`promoted` (`sessions.js:4758`). The coding agent loads only Playwright, visual-intent and evidence MCPs, under `--strict-mcp-config`. |
+| Per-change session | Chat, branch, PR, staging, checks, before & after shots and votes all key on `chat_sessions.id` (`change-destination.js:3`, `pr_votes.session_id`). The Mayor loop is written inline in `POST /api/sessions/:id/chat` (`sessions.js:4736`, a 15.9k-line file). One warm worker per session clones the app's repo. | Bound to one app (`app_id`) and one PR; the prompt says "ONE branch and ONE pull request" (`sessions.js:15634`). Chat stops once the status leaves `active`/`promoted` (`sessions.js:4758`). The coding agent loads only Playwright, visible-changes and shots MCPs, under `--strict-mcp-config`. |
 | Global Chat (experimental, opt-in) | Threads per user, not tied to an app (`global_chat_threads`). A cheap GLM model calls 525 auto-generated web routes by replaying the user's browser cookie. It confirms writes with sealed one-use tokens and has its own monthly cap. | No Mayor and no MCP. Code work creates a per-change session and navigates away (plan.md rule 5). The `activeAppSlug` hint is cleared before the chat opens (`app.js:5586`). |
 | Hosted Homeroom connector | 29 MCP tools over stateless Streamable HTTP, with OAuth tokens (`svmcp_`) issued only after browser consent. The allowlist is `CONNECTOR_ALLOWED_ROUTES`. | `prepare_work`/`submit_work` assume an external checkout and the user's own GitHub fork. Its charter assumes a human-driven client. There are no delegated or service tokens. |
 | CLI MCP (local, stdio) | Native proposal flow: `proposal_start → push_commit → submit_build → status/recheck → promote`, plus generic `api_read`/`api_write`. Uses `svcli_` device-code tokens and needs no fork. | Runs on the user's machine and uploads a local commit. It has no way to ask a platform worker to build. |
@@ -142,7 +142,7 @@ The data model adds one table and two nullable columns. Every migration is addit
 
 **What stays as it is**
 
-- `pr_votes`, `check_runs`, `visual_evidence_runs`, `turn_effects`, `agent_turns`, `chat_session_specs` and the rest keep keying on the change id.
+- `pr_votes`, `check_runs`, `shot_runs`, `turn_effects`, `agent_turns`, `chat_session_specs` and the rest keep keying on the change id.
 - Global Chat's six `global_chat_*` tables are not touched in v1. They stay for as long as Global Chat does.
 - No existing session is migrated. Classic sessions have `agent_session_id` NULL forever.
 
@@ -158,7 +158,7 @@ The Mayor is today's Mayor loop, moved out of the route and run with a conversat
   - `transport`: `{send, sendStatus, heartbeat, done}`, for SSE plus WebSocket plus bus.
 - What moves: handler lines \~5392–6706, tool definitions and resolvers \~10596–11700, `resolveTurnPills`, `buildMayorMessages` and `getMayorSystemPrompt` (about 2.5k lines in total).
 - What stays in `POST /api/sessions/:id/chat` (\~300 lines): auth, row load, attachments, branch mint, the user-message insert and opening the SSE stream. Its conversation adapter wraps the change's own transcript, so classic behaviour is unchanged.
-- `runScoutTool` and `runClaudeCodeTool` keep the whole per-change tail: PR metadata, staging, checks, visual evidence and vote revision. Their only edit is taking `actor` and `heartbeat` instead of `req` and `res`.
+- `runScoutTool` and `runClaudeCodeTool` keep the whole per-change tail: PR metadata, staging, checks, before & after shots and vote revision. Their only edit is taking `actor` and `heartbeat` instead of `req` and `res`.
 - The headless auto-session keeps its own copy of the loop in v1. Folding it into the service is a follow-up.
 - Staging: proposal 1 moves the turn as it is, `runMayorTurn(ctx, deps)` taking the route's own inputs, pinned byte-for-byte by `tests/mayor-turn-golden.test.js`. Proposal 3 splits `ctx` into the `conversation`, `change` and `transport` above.
 
@@ -354,7 +354,7 @@ The coding agent runs exactly as today: one warm worker per change, with the app
 
 1. `buildTurnSecretEnv` mints a `worker_read` delegation, next to today's `mintIssuesReadJwt`. It is bound to `user_id`, `change_id` and the change's `app_id`, and lasts one turn.
 2. The worker gets it as `HOMEROOM_MCP_TOKEN`.
-3. A new stdio bridge, `worker/homeroom-read-mcp.js` (modelled on `build-evidence-mcp.js`; the SDK is already in the worker image), proxies an allowlist of six read tools to `PLATFORM_URL/mcp`.
+3. A new stdio bridge, `worker/homeroom-read-mcp.js` (modelled on `visible-changes-mcp.js`; the SDK is already in the worker image), proxies an allowlist of six read tools to `PLATFORM_URL/mcp`.
 4. Claude: the bridge is added to the strict `~/.usernode-mcp.json` for build and scout modes. The token is passed through the environment, never expanded into the heredoc at bootstrap.
 5. Codex: the bridge is added to the per-turn `config.toml` with `env_vars` and `enabled_tools`. The token is added to `shell_environment_policy.exclude` and to output scrubbing.
 6. The turn's `finally` revokes the delegation. Pausing or archiving the change also makes it fail on the next call.
@@ -793,7 +793,7 @@ The plan is five proposals, each shippable on its own. None changes what a user 
 
 1. pins its base with `prepare_work`;
 2. runs the local fast checks (`npm test`, which also builds the shell);
-3. declares visual evidence for UI changes;
+3. declares before & after shots for UI changes;
 4. is submitted with a user-facing summary and a technical description.
 
 ## Questions
