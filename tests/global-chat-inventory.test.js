@@ -2,27 +2,79 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
 const ROOT = path.join(__dirname, '..');
 const inventory = require('../src/services/global-chat/classic-inventory.generated.json');
+const generator = require('../scripts/generate-global-chat-inventory.js');
+
+// Parsing every route and client file is nearly all of this suite's time, so
+// the tree is scanned once and every build below reuses the scans.
+const declaredRoutes = generator.discoverRoutes();
+const clientRefs = generator.discoverClientReferences();
+const built = generator.buildInventory({ declaredRoutes, clientRefs });
+const committed = fs.readFileSync(generator.OUTPUT, 'utf8');
 
 test('the generated Classic inventory is current and fully reviewed', () => {
-  assert.doesNotThrow(() => execFileSync(
-    process.execPath,
-    ['scripts/generate-global-chat-inventory.js', '--check'],
-    { cwd: ROOT, stdio: 'pipe' },
-  ));
+  assert.deepEqual(generator.reviewFindings(built), []);
+  assert.ok(generator.serialize(built) === committed,
+    'the committed inventory is stale: run npm run global-chat:inventory');
   assert.equal(inventory.inventoryReviewed, true);
   assert.deepEqual(inventory.routes.filter((route) => route.status === 'review_required'), []);
   assert.deepEqual(inventory.unmatchedClientReferences, []);
-  assert.ok(inventory.reviewedClientReferences.length > 0);
+  assert.ok(built[generator.REVIEWED_REFERENCES].length > 0);
   assert.ok(inventory.ignoredClientSources.some(
     ({ source }) => source === 'frontend/src/features/admin/e2e-results-data.js',
   ));
+});
+
+test('client calls are checked against the routes but never recorded, so a client change and a route change merge cleanly', () => {
+  // #3346 added a screen whose one call the generator counted against every
+  // /api/me route; it regenerated on a base without #2976, which added
+  // GET /api/me/app-blocks. Each regenerated correctly, the two merged
+  // cleanly, and main went stale on the pairing neither had seen (#3354).
+  // Which client files call a route was the file's one input from outside
+  // the route files, and nothing at runtime read it.
+  for (const route of inventory.routes) {
+    assert.ok(!Object.hasOwn(route, 'clientReferences'), `${route.method} ${route.path} lists no callers`);
+    assert.ok(!Object.hasOwn(route, 'reviewReason'), `${route.method} ${route.path} has no caller-dependent note`);
+  }
+  assert.ok(!Object.hasOwn(inventory, 'reviewedClientReferences'), 'no committed list of reviewed callers');
+  const ignored = new Set(inventory.ignoredClientSources.map(({ source }) => source));
+  const clientFiles = [];
+  JSON.stringify(inventory, (_key, value) => {
+    if (typeof value === 'string' && /^(?:frontend\/src|public\/js)\/\S+\.(?:js|ts|tsx)$/.test(value)
+        && !ignored.has(value)) clientFiles.push(value);
+    return value;
+  });
+  assert.deepEqual(clientFiles, [], 'the committed inventory names no client file');
+
+  // A new call to a route that exists, and the loss of every call to a whole
+  // family of routes, leave the committed file byte for byte as it is.
+  const withNewCall = new Map(clientRefs);
+  withNewCall.set('/api/me/app-blocks', new Set([
+    ...(clientRefs.get('/api/me/app-blocks') || []),
+    'frontend/src/features/imagined/new-screen.tsx',
+  ]));
+  assert.ok(generator.serialize(generator.buildInventory({ declaredRoutes, clientRefs: withNewCall })) === committed,
+    'adding a client call changed the committed inventory');
+  const withoutMeCalls = new Map([...clientRefs].filter(([apiPath]) => !apiPath.startsWith('/api/me/')));
+  assert.ok(withoutMeCalls.size < clientRefs.size);
+  assert.ok(generator.serialize(generator.buildInventory({ declaredRoutes, clientRefs: withoutMeCalls })) === committed,
+    'removing client calls changed the committed inventory');
+
+  // A call that matches no route still fails the check, and names itself.
+  const withBrokenCall = new Map(clientRefs);
+  withBrokenCall.set('/api/no-such-route', new Set(['frontend/src/features/imagined/typo.tsx']));
+  const broken = generator.buildInventory({ declaredRoutes, clientRefs: withBrokenCall });
+  assert.equal(broken.inventoryReviewed, false);
+  assert.deepEqual(broken.unmatchedClientReferences, [
+    { path: '/api/no-such-route', sources: ['frontend/src/features/imagined/typo.tsx'] },
+  ]);
+  assert.match(generator.reviewFindings(broken).join('\n'),
+    /\/api\/no-such-route, called from frontend\/src\/features\/imagined\/typo\.tsx, matches no route/);
 });
 
 test('every mapped route has one stable mobile-capable capability contract', () => {
