@@ -175,6 +175,13 @@ const BACKOFF_BASE_MS = 2 * 60 * 1000;
 const BACKOFF_CEILING_MS = 60 * 60 * 1000;
 // How far past one turn's budget a claimed queue row counts as abandoned.
 const STALE_CLAIM_MARGIN_SECONDS = 10 * 60;
+// A build on the platform's own repository gets this many times a build's
+// clocks, its spec's and its build turn's (#3396). The repository is far
+// larger than any app's: its specs ran past 10 minutes, and a build ran out
+// of time on its 92nd model request, in the middle of the test run the
+// repository's own instructions ask for, having spent $0.29. Time, not
+// money, is what those builds run out of.
+const PLATFORM_BUILD_TIME_FACTOR = 2;
 
 // Bounds on what a verdict may carry into the ledger.
 const MAX_FIELD_CHARS = 4000;
@@ -1843,6 +1850,16 @@ function shadowBuildSkipReason(settings, app, config = {}) {
   return null;
 }
 
+/**
+ * The clocks for one build of `app`: the build turn's, from the turn
+ * budget, and the spec's, from its own cap. The platform gets
+ * PLATFORM_BUILD_TIME_FACTOR times both.
+ */
+function buildBudgets(app, config, turnBudgetMs) {
+  const factor = isPlatformRepo(app, config) ? PLATFORM_BUILD_TIME_FACTOR : 1;
+  return { turnBudgetMs: turnBudgetMs * factor, specBudgetMs: live.SPEC_TURN_MAX_MS * factor };
+}
+
 function shadowBuildsApply(settings, app, config = {}) {
   return shadowBuildSkipReason(settings, app, config) === null;
 }
@@ -1871,11 +1888,17 @@ async function queueShadowBuild(pool, runId) {
 
 /**
  * Builds a finished process never recorded. One still in this process is
- * left alone whatever its age; one past a turn's budget and margin is put
- * back in the queue, or recorded failed once it has had its attempts.
+ * left alone whatever its age; one past the longest a build can take (a
+ * platform build's spec and build turn, #3396) and a margin is put back in
+ * the queue, or recorded failed once it has had its attempts. The one bound
+ * serves every app: waiting longer on an abandoned app build holds no slot
+ * in this process, while a shorter bound would recycle a platform build that
+ * is still running.
  */
 async function releaseStaleBuilds(pool, settings) {
-  const seconds = (Number(settings?.turnSeconds) || DEFAULTS.turnSeconds) + STALE_CLAIM_MARGIN_SECONDS;
+  const turnSeconds = Number(settings?.turnSeconds) || DEFAULTS.turnSeconds;
+  const seconds = PLATFORM_BUILD_TIME_FACTOR * (turnSeconds + live.SPEC_TURN_MAX_MS / 1000)
+    + STALE_CLAIM_MARGIN_SECONDS;
   const { rows } = await pool.query(
     `UPDATE homeroom_bot_runs
         SET build_at = CASE WHEN build_attempts < $3 THEN NULL ELSE build_at END,
@@ -1956,7 +1979,7 @@ async function shadowBuild({
   const { limits, managedOpenRouter } = deps;
   const built = await live.buildAndPropose({
     pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-    turnBudgetMs, model, deps, propose: false,
+    ...buildBudgets(app, config, turnBudgetMs), model, deps, propose: false,
   });
   if (built.costUsd > 0) {
     try {
@@ -1988,7 +2011,11 @@ async function shadowBuild({
       WHERE id = $1`,
     [runId, !!built.ok, built.branchName || null, built.sha || null,
       Number.isFinite(built.commits) ? built.commits : null,
-      built.ok ? null : clip(built.error || 'unknown', MAX_ERROR_CHARS),
+      // A spec that failed is noted even on a build that went ahead from
+      // the plan; build_ok says which it was (#3396).
+      built.ok
+        ? (built.specNote ? clip(built.specNote, MAX_ERROR_CHARS) : null)
+        : clip([built.error || 'unknown', built.specNote].filter(Boolean).join('; '), MAX_ERROR_CHARS),
       built.costUsd ?? null, built.sessionId || null, built.specMd || null],
   );
   log.info('homeroom-bot', 'Shadow build', {
@@ -2545,7 +2572,7 @@ async function actOnVerdict({
     };
     const built = await live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-      turnBudgetMs, model, deps, onSpec,
+      ...buildBudgets(app, config, turnBudgetMs), model, deps, onSpec,
     });
     if (built.specMd) {
       await pool.query('UPDATE homeroom_bot_runs SET build_spec_md = $2 WHERE id = $1', [runId, built.specMd])
@@ -3298,6 +3325,8 @@ module.exports = {
   buildLaneSummary,
   shadowBuildSkipReason,
   isPlatformRepo,
+  buildBudgets,
+  PLATFORM_BUILD_TIME_FACTOR,
   isInfraBuildError,
   wakeBuilds,
   MAX_BUILD_CONCURRENCY,
