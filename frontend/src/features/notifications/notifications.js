@@ -1990,9 +1990,10 @@ function rowView(n) {
   if (n.kind === 'app_quota_changed') {
     const [before, after] = String(n.detail || '').split(':');
     const detail = /^\d+$/.test(before) && /^\d+$/.test(after)
-      ? `${before} → ${after} app slots` : 'View your current app allowance';
+      ? `Your app allowance changed from ${before} to ${after}.`
+      : 'View your current app allowance';
     return { ...base, appLine: 'Account', wrap: true, icon: '＋',
-      label: 'App allowance changed', segments: [{ t: 'text', v: detail }] };
+      label: 'App allowance', segments: [{ t: 'strong', v: detail }] };
   }
   if (n.kind === 'app_quota_requested') {
     return { ...base, appLine: 'Admin', wrap: true, icon: '＋',
