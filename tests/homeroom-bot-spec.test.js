@@ -47,16 +47,25 @@ function harness({ spec = SPEC, specHang = false, onSpecThrows = false } = {}) {
   calls.release = () => release();
   const router = express.Router();
   router.post('/api/sessions/:id/promote', (req, res) => { calls.promoted.push(req.params.id); res.json({ ok: true, prNumber: 42 }); });
+  // Like the real worker (#937): a stop stays pending on the session, and
+  // every dispatch is skipped, exit 143 and no work, until it is cleared.
+  let pendingStop = false;
   const deps = {
     worker: {
       async ensureWorkerImage() {},
       async ensureWorker() { calls.ensured += 1; return 'usernode-worker-5001'; },
       async execInWorker(_id, opts) {
+        if (pendingStop) {
+          calls.order.push(`skipped:${opts.mode}`);
+          return { exitCode: 143 };
+        }
         calls.order.push(`exec:${opts.mode}`);
         calls.prompts[opts.mode] = opts.prompt;
+        if (opts.mode === 'scout') opts.onProgress('Waiting on a command for 40s: rg -n poller');
         return opts.mode === 'scout' ? { lastResultText: spec } : { pushOk: true, ahead: 1, sha: 'a'.repeat(40) };
       },
-      stopTurn(id) { calls.stopped.push(id); release(); return Promise.resolve(); },
+      stopTurn(id) { calls.stopped.push(id); pendingStop = true; release(); return Promise.resolve(); },
+      clearPendingStop(id) { calls.order.push(`clear:${id}`); pendingStop = false; },
     },
     sessions: {
       async runCodexAttemptLoop(args) {
@@ -91,7 +100,7 @@ const ARGS = {
 test('a spec is written first, read-only, stored as the session\'s spec doc, posted, then built from', async () => {
   const h = harness();
   const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, onSpec: h.onSpec });
-  assert.deepEqual(h.calls.order, ['exec:scout', 'onSpec', 'exec:build'], 'posted before the build, and not waited on beyond the post');
+  assert.deepEqual(h.calls.order, ['exec:scout', 'onSpec', 'clear:5001', 'exec:build'], 'posted before the build, and not waited on beyond the post');
 
   const scout = h.calls.loops.scout;
   assert.equal(scout.telemetryComponent, 'homeroom_bot_spec');
@@ -140,14 +149,14 @@ test('a spec wrapped in one fence is unwrapped; a spec that is really an API err
   const b = await live.buildAndPropose({ pool: broken.pool, deps: broken.deps, ...ARGS, onSpec: broken.onSpec });
   assert.equal(b.ok, true, 'the build goes ahead from the plan');
   assert.equal(b.specMd, undefined);
-  assert.deepEqual(broken.calls.order, ['exec:scout', 'exec:build'], 'nothing posted');
+  assert.deepEqual(broken.calls.order, ['exec:scout', 'clear:5001', 'exec:build'], 'nothing posted');
   assert.deepEqual(broken.calls.published, []);
   assert.doesNotMatch(broken.calls.prompts.build, /==== SPEC/);
 
   const empty = harness({ spec: '   ' });
   const c = await live.buildAndPropose({ pool: empty.pool, deps: empty.deps, ...ARGS, onSpec: empty.onSpec });
   assert.equal(c.ok, true);
-  assert.deepEqual(empty.calls.order, ['exec:scout', 'exec:build']);
+  assert.deepEqual(empty.calls.order, ['exec:scout', 'clear:5001', 'exec:build']);
 });
 
 test('a post that fails does not stop the build', async () => {
@@ -173,7 +182,37 @@ test('the spec has a clock of its own, shorter than the build\'s; a stopped spec
   assert.equal(h.calls.ensured, 2, 'stopping a turn takes its container, so the build gets a new one');
   assert.equal(out.ok, true);
   assert.equal(out.specMd, undefined);
-  assert.deepEqual(h.calls.order, ['exec:scout', 'exec:build']);
+  assert.deepEqual(h.calls.order, ['exec:scout', 'clear:5001', 'exec:build'],
+    'the spec\'s stop is cleared, so the build is dispatched rather than skipped (#3396)');
+  assert.equal(out.specNote,
+    'no spec (the spec ran past its time limit; last activity: Waiting on a command for 40s: rg -n poller); the build worked from the plan',
+    'why there was no spec, and what it was doing');
+});
+
+test('a longer spec clock is honoured: the platform\'s spec runs to its own cap (#3396)', async (t) => {
+  const h = harness({ specHang: true });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const running = live.buildAndPropose({
+    pool: h.pool, deps: h.deps, ...ARGS, turnBudgetMs: 40 * 60 * 1000, specBudgetMs: 2 * live.SPEC_TURN_MAX_MS, onSpec: h.onSpec,
+  });
+  for (let i = 0; i < 200 && !h.calls.order.includes('exec:scout'); i += 1) await new Promise((r) => setImmediate(r));
+  t.mock.timers.tick(2 * live.SPEC_TURN_MAX_MS - 1);
+  assert.deepEqual(h.calls.stopped, [], 'still inside its twenty minutes');
+  t.mock.timers.tick(1);
+  for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
+  if (!h.calls.stopped.length) h.calls.release();
+  const out = await running;
+  assert.deepEqual(h.calls.stopped, [5001], 'stopped at twenty minutes');
+  assert.equal(out.ok, true);
+});
+
+test('a good spec carries no note; a failed one says why the build worked from the plan', async () => {
+  const h = harness();
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, propose: false });
+  assert.equal(out.specNote, undefined);
+  const broken = harness({ spec: 'API Error: Connection lost mid-response' });
+  const b = await live.buildAndPropose({ pool: broken.pool, deps: broken.deps, ...ARGS, propose: false });
+  assert.equal(b.specNote, 'no spec (the spec turn ended on an API error); the build worked from the plan');
 });
 
 test('a shadow build writes its spec too, and posts it nowhere', async () => {
@@ -182,7 +221,7 @@ test('a shadow build writes its spec too, and posts it nowhere', async () => {
   assert.equal(out.ok, true);
   assert.equal(out.specMd, SPEC);
   assert.equal(out.specVersion, 3);
-  assert.deepEqual(h.calls.order, ['exec:scout', 'exec:build'], 'no onSpec: nothing is posted');
+  assert.deepEqual(h.calls.order, ['exec:scout', 'clear:5001', 'exec:build'], 'no onSpec: nothing is posted');
   assert.deepEqual(h.calls.promoted, []);
 });
 
@@ -356,6 +395,71 @@ test('a shadow build records the spec on its run', async (t) => {
   const rec = queries.find((q) => /SET build_ok = \$2/.test(q.sql));
   assert.match(rec.sql, /build_spec_md = \$9/);
   assert.equal(rec.params[8], SPEC);
+});
+
+test('a shadow build records a failed spec on its run, and the platform gets double clocks (#3396)', async (t) => {
+  bot._resetForTests();
+  const queries = [];
+  const apps = {
+    9: APP,
+    10: { id: 10, slug: 'homeroom', name: 'Homeroom', repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' },
+  };
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      if (/FROM apps WHERE id = \$1/.test(String(sql))) return { rows: [apps[params[0]]] };
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const realBuild = live.buildAndPropose;
+  t.after(() => { live.buildAndPropose = realBuild; });
+  const seen = [];
+  let outcome;
+  live.buildAndPropose = async (args) => {
+    seen.push({ slug: args.app.slug, turnBudgetMs: args.turnBudgetMs, specBudgetMs: args.specBudgetMs });
+    return outcome;
+  };
+  const deps = {
+    github: {
+      isEnabled: () => true, getBotUsername: async () => 'usernode-bot',
+      async fetchPublicIssue() { return { issue: { number: 12, title: 't', state: 'open' } }; },
+      async fetchIssueComments() { return { comments: [] }; },
+    },
+    limits: { async recordSpend() {} },
+    threadContext: { async loadIssueThread() { return { messages: [] }; } },
+    managedOpenRouter: { async usesIncludedKey() { return false; } },
+    sessions: { buildHeadlessSeed: () => 'seed' },
+    worker: {}, agentTurn: {}, activeWorkers: new Set(), sessionLifecycle: {},
+  };
+  const settings = {
+    mode: 'shadow', liveApps: [], pausedApps: [], shadowBuilds: true, shadowBuildPlatform: true, turnSeconds: 1200,
+  };
+  const note = 'no spec (the spec ran past its time limit; last activity: rg -n x); the build worked from the plan';
+  const record = () => queries.filter((q) => /SET build_ok = \$2/.test(q.sql)).pop();
+
+  outcome = { ok: true, sessionId: 6001, branchName: 'dev/b', sha: 'c'.repeat(40), commits: 1, costUsd: 0.02, specNote: note };
+  assert.equal(await bot.runQueuedBuild(pool, {}, {
+    bot: BOT, claim: { id: 900, app_id: 9, issue_number: 12, build_note: 'x' }, settings, deps,
+  }), 'shadow_built');
+  assert.equal(record().params[1], true);
+  assert.equal(record().params[5], note, 'built from the plan, and the run says why');
+  assert.deepEqual(seen.pop(), { slug: APP.slug, turnBudgetMs: 1200 * 1000, specBudgetMs: live.SPEC_TURN_MAX_MS }, 'an app keeps its clocks');
+
+  outcome = { ok: false, sessionId: 6002, costUsd: null, error: 'the build produced no change to propose', specNote: note };
+  assert.equal(await bot.runQueuedBuild(pool, {}, {
+    bot: BOT, claim: { id: 901, app_id: 10, issue_number: 13, build_note: 'x' }, settings, deps,
+  }), 'shadow_failed');
+  assert.equal(record().params[5], `the build produced no change to propose; ${note}`, 'the failure first, then why there was no spec');
+  assert.deepEqual(seen.pop(), {
+    slug: 'homeroom', turnBudgetMs: 2 * 1200 * 1000, specBudgetMs: 2 * live.SPEC_TURN_MAX_MS,
+  }, 'the platform gets double both clocks');
+
+  outcome = { ok: true, sessionId: 6003, branchName: 'dev/c', sha: 'd'.repeat(40), commits: 1, costUsd: 0.02, specMd: SPEC };
+  await bot.runQueuedBuild(pool, {}, { bot: BOT, claim: { id: 902, app_id: 9, issue_number: 14, build_note: 'x' }, settings, deps });
+  assert.equal(record().params[5], null, 'a build with its spec records no note');
+
+  assert.deepEqual(bot.buildBudgets(apps[10], {}, 60_000), { turnBudgetMs: 120_000, specBudgetMs: 2 * live.SPEC_TURN_MAX_MS });
+  assert.deepEqual(bot.buildBudgets(APP, {}, 60_000), { turnBudgetMs: 60_000, specBudgetMs: live.SPEC_TURN_MAX_MS });
 });
 
 test('the spec turn is its own telemetry component, the run keeps the spec, and the dashboard shows it', () => {

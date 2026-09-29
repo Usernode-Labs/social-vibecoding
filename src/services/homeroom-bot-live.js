@@ -186,6 +186,24 @@ const MAX_SPEC_COMMENT_CHARS = 60_000;
 const PROGRESS_LINES_KEPT = 3;
 const PROGRESS_LINE_CHARS = 160;
 
+/**
+ * What a turn was last doing, so one stopped on its clock says what it was
+ * waiting on (#3385): the last few distinct progress lines, clipped.
+ * `suffix()` is "" when there were none.
+ */
+function lastActivity() {
+  const recent = [];
+  return {
+    note(line) {
+      const text = clipText(String(line || '').replace(/\s+/g, ' '), PROGRESS_LINE_CHARS);
+      if (!text || recent[recent.length - 1] === text) return;
+      recent.push(text);
+      if (recent.length > PROGRESS_LINES_KEPT) recent.shift();
+    },
+    suffix() { return recent.length ? `; last activity: ${recent.join(' | ')}` : ''; },
+  };
+}
+
 function specPrompt({ seed, buildNote }) {
   return [
     seed,
@@ -870,9 +888,11 @@ function buildPrompt({ seed, buildNote, spec = null }) {
  */
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
+  specBudgetMs = SPEC_TURN_MAX_MS,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
-  const budgetMs = Math.min(turnBudgetMs, SPEC_TURN_MAX_MS);
+  const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
+  const progress = lastActivity();
   let stopped = false;
   let stopping = null;
   const timer = setTimeout(() => {
@@ -900,7 +920,7 @@ async function draftSpec({
         branchName: session.branch_name,
         ...(ctx || {}),
         telemetryComponent: 'homeroom_bot_spec',
-        onProgress: () => {},
+        onProgress: progress.note,
       }),
       retryPredicate: () => null,
       sendStatus: async () => {},
@@ -917,7 +937,7 @@ async function draftSpec({
     activeWorkers.delete(session.id);
   }
   const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
-  if (stopped) return { ok: false, stopped: true, costUsd, error: 'the spec ran past its time limit' };
+  if (stopped) return { ok: false, stopped: true, costUsd, error: `the spec ran past its time limit${progress.suffix()}` };
   if (!routed) return { ok: false, costUsd, error: 'the spec turn did not run' };
   if (routed.error) return { ok: false, costUsd, error: `the spec turn failed (${routed.error})` };
   const specMd = specFromTitle(stripSpecWrapperFence(String(routed.result?.lastResultText || '').trim()));
@@ -944,7 +964,7 @@ async function draftSpec({
 
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
-  turnBudgetMs, model, deps, propose = true, onSpec = null,
+  turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -977,9 +997,15 @@ async function buildAndPropose({
   }
 
   // What the spec turn wrote, carried on every outcome below so a run that
-  // failed to build still shows what it meant to build.
+  // failed to build still shows what it meant to build. A spec that failed
+  // (not one that found the request impossible) is carried as `specNote`,
+  // so the run records why the build worked from the plan alone.
   let spec = null;
-  const specOut = () => (spec?.ok ? { specMd: spec.specMd, specVersion: spec.version } : {});
+  const specOut = () => {
+    if (spec?.ok) return { specMd: spec.specMd, specVersion: spec.version };
+    if (spec && !spec.blocked && spec.error) return { specNote: `no spec (${spec.error}); the build worked from the plan` };
+    return {};
+  };
   const fail = async (error) => {
     // The bot's own failed attempt. Archived so it never reads as work
     // under way; its branch stays on GitHub for a person to look at.
@@ -1022,7 +1048,7 @@ async function buildAndPropose({
   }
 
   spec = await draftSpec({
-    pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
+    pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps, specBudgetMs,
   });
   if (spec.blocked) {
     // Impossible as written: nothing is built, and the caller says why.
@@ -1055,6 +1081,13 @@ async function buildAndPropose({
     }
   }
 
+  // A spec stopped on its clock leaves the session's stop pending, and the
+  // worker skips every dispatch until a new turn clears it (#937). Without
+  // this, the build after a spec time-out was skipped at once and recorded
+  // as "no change to propose" (#3396). Cleared before the build's own clock
+  // starts, so a stop aimed at the build is never the one erased.
+  worker.clearPendingStop?.(session.id);
+
   // The same wall clock a triage turn has, ended the same way.
   let stopped = false;
   let stopping = null;
@@ -1068,13 +1101,7 @@ async function buildAndPropose({
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
   // time-outs, most of them cheap, with nothing recorded about why.
-  const recent = [];
-  const noteProgress = (line) => {
-    const text = clipText(String(line || '').replace(/\s+/g, ' '), PROGRESS_LINE_CHARS);
-    if (!text || recent[recent.length - 1] === text) return;
-    recent.push(text);
-    if (recent.length > PROGRESS_LINES_KEPT) recent.shift();
-  };
+  const progress = lastActivity();
   let routed;
   try {
     routed = await sessions.runCodexAttemptLoop({
@@ -1093,7 +1120,7 @@ async function buildAndPropose({
         branchName,
         ...(ctx || {}),
         telemetryComponent: 'homeroom_bot_build',
-        onProgress: noteProgress,
+        onProgress: progress.note,
       }),
       retryPredicate: () => null,
       sendStatus: async () => {},
@@ -1121,8 +1148,7 @@ async function buildAndPropose({
     ? null
     : (buildCostUsd || 0) + (spec.costUsd || 0);
   if (stopped) {
-    const last = recent.length ? `; last activity: ${recent.join(' | ')}` : '';
-    return { ...(await fail(`the build ran past its time limit${last}`)), costUsd };
+    return { ...(await fail(`the build ran past its time limit${progress.suffix()}`)), costUsd };
   }
   if (routed?.error) return { ...(await fail(`the build turn failed (${routed.error})`)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
