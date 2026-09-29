@@ -96,10 +96,36 @@ function devBranchName(who, timestamp = Date.now()) {
   return `dev/${sanitizeBranchSegment(who)}-${ts}`;
 }
 
+/**
+ * Mint a dev-session branch name from the session's readable title
+ * (#3229). The slug is derived from the same words the session is
+ * called, lowercased, with the existing millisecond timestamp kept for
+ * uniqueness. A `#\d+ · ` prefix (the headlessTitle shape clones
+ * inherit) is stripped so it does not become a meaningless leading
+ * number. Titles that survive sanitization as nothing usable fall back
+ * to today's `devBranchName(who)` shape, so untitled sessions and
+ * emoji-only titles keep every existing guarantee.
+ */
+function devBranchNameFromTitle(title, who, timestamp = Date.now()) {
+  const ts = Number.isFinite(Number(timestamp)) ? Number(timestamp) : Date.now();
+  const slug = sanitizeBranchSegment(
+    String(title == null ? '' : title)
+      .toLowerCase()
+      .replace(/^#\d+\s*·\s*/, '')
+      .replace(/\s+/g, '-')
+  );
+  // `sanitizeBranchSegment` answers 'user' when nothing survived —
+  // an empty title, or one made only of characters the branch charset
+  // cannot carry. Either way today's username-based name is the fallback.
+  if (!slug || slug === 'user') return devBranchName(who, timestamp);
+  return `dev/${slug}-${ts}`;
+}
+
 module.exports = {
   BRANCH_SAFE_CHARS_RE,
   MAX_SEGMENT_LEN,
   isValidBranchName,
   sanitizeBranchSegment,
   devBranchName,
+  devBranchNameFromTitle,
 };

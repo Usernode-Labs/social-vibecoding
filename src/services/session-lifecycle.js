@@ -18,6 +18,7 @@ const { isSessionBusy } = require('./active-workers');
 const workerProgress = require('./worker-progress');
 const github = require('./github');
 const branchNames = require('./branch-names');
+const sessionTitles = require('./session-title');
 const externalAgentTasks = require('./external-agent-tasks');
 
 // Parse "owner/repo" out of a stored GitHub repo URL. Returns [owner,
@@ -720,7 +721,7 @@ async function ensureSessionBranch({ pool, sessionId, username = null }) {
     await client.query('BEGIN');
     open = true;
     const { rows } = await client.query(
-      `SELECT cs.id, cs.branch_name, cs.user_id, u.username, a.repo_url
+      `SELECT cs.id, cs.branch_name, cs.session_title, cs.user_id, u.username, a.repo_url
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
          LEFT JOIN users u ON u.id = cs.user_id
@@ -742,7 +743,32 @@ async function ensureSessionBranch({ pool, sessionId, username = null }) {
       return { branchName: row.branch_name, created: false };
     }
 
-    const branchName = branchNames.devBranchName(username || row.username || `u${row.user_id}`);
+    // #3229: the branch reads as the change it carries. Prefer the row's
+    // stored readable title; else derive one from the first user message
+    // with the same deterministic trim that names the session; else today's
+    // username shape (devBranchNameFromTitle falls back to it on its own
+    // when there is no usable title).
+    let titleSource = row.session_title || null;
+    if (!titleSource) {
+      try {
+        const { rows: msgRows } = await client.query(
+          `SELECT content FROM chat_session_messages
+             WHERE session_id = $1 AND role = 'user'
+             ORDER BY id ASC LIMIT 1`,
+          [sessionId]
+        );
+        titleSource = sessionTitles.deterministicTitle(
+          (msgRows[0] && msgRows[0].content) || ''
+        ) || null;
+      } catch (err) {
+        log.warn('session-lifecycle', 'First-message title read for branch failed', {
+          sessionId, err: err.message,
+        });
+      }
+    }
+    const branchName = branchNames.devBranchNameFromTitle(
+      titleSource, username || row.username || `u${row.user_id}`
+    );
     const [owner, repo] = ownerRepo(row.repo_url);
     if (github.isEnabled() && owner && repo) {
       try {

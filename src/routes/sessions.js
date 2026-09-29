@@ -3342,8 +3342,24 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // `fromBranch` argument below. Defer it and the first turn would
       // branch off main instead, silently discarding the work the clone
       // was created to continue.
-      const branchName = branchNames.devBranchName(req.user.username);
       const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      // #249: the clone inherits the auto session's display name.
+      // Sources that predate session_title fall back to the same
+      // "#N · issue title" derivation (best-effort, cache-first fetch
+      // — a failure just leaves the branch-name fallback). Resolved
+      // BEFORE the branch mint (#3229) so the branch can read as the
+      // change it carries — a clone whose title resolution degraded to
+      // nothing falls back to the username shape via the shared mint.
+      let cloneTitle = src.session_title || null;
+      if (!cloneTitle && src.headless_issue_number && github.isEnabled() && repoOwner && repoName) {
+        try {
+          const { issue } = await github.fetchPublicIssue(repoOwner, repoName, src.headless_issue_number);
+          cloneTitle = sessionTitles.headlessTitle(src.headless_issue_number, issue && issue.title);
+        } catch (err) {
+          log.warn('sessions', 'Issue fetch for clone title failed (continuing untitled)', { err: err.message });
+        }
+      }
+      const branchName = branchNames.devBranchNameFromTitle(cloneTitle, req.user.username);
       let inheritedCodeBranch = false;
       if (github.isEnabled() && repoOwner && repoName) {
         try {
@@ -3356,20 +3372,6 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           } catch (err2) {
             log.warn('sessions', 'GitHub branch creation failed (continuing)', { err: err2.message });
           }
-        }
-      }
-
-      // #249: the clone inherits the auto session's display name.
-      // Sources that predate session_title fall back to the same
-      // "#N · issue title" derivation (best-effort, cache-first fetch
-      // — a failure just leaves the branch-name fallback).
-      let cloneTitle = src.session_title || null;
-      if (!cloneTitle && src.headless_issue_number && github.isEnabled() && repoOwner && repoName) {
-        try {
-          const { issue } = await github.fetchPublicIssue(repoOwner, repoName, src.headless_issue_number);
-          cloneTitle = sessionTitles.headlessTitle(src.headless_issue_number, issue && issue.title);
-        } catch (err) {
-          log.warn('sessions', 'Issue fetch for clone title failed (continuing untitled)', { err: err.message });
         }
       }
 

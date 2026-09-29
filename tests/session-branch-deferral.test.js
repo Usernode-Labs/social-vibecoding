@@ -31,6 +31,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const branchNames = require('../src/services/branch-names');
+const sessionTitles = require('../src/services/session-title');
+
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 // ── a pool stand-in ─────────────────────────────────────────────────────
@@ -55,6 +58,17 @@ function fakePool(rowsBySession, opts = {}) {
           if (/FOR UPDATE OF cs/.test(text)) {
             txRows = rowsBySession.get(Number(params[0])) || null;
             return { rows: txRows ? [{ ...txRows }] : [] };
+          }
+          if (/SELECT content FROM chat_session_messages/.test(text)) {
+            // #3229: the mint reads the session's first user message to
+            // derive a title when the row has none stored. The scripted
+            // rows carry `firstMessage` for the tests that set it; no
+            // rows otherwise, which is the untitled-session shape.
+            return {
+              rows: (txRows && txRows.firstMessage)
+                ? [{ content: txRows.firstMessage }]
+                : [],
+            };
           }
           if (/UPDATE chat_sessions SET branch_name/.test(text)) {
             if (opts.failUpdate) throw new Error('update exploded');
@@ -137,8 +151,12 @@ test('ensureSessionBranch reads the row FOR UPDATE, inside a transaction', async
 
   assert.equal(pool.log[0], 'BEGIN', 'the read must be inside a transaction');
   assert.match(pool.log[1], /FOR UPDATE OF cs/);
-  assert.match(pool.log[2], /^UPDATE chat_sessions/);
-  assert.equal(pool.log[3], 'COMMIT');
+  // #3229 added the first-message title read between the row lock and
+  // the write; the transaction shape (BEGIN → lock → work → COMMIT) is
+  // unchanged.
+  const updateAt = pool.log.findIndex((s) => s.startsWith('UPDATE chat_sessions'));
+  assert.ok(updateAt > 1, 'the write must come after the lock');
+  assert.equal(pool.log[updateAt + 1], 'COMMIT');
 });
 
 test('ensureSessionBranch prefers the caller-supplied username', async () => {
@@ -156,13 +174,61 @@ test('ensureSessionBranch prefers the caller-supplied username', async () => {
 
 test('ensureSessionBranch still produces a valid name with no username at all', async () => {
   const lifecycle = loadLifecycle();
-  const branchNames = require('../src/services/branch-names');
   const rows = new Map([[7, {
     id: 7, branch_name: null, user_id: 42, username: null, repo_url: null,
   }]]);
   const out = await lifecycle.ensureSessionBranch({ pool: fakePool(rows), sessionId: 7 });
   assert.ok(branchNames.isValidBranchName(out.branchName));
   assert.match(out.branchName, /^dev\//);
+});
+
+// ── #3229: the branch reads as the change it carries ────────────────────
+
+test('a titled row mints a branch named after its title', async () => {
+  const lifecycle = loadLifecycle();
+  const rows = new Map([[7, {
+    id: 7, branch_name: null, user_id: 3, username: 'evan',
+    session_title: 'Fix the login redirect', repo_url: null,
+  }]]);
+  const out = await lifecycle.ensureSessionBranch({ pool: fakePool(rows), sessionId: 7 });
+  assert.match(out.branchName, /^dev\/fix-the-login-redirect-\d+$/);
+  assert.ok(branchNames.isValidBranchName(out.branchName));
+});
+
+test('a titleless row with a first message names the branch after the deterministic title', async () => {
+  const lifecycle = loadLifecycle();
+  const message = 'Hey, could you please fix the login redirect? It sends people to the dashboard.';
+  const expected = sessionTitles.deterministicTitle(message);
+  const rows = new Map([[7, {
+    id: 7, branch_name: null, user_id: 3, username: 'evan',
+    session_title: null, firstMessage: message, repo_url: null,
+  }]]);
+  const out = await lifecycle.ensureSessionBranch({ pool: fakePool(rows), sessionId: 7 });
+  // The expected slug goes through the same pipeline the mint uses,
+  // not just whitespace replacement — punctuation like `?` and `.` is
+  // dropped by the sanitizer, not kept.
+  const slug = branchNames.sanitizeBranchSegment(
+    String(expected).toLowerCase().replace(/^#\d+\s*·\s*/, '').replace(/\s+/g, '-')
+  );
+  assert.match(
+    out.branchName,
+    new RegExp(`^dev/${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d+$`)
+  );
+  assert.ok(branchNames.isValidBranchName(out.branchName));
+});
+
+test('an untitled row with no first message keeps the username shape', async () => {
+  // The pre-#3229 expectations hold for rows that have nothing to read:
+  // the existing deferral tests above already pin `dev/evan-<ts>` for
+  // rows with no session_title and no firstMessage, which the fake pool
+  // now answers with no rows from the first-message SELECT.
+  const lifecycle = loadLifecycle();
+  const rows = new Map([[7, {
+    id: 7, branch_name: null, user_id: 3, username: 'evan',
+    session_title: null, repo_url: null,
+  }]]);
+  const out = await lifecycle.ensureSessionBranch({ pool: fakePool(rows), sessionId: 7 });
+  assert.match(out.branchName, /^dev\/evan-\d+$/);
 });
 
 test('ensureSessionBranch reports a missing session as no_session', async () => {
