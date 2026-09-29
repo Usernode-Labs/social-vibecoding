@@ -14833,61 +14833,116 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-topic-visuals { margin-top: 10px; }
 .dev-topic-visuals:first-child, .dev-topic-h + .dev-topic-visuals { margin-top: 0; }
 
-/* Before & after shots: one screen that flips between before and after
-   (AppView.shotsHtml). The flip is a checkbox inside the label that is the
-   screen, so it needs no script (a repaint shows the after side again); the
-   outlines are where the run found the two screens differ
-   (services/shots-diff.js): red where it was, green where it is now, dashed
-   grey for a difference no declared change accounts for. */
-.shots-flip { margin: 0; display: grid; gap: 6px; }
-.shots-flip-narrow { max-width: 320px; margin-inline: auto; width: 100%; }
-.shots-flip-full { max-width: min(100%, 1280px); }
-.shots-flip-full.shots-flip-narrow { max-width: 420px; }
-.shots-flip-frame { position: relative; display: block; cursor: pointer; border-radius: 10px; overflow: hidden;
-  background: rgba(24, 24, 27, 0.04); box-shadow: inset 0 0 0 1px rgba(24, 24, 27, 0.08); user-select: none; }
-.dark .shots-flip-frame { background: rgba(255, 255, 255, 0.04); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1); }
-.shots-flip-frame:has(.shots-flip-toggle:focus-visible) { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
-.shots-flip-toggle { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
-.shots-flip-side { display: block; position: relative; }
-.shots-flip-side img { display: block; width: 100%; height: auto; }
-.shots-flip-missing { padding: 48px 12px; text-align: center; font-size: 12px; color: rgba(113, 113, 122, 1); }
-.shots-flip-before, .shots-flip-chip-before { display: none; }
-.shots-flip-toggle:checked ~ .shots-flip-before { display: block; }
-.shots-flip-toggle:checked ~ .shots-flip-after { display: none; }
-.shots-flip-toggle:checked ~ .shots-flip-chip-before { display: inline-block; }
-.shots-flip-toggle:checked ~ .shots-flip-chip-after { display: none; }
-.shots-flip-chip { position: absolute; top: 8px; left: 8px; z-index: 2; padding: 5px 9px; border-radius: 999px;
+/* Before & after shots (AppView.shotsHtml): one screen at a time, in a frame
+   that keeps its size. Radios before the screens hold the state (the side,
+   one pair for every screen, and which screen is showing) and labels on each
+   screen set it, so it needs no script; :has() reads it. Every screen sits in
+   the same 16:10 stage, a phone one in the middle at the same zoom as a
+   desktop one, and the screens share one grid cell, so the card is as tall as
+   its tallest description and never changes size. The outlines are where the
+   run found the two screens differ (services/shots-diff.js): red where it
+   was, green where it is now, dashed grey for a difference no declared change
+   accounts for. */
+.shots-viewer { position: relative; container-type: inline-size; border-radius: 14px; overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(24, 24, 27, 0.1); }
+.dark .shots-viewer { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1); }
+.shots-picks { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.shots-views { display: grid; }
+.shots-view { grid-area: 1 / 1; margin: 0; min-width: 0; visibility: hidden; }
+.shots-views-one > .shots-view,
+.shots-viewer:has(.shots-screen-pick:nth-of-type(1):checked) .shots-view:nth-of-type(1),
+.shots-viewer:has(.shots-screen-pick:nth-of-type(2):checked) .shots-view:nth-of-type(2),
+.shots-viewer:has(.shots-screen-pick:nth-of-type(3):checked) .shots-view:nth-of-type(3),
+.shots-viewer:has(.shots-screen-pick:nth-of-type(4):checked) .shots-view:nth-of-type(4),
+.shots-viewer:has(.shots-screen-pick:nth-of-type(5):checked) .shots-view:nth-of-type(5),
+.shots-viewer:has(.shots-screen-pick:nth-of-type(6):checked) .shots-view:nth-of-type(6) { visibility: visible; }
+
+/* The toolbar holds the same controls on every screen, so the arrows at its
+   end never move. */
+.shots-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; }
+.shots-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: rgba(24, 24, 27, 0.06); }
+.dark .shots-seg { background: rgba(255, 255, 255, 0.08); }
+.shots-seg-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 11px; border-radius: 999px;
+  cursor: pointer; user-select: none; white-space: nowrap; font-size: 13px; font-weight: 600; line-height: 1; color: #48484a; }
+.dark .shots-seg-btn { color: #c7c7cc; }
+.shots-seg-btn:hover { background: rgba(24, 24, 27, 0.06); }
+.dark .shots-seg-btn:hover { background: rgba(255, 255, 255, 0.08); }
+.shots-seg-btn svg { width: 16px; height: 16px; flex: none; }
+.shots-seg-on, .shots-seg-on:hover { background: #fff; color: #1c1c1e; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14); }
+.dark .shots-seg-on, .dark .shots-seg-on:hover { background: #3a3a3c; color: #f5f5f7; }
+.shots-viewer:has(.shots-side-before:checked) .shots-seg-before,
+.shots-viewer:has(.shots-side-after:checked) .shots-seg-after { color: #fff; background: #15803d; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14); }
+.shots-viewer:has(.shots-side-before:checked) .shots-seg-before { background: #dc2626; }
+.shots-viewer:has(.shots-side-pick:focus-visible) .shots-seg-side,
+.shots-viewer:has(.shots-screen-pick:focus-visible) .shots-seg-size,
+.shots-viewer:has(.shots-screen-pick:focus-visible) .shots-screen-nav { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+.shots-screen-nav { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.shots-screen-step { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; cursor: pointer; user-select: none;
+  font-size: 18px; line-height: 1; color: #3f3f46; background: rgba(24, 24, 27, 0.06); }
+.shots-screen-step:not(.shots-screen-step-off):hover { background: rgba(24, 24, 27, 0.12); }
+.dark .shots-screen-step { color: #e4e4e7; background: rgba(255, 255, 255, 0.08); }
+.dark .shots-screen-step:not(.shots-screen-step-off):hover { background: rgba(255, 255, 255, 0.14); }
+.shots-screen-step-off { opacity: 0.35; cursor: default; }
+.shots-screen-count { min-width: 3.4em; text-align: center; font-size: 13px; font-weight: 600; color: #52525b; }
+.dark .shots-screen-count { color: #d4d4d8; }
+@container (max-width: 430px) {
+  .shots-seg-label { display: none; }
+  .shots-seg-btn { padding: 0 9px; }
+  .shots-screen-count { min-width: 2.8em; }
+}
+
+/* The stage: a fixed 16:10 box; each side fits inside it at its own shape. */
+.shots-stage { position: relative; container-type: size; aspect-ratio: 16 / 10; display: grid; place-items: center; overflow: hidden;
+  user-select: none; background: rgba(24, 24, 27, 0.04); border-block: 1px solid rgba(24, 24, 27, 0.08); }
+.dark .shots-stage { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.1); }
+.shots-stage > .shots-flip-side { grid-area: 1 / 1; position: relative; display: block;
+  width: min(100cqw, calc(100cqh * (var(--shots-shape, 16 / 10)))); aspect-ratio: var(--shots-shape, 16 / 10); }
+.shots-stage > .shots-flip-missing { width: 100%; height: 100%; aspect-ratio: auto; display: grid; place-items: center;
+  font-size: 12px; color: rgba(113, 113, 122, 1); }
+.shots-flip-side img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.shots-viewer:has(.shots-side-after:checked) .shots-flip-before,
+.shots-viewer:has(.shots-side-before:checked) .shots-flip-after { visibility: hidden; }
+.shots-flip-to { position: absolute; inset: 0; z-index: 1; cursor: pointer; }
+.shots-viewer:has(.shots-side-before:checked) .shots-flip-to-before,
+.shots-viewer:has(.shots-side-after:checked) .shots-flip-to-after { display: none; }
+.shots-flip-chip { position: absolute; top: 10px; left: 10px; z-index: 2; pointer-events: none; padding: 5px 9px; border-radius: 999px;
   font-size: 12px; font-weight: 700; line-height: 1; color: #fff; background: #15803d; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
 .shots-flip-chip-before { background: #dc2626; }
-.shots-box { position: absolute; border: 2px solid #16a34a; background: rgba(22, 163, 74, 0.1); border-radius: 6px; pointer-events: none; }
+.shots-viewer:has(.shots-side-after:checked) .shots-flip-chip-before,
+.shots-viewer:has(.shots-side-before:checked) .shots-flip-chip-after { display: none; }
+.shots-box { position: absolute; border: 2px solid #16a34a; background: rgba(22, 163, 74, 0.1); border-radius: 6px; pointer-events: none;
+  transition: opacity 120ms ease; }
 .shots-flip-before .shots-box { border-color: #dc2626; background: rgba(220, 38, 38, 0.1); }
-.shots-flip .shots-box-other { border: 1.5px dashed rgba(113, 113, 122, 0.9); background: transparent; }
-.shots-mark { position: absolute; height: 0; border-top: 2px dashed #16a34a; pointer-events: none; }
+.shots-stage .shots-box-other { border: 1.5px dashed rgba(113, 113, 122, 0.9); background: transparent; }
+/* Lifted by its own width, so a line at the very bottom of a shot shows. */
+.shots-mark { position: absolute; height: 0; margin-top: -2px; border-top: 2px dashed #16a34a; pointer-events: none; transition: opacity 120ms ease; }
 .shots-flip-before .shots-mark { border-top-color: #dc2626; }
 .shots-box-n { position: absolute; left: -10px; top: -10px; width: 20px; height: 20px; border-radius: 999px; display: grid;
   place-items: center; font-size: 11px; font-weight: 700; line-height: 1; color: #fff; background: #16a34a; box-shadow: 0 0 0 2px #fff; }
 .shots-flip-before .shots-box-n { background: #dc2626; }
 .dark .shots-box-n { box-shadow: 0 0 0 2px #18181b; }
-/* Several screens: one at a time, stepped by the ‹ › arrows (labels for the
-   radios before the screens), or by the arrow keys once a radio has focus. */
-.shots-screens > .shots-flip { display: none; }
-.shots-screen-pick { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
-.shots-screen-pick:nth-of-type(1):checked ~ .shots-flip:nth-of-type(1),
-.shots-screen-pick:nth-of-type(2):checked ~ .shots-flip:nth-of-type(2),
-.shots-screen-pick:nth-of-type(3):checked ~ .shots-flip:nth-of-type(3),
-.shots-screen-pick:nth-of-type(4):checked ~ .shots-flip:nth-of-type(4),
-.shots-screen-pick:nth-of-type(5):checked ~ .shots-flip:nth-of-type(5),
-.shots-screen-pick:nth-of-type(6):checked ~ .shots-flip:nth-of-type(6) { display: grid; }
-.shots-screen-nav { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
-.shots-screens:has(.shots-screen-pick:focus-visible) .shots-screen-nav { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; border-radius: 999px; }
-.shots-screen-step { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 999px; cursor: pointer;
-  font-size: 16px; line-height: 1; color: #3f3f46; background: rgba(24, 24, 27, 0.06); }
-.shots-screen-step:hover { background: rgba(24, 24, 27, 0.12); }
-.dark .shots-screen-step { color: #e4e4e7; background: rgba(255, 255, 255, 0.08); }
-.dark .shots-screen-step:hover { background: rgba(255, 255, 255, 0.14); }
-.shots-screen-step-off { opacity: 0.35; cursor: default; }
-.shots-screen-count { font-weight: 600; color: #52525b; }
-.dark .shots-screen-count { color: #d4d4d8; }
+/* Pointing at a change in the description picks out its outline. */
+.shots-view:has(.shots-change:hover) .shots-box,
+.shots-view:has(.shots-change:hover) .shots-mark { opacity: 0.2; }
+.shots-view:has(.shots-change[data-shots-n="1"]:hover) .shots-stage [data-shots-n="1"],
+.shots-view:has(.shots-change[data-shots-n="2"]:hover) .shots-stage [data-shots-n="2"],
+.shots-view:has(.shots-change[data-shots-n="3"]:hover) .shots-stage [data-shots-n="3"] { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .shots-box, .shots-mark { transition: none; } }
+
+/* Under the screen: only the changes on it, numbered as their outlines. */
+.shots-view-notes { display: grid; gap: 10px; align-content: start; padding: 12px; }
+.shots-changes { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.shots-change { display: flex; gap: 10px; align-items: flex-start; margin: -4px; padding: 4px; border-radius: 8px; }
+.shots-change:hover { background: rgba(24, 24, 27, 0.04); }
+.dark .shots-change:hover { background: rgba(255, 255, 255, 0.05); }
+.shots-change-n { flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 999px; display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; line-height: 1; color: #fff; background: #16a34a; font-variant-numeric: tabular-nums; }
+.shots-viewer:has(.shots-side-before:checked) .shots-change-n { background: #dc2626; }
+.shots-keys, .shots-view-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; line-height: 1.4; color: #68686c; }
+.dark .shots-keys, .dark .shots-view-meta { color: #8e8e93; }
+.shots-key { display: inline-flex; align-items: center; gap: 6px; }
+.shots-key-box { flex: none; width: 16px; height: 10px; border: 1.5px dashed rgba(113, 113, 122, 0.95); border-radius: 3px; }
+.shots-key-line { flex: none; width: 16px; height: 0; border-top: 2px dashed rgba(113, 113, 122, 0.95); }
 .shots-claims { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .shots-claim { display: flex; gap: 10px; align-items: flex-start; }
 .shots-claim-n { flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 999px; display: grid; place-items: center;

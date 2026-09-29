@@ -203,22 +203,28 @@ can appear in them.
 
 ## What people see
 
-The proposal's card shows one screen per screen size that flips between
-before and after: click it, or focus it and press Space. Each declared change
-on it is outlined and numbered, red where it was and green where it is now; a
-dashed line marks where something appears or goes, and a difference no
-declared change accounts for is outlined dashed and grey. Changes whose before
-screens are the same image share one screen. With more than one screen, one
-shows at a time and the ‹ › arrows under it step through them (radios, so the
-keyboard's arrow keys step them too). "Open full screen" shows the screen
-larger, flipping the same way. Under the screens, the declared changes are
-listed with those numbers:
+The proposal's card shows one screen at a time in a frame that keeps its
+size. Every screen sits in the same 16:10 stage, a phone screen in the middle
+at the same zoom as a desktop one, so moving between screens never resizes the
+card. A toolbar above the screen switches between Before and After (clicking
+the screen flips it too) and between Desktop and Phone when the run has both.
+When one size has more than one screen, ‹ › arrows at the toolbar's right end
+step through that size's screens; the toolbar is the same on every screen, so
+they never move. It is radios and labels, so it needs no script, and the
+keyboard's arrow keys step them too. Each declared change on the screen is
+outlined and numbered, red where it was and green where it is now; a dashed
+line marks where something appears or goes, and a difference no declared
+change accounts for is outlined dashed and grey. Changes whose before screens
+are the same image share one screen. Under the screen are only the changes on
+it, with those numbers (pointing at one picks out its outline), a key for any
+dashed shape, and the screen size and persona. The screens share one grid
+cell, so the card is as tall as its longest description on every screen.
 
-- **Ready.** The change, its screen sizes and persona, and its steps. Motion
-  changes also show a before and an after clip player. When the agent
-  noted that its shots leave part of the claim out, the note is shown as
-  "Not in these shots: …", so a partial pair is never mistaken for the
-  whole change.
+- **Ready.** The change and its steps. Motion changes also show a before and
+  an after clip player. When the agent noted that its shots leave part of the
+  claim out, the note is shown as "Not in these shots: …", so a partial pair
+  is never mistaken for the whole change. A change with no screen of its own
+  is listed below the viewer instead.
 
 The outlines are worked out once, when the run saves its shots
 (`src/services/shots-diff.js`), and stored in the verdict as `screens`. The
@@ -237,6 +243,9 @@ shot when it is big enough to read (at least 120×40 px on both sides).
   or hints, or to outline a run from before outlines were worked out).
 - A change that is not up for a vote yet shows its shots the same way, on
   its page and in the Workshop feed, as soon as they are ready.
+- A proposal declared with nothing visible reads "No before & after needed"
+  and "This proposal has no visual changes." The author's `rationale` stays
+  with the declaration, for whoever reviews it.
 
 The public view model and the connector's `get_proposal` carry `shotResults`
 (`[{ id, status: "ready" | "skipped", reason, note }]`) beside `claims` and
