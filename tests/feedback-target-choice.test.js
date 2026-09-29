@@ -575,7 +575,7 @@ test('the dialog is headed with the words of the way in', () => {
   const h = makeHarness({ appData: OPEN_APP });
   const heading = () => h.el('feedback-form').querySelector('h2').textContent;
   h.sandbox.Feedback._open({ fromDev: true, intent: 'issue' });
-  assert.equal(heading(), 'File an issue', 'the Workshop "+" menu\'s row says File an issue');
+  assert.equal(heading(), 'Ask for a change', 'the hub ⋯ menu\'s row says Ask for a change');
   h.sandbox.Feedback._open({ fromDev: true });
   assert.equal(heading(), 'Send feedback', 'every other way in is feedback, and the next open resets it');
 });

@@ -1344,9 +1344,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // went 840 → 850 in the same change (services/app-manifest.js), leaving
   // 29 slots.
   //
+  // 821 → 824: +3 (the hub with doors): the hub's since-your-last-visit
+  // summary card, its door to the Workshop page, and the Workshop page's
+  // Approval rules (with its back bar folded into the same check). The rest
+  // of the change was REWRITTEN in place: every "+"/tab-strip check now pins
+  // the hero's ⋯ or the page it moved to, and the since list's week headings
+  // are folded into its existing Clear / Show older check.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 821);
+  checkCap.assertPinned(DAPP.tests.length, 824);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

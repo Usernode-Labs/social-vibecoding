@@ -145,12 +145,14 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   has('frontend/src/features/dev-board/topic/topic-head.tsx', new RegExp(`className="voting-help-btn ${KIT}"`), 'the ? beside it');
   has('frontend/src/features/dev-board/card/fold.tsx', new RegExp(`className="dev-fold-mark ${KIT}" data-open="1"`), 'Fold the card');
   const ws = 'frontend/src/features/dev-board/workshop/workshop.tsx';
-  has(ws, new RegExp(`className="dev-ws-reveal dev-ws-week-more ${KIT}"`), 'Show past week');
+  // "Show past week" went with the walk: the weeks head the since list now,
+  // and Show older below them steps back a week.
+  has('frontend/src/features/dev-board/workshop/since-summary-card.tsx', new RegExp(`className="dev-ws-since-card-x ${KIT}"`), 'the summary\'s ×');
   has(ws, new RegExp(`className="dev-ws-reveal dev-ws-since-more ${KIT}"`), 'Show older');
   has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Clear');
   // "N more of yours" is gone: the Workshop tab shows your own work in full.
   has(ws, new RegExp(`className="dev-ws-hub-open dev-ws-head-end ${KIT}"`), 'All items\' See all');
-  has(ws, new RegExp(`className="dev-ws-page-back ${KIT}"`), 'the way back from a page to its tab');
+  has(ws, new RegExp(`className="dev-ws-page-back ${KIT}"`), 'the way back from a page to the hub');
   has('frontend/src/features/dev-board/workshop/hub-cards.tsx', new RegExp(`className="dev-ws-hub-open ${KIT}"`), 'the channel\'s Open');
   const ui = 'frontend/src/features/home/panels/ui.tsx';
   has(ui, new RegExp(`className="home-panel-browse [^"]*${KIT}"`), 'Browse all apps');

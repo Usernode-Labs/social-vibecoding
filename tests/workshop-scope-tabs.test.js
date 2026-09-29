@@ -232,7 +232,7 @@ test('#3295: an app\'s Workshop draws no chip; its panel renders only once opene
   assert.doesNotMatch(html, /aria-haspopup/, 'the only control for it is the header\'s');
 });
 
-test('#3295: the Workshop leads with its tabs at every width, with nothing to measure', () => {
+test('#3295: a page leads with its back bar at every width, with nothing to measure', () => {
   const WORKSHOP_PATH = 'frontend/src/features/dev-board/workshop/workshop.tsx';
   const real = loadTsx('frontend/src/features/dev-board/card/cards-store.ts');
   const view = { ...real.EMPTY_WORKSHOP_VIEW, loading: false, slug: 'notes-ab12', tab: 'all' };
@@ -240,8 +240,9 @@ test('#3295: the Workshop leads with its tabs at every width, with nothing to me
     stubs: { '../card/cards-store': { ...real, devWorkshopStore: fixed(view) } },
   });
   const html = renderToHtml(createElement(mod.DevWorkshop, {}));
-  // The panel is shut on arrival, so the tab strip is the root's first child.
-  assert.match(html, /^<div class="dev-ws" data-ws-tab="all"><div class="dev-ws-tabs" data-ws-tabs="">/);
+  // The panel is shut on arrival, so the page's back bar is the root's first
+  // child (the hub has no bar; a page leads with its way back).
+  assert.match(html, /^<div class="dev-ws" data-ws-tab="all"><div class="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/);
   assert.doesNotMatch(html, /dev-ws-scope/);
 
   // #2837's measurement went with the chip it placed: nothing sets

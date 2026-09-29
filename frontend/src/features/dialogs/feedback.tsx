@@ -71,8 +71,8 @@ export function FeedbackDialog() {
       <DialogCard size="sm">
         <div id="feedback-form">
         {/* QA 2026-09-24: the resting heading. The controller renames it on
-            each open to match the way in ("File an issue" from the Workshop
-            "+" menu), like every other string inside this card. */}
+            each open to match the way in ("Ask for a change" from the hub's
+            ⋯ menu), like every other string inside this card. */}
         <h2 className="text-lg font-bold mb-4">
           Send feedback
         </h2>

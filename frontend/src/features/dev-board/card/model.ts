@@ -337,6 +337,11 @@ export type ListRow =
     /** Arrived since the viewer's last Workshop visit — the "new" marker. */
     fresh?: boolean;
     /**
+     * When the row last moved (epoch ms), on the since list's rows only: the
+     * Workshop page files each one under the week it moved in.
+     */
+    at?: number;
+    /**
      * The voter-facing plain-language summary (`pr_summary_md`), on vote rows
      * only. Null when the proposal has none — a legacy one, or a summary pass
      * that failed — and the deck says so rather than leaving a gap.

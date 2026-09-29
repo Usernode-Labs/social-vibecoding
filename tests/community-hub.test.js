@@ -71,28 +71,31 @@ test('the bar reads Home, Discover, Messages, Communities, you — Messages in t
   assert.match(STORE, /communities: state\.conversations\.filter\(\(item\) => item\.kind === 'channel' && item\.unreadCount > 0\)\.length\s*\+ state\.discussions\.filter\(\(item\) => item\.section !== 'more' && \(item\.unreadCount \|\| 0\) > 0\)\.length,/);
 });
 
-test('a project page is its hub and its Workshop; Needs you and All items are pages under them', () => {
-  const { hubLabel, litTab } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.equal(hubLabel('open'), 'Community hub');
-  assert.equal(hubLabel('invited'), 'Community hub');
-  assert.equal(hubLabel('solo'), 'Hub');
-  assert.equal(hubLabel(undefined), 'Hub', 'plain Hub until the community record has said');
-  assert.deepEqual(['status', 'needs', 'workshop', 'all'].map(litTab), ['status', 'status', 'workshop', 'workshop'],
-    'a page lights the tab it hangs off');
-  assert.match(LANDER, /const TABS: \{ key: TabKey; label: string; Icon: typeof NewspaperIcon \}\[\] = \[\s*\{ key: 'status', label: 'Hub', Icon: UserGroupIcon \},\s*\{ key: 'workshop', label: 'Workshop', Icon: BoardIcon \},\s*\];/);
-  // The hub's order, as agreed: the hero (which carries who is here since
-  // #3268), the channel, Needs you, and Since your last visit at the foot.
-  const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("));
-  const at = (s) => hub.indexOf(s);
-  assert.ok(at('<CommunityCard') < at('<ChannelCard') && at('<ChannelCard') < at('<NeedsCard'),
-    'hero, channel, Needs you');
-  assert.ok(LANDER.lastIndexOf('data-ws-since=""') > LANDER.indexOf('<NeedsCard'), 'Since your last visit last');
-  // The Workshop tab: All items' numbers with See all, then your own work (#3299).
+test('a project page is its hub, with doors to the Workshop and Needs you; All items is under the Workshop', () => {
+  const { pageParent, pageTitle } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.deepEqual(['needs', 'workshop', 'all'].map(pageParent), ['status', 'status', 'workshop'],
+    'a page goes back to where its door is');
+  assert.deepEqual(['needs', 'workshop', 'all'].map(pageTitle), ['Needs you', 'Workshop', 'All items']);
+  // No tab strip: the hub has no bar, and a page leads with its way back.
+  assert.doesNotMatch(LANDER, /role="tablist" aria-label="Workshop sections"/, 'the hub and the Workshop are not two tabs any more');
+  assert.match(LANDER, /const railNode = tab === 'status' \? null : \(/);
+  assert.match(LANDER, /<PageBack\s+label=\{tab === 'all' \? 'Workshop' : \(app\.name \|\| community\?\.name \|\| slug\)\}\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  // The hub's order, as agreed: the hero (with who is here, #3268), what
+  // landed since your last visit, your work, the channel, and the two doors.
+  const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{tab === 'workshop' ? ("));
+  const order = ['<CommunityCard', '<SinceSummaryCard', '<YourWorkCard', '<ChannelCard', '<NeedsCard', '<WorkshopDoor'].map((s) => hub.indexOf(s));
+  assert.ok(order.every((n) => n >= 0), 'all six on the hub');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, your work, channel, Needs you, Workshop');
+  assert.match(hub, /\{v\.queue\.length \? <NeedsCard /, 'Needs you only when something waits');
+  assert.match(hub, /\{v\.mine && v\.mine\.rows\.length \? \(\s*<YourWorkCard/, 'your work only when you have some');
+  assert.doesNotMatch(hub, /data-ws-since=""/, 'the since list is the Workshop page\'s now');
+  // The Workshop page: your work in full, the since list by week, All items
+  // with See all, then the approval rules.
   const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("));
-  assert.ok(ws.indexOf('data-ws-dashboard=""') < ws.indexOf('data-ws-mine=""'));
+  const w = (s) => ws.indexOf(s);
+  assert.ok(w('data-ws-mine=""') < w('data-ws-since=""') && w('data-ws-since=""') < w('data-ws-dashboard=""')
+    && w('data-ws-dashboard=""') < w('<ApprovalRules'));
   assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
-  // Each page has its way back to the tab it hangs off.
-  assert.match(LANDER, /\{tab === 'needs' \|\| tab === 'all' \? \(\s*<PageBack\s+label=\{tab === 'needs' \? hubLabel\(community\?\.audience\) : 'Workshop'\}\s+onBack=\{\(\) => openTab\(tab === 'needs' \? 'status' : 'workshop'\)\}/);
   // `?ws=workshop` is a deep link like the others.
   assert.match(read('public/js/app-view.js'), /WORKSHOP_TABS: \['status', 'workshop', 'needs', 'all'\],/);
 });

@@ -59,14 +59,17 @@ test('read-only viewers still get only Fork, and no + button on the platform app
   assert.deepEqual(actions(strip), []);
 });
 
-test('hiding import leaves File an issue under the heading, so neither the heading nor the divider goes', () => {
+test('hiding import leaves Ask for a change first, so the settings divider under it stays', () => {
   // #1490 gated the heading with the import row so that hiding the row could
-  // not leave an empty heading. Since #1900 the group always holds File an
-  // issue, so the heading is unconditional and the settings divider under it
-  // is too — and import's own top border is what separates the two rows.
+  // not leave an empty heading. Since #1900 the group always holds the ask
+  // row, so the settings divider under it is unconditional — and import's
+  // own top border is what separates the two rows. The first group has no
+  // heading any more: it is the menu's first, and "Settings & rules" says
+  // where the rest begins.
   const html = board({ canCollaborate: false });
   assert.deepEqual(actions(html), ['issue', 'members', 'rename', 'secrets', 'fork']);
-  assert.match(html, /data-plus-group="build"[^>]*>Add to the board</);
+  assert.doesNotMatch(html, /data-plus-group="build"/);
+  assert.doesNotMatch(html, /Add to the board/);
   const settings = html.match(/<div data-plus-group="settings"[^>]*>/);
   assert.ok(settings);
   assert.match(settings[0], /border-t/);
@@ -161,8 +164,8 @@ function menuHarness(touch) {
     App: {
       openFeedbackModal: (opts) => {
         assert.equal(opts?.fromDev, true, 'the open app is preselected as the target');
-        // QA 2026-09-24: and the dialog is told it was asked to file an issue,
-        // so it is headed "File an issue" rather than "Send feedback".
+        // QA 2026-09-24: and the dialog is told what it was asked for, so it
+        // is headed "Ask for a change" rather than "Send feedback".
         assert.equal(opts?.intent, 'issue', 'the dialog is headed with the row\'s own words');
         assert.deepEqual(Object.keys(opts), ['fromDev', 'intent']);
         calls.push('issue');
@@ -194,7 +197,7 @@ for (const touch of [false, true]) {
         assert.equal(h.sheets.length, index + 1, 'one sheet per click after re-wiring');
         const sheet = h.sheets.at(-1);
         assert.deepEqual(Array.from(sheet.actions, (item) => item.label), [
-          'Add to the board', 'File an issue', 'Import Feature from a PR', 'Settings & rules',
+          'Ask for a change', 'Import Feature from a PR', 'Settings & rules',
           'Members & approvals', 'App display name', 'App secrets', 'Fork this app',
         ]);
         // #1930: every action row carries its own glyph, class-stripped.
@@ -244,16 +247,16 @@ test('Improve retains its two wired quick actions, and the New change read-only 
   assert.doesNotMatch(VIEW, /querySelector\('\[data-plus="proposal"\]'\)/);
 });
 
-// ── #1900: File an issue is on the board again ───────────────────────────
+// ── #1900: asking for a change is on the board again ─────────────────────
 
-test('File an issue is a real button[data-plus] row that leads the writeable menu', () => {
+test('Ask for a change is a real button[data-plus] row that leads the writeable menu', () => {
   const html = board();
   const row = html.match(/<button data-plus="issue"[^>]*>[\s\S]*?<\/button>/);
   assert.ok(row, 'the row exists');
   // A <button>, so _wirePlusMenu's `button[data-plus]` walk hands it to the
   // touch action sheet as a tappable row — and the sheet reads its title by
   // name, which is what the marked span is for.
-  assert.match(row[0], /<span data-plus-title="[^"]*"[^>]*>File an issue<\/span>/);
+  assert.match(row[0], /<span data-plus-title="[^"]*"[^>]*>Ask for a change<\/span>/);
   assert.match(row[0], /Report a problem or idea without building it yourself/);
   assert.match(row[0], /<svg\b[^>]*aria-hidden="true"/, 'a glyph, decorative like the others');
   // It needs nothing of the viewer beyond a writeable board: present without
@@ -269,17 +272,17 @@ test('File an issue is a real button[data-plus] row that leads the writeable men
   assert.match(VIEW, /const issueBtn = menu\.querySelector\('\[data-plus="issue"\]'\);/);
   const wired = VIEW.slice(VIEW.indexOf('const issueBtn = '));
   // QA 2026-09-24: with `intent: 'issue'`, so the dialog is headed with the
-  // row's own words ("File an issue") rather than "Send feedback".
+  // row's own words ("Ask for a change") rather than "Send feedback".
   assert.match(wired.slice(0, 700), /App\.openFeedbackModal\(\{ fromDev: true, intent: 'issue' \}\)/);
 });
 
 for (const touch of [false, true]) {
-  test(`${touch ? 'the touch sheet' : 'the desktop dropdown'} routes File an issue to the feedback dialog, once, and closes`, () => {
+  test(`${touch ? 'the touch sheet' : 'the desktop dropdown'} routes Ask for a change to the feedback dialog, once, and closes`, () => {
     const h = menuHarness(touch);
     h.button.click();
     if (touch) {
       const sheet = h.sheets.at(-1);
-      const item = sheet.actions.find((entry) => entry.label === 'File an issue');
+      const item = sheet.actions.find((entry) => entry.label === 'Ask for a change');
       assert.ok(item && !item.heading, 'the sheet carries it as an action, not a heading');
       item.handler();
     } else {

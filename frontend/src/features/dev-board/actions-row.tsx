@@ -1,18 +1,16 @@
 /**
  * `#dev-actions` — the Dev screen's toolbar: the shared Board/Workshop filter
- * strip — and `DevPlusMenu`, the "+" and its menu.
+ * strip — and `DevPlusMenu`, the ⋯ (it was the "+") and its menu.
  *
- * ── The "+" lives at the end of the Workshop's tab strip ──────────────
+ * ── The ⋯ lives in the project hub's hero ────────────────────────────
  *
- * On the Workshop the "+" is not in this row any more. It is the last item of
- * the view-tab strip — Current status · Needs you · All items · + — on all
- * three tabs, which is where the navigation prototype drew it (`wsTabs`, a
- * `.tplus` closing the `.tabs` row) and where the spec puts it: "a plus at the
- * end of the tab strip holds Add … and Manage". It sat at the end of All
- * items' search row, so two of the three tabs had no way to file an issue or
- * reach the app's settings, and the empty-state notes on those tabs pointed at
- * a "+" that was not on screen. workshop/workshop.tsx renders `DevPlusMenu`
- * inside the strip and this row with `withPlus={false}` in the pane head.
+ * On the Workshop the ⋯ is not in this row. It sat at the end of All items'
+ * search row, then closed the view-tab strip on every tab; the strip is gone
+ * (the hub is one page with doors), so it ends the hero's members row,
+ * beside Invite: the project's own menu, on the project's own card, leading
+ * with Ask for a change. workshop/workshop.tsx hands `DevPlusMenu` to the
+ * hero (`inHero`) and renders this row with `withPlus={false}` in All items'
+ * pane head.
  *
  * The standalone Board surface (./board-frame.tsx), unreachable since 'kanban'
  * retired as a view mode, still draws the row with its "+" at the end — the
@@ -44,7 +42,7 @@
  * the Dev screen is on the Board, ./workshop/workshop.tsx when it is on the
  * Workshop — which is what keeps `#dev-actions`, `#dev-plus-btn` and
  * `#dev-plus-menu` unique ids. board-frame reads the view mode to decide, and
- * the Workshop renders the "+" once, in its tab strip, never in this row.
+ * the Workshop renders the ⋯ once, in the hub's hero, never in this row.
  *
  * tests/dev-plus-menu.test.js, tests/pr-import-menu.test.js and
  * tests/board-plus-menu-rows.test.js read this file's TEXT and compare row
@@ -58,7 +56,7 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, GitHubIcon, KeyIcon, LightBulbIcon, PencilSquareIcon, PlusIcon, UserGroupIcon,
+  AppWindowIcon, EllipsisHorizontalIcon, GitHubIcon, KeyIcon, LightBulbIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
 import { callAppView } from './card/fold';
@@ -72,11 +70,17 @@ export interface DevActionsRowProps {
   canCollaborate: boolean;
   showsMembers: boolean;
   /**
-   * Whether the row carries the "+" at its end. The Board frame's row does
+   * Whether the row carries the ⋯ at its end. The Board frame's row does
    * (the default); the Workshop's pane-head row does not, because the
-   * Workshop draws the "+" in its tab strip — see the header.
+   * Workshop draws it in the hub's hero — see the header.
    */
   withPlus?: boolean;
+  /**
+   * Drawn in the project hero, beside Invite, rather than at the end of a
+   * strip: the ⋯ then wears the hero's neutral pill fill so the two read as
+   * one row of buttons. See `DevPlusMenu`.
+   */
+  inHero?: boolean;
 }
 
 /**
@@ -132,6 +136,9 @@ const PLUS_ROW_CLS =
 const PLUS_ROW_DIVIDER_CLS = ' border-t border-zinc-200 dark:border-zinc-800';
 const PLUS_ICON_CLS = 'shrink-0 mt-0.5 w-5 h-5 text-zinc-500 dark:text-zinc-400';
 const PLUS_TITLE_CLS = 'block text-sm font-medium text-zinc-800 dark:text-zinc-200';
+/** The ⋯ in the hero: Invite's pill fill (`pillNeutral`), as a circle. */
+const HERO_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-hero un-touch-target '
+  + 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100';
 const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
 
 /**
@@ -177,19 +184,16 @@ function PlusRow({
 }
 
 /**
- * The "+" and its menu: `#dev-plus-btn` and `#dev-plus-menu`.
+ * The ⋯ and its menu: `#dev-plus-btn` and `#dev-plus-menu` (the ids are the
+ * "+"'s, kept, because the wiring and the declared checks look them up).
  *
  * ── Where it renders ────────────────────────────────────────────────────
  *
- * On the Workshop, as the LAST ITEM OF THE VIEW-TAB STRIP (workshop.tsx's
- * rail): Current status · Needs you · All items · +, on every tab. It is the
- * strip's own trailing control, drawn on the strip's metrics — app.css
- * `.dev-ws-plus-btn`, beside `.dev-ws-tab`, in a circle of its own a small
- * gap after the tab pill (#2934) — so it reads as part of the strip rather
- * than as the violet floating action it used to be at the end of All items'
- * search row. It is NOT inside the `role="tablist"`: a tab list owns
- * tabs, and a menu button among them is announced as a fourth tab that does
- * not select anything.
+ * On the Workshop, at the END OF THE HUB HERO'S MEMBERS ROW, beside Invite
+ * (community-card.tsx), in Invite's own neutral pill fill as a 32px circle
+ * (`inHero`), so the two read as one row of buttons. Its menu hangs below
+ * it, opening leftward from the row's end, and the hero lifts over the
+ * cards under it while it is open (app.css).
  *
  * On the (unreachable) Board, at the end of `#dev-actions`, as it always was.
  *
@@ -224,6 +228,7 @@ export function DevPlusMenu({
   readOnly,
   canCollaborate,
   showsMembers,
+  inHero = false,
 }: DevActionsRowProps): ReactNode {
   const [editingIllustration, setEditingIllustration] = useState(false);
   useEffect(() => {
@@ -247,7 +252,7 @@ export function DevPlusMenu({
   */
   const plusLabel = readOnly
     ? 'Fork this app'
-    : 'File an issue, import a PR or manage this app';
+    : 'Ask for a change, import a PR or manage this app';
   return (
     <>
   {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
@@ -265,13 +270,14 @@ export function DevPlusMenu({
         aria-haspopup="true"
         aria-expanded="false"
         aria-label={plusLabel}
-        className="dev-ws-plus-btn un-touch-target"
+        className={inHero ? HERO_BTN_CLS : 'dev-ws-plus-btn un-touch-target'}
         title={plusLabel}
       >
-        {/* The same glyph the Messages strip's own "+" draws (#2778), so
-            the two strips end on one mark. Decoration: the name is the
-            label above. */}
-        <PlusIcon className="dev-ws-plus-glyph" aria-hidden="true" />
+        {/* A ⋯, not a "+": on the hub the button sits in the hero beside
+            Invite and holds the project's settings as much as anything to
+            add, and a "+" there read as "add a member". Decoration: the
+            name is the label above. */}
+        <EllipsisHorizontalIcon className="dev-ws-plus-glyph" aria-hidden="true" />
       </button>
       {/*
           The desktop dropdown. `right-0` hangs it off the right edge of the
@@ -289,20 +295,24 @@ export function DevPlusMenu({
           <>
             {/*
                 New change lives in Improve (#1490) — the Homeroom menu's New
-                change button now (#2740 review). Filing an issue is back
+                change button now (#2740 review). Asking for a change is
                 HERE as well (#1900): #1490 folded it into Improve's Give
                 feedback beside New change, and people on the board could not
                 find "create an issue" any more. Same dialog, opened with the
                 open app preselected — the row needs nothing of the viewer
                 beyond a writeable board, so it is the one action in this group
-                that is not gated on canCollaborate, and the group heading is
-                unconditional because of it.
+                that is not gated on canCollaborate.
+
+                It was "File an issue" under an "Add to the board" heading.
+                The hub's ⋯ leads with it now, in the words a member would use
+                for what they want, and the group needs no heading: it is the
+                menu's first, and "Settings & rules" below says where the
+                rest begins.
             */}
-            <PlusMenuHeading label="Add to the board" groupKey="build" divider={false} />
             <PlusRow
               data-plus="issue"
               icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="File an issue"
+              title="Ask for a change"
               sub="Report a problem or idea without building it yourself"
             />
             {canCollaborate ? (

@@ -1,10 +1,17 @@
 /**
- * The project hub's own cards: its channel and what needs you. They sit on
- * the hub tab of a project's page (./workshop.tsx), under the hero, in the
+ * The project hub's own cards. The hub is ONE PAGE WITH DOORS: it answers
+ * "what is new, what is mine, what are people saying" itself, and opens a
+ * page for anything longer. Under the hero (./community-card.tsx), in the
  * order the hub was agreed in:
  *
- *   the CHANNEL, then NEEDS YOU, with Since your last visit at the foot of
- *   the tab (drawn by the lander itself).
+ *   the since-your-last-visit summary (./since-summary-card.tsx), YOUR WORK
+ *   when you have some, the CHANNEL, NEEDS YOU when something waits, and
+ *   the door to the WORKSHOP page.
+ *
+ * Your work is the first two of your items with the rest a press away IN
+ * PLACE, because a list you came to the hub to glance at should not send
+ * you to another page to see its third row. Needs you and the Workshop are
+ * doors: a row each that opens its page, since both are pages' worth.
  *
  * Members & activity was the third card. It is the hero's now (#3268,
  * ./community-card.tsx HeroPeople and HeroActivity): who is here and how
@@ -40,10 +47,11 @@
 
 import { useState, type FormEvent, type ReactNode } from 'react';
 
-import { ArrowUpIcon, ChevronRightIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, BoardIcon, ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
 import { agoStamp } from '../../../lib/timestamp';
 import { swatchFor } from '../../messages/format';
-import type { DevWorkshopView } from '../card/model';
+import { CardRowView } from '../card/fold';
+import type { DevWorkshopView, ListRow } from '../card/model';
 import { reloadCommunity, type CommunityPayload } from './community-card';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -186,12 +194,36 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
 }
 
 /**
+ * A reel, drawn small: a phone-shaped card with its progress segments, a
+ * second card peeking out behind it. Needs you is a feed of one decision
+ * per screen, so its door previews that shape rather than an icon.
+ * Decoration only; the row's words are its name.
+ */
+export function ReelThumb(): ReactNode {
+  return (
+    <span className="dev-ws-reel" aria-hidden="true">
+      <span className="dev-ws-reel-back" />
+      <span className="dev-ws-reel-front">
+        <span className="dev-ws-reel-bars"><span /><span /><span /></span>
+        <span className="dev-ws-reel-line" />
+        <span className="dev-ws-reel-pic" />
+        <span className="dev-ws-reel-line dev-ws-reel-line-short" />
+      </span>
+    </span>
+  );
+}
+
+/**
  * What is waiting on you: the votes you owe, the first of them and how many
  * more, opening the queue itself — one decision per screen, as it always
  * was. The queue also carries requests nobody has claimed, which are the
  * group's to pick up rather than yours to answer, so they are not counted
  * here: a card that said 14 where two votes were owed read as a backlog
  * with your name on it. They are named under it when they are all there is.
+ *
+ * A DOOR, and only while something waits: the lander draws it when the
+ * queue has anything in it, so a hub with nothing owed spends no row on
+ * saying so.
  */
 export function NeedsCard({ queue, canPost, onOpen }: {
   queue: DevWorkshopView['queue'];
@@ -205,32 +237,131 @@ export function NeedsCard({ queue, canPost, onOpen }: {
   const title = first && first.t === 'card' ? first.card.title.text || first.card.title.title : '';
   return (
     <section className="dev-ws-strip dev-ws-hub-needs" data-ws-hub-needs="" data-ws-hub-needs-votes={String(count)}>
-      <button type="button" className="dev-ws-hub-row" onClick={onOpen} data-ws-hub-needs-open="" disabled={!queue.length}>
-        <span className="dev-ws-head">
-          <span className="dev-ws-head-title">Needs you</span>
-          {count ? <span className="dev-ws-head-n">{count} to vote</span> : null}
-          {queue.length ? <ChevronRightIcon className="dev-ws-hub-chev" aria-hidden="true" /> : null}
-        </span>
-        {count && title ? (
-          <span className="dev-ws-hub-needs-first">
-            <span className="dev-ws-hub-needs-title">{title}</span>
-            <span className="dev-ws-hub-needs-sub">
-              {first && first.who ? `from @${first.who}` : ''}
-              {first && first.who && count > 1 ? ' · ' : ''}
-              {count > 1 ? `and ${count - 1} more` : ''}
+      <button type="button" className="dev-ws-hub-row dev-ws-hub-door" onClick={onOpen} data-ws-hub-needs-open="" disabled={!queue.length}>
+        <ReelThumb />
+        <span className="dev-ws-hub-door-text">
+          <span className="dev-ws-head">
+            <span className="dev-ws-head-title">Needs you</span>
+            {count ? <span className="dev-ws-head-n">{count} to vote</span> : null}
+          </span>
+          {count && title ? (
+            <span className="dev-ws-hub-needs-first">
+              <span className="dev-ws-hub-needs-title">{title}</span>
+              <span className="dev-ws-hub-needs-sub">
+                {first && first.who ? `from @${first.who}` : ''}
+                {first && first.who && count > 1 ? ' · ' : ''}
+                {count > 1 ? `and ${count - 1} more` : ''}
+              </span>
             </span>
-          </span>
-        ) : (
-          <span className="dev-ws-week-note" data-ws-hub-needs-none="">
-            {claims
-              ? `No votes owed. ${plural(claims, 'request', 'requests')} nobody has picked up.`
-              : 'Nothing is waiting on you.'}
-          </span>
-        )}
+          ) : (
+            <span className="dev-ws-week-note" data-ws-hub-needs-none="">
+              {claims
+                ? `No votes owed. ${plural(claims, 'request', 'requests')} nobody has picked up.`
+                : 'Nothing is waiting on you.'}
+            </span>
+          )}
+        </span>
+        {queue.length ? <ChevronRightIcon className="dev-ws-hub-chev" aria-hidden="true" /> : null}
       </button>
       {count && !canPost ? (
         <p className="dev-ws-hub-needs-join" data-ws-hub-needs-join="">Join to vote on these.</p>
       ) : null}
+    </section>
+  );
+}
+
+/** How many of your items the hub shows before "Show N more". */
+export const HUB_WORK_FIRST = 2;
+
+/**
+ * YOUR WORK, on the hub: only when you have some. The first two of your
+ * items as the board's own folded rows (they open in place, as they do on
+ * the Workshop page), and the rest under "Show N more" right below them,
+ * which unfolds the list where it is and folds it again as "Show less".
+ * Newest activity first, the order the Workshop page lists them in.
+ */
+export function YourWorkCard({ rows, slug, canPost, openKey, onToggleRow, all, onAll }: {
+  rows: ListRow[];
+  slug: string;
+  canPost: boolean;
+  openKey: string | null;
+  onToggleRow: (key: string) => void;
+  /** Whether every row is out. The page holds it, so the rows it reveals
+      are wired by the page's fillers like any other (see workshop.tsx). */
+  all: boolean;
+  onAll: () => void;
+}): ReactNode {
+  const cards = rows.filter((row): row is Extract<ListRow, { t: 'card' }> => row.t === 'card');
+  if (!cards.length) return null;
+  const rest = cards.length - HUB_WORK_FIRST;
+  const shown = all ? cards : cards.slice(0, HUB_WORK_FIRST);
+  return (
+    <section className="dev-ws-strip dev-ws-hub-work" data-ws-mine-card="">
+      <div className="dev-ws-head">
+        <span className="dev-ws-head-title">Your work</span>
+        <span className="dev-ws-head-n">{cards.length}</span>
+      </div>
+      <div className="dev-ws-lane" data-ws-lane="mine-hub">
+        {shown.map((row) => (
+          <CardRowView
+            key={row.key}
+            row={row}
+            slug={slug}
+            canPost={canPost}
+            open={openKey === row.key}
+            onToggle={() => onToggleRow(row.key)}
+          />
+        ))}
+      </div>
+      {rest > 0 ? (
+        <button
+          type="button"
+          className="dev-ws-reveal dev-ws-hub-work-more touch-target-32"
+          data-ws-mine-more=""
+          aria-expanded={all}
+          onClick={onAll}
+        >
+          <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+          {all ? 'Show less' : `Show ${rest} more`}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * The door to the Workshop page: everything that is being built, your own
+ * work in full, what changed week by week, and the approval rules. The
+ * count is what is open; a zero says nothing. #2915: a search or filter
+ * left on in All items, which is out of sight from here, is a dot beside
+ * the name, and words a screen reader reads as part of it.
+ */
+export function WorkshopDoor({ open, filtered = false, onOpen }: {
+  open: number;
+  filtered?: boolean;
+  onOpen: () => void;
+}): ReactNode {
+  return (
+    <section className="dev-ws-strip dev-ws-hub-workshop" data-ws-workshop-door="">
+      <button type="button" className="dev-ws-hub-row dev-ws-hub-door" onClick={onOpen} data-ws-workshop-open="">
+        <span className="dev-ws-hub-door-tile" aria-hidden="true">
+          <BoardIcon className="dev-ws-hub-door-glyph" />
+        </span>
+        <span className="dev-ws-hub-door-text">
+          <span className="dev-ws-head">
+            <span className="dev-ws-head-title">Workshop</span>
+            {filtered ? (
+              <>
+                <span className="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true" />
+                <span className="sr-only"> (filtered)</span>
+              </>
+            ) : null}
+            {open ? <span className="dev-ws-head-n">{open} open</span> : null}
+          </span>
+          <span className="dev-ws-hub-needs-sub">Your work, what changed, and what is open</span>
+        </span>
+        <ChevronRightIcon className="dev-ws-hub-chev" aria-hidden="true" />
+      </button>
     </section>
   );
 }

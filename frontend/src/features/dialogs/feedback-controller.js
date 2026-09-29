@@ -1511,12 +1511,13 @@ export function init() {
       firstFeedback = null;
       // Every open hands back an editable composer (showFirstFeedback re-locks).
       setComposerLocked(false);
-      // QA 2026-09-24: the heading says what was asked for. The Workshop "+"
-      // menu's "File an issue" row opened a dialog headed "Send Feedback",
-      // which read as the wrong thing having opened. Same dialog either way;
-      // it passes `intent: 'issue'`, and every other way in is feedback.
+      // QA 2026-09-24: the heading says what was asked for. The hub ⋯
+      // menu's "Ask for a change" row (it was the "+" menu's "File an
+      // issue") opened a dialog headed "Send Feedback", which read as the
+      // wrong thing having opened. Same dialog either way; it passes
+      // `intent: 'issue'`, and every other way in is feedback.
       const heading = feedbackForm?.querySelector('h2');
-      if (heading) heading.textContent = opts.intent === 'issue' ? 'File an issue' : 'Send feedback';
+      if (heading) heading.textContent = opts.intent === 'issue' ? 'Ask for a change' : 'Send feedback';
       firstSuccess?.classList.add('hidden');
       // #3186: the last filed report's confirmation never greets the next open.
       hideSent();
