@@ -19,7 +19,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#8\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -109,7 +110,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#14\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"What does https://example.com/spec say?\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -266,7 +268,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#6\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -349,7 +352,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#9\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -432,7 +436,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#8\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -518,7 +523,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#8\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -610,7 +616,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#8\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -688,7 +695,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#6\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -762,7 +770,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#6\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -835,7 +844,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#4\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -902,7 +912,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#19\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle (#34)\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -1120,7 +1131,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#22\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -1365,7 +1377,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#19\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -1577,7 +1590,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#14\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -1688,7 +1702,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#8\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Build it\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -1766,7 +1781,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#8\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -1864,7 +1880,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#17\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",
@@ -2015,7 +2032,8 @@
       "{\"type\":\"session_event\",\"_seq\":\"#14\",\"sessionId\":4242,\"event\":\"done\"}"
     ],
     "queries": [
-      "SELECT a.id, a.collab_visibility, a.view_visibility FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1 :: [4242]",
+      "SELECT app_id FROM user_app_blocks WHERE user_id = $1 AND app_id = $2 :: [7,4242]",
       "SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted as app_self_hosted FROM chat_sessions cs … <sha:49b4726211dab378 len:549> :: [\"4242\",7]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata, client_message_id) VALUES ($1, 'user', $2, $3, $… <sha:513d6d719625fb1d len:226> :: [4242,\"Add a dark mode toggle\",{\"json\":{}},null]",
       "UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1 :: [4242]",

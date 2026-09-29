@@ -2563,6 +2563,12 @@ const App = {
               }
             }
             break;
+          case 'app_blocks_changed':
+            window.dispatchEvent(new CustomEvent('app-blocks-changed', { detail: data }));
+            if (data.blocked && window.AppView?.appData?.slug === data.slug) App.navigateHome();
+            window.Home?.load?.();
+            window.Browse?._load?.();
+            break;
           case 'user_blocks_changed':
             window.UsernodeReact?.messages?.refreshBlockedView?.(data.userId, data.blocked);
             break;
@@ -6510,6 +6516,9 @@ const App = {
       AppView.close();
     }
     App.currentApp = slug;
+    // Clear the previous app's actions while this destination is loading.
+    // Its own metadata will publish them again below when confirmed.
+    App.ImproveStatus.setAppOpen(true);
     // Commit the destination while the click is still synchronous. App.open
     // may wait on metadata and the iframe may never load; neither is a reason
     // for the address bar to keep naming Home. A cached launcher record lets
@@ -6683,8 +6692,10 @@ const App = {
     // After app data is loaded, swap header to the display name — unless a
     // Dev view owns the title by now (Streamlined Concept: Activity / Board
     // name themselves; the app's name lives on the center tab's sheet).
-    if (AppView.appData?.name && App.currentTab !== 'dev') {
+    if (AppView.appData?.slug === slug && AppView.appData.name && App.currentTab !== 'dev') {
       App.setHeaderTitle(AppView.appData.name);
+    } else if (!AppView.appData) {
+      App.setHeaderTitle('App not available');
     }
 
     // "View on GitHub" and "Share app" were drawer rows revealed by hand

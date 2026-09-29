@@ -591,7 +591,7 @@ function adminRoutes(config) {
       await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
 
       const { rows: existing } = await client.query(
-        'SELECT id, is_admin, admin_readonly FROM users WHERE id = $1',
+        'SELECT id, is_admin, admin_readonly, participation_restricted_at FROM users WHERE id = $1',
         [userId]
       );
       if (!existing.length) {
@@ -599,10 +599,10 @@ function adminRoutes(config) {
         return res.status(404).json({ error: 'User not found' });
       }
 
-      const wasFullAdmin = existing[0].is_admin && !existing[0].admin_readonly;
+      const wasFullAdmin = existing[0].is_admin && !existing[0].admin_readonly && !existing[0].participation_restricted_at;
       if (wasFullAdmin) {
         const { rows: countRows } = await client.query(
-          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE'
+          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE AND participation_restricted_at IS NULL'
         );
         if (countRows[0].n <= 1) {
           await client.query('ROLLBACK');

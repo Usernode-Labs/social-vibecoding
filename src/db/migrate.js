@@ -40,6 +40,8 @@ async function migrate(config) {
 
   log.info('db', 'Running migrations...');
   await applySchemaWithLockRetry(pool, schema);
+  await require('../services/moderation-migration').importLegacyReports(pool);
+  await require('../services/moderation').purgeExpired(pool);
   log.info('db', 'Schema up to date');
   finishPhase('schemaMs');
 
@@ -117,6 +119,7 @@ async function migrate(config) {
   await seedStagingReadonlyDevTab(pool);
   await seedStagingQuietDiscussion(pool);
   await seedStagingYourApps(pool, config);
+  await require('../services/staging-apps').seedCatalog(pool, config);
   await seedStagingBrowseCardBranches(pool, config);
   // #1383: must run AFTER seedStagingBrowseCardBranches (it ranks that
   // fixture's four apps) and AFTER seedStagingMergedPrs, which owns the
@@ -1447,10 +1450,19 @@ async function seedStagingGeneralChannel(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
     await pool.query(
-      `INSERT INTO users (id, username, password)
-       VALUES (902783, 'staging-demo-general-ada', 'staging-demo-not-a-login'),
-              (902784, 'staging-demo-general-lin', 'staging-demo-not-a-login')
+      `INSERT INTO users (id, username, password, profile_published)
+       VALUES (902783, 'staging-demo-general-ada', 'staging-demo-not-a-login', TRUE),
+              (902784, 'staging-demo-general-lin', 'staging-demo-not-a-login', TRUE)
        ON CONFLICT DO NOTHING`
+    );
+    // The persisted demo inbox uses these same identities. Repair profiles
+    // from older previews, preserving any moderation decision.
+    await pool.query(
+      `UPDATE users SET profile_published = TRUE
+        WHERE (id, username) IN ((902783, 'staging-demo-general-ada'),
+                                 (902784, 'staging-demo-general-lin'))
+          AND password = 'staging-demo-not-a-login'
+          AND profile_published = FALSE AND profile_disabled_at IS NULL`
     );
     const room = await pool.query(
       `SELECT id FROM conversations WHERE channel_key = 'general' AND kind = 'channel'`
@@ -13397,4 +13409,5 @@ module.exports = {
   backfillProposalIssuerAssignments,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
+  seedStagingGeneralChannel,
 };

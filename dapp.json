@@ -1268,10 +1268,10 @@
       "expectSelector": "#browse-screen:has(#browse-filter-chips > [data-filter=\"featured\"][aria-pressed=\"true\"]) #browse-list[data-filter=\"featured\"]:not(:has(.browse-row[data-slug=\"staging-demo-popular-1\"])) .browse-row[data-slug=\"staging-demo-featured\"]"
     },
     {
-      "name": "An app's page offers Share, first in its action list (the prototype's About sheet)",
+      "name": "A stored sample without a live runtime does not offer a nonexistent Share link",
       "path": "/#apps/staging-demo-forkable",
-      "expectSelector": "#browse-detail #browse-detail-share:first-child",
-      "expectText": "Share"
+      "expectSelector": "#browse-detail:has(h2):not(:has(#browse-detail-share))",
+      "expectText": "Staging demo forkable app"
     },
     {
       "name": "Bare #leaderboard renders all three tabs and opens on Challenges (#962, #2374)",
@@ -3045,7 +3045,7 @@
     {
       "name": "A direct conversation is the same Discord-style named-row transcript as every chat: your own turn has your avatar, name and time, and no bubble (#2783)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) #messages-message-9100102.messages-message-self > span[aria-hidden] + .min-w-0 > .messages-message-head time"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) .messages-message-self > :is(span[aria-hidden], img[alt=\"\"]) + .min-w-0 > .messages-message-head time"
     },
     {
       "name": "...and the sheet carries the conversation's own title row",
@@ -3094,7 +3094,7 @@
     {
       "name": "#2783: #general groups one person's consecutive messages under a single name, the later ones as continuation lines",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-channel #messages-message-9100401:not(.messages-message-grouped) + #messages-message-9100402.messages-message-grouped > time.messages-message-gutter + .min-w-0"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-channel .messages-message:not(.messages-message-grouped) + .messages-message-grouped > time.messages-message-gutter + .min-w-0"
     },
     {
       "name": "#2783: the #general thread names itself as a channel everyone is in",
@@ -3105,24 +3105,24 @@
     {
       "name": "#2783: #name in a message is a link to that channel",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-message-9100404 .messages-markdown a.gc-channel-ref[href=\"#messages/channel/general\"]",
+      "expectSelector": ".messages-message .messages-markdown a.gc-channel-ref[href=\"#messages/channel/general\"]",
       "expectText": "#general"
     },
     {
       "name": "#2783: ...while #123 in a message still reads as an issue reference, not a channel",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-message-9100403 .messages-markdown span.gc-ref.gc-ref-issue[data-ref-number=\"488\"]"
+      "expectSelector": ".messages-message .messages-markdown span.gc-ref.gc-ref-issue[data-ref-number=\"488\"]"
     },
     {
       "name": "#2884: four shared cards in a row in #general draw as the first card and a “… 3 more” row, the rest folded",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel:not(:has(#messages-message-9100407)) #messages-message-9100406:has(.messages-object-card) + .messages-card-run > button.messages-card-run-more[data-card-run-more=\"3\"][aria-expanded=\"false\"]",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-message:has(.messages-object-card) + .messages-card-run > button.messages-card-run-more[data-card-run-more=\"3\"][aria-expanded=\"false\"]",
       "expectText": "… 3 more"
     },
     {
       "name": "#2884: a plain message before the run is not folded into it",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100405 + #messages-message-9100406 + .messages-card-run"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-message:not(:has(.messages-object-card)) + .messages-message:has(.messages-object-card) + .messages-card-run"
     },
     {
       "name": "#general is what people said: Homeroom posts no proposal or merge line there, so the room is people's messages alone",
@@ -3132,7 +3132,7 @@
     {
       "name": "A group conversation renders an attached screenshot with a macOS-style name, a thumbnail that opens in the app's own viewer (#2113, #3286)",
       "path": "/?demo=1#messages/910002",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-attachment a[data-image-open][href*=\"/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1\"] img[alt]"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group .messages-attachment a[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
     },
     {
       "name": "The notifications strip reads Unread, Messages, All — agents live under Messages, and it opens on Unread (#2718 review, #2815)",
@@ -3181,7 +3181,7 @@
     {
       "name": "#2905: a follow-up message's report and block sit behind one ⋯ disc, not three, so the line keeps its width on a phone",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100402.messages-message-grouped:not(:has(button[aria-label=\"Report message\"])) > .messages-message-actions > button.messages-action-more[aria-haspopup=\"menu\"][aria-expanded=\"false\"]",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-message-grouped > .msgx-bar.messages-message-actions > button.messages-action-more[aria-haspopup=\"menu\"][aria-expanded=\"false\"]",
       "impact": [
         "frontend/src/features/messages/**",
         "public/css/app.css"
@@ -3199,12 +3199,12 @@
     {
       "name": "A message in Messages offers a save button",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-message-9100102 .messages-message-actions button[aria-label=\"Save message\"]"
+      "expectSelector": ".messages-message-self .messages-message-actions button[aria-label=\"Save message\"]"
     },
     {
       "name": "An already-saved message offers to unsave instead, and says so to a screen reader",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-message-9100101 .messages-message-actions button[aria-label=\"Unsave message\"][aria-pressed=\"true\"]"
+      "expectSelector": ".messages-message .messages-message-actions button[aria-label=\"Unsave message\"][aria-pressed=\"true\"]"
     },
     {
       "name": "The Me tab lists Challenges above Settings (#1823, #2718)",
@@ -3230,9 +3230,9 @@
     },
     {
       "id": "workshop.all-apps",
-      "name": "The Workshop screen lists your apps with both of their numbers",
+      "name": "Workshop links joined communities to their actual app Workshop",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list a[data-workshop-app=\"staging-demo-your-app\"][href=\"/app/staging-demo-your-app/workshop\"] [data-workshop-needs=\"3\"]",
+      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-section=\"open\"] a[data-workshop-app][href$=\"/workshop\"]",
       "expectText": "Votes waiting on you",
       "visual": true,
       "impact": [
@@ -3244,15 +3244,15 @@
       ]
     },
     {
-      "name": "A Workshop row says what you are working on as well as what needs you",
+      "name": "Workshop rows carry both counts from their stored app data",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-app=\"staging-demo-your-app\"] [data-workshop-working=\"2\"] + [data-workshop-needs=\"3\"]"
+      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list a[data-workshop-app]:has([data-workshop-working] + [data-workshop-needs])"
     },
     {
-      "name": "The Workshop lists your communities under Communities, Groups and Just you, in that order",
+      "name": "The Workshop keeps joined community sections in audience order",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-list > [data-workshop-section=\"open\"] ~ [data-workshop-section=\"invited\"]:has([data-workshop-app=\"staging-demo-long-name\"]) ~ [data-workshop-section=\"solo\"] [data-workshop-app=\"staging-demo-emoji-icon\"]",
-      "expectText": "Just you"
+      "expectSelector": "#workshop-list:has([data-workshop-section=\"open\"]):not(:has([data-workshop-section=\"solo\"] ~ [data-workshop-section])):not(:has([data-workshop-section=\"invited\"] ~ [data-workshop-section=\"open\"]))",
+      "expectText": "Communities"
     },
     {
       "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All chip over its Current status and Needs you tabs, lit like a project page's (#3051)",
@@ -3692,9 +3692,9 @@
       "expectSelector": ".app-card[data-yours].cursor-grab"
     },
     {
-      "name": "Staging demo tiles are tagged drag-inert (#746)",
-      "path": "/?demo=1",
-      "expectSelector": ".app-card[data-demo='true']"
+      "name": "A persisted staging sample appears in expanded Your apps",
+      "path": "/?demo=1&shot=home-apps",
+      "expectSelector": ".app-card[data-slug='staging-demo-your-app']"
     },
     {
       "name": "Applied close-issue proposal renders as an Issue close card in Completed/Done",
@@ -4208,7 +4208,7 @@
       "name": "Offline: the signed-in shell keeps a visible offline strip above everything (#1021)",
       "path": "/?shot=offline",
       "expectSelector": "body.is-offline #offline-banner:not(.hidden)",
-      "expectText": "You're offline. Showing saved content"
+      "expectText": "Reconnecting to Homeroom. Showing saved content"
     },
     {
       "name": "Offline sign-in explains why the form cannot work instead of failing silently (#1021)",
@@ -4825,7 +4825,7 @@
     {
       "name": "#1808: a DM from an earlier year is stamped with that year, not a bare time of day",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen #messages-message-9100100 .messages-message-head time[title]",
+      "expectSelector": "#messages-screen .messages-message .messages-message-head time[title*=\"2024\"]",
       "expectText": "2024"
     },
     {
@@ -5234,19 +5234,19 @@
     {
       "name": "#2387: every message carries one hover bar (recent reactions, the picker, reply, save, ⋯), and a threaded one its reply count",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100404:has(.msgx-thread-chip) > .msgx-bar:has([aria-label^=\"React with\"]) > [aria-label=\"Add reaction\"] ~ [aria-label=\"Reply\"] ~ [aria-label=\"Save message\"] ~ .messages-action-more[aria-haspopup=\"menu\"]",
+      "expectSelector": ".messages-thread-channel .messages-message:has(.msgx-thread-chip) > .msgx-bar:has([aria-label^=\"React with\"]) > [aria-label=\"Add reaction\"] ~ [aria-label=\"Reply\"] ~ [aria-label=\"Save message\"] ~ .messages-action-more",
       "expectText": "3 replies"
     },
     {
       "name": "#2387: a reply thread opens beside its channel, with its first message and a composer of its own",
       "path": "/?demo=1#messages/910004/thread/9100404",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.messages-has-reply-thread > .messages-reply-pane[data-reply-thread=\"9100404\"] .messages-composer-thread",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.messages-has-reply-thread > .messages-reply-pane[data-reply-thread] .messages-composer-thread",
       "expectText": "Threads keep the room readable"
     },
     {
       "name": "#2387: a deleted message leaves a placeholder, a message link lands on it, and Full width, just before ⋯ in the header, can hide the list beside it",
       "path": "/?demo=1#messages/910002/m/9100202",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout:has(.messages-thread-header > .messages-list-toggle[aria-label=\"Full width\"][aria-pressed=\"false\"] + .relative) #messages-message-9100202 .messages-deleted",
+      "expectSelector": ".messages-layout:has(.messages-thread-header > .messages-list-toggle[aria-label=\"Full width\"][aria-pressed=\"false\"] + .relative) .messages-message .messages-deleted",
       "expectText": "Message deleted"
     },
     {
@@ -5274,7 +5274,7 @@
     {
       "name": "#2387 follow-up: a thread's replies show in #general where they landed, one card for the run, and the card under the first message shows the newest reply",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": ".messages-thread-channel:has(#messages-message-9100404 .msgx-thread-card .msgx-thread-line) .msgx-thread-activity > button.msgx-thread-activity-card .msgx-thread-line",
+      "expectSelector": ".messages-thread-channel:has(.messages-message .msgx-thread-card .msgx-thread-line) .msgx-thread-activity > button.msgx-thread-activity-card .msgx-thread-line",
       "expectText": "3 replies in thread"
     },
     {

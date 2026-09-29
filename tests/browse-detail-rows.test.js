@@ -19,8 +19,8 @@
 //
 // So this suite renders the real component and runs the real selectors over
 // the real output, with a tiny descendant matcher (the selectors are plain
-// descendant chains of tag / #id / .class / [attr="value"], plus the one
-// structural pseudo-class the Share check needs, `:first-child` — nothing
+// descendant chains of tag / #id / .class / [attr="value"], plus `:first-child`
+// and descendant `:has()` / `:not(:has())` checks for runtime availability — nothing
 // here invents support for combinators the manifest does not use on this
 // page; an unsupported selector THROWS rather than silently passing).
 
@@ -40,7 +40,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8'
 
 // ── the fixture ────────────────────────────────────────────────────────
 //
-// One ready descriptor that satisfies every declared check at once: the
+// A ready descriptor for the live-app checks: the
 // Open button, the Share row leading the action card, an action row labelled
 // "View on GitHub", a second labelled "Fork this app", the fork-lineage
 // anchor, and a contributor row for the demo seed the contributors check
@@ -57,8 +57,7 @@ const DETAIL = {
   openLabel: 'Open',
   isAdded: false,
   favLabel: 'Add to Your apps',
-  // A running app with a public link (Browse.shareUrlFor), so the Share row
-  // draws — the declared Share check selects it as the card's first child.
+  // A running app with a public link (Browse.shareUrlFor), so the Share row draws.
   canShare: true,
   actions: [
     { index: 0, label: 'View on GitHub', title: 'See the source', danger: false, disabled: false },
@@ -82,6 +81,14 @@ const DETAIL = {
     toggle: 'Show all 7 contributors',
     note: null,
   },
+};
+
+const STORED_SAMPLE = {
+  ...DETAIL,
+  app: { slug: 'staging-demo-forkable', name: 'Staging demo forkable app', url: null },
+  name: 'Staging demo forkable app',
+  slug: 'staging-demo-forkable',
+  canShare: false,
 };
 
 // #browse-detail is the host features/apps/browse-screen.tsx mounts this
@@ -140,7 +147,7 @@ function all(node) {
 // value carries arbitrary text, and `a[href="#app/x"]` read by a loose /#(…)/
 // yields the id "app". That was a real false negative while writing this.
 function parseCompound(part) {
-  const out = { tag: null, id: null, classes: [], attrs: [], firstChild: false };
+  const out = { tag: null, id: null, classes: [], attrs: [], firstChild: false, has: [], notHas: [] };
   let i = 0;
   const tag = /^(?:[a-z][a-z0-9-]*|\*)/.exec(part);
   if (tag) { out.tag = tag[0] === '*' ? null : tag[0]; i = tag[0].length; }
@@ -156,6 +163,10 @@ function parseCompound(part) {
       // as in the prototype's More list), so the matcher learned exactly this
       // pseudo-class — element children only, as in CSS.
       out.firstChild = true;
+    } else if ((m = /^:not\(:has\(([^()]+)\)\)/.exec(rest))) {
+      out.notHas.push(m[1]);
+    } else if ((m = /^:has\(([^()]+)\)/.exec(rest))) {
+      out.has.push(m[1]);
     } else {
       throw new Error(`browse-detail-rows.test.js: unsupported selector part "${part}" — `
         + 'this matcher covers only descendant chains of tag / #id / .class / [attr="value"]. '
@@ -170,6 +181,8 @@ function matchesCompound(node, c) {
   if (c.tag && node.tag !== c.tag) return false;
   if (c.id && node.attrs.id !== c.id) return false;
   if (c.firstChild && (!node.parent || node.parent.children[0] !== node)) return false;
+  if (c.has.some((selector) => queryAll(node, selector).length === 0)) return false;
+  if (c.notHas.some((selector) => queryAll(node, selector).length > 0)) return false;
   const classList = (node.attrs.class || '').split(/\s+/);
   if (c.classes.some((cls) => !classList.includes(cls))) return false;
   return c.attrs.every(({ name, value }) => {
@@ -207,11 +220,16 @@ test('the manifest still declares the detail-page checks this suite guards', () 
 });
 
 test('every declared #browse-detail selector matches the RENDERED detail page', () => {
-  const root = treeOf(renderDetail());
   for (const t of declared) {
+    const detail = t.path === '/#apps/staging-demo-forkable' ? STORED_SAMPLE : DETAIL;
+    const root = treeOf(renderDetail(detail));
     const hits = queryAll(root, t.expectSelector);
     assert.ok(hits.length > 0,
       `dapp.json check "${t.name}" no longer matches: ${t.expectSelector}`);
+    if (detail === STORED_SAMPLE) {
+      assert.equal(queryAll(treeOf(renderDetail(DETAIL)), t.expectSelector).length, 0,
+        'the no-runtime check must reject a page with a Share link');
+    }
   }
 });
 

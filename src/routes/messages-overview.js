@@ -141,6 +141,7 @@ const DISCUSSIONS_SQL = `
       LEFT JOIN member ON member.app_id = a.id
       LEFT JOIN app_favorites fav ON fav.app_id = a.id AND fav.user_id = $1
      WHERE (NOT a.self_hosted OR $2::boolean)
+       AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = $1 AND b.app_id = a.id)
        AND ($2::boolean OR a.view_visibility = 'public' OR member.app_id IS NOT NULL)
        AND (member.app_id IS NOT NULL
             OR (fav.app_id IS NOT NULL AND NOT fav.hidden)

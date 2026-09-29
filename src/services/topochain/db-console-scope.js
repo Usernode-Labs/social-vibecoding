@@ -125,6 +125,12 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   // whose hash and hint stay masked.
   'mcp_delegations',
   'user_agent_files',
+  'moderation_cases',
+  'moderation_reports',
+  'moderation_evidence_files',
+  'moderation_report_files',
+  'moderation_actions',
+  'moderation_message_originals',
   'profile_reports',
   // Lifecycle rows without bearer/envelope material. Opaque ids, public
   // installation keys and state transitions remain useful for human-admin
@@ -140,6 +146,7 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'conversation_message_attachments',
   'conversation_message_objects',
   'chat_session_spec_conversation_shares',
+  'user_app_blocks',
   'user_blocks',
   // Mutual friends (#2386): private relationships, like user_blocks beside
   // them, and no credential among their columns.

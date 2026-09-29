@@ -1,3 +1,4 @@
+import { openReport } from '../dialogs/report';
 import {
   memo, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode,
 } from 'react';
@@ -1160,6 +1161,7 @@ function ThreadHeader() {
               : active.kind === 'direct'
                 ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button>
                 : null}
+            {peer ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: `@${peer.username}`, userId: peer.id }); }}>Report user</button> : null}
             <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>Refresh conversation</button>
           </div>
         ) : null}

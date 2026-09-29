@@ -42,7 +42,9 @@
  *
  * Only the TOP entry consumes a record. Releasing one underneath (two
  * surfaces closing out of order) would otherwise eat a record belonging to
- * something still open.
+ * something still open. The address and marker must also still belong to
+ * that entry: blocking an app navigates Home while its report receipt stays
+ * open, and closing the receipt must not undo that newer navigation.
  *
  * ── Refusing to close ──────────────────────────────────────────────────
  *
@@ -212,8 +214,12 @@ export function createBackStack(win: WindowLike): BackStack {
     return key !== null && deadKeys.has(key) && !stack.some((entry) => entry.key === key);
   };
 
-  // Is the page on this entry's record right now?
+  // Is the page on this entry's record right now? A copied or replayed
+  // marker can still match by id/key at a different address (blocking an
+  // app navigates Home while its report receipt's copied state tags along),
+  // so the address it was pushed at must also still be the current one.
   const standingOn = (entry: BackStackEntry): boolean => {
+    if (entry.href != null && href() !== entry.href) return false;
     const key = currentKey();
     if (entry.key && key) return key === entry.key;
     return currentId() === entry.id;

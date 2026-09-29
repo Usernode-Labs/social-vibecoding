@@ -340,7 +340,7 @@ function parseCookies(header) {
 
 async function resolveAppForAccess(pool, slug) {
   const { rows } = await pool.query(
-    'SELECT id, collab_visibility, view_visibility FROM apps WHERE slug = $1',
+    'SELECT id, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE slug = $1',
     [slug]
   );
   return rows[0] || null;
@@ -366,6 +366,10 @@ function leaveRoom(appId, client) {
 function deliverToRoom(appId, data, excludeWs = null, audience = {}) {
   const room = rooms.get(appId);
   if (!room) return;
+  if (data.type === 'app_suspended') {
+    for (const client of room) client.ws.close(4004, 'App suspended by moderation');
+    return;
+  }
   const payload = JSON.stringify(data);
   const hidden = new Set(audience.blockedUserIds || []);
   const quoteHidden = new Set(audience.quoteHiddenUserIds || []);
@@ -587,8 +591,9 @@ async function validateThread(pool, appId, thread, viewerId = null) {
 const WRITE_MSG_TYPES = new Set(['chat', 'edit', 'react', 'typing']);
 
 async function canWriteChat(pool, client) {
+  if (await require('./moderation').isRestricted(pool, client.user.id)) return false;
   const { rows } = await pool.query(
-    'SELECT id, collab_visibility, view_visibility FROM apps WHERE id = $1',
+    'SELECT id, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE id = $1',
     [client.appId]
   );
   if (!rows.length) return false;
@@ -724,7 +729,7 @@ async function handleMessage(pool, client, msg) {
             }
           } else if (['message', 'event', 'spec'].includes(q.source) && Number.isInteger(q.refMsgId)) {
             const { rows: refRows } = await pool.query(
-              `SELECT m.id, m.user_id, m.content, m.msg_type, m.metadata, u.username
+              `SELECT m.id, m.user_id, m.content, m.msg_type, m.metadata, m.moderation_hidden_at, u.username
                FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
                WHERE m.id = $1 AND m.app_id = $2 AND m.deleted_at IS NULL`,
               [q.refMsgId, client.appId]
@@ -919,6 +924,7 @@ async function handleMessage(pool, client, msg) {
              LEFT JOIN chat_sessions cs ON cs.id = n.session_id
              LEFT JOIN users su ON su.id = n.source_user_id
              WHERE n.id = ANY($1::int[])
+               AND NOT EXISTS (SELECT 1 FROM user_app_blocks app_block WHERE app_block.user_id = n.user_id AND app_block.app_id = n.app_id)
                AND NOT EXISTS (
                  SELECT 1 FROM user_blocks blocked
                   WHERE blocked.blocker_id = n.user_id
@@ -968,6 +974,7 @@ async function handleMessage(pool, client, msg) {
              LEFT JOIN chat_sessions cs ON cs.id = n.session_id
              LEFT JOIN users su ON su.id = n.source_user_id
              WHERE n.id = ANY($1::int[])
+               AND NOT EXISTS (SELECT 1 FROM user_app_blocks app_block WHERE app_block.user_id = n.user_id AND app_block.app_id = n.app_id)
                AND NOT EXISTS (
                  SELECT 1 FROM user_blocks blocked
                   WHERE blocked.blocker_id = n.user_id
@@ -1060,7 +1067,7 @@ async function handleMessage(pool, client, msg) {
       // row): the row must exist in this app, belong to the editor, and be
       // an ordinary 'message'.
       const { rows } = await pool.query(
-        `SELECT user_id, msg_type, thread_type, thread_ref, deleted_at
+        `SELECT user_id, msg_type, thread_type, thread_ref, deleted_at, moderation_hidden_at
            FROM chat_messages WHERE id = $1 AND app_id = $2`,
         [messageId, client.appId]
       );
@@ -1071,7 +1078,7 @@ async function handleMessage(pool, client, msg) {
         return;
       }
       const row = rows[0];
-      if (row.user_id !== client.user.id || row.msg_type !== 'message') {
+      if (row.moderation_hidden_at || row.user_id !== client.user.id || row.msg_type !== 'message') {
         log.warn('ws', 'edit rejected: not author or not an editable message', {
           appId: client.appId, userId: client.user.id, messageId, msgType: row.msg_type,
         });
@@ -1084,7 +1091,7 @@ async function handleMessage(pool, client, msg) {
       // at what it replied to, and reactions (keyed on message id) survive.
       const { rows: upd } = await pool.query(
         `UPDATE chat_messages SET content = $1, edited_at = NOW()
-          WHERE id = $2 AND deleted_at IS NULL RETURNING edited_at`,
+          WHERE id = $2 AND deleted_at IS NULL AND moderation_hidden_at IS NULL RETURNING edited_at`,
         [content, messageId]
       );
       // Deleted between the check and the write.
@@ -1178,6 +1185,7 @@ async function handleMessage(pool, client, msg) {
                LEFT JOIN chat_sessions cs ON cs.id = n.session_id
                LEFT JOIN users su ON su.id = n.source_user_id
                WHERE n.id = ANY($1::int[])
+               AND NOT EXISTS (SELECT 1 FROM user_app_blocks app_block WHERE app_block.user_id = n.user_id AND app_block.app_id = n.app_id)
                  AND NOT EXISTS (
                    SELECT 1 FROM user_blocks blocked
                     WHERE blocked.blocker_id = n.user_id
@@ -1426,15 +1434,16 @@ function deliverGlobalScoped(payload, { appId = null, appSlug = null } = {}) {
   }
   appAccess.getWsVisibility(_pool, { appId, appSlug })
     .then((info) => {
-      if (!info) return; // app gone — nothing to broadcast
-      if (!info.viewPrivate) {
+      if (!info || info.suspended) return; // no ordinary activity from a suspended app
+      if (!info.viewPrivate && !info.blockedUserIds?.size) {
         deliverGlobal(payload);
         return;
       }
       const json = JSON.stringify(payload);
       for (const client of globalClients) {
         if (client.ws.readyState !== 1) continue;
-        if (client.user.isAdmin || info.memberIds.has(client.user.id)) {
+        if (!info.blockedUserIds?.has(client.user.id)
+            && (!info.viewPrivate || client.user.isAdmin || info.memberIds.has(client.user.id))) {
           client.ws.send(json);
         }
       }
@@ -1644,6 +1653,14 @@ function broadcastToAdmins(payload) {
 // `pushNotificationToUser` is kept as an alias so the notification call sites
 // above (and any external caller) read naturally and don't have to churn.
 function deliverToUser(userId, payload) {
+  if (payload.type === 'app_blocks_changed') {
+    appAccess.invalidateVisibility(payload.appId, payload.slug);
+    if (payload.blocked) {
+      for (const client of rooms.get(payload.appId) || []) {
+        if (client.user.id === userId) client.ws.close(4004, 'App blocked');
+      }
+    }
+  }
   const json = JSON.stringify(payload);
   let sent = 0;
   for (const client of globalClients) {

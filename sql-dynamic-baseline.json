@@ -159,6 +159,13 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
+      "fingerprint": "1012d07842e867c85087",
+      "count": 1,
+      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
       "fingerprint": "186bdc9221b3dd99e2f1",
       "count": 1,
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description FROM apps WHERE slug = $1 AND (NOT self_hosted "
@@ -185,18 +192,11 @@
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
     },
     {
-      "source": "src/routes/apps.js",
-      "kind": "structural-template",
-      "fingerprint": "7b1ff9cff45031446175",
-      "count": 1,
-      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
-    },
-    {
       "source": "src/routes/chat.js",
       "kind": "structural-template",
-      "fingerprint": "a8088914fba97dc374b7",
+      "fingerprint": "8fa09856905a3850d87a",
       "count": 1,
-      "preview": "`SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via, m.deleted_at FROM "
+      "preview": "`SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via, m.deleted_at, m.mo"
     },
     {
       "source": "src/routes/cli-auth.js",
@@ -1079,6 +1079,90 @@
       "fingerprint": "33bca25f32a9a95ab363",
       "count": 1,
       "preview": "`SELECT cs.id, cs.user_id, cs.source, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, cs.approval_epoch, cs.integration_resolved_epoch, cs.integra"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "356f708962d79716e928",
+      "count": 1,
+      "preview": "`SELECT id, username, display_name, bio, profile_published, profile_disabled_at FROM users WHERE username = $1 ${lock ? 'FOR SHARE' : ''}`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "472233ad7a4b6e23a28b",
+      "count": 1,
+      "preview": "`UPDATE ${table} SET content = $2, moderation_hidden_at = NULL${c.target_type === 'app_message' ? ', metadata = $3' : ''} WHERE id = $1`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "489298861dae26782c81",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS} FROM apps WHERE id = $1`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "4c24d9aa01a7083e3277",
+      "count": 1,
+      "preview": "`UPDATE users SET participation_restricted_at = ${action === 'restrict_user' ? 'NOW()' : 'NULL'} WHERE id = $1 AND participation_restricted_at IS ${action === '"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "6255692e60aeed2a91e4",
+      "count": 1,
+      "preview": "`SELECT * FROM ${table} WHERE id = $1 FOR UPDATE`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "a9dee7364368978b9c59",
+      "count": 1,
+      "preview": "`UPDATE ${table} SET content = $2, moderation_hidden_at = NOW()${c.target_type === 'app_message' ? \", metadata = '{}'::jsonb\" : ''} WHERE id = $1`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "c7ca09cc53008af93cf2",
+      "count": 1,
+      "preview": "`SELECT id, moderation_hidden_at FROM ${c.target_type === 'app_message' ? 'chat_messages' : 'conversation_messages'} WHERE id = $1`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "ca8d147570795698a506",
+      "count": 1,
+      "preview": "`SELECT * FROM ${table} WHERE id = $1 ${lock ? 'FOR SHARE' : ''}`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "d3c71689eb36f6537d03",
+      "count": 1,
+      "preview": "`SELECT id, slug, name, created_by, self_hosted, main_sha, collab_visibility, view_visibility, moderation_suspended_at FROM apps WHERE slug = $1 ${lock ? 'FOR S"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "d5425a9cf2e8e3ed4a75",
+      "count": 1,
+      "preview": "`SELECT id, filename, content_type, data FROM ${conversation ? 'conversation_message_attachments' : 'chat_message_attachments'} WHERE message_id = $1`"
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "f9f00f4fe6e3ca37acc6",
+      "count": 1,
+      "preview": "`UPDATE apps SET moderation_suspended_at = ${action === 'suspend_app' ? 'NOW()' : 'NULL'} WHERE id = $1 AND self_hosted IS NOT TRUE AND moderation_suspended_at "
+    },
+    {
+      "source": "src/services/moderation.js",
+      "kind": "structural-template",
+      "fingerprint": "ffedbadadf5a3cf89623",
+      "count": 1,
+      "preview": "`DELETE FROM notifications WHERE ${c.target_type === 'app_message' ? 'chat_message_id' : 'conversation_message_id'} = $1`"
     },
     {
       "source": "src/services/notifications.js",

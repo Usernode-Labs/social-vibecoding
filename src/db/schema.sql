@@ -5233,6 +5233,16 @@ COMMENT ON TABLE mobile_push_registrations IS 'staging:private';
 COMMENT ON TABLE mobile_push_registration_events IS 'staging:private';
 COMMENT ON TABLE mobile_push_deliveries IS 'staging:private';
 
+-- Personal app blocks affect one viewer, never the app's contributors.
+CREATE TABLE IF NOT EXISTS user_app_blocks (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, app_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_app_blocks_app ON user_app_blocks (app_id, user_id);
+COMMENT ON TABLE user_app_blocks IS 'staging:private';
+
 -- Capture the push outbox in the same transaction as the canonical
 -- notification. The kind/category registry is intentionally closed: adding a
 -- new inbox kind does not automatically make it a lock-screen event.
@@ -5242,6 +5252,7 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   IF NEW.read_at IS NOT NULL
+     OR EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = NEW.user_id AND b.app_id = NEW.app_id)
      OR NOT COALESCE((
        SELECT COALESCE(preference.enabled, policy.default_enabled)
          FROM mobile_push_kind_categories policy
@@ -7590,6 +7601,24 @@ CREATE INDEX IF NOT EXISTS idx_conversation_objects_message
 CREATE INDEX IF NOT EXISTS idx_conversation_objects_app
   ON conversation_message_objects (app_id, object_type, object_ref);
 
+-- Staging's old /messages/91000x links name recipes, not shared private
+-- conversations. Each viewer gets separate persisted rows; every subsequent
+-- action uses the ordinary conversation/message IDs and permission checks.
+CREATE TABLE IF NOT EXISTS staging_conversation_fixtures (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  legacy_id INTEGER NOT NULL CHECK (legacy_id BETWEEN 910001 AND 910004),
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, legacy_id)
+);
+COMMENT ON TABLE staging_conversation_fixtures IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS staging_app_fixtures (
+  app_id INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE
+);
+COMMENT ON TABLE staging_app_fixtures IS 'staging:private';
+ALTER TABLE staging_app_fixtures
+  ADD COLUMN IF NOT EXISTS home_favorite_seeded BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Sharing an exact immutable spec version into a conversation grants it to
 -- current members. Membership is checked at every read, so leaving/removal
 -- immediately revokes both retained-history and full-spec access.
@@ -9249,6 +9278,78 @@ INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_paused_apps', '[]'),
   ('homeroom_bot_live_apps', '[]')
 ON CONFLICT (key) DO NOTHING;
+
+-- #2721. Private, durable moderation records; target IDs intentionally have
+-- no cascading FK: removing a target must not remove evidence or the audit.
+ALTER TABLE notifications ALTER COLUMN detail TYPE VARCHAR(1200);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS participation_restricted_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS moderation_suspended_at TIMESTAMPTZ;
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS moderation_hidden_at TIMESTAMPTZ;
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS moderation_hidden_at TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS moderation_cases (
+  id BIGSERIAL PRIMARY KEY,
+  target_type VARCHAR(32) NOT NULL CHECK (target_type IN ('app','user','app_message','conversation_message')),
+  target_id BIGINT NOT NULL,
+  target_label TEXT NOT NULL,
+  target_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'new' CHECK (status IN ('new','in_review','resolved','dismissed')),
+  cycle INTEGER NOT NULL DEFAULT 1,
+  revision INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ,
+  UNIQUE(target_type, target_id)
+);
+CREATE INDEX IF NOT EXISTS moderation_cases_queue ON moderation_cases(status, updated_at, id);
+CREATE TABLE IF NOT EXISTS moderation_reports (
+  id BIGSERIAL PRIMARY KEY,
+  case_id BIGINT NOT NULL REFERENCES moderation_cases(id) ON DELETE CASCADE,
+  cycle INTEGER NOT NULL,
+  reporter_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reason VARCHAR(32) NOT NULL,
+  detail VARCHAR(1000),
+  evidence JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  legacy_type VARCHAR(32), legacy_id BIGINT,
+  UNIQUE(legacy_type, legacy_id)
+);
+CREATE TABLE IF NOT EXISTS moderation_evidence_files (
+  id BIGSERIAL PRIMARY KEY,
+  source_type VARCHAR(32) NOT NULL,
+  source_id VARCHAR(32) NOT NULL,
+  filename TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  data BYTEA NOT NULL,
+  UNIQUE(source_type, source_id)
+);
+CREATE TABLE IF NOT EXISTS moderation_report_files (
+  report_id BIGINT NOT NULL REFERENCES moderation_reports(id) ON DELETE CASCADE,
+  file_id BIGINT NOT NULL REFERENCES moderation_evidence_files(id) ON DELETE CASCADE,
+  PRIMARY KEY(report_id, file_id)
+);
+CREATE TABLE IF NOT EXISTS moderation_actions (
+  id BIGSERIAL PRIMARY KEY,
+  case_id BIGINT NOT NULL REFERENCES moderation_cases(id) ON DELETE CASCADE,
+  actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action VARCHAR(32) NOT NULL,
+  reason VARCHAR(1000),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS moderation_message_originals (
+  target_type VARCHAR(32) NOT NULL,
+  target_id INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  metadata JSONB,
+  PRIMARY KEY(target_type, target_id)
+);
+COMMENT ON TABLE moderation_cases IS 'staging:private';
+COMMENT ON TABLE moderation_reports IS 'staging:private';
+COMMENT ON TABLE moderation_evidence_files IS 'staging:private';
+COMMENT ON TABLE moderation_report_files IS 'staging:private';
+COMMENT ON TABLE moderation_actions IS 'staging:private';
+COMMENT ON TABLE moderation_message_originals IS 'staging:private';
+
+CREATE UNIQUE INDEX IF NOT EXISTS moderation_reports_unique_open ON moderation_reports(case_id,cycle,reporter_user_id) WHERE legacy_type IS NULL;
 
 -- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
 --

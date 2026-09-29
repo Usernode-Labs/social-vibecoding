@@ -15,7 +15,7 @@
 
 const log = require('./logger');
 
-const ACCESS_COLUMNS = 'id, slug, created_by, self_hosted, collab_visibility, view_visibility';
+const ACCESS_COLUMNS = 'id, slug, created_by, self_hosted, collab_visibility, view_visibility, moderation_suspended_at';
 
 // Credential-bearing `apps` columns that must NEVER reach an HTTP
 // response. Kept in sync with the `staging:private` tags in
@@ -47,7 +47,7 @@ function stripAppSecrets(row) {
 const NON_SECRET_APP_COLUMNS = [
   'id', 'name', 'slug', 'repo_url', 'container_id', 'status', 'retry_count',
   'created_by', 'created_at', 'main_sha', 'main_pr_number', 'last_deploy_at',
-  'manifest_snapshot', 'last_failure', 'locked', 'self_hosted',
+  'manifest_snapshot', 'last_failure', 'locked', 'self_hosted', 'moderation_suspended_at',
   'collab_visibility', 'view_visibility', 'approver_policy',
   'approvals_required', 'screenshot_device_scale', 'icon_emoji',
   'icon_image_id', 'featured_illustration', 'forked_from', 'admin_usernames',
@@ -117,7 +117,7 @@ async function isCollaborator(pool, appId, userId) {
 // so a trimmed projection that only broke for non-admins would keep
 // slipping through the paths most likely to exercise it.
 async function checkAppAccess(pool, app, user, level = 'view') {
-  if (!app) return false;
+  if (!app || app.moderation_suspended_at) return false;
   const column = level === 'collab' ? 'collab_visibility' : 'view_visibility';
   const vis = app[column];
   if (!vis) {
@@ -127,6 +127,7 @@ async function checkAppAccess(pool, app, user, level = 'view') {
       + 'ACCESS_COLUMNS) rather than trimming the projection.'
     );
   }
+  if (await require('./app-blocks').isBlocked(pool, user?.id, app.id)) return false;
   if (user?.isAdmin) return true;
   if (vis === 'public') return true;
   return isCollaborator(pool, app.id, user?.id);
@@ -191,7 +192,7 @@ function sessionCollabGuard(pool) {
     if (!Number.isFinite(id)) return next();
     try {
       const { rows } = await pool.query(
-        `SELECT a.id, a.collab_visibility, a.view_visibility
+        `SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1`,
         [id]
@@ -217,7 +218,7 @@ function issueCollabGuard(pool) {
     if (!Number.isFinite(id)) return next();
     try {
       const { rows } = await pool.query(
-        `SELECT a.id, a.collab_visibility, a.view_visibility
+        `SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at
            FROM issues i JOIN apps a ON a.id = i.app_id
           WHERE i.id = $1`,
         [id]
@@ -280,7 +281,7 @@ async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
   const cached = visCacheById.get(id);
   if (cached && now - cached.at < VIS_CACHE_TTL_MS) return cached;
 
-  const { rows } = await pool.query('SELECT view_visibility FROM apps WHERE id = $1', [id]);
+  const { rows } = await pool.query('SELECT view_visibility, moderation_suspended_at FROM apps WHERE id = $1', [id]);
   if (!rows.length) return null;
   const viewPrivate = rows[0].view_visibility === 'private';
   let memberIds = new Set();
@@ -291,7 +292,9 @@ async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
     );
     memberIds = new Set(members.map((r) => r.user_id));
   }
-  const entry = { at: now, viewPrivate, memberIds };
+  const { rows: blocks } = await pool.query('SELECT user_id FROM user_app_blocks WHERE app_id = $1', [id]);
+  const blockedUserIds = new Set(blocks.map(row => Number(row.user_id)));
+  const entry = { at: now, viewPrivate, memberIds, blockedUserIds, suspended: !!rows[0].moderation_suspended_at };
   visCacheById.set(id, entry);
   return entry;
 }
@@ -346,7 +349,7 @@ async function getHostVisibility(pool, slug) {
     return cached.appId == null ? null : cached;
   }
   const { rows } = await pool.query(
-    'SELECT id, view_visibility FROM apps WHERE slug = $1',
+    'SELECT id, view_visibility, moderation_suspended_at FROM apps WHERE slug = $1',
     [slug]
   );
   if (!rows.length) {
@@ -358,6 +361,7 @@ async function getHostVisibility(pool, slug) {
     at: now,
     appId: rows[0].id,
     viewPrivate: rows[0].view_visibility === 'private',
+    suspended: !!rows[0].moderation_suspended_at,
   };
   hostVisBySlug.set(slug, entry);
   return entry;
@@ -370,7 +374,7 @@ async function getHostVisibility(pool, slug) {
 async function isViewMember(pool, appId, userId) {
   if (!Number.isInteger(userId)) return false;
   const info = await getWsVisibility(pool, { appId });
-  if (!info) return false;          // app deleted
+  if (!info || info.suspended || info.blockedUserIds?.has(userId)) return false; // app deleted or suspended
   if (!info.viewPrivate) return true; // flipped public since lookup
   if (info.memberIds.has(userId)) return true;
   const { rows } = await pool.query('SELECT is_admin FROM users WHERE id = $1', [userId]);

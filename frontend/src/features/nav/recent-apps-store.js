@@ -117,5 +117,17 @@ export function rememberRecentApp(app, owner, at) {
   }
 }
 
+/** Remove a blocked app from this account's resume history, including storage. */
+export function forgetRecentApp(slug, owner) {
+  const apps = recentAppsStore.get().apps.filter((app) => app.slug !== slug);
+  recentAppsStore.set({ apps });
+  if (!owner) return;
+  try {
+    window.localStorage.setItem(KEY, JSON.stringify({ owner, apps }));
+  } catch {
+    // Keep the current view correct when storage is unavailable.
+  }
+}
+
 /** Exported for the test that pins the key, so it cannot drift silently. */
 export const RECENT_APPS_KEY = KEY;

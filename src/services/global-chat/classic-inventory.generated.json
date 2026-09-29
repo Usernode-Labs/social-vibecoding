@@ -93,6 +93,15 @@
       "mobileSupported": true
     },
     {
+      "key": "blocked-apps",
+      "label": "Blocked apps",
+      "group": "Preferences",
+      "gate": null,
+      "capabilityId": "settings.open.blocked_apps",
+      "classicPath": "#settings/blocked-apps",
+      "mobileSupported": true
+    },
+    {
       "key": "tour",
       "label": "Welcome tour",
       "group": "Preferences",
@@ -1967,6 +1976,69 @@
       "expression": null,
       "status": "exempt",
       "reason": "the agent-session Mayor's own conversation (#2779); one assistant does not drive another"
+    },
+    {
+      "source": "src/routes/app-blocks.js",
+      "method": "GET",
+      "path": "/api/me/app-blocks",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "settings.get.me.app.blocks.4297b6cb",
+      "domain": "settings",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "setting",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#settings/blocked-apps",
+      "clientReferences": [
+        "frontend/src/features/header/ai-credit.js",
+        "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/profile.js",
+        "frontend/src/features/settings/sections/blocked-apps.tsx",
+        "frontend/src/features/settings/sections/email.tsx",
+        "frontend/src/features/settings/settings.js",
+        "public/js/app-view.js",
+        "public/js/session-state.js"
+      ]
+    },
+    {
+      "source": "src/routes/app-blocks.js",
+      "method": "PUT",
+      "path": "/api/me/app-blocks/:slug",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "settings.put.me.app.blocks.item.e4da76a9",
+      "domain": "settings",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "setting",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#settings/blocked-apps",
+      "clientReferences": [
+        "frontend/src/features/dialogs/report.tsx",
+        "frontend/src/features/settings/sections/blocked-apps.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/app-blocks.js",
+      "method": "DELETE",
+      "path": "/api/me/app-blocks/:slug",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "settings.delete.me.app.blocks.item.63feee12",
+      "domain": "settings",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "setting",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#settings/blocked-apps",
+      "clientReferences": [
+        "frontend/src/features/dialogs/report.tsx",
+        "frontend/src/features/settings/sections/blocked-apps.tsx"
+      ]
     },
     {
       "source": "src/routes/app-directory.js",
@@ -4928,7 +5000,6 @@
       "classicPath": "#app/:slug/app",
       "clientReferences": [
         "frontend/src/features/app-context/about-data.ts",
-        "frontend/src/features/apps/browse-detail.tsx",
         "frontend/src/features/apps/browse.js",
         "frontend/src/features/dev-board/workshop/notices.tsx",
         "frontend/src/features/dialogs/members-controller.js",
@@ -4942,6 +5013,7 @@
       "path": "/api/apps/:slug/messages/:id/report",
       "expression": null,
       "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
       "capabilityId": "messages.post.apps.item.messages.item.report.63a3f5e8",
       "domain": "messages",
       "risk": "external_write",
@@ -4950,9 +5022,7 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#messages",
-      "clientReferences": [
-        "frontend/src/features/group-chat/transcript.tsx"
-      ]
+      "clientReferences": []
     },
     {
       "source": "src/routes/content-reports.js",
@@ -4970,7 +5040,6 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
-        "frontend/src/features/admin/admin-reports.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
@@ -4991,7 +5060,6 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
-        "frontend/src/features/admin/admin-reports.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
@@ -5501,6 +5569,7 @@
       "mobileSupported": true,
       "classicPath": "#profile",
       "clientReferences": [
+        "frontend/src/features/dialogs/report.tsx",
         "frontend/src/features/messages/api.ts"
       ]
     },
@@ -5519,6 +5588,7 @@
       "mobileSupported": true,
       "classicPath": "#profile",
       "clientReferences": [
+        "frontend/src/features/dialogs/report.tsx",
         "frontend/src/features/messages/api.ts"
       ]
     },
@@ -5572,7 +5642,6 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
-        "frontend/src/features/admin/admin-reports.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]
@@ -7697,6 +7766,319 @@
       ]
     },
     {
+      "source": "src/routes/moderation.js",
+      "method": "POST",
+      "path": "/api/reports",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.reports.0b5d9caa",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/admin/topochain/api-tester.tsx",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-chat/dev-chat.js",
+        "frontend/src/features/dialogs/report.tsx",
+        "frontend/src/features/home/home-panels.js",
+        "frontend/src/features/home/home.js",
+        "frontend/src/features/workshop/index.tsx",
+        "frontend/src/features/workshop/workshop-chrome.tsx",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "POST",
+      "path": "/api/conversations/:id/messages/:messageId/report",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "messages.post.conversations.item.messages.item.report.68dae324",
+      "domain": "messages",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "conversation",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#messages/:id",
+      "clientReferences": [
+        "frontend/src/features/messages/api.ts"
+      ]
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "POST",
+      "path": "/api/profiles/:username/report",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "profile.post.profiles.item.report.ca7fd180",
+      "domain": "profile",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "POST",
+      "path": "/api/users/:username/report",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.post.users.item.report.c57fa8fc",
+      "domain": "profile",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile",
+      "clientReferences": [
+        "frontend/src/features/profile/profile.js"
+      ]
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/report",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.apps.item.report.7d528f90",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app",
+      "clientReferences": [
+        "frontend/src/features/app-context/about-data.ts",
+        "frontend/src/features/apps/browse.js",
+        "frontend/src/features/dev-board/workshop/notices.tsx",
+        "frontend/src/features/dialogs/members-controller.js",
+        "frontend/src/features/messages/api.ts",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/messages/:id/report",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "messages.post.apps.item.messages.item.report.68c168f5",
+      "domain": "messages",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "conversation",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#messages",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "POST",
+      "path": "/api/admin/profile-reports/:id/:action",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.profile.reports.item.item.7b37918f",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "POST",
+      "path": "/api/admin/conversation-reports/:id/:action",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.conversation.reports.item.item.08923cde",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "POST",
+      "path": "/api/admin/app-reports/:id/:action",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.app.reports.item.item.cf77eec2",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "POST",
+      "path": "/api/admin/app-message-reports/:id/:action",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.app.message.reports.item.item.f916e897",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "POST",
+      "path": "/api/admin/profiles/:username/moderation",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.post.admin.profiles.item.moderation.e6727ad5",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "GET",
+      "path": "/api/admin/conversation-reports/:id/attachments/:attachmentId",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.get.admin.conversation.reports.item.attachments.item.54d4e371",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "GET",
+      "path": "/api/admin/conversation-reports/:id/attachments/:attachmentId/view",
+      "expression": null,
+      "status": "mapped",
+      "reviewReason": "Reviewed platform operation with no exact static client reference.",
+      "capabilityId": "admin.get.admin.conversation.reports.item.attachments.item.view.931973f8",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "client_action",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": []
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "GET",
+      "path": "/api/admin/moderation",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.moderation.7db1b45b",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-moderation.tsx",
+        "frontend/src/features/admin/admin-rollover.tsx",
+        "frontend/src/features/admin/admin-staging-reap.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "GET",
+      "path": "/api/admin/moderation/:id",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.moderation.item.359eabd0",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-moderation.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "GET",
+      "path": "/api/admin/moderation/:id/files/:fileId",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.moderation.item.files.item.e7e9c5a8",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-moderation.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/moderation.js",
+      "method": "POST",
+      "path": "/api/admin/moderation/:id/actions",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.moderation.item.actions.13ecbb05",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-moderation.tsx"
+      ]
+    },
+    {
       "source": "src/routes/notifications.js",
       "method": "POST",
       "path": "/api/me/test-alert",
@@ -8470,8 +8852,6 @@
       "mobileSupported": true,
       "classicPath": "#profile",
       "clientReferences": [
-        "frontend/src/features/group-chat/transcript.tsx",
-        "frontend/src/features/messages/message-row.tsx",
         "frontend/src/features/profile/profile.js"
       ]
     },
@@ -8508,7 +8888,6 @@
       "classicPath": "#admin",
       "clientReferences": [
         "frontend/src/features/admin/admin-homeroom-bot.tsx",
-        "frontend/src/features/admin/admin-reports.tsx",
         "frontend/src/features/admin/admin-rollover.tsx",
         "frontend/src/features/admin/admin-staging-reap.tsx"
       ]

@@ -797,6 +797,12 @@ const AppView = {
     // before that tail resumes, so the ownership check belongs here too.
     if (!isCurrentOpen()) return false;
     if (!res.ok) {
+      const failure = await res.json().catch(() => ({}));
+      if (failure.code === 'app_blocked') {
+        void window.PlatformUI?.confirm({ title: 'App blocked', message: 'You blocked this app. Unblock it in Settings → Blocked apps to open it again.', confirmLabel: 'Open Settings', cancelLabel: 'Close' }).then(open => {
+          if (open) location.hash = '#settings/blocked-apps';
+        });
+      }
       // The server won't confirm this app, but a launch surface may already
       // be mounted and pointing at it (beginLaunch runs off the cached list
       // record). Drop both, so the switchTab that follows lands on
@@ -2633,6 +2639,12 @@ const AppView = {
   // a copy to drift. `tests/app-frame-identity.test.js` holds the real store
   // and asserts on the view instead.
   _appStatusView(appData) {
+    if (appData?.staging_sample) return {
+      dot: null,
+      message: 'Preview sample app. You can try its discussion, favorites, reporting and blocking. No live app is deployed here.',
+      detail: null,
+      action: null,
+    };
     if (appData?.status === 'creating') {
       return { dot: 'creating', message: 'App is spinning up...', detail: null, action: null };
     }
@@ -22467,6 +22479,23 @@ const AppView = {
 // top-level listener; handleLlmBridgeMessage verifies the source is an
 // iframe this shell owns and ignores everything else.
 if (typeof window !== 'undefined') {
+  // Both the report receipt and live block events announce this before
+  // navigating Home. Drop the pending activity first: close() normally
+  // flushes it, but the blocked app no longer accepts that request.
+  window.addEventListener('app-blocks-changed', (event) => {
+    const { slug, blocked } = event.detail || {};
+    if (!blocked || !slug) return;
+    // Main keeps recently used apps alive. A block must discard that frame
+    // and its resume handles before navigateHome can park the outgoing app.
+    if (window.App?._runningApp?.slug === slug) window.App._runningApp = null;
+    window.UsernodeReact?.nav?.forget?.(slug);
+    delete AppView._issueStateBySlug[slug];
+    AppView._appFrame().evict(slug);
+    if (AppView.appData?.slug !== slug) return;
+    AppView._issueStateSource = null;
+    AppView.activeSeconds = 0;
+    AppView.stopActivityTracking();
+  });
   window.addEventListener('message', (e) => {
     try { AppView.handleLlmBridgeMessage(e); } catch {}
     // #2219: the gated browser capabilities (geolocation, microphone,

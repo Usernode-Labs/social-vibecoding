@@ -155,6 +155,7 @@ export function topicBackLabel(href) {
  * @property {boolean} readOnly
  * @property {boolean} showTerminal
  * @property {boolean} canShare
+ * @property {boolean} canReport
  * @property {string|null} sessionOrigin
  * @property {string|null} topicOrigin
  * @property {'app'|'dev'|'other'} tab
@@ -254,6 +255,8 @@ const INITIAL = {
   showTerminal: false,
   /** Whether the target is running and has a URL, i.e. whether Share works. */
   canShare: false,
+  /** Report eligibility from the app API; unknown targets cannot be reported. */
+  canReport: false,
   /** Active sessions belonging to `slug`. */
   sessions: [],
   /** Active sessions on every OTHER app — the overflow area. */

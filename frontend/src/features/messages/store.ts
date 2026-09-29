@@ -434,16 +434,30 @@ export async function loadThread(conversationId: number, force = false): Promise
     // retained history is not. Resolve membership first and never request
     // message bytes for an invitee.
     const active = await api.getConversation(conversationId);
+    if (request !== threadRequest || state.route.conversationId !== conversationId) return;
+    // Old Preview links resolve to the viewer's persisted sample thread.
+    // Use its canonical address for messages, writes, drafts and WS events.
+    if (active.id !== conversationId) {
+      const suffix = state.route.threadRootId ? `/thread/${state.route.threadRootId}`
+        : state.route.focusMessageId ? `/m/${state.route.focusMessageId}` : '';
+      openAddress(`#messages/${active.id}${suffix}`);
+      return;
+    }
     const member = active.membershipStatus === 'member';
     const anchor = focus || reading;
-    const page: { messages: ConversationMessage[]; nextBefore: number | null; nextAfter: number | null; threadRootId?: number | null } = !member
+    const page: { messages: ConversationMessage[]; nextBefore: number | null; nextAfter: number | null; threadRootId?: number | null; focusMessageId?: number | null } = !member
       ? { messages: [], nextBefore: null, nextAfter: null }
       : anchor
         ? await api.listMessagesAround(conversationId, anchor).then((around) => ({
-          messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter, threadRootId: around.focus.threadRootId,
+          messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter,
+          threadRootId: around.focus.threadRootId, focusMessageId: around.focus.messageId,
         })).catch(() => api.listMessages(conversationId).then((latest) => ({ ...latest, nextAfter: null })))
         : { ...(await api.listMessages(conversationId)), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
+    if (focus && page.focusMessageId && page.focusMessageId !== focus) {
+      openAddress(`#messages/${conversationId}/m/${page.focusMessageId}`);
+      return;
+    }
     const messages = withLocalRows(conversationId, [...page.messages].sort((a, b) => a.id - b.id));
     if (focus) focusLoaded = focus;
     publish({ active, messages, nextBefore: page.nextBefore, nextAfter: page.nextAfter, loadingThread: false, online: true });
@@ -1421,6 +1435,10 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
   try {
     const page = await api.listThread(conversationId, rootId);
     if (request !== replyThreadRequest || state.route.threadRootId !== rootId) return;
+    if (page.root?.id && page.root.id !== rootId) {
+      openAddress(threadAddress(conversationId, page.root.id));
+      return;
+    }
     const local = (state.thread?.messages || []).filter((item) => item.id < 0 && item.threadRootId === rootId
       && !page.messages.some((row) => row.sender.id === item.sender.id && row.content === item.content));
     const known = page.messages.map((item) => {

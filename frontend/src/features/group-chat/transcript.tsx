@@ -1,3 +1,4 @@
+import { openReport } from '../dialogs/report';
 /**
  * `#gc-messages` — the group chat transcript, as the only React writer below
  * that host.
@@ -58,7 +59,7 @@ import { ChatMessageRow, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
 import {
   BookmarkIcon, BookmarkSolidIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
-  PencilSquareIcon, ReplyArrowIcon, ThreadIcon, UserIcon,
+  PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
 import { confirmAction } from '../../lib/confirm';
@@ -70,7 +71,6 @@ import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { setUserBlocked } from '../messages/store';
-import { ReportForm, submitReport } from '../reports/report-form';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
@@ -561,12 +561,11 @@ function SpecSnippet({ html }: { html: string }) {
  * the same acts as a sheet; the module's own long-press stands down for a
  * `.gc-msg` row (see `_attachQuoteHandlers`).
  */
-function MessageActions({ msg, surface, onReportMessage, onReportUser }: {
+function MessageActions({ msg, surface, onReportMessage }: {
   msg: TranscriptMessage;
   /** Which transcript the row is in: a reply thread offers no thread of its own. */
   surface: 'main' | 'thread';
   onReportMessage: () => void;
-  onReportUser: () => void;
 }) {
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
   const [menu, setMenu] = useState<'above' | 'below' | null>(null);
@@ -576,7 +575,7 @@ function MessageActions({ msg, surface, onReportMessage, onReportUser }: {
   const recents = useRecentReactions();
   useDismiss(!!(picker || menu), [bar], () => { setPicker(null); setMenu(null); });
   const chat = controller();
-  const items = messageMenuItems(msg, surface, onReportMessage, onReportUser);
+  const items = messageMenuItems(msg, surface, onReportMessage);
   const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
   const pick = (emoji: string) => {
     rememberReaction(emoji);
@@ -617,7 +616,6 @@ export function messageMenuItems(
   msg: TranscriptMessage,
   surface: 'main' | 'thread',
   onReportMessage: () => void,
-  onReportUser: () => void,
 ): MenuItem[] {
   const chat = controller();
   const id = msg.id;
@@ -654,7 +652,6 @@ export function messageMenuItems(
     });
   } else if (!msg.mine && msg.senderId && msg.kind === 'message') {
     items.push({ key: 'report', label: 'Report message', icon: FlagIcon, separated: true, onSelect: onReportMessage });
-    items.push({ key: 'report-user', label: `Report @${msg.username}`, icon: UserIcon, onSelect: onReportUser });
     items.push({
       key: 'block', label: `Block @${msg.username}`, icon: NoSymbolIcon, danger: true,
       onSelect: () => {
@@ -691,23 +688,14 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   /** #2387: this row's reply thread is the one open beside the channel, which lights its chip. */
   threadOpen?: boolean;
 }) {
-  const [reporting, setReporting] = useState<'message' | 'user' | null>(null);
   const [sheet, setSheet] = useState(false);
   const recents = useRecentReactions();
   const chat = controller();
   const live = !msg.deleted && !!msg.id;
   const longPress = useLongPress(() => setSheet(true), { disabled: !live });
-  const report = async (reason: string, detail: string) => {
-    if (reporting === 'user') {
-      await submitReport(`/api/users/${encodeURIComponent(msg.username)}/report`, reason, detail);
-      return;
-    }
-    const slug = controller()?.appSlug;
-    if (!slug || !msg.id) throw new Error('This message is unavailable for reporting.');
-    await submitReport(`/api/apps/${encodeURIComponent(slug)}/messages/${msg.id}/report`, reason, detail);
-  };
+  const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, label: `Message from @${msg.username}`, userId: msg.senderId });
   const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
-  const items = live ? messageMenuItems(msg, surface, () => setReporting('message'), () => setReporting('user')) : [];
+  const items = live ? messageMenuItems(msg, surface, reportMessage) : [];
   const sheetItems: MenuItem[] = live ? [
     ...(!chat?._readOnly?.() ? [{ key: 'reply', label: 'Reply', icon: ReplyArrowIcon, onSelect: () => chat?.replyToMessage?.(msg.id, surface) }] : []),
     ...(msg.showBookmark ? [{ key: 'save', label: msg.bookmarked ? 'Unsave' : 'Save', icon: msg.bookmarked ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => chat?.toggleBookmark?.(msg.id) }] : []),
@@ -744,8 +732,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           ) : null}
         </>
       )}
-      actions={live ? <MessageActions msg={msg} surface={surface} onReportMessage={() => setReporting('message')}
-        onReportUser={() => setReporting('user')} /> : undefined}
+      actions={live ? <MessageActions msg={msg} surface={surface} onReportMessage={reportMessage} /> : undefined}
     >
       {msg.deleted ? <p className="gc-msg-deleted-text">Message deleted</p> : (
         <>
@@ -789,8 +776,6 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           onOpen={() => chat?.openReplyThread?.(msg.id)}
         />
       ) : null}
-      {reporting ? <ReportForm key={reporting} kind={reporting} onSubmit={report}
-        onCancel={() => setReporting(null)} /> : null}
       {live ? (
         <MessageActionSheet
           open={sheet}

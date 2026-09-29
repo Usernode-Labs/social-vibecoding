@@ -400,6 +400,7 @@ async function hydrateMessages(db, user, rows) {
     // removed when it was deleted; the empty values here are the contract
     // even for a report-retained attachment the moderation queue still holds.
     const deleted = !!row.deleted_at;
+    const moderated = !!row.moderation_hidden_at;
     // A platform line has no sender: Homeroom said it. Homeroom writes none
     // into a channel any more (services/ws.js sendSystemMessage); a line an
     // earlier version wrote that somebody replied to is kept, deleted, as
@@ -415,6 +416,7 @@ async function hydrateMessages(db, user, rows) {
       },
       ...(system ? { system: true } : {}),
       content: deleted ? '' : row.content,
+      moderated,
       createdAt: row.created_at,
       editedAt: deleted ? null : row.edited_at,
       reply: row.reply_id && !blockedIds.has(row.reply_sender_id) ? {
@@ -427,10 +429,10 @@ async function hydrateMessages(db, user, rows) {
         content: row.reply_deleted_at ? '' : (row.reply_content || ''),
         deleted: !!row.reply_deleted_at,
       } : null,
-      reactions: deleted ? [] : (reactions.get(row.id) || []),
-      attachments: deleted ? [] : (attachments.get(row.id) || []),
-      objects: deleted ? [] : (objects.get(row.id) || []),
-      saved: deleted ? false : savedIds.has(row.id),
+      reactions: deleted || moderated ? [] : (reactions.get(row.id) || []),
+      attachments: deleted || moderated ? [] : (attachments.get(row.id) || []),
+      objects: deleted || moderated ? [] : (objects.get(row.id) || []),
+      saved: deleted || moderated ? false : savedIds.has(row.id),
       deleted,
       threadRootId: row.thread_root_id ?? null,
       thread: row.thread_root_id == null ? (threads.get(row.id) || null) : null,
@@ -448,7 +450,7 @@ async function hydrateMessages(db, user, rows) {
 
 const MESSAGE_SELECT = `
   SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at, m.edited_at,
-         m.deleted_at, m.thread_root_id, m.msg_type,
+         m.deleted_at, m.moderation_hidden_at, m.thread_root_id, m.msg_type,
          su.username AS sender_username, sua.id AS sender_avatar_id,
          rm.id AS reply_id, rm.sender_id AS reply_sender_id, rm.content AS reply_content,
          rm.deleted_at AS reply_deleted_at,
@@ -1417,7 +1419,7 @@ async function editMessage(pool, user, conversationId, messageId, rawContent) {
     const { rows } = await db.query(
       `UPDATE conversation_messages SET content = $1, edited_at = NOW()
         WHERE id = $2 AND conversation_id = $3 AND sender_id = $4
-          AND deleted_at IS NULL
+          AND deleted_at IS NULL AND moderation_hidden_at IS NULL
         RETURNING id`,
       [content, messageId, conversationId, user.id]
     );

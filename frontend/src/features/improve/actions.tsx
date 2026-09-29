@@ -1,3 +1,4 @@
+import { openReport } from '../dialogs/report';
 /**
  * The two ACTIONS and the update NOTICE, which is all that outlived the
  * Improve panel (#2718 review).
@@ -87,6 +88,10 @@ export function ImproveQuickActions(): ReactNode {
           onClick={() => Improve.startSession()}
         />
       )}
+      {state.slug && state.canReport ? <QuickAction id="improve-row-report" label="Report app" onClick={async () => {
+        await Improve.close();
+        openReport({ targetType: 'app', target: state.slug!, label: state.name || state.slug! });
+      }} /> : null}
     </div>
   );
 }

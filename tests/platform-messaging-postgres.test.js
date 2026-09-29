@@ -73,6 +73,7 @@ const DDL = `
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     edited_at TIMESTAMPTZ,
+    moderation_hidden_at TIMESTAMPTZ,
     deleted_at TIMESTAMPTZ,
     thread_root_id INTEGER REFERENCES conversation_messages(id) ON DELETE CASCADE
   );

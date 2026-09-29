@@ -328,7 +328,7 @@ test('the offline engine kept window.Offline and its consumers', () => {
   assert.match(mod, /usernode:offline-change/);
   // /health, uncached — the SW bypasses it so the probe reflects real
   // reachability rather than a cached copy.
-  assert.match(mod, /fetch\('\/health', \{ cache: 'no-store' \}\)/);
+  assert.match(mod, /fetch\('\/health', \{ cache: 'no-store', signal: controller.signal \}\)/);
 });
 
 test('sw.js and manifest.webmanifest get the revalidate-every-load header', () => {

@@ -207,12 +207,12 @@ test('the demo overlay never overwrites a real count', () => {
   assert.ok(Object.keys(DEMO_COUNTS).includes('staging-demo-your-app'),
     'the one demo row Home.isYours accepts has to be one of these, or the '
     + 'declared checks read a screen of zeroes');
-  // Keyed to the rows GET /api/apps injects under the same flag, so a rename
-  // there does not silently leave this pointing at nothing.
-  const appsJs = read('src/routes/apps.js');
+  // Keyed to persisted catalog fixtures, so a rename cannot leave the
+  // workshop's sample counts pointing at nonexistent apps.
+  const appsJs = read('src/services/staging-apps.js');
   for (const slug of Object.keys(DEMO_COUNTS)) {
     assert.ok(appsJs.includes(`'${slug}'`),
-      `${slug} is still a demo row in src/routes/apps.js`);
+      `${slug} is still a stored catalog fixture`);
   }
 });
 
