@@ -258,7 +258,7 @@ function developmentTaskSchema(kind) {
     type: 'object',
     additionalProperties: false,
     description: kind === 'start'
-      ? 'Create a development session for one exact app, then hand the full coding request to its separately configured Development AI.'
+      ? 'Open a new agent session on one exact app with the full coding request ready for the user to send.'
       : 'Hand a complete follow-up coding request to one exact existing development session.',
     properties: {
       [kind === 'start' ? 'appSlug' : 'sessionId']: kind === 'start'
@@ -293,9 +293,17 @@ function developmentPreview(kind, input) {
     target: kind === 'start' ? input.appSlug : `Session ${input.sessionId}`,
     task: String(input.task || '').trim(),
     ...(input.issueNumber ? { issue: `#${input.issueNumber}` } : {}),
-    developmentAI: 'Use the configured Development AI model and reasoning effort',
+    ...(kind === 'start'
+      ? { opens: 'An agent session, with this task ready to send' }
+      : { developmentAI: 'Use the configured Development AI model and reasoning effort' }),
   };
 }
+
+// The agent-session hint's own slug rule (services/agent-sessions.js
+// parseHint), stricter than the route inventory's: a slug it would refuse
+// is refused here, before the user is sent to a conversation that cannot
+// name its app.
+const AGENT_HINT_SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 function exactSessionPath(session, fallbackSlug, fallbackId) {
   const slug = String(session?.app_slug || fallbackSlug || '');
@@ -356,12 +364,20 @@ function handoffResult(classicResult, { session, task, classicPath }) {
   };
 }
 
+// #2779: new work starts in an agent session, and classic sessions are no
+// longer created (POST /api/apps/:slug/sessions takes only the Mayor's
+// start_change). So "Start development work" creates nothing: it hands the
+// browser an unsent agent session focused on the app (and the issue), with
+// the exact task in its composer for the user to send. The conversation's
+// Mayor and coding agent do the work; the Global Chat model never does.
+// The capability keeps the create route's id and access, so what the model
+// discovers and what the user confirms are unchanged.
 function developmentStartDefinition(route) {
   return {
     id: route.capabilityId,
     domain: 'development',
     title: 'Start development work',
-    summary: 'Create a development session with the independently configured Development AI profile, then hand the exact task to that session. The Global Chat model never performs repository work.',
+    summary: 'Open a new agent session on the exact app with the exact task ready to send, where the Mayor plans and builds it. The Global Chat model never performs repository work.',
     keywords: ['build', 'code', 'develop', 'development', 'fix', 'implement', 'repository', 'start work'],
     discoveryPriority: 40,
     inputSchema: developmentTaskSchema('start'),
@@ -371,19 +387,39 @@ function developmentStartDefinition(route) {
     risk: route.risk,
     confirmation: route.confirmation,
     confirmationPreview: (input) => developmentPreview('start', input),
+    // The confirmation card's "Open in Classic" goes to the app, as before:
+    // the bare #messages/agent/new would open a conversation without the
+    // task or the app, which only the confirmed hand-off carries.
     classicPath: ({ input }) => `#app/${encodeURIComponent(input.appSlug)}/workshop`,
     mobileSupported: true,
     sensitiveFields: [],
-    handler: async (input, context) => {
+    handler: async (input) => {
       const task = input.task.trim();
-      const created = await context.classicApi.invoke(route.capabilityId, {
-        pathParameters: { slug: input.appSlug },
-        query: [],
-        body: input.issueNumber == null ? {} : { issueNumber: input.issueNumber },
-      });
-      const session = created.authoritativeResult?.session;
-      const classicPath = exactSessionPath(session, input.appSlug, session?.id);
-      return handoffResult(created, { session, task, classicPath });
+      if (!AGENT_HINT_SLUG.test(input.appSlug)) throw new Error('That app slug is unavailable.');
+      const hint = {
+        slug: input.appSlug,
+        ...(input.issueNumber == null ? {} : { issueNumber: input.issueNumber }),
+        entry: 'global-chat',
+      };
+      const classicPath = '#messages/agent/new';
+      const data = {
+        items: [{ appSlug: input.appSlug, issueNumber: input.issueNumber ?? null }],
+        state: 'client_action_required',
+        action: { transport: 'agent_session_handoff', hint, message: task, classicPath },
+      };
+      return {
+        authoritativeResult: { ok: true, status: 202, data },
+        modelResult: {
+          ok: true,
+          status: 202,
+          data: {
+            handoffReady: true,
+            agentSession: sanitizeForModel({ appSlug: input.appSlug, issueNumber: input.issueNumber ?? null }),
+            pendingClientAction: true,
+          },
+        },
+        classicPath,
+      };
     },
     tests: ['tests/global-chat-classic-capabilities.test.js'],
   };

@@ -85,7 +85,7 @@ const LABEL_OFF = 'home-create-label app-card-title text-zinc-400 dark:text-zinc
 
 // "New project" since communities, stage 4: the create dialog it opens is
 // titled "New project" (stage 3), and what it makes is a project for someone
-// (Just you, a group or a community), not only an app to use.
+// (Just you, a private or a public community), not only an app to use.
 export const CREATE_TILE_LABEL = 'New project';
 
 export function CreateTile({ view, style }: { view: CreateTileView; style?: string }) {

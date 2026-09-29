@@ -162,6 +162,50 @@ test('group-chat attachment files and previews never fall back to the SPA shell'
   }
 });
 
+// #3381: every admin "Download CSV" saved the app page as export.csv. A
+// download link is a navigation, and the shell-release cache answers every
+// navigation it is handed with a shell document. Nothing under /api/ is a
+// SPA route, so no navigation there is handed to it.
+test('a navigation to /api/ (a download, an export, a redirect) never gets the shell', () => {
+  for (const path of [
+    '/api/admin/homeroom-bot/export.csv',
+    '/api/admin/homeroom-bot/export.csv?app=todo&verdict=ready',
+    '/api/apps/demo/files/report.pdf',
+    '/api/anything/else',
+  ]) {
+    assert.equal(classify('GET', path, 'text/html', 'navigate'), 'bypass', path);
+  }
+  // Only navigations: the offline-cached JSON reads keep their lane, and a
+  // SPA route still falls back to the cached shell.
+  assert.equal(classify('GET', '/api/apps', 'application/json', 'cors'), 'api');
+  assert.equal(classify('GET', '/api/admin/homeroom-bot', 'application/json', 'cors'), 'api');
+  assert.equal(classify('GET', '/some/spa/route', 'text/html', 'navigate'), 'navigate');
+  assert.equal(classify('GET', '/apis-are-not-api', 'text/html', 'navigate'), 'navigate');
+});
+
+test('the installed worker leaves a CSV download to the browser (#3381)', () => {
+  const handlers = {};
+  const intercepted = [];
+  let fetches = 0;
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+    self: { location: { origin: ORIGIN }, addEventListener: (name, fn) => { handlers[name] = fn; } },
+    URL, Headers, Response, Map, Set, Promise,
+    caches: { open: async () => ({ match: async () => new Response('<!DOCTYPE html><title>Homeroom</title>') }) },
+    fetch: () => { fetches++; return new Promise(() => {}); },
+    setTimeout: () => 1, clearTimeout: () => {},
+  });
+  handlers.fetch({
+    request: {
+      method: 'GET', url: `${ORIGIN}/api/admin/homeroom-bot/export.csv`,
+      headers: new Headers({ accept: 'text/html' }), mode: 'navigate',
+    },
+    respondWith: (response) => intercepted.push(response),
+    waitUntil: () => {},
+  });
+  assert.equal(intercepted.length, 0, 'the browser receives the server\'s CSV, not a cached document');
+  assert.equal(fetches, 0);
+});
+
 test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/js/app.js'), 'shell');
   assert.equal(classify('GET', '/css/app.css'), 'shell');

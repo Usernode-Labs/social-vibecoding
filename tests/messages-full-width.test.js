@@ -77,7 +77,7 @@ test('a conversation, a group and #general: at the right of the header, just bef
 test('an app\'s channel: at the end of its header, where it draws nothing — a channel is always full width', () => {
   const pane = fn('AppDiscussionThread');
   assert.match(pane, /Everyone building this project`\}\s*<\/span>\s*<\/span>\s*<FullWidthToggle \/>\s*<\/header>/);
-  assert.match(pane, /<header className="messages-thread-header">\s*<span\s+data-icon=/, 'no longer leading the row');
+  assert.match(pane, /<header className="messages-thread-header">\s*<AppIconLink\s+slug=\{slug\}\s+name=\{name\}\s+data-icon=/, 'no longer leading the row');
   // A channel is its community's room and opens with no list beside it, so
   // the toggle for that list stands down on it.
   assert.match(fn('FullWidthToggle'),

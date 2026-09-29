@@ -69,10 +69,10 @@ test('hosted Claude receives conventions once as system context, while unchanged
   assert.match(codex.promptBlock, /SENTINEL platform rule/);
 });
 
-test('hosted build guidance keeps proposal submission with the harness and evidence intent with the agent', () => {
+test('hosted build guidance keeps proposal submission with the harness and shots intent with the agent', () => {
   const hosted = buildHostedCodingWorkflowGuidance();
   assert.match(hosted, /HOSTED WORKER LIFECYCLE/);
-  assert.match(hosted, /record_visual_evidence_intent/);
+  assert.match(hosted, /declare_visible_changes/);
   assert.match(hosted, /harness handles push, pull request/);
   assert.match(hosted, /Do not run\s+that skill, the social-vibecoding CLI/);
   assert.match(hosted, /Do not create platform users or tokens/);
@@ -419,8 +419,8 @@ test('run-cc.sh pipes the prompt file to claude on stdin, never as a -p argument
 
   // A supplied system-prompt path is required and applied to every physical
   // Claude invocation, including resume failure's fresh retry.
-  assert.match(cc, /\{ \[ "\$MODE" = "build" \] \|\| \[ "\$MODE" = "evidence" \]; \} && \[ -z "\$SYSTEM_PROMPT_FILE" \]/,
-    'hosted builds and evidence turns fail closed if system context is omitted');
+  assert.match(cc, /\{ \[ "\$MODE" = "build" \] \|\| \[ "\$MODE" = "shots" \]; \} && \[ -z "\$SYSTEM_PROMPT_FILE" \]/,
+    'hosted builds and shots turns fail closed if system context is omitted');
   assert.match(cc, /\[ -s "\$SYSTEM_PROMPT_FILE" \]/);
   const systemPromptInvocations = cc.match(/\$SYSTEM_PROMPT_FLAGS --verbose/g) || [];
   assert.equal(systemPromptInvocations.length, 3,

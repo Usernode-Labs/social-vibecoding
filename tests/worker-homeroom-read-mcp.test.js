@@ -40,21 +40,22 @@ const GRANT = `svmcd_${'A'.repeat(43)}`;
 test('the grant rides only on build and scout turns, on either backend', () => {
   const claude = (mode) => worker.buildTurnSecretEnv({
     mode, agentBackend: 'claude_code', workerSessionJwt: 'w', issuesReadJwt: 'i', anthropicProxyJwt: 'p',
-    evidenceJwt: 'e', evidenceMemberToken: 'm', evidenceAdminToken: 'a',
-    evidenceFullAdminToken: 'f', homeroomMcpToken: GRANT,
+    shotsJwt: 'e', shotsMemberToken: 'm', shotsAdminToken: 'a',
+    shotsFullAdminToken: 'f', homeroomMcpToken: GRANT,
   });
   const codex = (mode) => worker.buildTurnSecretEnv({
     mode, agentBackend: 'codex_openrouter', workerPushJwt: 'w', issuesReadJwt: 'i', openrouterApiKey: 'k',
-    evidenceJwt: 'e', evidenceMemberToken: 'm', evidenceAdminToken: 'a',
-    evidenceFullAdminToken: 'f', homeroomMcpToken: GRANT,
+    shotsJwt: 'e', shotsMemberToken: 'm', shotsAdminToken: 'a',
+    shotsFullAdminToken: 'f', homeroomMcpToken: GRANT,
   });
   for (const mode of ['build', 'scout']) {
     assert.equal(claude(mode).HOMEROOM_MCP_TOKEN, GRANT);
     assert.equal(codex(mode).HOMEROOM_MCP_TOKEN, GRANT);
   }
   assert.ok(!('HOMEROOM_MCP_TOKEN' in claude('sync')));
-  assert.ok(!('HOMEROOM_MCP_TOKEN' in claude('evidence')));
-  assert.ok(!('HOMEROOM_MCP_TOKEN' in codex('evidence')));
+  assert.ok(!('HOMEROOM_MCP_TOKEN' in claude('shots')));
+  // Every shots turn runs on Claude Code; Codex has no shots mode.
+  assert.throws(() => codex('shots'), /Codex shots mode is not supported/);
   const without = worker.buildTurnSecretEnv({
     mode: 'build', agentBackend: 'claude_code', workerSessionJwt: 'w', issuesReadJwt: 'i', anthropicProxyJwt: 'p',
   });

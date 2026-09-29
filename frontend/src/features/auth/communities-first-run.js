@@ -282,7 +282,7 @@
       }
 
       panel.appendChild(el('p', 'text-[0.8125rem] text-zinc-500 dark:text-zinc-400 mt-3',
-        'You can join or leave any time from Discover, and start your own group or community once you are in.'));
+        'You can join or leave any time from Discover, and start your own private or public community once you are in.'));
 
       const status = el('p', 'text-sm mt-2 min-h-5 text-red-600 dark:text-red-400');
       status.setAttribute('data-join-communities-error', '');

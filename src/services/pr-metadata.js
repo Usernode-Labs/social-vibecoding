@@ -87,8 +87,24 @@ function buildTestingBlock(testingMd, testingPath) {
 // post-capture body patch in src/services/visuals.js.
 const VISUALS_MARKER_START = '<!-- usernode:visuals -->';
 const VISUALS_MARKER_END = '<!-- /usernode:visuals -->';
-const EVIDENCE_MARKER_START = '<!-- usernode:visual-evidence -->';
-const EVIDENCE_MARKER_END = '<!-- /usernode:visual-evidence -->';
+const SHOTS_MARKER_START = '<!-- usernode:shots -->';
+const SHOTS_MARKER_END = '<!-- /usernode:shots -->';
+// Pull requests written before the rename carry the block under its old
+// marker. It is still found, so an update replaces it instead of adding a
+// second block beside it.
+const SHOTS_MARKERS = [
+  [SHOTS_MARKER_START, SHOTS_MARKER_END],
+  ['<!-- usernode:visual-evidence -->', '<!-- /usernode:visual-evidence -->'],
+];
+
+function findShotsBlock(body) {
+  for (const [open, close] of SHOTS_MARKERS) {
+    const start = body.indexOf(open);
+    const end = body.indexOf(close);
+    if (start !== -1 && end !== -1 && end > start) return { start, stop: end + close.length };
+  }
+  return null;
+}
 
 function safeMarkdownText(value, max = 1000) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -96,11 +112,11 @@ function safeMarkdownText(value, max = 1000) {
     .replace(/[\\`*_[\]()<>]/g, '\\$&');
 }
 
-// Protected visual evidence is reviewed in Homeroom, never embedded through
+// Protected before & after shots is reviewed in Homeroom, never embedded through
 // GitHub's public image proxy. The block names the claims and links to the
 // authenticated proposal surface; its wording intentionally does not cache a
 // run state that could become false on the next pushed commit.
-function buildEvidenceBlock({ intent, appSlug, sessionId, domain }) {
+function buildShotsBlock({ intent, appSlug, sessionId, domain }) {
   if (!intent || typeof intent !== 'object' || !appSlug || !domain
       || !Number.isInteger(Number(sessionId)) || Number(sessionId) <= 0) return '';
   const claims = Array.isArray(intent.stories)
@@ -108,41 +124,42 @@ function buildEvidenceBlock({ intent, appSlug, sessionId, domain }) {
     : [];
   if (intent.impact !== 'none' && !claims.length) return '';
   const url = `https://${domain}/#app/${encodeURIComponent(appSlug)}/dev/proposals/${Number(sessionId)}`;
-  const lines = [EVIDENCE_MARKER_START, '## Visual change preview', ''];
+  const lines = [SHOTS_MARKER_START, '## Before & after', ''];
   if (intent.impact === 'none') {
     lines.push(`No user-visible change declared: ${safeMarkdownText(intent.rationale, 1000)}`, '');
   } else {
     for (const claim of claims) lines.push(`- ${claim}`);
     lines.push('');
   }
-  lines.push(
-    `[Review the current exact-revision visual change preview in Homeroom](${url})`,
-    '',
-    '_The visual change preview is authenticated and revision-scoped; protected images are not embedded in this public PR body._',
-    EVIDENCE_MARKER_END
-  );
+  if (intent.impact === 'none') {
+    lines.push(`[Open this proposal in Homeroom](${url})`, SHOTS_MARKER_END);
+  } else {
+    lines.push(
+      `[See the before & after shots of this exact revision in Homeroom](${url})`,
+      '',
+      '_The shots are private to Homeroom and tied to this revision, so they are not embedded in this public PR body._',
+      SHOTS_MARKER_END
+    );
+  }
   return lines.join('\n');
 }
 
-function upsertEvidenceBlock(body, block) {
+function upsertShotsBlock(body, block) {
   const base = typeof body === 'string' ? body : '';
-  const start = base.indexOf(EVIDENCE_MARKER_START);
-  const end = base.indexOf(EVIDENCE_MARKER_END);
-  if (start !== -1 && end !== -1 && end > start) {
-    const head = base.slice(0, start).replace(/\n+$/, '');
-    const tail = base.slice(end + EVIDENCE_MARKER_END.length).replace(/^\n+/, '');
+  const found = findShotsBlock(base);
+  if (found) {
+    const head = base.slice(0, found.start).replace(/\n+$/, '');
+    const tail = base.slice(found.stop).replace(/^\n+/, '');
     return [head, block, tail].filter((part) => part && part.trim()).join('\n\n');
   }
   if (!block) return base;
   return base ? `${base}\n\n${block}` : block;
 }
 
-function extractEvidenceBlock(body) {
+function extractShotsBlock(body) {
   const base = typeof body === 'string' ? body : '';
-  const start = base.indexOf(EVIDENCE_MARKER_START);
-  const end = base.indexOf(EVIDENCE_MARKER_END);
-  if (start === -1 || end === -1 || end <= start) return '';
-  return base.slice(start, end + EVIDENCE_MARKER_END.length);
+  const found = findShotsBlock(base);
+  return found ? base.slice(found.start, found.stop) : '';
 }
 
 // Normalize the visuals argument to an ordered list of capture groups
@@ -274,10 +291,10 @@ function extractVisualsBlock(body) {
   return base.slice(start, end + VISUALS_MARKER_END.length);
 }
 
-async function syncEvidencePrBlock(pool, sessionId) {
+async function syncShotsPrBlock(pool, sessionId) {
   if (!pool || !Number.isInteger(Number(sessionId)) || Number(sessionId) <= 0) return { updated: false, reason: 'invalid_session' };
   const { rows } = await pool.query(
-    `SELECT cs.id, cs.source, cs.pr_number, cs.pr_body, cs.visual_evidence_detail,
+    `SELECT cs.id, cs.source, cs.pr_number, cs.pr_body, cs.shots_detail,
             a.slug AS app_slug, a.repo_url
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
       WHERE cs.id = $1`,
@@ -287,20 +304,20 @@ async function syncEvidencePrBlock(pool, sessionId) {
   if (!session || !session.pr_number || session.source === 'imported') {
     return { updated: false, reason: session?.source === 'imported' ? 'imported_pr' : 'missing_pr' };
   }
-  const detail = session.visual_evidence_detail;
+  const detail = session.shots_detail;
   const intent = detail && typeof detail === 'object' ? detail.intent : null;
-  const block = buildEvidenceBlock({
+  const block = buildShotsBlock({
     intent,
     appSlug: session.app_slug,
     sessionId: Number(session.id),
     domain: require('./caddy').USERNODE_DOMAIN,
   });
   if (!block) return { updated: false, reason: 'missing_intent' };
-  // Enrollment in evidence v2 retires the public legacy image embed for this
+  // Enrollment in shots retires the public legacy image embed for this
   // proposal. Historical artifact rows may remain during rollout, but the PR
-  // carries only the authenticated evidence link from now on.
+  // carries only the authenticated shots link from now on.
   const withoutLegacy = upsertVisualsBlock(session.pr_body || '', '');
-  const nextBody = upsertEvidenceBlock(withoutLegacy, block);
+  const nextBody = upsertShotsBlock(withoutLegacy, block);
   if (nextBody === (session.pr_body || '')) return { updated: false, reason: 'unchanged' };
   const match = String(session.repo_url || '').match(/github\.com\/([^/]+)\/([^/#]+?)(?:\.git)?$/i);
   if (!match) return { updated: false, reason: 'invalid_repo' };
@@ -512,7 +529,7 @@ async function generatePrMetadataDraft({ userMessage, ccSummary, requests, summa
 }
 
 function renderPrMetadataDraft(draft, {
-  username, closingBlock, testingBlock, visualsBlock, evidenceBlock,
+  username, closingBlock, testingBlock, visualsBlock, shotsBlock,
 }) {
   // `closingBlock` (#75) is the deterministic `Closes #N` text,
   // `testingBlock` (#127) the deterministic "How to test" section, and
@@ -521,7 +538,7 @@ function renderPrMetadataDraft(draft, {
   // and are deliberately NOT fed into the LLM prompt below, so the model
   // can never drop, duplicate, or paraphrase them.
   const suffix = (testingBlock ? `\n\n${testingBlock}` : '')
-    + (evidenceBlock ? `\n\n${evidenceBlock}` : '')
+    + (shotsBlock ? `\n\n${shotsBlock}` : '')
     + (visualsBlock ? `\n\n${visualsBlock}` : '')
     + (closingBlock ? `\n\n${closingBlock}` : '');
   const safeDraft = draft && typeof draft === 'object'
@@ -589,7 +606,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDe
     requests: [], summaries: [], descriptions: [], specs: [], linkedIssues: [], appliedIssues: [],
     testingMd: null, testingPath: null, appliedTesting: null,
     visuals: null, appliedVisuals: null,
-    visualEvidenceDetail: null, appSlug: null, currentPrBody: null,
+    shotsDetail: null, appSlug: null, currentPrBody: null,
     appliedSummary: null, summaryStale: false,
     summaryInputVersion: 0, summaryHead: null, summaryInputsChangedDuringGather: false,
     agentSessionChange: false, changeName: null, personTitle: null,
@@ -650,7 +667,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDe
                 testing_md, testing_path, pr_testing_applied,
                 pr_visuals_applied, pr_summary_md, pr_summary_stale,
                 pr_summary_input_version, source,
-                visual_evidence_detail, pr_body,
+                shots_detail, pr_body,
                 (SELECT slug FROM apps WHERE id = chat_sessions.app_id) AS app_slug,
                 imported_pr_head_sha, reviewed_head_sha,
                 checks_commit_sha, handoff_head_sha, handoff_uploaded_sha,
@@ -681,7 +698,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDe
       // the drift marker, not evidence that its artifact rows still describe
       // the proposal's current head; that check happens below.
       ctx.appliedVisuals = (liveRows[0] && liveRows[0].pr_visuals_applied) || null;
-      ctx.visualEvidenceDetail = (liveRows[0] && liveRows[0].visual_evidence_detail) || null;
+      ctx.shotsDetail = (liveRows[0] && liveRows[0].shots_detail) || null;
       ctx.appSlug = (liveRows[0] && liveRows[0].app_slug) || null;
       ctx.currentPrBody = (liveRows[0] && liveRows[0].pr_body) || null;
 
@@ -802,7 +819,7 @@ async function applyPrMetadata({
     visuals, appliedVisuals, appliedSummary, summaryStale,
     summaryInputVersion, summaryHead: recordedHead,
     summaryInputsChangedDuringGather,
-    visualEvidenceDetail, appSlug, currentPrBody,
+    shotsDetail, appSlug, currentPrBody,
     agentSessionChange, changeName, personTitle,
   } = await gatherSessionContext(pool, session && session.id, ccSummary, currentDescription);
   if (summaryInputsChangedDuringGather) {
@@ -830,10 +847,10 @@ async function applyPrMetadata({
   // path (headless → promote), where the capture ran long before the PR
   // exists; on the interactive path visuals.js patches the live body
   // directly after each capture instead.
-  const evidenceIntent = visualEvidenceDetail && typeof visualEvidenceDetail === 'object'
-    ? visualEvidenceDetail.intent : null;
-  const evidenceBlock = buildEvidenceBlock({
-    intent: evidenceIntent,
+  const visibleChanges = shotsDetail && typeof shotsDetail === 'object'
+    ? shotsDetail.intent : null;
+  const shotsBlock = buildShotsBlock({
+    intent: visibleChanges,
     appSlug: appSlug || session?.app_slug || session?.slug,
     sessionId: session?.id,
     domain: require('./caddy').USERNODE_DOMAIN,
@@ -841,7 +858,7 @@ async function applyPrMetadata({
   // Enrollment in v2 retires public legacy image embeds. The authenticated
   // Homeroom link is safe for member/admin flows and always resolves the
   // current exact-revision status instead of caching a verdict in GitHub.
-  const visualsBlock = evidenceIntent
+  const visualsBlock = visibleChanges
     ? ''
     : buildVisualsBlock(visuals, require('./caddy').USERNODE_DOMAIN);
 
@@ -861,7 +878,7 @@ async function applyPrMetadata({
   if (deterministic || (!allowModelGeneration && !effectTurnId)) {
     meta = renderPrMetadataDraft(
       deterministicPrMetadataDraft(generationArgs),
-      { username, closingBlock, testingBlock, visualsBlock, evidenceBlock },
+      { username, closingBlock, testingBlock, visualsBlock, shotsBlock },
     );
   } else if (effectTurnId) {
     try {
@@ -891,7 +908,7 @@ async function applyPrMetadata({
         : {};
       metadataBillingByok = !!settled.billingByok;
       meta = renderPrMetadataDraft(settled.draft, {
-        username, closingBlock, testingBlock, visualsBlock, evidenceBlock,
+        username, closingBlock, testingBlock, visualsBlock, shotsBlock,
       });
     } catch (err) {
       // Receipt uncertainty must keep the durable tail owned. Swallowing it
@@ -901,7 +918,7 @@ async function applyPrMetadata({
     }
   } else {
     meta = await generatePrMetadata({
-      ...generationArgs, closingBlock, testingBlock, visualsBlock, evidenceBlock,
+      ...generationArgs, closingBlock, testingBlock, visualsBlock, shotsBlock,
     });
   }
   const { title: generatedTitle, body: generatedBody } = meta;
@@ -941,7 +958,7 @@ async function applyPrMetadata({
   // last body write must reach GitHub even on a title-unchanged turn.
   const visualsChanged = visualsBlock !== (appliedVisuals || '');
 
-  const evidenceChanged = evidenceBlock !== extractEvidenceBlock(currentPrBody || session?.pr_body || '');
+  const shotsChanged = shotsBlock !== extractShotsBlock(currentPrBody || session?.pr_body || '');
 
   // Same drift check for the plain-language summary: a revised summary must
   // reach the PR body on a title-unchanged turn (the summary leads the body),
@@ -1112,7 +1129,7 @@ async function applyPrMetadata({
   // title-unchanged turn, leaving the new `Closes #N` line / "How to
   // test" / "Before / after" section off the PR body.
   if (prTitle === session.pr_title && !issuesChanged && !testingChanged && !visualsChanged
-      && !evidenceChanged && !summaryChanged) {
+      && !shotsChanged && !summaryChanged) {
     // Regenerating the same words still validates them against the current
     // inputs. No GitHub write is needed, but leaving the stale flag set would
     // make the freshness notice permanent after an unchanged refresh.
@@ -1181,6 +1198,6 @@ module.exports = {
   generatePrMetadata, applyPrMetadata, deterministicPrMetadataDraft, sanitizeIssueNumbers,
   buildClosingBlock, buildTestingBlock, parseClosingKeywords,
   buildVisualsBlock, upsertVisualsBlock, extractVisualsBlock,
-  buildEvidenceBlock, upsertEvidenceBlock, extractEvidenceBlock, syncEvidencePrBlock,
+  buildShotsBlock, upsertShotsBlock, extractShotsBlock, syncShotsPrBlock,
   applyIssueDeclarations, stripClosingLines, sameIssueSet, gatherSessionContext,
 };

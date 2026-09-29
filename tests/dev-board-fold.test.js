@@ -1337,9 +1337,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // in the same section via :has(), and the card's description as
   // expectText; its name and path are unchanged.
   //
+  // 820 → 821: +1 (welcome messages): Admin → Welcome messages, a new
+  // route (#admin/welcome-dm) with nothing already declared on it to fold
+  // into. It pins the section's intro with its form and its "Recently
+  // welcomed" card loaded beside it. At the floor, so MAX_DECLARED_TESTS
+  // went 840 → 850 in the same change (services/app-manifest.js), leaving
+  // 29 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 820);
+  checkCap.assertPinned(DAPP.tests.length, 821);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

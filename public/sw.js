@@ -519,6 +519,13 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   if (mode === 'navigate') {
     if (NO_FALLBACK_PAGES.includes(p)) return 'bypass';
     if (NO_FALLBACK_PREFIXES.some((pre) => p.startsWith(pre))) return 'bypass';
+    // #3381: a navigation to /api/... is a file or a redirect, never the
+    // shell: the server has no SPA route under /api/. A download link is a
+    // navigation too, and the shell-release cache (sw-release.js navigate)
+    // answers every navigation with a shell document, so each admin CSV
+    // export saved the app page as export.csv. The chat-attachments rule
+    // above was the first case of this; this is all of them.
+    if (p.startsWith('/api/')) return 'bypass';
     return 'navigate';
   }
 

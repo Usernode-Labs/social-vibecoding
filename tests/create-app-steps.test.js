@@ -2,11 +2,11 @@
 // every choice. Since the rework (drawn and agreed as a clickable mock first)
 // it asks six questions, each a step of its own:
 //
-//   who      Just me, A group, A community
-//   invite   a group only: one row per person, a @username or an email
+//   who      Just me, A private community, A public community
+//   invite   a private community only: one row per person, a @username or an email
 //   kind     App; Document and Video there, dimmed, saying Soon
 //   details  the name and the optional "What is it?"
-//   approve  who approves changes — a group or a community only
+//   approve  who approves changes — a private or a public community only
 //   start    LAST: from scratch, from a template (Soon), or from a GitHub
 //            repo, whose check also reads its dapp.json
 //
@@ -38,7 +38,7 @@ const { loadTsx } = require('./lib/render-tsx');
 
 const mod = () => loadTsx('frontend/src/features/dialogs/create-app.tsx');
 
-test('the steps a set of answers walks: four for Just me, five for a community, six for a group', () => {
+test('the steps a set of answers walks: four for Just me, five for a public community, six for a private one', () => {
   const { stepsFor } = mod();
   assert.deepEqual([...stepsFor(null)], ['who', 'kind', 'details', 'start'], 'unanswered counts as Just me');
   assert.deepEqual([...stepsFor('solo')], ['who', 'kind', 'details', 'start']);
@@ -143,7 +143,7 @@ test('an import names each earlier answer its repo’s dapp.json replaces', () =
   assert.deepEqual(repoOverrides({}, answers), [], 'a repo that sets nothing replaces nothing');
   assert.deepEqual(repoOverrides(null, answers), []);
   assert.deepEqual(repoOverrides({ visibility: { build: 'private', view: 'private' } }, answers), [],
-    'a private repo does not clash with a group');
+    'a private repo does not clash with a private community');
   assert.equal(repoOverrides({ visibility: { build: 'private', view: 'private' } }, { ...answers, audience: 'open' }).length, 1);
   assert.deepEqual(repoOverrides({ name: 'Book club' }, answers), [], 'the same name is not a change');
   assert.deepEqual(repoOverrides({ governance: { approvers: 'invited', approvals: 2 } }, { ...answers, audience: 'solo' }), [],

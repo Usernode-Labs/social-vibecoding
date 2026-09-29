@@ -5,10 +5,10 @@
 // Change 4952 ("Work on request #16") could not start its coding agent: the
 // namespace allowed 120 worker volume claims and held 120. Open changes keep
 // their volume indefinitely and archived ones for the retention window, and
-// visual-evidence runs on merged changes claimed fresh volumes the merge had
+// shots runs on merged changes claimed fresh volumes the merge had
 // already freed. So a new claim that the quota refuses now frees a few idle
-// volumes and retries, the hourly sweep frees merged changes' volumes, and an
-// evidence run no longer starts on a closed change.
+// volumes and retries, the hourly sweep frees merged changes' volumes, and a
+// shots run no longer starts on a closed change.
 //
 // Run with: node --test tests/worker-volume-reclaim.test.js
 
@@ -17,7 +17,7 @@ const assert = require('node:assert/strict');
 
 const reclaim = require('../src/services/worker-volume-reclaim');
 const kubernetes = require('../src/services/kubernetes');
-const orchestrator = require('../src/services/visual-evidence-orchestrator');
+const orchestrator = require('../src/services/shots-orchestrator');
 
 const NOW = Date.parse('2026-09-25T13:00:00Z');
 const HOUR = 60 * 60 * 1000;
@@ -229,18 +229,18 @@ test('the volume inventory names each change\'s state claim and whether a worker
   ]);
 });
 
-// ── Visual evidence on a closed change ─────────────────────────────────
+// ── Before & after shots on a closed change ─────────────────────────────────
 
 for (const status of ['merged', 'archived']) {
-  test(`no automatic evidence run starts on a ${status} change`, async () => {
+  test(`no automatic shots run starts on a ${status} change`, async () => {
     const created = [];
     const pool = {
       async query() {
-        return { rows: [{ id: 4649, status, app_slug: 'rss', repo_url: 'https://github.com/o/r', visual_evidence_detail: { required: true, intent: {} } }] };
+        return { rows: [{ id: 4649, status, app_slug: 'rss', repo_url: 'https://github.com/o/r', shots_detail: { required: true, intent: {} } }] };
       },
     };
     const result = await orchestrator.scheduleForSession(
-      { visualEvidence: { execute: true } },
+      { shots: { execute: true } },
       { pool, sessionId: 4649, headSha: 'a'.repeat(40), trigger: 'checks-harvested' },
       { state: { createRun: async (...args) => { created.push(args); return { run: {}, created: true }; } } }
     );

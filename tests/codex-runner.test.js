@@ -157,89 +157,48 @@ test('runner: fresh and resumed GLM invocations put catalog limits into actual H
   assert.ok(requests.every(r => r.key === 'Bearer sk-or-v1-test'));
 });
 
-test('runner: evidence completion resumes with terminal tools only and forces a decision', async t => {
-  let providerBody;
-  const provider = http.createServer(async (req, res) => {
-    const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
-    providerBody = JSON.parse(Buffer.concat(chunks).toString());
-    res.writeHead(200, { 'content-type': 'text/event-stream' });
-    res.end(`data: ${JSON.stringify({
-      type: 'response.output_item.done',
-      item: { type: 'function_call', namespace: 'mcp__evidence', name: 'evidence_run_plan' },
-    })}\n\n`);
-  });
-  await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise(resolve => { provider.closeAllConnections(); provider.close(resolve); }));
-  const fakeCodex = `#!/usr/bin/env node
-(async () => {
-  for await (const chunk of process.stdin) { /* consume the prompt */ }
-  const fs = require('node:fs');
-  const config = fs.readFileSync(process.env.CODEX_HOME + '/config.toml', 'utf8');
-  if (!config.includes('enabled_tools = ["evidence_run_plan", "evidence_report_blocker"]')) throw new Error('terminal tools missing');
-  if (config.includes('[mcp_servers.browser_member]')) throw new Error('browser tools remained enabled');
-  const override = process.argv.find(a => a.startsWith('model_providers.usernode_openrouter.base_url='));
-  const base = JSON.parse(override.slice(override.indexOf('=') + 1));
-  const response = await fetch(base + '/responses', {
-    method: 'POST', headers: { authorization: 'Bearer ' + process.env.OPENROUTER_API_KEY },
-    body: JSON.stringify({ model: process.env.AGENT_MODEL, stream: true, input: [], tools: [
-      { type: 'function', name: 'exec_command', parameters: { type: 'object' } },
-      { type: 'namespace', name: 'mcp__evidence', tools: [
-        { type: 'function', name: 'evidence_report_blocker', parameters: { type: 'object' } },
-        { type: 'function', name: 'evidence_run_plan', parameters: { type: 'object' } },
-      ] },
-      { type: 'web_search' },
-    ], tool_choice: 'auto', parallel_tool_calls: true }),
-  });
-  if (!response.ok) throw new Error(await response.text());
-  await response.text();
-  console.log(JSON.stringify({ type: 'thread.started', thread_id: 'evidence-thread' }));
-  console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 12, output_tokens: 3 } }));
-})().catch(err => { console.error(err.message); process.exitCode = 1; });
-`;
-  const { dir, env } = makeEnv(fakeCodex);
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const systemPrompt = path.join(dir, 'system-prompt.txt');
-  fs.writeFileSync(systemPrompt, 'Evidence system prompt');
-  Object.assign(env, {
-    MODE: 'evidence',
-    SYSTEM_PROMPT_FILE: systemPrompt,
-    EVIDENCE_JWT: 'test-evidence-jwt',
-    EVIDENCE_RUN_ID: '1'.repeat(32),
-    EVIDENCE_BASE_ORIGIN: 'http://base.example.invalid',
-    EVIDENCE_HEAD_ORIGIN: 'http://head.example.invalid',
-    EVIDENCE_MEMBER_TOKEN: 'member-token',
-    EVIDENCE_ADMIN_TOKEN: 'admin-token',
-    EVIDENCE_FULL_ADMIN_TOKEN: 'full-admin-token',
-    EVIDENCE_COMPLETION_REMINDER: '1',
-    AGENT_THREAD_ID: 'evidence-thread',
-    OPENROUTER_API_BASE: `http://127.0.0.1:${provider.address().port}/api/v1`,
-    AGENT_MODEL: 'z-ai/glm-5.3-flash',
-  });
-  const result = await new Promise((resolve, reject) => {
-    const child = spawn('sh', [RUNNER], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', data => { stdout += data; });
-    child.stderr.on('data', data => { stderr += data; });
-    child.once('error', reject);
-    child.once('close', code => resolve({ code, stdout, stderr }));
-    t.after(() => { if (child.exitCode == null) child.kill(); });
-  });
-  assert.equal(result.code, 0, result.stdout + result.stderr);
-  assert.equal(providerBody.tool_choice, 'required');
-  assert.equal(providerBody.parallel_tool_calls, false);
-  assert.deepEqual(providerBody.tools.map(tool => [tool.type, tool.name]), [
-    ['namespace', 'mcp__evidence'],
-  ]);
-  assert.deepEqual(providerBody.tools[0].tools.map(tool => tool.name).sort(), [
-    'evidence_report_blocker', 'evidence_run_plan',
-  ]);
-  assert.match(result.stdout, /__USERNODE_EVIDENCE_PROVIDER__ \{"kind":"provider_tool_config"/);
-  assert.match(result.stdout, /"terminalToolWireFormat":"namespace"/);
-  assert.match(result.stdout, /"toolSurfaceFiltered":true/);
-  assert.doesNotMatch(result.stdout, /__USERNODE_PHASE__ evidence_(?:proxy|browser_bootstrap)/);
-  assert.doesNotMatch(result.stdout + result.stderr, /member-token|admin-token|full-admin-token/);
+// Every shots turn runs on Claude Code through run-cc.sh. The
+// Codex runner has no shots mode, so it refuses one before it touches the
+// workspace, writes a config, or starts Codex.
+test('runner: MODE=shots is refused before anything starts', () => {
+  const { dir, env } = makeEnv('#!/bin/sh\necho "$*" >> "$INVOKE_LOG"\n');
+  try {
+    Object.assign(env, {
+      MODE: 'shots',
+      SHOTS_JWT: 'test-shots-jwt', SHOTS_RUN_ID: '1'.repeat(32),
+      SHOTS_MEMBER_TOKEN: 'member-token',
+    });
+    const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stdout, /__USERNODE_ERROR__ shots turns run on Claude Code \(run-cc\.sh\)/);
+    assert.doesNotMatch(r.stdout, /__USERNODE_PHASE__/, 'no phase ran');
+    assert.doesNotMatch(r.stdout + r.stderr, /member-token|test-shots-jwt/);
+    assert.equal(fs.existsSync(env.INVOKE_LOG), false, 'Codex never ran');
+    assert.equal(fs.existsSync(path.join(env.CODEX_HOME, 'config.toml')), false, 'no config was written');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  // Nothing of the retired evidence path is left: no origin proxy or browser
+  // bootstrap, no shots bridge, no per-persona browsers, no shots-only
+  // Codex settings. The build turn's intent tool (visible-changes-mcp.js) is
+  // a different server and stays.
+  const source = fs.readFileSync(RUNNER, 'utf8');
+  assert.doesNotMatch(source,
+    /SHOTS_|(?<!build-)evidence-(?:origin-proxy|browser-bootstrap|browser-observer|hosted-origins|mcp)\.js|cleanup_shots|\[mcp_servers\.(?:shots|browser_member|browser_admin|browser_full_admin)\]|developer_instructions|SYSTEM_PROMPT_FILE/);
+  assert.match(source, /args = \["\/usr\/local\/bin\/visible-changes-mcp\.js"\]/);
+});
+
+test('runner: only build and scout are accepted modes', () => {
+  const { dir, env } = makeEnv('#!/bin/sh\necho "$*" >> "$INVOKE_LOG"\n');
+  try {
+    env.MODE = 'sync';
+    const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stdout, /__USERNODE_ERROR__ unsupported MODE: sync/);
+    assert.equal(fs.existsSync(env.INVOKE_LOG), false, 'Codex never ran');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('request wrapper forwards Stop to Codex and releases its listener', async t => {
@@ -531,11 +490,11 @@ exit 1
     'startup_timeout_sec = 30',
     'tool_timeout_sec = 60',
     '',
-    '[mcp_servers.visual_intent]',
+    '[mcp_servers.visible_changes]',
     'command = "node"',
-    'args = ["/usr/local/bin/build-evidence-mcp.js"]',
+    'args = ["/usr/local/bin/visible-changes-mcp.js"]',
     'env_vars = ["WORKER_JWT", "SESSION_ID", "PLATFORM_URL"]',
-    'enabled_tools = ["record_visual_evidence_intent"]',
+    'enabled_tools = ["declare_visible_changes"]',
     'startup_timeout_sec = 15',
     'tool_timeout_sec = 30',
     '',

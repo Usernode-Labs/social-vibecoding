@@ -94,7 +94,7 @@ test('one filled button that says what it will do, and a quiet Skip for now', ()
   assert.ok(GATE.indexOf("'Welcome to Homeroom!'") > 0);
   assert.match(GATE, /'Homeroom is a place where communities build the apps they use together\.'/);
   assert.ok(GATE.indexOf("'Welcome to Homeroom!'") < GATE.indexOf("'What communities do you want to join?'"));
-  assert.match(GATE, /'You can join or leave any time from Discover, and start your own group or community once you are in\.'/);
+  assert.match(GATE, /'You can join or leave any time from Discover, and start your own private or public community once you are in\.'/);
   // A row with no description of its own is just its name: no empty line.
   assert.match(GATE, /if \(c\.detail\) \{\s*\n\s*text\.appendChild\(el\('div', 'mt-0\.5 line-clamp-2/);
   // In the screen's order, so the first one ticked is the card's.
@@ -145,13 +145,13 @@ test('the card counts, records the two visits it asks for, and closes for good',
 
 // ── the tile mark (stage 4) ────────────────────────────────────────────
 
-test('a Home tile says where it lives: people for a group, a lock for just you, nothing for a community', () => {
+test('a Home tile says where it lives: people for a private community, a lock for just you, nothing for a public one', () => {
   assert.match(HOME_JS,
     /audience: app\.audience === 'invited' \|\| app\.audience === 'solo' \? app\.audience : 'open',/);
   assert.match(GRID_SRC, /\{app\.audience !== 'open' \? \(/);
   assert.match(GRID_SRC, /data-stage=\{app\.audience\}/);
   assert.match(GRID_SRC, /\? <UserGroupIcon className="w-3 h-3" aria-hidden="true" \/>\s*\n\s*: <LockIcon className="w-3 h-3" aria-hidden="true" \/>/);
-  assert.match(GRID_SRC, /title=\{app\.audience === 'invited' \? 'Group' : 'Just you'\}/);
+  assert.match(GRID_SRC, /title=\{app\.audience === 'invited' \? 'Private community' : 'Just you'\}/);
 });
 
 // ── declared checks ────────────────────────────────────────────────────

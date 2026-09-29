@@ -302,13 +302,13 @@ async function applyHeadChange({
   session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
   session.approval_epoch = epoch;
   if (checksCarry) session.checks_commit_sha = newHead;
-  if (session.visual_evidence_state || session.visual_evidence_detail) {
+  if (session.shots_state || session.shots_detail) {
     // Revision fencing is synchronous with the imported head advance. Even
-    // when execution is disabled, reviewers must stop seeing evidence from
+    // when execution is disabled, reviewers must stop seeing shots from
     // the commit that just ceased to be current.
-    await require('./visual-evidence-state').markStaleForHead(
+    await require('./shots-state').markStaleForHead(
       pool, session.id, String(newHead).toLowerCase()
-    ).catch((err) => log.warn('pr-import-sync', 'Visual evidence invalidation failed', {
+    ).catch((err) => log.warn('pr-import-sync', 'Before & after shots invalidation failed', {
       sessionId: session.id, oldHead, newHead, err: err.message,
     }));
   }
@@ -700,15 +700,15 @@ function notifyStagingFailed({ session, app }) {
   }
 }
 
-// #2601/#2558: the connector-submission path reaches the evidence
+// #2601/#2558: the connector-submission path reaches the shots
 // orchestrator through `visuals.captureForSession`, which schedules a run in
 // its own `finally` — so an import whose preview builds does call
 // `scheduleForSession`. The gap was the paths BELOW that never get that far:
 // a preview environment that runs no builds, and a staging build that fails.
 // Neither produced a run and neither wrote anything down, so the proposal
 // kept the 'planned' its submission wrote, with nothing to explain it.
-function noteEvidenceNotStarted(pool, sessionId, reason) {
-  require('./visual-evidence-orchestrator').noteNotStarted(pool, Number(sessionId), reason)
+function noteShotsNotStarted(pool, sessionId, reason) {
+  require('./shots-orchestrator').noteNotStarted(pool, Number(sessionId), reason)
     .catch((err) => log.warn('pr-import-sync', 'could not record why the preview did not start', {
       sessionId, reason, err: err.message,
     }));
@@ -751,7 +751,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
           sessionId: session.id, err: err.message,
         }));
       if (stored) visuals.notifyChecks(session.id, { state: 'skipped', results: [] }, headSha || null, null);
-      noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
+      noteShotsNotStarted(pool, session.id, 'no_staging_preview');
       return;
     }
 
@@ -778,7 +778,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
         sessionId: session.id, err: e.message,
       }));
       notifyStagingFailed({ session, app });
-      noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
+      noteShotsNotStarted(pool, session.id, 'no_staging_preview');
       throw err;
     }
 
@@ -790,7 +790,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // vote is over.
     if (!(await stillOpenForPreview(pool, session))) {
       await discardStagingResult({ staging, session, app, result });
-      noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
+      noteShotsNotStarted(pool, session.id, 'no_staging_preview');
       return;
     }
 

@@ -84,10 +84,10 @@
       "description": "Log verbosity for the platform process: DEBUG, INFO, WARN or ERROR. Raising it to DEBUG is the one tunable you actually want to change without a code change while chasing something in prod."
     },
     {
-      "key": "VISUAL_EVIDENCE_V2_ENABLED",
+      "key": "SHOTS_ENABLED",
       "group": "Platform",
       "default": "true",
-      "description": "Emergency kill switch for agent-authored proposal evidence. The mechanism is enabled by default; set exactly false only to stop intent collection, paired replay, and reviewer presentation together. Proposal checks and previews continue, and legacy default-route screenshots are not restored."
+      "description": "Emergency kill switch for before/after shots of each proposal's declared changes. On by default; set exactly false only to stop collecting the declared changes, taking the shots, and showing them together. Proposal checks and previews continue, and legacy default-route screenshots are not restored."
     },
     {
       "key": "MAX_APPS",
@@ -567,6 +567,13 @@
       "group": "Waitlist",
       "required": false,
       "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it is this deployment's canonical origin; it is http://localhost:<PORT> only when USERNODE_LOCAL_DEV=1 marks a local run, so a missing variable cannot yield a callback that works only on a laptop. Change it and you must register the matching callback with GitHub, X and LinkedIn, which all validate redirect_uri first."
+    },
+    {
+      "key": "INVITE_TREE_BUDGETS",
+      "group": "Waitlist",
+      "required": false,
+      "default": "10",
+      "description": "Lifetime waitlist skips by invite-tree generation, comma-separated: the first number is for people let off the waitlist by hand, the next for the people their links let in, and so on, with none past the end. The default, 10, is ten each and no chaining. An empty or unreadable value falls back to 10. Whether links skip the waitlist at all is switched in Admin → Waitlist."
     },
     {
       "key": "USERNODE_OPENROUTER_MANAGEMENT_API_KEY",
@@ -1441,19 +1448,19 @@
       "expectText": "GitHub repo URL"
     },
     {
-      "name": "Create-project dialog opens on who it is for, nothing chosen yet and Next dimmed beside Cancel: Just me, A group and A community, with a step count (communities, stage 3; the rework)",
+      "name": "Create-project dialog opens on who it is for, nothing chosen yet and Next dimmed beside Cancel: Just me, A private community and A public community, with a step count (communities, stage 3; the rework)",
       "path": "/#create",
       "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-audience=\"\"]:has(#create-cancel + #create-next:disabled) .create-who-pill[data-audience-pill=\"solo\"] + .create-who-pill[data-audience-pill=\"invited\"] + .create-who-pill[data-audience-pill=\"open\"]",
       "expectText": "Step 1 of 4"
     },
     {
-      "name": "A community's create dialog asks who approves changes before how to start: members vote, or people you pick (communities, stage 3)",
+      "name": "A public community's create dialog asks who approves changes before how to start: members vote, or people you pick (communities, stage 3)",
       "path": "/?shot=create-approve#create",
       "expectSelector": ".un-modal #create-card[data-step=\"approve\"][data-audience=\"open\"][data-final=\"false\"] #create-approve-block .create-approver-pill[data-approver-pill=\"anyone\"] + .create-approver-pill[data-approver-pill=\"invited\"]",
       "expectText": "Who approves changes?"
     },
     {
-      "name": "A group names its people when it is created, on a step of its own: one row per person, typed as @username or an email (communities, stage 3; the rework)",
+      "name": "A private community names its people when it is created, on a step of its own: one row per person, typed as @username or an email (communities, stage 3; the rework)",
       "path": "/?shot=create-group#create",
       "expectSelector": ".un-modal #create-card[data-audience=\"invited\"][data-step=\"invite\"] [data-create-step=\"invite\"] #create-invite-block #create-invitees",
       "expectText": "Who do you want to invite?"
@@ -2420,7 +2427,7 @@
       "name": "A project's Workshop page leads with a hero that says who it is for and how a change gets in (communities)",
       "path": "/#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"] > [data-ws-community-rule]",
-      "expectText": "Community"
+      "expectText": "Public community"
     },
     {
       "id": "workshop.grouping-ear",
@@ -3252,7 +3259,7 @@
       "name": "The Workshop keeps joined community sections in audience order",
       "path": "/?demo=1#workshop",
       "expectSelector": "#workshop-list:has([data-workshop-section=\"open\"]):not(:has([data-workshop-section=\"solo\"] ~ [data-workshop-section])):not(:has([data-workshop-section=\"invited\"] ~ [data-workshop-section=\"open\"]))",
-      "expectText": "Communities"
+      "expectText": "Public communities"
     },
     {
       "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All chip over its Current status and Needs you tabs, lit like a project page's (#3051)",
@@ -3908,9 +3915,10 @@
       "expectText": "non-podium"
     },
     {
-      "name": "Admin Waitlist is a first-class menu section (#1179)",
+      "name": "Admin Waitlist is a first-class menu section (#1179), with its Invites panel loaded",
       "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-content"
+      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-invites-usage)",
+      "expectText": "Invite links"
     },
     {
       "name": "Admin Waitlist says where a signup is in words, not the route's name (#1544)",
@@ -3999,6 +4007,12 @@
       "path": "/#admin/homeroom-bot",
       "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-build-lane):has(#admin-homeroom-bot-optouts) #admin-homeroom-bot-intro",
       "expectText": "It posts nothing and claims nothing, and builds nothing unless shadow builds are on below"
+    },
+    {
+      "name": "Welcome messages lets an admin choose who greets somebody let in, and what the first message says",
+      "path": "/#admin/welcome-dm",
+      "expectSelector": "#admin-welcome-dm:has(#admin-welcome-dm-members):has(#admin-welcome-dm-recent) #admin-welcome-dm-intro",
+      "expectText": "When someone is let in to the platform"
     },
     {
       "name": "Model costs says what one change is and that it counts the coding agent (#2592)",
@@ -5059,20 +5073,20 @@
       "expectText": "Apps set differently"
     },
     {
-      "name": "#2241: New change opens a screen of its own, with the empty state that invites the first message",
+      "name": "#2241 → #2779: New change's old address opens an unsent agent session beside the inbox, with the empty state that invites the first message",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
-      "expectSelector": "#dc-tab-chat #dc-messages #dc-empty-state",
-      "expectText": "What should this session change?"
+      "expectSelector": "#messages-screen:not(.hidden) [data-agent-session-thread=\"new\"] [data-agent-session-empty]",
+      "expectText": "New agent session"
     },
     {
-      "name": "#2241/#2607: the unsent change has a live composer and the venue dropdown, and no controls for a session that does not exist",
+      "name": "#2779: the unsent agent session has a live message box, and no session actions for a conversation that does not exist yet",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
-      "expectSelector": "#dc-session-header:has(> button#dc-venue-select[data-venue-change]):not(:has(#dc-session-actions)) ~ .dc-session-body #dc-form #dc-input:not([disabled])"
+      "expectSelector": "[data-agent-session-thread=\"new\"]:has([data-agent-session-menu][disabled]) #agent-session-pane-composer:not([disabled])"
     },
     {
-      "name": "#2607: the venue dropdown on a new change names the venue it would be built in, and opens the sheet that changes it",
+      "name": "#2607 → #3078: where an unsent agent session is built is its composer's model pill, which opens Build with",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
-      "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]:not([disabled]) > .dc-venue-name"
+      "expectSelector": "[data-agent-session-thread=\"new\"] button[data-agent-session-model][aria-haspopup=\"dialog\"]"
     },
     {
       "name": "#2772: a change in progress is listed in Messages as an agent conversation, and opens its session (beside the list since #2813)",

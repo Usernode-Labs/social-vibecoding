@@ -17,7 +17,7 @@ export interface AgentChange {
   checkSkipReason?: string | null;
   /** The change is to the platform's own (self-hosted) app. */
   appSelfHosted?: boolean;
-  /** Its visual change preview, while one is being captured. */
+  /** Its before/after shots, while they are being taken. */
   previewCapture?: { state: string; startedAt: string | null } | null;
 }
 
@@ -161,6 +161,18 @@ export interface AgentHint {
    * request itself, so this never leaves the browser (serverHint).
    */
   issueTitle?: string;
+  /**
+   * The first message the unsent conversation offers, unsent and editable,
+   * when the entry point has one to hand over: Global Chat's development
+   * task, or Explore's message about a proposal. For the screen only, like
+   * the title (./request-seed.ts draftSeed).
+   */
+  message?: string;
+  /**
+   * Open the composer's "Build with" sheet on this agent's tab: the
+   * out-of-credits card's "Use Claude Code" / "Use Codex". Screen only.
+   */
+  handoff?: 'claude-code' | 'codex';
 }
 
 /** The hint as the server takes it: the fields it resolves, nothing the screen added. */
@@ -562,10 +574,10 @@ export async function stopTurn(id: number): Promise<{ stopped: boolean; reason?:
   return body;
 }
 
-/** Stop the change's running visual change preview (the proposal's Rerun starts it again). */
+/** Stop the change's running before/after shots (the proposal's Take again starts them again). */
 export async function stopPreviewCapture(appSlug: string, changeId: number): Promise<{ stopped: boolean; reason?: string }> {
   return json<{ stopped: boolean; reason?: string }>(
-    await request(`/api/apps/${encodeURIComponent(appSlug)}/proposals/${changeId}/evidence/stop`, { method: 'POST', body: '{}' }),
+    await request(`/api/apps/${encodeURIComponent(appSlug)}/proposals/${changeId}/shots/stop`, { method: 'POST', body: '{}' }),
     'Could not stop capturing previews.',
   );
 }

@@ -13,12 +13,19 @@
 // (`DevChat.startPendingSession`). The first send turns it into a real
 // session (`_materializePendingSession`) and the turn proceeds normally.
 //
+// #2779 retired that screen as a destination: classic sessions are no
+// longer created, and New change opens an unsent agent session instead. The
+// address still resolves — a bookmark, Back, a link an older page wrote —
+// and the router sends it to the unsent agent session on the same app. The
+// placeholder machinery below is unreachable from the product now and is
+// pinned only until it is deleted.
+//
 // What these tests pin, in order:
-//   1. the route: `new` is the one session ref that is a word, and the two
-//      copies of that literal (the router, DevChat) agree;
-//   2. the entry points: Improve's New change and the sync banner's
-//      "Start a new change" navigate instead of creating; the out-of-credits
-//      hand-off still creates up front, because it has a session to hand over;
+//   1. the route: `new` is still the one session ref that is a word, and the
+//      old address lands on an unsent agent session, replacing itself;
+//   2. the entry points: New change (AppView.createProposal), the
+//      out-of-credits hand-off and the banner's "Start a new change" open an
+//      agent session and create nothing;
 //   3. the placeholder: no id, no owner, nothing said about a venue or a PR,
 //      and NO request of any kind while it is on screen;
 //   4. the send: one session created, the message posted to the new id, and
@@ -312,59 +319,87 @@ test('the unsent change has a route of its own, and one spelling of it', () => {
     { tab: 'dev', subTab: 'forum', ref: null });
 });
 
-test('the address survives a reload, and the placeholder serializes back to it', () => {
-  const { App, context, location } = loadApp();
-  // Reading the URL: /app/<slug>/dev/sessions/new is the session sub-tab.
+test('the old address opens an unsent agent session on that app, in place of itself (#2779)', () => {
+  const { App, context, location, urls } = loadApp();
+  const prepared = [];
   const routed = [];
-  App.navigateToApp = async (slug, tab, ref, subTab) => { routed.push([slug, tab, ref, subTab]); };
+  context.window.UsernodeReact = { agentSession: { prepareDraft: (hint) => { prepared.push(plain(hint)); } } };
+  // A desktop: the unsent conversation opens beside the inbox, not full-screen.
+  context.window.matchMedia = () => ({ matches: true });
+  App.navigateToApp = async (...args) => { routed.push(['app', ...args]); };
+  App.navigateToMessages = (...args) => { routed.push(['messages', ...plain(args)]); };
   location.href = '/app/recipe-box/dev/sessions/new';
   App.restoreFromHash();
-  assert.deepEqual(plain(routed.at(-1)), ['recipe-box', 'dev', 'new', 'sessions'],
-    'a cold link lands on the unsent-change screen, not the board');
+  assert.deepEqual(prepared, [{ slug: 'recipe-box', entry: 'app' }],
+    'the unsent conversation is focused on the app the address named');
+  assert.deepEqual(plain(urls[0]), ['replace', '/#messages/agent/new'],
+    'replaced, from the root, so Back does not bounce through the old address');
+  assert.equal(routed.some(([kind]) => kind === 'app'), false, 'the classic screen is never opened');
+  assert.deepEqual(routed.at(-1), ['messages', null, null, { kind: 'agent', id: 'new' }]);
+});
 
-  // Writing it: updateHash asks DevChat for the open session's ref, and an
-  // unsent change has no id to give — `null` there would normalize the whole
-  // route back to the board and throw the reader off the screen they are on.
-  App.currentApp = 'recipe-box';
-  App.currentTab = 'dev';
-  App.currentSubTab = 'sessions';
-  context.DevChat.currentSession = { pending: true, id: null, app_slug: 'recipe-box' };
-  App.updateHash();
-  assert.equal(location.pathname, '/app/recipe-box/dev/sessions/new');
+test('an unsent conversation already on screen takes the old address\'s hint in place (#2779)', () => {
+  // The route alone would change nothing there, and the hint would wait for
+  // the next unsent conversation; the controller's own start applies it.
+  const { App, context, location, urls } = loadApp();
+  const started = [];
+  const prepared = [];
+  context.window.UsernodeReact = {
+    agentSession: {
+      isOpen: () => true,
+      currentId: () => 'new',
+      start: (hint) => { started.push(plain(hint)); },
+      prepareDraft: (hint) => { prepared.push(plain(hint)); },
+    },
+  };
+  context.window.matchMedia = () => ({ matches: true });
+  App.navigateToApp = async () => { throw new Error('the classic screen must not open'); };
+  App.navigateToMessages = () => {};
+  location.href = '/app/recipe-box/dev/sessions/new';
+  App.restoreFromHash();
+  assert.deepEqual(started, [{ slug: 'recipe-box', entry: 'app' }]);
+  assert.deepEqual(prepared, [], 'start carries the hint; nothing is left pending');
+  assert.deepEqual(plain(urls[0]), ['replace', '/#messages/agent/new']);
 });
 
 // ── 2. the entry points ───────────────────────────────────────────────
 
-test('Improve\'s New change navigates and creates nothing', async () => {
-  const { AppView, calls } = loadAppView();
-  await AppView.createProposal();
-  assert.deepEqual(plain(calls.createSession), [], 'no session is POSTed on the click');
-  assert.deepEqual(plain(calls.switchTab), [['dev', 'new', 'sessions']],
-    'it opens the unsent-change screen');
-  assert.equal(AppView._proposalHint, true, 'the one-shot hint still rides along');
-});
-
-test('the out-of-credits hand-off still creates up front', async () => {
-  // It is the one caller with a reason: the walkthrough it opens hands the
-  // session to a web agent, and the hand-off is recorded ON the session
-  // (POST /sessions/:id/build-venue), so there has to be a row to point at.
+test('New change on an app opens an agent session and creates nothing', () => {
   const { AppView, calls, sandbox } = loadAppView();
-  await AppView.createProposal({ flow: 'codex' });
-  assert.deepEqual(plain(calls.createSession), [['recipe-box']]);
-  assert.deepEqual(plain(calls.switchTab), [['dev', 77, 'sessions']]);
-  assert.equal(sandbox.DevChat._devFlow.agent, 'codex');
+  const started = [];
+  sandbox.UsernodeReact = { agentSession: { start: (hint) => { started.push(plain(hint)); } } };
+  AppView.createProposal();
+  assert.deepEqual(started, [{ slug: 'recipe-box', entry: 'app' }]);
+  assert.deepEqual(plain(calls.createSession), [], 'no session is POSTed');
+  assert.deepEqual(plain(calls.switchTab), [], 'and the classic screen is not opened');
 });
 
-test('the banner\'s "Start a new change" leads to the same screen', async () => {
+test('the out-of-credits hand-off opens the agent session on its "Build with" tab', () => {
+  // It used to create a classic session up front to record the hand-off on;
+  // an agent session hands off from its composer's "Build with" sheet.
+  const { AppView, calls, sandbox } = loadAppView();
+  const started = [];
+  sandbox.UsernodeReact = { agentSession: { start: (hint) => { started.push(plain(hint)); } } };
+  AppView.createProposal({ flow: 'codex' });
+  AppView.createProposal({ flow: 'something-else' });
+  assert.deepEqual(started, [
+    { slug: 'recipe-box', entry: 'app', handoff: 'codex' },
+    { slug: 'recipe-box', entry: 'app' },
+  ]);
+  assert.deepEqual(plain(calls.createSession), []);
+});
+
+test('the banner\'s "Start a new change" opens an agent session on the same app', () => {
   const { DevChat, sandbox, sessionRequests } = makeDevChat();
+  const started = [];
   const switched = [];
   sandbox.App.switchTab = async (...args) => { switched.push(args); };
   sandbox.AppView = { appData: { slug: 'recipe-box' } };
-  DevChat._publishBanners = () => {};
-  await DevChat.startNewChange();
-  assert.deepEqual(plain(switched), [['dev', 'new', 'sessions']]);
-  assert.deepEqual(plain(sessionRequests()), [], 'and creates nothing on the way');
-  assert.equal(DevChat._newChangePending, false, 'the button is released either way');
+  sandbox.UsernodeReact = { agentSession: { start: (hint) => { started.push(plain(hint)); } } };
+  DevChat.startNewChange();
+  assert.deepEqual(started, [{ slug: 'recipe-box', entry: 'banner' }]);
+  assert.deepEqual(plain(switched), [], 'the classic screen is not opened');
+  assert.deepEqual(plain(sessionRequests()), [], 'and nothing is created on the way');
 });
 
 // ── 3. the placeholder ────────────────────────────────────────────────

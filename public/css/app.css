@@ -12271,8 +12271,9 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
    the FURTHEST step reached: everything up to it is on screen, the rest is
    folded. Keyed on the CARD, like data-mode.
 
-   The invite step belongs to a group, and the approval step to a group or
-   a community: Just me has nobody else to approve anything. The footer
+   The invite step belongs to a private community, and the approval step to
+   a private or a public community: Just me has nobody else to approve
+   anything. The footer
    follows data-final, which the component sets from the same rule: Cancel
    always; Next until the last step, then Create / Import (QA 2026-09-24 Q6:
    never two accent buttons at once). Either stays dimmed until its step is
@@ -12828,8 +12829,6 @@ button.attr-chip { cursor: pointer; }
   font-style: italic;
   padding: 4px 0;
 }
-
-.st-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
 
 /* ────────────────────────────────────────────────────────────────────────
    Admin console — folded-in section styles (#860)
@@ -14393,12 +14392,12 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-topic-fold-more:hover { text-decoration: underline; }
 .dev-topic-fold[data-folded] + .dev-topic-fold-more { margin-top: -0.5em; }
 /* What the change claims a reader will see, as bullets under the summary,
-   then the evidence run's state as one strip — inside the fold. */
+   then the shots run's state as one strip — inside the fold. */
 .dev-topic-claims-h { margin-top: 12px; }
 .dev-topic-claims { margin: 0; padding-left: 20px; list-style: disc; font-size: 13.5px; line-height: 1.5; color: var(--text-primary); }
 .dev-topic-claims li + li { margin-top: 4px; }
 .dev-topic-fold > .dev-topic-visuals { margin-top: 12px; }
-.dev-topic-evidence {
+.dev-topic-shots {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -14410,7 +14409,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   line-height: 1.4;
   color: var(--text-muted);
 }
-.dev-topic-evidence > .dev-badge { flex: none; }
+.dev-topic-shots > .dev-badge { flex: none; }
 /* Addresses issue, as the sheet's second part: the grey box goes, a hairline
    parts it from the summary, and each issue is a row in the Discussion's
    event-box language — the number where the glyph goes, the title, the
@@ -14964,9 +14963,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-topic-hero-issues form { margin-top: 4px; }
 /* The picture, or the line that says it is coming. */
 .dev-topic-hero .dev-topic-visuals { margin-top: 14px; }
-.dev-topic-hero .dev-topic-evidence { margin-top: 12px; }
-.dev-topic-hero-evidence { display: inline-flex; align-items: center; gap: 8px; margin: 14px 0 0; font-size: 13px; color: var(--text-muted); }
-.dev-topic-hero-evidence > .dc-status-spinner-arc { flex: none; margin: 0; }
+.dev-topic-hero .dev-topic-shots { margin-top: 12px; }
+.dev-topic-hero-shots { display: inline-flex; align-items: center; gap: 8px; margin: 14px 0 0; font-size: 13px; color: var(--text-muted); }
+.dev-topic-hero-shots > .dc-status-spinner-arc { flex: none; margin: 0; }
 .dev-topic-hero > .dev-topic-note { margin-top: 12px; }
 
 /* ── The steps: the card's grey strip, expanded ──
@@ -16597,7 +16596,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 
    THE ROW WRAPS (#3276). Nothing in it can shrink: the faces are a fixed
    stack, the count is `nowrap`, and each pill is its own word. So when five
-   faces, "13 members", Joined, Invite and "Make it a group" came to more
+   faces, "13 members", Joined, Invite and "Make it private" came to more
    than a phone's width, the row ran past the screen's edge and the whole
    hub scrolled sideways. Now the actions drop to a line of their own under
    the faces, still at its far end, and wrap among themselves if even that
