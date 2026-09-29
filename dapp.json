@@ -1268,10 +1268,10 @@
       "expectSelector": "#browse-screen:has(#browse-filter-chips > [data-filter=\"featured\"][aria-pressed=\"true\"]) #browse-list[data-filter=\"featured\"]:not(:has(.browse-row[data-slug=\"staging-demo-popular-1\"])) .browse-row[data-slug=\"staging-demo-featured\"]"
     },
     {
-      "name": "An app's page offers Share, first in its action list (the prototype's About sheet)",
+      "name": "A stored sample without a live runtime does not offer a nonexistent Share link",
       "path": "/#apps/staging-demo-forkable",
-      "expectSelector": "#browse-detail #browse-detail-share:first-child",
-      "expectText": "Share"
+      "expectSelector": "#browse-detail:has(h2):not(:has(#browse-detail-share))",
+      "expectText": "Staging demo forkable app"
     },
     {
       "name": "Bare #leaderboard renders all three tabs and opens on Challenges (#962, #2374)",
