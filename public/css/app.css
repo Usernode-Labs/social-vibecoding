@@ -18873,6 +18873,29 @@ html.un-ios {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
+/* THE STRIP ARRIVES LIKE THE SHEET IN MESSAGES. It is already positioned
+   under the tab bar (z-index 29 against the bar's 30), so a short rise with
+   the sheet's own distance and opacity floor reads as drawn up from behind
+   the bar. The animation is what a display flip looks like: it restarts on
+   every appearance, including a reload that restores a parked app from
+   storage — which is why no component change is needed for the way in. */
+@media (max-width: 767px) {
+  .platform-parked {
+    animation: platform-parked-in 180ms ease-out;
+  }
+  /* THE WAY OUT IS HELD BY THE ISLAND (parked-strip.tsx). `hidden` flips
+     straight to `display: none`, which no keyframe can cross, so the strip
+     keeps its last app for this long with the out class on and THEN hides. */
+  .platform-parked.platform-parked-out {
+    animation: platform-parked-out 180ms ease-in forwards;
+  }
+}
+@keyframes platform-parked-in { from { transform: translateY(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+@keyframes platform-parked-out { from { transform: none; opacity: 1; } to { transform: translateY(24px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .platform-parked,
+  .platform-parked.platform-parked-out { animation: none; }
+}
 /* KEYBOARD UP, STRIP GONE (#2762), for the reason `html.un-kb #platform-tabs`
    gives for the bar under it: with the bar gone the strip's floor
    (`--platform-bar-h`) drops to 0 and it would ride on top of the keyboard,

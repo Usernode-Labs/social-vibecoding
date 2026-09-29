@@ -64,11 +64,11 @@
  * rewriting the attribute.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { XIcon } from '@/components/ui/icons';
 
-import { useHiddenClass } from '../../lib/legacy-dom';
+import { useHiddenClass, useClassToggle, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
@@ -76,14 +76,74 @@ import { navStore } from './nav-store.js';
 import { parkedStore, readParked, setParked } from './parked-store.js';
 import { enterPeek, leavePeek } from './rail-peek';
 
+// HOW LONG THE STRIP HOLDS ITS LAST APP WHILE IT ANIMATES OUT, matching the
+// 180ms of `platform-parked-out` in app.css. Pure CSS cannot animate the
+// exit: `hidden` flips straight to `display: none`, so the island holds the
+// snapshot for this long and THEN applies `hidden`. Only the render is held —
+// `setParked(null)` still clears the store and storage immediately, so a
+// reload inside the window behaves exactly as it does today.
+const EXIT_MS = 180;
+
+/** The store's row, restated here so the snapshot can be typed. */
+type ParkedApp = {
+  slug: string;
+  name: string;
+  iconUrl: string | null;
+  iconEmoji: string | null;
+};
+
 export function ParkedStrip() {
   const ref = useRef<HTMLDivElement | null>(null);
-  const { app } = useStoreState(parkedStore);
+  const { app: parked } = useStoreState(parkedStore);
   // The bar's own answer, read the way the bar reads it. `true` is the
   // prerender, and it only ever reaches the DOM as a class.
   const barUp = useVisibility('platform-tabs', true);
   const { peek } = useStoreState(navStore);
+
+  // ── The exit hold ──────────────────────────────────────────────────
+  //
+  // POST-MOUNT state only, like the app itself: the store's empty INITIAL is
+  // what the prerendered document ships, so this adds nothing to the first
+  // render. On a phone, the layout effect below snapshots the app the moment
+  // the store lets go of it, and `app` — what this component renders, hides
+  // and taps — becomes that snapshot for 180ms while the out animation
+  // plays. The store and storage were already cleared by `setParked(null)`;
+  // only the render is held, so a reload inside the window behaves exactly
+  // as it does today. A new app parked during the hold cancels it and takes
+  // the screen straight away (the strip never left, so its entrance does not
+  // restart). Reduced motion skips the hold, so the strip vanishes the way
+  // it did before the animation existed. The gate is the same 767px the CSS
+  // applies the animations inside, so the desktop rail's footer clears as
+  // promptly as it does today.
+  const [leaving, setLeaving] = useState<ParkedApp | null>(null);
+  const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveApp = useRef<ParkedApp | null>(null);
+  liveApp.current = parked || liveApp.current;
+  // A LAYOUT effect: the hold has to be decided in the same commit the store
+  // let go of the app, BEFORE `hidden` follows it and before the browser
+  // paints — otherwise the strip would hide for a frame and then come back
+  // to animate out. (In the prerender pass no effect runs at all.)
+  useIsomorphicLayoutEffect(() => {
+    if (parked) {
+      clearTimeout(exitTimer.current);
+      exitTimer.current = null;
+      setLeaving(null);
+      return;
+    }
+    if (!window.matchMedia('(max-width: 767px)').matches) return;
+    if (!window.matchMedia('(prefers-reduced-motion: no-preference)').matches) return;
+    const prior = liveApp.current;
+    if (!prior) return;
+    setLeaving(prior);
+    exitTimer.current = setTimeout(() => setLeaving(null), EXIT_MS);
+    return () => {
+      clearTimeout(exitTimer.current);
+      exitTimer.current = null;
+    };
+  }, [parked]);
+  const app = parked || leaving;
   useHiddenClass(ref, !app || !barUp);
+  useClassToggle(ref, 'platform-parked-out', !parked && !!app && !!barUp);
 
   // POST-MOUNT, and that is the whole of why it is an effect: a localStorage
   // read during the first render is a hydration mismatch. Once only — every

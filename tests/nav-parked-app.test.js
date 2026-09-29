@@ -369,6 +369,59 @@ test('on a peeked rail the strip rides on top, and holds the peek while pointed 
   assert.match(STRIP, /onMouseLeave=\{peek \? leavePeek : undefined\}/);
 });
 
+test('the strip animates in and out on the phone, and not at all under reduced motion', () => {
+  // The entrance plays when `hidden` comes off, a display flip — CSS runs
+  // the animation on every appearance, with no component change needed.
+  assert.match(CSS, /@keyframes platform-parked-in \{ from \{ transform: translateY\(24px\); opacity: 0\.6; \} to \{ transform: none; opacity: 1; \} \}/,
+    'the same rise, opacity floor and distance as msgx-sheet-in');
+  // The exit cannot be pure CSS: `hidden` flips straight to display: none,
+  // so the island holds the last app for the animation before unmounting it.
+  assert.match(CSS, /@keyframes platform-parked-out \{ from \{ transform: none; opacity: 1; \} to \{ transform: translateY\(24px\); opacity: 0; \} \}/,
+    'the mirror of the way in');
+  const mobile = CSS.match(/@media \(max-width: 767px\) \{[\s\S]*?\n\}/g)
+    .find((block) => block.includes('platform-parked-in'));
+  assert.ok(mobile, 'the entrance is applied inside a mobile-only block');
+  assert.match(mobile, /\.platform-parked \{\s*animation: platform-parked-in 180ms ease-out;\s*\}/);
+  assert.match(mobile, /\.platform-parked\.platform-parked-out \{\s*animation: platform-parked-out 180ms ease-in forwards;\s*\}/,
+    'forwards holds the transparent last frame until `hidden` lands');
+  // The desktop rail's footer row keeps today's behaviour, no animation:
+  // no @media (min-width: 768px) block may carry either animation.
+  const desktopBlocks = [];
+  let at = CSS.indexOf('@media (min-width: 768px)');
+  while (at >= 0) {
+    const open = CSS.indexOf('{', at);
+    let depth = 0;
+    let i = open;
+    for (; i < CSS.length; i++) {
+      if (CSS[i] === '{') depth++;
+      else if (CSS[i] === '}') { depth--; if (depth === 0) break; }
+    }
+    desktopBlocks.push(CSS.slice(at, i + 1));
+    at = CSS.indexOf('@media (min-width: 768px)', i + 1);
+  }
+  assert.ok(desktopBlocks.length > 0, 'the desktop blocks were found');
+  for (const block of desktopBlocks) {
+    assert.doesNotMatch(block, /platform-parked-in|platform-parked-out/);
+  }
+  // Reduced motion sees the strip appear and disappear instantly, as today.
+  assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.platform-parked,?\s*\.platform-parked\.platform-parked-out \{\s*animation: none;\s*\}\s*\}/);
+  // The hold: on a phone, a null transition snapshots the last app and the
+  // `hidden` class follows the snapshot's expiry — storage is still cleared
+  // immediately by setParked(null), so a reload in that window behaves as before.
+  assert.match(STRIP, /EXIT_MS = 180/);
+  assert.match(STRIP, /window\.matchMedia\('\(max-width: 767px\)'\)/);
+  assert.match(STRIP, /window\.matchMedia\('\(prefers-reduced-motion: no-preference\)'\)/,
+    'reduced motion skips the hold, so the strip vanishes instantly');
+  assert.match(STRIP, /setTimeout\(\(\) => setLeaving\(null\), EXIT_MS\)/);
+  assert.match(STRIP, /clearTimeout\(exitTimer\.current\)/,
+    'the hold is cancelled, never left running');
+  // The new app takes the screen straight away and the hold is cancelled.
+  assert.match(STRIP, /if \(parked\) \{\s*clearTimeout\(exitTimer\.current\);\s*exitTimer\.current = null;\s*setLeaving\(null\);/,
+    'a new app parked mid-hold takes the screen straight away');
+  assert.match(STRIP, /const app = parked \|\| leaving;/,
+    'what the strip renders, hides and taps becomes the snapshot while it leaves');
+});
+
 test('storage is read defensively and written through one key', () => {
   const SRC = read('frontend/src/features/nav/parked-store.js');
   assert.match(SRC, /const KEY = 'usernode_parked_app_v1';/);
