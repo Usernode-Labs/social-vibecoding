@@ -94,3 +94,65 @@ test('the hero leads the hub, above its channel and Needs you; who is here is th
   assert.match(lander, /<CommunityCard\s+slug=\{slug\}\s+name=\{app\.name \|\| undefined\}\s+iconUrl=\{app\.iconUrl\}\s+iconEmoji=\{app\.iconEmoji\}/,
     'with the identity the header chip draws');
 });
+
+test('the hero draws an Open app pill that opens the app, and none on the platform\'s own (#3367)', async () => {
+  const { CommunityCard, reloadCommunity } = loadTsx(CARD);
+
+  const payloads = {
+    'notes-ab12': {
+      slug: 'notes-ab12', name: 'Notes', member_count: 2, is_member: true,
+      is_creator: false, audience: 'open', audience_label: 'Public community',
+      members: [], channel: null, self_hosted: false,
+      approval: { policy: 'anyone', approvals_required: null, electorate: 2, required: 2 },
+    },
+    usernode: {
+      slug: 'usernode', name: 'Usernode', member_count: 2, is_member: true,
+      is_creator: false, audience: 'open', audience_label: 'Public community',
+      members: [], channel: null, self_hosted: true,
+      approval: { policy: 'anyone', approvals_required: null, electorate: 2, required: 2 },
+    },
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const slug = decodeURIComponent(String(url).split('/api/apps/')[1].split('/community')[0]);
+    return { ok: true, json: async () => payloads[slug] };
+  };
+  // The hero reads AppView for its Invite pill at render, once data is in.
+  globalThis.window = { AppView: { _plusMenuShowsMembers: () => false } };
+  try {
+    // Before the read has answered, the identity alone: no pill.
+    const pending = renderToHtml(createElement(CommunityCard, { slug: 'notes-ab12', name: 'Notes' }));
+    assert.doesNotMatch(pending, /data-ws-community-open-app/,
+      'nothing that depends on the read is drawn before it answers');
+
+    await reloadCommunity('notes-ab12');
+    await reloadCommunity('usernode');
+
+    // A member of an ordinary project: the pill is there, with the words,
+    // the attribute tests select on, and the hero's own neutral pill style.
+    const shown = renderToHtml(createElement(CommunityCard, { slug: 'notes-ab12', name: 'Notes' }));
+    assert.match(shown, /data-ws-community-open-app=""/);
+    assert.match(shown, /Open app/);
+    assert.match(shown, /bg-zinc-100/,
+      'the same small neutral pill the hero already draws');
+
+    // The platform's own project gets no pill: the platform is what you are
+    // using when you are there.
+    const selfHosted = renderToHtml(createElement(CommunityCard, { slug: 'usernode', name: 'Usernode' }));
+    assert.doesNotMatch(selfHosted, /data-ws-community-open-app/,
+      'the platform\'s own row is already the app you are in');
+
+    // A tap delegates to the same call the existing card action makes
+    // (public/js/app-view.js's openLiveApp), optional-chained so server-side
+    // and test rendering stay safe where window.App does not exist.
+    assert.match(read(CARD), /\(window as any\)\.App\?\.openAppTab\?\.\(slug, 'app'\)/,
+      'the same call the existing card action makes');
+
+    // And the guard is on the payload, not guessed: the route sends it.
+    assert.match(read('src/routes/apps.js'), /self_hosted: !!app\.self_hosted/,
+      'GET /api/apps/:slug/community sends the guard the button reads');
+  } finally {
+    globalThis.fetch = realFetch;
+    delete globalThis.window;
+  }
+});

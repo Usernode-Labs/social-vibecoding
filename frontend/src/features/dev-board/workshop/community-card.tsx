@@ -111,6 +111,9 @@ export type CommunityPayload = {
   /** Whether this viewer may propose who the project is for (the creator,
       an app admin or a platform admin; never the platform's own app). */
   can_manage?: boolean;
+  /** The platform's own project, which has no app to open — the platform
+      is what you are using when you are there. */
+  self_hosted?: boolean;
   /** An audience change already up for a vote, if one is. */
   audience_change?: { session_id: number; pr_number: number | null; title: string | null } | null;
   approval: {
@@ -630,6 +633,18 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji }: {
       ) : null}
       {data.can_manage && !data.audience_change ? (
         <AudienceChange slug={slug} name={displayName} audience={data.audience} onOpened={() => { void load(); }} />
+      ) : null}
+      {!data.self_hosted ? (
+        <Button
+          type="button"
+          variant="pillNeutral"
+          size="sm"
+          ink="neutral"
+          data-ws-community-open-app=""
+          onClick={() => { (window as any).App?.openAppTab?.(slug, 'app'); }}
+        >
+          Open app
+        </Button>
       ) : null}
     </div>
   );

@@ -3239,6 +3239,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         channel,
         activity,
         can_manage: !!canManage,
+        self_hosted: !!app.self_hosted,
         audience_change: pendingAudience ? {
           session_id: pendingAudience.id,
           pr_number: pendingAudience.pr_number,
