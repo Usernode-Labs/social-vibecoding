@@ -281,9 +281,13 @@ is no replay plan to write and nothing to verify locally.
   platform access is QUEUED and joins on release, however that happens. The
   page carries the token in an HttpOnly cookie, so signing up or in from it
   follows the link server-side (`redeemCarried` in `routes/auth.js`). The
-  invite tree (`users.admitted_by`, `invite_generation`; skips of 10, 5, 2)
-  is built and OFF behind `INVITE_TREE_ENABLED`; `grantPlatformAccess` is
-  "let in by us", generation 0.
+  invite tree (`users.admitted_by`, `invite_generation`; 10 skips for
+  generation 0, none after it, so invites do not chain) is ON unless an admin
+  switches it off in Admin → Waitlist (the `invite_tree_enabled` platform
+  setting, read through a 10-second cache). Only a release by hand
+  (`grantPlatformAccess(…, { manualRelease: true })` on an account without
+  access) makes generation 0; existing accounts, activation codes, genesis
+  wallets and an admin's link's invitees get no skips.
 
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 

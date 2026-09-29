@@ -156,6 +156,23 @@ origin including the scheme, with no path or trailing slash; the application
 appends `/waitlist/connect/<provider>/callback`. When overriding it, register
 the resulting callback URLs with the OAuth providers.
 
+Invite links let people skip the waitlist unless an admin switches that off
+in Admin → Waitlist; the switch is a platform setting, not a chart value. How
+many skips each generation gets is `config.inviteTreeBudgets`, which maps to
+`INVITE_TREE_BUDGETS` in the platform Deployment:
+
+```yaml
+config:
+  inviteTreeBudgets: "10"
+```
+
+Only accounts an admin let off the waitlist by hand (Admit, or a direct access
+grant) have skips: the first number each. Accounts that already had access,
+activation codes, genesis wallets and anyone a link let in get none. The
+default `"10"` stops there, so invites do not chain; a later number would give
+the next generation that many. Explicit `env` entries win over `envFrom`, so
+set this here rather than in the platform Secret.
+
 For OpenRouter managed keys, set `secrets.openrouterManagementApiKey` in the
 same SOPS-encrypted values file. With `secrets.create: true`, it maps to
 `OPENROUTER_MANAGEMENT_API_KEY` in the platform Secret, imported through the

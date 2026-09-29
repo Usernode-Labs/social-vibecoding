@@ -7,7 +7,7 @@ import { fetchJson, send } from './api.ts';
 import { countryLabel } from './countries.ts';
 import { BTN } from './tokens.ts';
 import {
-  Badge, EmptyState, ErrorState, List, Pager, Panel, ScreenHeader, Select, Skeleton, fmt,
+  Badge, CheckField, EmptyState, ErrorState, List, Pager, Panel, ScreenHeader, Select, Skeleton, fmt,
 } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
 import { useWaitlistOptions } from '../../auth/waitlist-shared.tsx';
@@ -822,6 +822,102 @@ function WaitlistAnalyticsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ── Invites: the switch for invite links skipping the waitlist ──────────
+//
+// services/community-invites.js, "the invite tree". Somebody admitted here
+// (or granted access directly) gets `root_skips` invites: anyone new who
+// follows one of their invite links gets in at once instead of waiting.
+// Nobody else has any: not the people they let in (invites do not chain),
+// not accounts that already had access. The switch is a platform setting,
+// on unless turned off here; the body is split out so a test can render it.
+
+type InviteTree = {
+  enabled: boolean;
+  root_skips: number;
+  roots: number;
+  through_links: number;
+  updated_at?: string | null;
+  updated_by?: string | null;
+};
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+function InviteTreeBody({ tree, write, onToggle }: {
+  tree: InviteTree;
+  write: boolean;
+  onToggle: (next: boolean) => void;
+}) {
+  const help = `Everyone you admit gets ${plural(tree.root_skips, 'invite', 'invites')}: `
+    + 'anyone new who follows one of their invite links gets in straight away. The people they '
+    + 'invite get none, and neither do accounts that already had access. Switched off, anyone new '
+    + 'who follows a link waits here until admitted.';
+  const usage = `${plural(tree.roots, 'person', 'people')} admitted can invite; `
+    + `${plural(tree.through_links, 'person', 'people')} got in through an invite so far.`;
+  return (
+    <>
+      {write ? (
+        <CheckField
+          id="admin-topo-wl-invites-enabled"
+          label="Invite links skip the waitlist"
+          help={help}
+          checked={tree.enabled}
+          onChange={onToggle}
+        />
+      ) : (
+        <p className="text-xs text-zinc-600 dark:text-zinc-400">
+          <span className="font-medium">
+            {tree.enabled ? 'Invite links skip the waitlist.' : 'Invite links do not skip the waitlist.'}
+          </span>
+          {` ${help}`}
+        </p>
+      )}
+      <p id="admin-topo-wl-invites-usage" className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+        {usage}
+        {tree.updated_at
+          ? ` Last switched ${fmt(tree.updated_at)}${tree.updated_by ? ` by ${tree.updated_by}` : ''}.`
+          : ''}
+      </p>
+    </>
+  );
+}
+
+function InviteTreePanel() {
+  const [tree, setTree] = useState<InviteTree | null>(null);
+  const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
+  const saving = useRef(false);
+
+  const load = useCallback(async () => {
+    setError(null);
+    const { status, ok, data } = await fetchJson('/api/v4/admin/invite-tree');
+    if (!ok || !data?.success) { setError({ status, message: data?.error || null }); return; }
+    setTree(data.data);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = useCallback(async (next: boolean) => {
+    if (!canWrite() || saving.current) return;
+    saving.current = true;
+    const { ok, data } = await send('PUT', '/api/v4/admin/invite-tree', { enabled: next });
+    saving.current = false;
+    if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not save the invite setting.'); return; }
+    setTree(data.data);
+  }, []);
+
+  return (
+    <div id="admin-topo-wl-invites">
+      <Panel title="Invites">
+        {error ? (
+          <ErrorState title="Couldn't load the invite setting" status={error.status} message={error.message} onRetry={load} />
+        ) : null}
+        {!error && !tree ? <Skeleton rows={2} /> : null}
+        {!error && tree ? <InviteTreeBody tree={tree} write={canWrite()} onToggle={toggle} /> : null}
+      </Panel>
+    </div>
+  );
+}
+
 const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
   {
     label: 'Signup',
@@ -1054,9 +1150,12 @@ function WaitlistScreen() {
         sortId="admin-topo-wl-sort"
         endpoint="/api/v4/admin/waitlist"
         analytics={{ id: 'admin-topo-wl-analytics', onClick: () => setShowAnalytics((s) => !s) }}
-        panel={showAnalytics ? (
-          <WaitlistAnalyticsPanel onClose={() => setShowAnalytics(false)} />
-        ) : null}
+        panel={(
+          <>
+            {showAnalytics ? <WaitlistAnalyticsPanel onClose={() => setShowAnalytics(false)} /> : null}
+            <InviteTreePanel />
+          </>
+        )}
         exportCsv={write
           ? { id: 'admin-topo-wl-export', path: '/api/v4/admin/waitlist/export-csv' }
           : undefined}
@@ -1138,4 +1237,7 @@ function WaitlistScreen() {
 // shape cannot be reached by a declared browser check either: the queue opens
 // on `status: 'pending'`, whose server filter is `released_at IS NULL`, so an
 // admitted row is never in the table a check at `/#admin/waitlist` sees.
-export { SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS };
+//
+// InviteTreeBody is exported for tests/community-invites.test.js, which
+// renders the switch's copy for both kinds of admin.
+export { InviteTreeBody, SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS };

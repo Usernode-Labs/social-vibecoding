@@ -571,6 +571,7 @@ function authRoutes(config) {
       // waitlist release — so it carries platform access with it
       // (onboarding flow alignment). Without this, every invited user
       // would land in the waiting room, a regression on the invite flow.
+      // Not a release by hand, so no invite-tree skips come with it.
       await waitlist.grantPlatformAccess(pool, userId);
 
       // #2568: the included OpenRouter key, created with the account.
@@ -1717,7 +1718,8 @@ function authRoutes(config) {
       const userId = rows[0].id;
 
       // Genesis-ledger registration is invite-equivalent (the genesis
-      // allowlist IS the invite) — grant platform access directly.
+      // allowlist IS the invite) — grant platform access directly, without
+      // the invite-tree skips a release by hand carries.
       await waitlist.grantPlatformAccess(pool, userId);
 
       // #2568: the included OpenRouter key, created with the account.

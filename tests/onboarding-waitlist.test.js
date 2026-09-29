@@ -25,6 +25,10 @@
 //      not-yet-registered email just sets released_at — the grant then
 //      happens at account creation via contract 3.
 //   5. grantPlatformAccess is idempotent (the original granted_at wins).
+//   6. Only a release by hand that is what lets somebody in makes them
+//      generation 0 of the invite tree, the generation with skips to give:
+//      Admit and the linkage that completes it do; a plain grant and a
+//      grant to an account that already had access do not.
 //
 // Service-level tests against a stateful in-memory mock pool — no live
 // DB.
@@ -50,7 +54,8 @@ const {
 //
 // Simulates just the rows/statements waitlist.js touches:
 //   state.signups — Map(email -> { id, email, released_at, linked_user_id })
-//   state.users   — Map(id -> { id, email, has_platform_access, platform_access_granted_at })
+//   state.users   — Map(id -> { id, email, has_platform_access, platform_access_granted_at,
+//                                   invite_generation })
 
 function collapse(sql) {
   return sql.replace(/\s+/g, ' ').trim();
@@ -98,11 +103,12 @@ function makePool(state) {
     }
 
     if (sql.includes('SET has_platform_access = TRUE')) {
-      const [userId] = params;
+      const [userId, manualRelease] = params;
       const u = state.users.get(userId);
       if (u && !u.has_platform_access) {
         u.has_platform_access = true;
         u.platform_access_granted_at = u.platform_access_granted_at || new Date();
+        if (manualRelease === true) u.invite_generation = 0;
       }
       return { rowCount: u ? 1 : 0, rows: [] };
     }
@@ -157,6 +163,7 @@ function addUser(state, { id, email = null, hasAccess = false }) {
     email,
     has_platform_access: hasAccess,
     platform_access_granted_at: hasAccess ? new Date(0) : null,
+    invite_generation: null,
   });
   return state.users.get(id);
 }
@@ -405,4 +412,42 @@ test('re-granting keeps the original granted_at', async () => {
 
   assert.equal(user.has_platform_access, true);
   assert.equal(user.platform_access_granted_at, firstGrant);
+});
+
+// ─── 6. Who a release makes generation 0 of the invite tree ──────────
+
+test('Admit, and the signup that completes it, make generation 0', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+  await joinWaitlist(pool, { email: 'now@example.com' });
+  await joinWaitlist(pool, { email: 'later@example.com' });
+  const now = addUser(state, { id: 40, email: 'now@example.com' });
+
+  await releaseWaitlistSignup(pool, state.signups.get('now@example.com').id);
+  assert.equal(now.invite_generation, 0, 'an account that exists is let in on the spot');
+
+  await releaseWaitlistSignup(pool, state.signups.get('later@example.com').id);
+  const later = addUser(state, { id: 41, email: 'later@example.com' });
+  await linkUserByEmail(pool, { userId: 41, email: 'later@example.com' });
+  assert.equal(later.invite_generation, 0, 'an address admitted before it had an account');
+});
+
+test('a release of an account that already had access gives it no generation', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+  await joinWaitlist(pool, { email: 'old@example.com' });
+  const old = addUser(state, { id: 42, email: 'old@example.com', hasAccess: true });
+
+  await releaseWaitlistSignup(pool, state.signups.get('old@example.com').id);
+  assert.equal(old.invite_generation, null, 'an existing user gets no invites by being admitted again');
+});
+
+test('a grant that is not a release by hand gives no generation', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+  const coded = addUser(state, { id: 43, email: 'code@example.com' });
+
+  await grantPlatformAccess(pool, 43);
+  assert.equal(coded.has_platform_access, true);
+  assert.equal(coded.invite_generation, null, 'activation codes and genesis wallets carry no skips');
 });

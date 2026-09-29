@@ -26,10 +26,15 @@
  * else it is membership. schema.sql's apply_community_invite() is the one
  * implementation, used both here and by that trigger.
  *
- * THE INVITE TREE is built and OFF (INVITE_TREE_ENABLED). When on, a link
+ * THE INVITE TREE is ON unless an admin switches it off (Admin → Waitlist,
+ * the `invite_tree_enabled` platform setting). On, a link
  * can also let somebody past the waitlist, spending one of its maker's
- * lifetime skips: TREE_BUDGETS by generation (10 for people we let in, then
- * 5, then 2, then none), unlimited for admins, whose invitees start at 10.
+ * lifetime skips: INVITE_TREE_BUDGETS by generation, 10 for the people we
+ * let off the waitlist by hand (generation 0) and none for anybody a link
+ * let in, so invites do not chain. Unlimited for admins, but an admin's link
+ * is not a release by hand: whoever it lets in is generation 1 like anyone
+ * else's invitee. An account with no generation (everyone who had access
+ * before the tree, activation codes, genesis wallets) has no skips.
  * Skips used is a count of users.admitted_by, read under a lock on the
  * maker's row so two people following at once cannot spend a skip that is
  * not there. With it off, everybody new is queued.
@@ -53,15 +58,89 @@ const MAX_LIVE_PER_MAKER = 10;
 // and never reaches the database.
 const TOKEN_RE = /^[A-Za-z0-9_-]{22}$/;
 
-function treeEnabled() {
-  return process.env.INVITE_TREE_ENABLED === 'true';
+// THE SWITCH is an admin setting, stored in platform_settings like the app
+// limit (services/app-limit.js) and read through the same kind of short
+// per-pool cache, so a save applies on every server within SETTING_CACHE_MS
+// with no deploy. No row is ON: the tree is on by default. A row reads as on
+// only when it says 'true'. An unreadable setting reads as OFF and is not
+// cached: a newcomer waiting a moment longer is the safer mistake than a
+// skip nobody meant to hand out.
+const SETTING_KEY = 'invite_tree_enabled';
+const SETTING_CACHE_MS = 10 * 1000;
+const SETTING_DESCRIPTION = 'Whether invite links let people new to Homeroom skip the waitlist '
+  + '(services/community-invites.js). Switched from Admin → Waitlist.';
+const settingCaches = new WeakMap();
+
+/** The stored switch: { enabled, updatedAt, updatedBy }. Cached per pool. */
+async function readTreeSetting(pool) {
+  const cached = settingCaches.get(pool);
+  if (cached && Date.now() - cached.at < SETTING_CACHE_MS) return cached.setting;
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.value, s.updated_at, u.username AS updated_by
+         FROM platform_settings s
+         LEFT JOIN users u ON u.id = s.updated_by
+        WHERE s.key = $1`,
+      [SETTING_KEY]
+    );
+    const row = rows[0];
+    const setting = {
+      enabled: row ? row.value === 'true' : true,
+      updatedAt: row ? row.updated_at || null : null,
+      updatedBy: row ? row.updated_by || null : null,
+    };
+    settingCaches.set(pool, { at: Date.now(), setting });
+    return setting;
+  } catch (err) {
+    log.warn('invites', 'Invite tree setting read failed; treating the tree as off', { err: err.message });
+    return { enabled: false, updatedAt: null, updatedBy: null };
+  }
 }
 
-// Lifetime skips by generation: index 0 is people we let in.
+async function treeEnabled(pool) {
+  return (await readTreeSetting(pool)).enabled;
+}
+
+/** Switch the tree on or off as admin `actorId`. */
+async function setTreeEnabled(pool, { enabled, actorId = null }) {
+  await pool.query(
+    `INSERT INTO platform_settings (key, value, description, updated_at, updated_by)
+     VALUES ($1, $2, $3, NOW(), $4)
+     ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by`,
+    [SETTING_KEY, enabled ? 'true' : 'false', SETTING_DESCRIPTION, actorId]
+  );
+  settingCaches.delete(pool);
+}
+
+/**
+ * What the Waitlist screen shows: the switch, the skips a release by hand
+ * carries, and how the tree has been used so far.
+ */
+async function adminPayload(pool) {
+  const setting = await readTreeSetting(pool);
+  const { rows } = await pool.query(
+    `SELECT COUNT(*) FILTER (WHERE invite_generation = 0 AND has_platform_access)::int AS roots,
+            COUNT(*) FILTER (WHERE admitted_by IS NOT NULL)::int AS through_links
+       FROM users`
+  );
+  return {
+    enabled: setting.enabled,
+    rootSkips: budgetFor(0),
+    roots: rows[0]?.roots || 0,
+    throughLinks: rows[0]?.through_links || 0,
+    updatedAt: setting.updatedAt,
+    updatedBy: setting.updatedBy,
+  };
+}
+
+// Lifetime skips by generation: index 0 is people we let off the waitlist by
+// hand, and every generation past the list gets none. The fallback is one
+// entry on purpose: a missing or mistyped value must not switch chaining on.
 function treeBudgets() {
-  const raw = String(process.env.INVITE_TREE_BUDGETS || '10,5,2');
+  const raw = String(process.env.INVITE_TREE_BUDGETS || '10');
   const parsed = raw.split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => Number.isFinite(n) && n >= 0);
-  return parsed.length ? parsed : [10, 5, 2];
+  return parsed.length ? parsed : [10];
 }
 
 /** Skips a person of `generation` gets over their lifetime. */
@@ -344,6 +423,8 @@ async function standing(pool, token, user) {
 async function redeem(pool, { token, user }) {
   if (!user || !user.id) return { ok: false, status: 401, reason: 'signed_out' };
   if (!isToken(token)) return { ok: false, status: 404, reason: 'unknown' };
+  // Read before taking a connection: the switch has its own (cached) read.
+  const tree = await treeEnabled(pool);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -388,7 +469,7 @@ async function redeem(pool, { token, user }) {
     let skippedWaitlist = false;
     if (hasAccess) {
       await client.query('SELECT apply_community_invite($1)', [redemption[0].id]);
-    } else if (treeEnabled() && invite.created_by != null) {
+    } else if (tree && invite.created_by != null) {
       skippedWaitlist = await admitThroughTree(client, { inviterId: invite.created_by, userId: user.id });
       if (skippedWaitlist) {
         await client.query(
@@ -421,18 +502,17 @@ async function redeem(pool, { token, user }) {
 }
 
 /**
- * THE INVITE TREE (off unless INVITE_TREE_ENABLED): let `userId` past the
+ * THE INVITE TREE (on unless switched off): let `userId` past the
  * waitlist on one of `inviterId`'s skips, inside the caller's transaction.
  * Locks the inviter's row, counts what they have spent, and when a skip is
  * left, records who let them in, their generation (one below the inviter's;
- * an admin's invitees start at 0, the top) and grants access — which fires
- * the trigger that applies the redemptions this person has queued, this one
- * included. Returns whether it let them in.
+ * an admin's invitees are generation 1, as a root's are) and grants access —
+ * which fires the trigger that applies the redemptions this person has
+ * queued, this one included. Returns whether it let them in.
  */
 async function admitThroughTree(client, { inviterId, userId }) {
   const { rows } = await client.query(
-    `SELECT id, is_admin, has_platform_access,
-            COALESCE(invite_generation, CASE WHEN has_platform_access THEN 0 END) AS generation
+    `SELECT id, is_admin, has_platform_access, invite_generation AS generation
        FROM users WHERE id = $1
        FOR UPDATE`,
     [inviterId]
@@ -447,7 +527,9 @@ async function admitThroughTree(client, { inviterId, userId }) {
     );
     if ((used[0]?.n || 0) >= budget) return false;
   }
-  const generation = inviter.is_admin ? 0 : (inviter.generation ?? 0) + 1;
+  // An admin's link lets in whoever holds it, which is not a release by
+  // hand: its people get what a root's invitees get, not a root's skips.
+  const generation = inviter.is_admin ? 1 : inviter.generation + 1;
   const { rows: admitted } = await client.query(
     `UPDATE users
         SET has_platform_access = TRUE,
@@ -466,10 +548,9 @@ async function admitThroughTree(client, { inviterId, userId }) {
  * is off, so nothing on screen mentions it.
  */
 async function skipsLeft(pool, user) {
-  if (!treeEnabled() || !user) return null;
+  if (!user || !(await treeEnabled(pool))) return null;
   const { rows } = await pool.query(
-    `SELECT is_admin,
-            COALESCE(invite_generation, CASE WHEN has_platform_access THEN 0 END) AS generation,
+    `SELECT is_admin, invite_generation AS generation,
             (SELECT COUNT(*)::int FROM users x WHERE x.admitted_by = u.id) AS used
        FROM users u WHERE u.id = $1`,
     [user.id]
@@ -554,7 +635,10 @@ module.exports = {
   MAX_LIVE_PER_MAKER,
   TOKEN_RE,
   INVITE_COOKIE,
+  SETTING_KEY,
   treeEnabled,
+  setTreeEnabled,
+  adminPayload,
   treeBudgets,
   budgetFor,
   isToken,

@@ -10544,14 +10544,16 @@ CREATE INDEX IF NOT EXISTS idx_community_invite_redemptions_user
   ON community_invite_redemptions (user_id) WHERE applied_at IS NULL;
 COMMENT ON TABLE community_invite_redemptions IS 'staging:private';
 
--- THE INVITE TREE: who let whom in. Built, and off until
--- INVITE_TREE_ENABLED says otherwise (services/community-invites.js).
--- `invite_generation` 0 is "let in by us" (an admin release, an activation
--- code, a genesis wallet, and everyone who had access before this); 1 is
--- somebody a generation-0 person's link let in, and so on. Skips used is a
--- COUNT of admitted_by, so there is no counter to drift. NULL generation on
--- an account with access reads as 0 (the reads COALESCE it); grantPlatform-
--- Access writes 0, the lowest, whenever we let somebody in ourselves.
+-- THE INVITE TREE: who let whom in. On unless an admin switches it off in
+-- Admin → Waitlist, which writes the `invite_tree_enabled` platform_settings
+-- row (services/community-invites.js; no row is on).
+-- `invite_generation` 0 is "let off the waitlist by us, by hand" (an admin
+-- admitting a waitlist row, or granting an account directly): grantPlatform-
+-- Access writes it only when that grant is what lets them in. 1 is somebody
+-- a link let in (a generation-0 person's, or an admin's), and so on. NULL is
+-- no place in the tree, and no skips: everyone who had access before this,
+-- activation codes, genesis wallets. Skips used is a COUNT of admitted_by,
+-- so there is no counter to drift.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS admitted_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_generation SMALLINT;
 CREATE INDEX IF NOT EXISTS idx_users_admitted_by ON users (admitted_by) WHERE admitted_by IS NOT NULL;
