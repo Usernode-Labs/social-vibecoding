@@ -90,7 +90,7 @@ import { improveStore } from '../improve/improve-store.js';
 import { navStore } from '../nav/nav-store.js';
 import { sessionHeaderStore } from '../dev-chat/session-header-store';
 import { MergeStatusPill } from '../dev-chat/session-header';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { useDevViewMode } from '../dev-board/view-mode-store';
 import { APP_SCOPE_PANEL_ID, appScopeStore } from '../workshop/app-scope-store.js';
 import { workshopStore } from '../workshop/workshop-store.js';
@@ -124,7 +124,7 @@ function usePhone(): boolean {
 
 export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
   const { text, subtitle } = useStoreState(headerTitleStore);
-  const { tab, subTab, name, iconUrl, iconEmoji } = useStoreState(improveStore);
+  const { slug, tab, subTab, name, iconUrl, iconEmoji } = useStoreState(improveStore);
   const { screen } = useStoreState(navStore);
   const { life } = useStoreState(sessionHeaderStore);
   const viewMode = useDevViewMode();
@@ -159,14 +159,19 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
      exactly, so the tile cannot be what pushes the bar past its pinned
      height. */
   const tile = showTile ? (
-    <span
+    <AppIconLink
       id="header-app-tile"
+      // Inside the switcher button, the tile is a nested link. The h1 is
+      // pointer-events-none, so the tile opts back in.
+      nested={switcher}
+      slug={slug}
+      name={name || text}
       data-icon={appIconKind(record)}
-      className="app-icon-tile shrink-0 w-7 h-7 rounded-lg overflow-hidden
+      className="app-icon-tile pointer-events-auto shrink-0 w-7 h-7 rounded-lg overflow-hidden
                  flex items-center justify-center text-sm font-bold"
     >
       <AppIconContent app={record} />
-    </span>
+    </AppIconLink>
   ) : null;
 
   return (

@@ -15,7 +15,7 @@
  * and the chip run, never the wrapper.
  */
 
-import type { ReactNode } from 'react';
+import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 
 import { Glyph } from '@/components/ui/icons';
 
@@ -55,6 +55,90 @@ export function AppIconContent({ app }: { app: AppRecord }): ReactNode {
     return <span className="text-3xl leading-none" aria-hidden="true">{icon.emoji}</span>;
   }
   return icon.letter;
+}
+
+/** Where an app's icon goes: the app itself, the path its Open link uses. */
+export function appOpenHref(slug: string): string {
+  return `/app/${encodeURIComponent(slug)}`;
+}
+
+function openApp(event: MouseEvent | KeyboardEvent, slug: string, onOpen?: (slug: string) => void): void {
+  // The icon may sit inside a card or row with its own destination: the tap
+  // is the icon's, never also the card's.
+  event.stopPropagation();
+  const win = window as unknown as {
+    NavLink?: { isNativeClick?: (e: unknown) => boolean };
+    App?: { openAppTab?: (slug: string, tab: string) => void };
+  };
+  if (event.type === 'click' && event.currentTarget instanceof HTMLAnchorElement
+      && win.NavLink?.isNativeClick?.(event)) return;
+  event.preventDefault();
+  if (onOpen) onOpen(slug);
+  else if (win.App?.openAppTab) win.App.openAppTab(slug, 'app');
+  else window.location.assign(appOpenHref(slug));
+}
+
+/**
+ * An app's icon tile that opens the app (#3365). It keeps the caller's tile
+ * box exactly: `className` and `data-icon` are the ones the caller drew
+ * before, and this only adds the link, the pointer and the label.
+ *
+ * `nested` is for a tile inside something that is already a link or button
+ * going elsewhere (an inbox row, a Workshop row). An anchor inside an anchor
+ * is invalid markup, so there the tile is a focusable `role="link"` span,
+ * and either way the click stops at the tile. With no slug the tile renders
+ * as the plain box it was.
+ */
+export function AppIconLink({
+  slug, name, nested = false, onOpen, className, children, id, 'data-icon': dataIcon,
+}: {
+  slug: string | null | undefined;
+  name: string | null | undefined;
+  nested?: boolean;
+  /** Replaces the default open, for a surface that must close first. */
+  onOpen?: (slug: string) => void;
+  className?: string;
+  children: ReactNode;
+  id?: string;
+  'data-icon'?: string;
+}): ReactNode {
+  if (!slug) {
+    return <span id={id} data-icon={dataIcon} className={className} aria-hidden="true">{children}</span>;
+  }
+  const label = `Open ${name || slug}`;
+  const cls = `${className || ''} app-icon-link cursor-pointer`;
+  if (nested) {
+    return (
+      <span
+        id={id}
+        role="link"
+        tabIndex={0}
+        aria-label={label}
+        title={label}
+        data-icon={dataIcon}
+        data-app-icon-link={slug}
+        className={cls}
+        onClick={(event) => openApp(event, slug, onOpen)}
+        onKeyDown={(event) => { if (event.key === 'Enter') openApp(event, slug, onOpen); }}
+      >
+        {children}
+      </span>
+    );
+  }
+  return (
+    <a
+      id={id}
+      href={appOpenHref(slug)}
+      aria-label={label}
+      title={label}
+      data-icon={dataIcon}
+      data-app-icon-link={slug}
+      className={cls}
+      onClick={(event) => openApp(event, slug, onOpen)}
+    >
+      {children}
+    </a>
+  );
 }
 
 /** The `data-icon` kind that goes on the tile box, for app.css and the tests. */

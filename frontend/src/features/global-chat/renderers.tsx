@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 
 import { ChevronDownIcon } from '@/components/ui/icons';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { GlobalChatSettingsEditor } from '../settings/sections/global-chat';
 import { DevelopmentAISettingsEditor } from './development-settings-editor';
 
@@ -721,12 +721,14 @@ function ItemRow({
       data-expanded={selectionAction ? undefined : expanded || undefined}
     >
       {showAppIcon ? (
-        <div
+        <AppIconLink
+          slug={text(item.slug || item.app_slug, 255)}
+          name={text(item.name, 255)}
           className="app-icon-tile global-chat-app-icon shrink-0 overflow-hidden flex items-center justify-center text-lg font-bold"
           data-icon={appIconKind(item)}
         >
           <AppIconContent app={item} />
-        </div>
+        </AppIconLink>
       ) : null}
       <div className="min-w-0 flex-1">
         <button

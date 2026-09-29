@@ -56,7 +56,7 @@ import {
   useChannelHandles,
   useMessagesSnapshot,
 } from './store';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
@@ -279,12 +279,15 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
       className={`messages-conversation-row messages-channel-row ${active ? 'messages-conversation-active' : ''}`}
       aria-current={active ? 'page' : undefined}
     >
-      <span
+      <AppIconLink
+        nested
+        slug={discussion.slug}
+        name={discussion.name}
         data-icon={appIconKind(record as never)}
         className="app-icon-tile messages-inbox-tile"
       >
         <AppIconContent app={record as never} />
-      </span>
+      </AppIconLink>
       <div className="min-w-0 flex-1">
         <div className="messages-row-line">
           <span className="messages-row-name">{discussion.name}<span className="messages-channel-handle">#{handle}</span></span>
@@ -1304,13 +1307,14 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           once per browser and then never again. The conversation pane beside
           it carries the same row (ThreadHeader). */}
       <header className="messages-thread-header">
-        <span
+        <AppIconLink
+          slug={slug}
+          name={name}
           data-icon={appIconKind(iconRecord as never)}
           className="app-icon-tile messages-inbox-tile"
-          aria-hidden="true"
         >
           <AppIconContent app={iconRecord as never} />
-        </span>
+        </AppIconLink>
         <span className="min-w-0 flex-1">
           <span className="messages-thread-name block">{name}</span>
           <span className="messages-thread-sub block">
