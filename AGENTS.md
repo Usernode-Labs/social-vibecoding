@@ -208,17 +208,44 @@ remaining live-proposal boundary.
 
 ## Communities own projects — name them the way the screen does
 
-- **Internally the container is a `community`; on screen it never is.** Every
-  app belongs to exactly one community (`apps.community_id`, the
-  "Communities" block at the end of `src/db/schema.sql`,
+- **Internally the container is a `community`; on screen it is named by its
+  audience.** Every app belongs to exactly one community (`apps.community_id`,
+  the "Communities" block at the end of `src/db/schema.sql`,
   `src/services/communities.js`), and a community is what people join.
   People see it by its audience — **Just you** (`solo`), **Group**
   (`invited`) or **Community** (`open`) — and what it owns are **projects**.
   Use "project" in user-facing copy where the app is the thing being built;
   keep "app" where it is the thing being used (the App tab, Discover).
+- **Communities is the fourth tab, beside you; Messages is in the middle.**
+  It lists every community you are in
+  (Communities, Groups, Just you) at `#communities` (`#workshop` still routes
+  there; the tab's key and ids keep `workshop`). A project's page opens on
+  its **hub** (a hero with who is here and a 14-day trend, then its channel,
+  Needs you, and Since your last visit) beside its **Workshop** (what you are
+  working on, All items). The Communities screen's Needs you is one feed of
+  every decision owed across your projects (`GET /api/workshop/needs-feed`). A
+  project's channel lives on its hub, not in Messages, and #general is the
+  Homeroom community's channel; Messages is people and agents. **A channel
+  is what people said:** Homeroom writes no activity (a proposal put up for a
+  vote, a merge, a check verdict, a setting changed) into a project's channel
+  or #general. `ws.sendSystemMessage` writes nothing without a thread, so a
+  new platform line names the proposal's, request's or decision's own thread
+  (`{ type: 'session' | 'issue' | 'governance', ref }`) or is not written.
+  App-wide state is shown where it lives: merges paused and a stalled release
+  are banners on the project page, and settings changed lately and the
+  Friday card are the Workshop tab's notices panel (`services/app-notices.js`,
+  read from `events` — record a new kind there, not a chat line).
+  `migrate.clearAutomatedChannelLines` clears the lines written before. A
+  door to a project's hub (a link that says so) calls
+  `AppView._landOnHub(slug)` first, so it opens on the hub rather than the
+  tab the page was last left on. Back and Forward are not doors: the page
+  reopens on the tab last shown, read fresh when it mounts.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
-  stored copy is one the visibility reconcile would have to remember.
+  stored copy is one the visibility reconcile would have to remember. So a
+  project GROWS by the same two levers: Invite makes Just you a Group, and
+  the hero's "Open it up" / "Make it a group" opens the visibility PR
+  (`POST /api/apps/:slug/visibility-pr`), which applies once it merges.
 - **Communities and apps are one-to-one today.** A community with a single
   project is drawn as that project — its name, icon and page — and nothing
   should render a separate "community" layer for it. The table is bare on
@@ -240,12 +267,28 @@ remaining live-proposal boundary.
   answers with a `join_required` frame). Mount the matching gate on any new
   write route of that kind; the client's fetch wrapper
   (`frontend/src/lib/join-required.ts`) turns the 403 into a Join prompt and
-  a retry, so no caller handles it by hand. The collab guard in
+  a retry, so no caller handles it by hand. A Mayor or connector tool keeps
+  the code (`mcp-tools.platformError` answers `join_required` with the app),
+  and the Mayor's refused card offers Join itself. The collab guard in
   `app-access.js` still decides who may be there at all; admins pass.
   Collaborators, Home pins and platform access join by trigger — write those
   rows, not `community_members`, unless the action is literally Join or
   Leave. The vote threshold counts active MEMBERS
   (`services/active-users.js`, concept #3).
+- **An invite link grants what its maker could grant.** `/invite/<token>`
+  (`services/community-invites.js`, the "Communities, stage 6" block of
+  `schema.sql`) is made by any member from the logo menu's "Invite to
+  community" pane: 7 days and 25 people unless they choose otherwise, and
+  revocable. On a project where building is by invitation it is the
+  collaborator invite, accepted; anywhere else it is membership. One SQL
+  function, `apply_community_invite()`, applies it, both on the spot and from
+  the trigger that runs when an account is let in, so a person without
+  platform access is QUEUED and joins on release, however that happens. The
+  page carries the token in an HttpOnly cookie, so signing up or in from it
+  follows the link server-side (`redeemCarried` in `routes/auth.js`). The
+  invite tree (`users.admitted_by`, `invite_generation`; skips of 10, 5, 2)
+  is built and OFF behind `INVITE_TREE_ENABLED`; `grantPlatformAccess` is
+  "let in by us", generation 0.
 
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 
@@ -474,6 +517,16 @@ Two behaviours are easy to lose to React's defaults and are worth naming:
   a dead button is silent.
 
 ## Shell CSS is generated by the image build — do not commit it
+
+- **Cache releases are generated too.** `scripts/build-shell-release.js` runs
+  after the shell and CSS builds and writes ignored `public/shell/release.json`
+  and `public/shell/worker.js`. The fixed `/sw.js` URL serves this generated
+  worker. Its asset hashes change automatically with the built interface,
+  including lazy chunks; do not bump `SW_VERSION` for UI changes. Keep all
+  image paths and `ensure:shell` in the same shell → CSS → release order.
+  Hosted images must carry their exact `GIT_SHA` through build and runtime.
+  Test updates with an existing cache as well as a fresh browser. The stable
+  API cache and assets used by open tabs must survive a shell upgrade.
 
 - The platform shell's Tailwind is **compiled**, not loaded from a CDN:
   `tailwind.config.js` + `styles/tailwind-input.css` build to

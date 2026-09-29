@@ -15,6 +15,7 @@ const {
   // two profiles can never drift onto different vocabularies.
   REASONING_EFFORTS: REASONING_EFFORT_LEVELS,
 } = require('./services/global-chat/prompt');
+const { parseOpenRouterHarnessMap } = require('./agents/registry');
 
 // #2600: the default reasoning effort for an OpenRouter CODING turn when the
 // user has not picked one in Settings. It is 'xhigh' — the top of the scale
@@ -367,6 +368,16 @@ function load() {
     // GLM 5.3 Flash; docs/coding-agent-defaults.md has the evidence and
     // what would change the answer.
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
+    // #3296: which CLI runs each OpenRouter model — `claude` (Claude Code
+    // against OpenRouter's Anthropic-compatible endpoint) or `codex`. GLM 5.3
+    // Flash does better in Claude Code and DeepSeek v4.1 Flash in Codex; a
+    // model not listed here stays on Codex. The name above predates this and
+    // still means "the default OpenRouter coding model", whichever CLI runs it.
+    openrouterModelHarnesses: parseOpenRouterHarnessMap(
+      process.env.OPENROUTER_MODEL_HARNESSES === undefined
+        ? 'z-ai/glm-5.3-flash=claude,deepseek/deepseek-v4.1-flash=codex'
+        : process.env.OPENROUTER_MODEL_HARNESSES,
+    ),
     // The effort a coding turn runs at when the session carries no explicit
     // choice. A user's Settings choice is stored on the session and still
     // wins; this only fills the blank.
@@ -481,7 +492,10 @@ function load() {
     // Hard cap on non-errored apps per server. Protects against runaway
     // container / DB creation chewing through host resources. Admins bypass
     // the cap; errored rows don't count (they hold ~no resources and users
-    // can delete them to free a slot). See src/routes/apps.js.
+    // can delete them to free a slot). See src/routes/apps.js. This is the
+    // DEFAULT: an admin's setting in Admin → Limits overrides it, and every
+    // reader resolves the cap through services/app-limit.js, never this
+    // field directly. <= 0 switches the cap off, the setting included.
     maxApps: parseInt(process.env.MAX_APPS || '50', 10),
     // Concurrency caps on dev sessions. A "session" holds (or can lazily
     // spawn) a warm worker container + optional staging container, so

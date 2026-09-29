@@ -58,22 +58,18 @@ function makePool(rows) {
     async query(sql, params = []) {
       const s = String(sql);
       if (/SELECT cs\.id[\s\S]*FROM chat_sessions cs/i.test(s) && /status IN \('promoted', 'merging'\)/.test(s)) {
-        return { rows, rowCount: rows.length };
+        const selected = params[0]
+          ? rows.filter((r) => r.status === 'merging' || r.merge_attempt_at)
+          : rows;
+        return { rows: selected, rowCount: selected.length };
       }
       if (/SET\s+status = 'merged'/.test(s)) {
         updates.push({ to: 'merged', id: params[0], mergedAt: params[1], sha: params[2] });
         return { rows: [], rowCount: 1 };
       }
       if (/SET status = 'promoted'/.test(s)) {
-        if (/WHERE id = \$1/.test(s)) {
-          // Per-row demote (GitHub-aware path).
-          updates.push({ to: 'promoted', id: params[0] });
-          return { rows: [], rowCount: 1 };
-        }
-        // Bulk demote of all 'merging' rows (no-GitHub-auth fallback).
-        const ids = rows.filter((r) => r.status === 'merging').map((r) => r.id);
-        updates.push({ to: 'promoted', bulk: true, ids });
-        return { rows: ids.map((id) => ({ id })), rowCount: ids.length };
+        updates.push({ to: 'promoted', id: params[0] });
+        return { rows: [], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
     },
@@ -135,14 +131,67 @@ test('recoverStuckMerges heals merged-on-GitHub rows, demotes stuck merging, lea
   assert.deepEqual(getPRCalls.sort(), [39, 52, 99]);
 });
 
-test('recoverStuckMerges without GitHub auth only demotes merging rows', async () => {
+test('recoverStuckMerges without GitHub auth keeps the unknown merge outcome unchanged', async () => {
   const pool = makePool(ROWS.map((r) => ({ ...r })));
   await withStubs(pool, {
     isEnabled: () => false,
     getPR: async () => { throw new Error('should not be called'); },
   }, () => recoverStuckMerges({}));
 
-  // Fallback path: a single bulk flip of 'merging' rows (id 2); promoted
-  // rows (1, 3) are left untouched because we can't ask GitHub the truth.
-  assert.deepEqual(pool.updates, [{ to: 'promoted', bulk: true, ids: [2] }]);
+  assert.deepEqual(pool.updates, []);
+});
+
+test('recoverStuckMerges does not demote a claim when GitHub lookup fails', async () => {
+  const pool = makePool([ROWS[1]]);
+  await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async () => { throw new Error('GitHub unavailable'); },
+  }, () => recoverStuckMerges({}));
+  assert.deepEqual(pool.updates, []);
+});
+
+test('recoverStuckMerges does not release a live merge claim while GitHub still shows the PR open', async () => {
+  const fresh = {
+    id: 7, status: 'merging', pr_number: 70, merge_commit_sha: null,
+    merge_attempt_at: new Date().toISOString(),
+    repo_url: 'https://github.com/acme/widget',
+  };
+  const pool = makePool([fresh]);
+  await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async () => ({ merged: false }),
+  }, () => recoverStuckMerges({}));
+  assert.deepEqual(pool.updates, []);
+});
+
+test('recoverStuckMerges leaves a merge owned by another process untouched', async () => {
+  const pool = makePool([{ ...ROWS[1], merge_attempt_at: new Date(0).toISOString() }]);
+  let released = false;
+  pool.connect = async () => ({
+    query: async () => ({ rows: [{ acquired: false }] }),
+    release: () => { released = true; },
+  });
+  await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async () => { throw new Error('the live owner still has the lock'); },
+  }, () => recoverStuckMerges({}));
+  assert.equal(released, true);
+  assert.deepEqual(pool.updates, []);
+});
+
+test('periodic reconciliation revisits a demoted attempt that GitHub completed later', async () => {
+  const attempted = { ...ROWS[0], merge_attempt_at: new Date(0).toISOString() };
+  const untouched = { ...ROWS[2] };
+  const pool = makePool([attempted, untouched]);
+  const lookedUp = [];
+  await withStubs(pool, {
+    isEnabled: () => true,
+    getPR: async (_owner, _repo, number) => {
+      lookedUp.push(number);
+      return { merged: true, merged_at: '2026-06-13T14:40:19Z', merge_commit_sha: 'sha52' };
+    },
+  }, () => recoverStuckMerges({}, { attemptedOnly: true }));
+  assert.deepEqual(lookedUp, [52]);
+  assert.equal(pool.updates.length, 1);
+  assert.equal(pool.updates[0].id, attempted.id);
 });

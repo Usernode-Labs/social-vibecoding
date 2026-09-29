@@ -542,6 +542,11 @@ const GroupChat = {
         GroupChat._updateMessageReactions(msg.messageId, msg.reactions || []);
         break;
       }
+      case 'moderation_changed': {
+        void GroupChat.loadHistory();
+        GroupChat.loadThreadHistoryForOpen();
+        break;
+      }
       case 'chat_edit': {
         // Author edited a message — patch content + the "edited" marker in
         // place (preserves scroll, reactions, and the row's quote block).
@@ -888,7 +893,12 @@ const GroupChat = {
       // pull request it is about — so the pair rides on the view model and
       // lands on the host as the two data-* attributes refreshVoteControls
       // reads back.
-      voteRef: isVote
+      // #3288: an ordinary message can carry one too, when its metadata
+      // names the proposal: the Homeroom bot's "built this" post is a message
+      // from its own user, and its card hangs under the bubble. Only that
+      // metadata, never a "PR #N" in the words, which anybody can type; and
+      // a person's post cannot set it (handleMessage builds its metadata).
+      voteRef: isVote || (kind === 'message' && !deleted && !!(meta.vote && meta.vote.sessionId))
         ? (([sessionId, prNumber]) => ({ sessionId, prNumber }))(GroupChat._voteRef(msg))
         : null,
       specShare: isSpecShare ? GroupChat._specShareView(meta.specShare, msg) : null,
@@ -2121,6 +2131,12 @@ const GroupChat = {
         if (id) GroupChat._startEdit(id);
         return;
       }
+      if (e.target.closest('.gc-react-bar-report')) {
+        const id = parseInt(bar.dataset.msgId || '', 10);
+        GroupChat._closeReactionBar();
+        if (id) window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app_message', target: id, label: 'Selected message' });
+        return;
+      }
       if (e.target.closest('.gc-react-bar-more')) {
         GroupChat._reactBarGridOpen = !GroupChat._reactBarGridOpen;
         GroupChat._publishReactBar();
@@ -2143,11 +2159,13 @@ const GroupChat = {
     window.UsernodeReact?.groupChat?.publishReactionBar?.({
       gridOpen: !!GroupChat._reactBarGridOpen,
       editable: !!GroupChat._reactBarEditable,
+      reportable: !!GroupChat._reactBarReportable,
+      readOnly: GroupChat._readOnly(),
     });
   },
 
   _openReactionBar(row) {
-    if (GroupChat._readOnly()) return; // #621: long-press bar is write-only
+    if (!App.user) return;
     const id = row && parseInt(row.dataset.msgId || '', 10);
     if (!id) return;
     const bar = GroupChat._ensureReactionBar();
@@ -2157,7 +2175,8 @@ const GroupChat = {
     // (features/group-chat/mount.ts), so the pencil is in or out of the DOM
     // before the measurement below decides where the bar fits.
     GroupChat._reactBarGridOpen = false;
-    GroupChat._reactBarEditable = row.classList.contains('gc-msg')
+    GroupChat._reactBarReportable = row.classList.contains('gc-msg') && !row.classList.contains('gc-msg-self');
+    GroupChat._reactBarEditable = !GroupChat._readOnly() && row.classList.contains('gc-msg')
       && row.classList.contains('gc-msg-self');
     GroupChat._publishReactBar();
     bar.classList.remove('hidden');
@@ -3952,15 +3971,21 @@ const MentionAutocomplete = {
   },
 
   // Wire (or re-wire) the controller onto a freshly-rendered composer.
-  // Idempotent per element; called on every group-chat tab mount.
+  // Idempotent per element; called on every group-chat tab mount. The
+  // candidates are warmed when the box is focused, before the first
+  // keystroke, rather than on every mount (see RefAutocomplete.attach).
   attach(input, slug) {
     if (!input) return;
     MentionAutocomplete._input = input;
     MentionAutocomplete._slug = slug;
-    MentionAutocomplete._loadCandidates(slug);
+    if (document.activeElement === input) MentionAutocomplete._loadCandidates(slug);
 
     if (input._gcMentionBound) return;
     input._gcMentionBound = true;
+
+    input.addEventListener('focus', () => {
+      if (MentionAutocomplete._input === input) MentionAutocomplete._loadCandidates(MentionAutocomplete._slug);
+    });
 
     input.addEventListener('compositionstart', () => { MentionAutocomplete._composing = true; });
     input.addEventListener('compositionend', () => {
@@ -4262,16 +4287,23 @@ const RefAutocomplete = {
   _triggerRe: /(^|[^\w&])(pr ?#|#)(\d{0,7}|[A-Za-z][A-Za-z0-9-]{0,39})$/i,
 
   // Wire (or re-wire) the controller onto a freshly-rendered composer.
-  // Idempotent per element; called on every group-chat tab mount. Kicks
-  // off the candidate load so the list is warm by the first keystroke.
+  // Idempotent per element; called on every group-chat tab mount. Warms the
+  // candidates when the box is focused — before the first keystroke, as it
+  // always was — rather than on every mount: the list is the app's open
+  // proposals and GitHub issues, a read no screen that merely SHOWS a chat
+  // needed (on the platform app, two of the board's largest).
   attach(input, slug) {
     if (!input) return;
     RefAutocomplete._input = input;
     RefAutocomplete._slug = slug;
-    RefAutocomplete._loadCandidates(slug);
+    if (document.activeElement === input) RefAutocomplete._loadCandidates(slug);
 
     if (input._gcRefBound) return;
     input._gcRefBound = true;
+
+    input.addEventListener('focus', () => {
+      if (RefAutocomplete._input === input) RefAutocomplete._loadCandidates(RefAutocomplete._slug);
+    });
 
     input.addEventListener('compositionstart', () => { RefAutocomplete._composing = true; });
     input.addEventListener('compositionend', () => {
@@ -4300,7 +4332,9 @@ const RefAutocomplete = {
     if (cached && (Date.now() - cached.fetchedAt) < RefAutocomplete.CACHE_TTL_MS) return;
     try {
       const [prRes, issueRes] = await Promise.all([
-        fetch(`/api/apps/${slug}/promoted`),
+        // `results=failing`: numbers and titles are all this reads; the list
+        // form is the Workshop's own spelling (AppView._listQS), so one copy.
+        fetch(`/api/apps/${slug}/promoted?results=failing`),
         fetch(`/api/apps/${slug}/github-issues`),
       ]);
       const prData = prRes.ok ? await prRes.json() : {};

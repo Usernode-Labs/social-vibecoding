@@ -544,7 +544,7 @@ function chatRoutes(config) {
     const { rows } = await db.query(
       `SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata,
               m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via,
-              m.deleted_at
+              m.deleted_at, m.moderation_hidden_at
          FROM chat_messages m
          LEFT JOIN users u ON m.user_id = u.id
         WHERE ${where}
@@ -607,10 +607,10 @@ function chatRoutes(config) {
     if (quotedIds.length) {
       const { rows: quoted } = await pool.query(
         `SELECT quoted.id, (quoted.deleted_at IS NOT NULL) AS deleted,
-                EXISTS (
+                (quoted.moderation_hidden_at IS NOT NULL OR EXISTS (
                   SELECT 1 FROM user_blocks blocked
                    WHERE blocked.blocker_id = $1 AND blocked.blocked_user_id = quoted.user_id
-                ) AS hidden
+                )) AS hidden
            FROM chat_messages quoted
           WHERE quoted.id = ANY($2::int[])`,
         [viewerId, quotedIds]
@@ -764,6 +764,9 @@ function chatRoutes(config) {
         }
         if (result?.code === 'invalid_thread') {
           return res.status(400).json({ error: 'Invalid thread_type/thread_ref' });
+        }
+        if (result?.code === 'channel_moved') {
+          return res.status(409).json({ error: communities.CHANNEL_MOVED, code: 'channel_moved' });
         }
         log.error('chat', 'Canonical chat write returned no result', {
           slug: req.params.slug, code: result?.code,
@@ -1054,7 +1057,8 @@ function chatRoutes(config) {
       const { rows } = await pool.query(
         `SELECT kind, filename, content_type, data, message_id, user_id
            FROM chat_message_attachments
-          WHERE id = $1 AND app_id = $2`,
+          WHERE id = $1 AND app_id = $2
+            AND NOT EXISTS (SELECT 1 FROM chat_messages hidden WHERE hidden.id = chat_message_attachments.message_id AND hidden.moderation_hidden_at IS NOT NULL)`,
         [attId, app.id]
       );
       if (!rows.length) return res.status(404).end();
@@ -1075,7 +1079,7 @@ function chatRoutes(config) {
       res.set('Content-Disposition', attachmentDisposition(
         inline ? 'inline' : 'attachment', att.filename
       ));
-      res.set('Cache-Control', 'private, max-age=31536000, immutable');
+      res.set('Cache-Control', 'private, no-store');
       return res.send(att.data);
     } catch (err) {
       log.error('chat', 'Chat attachment serve failed', { attId, err: err.message });
@@ -1102,7 +1106,8 @@ function chatRoutes(config) {
       const { rows } = await pool.query(
         `SELECT kind, filename, data, message_id, user_id
            FROM chat_message_attachments
-          WHERE id = $1 AND app_id = $2`,
+          WHERE id = $1 AND app_id = $2
+            AND NOT EXISTS (SELECT 1 FROM chat_messages hidden WHERE hidden.id = chat_message_attachments.message_id AND hidden.moderation_hidden_at IS NOT NULL)`,
         [attId, app.id]
       );
       if (!rows.length || rows[0].kind !== 'html') return res.status(404).end();
@@ -1119,7 +1124,7 @@ function chatRoutes(config) {
       res.set('Referrer-Policy', 'no-referrer');
       res.set('X-Content-Type-Options', 'nosniff');
       res.set('Content-Disposition', attachmentDisposition('inline', att.filename || 'file.html'));
-      res.set('Cache-Control', 'private, max-age=31536000, immutable');
+      res.set('Cache-Control', 'private, no-store');
       return res.send(att.data);
     } catch (err) {
       log.error('chat', 'Chat attachment view failed', { attId, err: err.message });

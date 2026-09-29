@@ -31,14 +31,13 @@
  * shell shipped and the SSG prerender has to reproduce.
  */
 
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ArrowRightShortIcon } from '@/components/ui/icons';
 
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
-import { ReportForm, submitReport } from '../reports/report-form';
 
 type ContributorRowView = {
   who: string;
@@ -70,6 +69,7 @@ type ActionView = {
 export type DetailView =
   | { state: 'loading' }
   | { state: 'missing' }
+  | { state: 'blocked' }
   | {
     state: 'ready';
     app: Record<string, any>;
@@ -203,9 +203,6 @@ function Missing(): ReactNode {
 
 function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): ReactNode {
   const warm = () => controller()?.warmDetailApp(view.slug);
-  const [reporting, setReporting] = useState(false);
-  const ownApp = typeof window !== 'undefined'
-    && Number(view.app.created_by) === Number((window as any).App?.user?.id);
   return (
     <>
       <div className="flex items-start gap-4">
@@ -293,14 +290,7 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
           data-added={String(view.isAdded)}
           onClick={() => controller()?.toggleDetailAdded(view.app)}
         >{view.favLabel}</button>
-        {!ownApp && !view.app.demo ? <button type="button" className="rounded-full px-3 py-2 text-sm text-zinc-500 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
-          onClick={() => setReporting((open) => !open)} aria-label={`Report ${view.name}`}>
-          Report app
-        </button> : null}
       </div>
-
-      {reporting ? <ReportForm kind="app" onCancel={() => setReporting(false)}
-        onSubmit={(reason, detail) => submitReport(`/api/apps/${encodeURIComponent(view.slug)}/report`, reason, detail)} /> : null}
 
       {view.actions.length || view.canShare ? (
         <GroupedList className={CARD_SPACING}>
@@ -351,6 +341,10 @@ export function BrowseDetail({ detail }: { detail: DetailView | null }): ReactNo
   if (detail.state === 'loading') {
     return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading&hellip;</p>;
   }
+  if (detail.state === 'blocked') return <div className={NOTE_CLASS}>
+    <p>You blocked this app. Unblock it to open it again.</p>
+    <a href="#settings/blocked-apps" className="text-violet-600 dark:text-violet-400 underline">Open blocked apps in Settings</a>
+  </div>;
   if (detail.state === 'missing') return <Missing />;
   return <Ready key={detail.slug} view={detail} />;
 }

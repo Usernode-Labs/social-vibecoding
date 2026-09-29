@@ -143,7 +143,7 @@ test('the platform\'s own row shows no ✕ on its Workshop', () => {
   assert.deepEqual([...App._backSlotFor('app-view')], ['none']);
 });
 
-test('no app\'s Workshop has a ✕ — only the running app does — and a thread keeps its chevron to Messages', () => {
+test('no app\'s Workshop has a ✕ — only the running app does — and a channel keeps its chevron to its hub', () => {
   // #2740 review: an app's Workshop has NO back control. #2799 made that true
   // for the platform's own row and left every other app's Workshop wearing a
   // "Close app" ✕ that OPENED the app it claimed to close.
@@ -165,10 +165,13 @@ test('no app\'s Workshop has a ✕ — only the running app does — and a threa
   // …or the page it was opened from (App.closeApp; tests/app-close-origin.test.js).
   App._appReturn = { slug: 'todo', url: '/#messages/5', depth: null, pushes: null };
   assert.deepEqual([...App._backSlotFor('app-view')], ['close', '/#messages/5']);
-  // The platform's own discussion is still a row of Messages.
+  // A project's channel hangs off its community's hub now, not Messages.
   App.currentApp = 'homeroom';
   App.currentTab = 'dev';
   App.currentSubTab = 'chat';
+  assert.deepEqual([...App._backSlotFor('app-view')], ['arrow', '#app/homeroom/workshop']);
+  // A change is still an agent conversation, a thread of Messages (#2770).
+  App.currentSubTab = 'sessions';
   assert.deepEqual([...App._backSlotFor('app-view')], ['arrow', '#messages']);
 });
 

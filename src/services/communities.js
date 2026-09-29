@@ -245,6 +245,40 @@ async function chatNeedsJoin(pool, appId, user) {
   return (await refusesToJoin(pool, app, user)) ? joinRequiredBody(app) : null;
 }
 
+// #general is the Homeroom community's channel, so posting there is for the
+// members of that community, like posting in any app's chat. Reading stays
+// open: the room is still every signed-in person's to read, and the refusal
+// is the same join_required answer, which the client turns into Join.
+// `selfAppSlug` names the platform's own app (config.selfAppSlug). Null for
+// any other conversation, an admin, or a platform row that is missing.
+async function generalNeedsJoin(pool, conversationId, user, selfAppSlug) {
+  if (!user || user.isAdmin || !selfAppSlug) return null;
+  const { rows: room } = await pool.query(
+    `SELECT 1 FROM conversations
+      WHERE id = $1 AND kind = 'channel' AND channel_key = 'general'`,
+    [conversationId]
+  );
+  if (!room.length) return null;
+  const { rows } = await pool.query(
+    `SELECT ${GATE_COLUMNS} FROM apps a WHERE a.slug = $1`,
+    [selfAppSlug, user.id]
+  );
+  const app = rows[0];
+  return (await refusesToJoin(pool, app, user)) ? joinRequiredBody(app) : null;
+}
+
+// The platform's own project discussion was its channel until #general
+// became the Homeroom community's. It is kept, read-only: people read it
+// and nobody posts in its main stream or its reply threads (a proposal's or
+// a request's own thread is not the channel and stays open).
+async function channelArchived(pool, appId) {
+  if (!appId) return false;
+  const { rows } = await pool.query('SELECT self_hosted FROM apps WHERE id = $1', [appId]);
+  return rows[0]?.self_hosted === true;
+}
+
+const CHANNEL_MOVED = 'This discussion is read-only now: Homeroom\'s channel is #general.';
+
 // For session-addressed routes (/api/sessions/:id/...): proposing, voting,
 // cloning a headless run. The rules every gate here shares are stated once,
 // on this one. Each answers only "has the caller joined": a caller without
@@ -273,7 +307,14 @@ function requireSessionMembership(pool) {
       `SELECT ${GATE_COLUMNS} FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
       [id, req.user?.id || null]
     );
-    return rows[0] || null;
+    const row = rows[0] || null;
+    // The Homeroom bot proposing what it built on an app in its live list
+    // (app-access.isBotOwnSession): an admin's listing is its standing
+    // there, not membership. Only a request carrying the marker is asked,
+    // and for it there is no app to refuse.
+    if (row && req.user?.[appAccess.HOMEROOM_BOT_PROPOSAL]
+        && await appAccess.isBotOwnSession(pool, req.user, id)) return null;
+    return row;
   }, 'session');
 }
 
@@ -308,8 +349,10 @@ async function listMembers(pool, appId, limit = 8) {
 // this row replaces. Unread is 0 without a read cursor, as it is there:
 // a viewer who has never opened the channel has no "since".
 async function channelSummary(pool, appId, userId) {
+  // The newest few, for the hub's preview; the newest of them is the row's
+  // "last thing said" as before.
   const { rows: latest } = await pool.query(
-    `SELECT m.content, m.created_at, u.username
+    `SELECT m.id, m.content, m.created_at, u.username
        FROM chat_messages m
        LEFT JOIN users u ON u.id = m.user_id
       WHERE m.app_id = $1
@@ -320,7 +363,7 @@ async function channelSummary(pool, appId, userId) {
            WHERE blocked.blocker_id = $2 AND blocked.blocked_user_id = m.user_id
         )
       ORDER BY m.created_at DESC, m.id DESC
-      LIMIT 1`,
+      LIMIT 3`,
     [appId, userId || null]
   );
   const { rows: unread } = await pool.query(
@@ -344,11 +387,147 @@ async function channelSummary(pool, appId, userId) {
     last_at: last ? last.created_at : null,
     last_by: last ? last.username || null : null,
     unread_count: unread[0]?.n || 0,
+    recent: recentRows(latest),
+  };
+}
+
+// Oldest first, as a transcript reads.
+function recentRows(rows) {
+  return rows.slice().reverse().map((r) => ({
+    id: Number(r.id),
+    content: r.content || '',
+    created_at: r.created_at,
+    by: r.username || null,
+  }));
+}
+
+// #general, as the Homeroom community's channel: the platform's one
+// channel (`conversations`, kind 'channel', key 'general') is the room the
+// platform's own project talks in. The same three facts as channelSummary,
+// read from that domain's tables with its own rules: main stream only, no
+// deleted message, nobody the viewer blocked, and unread behind the
+// viewer's read cursor (a viewer who has never opened it has none). Null
+// when the room does not exist, which a fresh database seeds it with.
+async function generalChannelSummary(pool, userId) {
+  const { rows: room } = await pool.query(
+    `SELECT id FROM conversations
+      WHERE kind = 'channel' AND channel_key = 'general' AND status = 'active'
+      LIMIT 1`
+  );
+  if (!room[0]) return null;
+  const conversationId = room[0].id;
+  const { rows: latest } = await pool.query(
+    `SELECT m.id, m.content, m.created_at, u.username
+       FROM conversation_messages m
+       LEFT JOIN users u ON u.id = m.sender_id
+      WHERE m.conversation_id = $1
+        AND m.thread_root_id IS NULL
+        AND m.deleted_at IS NULL
+        AND m.msg_type = 'message'
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks blocked
+           WHERE blocked.blocker_id = $2 AND blocked.blocked_user_id = m.sender_id
+        )
+      ORDER BY m.id DESC
+      LIMIT 3`,
+    [conversationId, userId || null]
+  );
+  let unreadCount = 0;
+  if (userId) {
+    const { rows: unread } = await pool.query(
+      `SELECT COUNT(*)::int AS n
+         FROM conversation_members cm
+         JOIN conversation_messages m ON m.conversation_id = cm.conversation_id
+        WHERE cm.conversation_id = $1 AND cm.user_id = $2 AND cm.status = 'member'
+          AND m.id > COALESCE(cm.last_read_message_id, 0)
+          AND m.thread_root_id IS NULL AND m.deleted_at IS NULL
+          AND m.msg_type = 'message'
+          AND m.sender_id IS DISTINCT FROM $2
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks blocked
+             WHERE blocked.blocker_id = $2 AND blocked.blocked_user_id = m.sender_id
+          )`,
+      [conversationId, userId]
+    );
+    unreadCount = unread[0]?.n || 0;
+  }
+  const last = latest[0] || null;
+  return {
+    conversation_id: conversationId,
+    last_message: last ? last.content : null,
+    last_at: last ? last.created_at : null,
+    last_by: last ? last.username || null : null,
+    unread_count: unreadCount,
+    recent: recentRows(latest),
+  };
+}
+
+// Members & activity on the hub: how many people did something here this
+// week (said something in the channel, started a change, or voted on one),
+// and how many changes shipped in the last thirty days. People only: a
+// synthetic account (the Homeroom bot, which opens changes and, since #3288,
+// posts ordinary messages) is never counted as somebody active here.
+async function activitySummary(pool, appId) {
+  // THE TREND: people active on each of the last fourteen days, oldest
+  // first, the same three kinds of taking part as the week's count. Days
+  // with nobody are zero rather than missing, so the bars keep their places.
+  const { rows: days } = await pool.query(
+    `SELECT to_char(d.day, 'YYYY-MM-DD') AS day, COUNT(DISTINCT who.user_id)::int AS n
+       FROM generate_series(CURRENT_DATE - 13, CURRENT_DATE, INTERVAL '1 day') AS d(day)
+       LEFT JOIN (SELECT w.user_id, w.day FROM (
+         SELECT m.user_id, m.created_at::date AS day FROM chat_messages m
+          WHERE m.app_id = $1 AND m.user_id IS NOT NULL
+            AND m.created_at >= CURRENT_DATE - 13
+         UNION
+         SELECT s.user_id, s.created_at::date FROM chat_sessions s
+          WHERE s.app_id = $1 AND s.user_id IS NOT NULL
+            AND s.created_at >= CURRENT_DATE - 13
+         UNION
+         SELECT v.user_id, v.created_at::date FROM pr_votes v
+           JOIN chat_sessions s ON s.id = v.session_id
+          WHERE s.app_id = $1 AND v.user_id IS NOT NULL
+            AND v.created_at >= CURRENT_DATE - 13
+       ) w JOIN users u ON u.id = w.user_id AND u.is_synthetic IS NOT TRUE
+       ) who ON who.day = d.day::date
+      GROUP BY d.day
+      ORDER BY d.day`,
+    [appId]
+  );
+  const { rows } = await pool.query(
+    `SELECT
+       (SELECT COUNT(DISTINCT who.user_id)::int FROM (
+          SELECT m.user_id FROM chat_messages m
+           WHERE m.app_id = $1 AND m.user_id IS NOT NULL
+             AND m.created_at > NOW() - INTERVAL '7 days'
+          UNION
+          SELECT s.user_id FROM chat_sessions s
+           WHERE s.app_id = $1 AND s.user_id IS NOT NULL
+             AND s.created_at > NOW() - INTERVAL '7 days'
+          UNION
+          SELECT v.user_id FROM pr_votes v
+            JOIN chat_sessions s ON s.id = v.session_id
+           WHERE s.app_id = $1 AND v.user_id IS NOT NULL
+             AND v.created_at > NOW() - INTERVAL '7 days'
+        ) who JOIN users u ON u.id = who.user_id AND u.is_synthetic IS NOT TRUE) AS active_week,
+       (SELECT COUNT(*)::int FROM chat_sessions s
+         WHERE s.app_id = $1 AND s.status = 'merged'
+           AND COALESCE(s.merged_at, s.created_at) > NOW() - INTERVAL '30 days') AS shipped_month`,
+    [appId]
+  );
+  return {
+    active_week: rows[0]?.active_week || 0,
+    shipped_month: rows[0]?.shipped_month || 0,
+    daily: days.map((d) => ({ day: d.day, n: d.n })),
   };
 }
 
 module.exports = {
   channelSummary,
+  generalChannelSummary,
+  activitySummary,
+  generalNeedsJoin,
+  channelArchived,
+  CHANNEL_MOVED,
   AUDIENCES,
   AUDIENCE_LABELS,
   audienceSql,

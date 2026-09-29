@@ -23,6 +23,9 @@ const CURRENT_KINDS = [
   'mention', 'reply', 'reaction', 'kudos', 'stale_pr', 'check_failed',
   'pr_proposed', 'spec_shared', 'collab_invite', 'collab_invite_accepted',
   'approver_invite', 'approver_invite_accepted', 'session_done',
+  // #3181: a dev-session turn that stopped before finishing, beside the
+  // one that finished, on the same developer_sessions switch.
+  'session_stalled',
   'auto_solve_done',
   // #1405: a connector session put work somewhere, and a connector session is
   // holding for an answer. Both are "a coding session did something while you
@@ -43,6 +46,9 @@ const CURRENT_KINDS = [
   // #2386's two: a friend request and its acceptance — one person reaching
   // you directly, so they join direct_interactions.
   'friend_request', 'friend_accept',
+  // A server-wide cap nearing its ceiling, for full admins only. Joins
+  // app_alerts beside app_health (services/platform-limit-alerts.js).
+  'platform_limit',
 ];
 
 test('every current inbox kind maps exactly once to one closed category', () => {
@@ -102,6 +108,14 @@ test('#2386: friend requests and acceptances ride the direct-interactions switch
     assert.equal(isKindEnabled(kind, { direct_interactions: false }), false, `${kind} follows the switch`);
     assert.equal(isKindEnabled(kind, { messages: false }), true, `${kind} is not a Messages kind`);
   }
+});
+
+test('#3181: a stalled session rides the developer-sessions switch, beside a finished one', () => {
+  assert.equal(KIND_TO_CATEGORY.get('session_stalled'), 'developer_sessions');
+  assert.equal(KIND_TO_CATEGORY.get('session_stalled'), KIND_TO_CATEGORY.get('session_done'));
+  assert.equal(isKindEnabled('session_stalled'), true, 'on by default');
+  assert.equal(isKindEnabled('session_stalled', { developer_sessions: false }), false,
+    'turning session pushes off silences it too');
 });
 
 test('preference validation rejects malformed values and unknown categories', () => {

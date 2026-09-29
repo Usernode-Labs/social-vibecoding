@@ -31,7 +31,8 @@ test('parseVerdict reads the LAST fenced JSON block and normalizes its fields', 
     'Actually, on reflection:',
     '```json',
     '{ "verdict": "Question", "determined": false, "missing_fact": "Which screen shows the pins.",',
-    '  "question": "Which screen do the pins drift on?", "default": "The route map", "build_note": "ignored" }',
+    '  "question": "Which screen do the pins drift on?", "default": "The route map", "build_note": "ignored",',
+    '  "blocker": "user_facing", "why_default_fails": "The two maps draw pins in different code." }',
     '```',
   ].join('\n');
   const v = bot.parseVerdict(text);
@@ -41,7 +42,7 @@ test('parseVerdict reads the LAST fenced JSON block and normalizes its fields', 
   assert.equal(v.question, 'Which screen do the pins drift on?');
   assert.equal(v.questionDefault, 'The route map');
   assert.equal(v.buildNote, null, 'a build note only rides a ready verdict');
-  assert.equal(v.reason, null);
+  assert.equal(v.reason, 'user_facing: The two maps draw pins in different code.', 'which blocker, and why');
 });
 
 test('parseVerdict: "none" clears missing_fact, ready keeps its note, person keeps its reason', () => {
@@ -117,6 +118,7 @@ test('settings default to off and clamp their numbers', () => {
   assert.deepEqual(s, {
     mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [], liveApps: [],
     turnSeconds: 20 * 60, turnInputTokens: 10_000_000,
+    shadowBuilds: false, buildConcurrency: 2, shadowBuildPlatform: false,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },
@@ -420,7 +422,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -481,7 +483,9 @@ test('every issue starts a fresh model thread, through the platform\'s own readi
   assert.match(start.s, /agent_thread_id = NULL/, 'and the saved thread is cleared in the row, for every later reader');
 
   // The imitation is only worth something while it matches the platform.
-  assert.match(read('src/services/agent-turn.js'), /resumeThreadId: resumeThreadId \|\| session\.agent_thread_id \|\| null/,
+  // (#3296 added a harness check after this read; it can only drop a thread,
+  // never supply one, so a null here still means the saved thread.)
+  assert.match(read('src/services/agent-turn.js'), /const candidateThreadId = resumeThreadId \|\| session\.agent_thread_id \|\| null;/,
     'if this changes, re-check how a null thread is read before trusting the test above');
   assert.match(read('src/routes/sessions.js'), /resumeThreadId \?\? runtimeContext\.resumeThreadId \?\? null/);
 });
@@ -1006,7 +1010,7 @@ test('parseVerdict accepts empty, and it shares the question tripwire', () => {
     'both are a demand on somebody attention, so they share one daily allowance');
   assert.ok(bot.VERDICTS.includes('empty'));
   const schema = read('src/db/schema.sql');
-  assert.match(schema, /CHECK \(verdict IN \('question', 'ready', 'person', 'empty', 'failed'\)\)/);
+  assert.match(schema, /CHECK \(verdict IN \('question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'\)\)/);
   assert.match(schema, /ALTER TABLE homeroom_bot_runs DROP CONSTRAINT IF EXISTS homeroom_bot_runs_verdict_check/,
     'and a database that predates it is widened on boot');
 });
@@ -1197,6 +1201,33 @@ test('the triage prompt ends with the JSON contract parseVerdict reads', () => {
   assert.match(prompt, /never an `empty`/);
 });
 
+test('the triage prompt decides what is not in the repository instead of searching for it', () => {
+  // rss-reader #24, 2026-09-25: "a dark colour closer to the platform's
+  // background". The model hunted the app's repository for the platform's
+  // colour: 183 reads, over 50 of the same lines of index.html, 15 fresh
+  // starts, no words and no verdict, until the 20-minute wall clock. The
+  // first fix sent it to ASK instead; since the question bar it DECIDES:
+  // the closest value in the app, stated as an assumption in the spec.
+  const prompt = read('src/prompts/homeroom-bot-triage.md');
+  assert.match(prompt, /A value of the Homeroom platform the conventions do not state \(such as the exact colours of its own screens\) is not in anything you can read, so do not search for it: use the closest value you found in the app and say so\./);
+  assert.match(prompt, /"darker", "nicer", "like the platform"/);
+  assert.match(prompt, /is built with the closest dark colour the app already has, listed as an assumption, not asked about/);
+  assert.match(prompt, /If one or two targeted searches for the obvious names do not find it, it is not in the repository: stop searching and decide\./,
+    '"the repository can answer it" has a limit');
+  assert.match(prompt, /Do not read a file or line range you have already read/);
+  assert.match(prompt, /List or search the whole repository at most once/);
+  assert.match(prompt, /still unsure after about ten reads, stop reading and decide now/);
+  assert.match(prompt, /a turn that ends without the JSON block below has decided nothing/);
+});
+
+test('the triage prompt sends platform questions to the conventions tool, not to the repository', () => {
+  const prompt = read('src/prompts/homeroom-bot-triage.md');
+  assert.match(prompt, /are served by the `get_platform_conventions` tool: call it with no arguments for the essentials and an index of its sections, then with a section's slug to read just that section\./);
+  assert.match(prompt, /That is the same document an app's notes tell an agent to fetch from the Homeroom site: use the tool, do not fetch the site\./,
+    'the app\'s notes send an agent to the platform site for this document');
+  assert.match(prompt, /A question about the platform is answered there, not in the app's repository: look it up with the tool/);
+});
+
 // ── runTriage with every dependency injected ─────────────────────────────
 
 function triageHarness({ verdictText, routed = null, budgetError = null, sessionId = 501, result = null } = {}) {
@@ -1301,6 +1332,42 @@ test('runTriage: an issue carrying the bot\'s own GitHub comment triages instead
   assert.match(prompt, /\[bot — earlier proposal questions, 2026-09-25, github\] Homeroom bot is looking at this request\./,
     'its own comment is recognised as the bot\'s');
   assert.match(prompt, /\[alice, 2026-09-25, github\] Darker, like the platform\./, 'a person\'s comment is not');
+});
+
+test('runTriage: the request comes first; the platform reference follows, small, with the conventions a tool call away (#24)', async () => {
+  // Put first and inline (#3161), 150 KB of conventions buried the task on
+  // rss-reader #24 (2026-09-26): once the model took the whole message for a
+  // conventions document; once every request carried 50k tokens, the context
+  // crossed the compaction limit after 86 reads, and the model's own summary
+  // lost the task. The reference now follows the request, fenced, and names
+  // the tool that serves the conventions a section at a time.
+  const { pool, deps, calls } = triageHarness({
+    verdictText: '```json\n{"verdict":"ready","determined":true,"missing_fact":"none","build_note":"x"}\n```',
+  });
+  await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  const prompt = calls.exec[0].opts.prompt;
+  const at = (re) => prompt.search(re);
+  const order = [
+    /^Please work on GitHub issue #12/,
+    /You are the Homeroom bot, triaging ONE request/,
+    /"verdict": "question" \| "empty" \| "ready" \| "person",\n/,
+    /==== PLATFORM REFERENCE \(for looking things up; not the request\) ====/,
+    /Call `get_platform_conventions` with no arguments for the essentials and an index of its sections, then with a section's slug to read just that section\./,
+    /==== UI DESIGN/,
+    /you read text, not images/,
+    /==== END UI DESIGN ====/,
+    /==== END PLATFORM REFERENCE ====/,
+    /That is the end of the reference\. Now answer the triage request above, for issue #12/,
+  ].map((re) => [re, at(re)]);
+  for (const [re, where] of order) assert.ok(where >= 0, `present: ${re}`);
+  for (let i = 1; i < order.length; i += 1) {
+    assert.ok(order[i - 1][1] < order[i][1], `${order[i - 1][0]} before ${order[i][0]}`);
+  }
+  assert.match(prompt, /nothing in this reference is a task\./);
+  assert.doesNotMatch(prompt, /==== PLATFORM CONVENTIONS \(authoritative\) ====/, 'the conventions are not inline');
+  assert.ok(prompt.length < 20000, `a triage prompt stays small: ${prompt.length} chars`);
+  // The last thing the model reads is the one format parseVerdict accepts.
+  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}$/);
 });
 
 test('the bot\'s GitHub login resolves to a string, or to null when it cannot be read', async () => {

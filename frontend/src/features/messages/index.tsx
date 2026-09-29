@@ -1,3 +1,4 @@
+import { openReport } from '../dialogs/report';
 import {
   memo, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode,
 } from 'react';
@@ -17,7 +18,7 @@ import { useMenuKeyboard } from '../../lib/menu-keys';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
-import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { AgentAppDialog } from './agent-dialog';
 import { MessageComposer } from './composer';
@@ -69,6 +70,7 @@ import {
   loadAgentSessions,
   openAgentSession,
   startAgentSession,
+  useAgentSessionSelector,
   useAgentSessions,
 } from '../agent-session/store';
 import type { AgentSession as MayorSession } from '../agent-session/api';
@@ -905,7 +907,11 @@ function ConversationList() {
             channels outside Your apps begin (above them once they are shown,
             so "Show less" is next to what it folds), or at the card's foot
             while they are folded. */}
-        {sectionRuns(shown, snap.filter === 'all').map((run) => {
+        {/* ONE LIST, UNHEADED. The Channels section moved to the hubs of the
+            communities its rooms belong to (./inbox.ts), which leaves the
+            chats alone here, and a lone "Chats" heading over the only list
+            on the screen would be a label for nothing. */}
+        {sectionRuns(shown, false).map((run) => {
           const rows = run.entries.flatMap((entry, i) => {
             const toggle = entry.more && (i === 0 || !run.entries[i - 1].more) ? moreToggle : null;
             return [toggle, inboxRow(entry)].filter(Boolean);
@@ -1033,6 +1039,9 @@ function FullWidthToggle() {
   const specBeside = useSidePaneBeside('messages');
   const collapsed = snap.listCollapsed;
   if (specBeside) return null;
+  // A channel is always full width (see the layout's note), so a toggle for
+  // a list it never shows would do nothing.
+  if (snap.route.appSlug || (snap.active?.kind === 'channel' && snap.active.id === snap.route.conversationId)) return null;
   const label = collapsed ? 'Show the conversation list' : 'Full width';
   return (
     <button
@@ -1123,7 +1132,7 @@ function ThreadHeader() {
   // the roster until they accept, so the count the server gives them is 0 —
   // they read the invitation's state instead of "0 members".
   const subtitle = channel
-    ? `Everyone on Homeroom · ${count(active.memberCount)}`
+    ? `The Homeroom community's channel · ${count(active.memberCount)}`
     : invited
       ? 'Invitation pending'
       : active.kind === 'group'
@@ -1152,6 +1161,7 @@ function ThreadHeader() {
               : active.kind === 'direct'
                 ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button>
                 : null}
+            {peer ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: `@${peer.username}`, userId: peer.id }); }}>Report user</button> : null}
             <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>Refresh conversation</button>
           </div>
         ) : null}
@@ -1223,6 +1233,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
   const ready = !!context && context.slug === slug;
   const name = ready ? context.name : slug;
   const readOnly = ready ? context.readOnly : false;
+  const archived = ready ? !!context.archived : false;
   // The channel's list row, when the viewer is a member: its `#handle`, and
   // the app's artwork for the header tile below.
   const row = snap.discussions.find((item) => item.slug === slug) || null;
@@ -1255,7 +1266,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
     // sent. A macrotask later the commit is over and the portal lands at once.
     let live = true;
     const timer = window.setTimeout(() => {
-      if (live) view?.renderGroupChatTab?.({ host: el, slug, name, readOnly });
+      if (live) view?.renderGroupChatTab?.({ host: el, slug, name, readOnly, archived });
     }, 0);
     return () => {
       live = false;
@@ -1271,7 +1282,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
       // #2387: a "Mark unread" lasts while the channel is open, not after.
       (window as any).GroupChat?.releaseUnreadHold?.(slug);
     };
-  }, [slug, ready, name, readOnly]);
+  }, [slug, ready, name, readOnly, archived]);
 
   if (snap.discussionError) {
     return (
@@ -1302,7 +1313,11 @@ function AppDiscussionThread({ slug }: { slug: string }) {
         </span>
         <span className="min-w-0 flex-1">
           <span className="messages-thread-name block">{name}</span>
-          <span className="messages-thread-sub block">{handle ? `#${handle} · ` : ''}Everyone building this app</span>
+          <span className="messages-thread-sub block">
+            {archived
+              ? 'Earlier project discussion · read-only'
+              : `${handle ? `#${handle} · ` : ''}Everyone building this project`}
+          </span>
         </span>
         <FullWidthToggle />
       </header>
@@ -1360,6 +1375,16 @@ function MayorSessionThread({ id }: { id: number | 'new' }) {
       if (current.open && current.host === 'messages' && same) deactivateAgentSession();
     };
   }, [id]);
+  // A screen swap can close the conversation under this pane after the pane
+  // took it (a desktop's transition out of #agent/<id> into Messages closes
+  // the conversation's own screen last): the pane would draw a conversation
+  // nobody holds open, which nothing updates. While Messages is on screen
+  // and nothing holds it, the pane takes it back.
+  const shown = useVisibility('messages-screen', false);
+  const held = useAgentSessionSelector((s) => s.open);
+  useEffect(() => {
+    if (shown && !held) void openAgentSession({ id, host: 'messages' });
+  }, [shown, held, id]);
   return (
     <section
       className="flex messages-thread-pane dc-lift dc-lift-session messages-thread-agent"
@@ -1588,7 +1613,7 @@ function ConversationThread() {
     const { slug, id } = snap.route.agent;
     return <AgentSessionThread key={`${slug}/${id}`} slug={slug} id={id} />;
   }
-  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2><p>Your chats and channels open here.</p></section>;
+  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2><p>Your chats open here. A community's channel is on its hub, under Communities.</p></section>;
   // The kind is on the SECTION — `messages-thread-direct`, `-group` or
   // `-channel` — so the scroller's class string below stays the one the
   // safe-area test pins. It no longer changes the rows' shape: every kind is
@@ -1628,7 +1653,10 @@ function ConversationThread() {
       continue;
     }
     // A failed or unsent row is its own line: it carries a status of its own.
+    // So is a platform line (a Homeroom line kept as the root of a thread),
+    // which has no author to share a name with the row above.
     const grouped = !!previous && !previous.failed && !message.failed
+      && !previous.system && !message.system
       && groupsWithPrevious(
         { author: previous.sender.id, at: previous.createdAt },
         { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
@@ -1924,7 +1952,13 @@ export function MessagesScreen() {
   // threads hang off conversations and channels alone.
   const chatOpen = !!(snap.route.conversationId || snap.route.appSlug);
   const discussionOpen = chatOpen || !!snap.route.agent;
-  const layout = `messages-layout dc-lift dc-lift-strip${snap.listCollapsed && discussionOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`;
+  // A CHANNEL OPENS FULL WIDTH. It is its community's room, reached from the
+  // community's hub, and the list beside it is people and agents — a column
+  // of other things beside a room that is not in it. So there is no list
+  // for it to sit beside, whatever the full-width preference says.
+  const channelOpen = !!snap.route.appSlug
+    || (!!snap.route.conversationId && snap.active?.id === snap.route.conversationId && snap.active?.kind === 'channel');
+  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.

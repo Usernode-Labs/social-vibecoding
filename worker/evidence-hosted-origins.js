@@ -6,13 +6,14 @@
 // catalog also gives the planner candidate slugs without trusting page text
 // or implying that a candidate's runtime will load cleanly.
 const fs = require('node:fs');
+const { isHostedAppFixture } = require('./evidence-hosted-app-contract');
 
 const MAX_CATALOG_APPS = 1000;
 const MAX_HOSTED_ORIGINS = 1000;
 const MAX_FILE_BYTES = 256 * 1024;
 const APP_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-function trustedHostedAppOrigins(apps, platformOrigin) {
+function trustedHostedAppOrigins(apps, platformOrigin, evidenceRunId = null) {
   const origins = new Map();
   for (const app of Array.isArray(apps) ? apps.slice(0, MAX_CATALOG_APPS) : []) {
     if (app?.status !== 'running' || app?.view_visibility !== 'public'
@@ -25,18 +26,25 @@ function trustedHostedAppOrigins(apps, platformOrigin) {
       && /^[0-9a-f]{40}$/.test(String(app.main_sha || ''));
     const localRuntime = url.protocol === 'http:' && url.hostname === 'localhost'
       && String(app.container_id || '') === `usernode-app-${app.slug}`;
-    if (!versionedRuntime && !localRuntime) continue;
+    // The third lane is a real, short-lived app deployment owned by this
+    // exact evidence run. Its run-bound marker and reserved id are installed
+    // only in the two disposable databases; unlike a user app, it has no
+    // GitHub revision because the immutable capture image supplies it.
+    const evidenceFixture = isHostedAppFixture(app, evidenceRunId);
+    if (!versionedRuntime && !localRuntime && !evidenceFixture) continue;
     origins.set(url.origin, app.slug);
   }
   return origins;
 }
 
-async function loadTrustedHostedAppOrigins(context, platformOrigin, report = null) {
+async function loadTrustedHostedAppOrigins(context, platformOrigin, report = null,
+  evidenceRunId = null) {
   let response;
   let outcome = 'request_error';
   let status = null;
   let catalog = new Map();
   let catalogCount = null;
+  let evidenceFixtureAvailable = false;
   try {
     response = await context.request.get(`${platformOrigin}/api/apps`, {
       failOnStatusCode: false, maxRedirects: 0, timeout: 10_000,
@@ -47,14 +55,26 @@ async function loadTrustedHostedAppOrigins(context, platformOrigin, report = nul
       const body = await response.json();
       if (Array.isArray(body?.apps)) {
         catalogCount = Math.min(body.apps.length, MAX_CATALOG_APPS);
-        catalog = trustedHostedAppOrigins(body.apps, platformOrigin);
+        catalog = trustedHostedAppOrigins(body.apps, platformOrigin, evidenceRunId);
+        evidenceFixtureAvailable = body.apps
+          .slice(0, MAX_CATALOG_APPS)
+          .some((app) => {
+            if (!isHostedAppFixture(app, evidenceRunId)) return false;
+            try { return catalog.get(new URL(app.url).origin) === app.slug; }
+            catch { return false; }
+          });
         outcome = 'ok';
       } else outcome = 'invalid_catalog';
     }
   } catch { outcome = status === 200 ? 'invalid_catalog' : 'request_error'; }
   finally {
     await response?.dispose?.().catch(() => {});
-    try { report?.({ outcome, httpStatus: status, catalogCount, count: catalog.size }); } catch {}
+    try {
+      report?.({
+        outcome, httpStatus: status, catalogCount, count: catalog.size,
+        evidenceFixtureAvailable,
+      });
+    } catch {}
   }
   return catalog;
 }

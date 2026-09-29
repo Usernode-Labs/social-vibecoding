@@ -68,6 +68,7 @@ const Browse = {
   // Guards the cold-deep-link fetch below so a miss can't loop.
   _detailFetching: null,
   _detailMissing: false,
+  _detailBlocked: false,
   // Where the CURRENT detail page was entered from, so the header's back
   // button lands where the user actually came from:
   //   'list' — a browse row tap, or a deep link / screenshot state. Back
@@ -138,6 +139,7 @@ const Browse = {
     Browse._chromeSuspended = !!(opts && opts.chrome === false);
     Browse._slug = slug || null;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     Browse._contribExpanded = false;
     if (Browse._slug) Browse._takeOrigin();
     else Browse._pendingOrigin = null;
@@ -155,6 +157,7 @@ const Browse = {
     Browse._open = false;
     Browse._slug = null;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     // Leaving the screen retires the entry note with it — the next detail
     // page declares its own origin.
     Browse._detailOrigin = 'list';
@@ -182,6 +185,7 @@ const Browse = {
     const goingDeeper = !!next && !Browse._slug;
     Browse._slug = next;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     Browse._contribExpanded = false;
     if (next) Browse._takeOrigin();
     else Browse._pendingOrigin = null;
@@ -195,6 +199,7 @@ const Browse = {
     if (!slug) return;
     Browse._slug = slug;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     Browse._contribExpanded = false;
     Browse._takeOrigin();
     Browse._syncLevel();
@@ -204,6 +209,7 @@ const Browse = {
   showList() {
     Browse._slug = null;
     Browse._detailMissing = false;
+    Browse._detailBlocked = false;
     Browse._contribExpanded = false;
     Browse._pendingOrigin = null;
     Browse._syncLevel();
@@ -779,22 +785,31 @@ const Browse = {
   // cmd/middle-click is intercepted instead — NavLink.wireModified takes this
   // as its hrefFor, and it repeats the same guards openRow applies so an inert
   // row stays inert under a modifier too.
+  //
+  // THE ROW OPENS THE PROJECT'S HUB (the communities prototype). What a
+  // person browsing wants first is what it is, who it is for and Join, which
+  // is the hub's hero, with its channel and what it is working on under it —
+  // not a store page one level short of that. The address is the one
+  // App._hubHref builds (`#app/<slug>/workshop`, which opens on the hub),
+  // spelled here so the controller stays testable without App. The About
+  // page (#apps/<slug>) stays: Home's card menu opens it, links to it still
+  // work, and ?shot=browse-detail still drills into it for the captures.
   rowHref(view) {
     if (!view || view.demo || !view.slug) return null;
-    return `#apps/${encodeURIComponent(view.slug)}`;
+    return `#app/${encodeURIComponent(view.slug)}/workshop`;
   },
 
   openRow(view) {
     const href = Browse.rowHref(view);
     if (!href) return;
-    // Back from here means up to this list.
-    Browse.noteDetailOrigin('list');
+    // The hub, not the tab that project page was last left on.
+    if (typeof AppView !== 'undefined' && AppView._landOnHub) AppView._landOnHub(view.slug);
     location.hash = href;
   },
 
-  // #931: a row tap lands on the detail page, not in the app, so this is a
-  // warm-up for the "Open" button one screen later — by then the token is
-  // minted and the connection to the app's origin is open.
+  // #931: a warm-up for opening the app from its page one screen later — by
+  // then the token is minted and the connection to the app's origin is
+  // open. The hub is a screen short of the app, as the About page was.
   warmRow(view) {
     if (!view || view.demo || !view.slug) return;
     try { App.prewarmApp(view.slug); } catch (err) { /* ignore */ }
@@ -1063,7 +1078,7 @@ const Browse = {
 
     if (!app) {
       if (Browse._detailMissing) {
-        Browse._store.set({ detail: { state: 'missing' } });
+        Browse._store.set({ detail: { state: Browse._detailBlocked ? 'blocked' : 'missing' } });
         return;
       }
       Browse._store.set({ detail: { state: 'loading' } });
@@ -1193,8 +1208,15 @@ const Browse = {
     if (Browse._detailFetching === slug) return;
     Browse._detailFetching = slug;
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // `manifest=summary`: the row joins the list's rows, which carry the
+      // same summary, and shares the service worker's copy with AppView.
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}?manifest=summary`);
+      if (!res.ok) {
+        const failure = await res.json().catch(() => ({}));
+        Browse._detailBlocked = failure.code === 'app_blocked';
+        throw new Error(`HTTP ${res.status}`);
+      }
+      Browse._detailBlocked = false;
       // The route answers `{ app: … }` (src/routes/apps.js), NOT a bare app
       // row — reading it as one made every cold deep link resolve to the
       // "isn't available" state. It only ever surfaced when the concurrent

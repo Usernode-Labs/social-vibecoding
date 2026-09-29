@@ -175,7 +175,10 @@ export const PlatformTarget = {
           restricted(slug);
         } else {
           PlatformTarget._slug = slug;
-          const res = await fetch(`/api/apps/${encodeURIComponent(slug)}`);
+          // `manifest=summary`: this row is read for its identity and its
+          // description; the platform's declared tests and env are ~280 KB of
+          // it, fetched on every load, that nothing here reads.
+          const res = await fetch(`/api/apps/${encodeURIComponent(slug)}?manifest=summary`);
           if (res.ok) {
             const data = await res.json();
             const row = data && data.app;

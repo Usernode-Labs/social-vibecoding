@@ -373,13 +373,17 @@ const Notifications = {
     // browser tab sets the dedicated tab-title marker (the replacement
     // for the old streaming-driven "✅ Done"). If they're actively
     // looking at the page, the badge + drawer suffice.
-    if ((notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
+    // #3181: a turn that stopped before finishing is the other half of a
+    // finished one, and arrives on the same channels with its own marker.
+    if (PRIORITY_KINDS.has(notif.kind)
         && !notif.readAt
         && window.DevChat && DevChat.setCompletionTitle
         && DevChat._userIsAway && DevChat._userIsAway()) {
       DevChat.setCompletionTitle(notif.kind === 'session_done'
         ? 'sessionDone'
-        : (notif.detail === 'failed' ? 'autoSolveFailed' : 'autoSolveDone'));
+        : notif.kind === 'session_stalled'
+          ? 'sessionStalled'
+          : (notif.detail === 'failed' ? 'autoSolveFailed' : 'autoSolveDone'));
     }
     // #138: route an arriving completion through the alert channels — a
     // chime when the app is visible, an OS notification when it's hidden.
@@ -387,7 +391,7 @@ const Notifications = {
     // "user is elsewhere in the app, or backgrounded" path (notify_on_done
     // was armed, so a notification_new arrives); the "watching the same dev
     // chat" path is handled by DevChat._finishStreaming's direct tone.
-    if ((notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
+    if (PRIORITY_KINDS.has(notif.kind)
         && !notif.readAt
         && window.DevAlerts && typeof DevAlerts.onCompletion === 'function') {
       DevAlerts.onCompletion(completionAlertInfo(notif));
@@ -789,18 +793,36 @@ const Notifications = {
       }
       return;
     }
+    // A platform limit opens where it is raised. The app limit is set in
+    // Admin → Limits (services/app-limit.js), which works on every deploy;
+    // the session cap opens Health & status, whose capacity meter shows the
+    // load behind it (MAX_GLOBAL_SESSIONS itself is deploy configuration).
+    if (item.kind === 'platform_limit') {
+      Notifications._dismissSheetForNav();
+      const limit = parsePlatformLimitDetail(item.detail);
+      const section = limit?.limit === 'apps' ? 'limits' : 'status';
+      if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
+        App.navigateToAdminConsole(section);
+      } else {
+        window.location.hash = `#admin/${section}`;
+      }
+      return;
+    }
     // #161/#194: completion notifications deep-link to their change.
     // session_done opens the lifecycle-aware detail page around its workspace;
     // auto_solve_done opens the Issues tab with that issue's accordion
     // expanded.
     // #2779: a change an agent session started is worked on in that
     // conversation, so its completion opens the conversation.
-    if (item.kind === 'session_done' && item.agentSessionId) {
+    // #3181: a session that stopped before finishing opens exactly where a
+    // finished one does, since continuing it is what the row asks for.
+    const sessionTurnEnd = item.kind === 'session_done' || item.kind === 'session_stalled';
+    if (sessionTurnEnd && item.agentSessionId) {
       Notifications._dismissSheetForNav();
       window.location.hash = `#messages/agent/${encodeURIComponent(item.agentSessionId)}`;
       return;
     }
-    if (item.kind === 'session_done' && item.appSlug && item.sessionId) {
+    if (sessionTurnEnd && item.appSlug && item.sessionId) {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', {
@@ -1502,6 +1524,14 @@ function conversationNotificationHref(n) {
 // FRIEND_NOTIFICATION_KINDS). No app and no conversation — a person.
 const FRIEND_NOTIF_KINDS = new Set(['friend_request', 'friend_accept']);
 
+// services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+
+function parsePlatformLimitDetail(detail) {
+  const m = PLATFORM_LIMIT_DETAIL_RE.exec(String(detail || ''));
+  return m ? { limit: m[1], level: m[2], used: Number(m[3]), cap: Number(m[4]) } : null;
+}
+
 // #161 defined these as the kinds that "demand attention": a finished dev
 // session or headless run, while still unread.
 //
@@ -1513,14 +1543,17 @@ const FRIEND_NOTIF_KINDS = new Set(['friend_request', 'friend_accept']);
 // restoring a top-of-list pin is one stable partition in _renderList if the
 // group decides it wants one.
 //
-// Deliberately limited to these two kinds; grow this set rather than adding a
-// server-side priority column if more "priority" kinds emerge.
-const PRIORITY_KINDS = new Set(['session_done', 'auto_solve_done']);
+// Deliberately limited to these kinds; grow this set rather than adding a
+// server-side priority column if more "priority" kinds emerge. #3181 grew it
+// by session_stalled: a session that stopped before finishing demands the
+// same attention as one that finished, on the same channels (the tab title,
+// the chime, the OS notification; see handleIncoming).
+const PRIORITY_KINDS = new Set(['session_done', 'session_stalled', 'auto_solve_done']);
 function isPriorityNotif(n) {
   return !!n && PRIORITY_KINDS.has(n.kind) && !n.readAt;
 }
 
-// The four system-generated (source-user-less) notifications about the
+// The system-generated (source-user-less) notifications about the
 // viewer's OWN sessions and proposals. Everything social — mentions,
 // replies, reactions, kudos, vote nudges, invites, spec shares — is
 // everything else.
@@ -1531,9 +1564,11 @@ function isPriorityNotif(n) {
 // split that outlived the drawer is gone as well — the bell counts these
 // along with everything else — so what the set is left doing is naming the
 // kinds the app-context sheet draws a per-change unread dot for
-// (`sessionUnreadIds`, published by _renderBadge).
+// (`sessionUnreadIds`, published by _renderBadge). #3181 adds the fifth,
+// session_stalled: a change that stopped before finishing is exactly what
+// that dot should point at.
 const SESSION_NOTIF_KINDS = new Set([
-  'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
+  'session_done', 'session_stalled', 'auto_solve_done', 'stale_pr', 'check_failed',
 ]);
 function isSessionNotif(n) {
   return !!n && SESSION_NOTIF_KINDS.has(n.kind);
@@ -1628,6 +1663,19 @@ function completionAlertInfo(n) {
       body,
     };
   }
+  // #3181: the turn stopped before finishing (an error, a timeout, a lost
+  // worker). Same deep link as a finished one; the copy says what to do.
+  if (n.kind === 'session_stalled') {
+    return {
+      kind: 'session_stalled',
+      appSlug: n.appSlug || null,
+      sessionId: n.sessionId || null,
+      ...(n.agentSessionId ? { agentSessionId: n.agentSessionId } : {}),
+      headlessIssueNumber: null,
+      title: 'Session stopped before finishing',
+      body: `Your session on ${appName} stopped before finishing. Open it to continue`,
+    };
+  }
   // session_done — #971: the session's own title first, then the PR title,
   // and only then the machine-generated branch name.
   const label = n.sessionTitle || n.prTitle || n.branchName || 'your session';
@@ -1706,8 +1754,10 @@ function screenViews(items) {
 // flag for the same reason `conversation` is: the tab must never re-derive
 // the set from `kind` and drift from it. stale_pr and check_failed stay out:
 // they are about a proposal, not about an agent talking back to you.
+// #3181: a session that stopped before finishing is an agent talking back
+// too, so it lists beside the one that finished.
 const AGENT_NOTIF_KINDS = new Set([
-  'session_done', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted',
+  'session_done', 'session_stalled', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted',
 ]);
 
 // One notification row, as data. It has ONE renderer — ScreenRow in
@@ -1932,6 +1982,11 @@ function rowView(n) {
     };
   }
 
+  if (n.kind === 'moderation_report' || n.kind === 'moderation_action') {
+    return { ...base, appLine: 'Account', wrap: true, icon: '⚑',
+      ...headline(n.kind === 'moderation_report' ? 'Report update' : 'Moderation action', n.detail || '') };
+  }
+
   if (n.kind === 'app_quota_changed') {
     const [before, after] = String(n.detail || '').split(':');
     const detail = /^\d+$/.test(before) && /^\d+$/.test(after)
@@ -1962,6 +2017,38 @@ function rowView(n) {
       icon: review ? '⚠️' : '🔑',
       label: review ? 'OpenRouter key needs admin review' : 'OpenRouter access enabled',
       segments: [{ t: 'who', v: who }],
+    };
+  }
+
+  // A server-wide cap nearing or at its ceiling (services/platform-limit-
+  // alerts.js). Full admins only, no app: the meta line says Admin like the
+  // two kinds above. `detail` is "<limit>_<level>:<used>:<cap>"; a token this
+  // build cannot read still says which kind of alert it is.
+  if (n.kind === 'platform_limit') {
+    const limit = parsePlatformLimitDetail(n.detail);
+    if (!limit) {
+      return { ...base, appLine: 'Admin', wrap: true, icon: '\u26A0\uFE0F',
+        ...headline('Platform limit', 'the server is nearing one of its limits') };
+    }
+    const noun = limit.limit === 'apps' ? 'apps' : 'coding sessions';
+    const full = limit.level === 'full';
+    const consequence = limit.limit === 'apps'
+      ? (full ? ' New apps are refused until the app limit is raised in Admin \u2192 Limits or an app is removed.'
+        : ' Raise the app limit in Admin \u2192 Limits before new apps are refused.')
+      : (full ? ' New sessions pause idle ones, or wait, until MAX_GLOBAL_SESSIONS is raised.'
+        : ' At the limit, idle sessions are paused to make room.');
+    return {
+      ...base,
+      appLine: 'Admin',
+      wrap: true,
+      icon: full ? '\u{1F6A8}' : '\u26A0\uFE0F',
+      label: full
+        ? (limit.limit === 'apps' ? 'App limit reached' : 'Session limit reached')
+        : (limit.limit === 'apps' ? 'Nearing the app limit' : 'Nearing the session limit'),
+      segments: [
+        { t: 'strong', v: `${limit.used} of ${limit.cap} ${noun} in use.` },
+        { t: 'text', v: consequence },
+      ],
     };
   }
 
@@ -2082,7 +2169,8 @@ function rowView(n) {
   }
 
   // #1688: the Friday card. `detail` is "<merged>:<open>" — what went live
-  // this week and what is waiting on votes; the card itself is in the chat.
+  // this week and what is waiting on votes. This is the whole card now: a
+  // channel carries no activity (services/ws.js sendSystemMessage).
   if (n.kind === 'weekly_digest') {
     const counts = /^(\d+):(\d+)$/.exec(String(n.detail || ''));
     const merged = counts ? Number(counts[1]) : 0;
@@ -2225,6 +2313,22 @@ function rowView(n) {
       ...headline(
         // #2779: a run in an agent session says what finished, not "session".
         n.agentSessionId ? 'The coding agent finished' : 'Session finished',
+        n.sessionTitle || prLabel || n.branchName || 'your session',
+      ),
+    };
+  }
+
+  // #3181: the other way a turn ends. It errored, timed out or lost its
+  // worker, or the platform paused the session mid-turn, so the work is not
+  // done and nothing else would say so. Same subject ladder as session_done;
+  // the app is on the meta line, so the label is the whole message.
+  if (n.kind === 'session_stalled') {
+    return {
+      ...base,
+      wrap: true,
+      icon: '⏸️',
+      ...headline(
+        n.agentSessionId ? 'The coding agent stopped before finishing' : 'Session stopped before finishing',
         n.sessionTitle || prLabel || n.branchName || 'your session',
       ),
     };

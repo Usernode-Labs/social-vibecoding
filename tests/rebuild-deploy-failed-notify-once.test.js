@@ -60,7 +60,13 @@ stub(ids.github, { getCloneUrl: async () => 'https://github.com/example/falling-
 
 let buildError = null;
 stub(ids.appManifest, {
-  read: () => { throw buildError; },
+  read: () => { if (buildError) throw buildError; return { secrets: [] }; },
+  reconcileAppName: async () => {},
+  reconcileAppVisibility: async () => {},
+  reconcileAppGovernance: async () => {},
+  reconcileAppAdmins: async () => {},
+  reconcileAppScreenshot: async () => {},
+  reconcileAppIcon: async () => {},
   MAX_APP_NAME_LENGTH: 64,
 });
 
@@ -75,11 +81,26 @@ stub(ids.notifications, {
 });
 
 stub(ids.caddy, {});
-stub(ids.dbManager, {});
-stub(ids.applicationRuntime, {});
-stub(ids.appSecrets, {});
-stub(ids.appLlmEnv, {});
-stub(ids.appStorageEnv, {});
+stub(ids.dbManager, { appDbName: slug => `app_${slug}`, connectionUrl: () => 'postgres://app' });
+let deployedOptions = null;
+let observedLive = null;
+stub(ids.applicationRuntime, {
+  productionRef: () => ({ runtimeKind: 'docker', runtimeName: 'usernode-app-falling-sands' }),
+  inspect: async () => observedLive || { status: 'not_found', labels: {} },
+  probeHealth: async () => true,
+  build: async () => ({ imageRef: 'image@sha256:abc', buildRef: 'build-1' }),
+  deploy: async (_config, options) => {
+    deployedOptions = options;
+    return { runtimeKind: 'docker', runtimeName: 'usernode-app-falling-sands' };
+  },
+});
+stub(ids.appSecrets, {
+  getRawValues: async () => ({}),
+  platformDefaultsFromEnv: () => ({}),
+  mergeForDeploy: () => ({ missingRequired: [], env: {} }),
+});
+stub(ids.appLlmEnv, { productionLlmEnv: async () => ({}) });
+stub(ids.appStorageEnv, { productionStorageEnv: async () => ({}) });
 stub(ids.appIdentityEnv, { appIdentityEnv: () => ({}) });
 stub(ids.stagingEnv, {});
 stub(ids.events, { emit: () => {} });
@@ -93,13 +114,19 @@ const pool = {
   query: async (sql, params) => {
     const s = String(sql);
     queries.push({ sql: s, params });
+    if (/SELECT db_password FROM apps/.test(s)) return { rows: [{ db_password: 'secret' }] };
     if (/UPDATE apps SET last_failure = \$1/.test(s)) {
-      assert.match(s, /WITH before AS \(SELECT last_failure FROM apps WHERE id = \$2\)/);
-      assert.match(s, /RETURNING \(SELECT last_failure FROM before\) AS previous_failure/);
       assert.equal(params[1], appRow.id);
       const previous = appRow.last_failure;
       appRow.last_failure = JSON.parse(params[0]);
+      if (!s.includes('WITH before')) return { rows: [], rowCount: 1 };
+      assert.match(s, /WITH before AS \(SELECT last_failure FROM apps WHERE id = \$2\)/);
+      assert.match(s, /RETURNING \(SELECT last_failure FROM before\) AS previous_failure/);
       return { rows: [{ previous_failure: previous }], rowCount: 1 };
+    }
+    if (/UPDATE apps SET last_failure = NULL/.test(s)) {
+      appRow.last_failure = null;
+      return { rows: [], rowCount: 1 };
     }
     return { rows: [], rowCount: 0 };
   },
@@ -120,6 +147,8 @@ function reset() {
   pushed.length = 0;
   logged.length = 0;
   headSha = RED;
+  deployedOptions = null;
+  observedLive = null;
   buildError = new Error('docker build failed: E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease Connection timed out');
 }
 
@@ -135,6 +164,38 @@ test('the first failure on a commit records it and notifies', async () => {
   assert.equal(notified.length, 1);
   assert.deepEqual(notified[0], { appId: 8, detail: 'deploy_failed' });
   assert.equal(pushed.length, 1, 'the created notification is pushed');
+});
+
+test('a missing required secret records the failed commit before runtime replacement', async () => {
+  reset();
+  buildError = new staging.MissingSecretsError(['NEEDED_KEY']);
+  await failOnce();
+  assert.equal(appRow.last_failure.sha, RED);
+  assert.match(appRow.last_failure.reason, /NEEDED_KEY/);
+  assert.equal(notified.length, 0, 'the existing missing-secret notification path stays separate');
+});
+
+test('a successful rebuild stamps the cloned source revision on production', async () => {
+  reset();
+  appRow.last_failure = { sha: RED, reason: 'earlier build failed' };
+  buildError = null;
+  const result = await staging.rebuildProduction(config, app);
+  assert.equal(result.sha, RED);
+  assert.equal(deployedOptions.environment, 'production');
+  assert.equal(deployedOptions.labels['social.usernode.io/source-revision'], RED);
+  assert.equal(appRow.last_failure, null, 'the successful retry clears the old failure');
+  assert.equal(notified.length, 0);
+});
+
+test('merge recovery observes a healthy deployed revision after a lost database write', async () => {
+  reset();
+  observedLive = { status: 'running', labels: { 'social.usernode.io/source-revision': RED } };
+  const result = await staging.rebuildProduction(config, app, { reuseRunningRevision: RED });
+  assert.equal(result.sha, RED);
+  assert.equal(result.recovered, true);
+  assert.equal(result.containerId, 'usernode-app-falling-sands');
+  assert.equal(deployedOptions, null, 'the external deployment is not repeated');
+  assert.equal(queries.length, 0, 'the running result is discovered before a new build');
 });
 
 test('the same commit failing again at the same stage is recorded but not re-notified', async () => {

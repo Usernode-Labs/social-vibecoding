@@ -75,7 +75,10 @@ const WEEKLY_DIGEST_LOCK = 991011;
 // would still refuse a duplicate row, so this is about not doing the work
 // twice rather than about correctness.
 const HOMEROOM_BOT_LOCK = 991012;
+// Held from the GitHub merge call through its finalizer. Recovery may only
+// inspect/replay that proposal after the live owner has released it.
+const MERGE_FINALIZATION_LOCK = 991013;
 
-module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
+module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, MERGE_FINALIZATION_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK, PREVIEW_LIFECYCLE_LOCK,
   VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK };

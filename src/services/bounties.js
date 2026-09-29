@@ -170,9 +170,7 @@ async function placeBounty(pool, { app, user, issueNumber }) {
   // this module is imported by routes/kudos.js at load time.
   const { sendSystemMessage, pushIssueUpdate } = require('./ws');
   const bountyMsg = `${user.username} placed a bounty (kudos) on issue #${issueNumber}`;
-  await sendSystemMessage(pool, app.id, bountyMsg, 'system')
-    .catch((err) => log.warn('bounties', 'Bounty chat message failed', { err: err.message }));
-  // Dual-post into the issue's thread (lifecycle in context).
+  // Into the issue's thread (lifecycle in context).
   await sendSystemMessage(pool, app.id, bountyMsg, 'system',
     null, { type: 'issue', ref: issueNumber }).catch(() => {});
 

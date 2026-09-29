@@ -96,7 +96,14 @@ const FOOTER_STYLE =
   `margin:24px 0 0;padding-top:16px;border-top:1px solid ${NEUTRAL_HAIRLINE};`
   + `font-size:12px;line-height:1.5;color:${NEUTRAL_SECONDARY_INK}`;
 
-const HTML_SHELL = (body) =>
+// Why a mail arrived, for every kind but one: the recipient's own account
+// or waitlist place. A project invite goes to an address somebody ELSE
+// typed, so it says that instead (its template returns `why`); claiming the
+// recipient asked for it would be the one untrue sentence in the frame.
+const WHY_DEFAULT = 'You are receiving this because of activity on your account or your '
+  + 'place on the waitlist. We only send mail you asked for.';
+
+const HTML_SHELL = (body, why = WHY_DEFAULT) =>
   '<!doctype html><html><body style="' + BODY_STYLE + '">'
   + '<div style="' + CARD_STYLE + '">'
   + `<img src="${LOGO_URL}" width="140" height="37" alt="${esc(LOGO_ALT)}" `
@@ -104,8 +111,7 @@ const HTML_SHELL = (body) =>
   + body
   + '<div style="' + FOOTER_STYLE + '">'
   + BRAND_NAME
-  + '<br>You are receiving this because of activity on your account or your '
-  + 'place on the waitlist. We only send mail you asked for.'
+  + '<br>' + esc(why)
   + '</div>'
   + '</div>'
   + '</body></html>';
@@ -386,6 +392,31 @@ function adminTest(payload) {
   };
 }
 
+// A project invite, to an address that is not on Homeroom yet (the create
+// dialog's "Will invite" rows; services/email-invites.js). One link: the
+// waitlist, joined with this address. Nothing here grants access; the invite
+// waits on the account and turns into an ordinary one once the address is
+// confirmed on it. Every field is optional so the kind still renders empty.
+function projectInvite(payload) {
+  const inviter = payload.inviter ? `@${payload.inviter}` : 'Someone';
+  const project = payload.project || 'a project';
+  const url = payload.url || '';
+  const lead = `${inviter} invited you to ${project}, a group on Homeroom, where communities build the apps they use together.`;
+  const how = 'Join the waitlist with this email address. Once you are in, the invite will be waiting for you.';
+  return {
+    why: 'You are receiving this because someone on Homeroom invited this address to a project. '
+      + 'You will not hear from us again unless you join, or somebody invites you again.',
+    subject: `${inviter} invited you to ${project} on Homeroom`,
+    text: `${lead}\n\n${how}${url ? `\n\n${url}` : ''}\n\nIf you were not expecting this, you can ignore this email.`,
+    html: (
+      p(lead)
+      + p(how)
+      + (url ? button(url, 'Join the waitlist') : '')
+      + p('If you were not expecting this, you can ignore this email.')
+    ),
+  };
+}
+
 /**
  * Every template returns a FRAGMENT; the frame is applied here, once (#1555).
  *
@@ -409,6 +440,7 @@ const TEMPLATES = {
   waitlist_released: waitlistReleased,
   password_reset: passwordReset,
   admin_test: adminTest,
+  project_invite: projectInvite,
 };
 
 function buildMessage(kind, payload = {}) {
@@ -416,8 +448,8 @@ function buildMessage(kind, payload = {}) {
     ? TEMPLATES[kind]
     : null;
   if (!template) throw new Error(`unknown mail kind: ${kind}`);
-  const message = template(payload);
-  return { ...message, html: HTML_SHELL(message.html) };
+  const { why, ...message } = template(payload);
+  return { ...message, html: HTML_SHELL(message.html, why) };
 }
 
 // Every kind this module can render, for the admin console and for tests

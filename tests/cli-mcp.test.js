@@ -398,7 +398,94 @@ test('generic MCP API calls classify 429 and 5xx responses as retryable service 
   }
 });
 
-test('proposal MCP tools call the native handoff lifecycle and gate promotion on ready status', async () => {
+test('proposal_promote does not wait for a ready revision; the server decides (#3043)', async () => {
+  // Submitting opens the vote and the merge gate waits for the checks, so the
+  // tool promotes while they run. What the server still refuses (nothing
+  // submitted, a turn still running) comes back in the server's own words.
+  const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-early-')));
+  await fs.chmod(home, 0o700);
+  const directory = path.join(home, '.config', 'social-vibecoding');
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  const checkout = path.resolve(__dirname, '..');
+  const token = makeAccessToken();
+  const requests = [];
+  let refuse = false;
+  const server = http.createServer(async (req, res) => {
+    for await (const _chunk of req) { /* drain */ }
+    requests.push([req.method, req.url]);
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'GET' && req.url === '/api/sessions/41/proposal-handoff') {
+      res.statusCode = 200;
+      res.end(JSON.stringify({ sessionId: 41, source: 'cli_handoff', state: 'checking',
+        revisionState: 'checking', checkState: 'pending', headSha: 'b'.repeat(40) }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/api/sessions/41/promote') {
+      res.statusCode = refuse ? 409 : 200;
+      res.end(JSON.stringify(refuse
+        ? { error: 'proposal_not_ready', message: 'An agent turn is still running on this change. Submit it for review when the turn finishes.' }
+        : { ok: true, prNumber: 88 }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: 'not_found' }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  await fs.writeFile(path.join(directory, 'config.json'), `${JSON.stringify({
+    version: 1, default_profile: 'lab', profiles: { lab: { origin } },
+    credential_backends: { [origin]: 'file' },
+  })}\n`, { mode: 0o600 });
+  await fs.writeFile(path.join(directory, 'credentials.json'), `${JSON.stringify({
+    version: 1,
+    servers: { [origin]: { access_token: token,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      scopes: REQUIRED_SCOPES, client_id: CLIENT_ID } },
+  })}\n`, { mode: 0o600 });
+  const bootstrap = [
+    "const os = require('node:os');",
+    'const original = os.userInfo();',
+    'os.userInfo = () => ({ ...original, homedir: process.argv[1] });',
+    "const path = require('node:path');",
+    "const { main } = require(path.join(process.argv[2], 'src/cli/main'));",
+    "main(['mcp', '--profile', 'lab'], {",
+    "  launcherPath: path.join(process.argv[2], 'tools/social-vibecoding')",
+    '}).then((code) => { process.exitCode = code; });',
+  ].join('\n');
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ['-e', bootstrap, home, checkout],
+    cwd: checkout,
+    env: { PATH: '/definitively-unavailable-for-cli-mcp-test' },
+    stderr: 'pipe',
+  });
+  const client = new Client({ name: 'cli-mcp-early-promote-test', version: '1.0.0' });
+  try {
+    await client.connect(transport);
+    const promote = await client.callTool({
+      name: 'social_vibecoding.proposal_promote', arguments: { session_id: 41 },
+    });
+    assert.equal(promote.structuredContent.status, 200);
+    assert.equal(promote.structuredContent.body.prNumber, 88);
+    assert.deepEqual(requests, [
+      ['GET', '/api/sessions/41/proposal-handoff'],
+      ['POST', '/api/sessions/41/promote'],
+    ], 'checks still running do not stop the promotion');
+
+    refuse = true;
+    const refused = await client.callTool({
+      name: 'social_vibecoding.proposal_promote', arguments: { session_id: 41 },
+    });
+    assert.match(JSON.stringify(refused.structuredContent), /An agent turn is still running on this change/,
+      'a refusal is the server\'s own sentence');
+  } finally {
+    await client.close().catch(() => {});
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
+test('proposal MCP tools call the native handoff lifecycle through promotion', async () => {
   const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-proposal-')));
   await fs.chmod(home, 0o700);
   const directory = path.join(home, '.config', 'social-vibecoding');

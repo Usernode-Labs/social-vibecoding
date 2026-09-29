@@ -420,7 +420,7 @@ export interface DevWorkshopView {
    */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
-  tab: 'status' | 'needs' | 'all' | null;
+  tab: 'status' | 'workshop' | 'needs' | 'all' | null;
   /**
    * The models the ask box may talk to — the dev session's own list
    * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and
@@ -554,9 +554,18 @@ export interface DevWorkshopView {
       lastWeek: string;
       thisWeek: string;
       open: string;
-      /** Weeks before last week, newest first: one Monday-anchored window each. */
-      older: { start: number; line: string }[];
-      /** Monday of the app's first week of activity, when the server says. */
+      /**
+       * Weeks before last week, newest first: one Monday-anchored window
+       * each, derived by the server from what landed in it (#3293), back to
+       * the project's first week. `closed` is how many changes landed, over
+       * the whole history; null where the server sent no count.
+       */
+      older: { start: number; line: string; closed: number | null }[];
+      /**
+       * Monday of the week the project began, sent only beside a complete
+       * `older`, so a walk that reaches the end with it set has reached the
+       * project's start.
+       */
       firstWeek: number | null;
     } | null;
     /**
@@ -580,8 +589,9 @@ export interface DevWorkshopView {
       endMs: number;
       /**
        * What the server can stand behind for this window. Null where it has
-       * written nothing — an older window, or a board with no server counts
-       * — and the pane then draws the line alone rather than a zero.
+       * written nothing — an older window from a cache that predates #3293,
+       * or a board with no server counts — and the pane then draws the line
+       * alone rather than a zero.
        * `partial` marks a page-counted floor, as the tiles' own does.
        */
       counts: { closed: number; partial: boolean } | null;
@@ -592,7 +602,7 @@ export interface DevWorkshopView {
      * written, and `summary` then supplies the fallback.
      */
     openLine: string;
-    /** Monday of the app's first week of activity, when the server says. */
+    /** Monday of the week the project began, when the server says (`cards.firstWeek`). */
     firstWeek: number | null;
     /**
      * The same answer flattened to one paragraph. It is what a row last
@@ -659,6 +669,8 @@ export interface KanbanColView {
   title: string;
   count: number;
   hint?: string | null;
+  /** In review only; sorting never filters cards or changes other columns. */
+  reviewSort?: 'newest' | 'priority';
   /** A visible app-level fact under the heading (the Done deployment boundary). */
   status?: {
     text: string;

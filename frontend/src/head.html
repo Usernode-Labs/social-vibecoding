@@ -456,21 +456,22 @@
     // it, and that panel is this same platform loaded again in a frame at
     // `/?panel=1#<route>`. `in-side-panel` on <html> is what hides every piece
     // of chrome (public/css/app.css) and what tells the scripts that write
-    // state the top window owns to stand down (lib/side-panel-mode.ts, and
+    // state the parent window owns to stand down (lib/side-panel-mode.ts, and
     // App.embeddedPanel in public/js/app.js). Decided HERE, before the first
     // paint, so the header and the tab bar never flash inside the panel.
     //
     // Honoured ONLY when this document really is framed by the platform: a
-    // direct child of a top window that is not this window, on this origin —
-    // reading a cross-origin top's location throws, which is the answer "no".
+    // a child of another window on this origin. The parent platform may itself
+    // be inside Preview, with a cross-origin window above it. The embedded
+    // runtime talks to that immediate parent, so use the same boundary here.
+    // Reading a cross-origin parent's location throws, which is the answer "no".
     // A `?panel=1` address opened in a tab of its own, or framed by any other
     // site, is the ordinary platform.
     var inSidePanel = false;
     try {
       inSidePanel = new URLSearchParams(window.location.search).get('panel') === '1'
-        && window.top !== window
-        && window.parent === window.top
-        && window.top.location.origin === window.location.origin;
+        && window.parent !== window
+        && window.parent.location.origin === window.location.origin;
     } catch (e) { inSidePanel = false; }
     if (inSidePanel) document.documentElement.classList.add('in-side-panel');
 

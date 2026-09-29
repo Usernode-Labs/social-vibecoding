@@ -210,9 +210,10 @@ function makeHarness() {
         return { rows: row ? [{ ...row, app_slug: app.slug, app_name: app.name,
           repo_url: app.repo_url, collab_visibility: 'public', view_visibility: 'public' }] : [] };
       }
-      if (/SELECT status, checks_commit_sha FROM chat_sessions/.test(text)) {
+      if (/SELECT status, checks_commit_sha, reviewed_head_sha FROM chat_sessions/.test(text)) {
         const row = state.sessions.find((s) => s.id === Number(params[0]));
-        return { rows: row ? [{ status: row.status, checks_commit_sha: row.checks_commit_sha }] : [] };
+        return { rows: row ? [{ status: row.status, checks_commit_sha: row.checks_commit_sha,
+          reviewed_head_sha: row.reviewed_head_sha || null }] : [] };
       }
       if (/SET handoff_head_sha = \$1/.test(text)) {
         const row = state.sessions.find((s) => s.id === Number(params[1]));
@@ -282,7 +283,11 @@ function makeHarness() {
           return { rows: [], rowCount: matched ? 1 : 0 };
         }
         if (state.persistStagingError) throw new Error('staging persistence unavailable');
-        const matched = owned && row.checks_commit_sha === params[3] && row.status === params[4];
+        // #3043: or promoted on this very commit while the run was checking it.
+        assert.match(text, /status = 'promoted' AND LOWER\(reviewed_head_sha\) = LOWER\(\$4\)/);
+        const matched = owned && row.checks_commit_sha === params[3]
+          && (row.status === params[4]
+            || (row.status === 'promoted' && row.reviewed_head_sha === params[3]));
         if (matched) {
           row.staging_container_id = params[0];
           row.staging_url = params[1];
@@ -489,22 +494,50 @@ test('paused native revisions retain progress and exact-head submission prefligh
     assert.equal(req.cliHandoffStatus, 'paused');
     assert.equal(session.status, 'paused', 'preflight must not resume coding');
     res.emit('finish');
+    // #3173 / #3043: the verdict and the preview gate the MERGE, not the
+    // submission. Checks still running, checks failing or erroring, and a
+    // preview the idle sweep reclaimed all go up for review on the checked
+    // head; the promote route rebuilds a missing preview.
     for (const patch of [
       { check_state: 'pending' }, { check_state: 'failing' }, { check_state: 'error' },
-      { handoff_uploaded_sha: BOT_HEAD }, { staging_url: null },
-      { status: 'archived' }, { status: 'promoted' }, { status: 'merged' },
+      { staging_url: null }, { check_state: 'passing', staging_url: null },
+    ]) {
+      const original = { ...session };
+      Object.assign(session, patch);
+      const admittedReq = { ...req };
+      const admitted = mockRes();
+      let reached = false;
+      await gate(admittedReq, admitted, () => { reached = true; });
+      assert.equal(reached, true, `admitted: ${JSON.stringify(patch)}`);
+      assert.equal(admittedReq.cliHandoffCheckedHead, HEAD, 'on exactly the checked head');
+      admitted.emit('finish');
+      Object.assign(session, original);
+    }
+    // What still stops it is only what would put the wrong commit, or none,
+    // in front of the group, each in its own words.
+    for (const [patch, message] of [
+      [{ handoff_uploaded_sha: BOT_HEAD, handoff_upload_checked_sha: HEAD },
+        /uploaded to this change but has not been submitted for checks yet/],
+      [{ checks_commit_sha: null, handoff_head_sha: null, handoff_uploaded_sha: null },
+        /Nothing has been submitted to this change yet/],
+      [{ status: 'archived' }, /This change is archived/],
+      [{ status: 'promoted' }, /This change is promoted/],
+      [{ status: 'merged' }, /This change is merged/],
     ]) {
       const original = { ...session };
       Object.assign(session, patch);
       const blocked = mockRes();
-      await gate({ ...req }, blocked, () => assert.fail('an ineligible revision reached promotion'));
+      await gate({ ...req }, blocked, () => assert.fail(`an ineligible revision reached promotion: ${JSON.stringify(patch)}`));
       assert.equal(blocked.statusCode, 409);
+      assert.equal(blocked.body.error, 'proposal_not_ready');
+      assert.match(blocked.body.message, message);
       Object.assign(session, original);
     }
     state.busy = true;
     const busy = mockRes();
     await gate({ ...req }, busy, () => assert.fail('busy submission admitted'));
     assert.equal(busy.statusCode, 409);
+    assert.match(busy.body.message, /An agent turn is still running on this change/);
     state.busy = false;
     state.remoteHead = BOT_HEAD;
     const changed = mockRes();
@@ -1476,7 +1509,8 @@ test('native CLI handoff persists context, adopts an exact commit, and reaches r
     }, earlyPromoteRes, () => { earlyNext = true; });
     assert.equal(earlyPromoteRes.statusCode, 409);
     assert.equal(earlyPromoteRes.body.error, 'proposal_not_ready');
-    assert.match(earlyPromoteRes.body.message, /not ready yet/i);
+    assert.match(earlyPromoteRes.body.message, /Nothing has been submitted to this change yet/,
+      'a draft with no submitted commit is the one thing it cannot put up for review');
     assert.equal(earlyNext, false);
 
     // Same request/event IDs repair safely without duplicating the session or
@@ -1876,3 +1910,58 @@ for (const changed of [false, true]) {
     } finally { release(); restore(); }
   });
 }
+
+// #3043: a change may be submitted for review while its own run is still
+// checking it. Promotion pins reviewed_head_sha to the commit being checked,
+// and the vote is waiting on exactly this run's verdict, so the run keeps
+// its right to publish. Promoted on ANOTHER commit, it does not.
+for (const reviewed of ['same', 'other']) {
+  test(`a run promoted mid-build publishes only onto its own reviewed commit (${reviewed})`, async () => {
+    const { router, state, subject, restore } = makeHarness();
+    let release;
+    state.stagingGate = new Promise((resolve) => { release = resolve; });
+    try {
+      await routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post')({
+        params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true, user: { id: 7, username: 'maker' },
+      }, mockRes());
+      state.sessions[0].status = 'paused';
+      markUploaded(state);
+      const res = mockRes();
+      await routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post')({
+        params: { id: '101' }, cliAuthenticated: true, user: { id: 7 },
+        body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
+      }, res);
+      assert.equal(res.statusCode, 202);
+      assert.equal(subject.hasInFlightHandoffPipeline(101), true);
+      // The promote route's own write, while the build is still running.
+      Object.assign(state.sessions[0], { status: 'promoted',
+        reviewed_head_sha: reviewed === 'same' ? HEAD : BOT_HEAD });
+      release();
+      for (let n = 0; n < 10 && subject.hasInFlightHandoffPipeline(101); n += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      if (reviewed === 'same') {
+        assert.equal(state.sessions[0].staging_url, 'https://preview.example', 'the preview is kept');
+        assert.deepEqual(state.captures, [[101, HEAD]], 'and the verdict the vote waits on is taken');
+      } else {
+        assert.equal(state.sessions[0].staging_url || null, null, 'another commit is under review');
+        assert.equal(state.captures.length, 0);
+      }
+    } finally { release(); restore(); }
+  });
+}
+
+test('publishableStatus: the status a run started in, or promoted on its own commit', () => {
+  const { publishableStatus } = require('../src/services/handoff-pipeline');
+  const head = 'a'.repeat(40);
+  assert.equal(publishableStatus({ status: 'paused' }, 'paused', head), true);
+  assert.equal(publishableStatus({ status: 'active' }, 'paused', head), false);
+  assert.equal(publishableStatus({ status: 'promoted', reviewed_head_sha: head }, 'active', head), true);
+  assert.equal(publishableStatus({ status: 'promoted', reviewed_head_sha: head.toUpperCase() }, 'active', head), true);
+  assert.equal(publishableStatus({ status: 'promoted', reviewed_head_sha: 'b'.repeat(40) }, 'active', head), false);
+  assert.equal(publishableStatus({ status: 'promoted', reviewed_head_sha: null }, 'active', head), false);
+  for (const status of ['archived', 'merging', 'merged']) {
+    assert.equal(publishableStatus({ status, reviewed_head_sha: head }, 'active', head), false, status);
+  }
+  assert.equal(publishableStatus(null, 'active', head), false);
+});

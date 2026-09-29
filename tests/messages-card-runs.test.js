@@ -2,10 +2,11 @@
 
 // Three Messages fixes filed together by the platform admin:
 //
-//   #2884 — a channel that is mostly cards (proposals put up, merged, shared)
-//           folds a run of three or more consecutive cards into the first one
-//           and a "… N more" row that expands the rest in place. A plain
-//           message between two cards breaks the run.
+//   #2884 — a conversation that is mostly shared cards folds a run of three
+//           or more consecutive cards into the first one and a "… N more"
+//           row that expands the rest in place. A plain message between two
+//           cards breaks the run. (An app's channel folded its proposal cards
+//           too, until Homeroom stopped writing any into a channel.)
 //   #2882 — the composer has one outline, the card's: the field inside it
 //           draws no edge of its own in any engine.
 //   #2883 — on a desktop the transcript reads one step down the existing
@@ -51,52 +52,17 @@ test('the folded row says how many it holds', () => {
   assert.equal(cardRunLabel(4), '… 4 more');
 });
 
-// ── An app's channel: the group-chat transcript ───────────────────────
+// ── An app's channel: nothing to fold ─────────────────────────────────
 
-const base = {
-  kind: 'system', username: '', time: '09:05 AM', timeTitle: 'Sep 16, 2026, 09:05 AM',
-  bodyHtml: '', systemText: 'a notice', mine: false, editedTitle: null, unread: false,
-  bookmarked: false, canEdit: false, flash: false, showEdit: false, showBookmark: false,
-  showReact: false, quote: null, reactions: [], attachments: [], voteRowClass: '',
-  voteRef: null, specShare: null, event: null, eventHref: null,
-};
-let seq = 500;
-const icon = { tint: 'bg-sky-500/15 text-sky-700 dark:text-sky-400', path: 'M14 10h4', small: true };
-const card = () => ({
-  ...base, id: (seq += 1), kind: 'vote', votePhase: 'settled',
-  event: { type: 'submitted', sessionId: '5', prNumber: String(seq), title: 'A change', actor: 'evan', sender: 'evan', mine: false, force: false, votes: '', icon },
-});
-const human = (text) => ({ ...base, id: (seq += 1), kind: 'message', username: 'alice', bodyHtml: `<p>${text}</p>` });
-const lead = { earlier: false, placeholder: null };
-const rows = (messages, foldCards) => renderToHtml(createElement(loadTsx(TRANSCRIPT).TranscriptRows, { view: { messages, lead }, source: 'main', foldCards }));
-const eventIds = (html) => [...html.matchAll(/gc-event" data-msg-id="(\d+)"/g)].map((m) => Number(m[1]));
-
-test('a Messages channel draws a run of cards as the first and a "… N more" row', () => {
-  const messages = [card(), card(), card(), card()];
-  const html = rows(messages, true);
-  assert.deepEqual(eventIds(html), [messages[0].id], 'only the first card of the run');
-  assert.match(html, new RegExp(`data-msg-id="${messages[0].id}"[\\s\\S]*</div><div class="gc-card-run"><button type="button" class="gc-card-run-more" data-card-run-more="3" aria-expanded="false" aria-label="Show 3 more cards">… 3 more</button></div>$`));
-});
-
-test('a person saying something between the cards breaks the run', () => {
-  const messages = [card(), card(), human('what do we think?'), card(), card(), card()];
-  const html = rows(messages, true);
-  assert.deepEqual(eventIds(html), [messages[0].id, messages[1].id, messages[3].id]);
-  assert.match(html, /what do we think\?/);
-  assert.equal((html.match(/data-card-run-more="2"/g) || []).length, 1);
-});
-
-test('the app\'s own Discussion page, and a topic thread, still draw every card', () => {
-  const messages = [card(), card(), card()];
-  assert.deepEqual(eventIds(rows(messages, false)), messages.map((m) => m.id));
-  assert.doesNotMatch(rows(messages, false), /gc-card-run/);
-  const thread = renderToHtml(createElement(loadTsx(TRANSCRIPT).TranscriptRows, { view: { messages, lead }, source: 'thread', foldCards: true }));
-  assert.doesNotMatch(thread, /gc-card-run/);
-});
-
-test('the channel transcript is told it is a channel by where it is mounted', () => {
+test('an app\'s channel no longer folds: Homeroom writes no proposal cards into it', () => {
+  // A channel is what people said (services/ws.js sendSystemMessage), so the
+  // run of proposal cards #2884 folded there does not occur; the transcript
+  // draws every row it has, wherever it is mounted.
+  const tsx = read(TRANSCRIPT);
+  assert.doesNotMatch(tsx, /foldCards|cardRunStarts|gc-card-run/);
   const mount = read('frontend/src/features/group-chat/mount.ts');
-  assert.match(mount, /const channel = !!host\.closest\('#messages-screen'\);\s*\n\s*mountLegacyPortal\(host, createElement\(Transcript, \{ source: key, foldCards: channel \}\)\);/);
+  assert.match(mount, /mountLegacyPortal\(host, createElement\(Transcript, \{ source: key \}\)\);/);
+  assert.doesNotMatch(CSS, /\.gc-card-run/);
 });
 
 // ── A conversation: #general, a group, a DM ───────────────────────────
@@ -110,7 +76,7 @@ test('a conversation folds messages that are only a shared item, never ones a pe
 });
 
 test('the #general demo carries a run of four cards for the declared check', () => {
-  const src = read('src/routes/conversations.js');
+  const src = read('src/services/staging-messages.js');
   for (const id of [9100406, 9100407, 9100408, 9100409]) assert.match(src, new RegExp(`\\[${id}, \\d+, '`));
 });
 

@@ -9,7 +9,26 @@ const path = require('node:path');
 
 const workerDir = path.join(__dirname, '..', 'worker');
 const read = (name) => fs.readFileSync(path.join(workerDir, name), 'utf8');
-const { browserAllowedOrigins, hostedAppSlugs } = require('../worker/evidence-hosted-origins');
+const { browserAllowedOrigins, hostedAppSlugs, trustedHostedAppOrigins } = require('../worker/evidence-hosted-origins');
+const hostedContract = require('../worker/evidence-hosted-app-contract');
+
+test('only the platform-owned hosted app for this exact run enters the evidence catalog', () => {
+  const runId = 'b'.repeat(32);
+  const slug = hostedContract.hostedAppSlug(runId);
+  const fixture = {
+    id: hostedContract.HOSTED_APP_ID,
+    slug,
+    status: 'running',
+    view_visibility: 'public',
+    self_hosted: false,
+    url: `https://${slug}.apps.example.invalid`,
+    manifest_snapshot: hostedContract.hostedAppManifest(runId),
+  };
+  assert.deepEqual([...trustedHostedAppOrigins([fixture], 'https://platform.example.invalid', runId)],
+    [[fixture.url, slug]]);
+  assert.equal(trustedHostedAppOrigins([fixture], 'https://platform.example.invalid', 'c'.repeat(32)).size, 0);
+  assert.equal(trustedHostedAppOrigins([{ ...fixture, id: 42 }], 'https://platform.example.invalid', runId).size, 0);
+});
 
 test('planner origin list rejects stale or malformed hosted-app catalogs', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-origins-test-'));
@@ -45,6 +64,7 @@ test('both evidence backends launch Playwright through the content-free timing o
   const dockerfile = read('Dockerfile');
   const claudeRunner = read('run-cc.sh');
   const codexRunner = read('run-codex-agent.sh');
+  const evidenceMcp = read('evidence-mcp.js');
   const command = 'node';
 
   assert.match(dockerfile, /npm install -g @playwright\/mcp@\$\{PLAYWRIGHT_MCP_VERSION\}/);
@@ -55,7 +75,7 @@ test('both evidence backends launch Playwright through the content-free timing o
   assert.match(codexRunner, /command -v mcp-server-playwright[^\n]*\n\s*\|\| die/);
   assert.match(dockerfile, /COPY evidence-browser-observer\.js \/usr\/local\/bin\/evidence-browser-observer\.js/);
   assert.ok((codexRunner.match(/command = "node"/g) || []).length >= 2);
-  assert.equal((codexRunner.match(/evidence-browser-observer\.js/g) || []).length, 2);
+  assert.equal((codexRunner.match(/evidence-browser-observer\.js/g) || []).length, 3);
   assert.match(claudeRunner, /EVIDENCE_BROWSER_DIAGNOSTIC_FILE/);
   assert.match(codexRunner, /EVIDENCE_BROWSER_DIAGNOSTIC_FILE/);
 
@@ -82,6 +102,7 @@ test('both evidence backends launch Playwright through the content-free timing o
     for (const [server, state] of [
       ['browser_member', 'member.json'],
       ['browser_admin', 'read_only_admin.json'],
+      ['browser_full_admin', 'full_admin.json'],
     ]) {
       assert.equal(config.mcpServers[server].command, command);
       assert.equal(config.mcpServers[server].args[0], '/usr/local/bin/evidence-browser-observer.js');
@@ -91,13 +112,24 @@ test('both evidence backends launch Playwright through the content-free timing o
       assert.ok(config.mcpServers[server].args.includes('--caps'));
       assert.ok(config.mcpServers[server].args.includes('vision'));
     }
-    assert.equal((codexRunner.match(/"--no-sandbox"/g) || []).length, 3);
+    assert.equal((codexRunner.match(/"--no-sandbox"/g) || []).length, 4);
     assert.match(read('worker-run.sh'), /"--browser", "chromium", "--headless", "--isolated", "--no-sandbox"/);
     assert.match(claudeRunner, /EVIDENCE_HOSTED_ORIGINS_FILE/);
     assert.match(codexRunner, /EVIDENCE_HOSTED_ORIGINS_FILE/);
     assert.match(codexRunner, /env_vars = \[[^\n]*"EVIDENCE_HOSTED_ORIGINS_FILE"/);
     assert.match(codexRunner, /evidence-hosted-origins\.js/);
-    assert.equal((codexRunner.match(/"browser_mouse_move_xy"/g) || []).length, 2);
+    assert.doesNotMatch(codexRunner, /enabled_tools = \[[^\n]*"evidence_reset_pair"/);
+    assert.doesNotMatch(codexRunner, /enabled_tools = \[[^\n]*"evidence_reset_side"/);
+    assert.doesNotMatch(evidenceMcp, /registerTool\('evidence_reset_pair'/);
+    assert.doesNotMatch(evidenceMcp, /request\('\/reset-pair'/);
+    assert.doesNotMatch(evidenceMcp, /registerTool\('evidence_reset_side'/);
+    assert.match(evidenceMcp, /registerTool\('evidence_report_blocker'/);
+    assert.match(evidenceMcp, /status: 'failed', reason/);
+    assert.match(codexRunner,
+      /enabled_tools = \["evidence_run_plan", "evidence_report_blocker"\]/);
+    assert.match(codexRunner,
+      /EVIDENCE_COMPLETION_REMINDER" != "1"/);
+    assert.equal((codexRunner.match(/"browser_mouse_move_xy"/g) || []).length, 3);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

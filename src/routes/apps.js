@@ -1,4 +1,6 @@
 const appAllowance = require('../services/app-allowance');
+const platformLimits = require('../services/platform-limit-alerts');
+const appLimit = require('../services/app-limit');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -29,6 +31,7 @@ const governance = require('../services/governance');
 const activeUsers = require('../services/active-users');
 const createOptions = require('../services/create-options');
 const collabInvites = require('../services/collab-invites');
+const emailInvites = require('../services/email-invites');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -170,6 +173,9 @@ function accessFlags(app, user, isCollaborator, adminAppIds = null, contributorC
     is_collaborator: !!isCollaborator,
     can_collaborate: isAdmin || app.collab_visibility !== 'private' || !!isCollaborator,
     can_manage: canAdminWrite || (user?.id != null && app.created_by === user.id) || isAppAdmin,
+    // All reporting entry points use the same server-derived eligibility.
+    can_report: !!user?.id && !app.demo && !app.moderation_suspended_at
+      && Number(app.created_by) !== Number(user.id),
     // Deletion is deliberately narrower than general app management. App
     // admins can manage settings, but only a full platform admin or the
     // creator while they remain the app's ONE contributor may destroy it.
@@ -226,218 +232,8 @@ function compactGlobalChatApp(app, user, adminAppIds = new Set()) {
 const IS_LOCAL_DEV = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
-// Staging-gated (?demo=1) home-feed rows so a tester can see the new
-// homescreen icon tiles (emoji / custom image / letter fallback) — the
-// staging clone's real app rows predate the feature and would all
-// render letter tiles. Read-only request-time injection per the
-// "Staging mock data" convention: never persisted, strictly a no-op
-// outside staging. The image row carries a tiny inline data-URI PNG so
-// no app_icons blob needs to exist in the clone (the client renders
-// whatever icon_url it's given).
-const DEMO_ICON_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAg0lEQVR42r3NuRGAMAwEQNdFbXRAIVRHAyQwDmB4/MjS3QUbb5qn7VBKymxddl2YM1l4ZZLwmdHDb0YNSxktrGWUsJXBw14GDS0ZLLRmkHAkC4ejWSj0ZO7Qm7nCSDYcRrOhEJGZQ1RmCpFZN0RnzZCRVUNWVgyZ2S9kZ69Qkd2hKstOLPva44BQr+EAAAAASUVORK5CYII=';
-// Relative ISO timestamp for the demo rows below, so their ages read the
-// same however long the staging container has been up.
-function demoAgo(hours) {
-  return new Date(Date.now() - hours * 3600 * 1000).toISOString();
-}
-
-function demoIconApps(curation = false) {
-  const base = {
-    status: 'running',
-    self_hosted: false,
-    locked: false,
-    collab_visibility: 'public',
-    view_visibility: 'public',
-    created_at: new Date().toISOString(),
-    last_deploy_at: new Date().toISOString(),
-    // Synthetic preview reviews, never assigned to real apps.
-    main_sha: '0000000000000000000000000000000000000001',
-    directory_reviewed_sha: '0000000000000000000000000000000000000001',
-    directory_reviewed_at: new Date().toISOString(),
-    directory_review_status: 'working',
-    url: null,
-    version: null,
-    deployProgress: null,
-    missingSecrets: null,
-    active_users: 0,
-    is_favorited: false,
-    your_apps_hidden: false,
-    favorite_order: null,
-    featured: false,
-    featured_order: null,
-    is_collaborator: false,
-    open_prs: 0,
-    active_sessions: 0,
-    merged_prs: 0,
-    merged_prs_recent: 0,
-    last_merged_at: null,
-    open_issues: 0,
-    // Communities (services/communities.js). Outsiders by default, like the
-    // Your-apps flags above; the three rows below that set is_member are
-    // the Workshop's three sections, one each, so ?demo=1 shows every
-    // audience label whatever the clone's own memberships are.
-    is_member: false,
-    member_count: 0,
-    audience: 'open',
-    last_active_at: null,
-    icon_emoji: null,
-    icon_url: null,
-    can_collaborate: false,
-    can_manage: false,
-    // Marks the tile inert for client gestures: these slugs don't
-    // exist in the DB, so drag-to-favorite (issue #746) would 404 —
-    // home.js excludes [data-demo] cards from the kit drag.
-    demo: true,
-  };
-  const apps = [
-    // "Just you" in the Workshop: a private project nobody else is in.
-    {
-      ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮',
-      view_visibility: 'private', collab_visibility: 'private',
-      is_member: true, member_count: 1, audience: 'solo', last_active_at: demoAgo(26),
-    },
-    {
-      ...base,
-      id: 900002,
-      slug: 'staging-demo-image-icon',
-      name: 'Staging demo image icon',
-      icon_url: DEMO_ICON_PNG,
-      // Deterministic tile for the home screen's "Find more apps" row
-      // and the browse screen's featured-first ordering: featured_apps
-      // is created by this change, so a prod-cloned staging DB has no
-      // real rows to show there (migrate.js also seeds a few from real
-      // cloned apps for the no-?demo=1 case).
-      featured: true,
-      featured_order: 0,
-    },
-    {
-      ...base,
-      id: 900003,
-      slug: 'staging-demo-featured',
-      name: 'Staging demo featured app',
-      icon_emoji: '⭐',
-      featured: true,
-      featured_order: 1,
-    },
-    // A deliberately LONG name (#951). The tile label is two 11px lines
-    // clamped with an ellipsis, and the only way a reviewer can see that
-    // working — here and in the before/after screenshots — is a name that
-    // actually overflows one line at phone width.
-    {
-      ...base,
-      id: 900012,
-      slug: 'staging-demo-long-name',
-      name: 'Staging demo photo album and journal',
-      icon_emoji: '📔',
-      // A "Group" in the Workshop: private, and more than one person in it.
-      view_visibility: 'private',
-      collab_visibility: 'private',
-      is_member: true,
-      member_count: 4,
-      audience: 'invited',
-      last_active_at: demoAgo(3),
-    },
-    // #1838: the ONE demo row that lands in "Your apps". Every other row
-    // here inherits is_favorited/is_collaborator false from `base`, so
-    // Home.isYours excludes them all and the launcher grid under ?demo=1
-    // holds only whatever the checks clone happens to have — which is why
-    // the card-menu deep link carries a featured-row fallback at all. The
-    // gesture-driven variants of that link have to dispatch onto a real
-    // launcher tile, so seed one deterministically.
-    //
-    // favorite_order 99 sorts it LAST inside Your apps, so the existing
-    // shot=home-apps / shot=home-grid expectations keep their leading tiles;
-    // demo:true keeps it out of the kit's placement selector
-    // (.app-card[data-yours]:not([data-demo])) so no drag shot changes.
-    {
-      ...base,
-      id: 900013,
-      slug: 'staging-demo-your-app',
-      name: 'Staging demo your app',
-      icon_emoji: '🏠',
-      is_favorited: true,
-      favorite_order: 99,
-      // ...and a "Community" in the Workshop, the most recent one, so the
-      // declared checks that find it there do not depend on the clone.
-      is_member: true,
-      member_count: 12,
-      last_active_at: demoAgo(0.5),
-    },
-    // Four more featured rows so the Discover widget's curated lane is
-    // reviewable AT ITS CAP (#949): the lane holds six tiles — one per
-    // Home.FEATURED_LIMIT slot — and the whole point of the six-track grid
-    // is that all six fit on ONE row. With only the two rows above, a
-    // staging capture showed a third-full lane and proved nothing.
-    {
-      ...base, id: 900004, slug: 'staging-demo-featured-2',
-      name: 'Staging demo featured 2', icon_emoji: '🎲',
-      featured: true, featured_order: 2,
-    },
-    {
-      ...base, id: 900005, slug: 'staging-demo-featured-3',
-      name: 'Staging demo featured 3', icon_emoji: '🧩',
-      featured: true, featured_order: 3,
-    },
-    {
-      ...base, id: 900006, slug: 'staging-demo-featured-4',
-      name: 'Staging demo featured 4', icon_emoji: '🚀',
-      featured: true, featured_order: 4,
-    },
-    {
-      ...base, id: 900007, slug: 'staging-demo-featured-5',
-      name: 'Staging demo featured 5', icon_emoji: '🎨',
-      featured: true, featured_order: 5,
-    },
-    // ...and four NON-featured rows carrying an active-user count, for the
-    // desktop widget's second lane (Home.popularApps ranks by
-    // `active_users` and drops anything at zero). Without these the Popular
-    // lane is empty in every staging preview — the clone's own rows keep
-    // their real counts, but a check runs against a fresh database.
-    // Numbers here where production sends bigint STRINGS; the client
-    // coerces either, and tests cover both shapes.
-    //
-    // The four also carry deliberately DIFFERENT merged-proposal and age
-    // profiles, so the #apps sort control (#1383) puts a different row on
-    // top under each of its five orders instead of looking broken against
-    // an otherwise uniform fixture set. Read them as: 1 = popular but
-    // dormant, 2 = the workhorse, 3 = brand new and busy, 4 = neither.
-    {
-      ...base, id: 900008, slug: 'staging-demo-popular-1',
-      name: 'Staging demo popular 1', icon_emoji: '🔥', active_users: 12,
-      merged_prs: 3, merged_prs_recent: 0, last_merged_at: demoAgo(90 * 24),
-      created_at: demoAgo(200 * 24), last_deploy_at: demoAgo(60 * 24),
-    },
-    {
-      ...base, id: 900009, slug: 'staging-demo-popular-2',
-      name: 'Staging demo popular 2', icon_emoji: '📈', active_users: 9,
-      merged_prs: 41, merged_prs_recent: 11, last_merged_at: demoAgo(2),
-      created_at: demoAgo(120 * 24), last_deploy_at: demoAgo(2),
-    },
-    {
-      ...base, id: 900010, slug: 'staging-demo-popular-3',
-      name: 'Staging demo popular 3', icon_emoji: '🎧', active_users: 7,
-      merged_prs: 6, merged_prs_recent: 5, last_merged_at: demoAgo(24),
-      created_at: demoAgo(3 * 24), last_deploy_at: demoAgo(24),
-    },
-    {
-      ...base, id: 900011, slug: 'staging-demo-popular-4',
-      name: 'Staging demo popular 4', icon_emoji: '🗺️', active_users: 5,
-      created_at: demoAgo(400 * 24), last_deploy_at: demoAgo(300 * 24),
-    },
-  ];
-  if (curation) apps.push(
-    { ...base, id: 990031, slug: 'directory-sample-working', name: 'Directory sample working',
-      icon_emoji: '🧩', featured: true, featured_order: -1 },
-    { ...base, id: 990032, slug: 'directory-sample-unreviewed', name: 'Directory sample unreviewed',
-      icon_emoji: '🌱', directory_review_status: 'unreviewed', directory_reviewed_at: null },
-    { ...base, id: 990033, slug: 'directory-sample-demo', name: 'Directory sample demo',
-      icon_emoji: '🎭', directory_review_status: 'demo', active_users: 9999 },
-    { ...base, id: 990034, slug: 'directory-sample-broken', name: 'Directory sample needs fixes',
-      icon_emoji: '🔧', directory_review_status: 'broken', active_users: 9998 },
-    { ...base, id: 990035, slug: 'directory-sample-no-icon', name: 'Directory sample needs an icon' },
-  );
-  return apps.map((app) => ({ ...app, directory: discoveryCuration.describe(app) }));
-}
+// Catalog samples are stored rows; all app APIs use the same identity.
+const stagingApps = require('../services/staging-apps');
 
 // SELF-HOSTING.md sub-step 2k: helper for the import-flow guards.
 // Compares a parsed {owner, repo} against config.platformRepoUrl,
@@ -714,9 +510,8 @@ function activitySeconds(raw) {
   return Math.min(rounded, ACTIVITY_MAX_PER_POST);
 }
 
-function appRoutes(config) {
+function appRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
-  const pool = getPool(config);
 
   router.get('/api/apps', async (req, res) => {
     try {
@@ -854,7 +649,8 @@ function appRoutes(config) {
           WHERE status = 'open'
           GROUP BY app_id
         ) iss ON iss.app_id = a.id
-        WHERE (NOT a.self_hosted OR $1::boolean)
+        WHERE a.moderation_suspended_at IS NULL AND (NOT a.self_hosted OR $1::boolean)
+          AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = $2 AND b.app_id = a.id)
           AND ($3::boolean OR a.view_visibility = 'public' OR me.user_id IS NOT NULL)
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
       `, [showSelfHosted, userId, isAdmin]);
@@ -879,7 +675,7 @@ function appRoutes(config) {
         pool, rows.map((a) => a.id)
       );
 
-      const apps = await Promise.all(rows.map(async (a) => {
+      let apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
         // each) and lets the home tile show a "fix secrets" warning
         // without each card making its own /secrets fetch on render.
@@ -910,8 +706,9 @@ function appRoutes(config) {
           }
         }
 
+        const stagingSample = stagingApps.isSample(a);
         let url = null;
-        if (a.status === 'running') {
+        if (!stagingSample && a.status === 'running') {
           if (IS_LOCAL_DEV) {
             const containerName = `usernode-app-${a.slug}`;
             const hostPort = await docker.getHostPort(containerName, 3000);
@@ -973,11 +770,17 @@ function appRoutes(config) {
         const contributorCount = contributorCounts.get(a.id) || 0;
         return {
           ...appAccess.stripAppSecrets(a),
+          // The launcher's copy of the manifest: everything but the declared
+          // tests and platform env, which no client reads and which were most
+          // of this payload (see summarizeManifestSnapshot). GET
+          // /api/apps/:slug still answers the whole snapshot.
+          manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
           contributor_count: contributorCount,
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,
           url,
+          staging_sample: stagingSample,
           version,
           deployProgress: appDeployStatus.read(a.slug),
           missingSecrets,
@@ -1007,9 +810,11 @@ function appRoutes(config) {
       // Resolve fork lineage (live source-name lookup, "<deleted>"
       // fallback) for every serialized app in one batched query.
       await attachForkLineage(pool, apps);
-      // Staging demo tiles for the icon feature (see demoIconApps above).
-      if (IS_STAGING && req.query.demo === '1') {
-        apps.unshift(...demoIconApps(req.query.curation === '1'));
+      // Keep optional catalog samples behind their display flags, after the
+      // same visibility and block filters as every stored app.
+      if (IS_STAGING) {
+        apps = apps.filter(app => !stagingApps.isCatalogSlug(app.slug)
+          || (req.query.demo === '1' && (req.query.curation === '1' || !app.slug.startsWith('directory-sample-'))));
       }
       res.json({ apps });
     } catch (err) {
@@ -1045,6 +850,32 @@ function appRoutes(config) {
   // githubLookupLimiter (#2519): same shared installation quota as
   // repo-info above, plus step 1 is a side effect worth bounding on its
   // own. One bucket covers both routes.
+  // The four dapp.json fields that replace a create answer on an import's
+  // first deploy, read with the deploy's own readers: its name, description,
+  // visibility and approval rule. An unparseable file reads as {}, the way
+  // the deploy reader treats it.
+  async function readImportManifest(parsed) {
+    try {
+      const raw = await github.getFileContent(parsed.owner, parsed.repo, appManifest.MANIFEST_FILENAME);
+      if (raw == null) return {};
+      let json;
+      try { json = JSON.parse(raw); } catch { return {}; }
+      const governance = appManifest.readGovernance(json);
+      return {
+        name: appManifest.readName(json),
+        description: appManifest.readDescription(json),
+        visibility: appManifest.readVisibility(json),
+        governance: governance ? {
+          approvers: governance.approvers || 'anyone',
+          approvals: typeof governance.approvals === 'number' ? governance.approvals : null,
+        } : null,
+      };
+    } catch (err) {
+      log.warn('apps', 'Import dapp.json read failed', { repo: `${parsed.owner}/${parsed.repo}`, err: err.message });
+      return null;
+    }
+  }
+
   router.get('/api/github/verify-access', githubLookupLimiter, async (req, res) => {
     const parsed = github.parseGithubUrl(req.query.url || '');
     if (!parsed) return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
@@ -1066,6 +897,10 @@ function appRoutes(config) {
       name: verify.name,
       description: verify.description,
       fullName: verify.fullName,
+      // What the repo's own dapp.json already says, so the dialog can say
+      // which answers it replaces. {} when there is no dapp.json; null when
+      // it could not be read, which the dialog says as well.
+      manifest: await readImportManifest(parsed),
     });
   });
 
@@ -1073,7 +908,7 @@ function appRoutes(config) {
     res.set('Cache-Control', 'private, no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
-      res.json(await appAllowance.read(pool, req.user, { maxApps: config.maxApps }));
+      res.json(await appAllowance.read(pool, req.user, { maxApps: await appLimit.effective(pool, config) }));
     } catch (err) {
       log.error('apps', 'App allowance lookup failed', { message: err.message });
       res.status(500).json({ error: 'Could not load your app allowance. Please try again.' });
@@ -1085,7 +920,7 @@ function appRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     if (req.user.canAdminWrite) return res.status(400).json({ error: 'Your account already has unlimited app slots.' });
     try {
-      res.json(await appAllowance.requestMore(pool, req.user, { maxApps: config.maxApps }));
+      res.json(await appAllowance.requestMore(pool, req.user, { maxApps: await appLimit.effective(pool, config) }));
     } catch (err) {
       log.error('apps', 'App allowance request failed', { message: err.message });
       res.status(500).json({ error: 'Could not send your request. Please try again.' });
@@ -1106,7 +941,7 @@ function appRoutes(config) {
     if (options.error) {
       return res.status(400).json({ error: options.error });
     }
-    const { collabVisibility, viewVisibility, invitees, governance: rule } = options;
+    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description } = options;
 
     // Import-existing pre-flight: parse URL, accept any pending invite
     // for this exact repo, then verify Write access. Anything other
@@ -1174,19 +1009,23 @@ function appRoutes(config) {
       // Enforce global app cap (full admins bypass; view-only admins
       // don't — issue #311). Errored apps don't count
       // toward the limit — they hold ~no resources and can be deleted to
-      // free a slot.
-      if (!req.user?.canAdminWrite && config.maxApps > 0) {
+      // free a slot. The cap is the admin's setting when one is stored,
+      // else MAX_APPS (services/app-limit.js).
+      const maxApps = req.user?.canAdminWrite ? 0 : await appLimit.effective(pool, config);
+      if (maxApps > 0) {
         const { rows: countRows } = await pool.query(
           `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
         );
-        if (countRows[0].n >= config.maxApps) {
+        if (countRows[0].n >= maxApps) {
           log.warn('apps', 'App creation blocked by max-apps cap', {
             userId: req.user.id,
             active: countRows[0].n,
-            cap: config.maxApps,
+            cap: maxApps,
           });
+          // Somebody was just refused: make sure the admins have heard.
+          platformLimits.nudge(pool, config, 'apps');
           return res.status(429).json({
-            error: `This server is at its app limit (${config.maxApps}). Ask an admin to remove an app or raise the limit.`,
+            error: `This server is at its app limit (${maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
         }
       }
@@ -1236,6 +1075,18 @@ function appRoutes(config) {
         }
       }
 
+      // WHAT IT IS, if the creator said. Seeded as the manifest snapshot the
+      // template's dapp.json is about to match ({ description, secrets: [] }),
+      // so app-creator writes it into the new repository and a Retry still
+      // has it. The first deploy then snapshots the real file over it.
+      if (description) {
+        const { rows: described } = await pool.query(
+          `UPDATE apps SET manifest_snapshot = $1 WHERE id = $2 RETURNING *`,
+          [JSON.stringify({ description, secrets: [] }), appRow.id]
+        );
+        appRow = described[0] || appRow;
+      }
+
       // A Group's invites go out now, each the same invite (and the same
       // notification) Members & approvals sends. Best-effort per person: the
       // project exists either way, and anyone missed can be invited from
@@ -1248,6 +1099,17 @@ function appRoutes(config) {
         } catch (err) {
           log.warn('apps', 'Create-time invite failed', { appId: appRow.id, invitee: target.username, err: err.message });
         }
+      }
+      // Addresses: an account that already has one confirmed is invited as
+      // that account; anyone else gets a mail pointing at the waitlist, and
+      // the invite waits on their account (services/email-invites.js). The
+      // response counts them together, so it says nothing about who has an
+      // account.
+      if (inviteEmails.length) {
+        const byEmail = await emailInvites.inviteByEmail(pool, config, {
+          app: appRow, emails: inviteEmails, inviter: { id: req.user.id, username: req.user.username },
+        });
+        invited += byEmail.invited + byEmail.mailed;
       }
 
       log.info('apps', repoUrlNormalized ? 'App imported (pending)' : 'App created (pending)', {
@@ -1266,6 +1128,7 @@ function appRoutes(config) {
           ...(options.audience ? { audience: options.audience } : {}),
           ...(invited ? { invited } : {}),
           ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
+          ...(description ? { described: true } : {}),
         },
       });
 
@@ -1285,6 +1148,7 @@ function appRoutes(config) {
       scheduleCreationWatchdog(pool, appRow.id);
 
       res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited });
+      platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
@@ -1327,13 +1191,15 @@ function appRoutes(config) {
         const allowance = await appAllowance.read(pool, req.user);
         if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
-      if (!req.user?.canAdminWrite && config.maxApps > 0) {
+      const maxApps = req.user?.canAdminWrite ? 0 : await appLimit.effective(pool, config);
+      if (maxApps > 0) {
         const { rows: countRows } = await pool.query(
           `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
         );
-        if (countRows[0].n >= config.maxApps) {
+        if (countRows[0].n >= maxApps) {
+          platformLimits.nudge(pool, config, 'apps');
           return res.status(429).json({
-            error: `This server is at its app limit (${config.maxApps}). Ask an admin to remove an app or raise the limit.`,
+            error: `This server is at its app limit (${maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
         }
       }
@@ -1380,6 +1246,7 @@ function appRoutes(config) {
       scheduleCreationWatchdog(pool, appRow.id);
 
       res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
+      platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
@@ -1415,8 +1282,9 @@ function appRoutes(config) {
       if (!req.user?.isAdmin && appRow.view_visibility === 'private' && !isCollaborator) {
         return res.status(404).json({ error: 'App not found' });
       }
+      const stagingSample = stagingApps.isSample(appRow);
       let url = null;
-      if (appRow.status === 'running') {
+      if (!stagingSample && appRow.status === 'running') {
         if (IS_LOCAL_DEV) {
           const containerName = `usernode-app-${appRow.slug}`;
           const hostPort = await docker.getHostPort(containerName, 3000);
@@ -1484,13 +1352,29 @@ function appRoutes(config) {
       const contributorCount = contributorCounts.get(appRow.id) || 0;
       const appPayload = {
         ...appAccess.stripAppSecrets(appRow),
+        // `?manifest=summary`: the shell's own reads of an app (the Improve
+        // target, AppView) use only the snapshot's description, and the
+        // platform's snapshot alone is ~280 KB. Without the flag the whole
+        // snapshot is answered, as it always was.
+        ...(req.query.manifest === 'summary'
+          ? { manifest_snapshot: appAccess.summarizeManifestSnapshot(appRow.manifest_snapshot) }
+          : {}),
         demo_partner: demoPartner,
         contributor_count: contributorCount,
+        // Server-built icon URL so the client never assembles ids into
+        // paths (and staging demo rows can inject arbitrary sources) —
+        // same computation as the /api/apps list. Without it the header
+        // tile (features/header/header-title.tsx via improve-status.js)
+        // only ever sees the raw `icon_image_id` column, never a usable
+        // URL, so it falls back to the letter/emoji even when the app has
+        // a real icon image (#3348).
+        icon_url: appRow.icon_image_id ? `/app-icons/${appRow.icon_image_id}` : null,
         directory: discoveryCuration.describe(appRow),
         last_failure: undefined,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
           ? appRow.last_failure : null,
         url,
+        staging_sample: stagingSample,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
         missingSecrets,
         // Reviewer copy needs to distinguish an advisory evidence run from
@@ -2391,14 +2275,16 @@ function appRoutes(config) {
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
 
-      const { sendSystemMessage, pushAppUpdate } = require('../services/ws');
-      await sendSystemMessage(pool, app.id,
-        locked
-          ? `${req.user.username} locked this app, so merges now also require an admin yes vote`
-          : `${req.user.username} unlocked this app, so merges no longer require an admin yes vote`,
-        'system'
-      ).catch((err) => log.warn('apps', 'Lock chat msg failed', { err: err.message }));
+      // On the record for the project's Workshop notices
+      // (services/app-notices.js): a channel carries no activity.
+      events.record(pool, {
+        type: events.EVENT_TYPES.APP_LOCK_CHANGED,
+        userId: req.user.id,
+        appId: app.id,
+        metadata: { locked: app.locked },
+      });
 
+      const { pushAppUpdate } = require('../services/ws');
       pushAppUpdate({
         action: 'lock_changed',
         appSlug: app.slug,
@@ -3280,7 +3166,7 @@ function appRoutes(config) {
     try {
       const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
       const { rows: appRows } = await pool.query(
-        `SELECT ${appAccess.ACCESS_COLUMNS}, name,
+        `SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url,
                 LEFT(manifest_snapshot->>'description', 280) AS description
            FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
         [req.params.slug, showSelfHosted]
@@ -3296,7 +3182,47 @@ function appRoutes(config) {
       // collab-private app but not talk in it gets no row for it rather
       // than a preview of a room they cannot enter.
       const canChat = await appAccess.checkAppAccess(pool, app, req.user, 'collab');
-      const channel = canChat ? await communities.channelSummary(pool, app.id, req.user?.id) : null;
+      // THE HOMEROOM COMMUNITY'S CHANNEL IS #general. The platform's own
+      // project talks in the platform's one channel, which every signed-in
+      // person can read; its old project discussion stays reachable as
+      // read-only history (`archive_href`). Any other project's channel is
+      // its own discussion, at its own address.
+      let channel = null;
+      if (app.slug === config.selfAppSlug) {
+        const general = await communities.generalChannelSummary(pool, req.user?.id);
+        if (general) {
+          const { conversation_id: conversationId, ...summary } = general;
+          channel = {
+            ...summary,
+            href: `#messages/${conversationId}`,
+            // Where the hub's composer posts: the room's own write route,
+            // which gates it on Homeroom membership (generalNeedsJoin).
+            post_url: `/api/conversations/${conversationId}/messages`,
+            handle: 'general',
+            archive_href: `#messages/app/${encodeURIComponent(app.slug)}`,
+          };
+        }
+      } else if (canChat) {
+        channel = {
+          ...(await communities.channelSummary(pool, app.id, req.user?.id)),
+          href: `#messages/app/${encodeURIComponent(app.slug)}`,
+          // The app chat's REST write path, the one CLI and MCP clients use:
+          // the same handler as the browser's socket, membership-gated.
+          post_url: `/api/apps/${encodeURIComponent(app.slug)}/messages`,
+          handle: null,
+        };
+      }
+      const activity = await communities.activitySummary(pool, app.id);
+      // WHO IT IS FOR, AS SOMETHING TO CHANGE. Opening a project up (or
+      // closing it to a group) is the visibility PR the settings dialog
+      // opens, offered on the hero to the people POST /visibility-pr lets
+      // open it: the creator, an app admin or a platform admin, on an app
+      // with a repository, never the platform's own. One in flight at a
+      // time, and the hero points at it rather than offering a second.
+      const canManage = !app.self_hosted && !!app.repo_url
+        && await appAdmins.canManageApp(pool, app, req.user);
+      const pendingAudience = canManage || membership?.is_member
+        ? await renamePr.findVisibilityPr(pool, app.id) : null;
       const gov = await governance.getGovernance(pool, app.id);
       const electorate = await governance.getElectorate(pool, app.id, gov);
       const required = gov.approvalsRequired != null
@@ -3311,6 +3237,13 @@ function appRoutes(config) {
         ...membership,
         members,
         channel,
+        activity,
+        can_manage: !!canManage,
+        audience_change: pendingAudience ? {
+          session_id: pendingAudience.id,
+          pr_number: pendingAudience.pr_number,
+          title: pendingAudience.pr_title || null,
+        } : null,
         approval: {
           policy: gov.approverPolicy,
           approvals_required: gov.approvalsRequired,

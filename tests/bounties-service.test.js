@@ -106,13 +106,11 @@ test('placeBounty: success returns the id, the new count and the remaining allow
   assert.deepEqual(insert.params.slice(0, 3), [42, 101, 7]);
   assert.match(insert.sql, /'open'/);
 
-  // Both system messages are posted: the app's group chat and the issue's
-  // own discussion thread, with identical wording.
-  assert.equal(systemMessages.length, 2);
+  // One line, in the issue's own discussion thread: a channel carries no
+  // activity (services/ws.js sendSystemMessage), so the app chat gets none.
+  assert.equal(systemMessages.length, 1);
   assert.match(systemMessages[0].text, /tester placed a bounty \(kudos\) on issue #101/);
-  assert.equal(systemMessages[0].thread, null, 'first post is the app chat');
-  assert.deepEqual(systemMessages[1].thread, { type: 'issue', ref: 101 });
-  assert.equal(systemMessages[1].text, systemMessages[0].text, 'same wording in both surfaces');
+  assert.deepEqual(systemMessages[0].thread, { type: 'issue', ref: 101 });
 
   // And the live update other clients repaint from.
   assert.equal(issuePushes.length, 1);

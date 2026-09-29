@@ -130,7 +130,8 @@ const DevChat = {
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>',
 
   _titleStatus: null, // null | 'thinking'
-  // null | 'sessionDone' | 'autoSolveDone' | 'autoSolveFailed' (#161).
+  // null | 'sessionDone' | 'sessionStalled' | 'autoSolveDone' | 'autoSolveFailed'
+  // (#161, #3181).
   // Single slot, last-write-wins — the badge count carries multiplicity.
   _titleCompletion: null,
 
@@ -1294,6 +1295,9 @@ const DevChat = {
     const badges = [];
     if (model?.isFavorite) badges.push('★');
     if (model?.isRecommended) badges.push('Recommended');
+    // #3296: the platform runs some OpenRouter models in Claude Code rather
+    // than Codex. Only that exception is named; Codex is every other row.
+    if (model?.harness === 'claude') badges.push('Claude Code');
     if (model?.createdAt) {
       const age = Date.now() - Date.parse(model.createdAt);
       if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
@@ -1485,6 +1489,15 @@ const DevChat = {
       return data;
     }
 
+    // The key and the catalog are asked together: the catalog is the
+    // platform's own, answered at once, so the dialog waits on neither twice.
+    const refresh = forceRefresh ? '&refresh=1' : '';
+    const catalogRead = data.codexAvailable
+      ? fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      }).then(async (res) => ({ res, body: await res.json().catch(() => ({})) }), (err) => ({ err }))
+      : null;
     try {
       const credentialRes = await fetch('/api/me/credentials/openrouter', {
         credentials: 'same-origin',
@@ -1500,19 +1513,15 @@ const DevChat = {
     if (!data.codexAvailable || !data.credentialConfigured) return data;
 
     try {
-      const refresh = forceRefresh ? '&refresh=1' : '';
-      const modelsRes = await fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
-        credentials: 'same-origin',
-        cache: 'no-store',
-      });
-      const catalog = await modelsRes.json().catch(() => ({}));
+      const { res: modelsRes, body: catalog, err } = await catalogRead;
+      if (err) throw err;
       if (!modelsRes.ok) throw new Error(catalog.error || 'Could not load OpenRouter models.');
       data.catalogLoaded = true;
       data.models = Array.isArray(catalog.models) ? catalog.models : [];
       data.recommendedModelId = catalog.recommendedModelId || null;
       data.refreshedAt = catalog.refreshedAt || null;
       data.totalModels = Number.isInteger(catalog.totalModels) ? catalog.totalModels : data.models.length;
-      if (!data.models.length) data.catalogError = 'No OpenRouter models are available under this key.';
+      if (!data.models.length) data.catalogError = 'No OpenRouter models are available right now. Try Refresh.';
     } catch (err) {
       data.catalogError = err.message || 'Could not load OpenRouter models.';
     }
@@ -1644,7 +1653,7 @@ const DevChat = {
       const age = this._openRouterCatalogAgeText(data.refreshedAt);
       catalogMeta.textContent = visibleModels.length
         ? `${visibleModels.length} of ${data.totalModels || data.models.length} models${age ? ` · ${age}` : ''}`
-        : `No key-visible models match. Refresh, then check this key's OpenRouter account policies${age ? ` · ${age}` : ''}`;
+        : `No models match. Clear the search or show all models${age ? ` · ${age}` : ''}`;
       if (!visibleModels.length) {
         starModelButton.disabled = true;
         starModelButton.textContent = '☆';
@@ -1691,13 +1700,13 @@ const DevChat = {
         return;
       }
       if (!data.models.length) {
-        status.textContent = data.catalogError || 'No OpenRouter models are available under this key.';
+        status.textContent = data.catalogError || 'No OpenRouter models are available right now. Try Refresh.';
         applyButton.disabled = true;
         return;
       }
       const model = data.models.find((item) => item.id === selectedModel) || null;
       if (!model) {
-        status.textContent = "No key-visible models match. Refresh, then check this key's OpenRouter account policies.";
+        status.textContent = 'No models match. Clear the search or show all models.';
         applyButton.disabled = true;
         starModelButton.disabled = true;
         starModelButton.textContent = '☆';
@@ -5079,6 +5088,10 @@ const DevChat = {
     DevChat.scrollToBottom();
 
     DevChat._abortController = new AbortController();
+    // #3177: set by the stream's `accepted` event, which the server writes
+    // once the message is stored. A stream that breaks after it lost a
+    // connection, not the message.
+    let accepted = false;
 
     try {
       const sessionId = DevChat.currentSession.id;
@@ -5248,6 +5261,12 @@ const DevChat = {
             // enabled Send button.
             DevChat._noteLiveTurnEvent(data, sessionId);
             switch (data.type) {
+              case 'accepted':
+                // #3177: the message is stored and its turn has started. Its
+                // _seq, recorded above, is where the resumable stream picks
+                // the turn up if this one breaks.
+                accepted = true;
+                break;
               case 'token':
                 gotFirstToken = true;
                 // #990: the reply is arriving — the dots have done their job.
@@ -5537,7 +5556,11 @@ const DevChat = {
         }
       }
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      // #3177: after `accepted` a broken stream is a delivered message on a
+      // lost connection. The turn is still running, so its live cue stays up
+      // while the fallback below resumes it; only a stream that broke before
+      // the server took the message drops the cue.
+      if (err.name !== 'AbortError' && !accepted) {
         DevChat._removeSpinner();
       }
     }
@@ -6184,6 +6207,8 @@ const DevChat = {
     // #161 completion tier — set by notification arrival (see
     // setCompletionTitle), not by stream end.
     sessionDone: '✅ Session done · ',
+    // #3181: the turn stopped before finishing.
+    sessionStalled: '⏸️ Session stopped · ',
     autoSolveDone: '🤖 Proposal ready · ',
     autoSolveFailed: '⚠️ Proposal failed · ',
   },

@@ -14,7 +14,7 @@ import { flushSync } from 'react-dom';
 
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
-import { readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
+import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
 
 navStore.setFlush(flushSync);
 // Same reason as the tab's: App.navigateToApp clears the strip inside
@@ -135,6 +135,11 @@ if (typeof window !== 'undefined') {
         iconUrl: app.iconUrl || null,
         iconEmoji: app.iconEmoji || null,
       } : null);
+    },
+    /** A blocked app must disappear from both desktop Recents and mobile Resume. */
+    forget(slug: string) {
+      if (parkedStore.get().app?.slug === slug) setParked(null);
+      forgetRecentApp(slug, navStore.get().viewer);
     },
   };
 }

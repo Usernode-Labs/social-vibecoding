@@ -115,8 +115,8 @@ test('Q18: the Messages "+" and the conversation ⋯ are keyboard menus', () => 
   assert.match(head, /useDismiss\(menu, \[menuWrapRef\], closeMenu\);/, 'an outside press and Escape close it');
   assert.match(head, /aria-haspopup="menu" aria-expanded=\{menu\}/);
   assert.match(head, /className="messages-thread-menu" role="menu"/);
-  // 4 with QA Q14's "Rename group" row (merged from the Messages group).
-  assert.equal((head.match(/role="menuitem"/g) || []).length, 4, 'every row is a menuitem');
+  // Includes Rename group and the conversation-level Report user action.
+  assert.equal((head.match(/role="menuitem"/g) || []).length, 5, 'every row is a menuitem');
 });
 
 test('Q18: the Workshop "+" menu closes on Escape and on a press anywhere, and roves with the arrows', () => {
@@ -128,7 +128,7 @@ test('Q18: the Workshop "+" menu closes on Escape and on a press anywhere, and r
   assert.doesNotMatch(fn, /content\.addEventListener\('click'/, 'the content-only dismisser, which a header press skipped, is gone');
 });
 
-test('Q18: the "Which workshop?" panel and the Homeroom menu take focus, rove, and give it back on Escape', () => {
+test('Q18: the "Which project?" panel and the Homeroom menu take focus, rove, and give it back on Escape', () => {
   const ws = read('frontend/src/features/workshop/workshop-chrome.tsx');
   assert.match(ws, /<button id=\{id\} type="button" role="menuitem"/);
   assert.match(ws, /onKeyDown=\{\(event\) => \{ roveMenuFocus\(event, event\.currentTarget\); \}\}/);

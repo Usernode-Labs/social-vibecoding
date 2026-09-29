@@ -35,6 +35,10 @@ export const AppContext = Object.assign(
     showAbout() {
       appContextStore.set({ view: 'about' });
     },
+    /** The invite pane: a link to this project anyone can join with. */
+    showInvite() {
+      appContextStore.set({ view: 'invite' });
+    },
     /** Back to the app's options. */
     showMenu() {
       appContextStore.set({ view: 'menu' });

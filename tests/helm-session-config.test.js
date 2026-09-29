@@ -21,7 +21,7 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
       { MAX_GLOBAL_SESSIONS: '25', WORKER_IDLE_EVICTION_MS: '600000', SESSION_AUTOPAUSE_IDLE_MS: '300000', CAPTURE_CPUS: '8', VISUAL_EVIDENCE_V2_ENABLED: 'false' }],
   ]) {
     const rendered = execFileSync('helm', [...args, ...overrides], { encoding: 'utf8' });
-    const env = Object.fromEntries([...rendered.matchAll(/\{name: ([A-Z_]+), value: "([^"]*)"\}/g)]
+    const env = Object.fromEntries([...rendered.matchAll(/\{name: ([A-Z0-9_]+), value: "([^"]*)"\}/g)]
       .map(([, key, value]) => [key, value]));
     for (const [name, value] of Object.entries({
       ...expected, MAX_USER_SESSIONS: '3', MAX_USER_PROMOTED_SESSIONS: '5',

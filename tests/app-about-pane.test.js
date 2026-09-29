@@ -269,7 +269,7 @@ test('served: the platform row, from the route an app\'s page uses, handed to Ho
     assert.equal(t.slug, 'usernode-2d5619');
     assert.equal(t.restricted, undefined);
     assert.equal(env.PT.row().slug, 'usernode-2d5619', 'the row is kept for About');
-    assert.deepEqual(env.calls, ['/api/platform/about', '/api/apps/usernode-2d5619']);
+    assert.deepEqual(env.calls, ['/api/platform/about', '/api/apps/usernode-2d5619?manifest=summary']);
     assert.equal(env.published.length, 1, 'Home publishes it, through its own gates');
   } finally { env.restore(); }
 });
@@ -305,7 +305,7 @@ test('without the about read, GET /api/version names the slug and the row answer
   try {
     const t = await env.PT.resolve();
     assert.equal(t.restricted, true, 'a 404 from the row is "not served"');
-    assert.deepEqual(env.calls, ['/api/platform/about', '/api/version', '/api/apps/usernode-2d5619']);
+    assert.deepEqual(env.calls, ['/api/platform/about', '/api/version', '/api/apps/usernode-2d5619?manifest=summary']);
   } finally { env.restore(); }
 });
 
@@ -324,7 +324,8 @@ test('offline: nothing is published, and a burst of screen changes does not retr
 
 test('the restricted rows hide through a layout effect, so the prerendered menu is untouched', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /useIsomorphicLayoutEffect\(\(\) => \{\s*for \(const el of \[workshopRowRef\.current, discussionRowRef\.current\]\)/);
+  // The invite row hides with them: its links are to the same project.
+  assert.match(sheet, /useIsomorphicLayoutEffect\(\(\) => \{\s*for \(const el of \[workshopRowRef\.current, discussionRowRef\.current, inviteRowRef\.current\]\)/);
   assert.match(sheet, /el\.classList\.toggle\('hidden', !!restricted\);[\s\S]{0,40}\}, \[restricted, view\]\);/,
     'and re-runs when the menu pane comes back from About, whose rows mount again');
   assert.match(sheet, /id="app-menu-row-workshop"\s+dataContextRow="workshop"\s+elRef=\{workshopRowRef\}/);
@@ -339,8 +340,9 @@ test('the restricted rows hide through a layout effect, so the prerendered menu 
 
 test('About is the menu\'s pane, and the menu\'s two actions stay on the menu pane', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /\{view === 'about' \? null : <UpdateStatus \/>\}/);
-  assert.match(sheet, /\{view === 'about' \? null : <ImproveQuickActions \/>\}/);
+  // Every pane but the menu's (About, and Invite since invite links).
+  assert.match(sheet, /\{view !== 'menu' \? null : <UpdateStatus \/>\}/);
+  assert.match(sheet, /\{view !== 'menu' \? null : <ImproveQuickActions \/>\}/);
 });
 
 test('?shot=app-about opens the pane once the route has published a subject', () => {

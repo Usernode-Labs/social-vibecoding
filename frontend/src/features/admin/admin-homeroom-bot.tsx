@@ -31,6 +31,22 @@ interface Settings {
   liveApps: string[];
   turnSeconds: number;
   turnInputTokens: number;
+  // Shadow builds: ready verdicts off the live list built on a branch
+  // nobody is shown, in a lane of their own, this many at once. The
+  // platform's own repository is left out unless included.
+  shadowBuilds: boolean;
+  buildConcurrency: number;
+  shadowBuildPlatform: boolean;
+}
+
+interface BuildLane {
+  queued: number;
+  building: number;
+  built: number;
+  failed: number;
+  costUsd: number;
+  lane: { at: string; started: number; inFlight: number; paused: string | null; detail?: string } | null;
+  fault: { error: string; retryAt: string } | null;
 }
 
 interface Bot {
@@ -71,7 +87,8 @@ interface Run {
   id: number;
   issue_number: number;
   mode: string;
-  verdict: 'question' | 'ready' | 'person' | 'empty' | 'failed';
+  // #3264: 'answer' and 'revise' are follow-ups on the bot's own proposal.
+  verdict: 'question' | 'ready' | 'person' | 'empty' | 'failed' | 'answer' | 'revise';
   determined: boolean | null;
   missing_fact: string | null;
   question: string | null;
@@ -91,6 +108,17 @@ interface Run {
   created_at: string;
   // #3146: the proposal a live `ready` run opened.
   proposal_session_id: number | null;
+  build_ok: boolean | null;
+  build_branch: string | null;
+  build_sha: string | null;
+  build_commits: number | null;
+  build_error: string | null;
+  build_cost_usd: number | null;
+  build_at: string | null;
+  build_queued_at: string | null;
+  // The spec the bot wrote before building, live or shadow.
+  build_spec_md: string | null;
+  buildUrl: string | null;
   app_slug: string;
   app_name: string;
   issueUrl: string | null;
@@ -133,6 +161,17 @@ interface Payload {
   runs: Run[];
   apps: { slug: string; name: string }[];
   caps: { proposalsPerApp: number; questionsPerAppPerDay: number };
+  builds: BuildLane;
+  mentionOptOuts: { total: number; items: MentionOptOut[] };
+}
+
+// Somebody who asked the bot to stop tagging them on one issue.
+interface MentionOptOut {
+  app_slug: string;
+  app_name: string;
+  issue_number: number;
+  username: string;
+  created_at: string;
 }
 
 type Tone = 'ok' | 'err';
@@ -161,6 +200,8 @@ const VERDICT_LABEL: Record<Run['verdict'], string> = {
   person: 'Needs a person',
   empty: 'Nothing to build',
   failed: 'Failed',
+  answer: 'Answered',
+  revise: 'Revised its proposal',
 };
 
 const VERDICT_BADGE: Record<Run['verdict'], string> = {
@@ -169,12 +210,93 @@ const VERDICT_BADGE: Record<Run['verdict'], string> = {
   person: AdminUI.badge.secondary,
   empty: AdminUI.badge.outline,
   failed: AdminUI.badge.destructive,
+  answer: AdminUI.badge.secondary,
+  revise: AdminUI.badge.success,
 };
+
+/** #3264: a run that followed up on a proposal the bot had already opened. */
+function isFollowUp(run: Run): boolean {
+  return !!run.proposal_session_id && run.verdict !== 'ready';
+}
+
+function ProposalLink({ run, children }: { run: Run; children: string }) {
+  return (
+    <a className={AdminUI.btn.link} href={`#app/${encodeURIComponent(run.app_slug)}/dev/proposals/${Number(run.proposal_session_id)}`}>
+      {children}
+    </a>
+  );
+}
 
 const CAP_LABEL: Record<string, string> = {
   proposals_per_app: 'would be held: 2 bot proposals already open on this app',
   question_tripwire: 'would be held: question tripwire for this app tripped today',
 };
+
+/**
+ * A shadow build of a ready verdict: the branch it left on the app's
+ * repository, for a spot check, or why there is none. The compare address
+ * is text to copy, not a link: it is built from the app's repo_url, and the
+ * console never renders an API-supplied URL as an anchor.
+ */
+function ShadowBuild({ run }: { run: Run }) {
+  if (run.build_ok == null) {
+    if (run.build_at) {
+      return <p className={AdminUI.muted} data-shadow-build="building">{`Shadow build under way since ${when(run.build_at)}.`}</p>;
+    }
+    if (run.build_queued_at) {
+      return <p className={AdminUI.muted} data-shadow-build="queued">{`Shadow build queued ${when(run.build_queued_at)}.`}</p>;
+    }
+    // Skipped (the issue closed, the app went live) or replaced by a later
+    // verdict: the reason is kept, and there is no branch.
+    if (run.build_error) {
+      return <p className={`${AdminUI.muted} break-words`} data-shadow-build="skipped">{`Not shadow built: ${run.build_error.replace(/^(skipped|superseded): /, '')}.`}</p>;
+    }
+    return null;
+  }
+  if (!run.build_ok) {
+    return (
+      <p className={`${AdminUI.muted} break-words`} data-shadow-build="failed">
+        {`Shadow build did not produce a change: ${run.build_error || 'no reason recorded'}.`}
+      </p>
+    );
+  }
+  const parts = [
+    `Shadow build on ${run.build_branch}`,
+    run.build_commits != null ? `${run.build_commits} commit${run.build_commits === 1 ? '' : 's'}` : null,
+    run.build_sha ? `at ${String(run.build_sha).slice(0, 7)}` : null,
+    run.build_cost_usd != null ? money(run.build_cost_usd) : null,
+  ].filter(Boolean);
+  return (
+    <div className="space-y-0.5" data-shadow-build="built">
+      <p className={AdminUI.muted}>{`${parts.join(', ')}. Not proposed, not posted.`}</p>
+      {run.buildUrl ? <p className={`${AdminUI.muted} break-all select-all`}>{run.buildUrl}</p> : null}
+    </div>
+  );
+}
+
+/** A question's "user_facing: why" as words. */
+function blockerLabel(reason: string): string {
+  const [kind, ...rest] = reason.split(': ');
+  const why = rest.join(': ');
+  if (kind === 'user_facing') return `it changes what people see, and the default could be the wrong build. ${why}`;
+  if (kind === 'impossible') return `it may not be buildable as asked. ${why}`;
+  return reason;
+}
+
+/**
+ * The spec the bot wrote just before it built, folded away: on a live app it
+ * was also posted on the issue and the proposal, on a shadow one it was
+ * shown to nobody. Plain text, as the rest of this table is.
+ */
+function BuildSpec({ run }: { run: Run }) {
+  if (!run.build_spec_md) return null;
+  return (
+    <details className="text-sm" data-build-spec>
+      <summary className={`${AdminUI.muted} cursor-pointer`}>The spec it built from</summary>
+      <p className="mt-1 whitespace-pre-wrap break-words">{run.build_spec_md}</p>
+    </details>
+  );
+}
 
 /** What the bot would have posted, as one block of plain text per verdict. */
 function VerdictBody({ run }: { run: Run }) {
@@ -185,6 +307,9 @@ function VerdictBody({ run }: { run: Run }) {
         {run.question_default ? (
           <p className={AdminUI.muted}>Suggested default: {run.question_default}</p>
         ) : null}
+        {run.reason ? (
+          <p className={AdminUI.muted} data-question-blocker>{`Why it is a blocker: ${blockerLabel(run.reason)}`}</p>
+        ) : null}
       </div>
     );
   }
@@ -192,6 +317,9 @@ function VerdictBody({ run }: { run: Run }) {
     return (
       <div className="space-y-1">
         <p className="text-sm whitespace-pre-line">{run.build_note || '(no build note)'}</p>
+        {run.reason ? <p className={AdminUI.muted} data-demoted-question>{run.reason}</p> : null}
+        <ShadowBuild run={run} />
+        <BuildSpec run={run} />
         {run.proposal_session_id ? (
           <p className={AdminUI.muted}>
             {'Built and '}
@@ -199,6 +327,36 @@ function VerdictBody({ run }: { run: Run }) {
               opened as a proposal
             </a>
             .
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+  // #3264: what it answered on its own proposal, and what it changed there.
+  if (run.verdict === 'answer') {
+    return (
+      <div className="space-y-1">
+        <p className="text-sm whitespace-pre-line">{run.reason || '(no reply recorded)'}</p>
+        {run.proposal_session_id ? (
+          <p className={AdminUI.muted}>
+            {'Replied about '}
+            <ProposalLink run={run}>its proposal</ProposalLink>
+            .
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+  if (run.verdict === 'revise') {
+    return (
+      <div className="space-y-1">
+        <p className="text-sm whitespace-pre-line">{run.build_note || run.reason || '(no summary recorded)'}</p>
+        {run.build_note && run.reason ? <p className={`${AdminUI.muted} whitespace-pre-line`}>{run.reason}</p> : null}
+        {run.proposal_session_id ? (
+          <p className={AdminUI.muted}>
+            {'Pushed to '}
+            <ProposalLink run={run}>its proposal</ProposalLink>
+            {', which cleared its votes and re-ran its checks.'}
           </p>
         ) : null}
       </div>
@@ -229,6 +387,22 @@ function VerdictBody({ run }: { run: Run }) {
     );
   }
   return <p className="text-sm text-red-400 break-words">{run.error || 'The run failed before it produced a verdict.'}</p>;
+}
+
+/** The build lane in one line: what is waiting, running, done, and why it idles. */
+function buildLaneLine(b: BuildLane | undefined): string {
+  if (!b) return '';
+  const parts = [
+    `${b.queued} queued`,
+    `${b.building} building`,
+    `${b.built} built`,
+    `${b.failed} failed`,
+    `${money(b.costUsd)} spent on builds`,
+  ];
+  let line = `${parts.join(', ')}.`;
+  if (b.fault) line += ` Backing off after a platform fault until ${when(b.fault.retryAt)}: ${b.fault.error}.`;
+  else if (b.lane?.paused === 'budget') line += ' Waiting on the weekly cap.';
+  return line;
 }
 
 function HomeroomBotSection() {
@@ -328,6 +502,48 @@ function HomeroomBotSection() {
     if (data) { setRunIssue(''); load(); }
   };
 
+  // Every open request whose latest verdict is ready and that has no build
+  // yet, into the build lane. The lane works through it at its own pace.
+  const backfill = async () => {
+    const data = await write('/api/admin/homeroom-bot/shadow-builds/backfill', 'POST', {}, 'Queued.');
+    if (!data || !alive.current) return;
+    const left = data.left || {};
+    const notes = [
+      left.live ? `${left.live} on live apps` : null,
+      left.platform ? `${left.platform} on the platform's own repository` : null,
+      left.paused ? `${left.paused} on paused apps` : null,
+    ].filter(Boolean);
+    setStatus({
+      text: data.queued
+        ? `Queued ${data.queued} build${data.queued === 1 ? '' : 's'} across ${data.apps} app${data.apps === 1 ? '' : 's'}.${notes.length ? ` Left out: ${notes.join(', ')}.` : ''}`
+        : `Nothing new to build.${notes.length ? ` Left out: ${notes.join(', ')}.` : ''}`,
+      tone: 'ok',
+    });
+    load();
+  };
+
+  // The questions the bot asked under an older bar, triaged again under the
+  // current prompt: old and new verdicts sit side by side in the export.
+  const retriage = async () => {
+    const data = await write('/api/admin/homeroom-bot/retriage-questions', 'POST', {}, 'Queued.');
+    if (!data || !alive.current) return;
+    setStatus({
+      text: data.queued
+        ? `${data.queued} question${data.queued === 1 ? '' : 's'} will be triaged again.${data.live ? ` ${data.live} on live apps left alone.` : ''}`
+        : `No questions to triage again.${data.live ? ` ${data.live} on live apps left alone.` : ''}`,
+      tone: 'ok',
+    });
+    load();
+  };
+
+  // An ask the bot misread: tag this person on this issue again.
+  const tagAgain = async (o: MentionOptOut) => {
+    const data = await write('/api/admin/homeroom-bot/mention-optouts/remove', 'POST',
+      { slug: o.app_slug, issueNumber: o.issue_number, username: o.username },
+      `@${o.username} is tagged again on ${o.app_name} #${o.issue_number}.`);
+    if (data && alive.current && payload) setPayload({ ...payload, mentionOptOuts: data.mentionOptOuts });
+  };
+
   const savedLive = payload?.settings.liveApps || [];
   const liveRows = liveDraft ?? savedLive;
   const liveChosen = [...new Set(liveRows.filter(Boolean))];
@@ -380,8 +596,8 @@ function HomeroomBotSection() {
         <p className={`${AdminUI.muted} mb-4`} id="admin-homeroom-bot-intro">
           In shadow mode the bot reads each open request, its discussion and the app’s code, and records what it
           would do: the one question it would ask, that the request is ready to build, or that a person has to decide.
-          It posts nothing, claims nothing and builds nothing. Rate its verdicts here; that is what decides whether it
-          is ever allowed to post.
+          It posts nothing and claims nothing, and builds nothing unless shadow builds are on below. Rate its verdicts
+          here; that is what decides whether it is ever allowed to post.
         </p>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -508,6 +724,68 @@ function HomeroomBotSection() {
               A warning, not a stop. The bot only learns what a turn read once the
               turn is over, so a turn past this keeps its verdict and the overrun is
               logged. The minute limit above is what actually ends a runaway turn.
+            </p>
+          </div>
+
+          <div>
+            <label className={AdminUI.label} htmlFor="admin-homeroom-bot-shadow-builds">Shadow builds</label>
+            <select
+              id="admin-homeroom-bot-shadow-builds"
+              className={`${AdminUI.select} mt-1`}
+              value={settings?.shadowBuilds ? 'on' : 'off'}
+              disabled={!canWrite || busy !== ''}
+              onChange={(e) => saveSettings({ shadowBuilds: e.target.value === 'on' }, e.target.value === 'on'
+                ? 'Shadow builds on: each new ready request is built on a branch nobody is shown.'
+                : 'Shadow builds are off. A build under way finishes; nothing new starts.')}
+            >
+              <option value="off">Off</option>
+              <option value="on">On</option>
+            </select>
+            <label className={`${AdminUI.label} block mt-3`} htmlFor="admin-homeroom-bot-build-concurrency">Builds at once</label>
+            <input
+              id="admin-homeroom-bot-build-concurrency"
+              type="number" min="1" max="4" step="1"
+              className={`${AdminUI.input} mt-1`}
+              defaultValue={settings?.buildConcurrency ?? 2}
+              key={`builds-${settings?.buildConcurrency ?? 2}`}
+              disabled={!canWrite}
+              onBlur={(e) => {
+                const n = Number(e.target.value);
+                if (n === settings?.buildConcurrency) return;
+                if (!Number.isInteger(n) || n < 1 || n > 4) {
+                  setStatus({ text: 'Builds at once must be a whole number from 1 to 4.', tone: 'err' });
+                  return;
+                }
+                saveSettings({ buildConcurrency: n }, `The bot now runs up to ${n} shadow build${n === 1 ? '' : 's'} at once, one per app.`);
+              }}
+            />
+            <label className="flex items-center gap-2 mt-3 text-sm" htmlFor="admin-homeroom-bot-shadow-build-platform">
+              <input
+                id="admin-homeroom-bot-shadow-build-platform" type="checkbox"
+                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                checked={!!settings?.shadowBuildPlatform}
+                disabled={!canWrite || busy !== ''}
+                onChange={(e) => saveSettings({ shadowBuildPlatform: e.target.checked }, e.target.checked
+                  ? "The platform's own repository is shadow built too."
+                  : "The platform's own repository is left out of shadow builds.")}
+              />
+              <span>Include the platform's own repository</span>
+            </label>
+            <p className={`${AdminUI.muted} mt-2`} id="admin-homeroom-bot-build-lane">{buildLaneLine(payload?.builds)}</p>
+            {canWrite ? (
+              <button
+                type="button" id="admin-homeroom-bot-shadow-backfill"
+                className={`${AdminUI.btn.outlineSm} mt-2`}
+                disabled={busy !== '' || !settings?.shadowBuilds}
+                onClick={backfill}
+              >Build every open ready request</button>
+            ) : null}
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-shadow-builds-note">
+              On apps outside the live list, a ready request is also built on a branch
+              of the app's repository, and nothing else happens: no proposal, no post,
+              nothing in the app. Each build first writes a spec and then works from it.
+              Builds run beside triage, never in its way, and are paid from the weekly cap
+              above. Each run below shows its branch and its spec for a spot check.
             </p>
           </div>
 
@@ -674,8 +952,46 @@ function HomeroomBotSection() {
             <button type="button" className={AdminUI.btn.outlineSm} disabled={busy !== ''} onClick={runNow}>
               Queue it first
             </button>
+            <button
+              type="button" id="admin-homeroom-bot-retriage"
+              className={AdminUI.btn.outlineSm} disabled={busy !== ''} onClick={retriage}
+            >
+              Triage every open question again
+            </button>
           </div>
         ) : null}
+      </div>
+
+      <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-optouts">
+        <div className={AdminUI.cardHeader}>
+          <h3 className={AdminUI.cardTitle}>Asked not to be tagged</h3>
+          <span className={AdminUI.cardDescription} id="admin-homeroom-bot-optouts-count">
+            {payload ? `${payload.mentionOptOuts.total} ${payload.mentionOptOuts.total === 1 ? 'person' : 'people'}` : ''}
+          </span>
+        </div>
+        <p className={`${AdminUI.muted} mb-2`}>
+          The bot tags whoever filed an issue and whoever took part in it, except these people, who asked
+          it to stop on that issue. They are tagged again when they say so there. Tag again from here only
+          when the bot misread what somebody said.
+        </p>
+        {payload && payload.mentionOptOuts.items.length ? (
+          <ul className="text-sm space-y-1" id="admin-homeroom-bot-optouts-list">
+            {payload.mentionOptOuts.items.map((o) => (
+              <li key={`${o.app_slug}-${o.issue_number}-${o.username}`} className="flex flex-wrap items-center gap-2"
+                data-optout={`${o.app_slug}#${o.issue_number}@${o.username}`}>
+                <span>{`@${o.username} on ${o.app_name} #${o.issue_number}`}</span>
+                <span className={AdminUI.muted}>{`since ${when(o.created_at)}`}</span>
+                {canWrite ? (
+                  <button type="button" className={AdminUI.btn.outlineSm} disabled={busy !== ''} onClick={() => tagAgain(o)}>
+                    Tag again
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className={AdminUI.muted} id="admin-homeroom-bot-optouts-none">Nobody has asked.</p>
+        )}
       </div>
 
       <div className={`${AdminUI.card} p-4`}>
@@ -704,6 +1020,8 @@ function HomeroomBotSection() {
               <option value="ready">Ready to build</option>
               <option value="empty">Nothing to build</option>
               <option value="person">Needs a person</option>
+              <option value="answer">Answered (follow-up)</option>
+              <option value="revise">Revised its proposal</option>
               <option value="failed">Failed</option>
               <option value="budget">Stopped on budget</option>
             </select>
@@ -763,6 +1081,7 @@ function HomeroomBotSection() {
                           {run.budget_stop ? `Stopped: ${run.budget_stop}` : VERDICT_LABEL[run.verdict]}
                         </span>
                         {run.cap_suppressed ? <span className={`${AdminUI.badge.outline} ml-1`}>held</span> : null}
+                        {isFollowUp(run) ? <span className={`${AdminUI.badge.outline} ml-1`}>follow-up</span> : null}
                         <span className={`${AdminUI.muted} ml-2`}>{isOpen ? 'hide' : 'show'}</span>
                       </button>
                     </td>

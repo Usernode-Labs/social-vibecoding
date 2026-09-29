@@ -115,10 +115,11 @@ test('resolver: flips matching open proposals with a pr-merge audit trail and me
     assert.ok(audit.supersededAt);
     assert.equal(audit.issueNumber, 42, 'original payload preserved');
 
-    // Group line + governance-thread dual-post, pr-merge wording names the PR.
-    assert.equal(spies.systemMessages.length, 2);
+    // The governance thread only (a channel carries no activity); the
+    // pr-merge wording names the PR.
+    assert.equal(spies.systemMessages.length, 1);
     assert.match(spies.systemMessages[0][2], /Close proposal for issue #42 resolved automatically: PR #431 closed the issue/);
-    assert.deepEqual(spies.systemMessages[1][5], { type: 'governance', ref: 61 });
+    assert.deepEqual(spies.systemMessages[0][5], { type: 'governance', ref: 61 });
 
     // Same event the withdraw path emits — clients drop the card.
     assert.equal(spies.issueUpdates.length, 1);

@@ -32,266 +32,21 @@
 // tests/pwa-offline-cache.test.js load this file in Node (module.exports
 // branch at the bottom) and pin their behaviour without a browser.
 
-// v6: the shell has no cross-origin assets left (Tailwind is compiled into
-// /css/tailwind.css and marked/DOMPurify/qrcodejs are vendored under
-// /vendor/), so the CDN cache and its stale-while-revalidate strategy are
-// gone. The activate handler prunes any `usernode-*` cache not listed in
-// ALL_CACHES, which retires the old usernode-cdn-v5 entries automatically.
+// Hosted releases use a generated worker and per-asset content hashes.
+// scripts/build-shell-release.js appends this strategy implementation to the
+// generated manifest and release-cache helper. A UI-only change automatically
+// changes the worker bytes and stages a complete shell without a manual bump.
+// The legacy strategy remains for unbuilt development and existing v36 caches.
+// API caching is independent from either shell strategy.
 //
-// The React + shadcn chassis swap added one local asset to the shell —
-// /shell/assets/shell.js — and SHELL_ASSETS below precaches it like any
-// other. It needed no version bump of its own: a byte change to this file
-// re-runs install(), which re-runs the precache with the current list.
+// Legacy development/cache-format identity only. Hosted /sw.js is generated
+// from the final asset manifest: UI changes never require editing this value.
 //
-// v8: a deployed document loads its scripts and stylesheets from build-scoped
-// URLs (/b/<sha>/…, see parseBuildScopedPath). The precache now stores those
-// addresses, so the shell cache is versioned past the plain-path entries a
-// v7 worker filled it with — network-first and content-addressed, it costs
-// nothing to refill, which is exactly why the SHELL cache is versioned and
-// the API cache below is not.
-//
-// v9: document replacement is ordered and its write is held inside the fetch
-// event's lifetime. A v8 cache can contain a document that was briefly shown
-// from the network but never durably stored, so this one-time shell-cache bump
-// starts every existing install from a known current document. The stable API
-// cache below is deliberately preserved.
-//
-// v10: the first bump made for a change that is not in this file at all.
-// #1985 replaced the Workshop's summary paragraph with three cards, and the
-// whole of that lives in the React bundle and in the document that names its
-// build-scoped URL — exactly the two things a deploy rebuilds and the note
-// below says nothing refreshes. It merged, it deployed, production served the
-// new build, and a browser that already had the app kept drawing the old
-// screen: the change reached nobody who had ever loaded the page before.
-//
-// So the rule this entry is really recording: a change whose user-visible
-// surface is ENTIRELY inside the shell bundle needs a bump in the same
-// proposal, because for those there is no second path to the reader. A
-// change that touches public/js/** or a server response does not — those
-// are fetched per navigation and arrive on their own.
-//
-// This bump is also a deliberate cache retirement, not just a code change
-// (#1673 follow-up).
-//
-// BUMPING THIS IS THE REMOTE REMEDY FOR A FLEET STUCK ON AN OLD BUILD, and
-// nothing said so before, so the next person facing one had to re-derive it
-// from the lifecycle below. Write it down here, where the constant is.
-//
-// A deploy rebuilds index.html and /shell/assets/shell.js without touching
-// this file, so nothing refreshes the precache: the shell cache keeps the
-// build it was filled with until some later load happens to win a per-asset
-// race (see the note above prefetchShellAssets). The page-side recovery --
-// the /api/version poll into App._ensureShellPrefetch, then a reload the
-// USER presses -- needs a network, a running poll, and a page intact enough
-// to show a button. A device whose boot ends blank has none of those.
-//
-// Changing these bytes does not. The browser fetches a changed worker on its
-// next NAVIGATION, whether or not the page's own scripts ever run: install()
-// precaches the current build under the new cache name and calls
-// skipWaiting(), activate() deletes every `usernode-*` cache not in
-// ALL_CACHES -- which retires the stale shell outright -- and then calls
-// clients.claim(). No user action, no working page.
-//
-// It is cheap and bounded for the reason the API cache below is NOT
-// versioned: a bump drops only SHELL_CACHE and IMMUTABLE_CACHE, both
-// content-addressed and network-first, and leaves the offline session alone.
-//
-// v12: the Workshop's grouping tabs and the board pane under them. The
-// control, both panes and their CSS class names are all in the React shell
-// bundle — app-view.js gains only the preference and the publish, and on a
-// stale shell there is no tab strip for it to drive. So the user-visible
-// surface is entirely inside the bundle, which is the case the v10 entry
-// above names.
-//
-// v13: the Workshop's working pane — the search, filters and "+" move out of
-// the frame's chrome into a sticky head above the grouping tabs. The toolbar
-// is React's on both surfaces and the pane is entirely in the shell bundle, so
-// a stale shell would draw the old chrome row and no pane at all.
-//
-// v11: refresh the task-time OpenRouter picker. Its controls live in the main
-// shell bundle, while Settings lives in a lazy chunk; without retiring the
-// cached shell, an existing installation could show the new Settings picker
-// alongside the old in-task model list.
-// Card-action cleanup: retire cached shells so existing previews receive
-// the Build tab, its author default, and the simplified full-card controls.
-//
-// v15: THE FIRST BUMP MADE FOR CHANGES IN EARLIER PROPOSALS, which is the
-// variant none of the notes above covers and the reason this one is long.
-//
-// #4150 moved the Workshop's phone tab bar out of the frosted frame and made
-// it `position: fixed`; #4151 made it edge to edge so its surface reaches the
-// physical bottom. Both live ENTIRELY in public/css/app.css, the React shell
-// bundle and the document that names its build-scoped URL — all three
-// precached in SHELL_ASSETS — which is exactly the case the v10 entry says
-// needs a bump IN THE SAME PROPOSAL. Neither bumped it.
-//
-// So both merged, both deployed, production served them, and an installed PWA
-// and the native app kept drawing the cached shell: the bar still rendered as
-// the floating pill resting 42px up. Two rounds of "still not fixed" were the
-// old stylesheet, not the new one — the changes had never reached the device.
-//
-// WHAT THE v10 ENTRY DOES NOT SAY, and this one does: when the bump is missed,
-// it is still the remedy, just late. A later proposal can retire the cache for
-// work that landed earlier, and this is what that looks like. The reason to
-// prefer the same proposal is not that a later one cannot work — it is that
-// between the two, everyone who already had the app is looking at code nobody
-// can tell is stale, including the person who wrote it.
-//
-// v16: the Workshop's phone bar returns to a floating pill and sits lower.
-// Bumped IN THIS PROPOSAL, which is what the v10 entry asks for and what v15
-// had to be filed late for — app.css and the shell bundle are the whole
-// user-visible surface, so without the bump an installed client renders the
-// previous build for at least one load. That lag is exactly what made two
-// earlier rounds of this bar look unfixed: every report was of the deploy
-// before the one being discussed.
-//
-// v17: the Workshop's selection marker — the tab bar's selected fill becomes
-// one element that slides rather than a background redrawn per tab. app.css
-// and the shell bundle are the whole user-visible surface, so the bump belongs
-// in this proposal, per v10.
-//
-// v18: the marker appears on FIRST open, and the desktop strip stops moving
-// between panes. The whole surface is app.css and the shell bundle again, and
-// v17 is already installed on the devices that previewed the marker — so
-// without this bump the fix reaches nobody who saw the bug.
-//
-// v19: Generate proposal becomes a short confirmation with its full model
-// catalog behind a separate search step. The dialog lives in the shell bundle,
-// so an installed client needs a new shell cache to receive the redesign.
-//
-// v20: the platform rename to Homeroom. The precached document's <title>
-// and /manifest.webmanifest's name/short_name both changed, and both are
-// served from the shell cache — without this bump every existing install
-// keeps showing the old name in the tab and on the home screen indefinitely.
-//
-// v21: an OpenRouter session's composer shows its spend again (#2118). The
-// server now reports the turn's cost and the key's remaining allowance, but
-// the meter that draws them is the shell bundle's, and the installed one
-// skips OpenRouter sessions entirely: without the bump the new responses
-// reach a reader that never asks for them.
-//
-// v22: verified social accounts gain Change account, Refresh handle, pending
-// replacement confirmation, and profile-visibility controls (#2260). The
-// previous cached bundle has only Disconnect once an account is linked and
-// still contains the retired free-text profile inputs, so this is also the
-// remote repair for the silent stale-client failure reported after #1939.
-// v23: the four composer columns reserve the on-screen keyboard's height, so
-// the message box stops hiding behind the keys (#1937, #1491). The whole
-// user-visible surface is public/css/app.css and the React shell bundle —
-// precisely the case the v10 entry names — and the miss was caught the way
-// v15 describes, one step earlier for once: the topic thread was verified on
-// a FRESH preview, then the same preview, by then holding a shell cache, drew
-// the general chat from the old stylesheet and read as a fix that simply had
-// not worked. The deployed CSS had the new rule the whole time. Bumped here so
-// an installed client is not the next one to report it as unfixed.
-// v24: the on-screen keyboard is forwarded into app frames (#1937/#1491).
-// An iframe's visualViewport describes the FRAME and the keyboard does not
-// resize the frame, so the kit's tracker computed 0 inside every app and
-// `--un-kb-inset` was never set — every app's bottom-anchored UI was dead to
-// the keyboard however correctly it consumed the var. app-view.js computes and
-// posts it now and the bridge applies it in-frame; both are precached, which
-// is the case the v10 note names. Without the bump an installed client keeps a
-// shell that never sends the value, so no app would see the fix.
-//
-// NOTE FOR WHOEVER MERGES SECOND: the "stop reserving the inset twice"
-// proposal also takes v24 from v23. These two are independent changes that
-// both need a cache retirement, so the loser of the race is a real conflict
-// and wants v25 — not a silent pick of one side.
-
-// v25: and the OTHER half of the same work — the composer column was
-// reserving the inset twice. v23 shipped `.platform-kb-column`, but
-// `attachKeyboardAvoidance` ADDS `un-kb-avoid` to the scroller it is given,
-// so the general chat, the topic thread and the dev chat reserved the
-// keyboard height on the column AND again inside the scroller. A scroll
-// container cannot shrink below its own padding, so #gc-messages floored at
-// 368px and held the composer 197px behind the keys; only the topic thread
-// had enough slack to absorb it, which is why v23 looked verified.
-// app.css again, so the bump belongs here per v10 — and per v15, an
-// installed client that took v23 or v24 would otherwise keep the half-fix.
-//
-// This is the conflict the v24 entry predicted, resolved the way it asked:
-// both notes kept, the version advanced rather than one side silently won.
-//
-// v26 (#1938): /usernode-native/v1/native.js, which is precached in
-// SHELL_ASSETS, so the bump belongs in this same proposal per v10. The kit's
-// keyboardInset() measured the keyboard against window.innerHeight, which iOS
-// collapses to the visual viewport when the keyboard opens — the expression
-// went negative there and reported NO keyboard, which left every iOS client
-// (Safari and installed PWA alike) with --un-kb-inset pinned at 0 and every
-// keyboard-avoidance rule in the kit and in app.css inert. v23-v25 all shipped
-// that, so per v15 an installed client holding any of them would keep serving
-// the old kit from cache and stay broken however correct the new one is.
-//
-// v27 (#1938 follow-up): app.css, precached in SHELL_ASSETS, so per v10 the
-// bump belongs in this same proposal. The Workshop card sheet kept its own
-// copy of the keyboard arithmetic and published `--ws-kb`; its floor now reads
-// the kit's `--un-kb-inset` like every other surface. Without the bump an
-// installed client would pair the NEW shell.js (which no longer sets --ws-kb)
-// with a CACHED app.css (which still reads it) — the sheet would stop lifting
-// on every platform, not just iOS, which is worse than the bug being fixed.
-//
-// v28 (#1929): frontend/src/head.html gains
-// `apple-mobile-web-app-status-bar-style: black-translucent`, so an installed
-// iOS web app gives the PAGE the status-bar strip instead of letting iOS draw
-// it. /index.html carries that meta and is precached in SHELL_ASSETS, so per
-// v10 the bump belongs here — and per v15 an installed client holding v27
-// would otherwise keep serving the old document and never take the meta at
-// all, which is the one asset where a stale copy hides the whole change.
-//
-// v29 (#2307 follow-up): #2311 taught an unsent change's model picker to use
-// the saved OpenRouter backend, but that fix lives entirely in the React shell
-// bundle and omitted the cache retirement required by v10. Existing clients
-// therefore kept drawing the pre-fix Anthropic default even though production
-// was running the merged commit. Retire that stale shell now.
-//
-// v32 (logged-out screens): the signed-out landing and the sign-in steps are
-// redrawn in the shell's own language, and the header chip names the platform
-// with the logotype. All of that lives in /shell/assets/shell.js plus the
-// prerendered /index.html — both precached here — so per v10 the retirement
-// belongs in this same proposal, or an installed PWA and the native app keep
-// drawing the app grid and the "Log in" pill against a server that no longer
-// serves them. The new /brand/people.png joins SHELL_ASSETS in the same
-// change; an entry alone would be install bandwidth nothing ever reads, so
-// classifyRequest gains the matching /brand/ rule below.
-//
-// v33 (#2695): the Done column gains a production-deployment summary. The
-// server and app-view.js publish the new deployment state, but the node that
-// displays the summary lives in /shell/assets/shell.js. A preview browser
-// that already cached v32 therefore kept the old component and silently
-// ignored the new field, making the proposal look unchanged even though the
-// preview served the new API and controller code. Retire that shell here so
-// existing preview tabs and installed clients receive the renderer too.
-//
-// v34 (#2718): THE NAVIGATION REDESIGN, which is the largest shell change
-// these notes have had to cover and exactly the case v10 names. The five
-// places as a permanent bar, the desktop rail and its fold, the header taking
-// the rail's surface, Messages as two panes, the mark's menu — all of it is
-// public/css/app.css, /shell/assets/shell.js and the prerendered
-// /index.html, and all three are precached here. public/js/** changes with
-// them, but a stale shell has no rail for the router to publish to and no
-// second pane for the inbox to fill, so the controller code lands against
-// markup that cannot show it.
-//
-// Found the way v15 says it gets found. The preview was rebuilt and served
-// the new code, and testing still reported one pane in Messages and a back
-// button that went to the Workshop — behaviours measured as correct on the
-// built shell, from a browser that was drawing the cached one. v15 recorded
-// "two rounds of 'still not fixed'" for the same omission; this is the
-// third, and it is the same lesson: the bump belongs in the proposal that
-// changes the shell, not in the one after it.
-//
-// v35 (home-screen icon): the icons are the real Homeroom mark on the brand
-// cream now, and they moved from /icons/icon-*.png to /icons/v2/ — Chrome
-// judges an installed app's icon changed by its URL, so new art gets a new
-// directory. The old files are deleted, and the precached /index.html is
-// what names them in its <head>: a client serving the v34 copy would keep
-// linking a favicon and touch icon the server no longer has. Per v10 the
-// retirement ships with the change, and it drops the old pictures too.
-//
-// v36 (home-screen icon on black): the same mark, now cream on a black tile
-// after feedback, so it moves again, /icons/v2/ to /icons/v3/, for the
-// reason v35 gives — and the cached /index.html names the v2 favicon.
-const SW_VERSION = 'v36';
+// v37 (#3331): replace the In review sorting pill with the compact header
+// button. Bumped past v36 so an unbuilt development checkout also retires the
+// pre-compact-sorting shell cache, matching the fresh-browser renderer
+// (tests/pwa-offline-cache.test.js).
+const SW_VERSION = 'v37';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
@@ -1046,6 +801,12 @@ if (typeof module !== 'undefined' && module.exports) {
   };
 } else {
   const ORIGIN = self.location.origin;
+  const releaseCache = self.__USERNODE_SHELL_RELEASE__
+    ? createShellReleaseCache({
+      manifest: self.__USERNODE_SHELL_RELEASE__, storage: caches,
+      fetcher: fetch, worker: self, cryptoApi: self.crypto, origin: ORIGIN,
+      canReplaceDocument: shouldReplaceShellDocument,
+    }) : null;
 
   // ── Per-page-load shell consistency ─────────────────────────────────
   // The shell's assets are deliberately UNHASHED, so index.html does not
@@ -1212,6 +973,10 @@ if (typeof module !== 'undefined' && module.exports) {
   }
 
   async function networkFirstShell(event) {
+    if (releaseCache) {
+      const response = await releaseCache.respond(event);
+      if (response) return response;
+    }
     const cache = await caches.open(SHELL_CACHE);
     const fetchAndCache = () => fetch(event.request).then((res) => {
       // Clone synchronously, before the page can start reading the body.
@@ -1314,6 +1079,7 @@ if (typeof module !== 'undefined' && module.exports) {
   }
 
   async function networkFirstNavigate(event) {
+    if (releaseCache) return releaseCache.navigate(event);
     const cache = await caches.open(SHELL_CACHE);
 
     // The cached document MUST be refreshed from here. install() precaches
@@ -1422,6 +1188,45 @@ if (typeof module !== 'undefined' && module.exports) {
   const awaitingNetwork = new Set();
   const CORRECTION_WAIT_MS = 10000;
 
+  // ── One network request for identical reads in flight ─────────────────
+  //
+  // A screen is assembled from components that each load what they draw, and
+  // several ask for the same read in the same moment: measured across the
+  // shell, the Notifications screen fetched its list twice, Create read the
+  // app allowance three times, a change's page its own row and status twice,
+  // a request's page its issue and comments twice. Each duplicate is a round
+  // trip on a phone, and on a six-connection HTTP/1.1 link it queues behind
+  // the others.
+  //
+  // So an API GET for a URL that went to the network within the last
+  // API_SHARE_WINDOW_MS waits for that request instead of starting another.
+  // Every asker still gets its own Response (a clone; the shared original is
+  // never read), and nothing is kept once the request settles.
+  //
+  // Only reads asked for in the same moment share. A request can be seconds
+  // in flight on a slow link, and a read that joined it late could get an
+  // answer the server gave before something the page has since done: vote,
+  // then reload the list the vote changed. So a request stops taking joiners
+  // after the window, and any write the page sends (the fetch handler below)
+  // ends sharing for every request already in flight. A read asked for after
+  // either is a new request, exactly as before.
+  const API_SHARE_WINDOW_MS = 100;
+  const inflightApi = new Map();
+
+  function sharedApiFetch(request) {
+    const key = request.url;
+    const now = Date.now();
+    const open = inflightApi.get(key);
+    if (open && now - open.startedAt <= API_SHARE_WINDOW_MS) {
+      return open.pending.then((res) => res.clone());
+    }
+    const entry = { pending: fetch(request), startedAt: now };
+    inflightApi.set(key, entry);
+    const settle = () => { if (inflightApi.get(key) === entry) inflightApi.delete(key); };
+    entry.pending.then(settle, settle);
+    return entry.pending.then((res) => res.clone());
+  }
+
   async function networkFirstApi(event) {
     const cache = await caches.open(API_CACHE);
     // Did we answer this request from cache while the network was still in
@@ -1445,7 +1250,7 @@ if (typeof module !== 'undefined' && module.exports) {
       : laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
 
     const { response, pending } = await raceNetworkAndCache({
-      startFetch: () => fetch(event.request).then((res) => {
+      startFetch: () => sharedApiFetch(event.request).then((res) => {
         // Only genuine successes are worth replaying offline; 401/403/500
         // must never mask a later real answer. Clone before returning —
         // once the page starts reading the body the response is locked.
@@ -1604,6 +1409,11 @@ if (typeof module !== 'undefined' && module.exports) {
 
   self.addEventListener('install', (event) => {
     event.waitUntil((async () => {
+      if (releaseCache) {
+        await releaseCache.install();
+        await self.skipWaiting();
+        return;
+      }
       const shell = await caches.open(SHELL_CACHE);
       // Per-asset, best-effort: one 404 must not brick the whole install.
       // Every asset the shell needs is same-origin now, so a completed
@@ -1648,6 +1458,12 @@ if (typeof module !== 'undefined' && module.exports) {
     event.waitUntil((async () => {
       const names = await caches.keys();
       await migrateLegacyApiCaches(names);
+      if (releaseCache) {
+        await releaseCache.activate();
+        await pruneStaleApiEntries();
+        await self.clients.claim();
+        return;
+      }
       // Drop caches from older SW versions.
       await Promise.all(names
         .filter((n) => n.startsWith('usernode-') && !ALL_CACHES.includes(n))
@@ -1690,6 +1506,7 @@ if (typeof module !== 'undefined' && module.exports) {
   // — the rollout-crossed case precacheShell names, which the page retries
   // rather than settles.
   async function prefetchShellAssets(expectedBuild) {
+    if (releaseCache) return releaseCache.prefetch(expectedBuild);
     if (!/^[0-9a-f]{7,40}$/.test(String(expectedBuild || ''))) {
       return { ok: false, mismatch: false };
     }
@@ -1715,6 +1532,10 @@ if (typeof module !== 'undefined' && module.exports) {
 
   self.addEventListener('message', (event) => {
     const type = event.data && event.data.type;
+    if (type === 'shell-client-build' && releaseCache && event.source?.id) {
+      event.waitUntil(releaseCache.noteClient(event.source.id, event.data.build)
+        .then(() => releaseCache.cleanup()).catch(() => {}));
+    }
     if (type === 'clear-api-cache') {
       event.waitUntil((async () => {
         await clearApiCaches();
@@ -1757,6 +1578,10 @@ if (typeof module !== 'undefined' && module.exports) {
 
   self.addEventListener('fetch', (event) => {
     const req = event.request;
+
+    // A write ends sharing: no read asked for after it may join one that
+    // could have been answered before it (sharedApiFetch). A logout is one.
+    if (req.method !== 'GET' && req.method !== 'HEAD') inflightApi.clear();
 
     // Belt-and-braces logout isolation: a logout passing through (never
     // intercepted — it's a POST) still wipes the per-user API cache.

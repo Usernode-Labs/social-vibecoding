@@ -34,7 +34,7 @@ const SCHEMA_NAME = `unpromote_test_${process.pid}`;
 // The merge claim and the promote CAS, lifted out of routes/votes.js rather
 // than retyped, so this file keeps describing the statements that ship.
 const MERGE_CLAIM_SQL = (() => {
-  const m = VOTES_SRC.match(/`(UPDATE chat_sessions SET status = 'merging'\s+WHERE id = \$1 AND status = 'promoted'\s+RETURNING id)`/);
+  const m = VOTES_SRC.match(/`(UPDATE chat_sessions SET status = 'merging', merge_attempt_at = NOW\(\)\s+WHERE id = \$1 AND status = 'promoted'\s+RETURNING id)`/);
   assert.ok(m, 'the promoted -> merging claim must be findable in routes/votes.js');
   return m[1];
 })();
@@ -89,6 +89,7 @@ async function connectPool() {
       approval_epoch INTEGER NOT NULL DEFAULT 0,
       stale_notified_at TIMESTAMPTZ,
       promoted_at TIMESTAMPTZ,
+      merge_attempt_at TIMESTAMPTZ,
       pr_number INTEGER,
       pr_title TEXT,
       integration_block_reasons JSONB,
@@ -266,9 +267,9 @@ test('unpromote against a real PostgreSQL', async (t) => {
       assert.ok(s[0].promoted_at, 'promoted_at stays: it records that it was once proposed');
 
       assert.deepEqual(loaded.spies.destroyed, ['usernode-worker-10']);
-      assert.equal(loaded.spies.chat.length, 2, 'app chat and the proposal thread');
+      assert.equal(loaded.spies.chat.length, 1, 'the proposal thread; a channel carries no activity');
       assert.match(loaded.spies.chat[0].content, /alice moved PR #7: Tidy the header back to Underway/);
-      assert.deepEqual(loaded.spies.chat[1].thread, { type: 'session', ref: 10 });
+      assert.deepEqual(loaded.spies.chat[0].thread, { type: 'session', ref: 10 });
       assert.doesNotMatch(loaded.spies.chat[0].content, /—/, 'no em dashes in product copy');
       assert.equal(loaded.spies.sessionUpdates.at(-1).action, 'unpromoted');
       assert.equal(loaded.spies.voteUpdates.at(-1).sessionId, 10);
@@ -278,7 +279,7 @@ test('unpromote against a real PostgreSQL', async (t) => {
       const again = await srv.post(10);
       assert.equal(again.status, 200);
       assert.equal(again.body.alreadyUnderway, true);
-      assert.equal(loaded.spies.chat.length, 2, 'a repeat posts nothing');
+      assert.equal(loaded.spies.chat.length, 1, 'a repeat posts nothing');
     });
 
     await t.test('an Underway proposal cannot be voted on or claimed for a merge', async () => {

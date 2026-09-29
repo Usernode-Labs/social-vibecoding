@@ -1216,12 +1216,24 @@ export function ActionBand({ actions, menuKey, preview, lead, actionEnd, dense }
   const hasActions = bandPrimary.length > 0 || !!actionEnd || !!menuTrigger || !!bandPreview;
   const folded = useFoldedActions(bandPrimary, menuKey || '', !!bandPreview);
   if (!hasActions && !lead) return dense ? <div className="gc-card-actions"></div> : null;
+  // `folded.n` counts the pills that can fold (useFoldedActions' foldSpecs:
+  // not the kudos slot, not a Preview spec), so the ones it hides are the
+  // last n OF THOSE. Counting from the end of every spec hid the wrong pill
+  // whenever a kudos slot or a Preview sat among them, and the next measure
+  // put it back: the row changed twice in a frame.
+  const foldable = bandPrimary.filter((a) => a.kudos == null && !a.preview).length;
+  let foldIndex = -1;
   return (
     <div className="gc-card-actions" ref={folded.ref} data-band-measured={folded.measured ? '1' : undefined}>
       {lead}
-      {bandPrimary.map((a, i) => (
-        <ActionButton key={a.key} a={a} fold={a.kudos == null ? i + 1 : undefined} hidden={i >= bandPrimary.length - folded.n} />
-      ))}
+      {bandPrimary.map((a, i) => {
+        const folds = a.kudos == null && !a.preview;
+        if (folds) foldIndex += 1;
+        return (
+          <ActionButton key={a.key} a={a} fold={a.kudos == null ? i + 1 : undefined}
+            hidden={folds && foldIndex >= foldable - folded.n} />
+        );
+      })}
       {actionEnd}
       {bandPreview}
       {menuTrigger}
@@ -1519,6 +1531,16 @@ function useFoldedActions(
       setMeasured(true);
     };
     measure();
+    // The observer reports the band's size once on `observe` too, which
+    // re-ran the whole measurement (and its forced layouts) for a width it
+    // had just measured. Only a width that moved is worth it.
+    let measuredWidth = band.clientWidth;
+    const resized = () => {
+      const width = band.clientWidth;
+      if (width === measuredWidth) return;
+      measuredWidth = width;
+      measure();
+    };
     // Re-measure when the band's width changes — and when its CONTENT does:
     // a merged card's kudos slot is filled by app-view.js after this effect
     // has run (the column's layout effect, a parent's, runs after the
@@ -1528,7 +1550,7 @@ function useFoldedActions(
     // `data-folded` is not observed: measure() writes it.
     const off: Array<() => void> = [];
     if (typeof ResizeObserver === 'function') {
-      const ro = new ResizeObserver(measure);
+      const ro = new ResizeObserver(resized);
       ro.observe(band);
       off.push(() => ro.disconnect());
     }

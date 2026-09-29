@@ -552,7 +552,8 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
   assert.match(platformFallback,
     /if \(Home\._appsLoaded\) \{[\s\S]{0,400}Home\._restrictedPlatformTarget\(slug\)/,
     'not served: the restricted Homeroom target, not no target');
-  const loadStart = home.indexOf('  async load() {');
+  // load() is the single-flight gate; the load itself is _loadOnce().
+  const loadStart = home.indexOf('  async _loadOnce() {');
   const load = home.slice(loadStart, home.indexOf('\n  },', loadStart));
   assert.ok(load.includes('Home.publishImproveTarget();'),
     'load() publishes before its own fetch — render() does not run until it lands');

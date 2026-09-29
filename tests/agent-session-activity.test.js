@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { withStateRead } = require('./lib/agent-session-state-read');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -129,7 +130,7 @@ test('a burst of pushes is one read of the list, and the open conversation keeps
   // (QA 2026-09-24 Q35, lib/platform-viewer.ts), which is `App.user`.
   globalThis.window = { location: { hash: '' }, App: { setHeaderTitle() {}, user: { id: 1 } }, UsernodeReact: {} };
   globalThis.EventSource = class { close() {} };
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = withStateRead(async (url) => {
     requests.push(url);
     const body = url.startsWith('/api/agent-sessions?') || url === '/api/agent-sessions'
       ? { sessions: [session({ doneUnseen: listDone })], nextBefore: null }
@@ -137,7 +138,7 @@ test('a burst of pushes is one read of the list, and the open conversation keeps
         : /\/actions$/.test(url) ? { actions: [] }
           : { session: session({ doneUnseen: false }), turn: null };
     return { ok: true, status: 200, json: async () => body };
-  };
+  });
   try {
     const store = loadTsx('frontend/src/features/agent-session/store.ts');
     await store.loadAgentSessions();

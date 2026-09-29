@@ -17,6 +17,59 @@ const platformJwt = require('../src/services/platform-jwt');
 const contract = require('../src/services/visual-evidence-plan');
 const fixtures = require('./fixtures/visual-evidence');
 
+async function listen(app, t) {
+  const server = await new Promise((resolve) => {
+    const started = app.listen(0, '127.0.0.1', () => resolve(started));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  return server;
+}
+
+test('the authenticated pair reset endpoint returns both replacement origins atomically', async (t) => {
+  controlPlane._clearForTests();
+  const runId = 'b'.repeat(32);
+  const sessionId = 43;
+  let resets = 0;
+  const registration = controlPlane.registerRun({
+    runId,
+    sessionId,
+    intent: fixtures.intent(),
+    context: {},
+    expiresAt: Date.now() + 10_000,
+    resetPair: async () => {
+      resets += 1;
+      return {
+        origins: {
+          base: `http://base-${resets}.test`,
+          head: `http://head-${resets}.test`,
+        },
+        bothSidesReset: true,
+      };
+    },
+    runPlan: async () => assert.fail('unexpected replay'),
+  });
+  t.after(() => { registration.unregister(); controlPlane._clearForTests(); });
+
+  const app = express();
+  app.use(express.json());
+  app.use(internalRoutes({ jwtSecret: process.env.JWT_SECRET }));
+  const server = await listen(app, t);
+  const token = platformJwt.signEvidenceToken({ runId, sessionId });
+  const response = await fetch(
+    `http://127.0.0.1:${server.address().port}/api/internal/evidence/${runId}/reset-pair`,
+    { method: 'POST', headers: { authorization: `Bearer ${token}` } }
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    result: {
+      origins: { base: 'http://base-1.test', head: 'http://head-1.test' },
+      bothSidesReset: true,
+    },
+  });
+  assert.equal(resets, 1);
+});
+
 test('the authenticated plan endpoint responds before paired replay finishes', async (t) => {
   controlPlane._clearForTests();
   const runId = 'a'.repeat(32);
@@ -39,10 +92,7 @@ test('the authenticated plan endpoint responds before paired replay finishes', a
   const app = express();
   app.use(express.json());
   app.use(internalRoutes({ jwtSecret: process.env.JWT_SECRET }));
-  const server = await new Promise((resolve) => {
-    const started = app.listen(0, '127.0.0.1', () => resolve(started));
-  });
-  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const server = await listen(app, t);
 
   const url = `http://127.0.0.1:${server.address().port}/api/internal/evidence/${runId}/run-plan`;
   const token = platformJwt.signEvidenceToken({ runId, sessionId });

@@ -83,6 +83,11 @@ const PATH_EXEMPTIONS = [
 const REVIEWED_ROUTE_EXEMPTIONS = [
   {
     matches: (route) => route.source === 'server.js'
+      && ['/sw.js', '/shell/release.json'].includes(route.path),
+    reason: 'generated service-worker and asset manifest delivery, not an interactive control',
+  },
+  {
+    matches: (route) => route.source === 'server.js'
       && ['/health', '/claude.md', '/node-status'].includes(route.path),
     reason: 'public health, documentation, or redirect surface rather than a signed-in Classic control',
   },
@@ -90,6 +95,10 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     matches: (route) => route.source === 'server.js'
       && ['/admin', '/admin-features', '/dashboard', '/debug', '/gallery', '*'].includes(route.path),
     reason: 'legacy or catch-all document route represented by in-app navigation capabilities',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/community-invites.js' && route.path === '/invite/:token',
+    reason: 'invite-link document: the shell with a link preview, represented by the invite-link capabilities',
   },
   {
     matches: (route) => route.path === '/api/iframe-token',
@@ -187,6 +196,7 @@ const CLIENT_REFERENCE_EXEMPTIONS = [
 ];
 
 const DOMAIN_RULES = [
+  [/^\/api\/me\/app-blocks(?:\/|$)/, 'settings'],
   [/^\/api\/v4\/admin(?:\/|$)/, 'admin'],
   [/^\/api\/v4\/mobile(?:\/|$)/, 'native'],
   [/^\/challenges-api(?:\/|$)/, 'leaderboards'],
@@ -459,6 +469,7 @@ function classicPathFor(domain, routePath) {
   const value = String(routePath || '');
   const inApp = value.includes(':slug');
   const appRoot = '#app/:slug';
+  if (/^\/api\/me\/app-blocks(?:\/|$)/.test(value)) return '#settings/blocked-apps';
   if (domain === 'settings') return '#settings';
   if (domain === 'admin') return '#admin';
   if (domain === 'notifications') return '#notifications';

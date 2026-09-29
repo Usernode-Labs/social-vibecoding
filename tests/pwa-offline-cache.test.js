@@ -29,6 +29,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const vm = require('node:vm');
 
 const {
   isImmuneApiRequest,
@@ -112,6 +113,65 @@ test('the activate prune still deletes caches this worker does not own', () => {
   // stale SHELL caches from older versions still have to go.
   assert.ok(!ALL_CACHES.includes('usernode-shell-v1'));
   assert.ok(!ALL_CACHES.includes('usernode-immutable-v1'));
+});
+
+test('upgrading the review-sort shell retires v36 assets and preserves offline sign-in', async () => {
+  const stores = new Map();
+  const keyOf = request => new URL(typeof request === 'string' ? request : request.url, ORIGIN).href;
+  const caches = {
+    open: async name => {
+      if (!stores.has(name)) stores.set(name, new Map());
+      const entries = stores.get(name);
+      return {
+        match: async request => entries.get(keyOf(request))?.clone(),
+        put: async (request, response) => { entries.set(keyOf(request), response.clone()); },
+        keys: async () => [...entries.keys()].map(url => new Request(url)),
+        delete: async request => entries.delete(keyOf(request)),
+      };
+    },
+    keys: async () => [...stores.keys()],
+    delete: async name => stores.delete(name),
+  };
+  const oldShell = await caches.open('usernode-shell-v36');
+  await oldShell.put('/index.html', new Response('old document'));
+  await oldShell.put('/shell/assets/shell.js', new Response('old full-width sorting pill'));
+  await caches.open('usernode-immutable-v36');
+  const api = await caches.open(API_CACHE);
+  const session = JSON.stringify({ user: { id: 3, username: 'reviewer' } });
+  await api.put('/api/auth/me', new Response(session));
+  await caches.open('another-app-cache');
+
+  const handlers = {};
+  const lifecycle = [];
+  vm.runInNewContext(SW_SRC, {
+    self: {
+      location: { origin: ORIGIN },
+      addEventListener: (name, handler) => { handlers[name] = handler; },
+      skipWaiting: async () => { lifecycle.push('skipWaiting'); },
+      clients: { claim: async () => { lifecycle.push('claim'); } },
+    },
+    URL, Headers, Request, Response, caches, setTimeout, clearTimeout,
+    // Staging can serve an unstamped shell at these same asset URLs.
+    fetch: async request => new Response(keyOf(request).endsWith('/shell/assets/shell.js')
+      ? 'new compact sorting button' : 'new shell asset'),
+  });
+  for (const name of ['install', 'activate']) {
+    let completed;
+    handlers[name]({ waitUntil: promise => { completed = promise; } });
+    await completed;
+  }
+
+  const names = await caches.keys();
+  assert.ok(!names.includes('usernode-shell-v36'), 'the previous renderer cache must be retired');
+  assert.ok(!names.includes('usernode-immutable-v36'));
+  const shell = await caches.open(names.find(name => name.startsWith('usernode-shell-')));
+  assert.equal(await (await shell.match('/shell/assets/shell.js')).text(), 'new compact sorting button');
+  assert.equal(await (await shell.match('/index.html')).text(), 'new shell asset');
+  const retainedApi = await caches.open(API_CACHE);
+  assert.equal(await (await retainedApi.match('/api/auth/me')).text(), session);
+  assert.ok(names.includes(API_CACHE));
+  assert.ok(names.includes('another-app-cache'));
+  assert.deepEqual(lifecycle, ['skipWaiting', 'claim']);
 });
 
 test('legacy version-named API caches are recognised for migration', () => {
@@ -875,7 +935,7 @@ test('a refresh of a board already on screen tells the worker it is not a boot',
   assert.match(refreshActive.slice(0, 1200),
     /if \(document\.hidden\) return;[\s\S]*?App\._announceRefreshIntent\(\);[\s\S]*?const visible =/,
     'a correction re-pull announces refresh intent before any loader runs');
-  const refreshDev = view.slice(view.indexOf('  refreshDevData(kind) {'));
+  const refreshDev = view.slice(view.indexOf('  refreshDevData(kind, live = null) {'));
   assert.match(refreshDev.slice(0, 800), /App\._announceRefreshIntent\?\.\(\);/,
     'every live board refresh announces refresh intent');
   // And the worker honours it: an announced refresh is never laned.

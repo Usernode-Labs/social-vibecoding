@@ -2,10 +2,10 @@ import { memo, useRef, useState } from 'react';
 
 import {
   BookmarkIcon, BookmarkSolidIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
-  PencilSquareIcon, ReplyArrowIcon, ThreadIcon, UserIcon,
+  PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
-import * as api from './api';
+import { openReport } from '../dialogs/report';
 import {
   deleteMessage, discardFailed, edit, markUnread, messageAddress, openThread, react, retrySend, scopeKey, setReply,
   setUserBlocked, toggleSaved,
@@ -15,11 +15,11 @@ import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './f
 import { confirmAction } from '../../lib/confirm';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { messageStamp, timeOfDay } from '../../lib/timestamp';
-import { ReportForm, submitReport } from '../reports/report-form';
 import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
 import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
 import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
 import { EmojiPicker } from '../message-actions/emoji-picker';
+import { ImageViewer, openInViewer } from '../image-viewer/image-viewer';
 import { rememberReaction, useRecentReactions } from '../message-actions/recents';
 import { ThreadSummaryChip } from '../message-actions/thread-summary';
 import { useDismiss } from '../message-actions/use-dismiss';
@@ -40,15 +40,21 @@ import { useDismiss } from '../message-actions/use-dismiss';
  * three recent reactions, the picker, Reply, Save and ⋯ — on hover with a
  * pointer, and the same acts in a sheet on a long press on a phone. ⋯ holds
  * the rarer ones: the thread, edit, copy, the link, mark unread, delete,
- * report and block.
+ * report and block. Report message opens the shared reporting dialog
+ * (../dialogs/report.tsx), which feeds the platform's one moderation queue
+ * rather than an inline form of its own (issue #2721).
  */
 
 function Attachment({ attachment }: { attachment: ConversationMessage['attachments'][number] }) {
   const image = attachment.contentType.startsWith('image/');
   const html = attachment.contentType === 'text/html' || /\.html?$/i.test(attachment.name);
+  // #3286: a plain tap opens the picture in the app's own viewer, which has
+  // a way out (../image-viewer/image-viewer.tsx).
+  const [viewing, setViewing] = useState(false);
   return (
     <div className="messages-attachment">
-      {image ? <a href={attachment.url} target="_blank" rel="noopener noreferrer"><img src={attachment.url} alt={attachment.name} loading="lazy" /></a> : <span className="messages-file-icon" aria-hidden="true">{html ? '</>' : '↓'}</span>}
+      {image ? <a href={attachment.url} target="_blank" rel="noopener noreferrer" data-image-open="" onClick={(event) => openInViewer(event, () => setViewing(true))}><img src={attachment.url} alt={attachment.name} loading="lazy" /></a> : <span className="messages-file-icon" aria-hidden="true">{html ? '</>' : '↓'}</span>}
+      {viewing ? <ImageViewer src={attachment.url} alt={attachment.name} onClose={() => setViewing(false)} /> : null}
       <div className="min-w-0 flex-1"><a className="font-medium truncate block" href={attachment.url} download>{attachment.name}</a><span>{fileSize(attachment.size)}</span></div>
       {html && attachment.viewUrl ? <a className="messages-attachment-view" href={attachment.viewUrl} target="_blank" rel="noopener noreferrer">Preview</a> : null}
     </div>
@@ -96,8 +102,6 @@ export const MessageRow = memo(function MessageRow({
   const [editValue, setEditValue] = useState(message.content);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
-  const [reporting, setReporting] = useState(false);
-  const [userReporting, setUserReporting] = useState(false);
   const bar = useRef<HTMLDivElement>(null);
   const moreButton = useRef<HTMLButtonElement>(null);
   const pickerButton = useRef<HTMLButtonElement>(null);
@@ -198,9 +202,11 @@ export const MessageRow = memo(function MessageRow({
   if (mine) {
     items.push({ key: 'delete', label: 'Delete message', icon: DraftTrashIcon, danger: true, separated: true, onSelect: () => { void remove(); } });
   } else {
-    items.push({ key: 'report', label: 'Report message', icon: FlagIcon, separated: true, onSelect: () => { setReporting(true); setUserReporting(false); setNotice(''); } });
+    items.push({
+      key: 'report', label: 'Report message', icon: FlagIcon, separated: true,
+      onSelect: () => openReport({ targetType: 'conversation_message', target: message.id, label: `Message from @${message.sender.username}`, userId: message.sender.id }),
+    });
     if (message.sender.id) {
-      items.push({ key: 'report-user', label: `Report @${message.sender.username}`, icon: UserIcon, onSelect: () => { setUserReporting(true); setReporting(false); } });
       items.push({ key: 'block', label: `Block @${message.sender.username}`, icon: NoSymbolIcon, danger: true, disabled: busy, onSelect: () => { void blockSender(); } });
     }
   }
@@ -234,7 +240,7 @@ export const MessageRow = memo(function MessageRow({
   );
 
   // Everything a message carries besides its text: files, shared items,
-  // reactions, the thread under it, the report form and the status line.
+  // reactions, the thread under it and the status line.
   const extras = (
     <>
       {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
@@ -254,10 +260,6 @@ export const MessageRow = memo(function MessageRow({
           onOpen={() => openThread(message.id)}
         />
       ) : null}
-      {reporting ? <ReportForm kind="message" onCancel={() => setReporting(false)}
-        onSubmit={(reason, detail) => api.reportMessage(conversationId, message.id, reason as Parameters<typeof api.reportMessage>[2], detail)} /> : null}
-      {userReporting ? <ReportForm kind="user" onCancel={() => setUserReporting(false)}
-        onSubmit={(reason, detail) => submitReport(`/api/users/${encodeURIComponent(message.sender.username)}/report`, reason, detail)} /> : null}
       {notice ? <p role="status" className="mt-1 text-sm text-red-700 dark:text-red-400">{notice}</p> : null}
     </>
   );
@@ -290,7 +292,7 @@ export const MessageRow = memo(function MessageRow({
     </MessageActionBar>
   ) : null;
 
-  const stateClasses = `${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''} ${message.deleted ? 'messages-message-deleted' : ''} ${focused ? 'messages-message-focus' : ''}`;
+  const stateClasses = `${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''} ${message.deleted ? 'messages-message-deleted' : ''} ${focused ? 'messages-message-focus' : ''} ${message.system ? 'messages-message-system' : ''}`;
 
   // The state word a header carries — edited. A continuation line has no
   // header, so it carries it on a meta line of its own, beside nothing: the

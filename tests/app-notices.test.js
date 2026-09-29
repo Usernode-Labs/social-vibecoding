@@ -1,0 +1,140 @@
+'use strict';
+
+// A project's notices on its Workshop tab (services/app-notices.js,
+// GET /api/apps/:slug/notices, dev-board/workshop/notices.tsx), and the doors
+// to a project's hub that open the hub (AppView._landOnHub).
+//
+// Channels carry no activity, so the two app-wide notices that had nowhere
+// else to be seen — settings changed lately and the Friday card — are this
+// panel, read from `events`. Merges paused and a stalled release stay the
+// project page's banners.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+
+const ROOT = path.join(__dirname, '..');
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const notices = require('../src/services/app-notices');
+const PANEL = 'frontend/src/features/dev-board/workshop/notices.tsx';
+
+const at = new Date('2026-09-27T10:00:00Z');
+
+test('each settings change reads as a line, and a change a vote carried names nobody', () => {
+  const row = (event_type, metadata, username = 'ada') => notices.settingsLine({ event_type, metadata, username, created_at: at });
+  assert.deepEqual(row('visibility_changed', { to: { collab: 'private', view: 'public' }, source: 'manifest' }), {
+    kind: 'visibility', text: 'Who can see it changed: anyone can see it; its members build', by: null, at: at.toISOString(),
+  });
+  assert.equal(row('visibility_changed', { to: { collab: 'private', view: 'private' }, source: 'manifest' }).text,
+    'Who can see it changed: only its members can see it');
+  assert.equal(row('governance_changed', { to: { approverPolicy: 'invited', approvalsRequired: 2 }, source: 'manifest' }).text,
+    'Approval rule changed: approvals by invited approvers, requiring at least 2 approvals');
+  assert.equal(row('app_admins_changed', { to: ['ada', 'bo'], source: 'manifest' }).text, 'Admins changed: @ada, @bo');
+  const lock = row('app_lock_changed', { locked: true });
+  assert.equal(lock.text, 'Locked: merges also need an admin’s yes vote');
+  assert.equal(lock.by, 'ada', 'a person toggled it');
+  assert.equal(row('app_lock_changed', { locked: false }).text, 'Unlocked: merges no longer need an admin’s yes vote');
+  assert.deepEqual(row('approver_joined', {}, 'bo'), { kind: 'approver', text: '@bo became an approver', by: null, at: at.toISOString() });
+  assert.equal(row('approver_joined', {}, null), null, 'nobody to name, nothing to say');
+  assert.equal(row('governance_changed', {}), null);
+  assert.equal(row('pr_merged', {}), null, 'only the settings kinds');
+});
+
+test('the Friday card is shown while it is fresh, as its own sentence', () => {
+  assert.equal(notices.weekCard(null), null);
+  assert.equal(notices.weekCard({ metadata: { mergedTotal: 0, openTotal: 0 }, created_at: at }), null);
+  const card = notices.weekCard({
+    created_at: at,
+    metadata: {
+      app: 'Tiers', slug: 'tiers', mergedTotal: 1, openTotal: 1,
+      merged: [{ id: 41, prNumber: 41, title: 'Custom tier colors', author: 'evan', backers: ['alice'] }],
+      open: [{ id: 42, prNumber: 42, title: 'Dark mode', author: 'bo' }],
+    },
+  });
+  assert.equal(card.at, at.toISOString());
+  assert.equal(card.mergedTotal, 1);
+  assert.match(card.line, /^This week on Tiers: 1 change went live: Custom tier colors \(evan, backed by alice\)\./);
+  assert.deepEqual(card.merged, [{ title: 'Custom tier colors', author: 'evan' }]);
+});
+
+test('the reads: this app, the settings kinds, the last week; the latest card of the last three days', async () => {
+  assert.match(notices.SETTINGS_SQL, /e\.event_type = ANY\(\$2::text\[\]\)\s+AND e\.created_at > NOW\(\) - \(\$3 \|\| ' days'\)::interval\s+AND e\.app_id = \$1/);
+  assert.match(notices.WEEK_SQL, /e\.event_type = 'weekly_digest'/);
+  assert.deepEqual([...notices.SETTINGS_TYPES], ['visibility_changed', 'governance_changed', 'app_admins_changed', 'app_lock_changed', 'approver_joined']);
+  assert.equal(notices.SETTINGS_DAYS, 7);
+  assert.equal(notices.WEEK_DAYS, 3);
+  const seen = [];
+  const pool = { query: async (sql, params) => { seen.push(params); return { rows: [] }; } };
+  assert.deepEqual(await notices.forApp(pool, 12), { settings: [], week: null });
+  assert.deepEqual(seen, [[12, notices.SETTINGS_TYPES, '7', 8], [12, '3']]);
+});
+
+test('a staging demo page shows one of each, only where the record has none', () => {
+  const demo = notices.withDemoNotices({ settings: [], week: null });
+  assert.equal(demo.settings.length, 1);
+  assert.equal(demo.settings[0].kind, 'governance');
+  assert.ok(demo.week && demo.week.demo);
+  const real = { settings: [{ kind: 'lock', text: 'Locked', by: 'ada', at: null }], week: null };
+  assert.equal(notices.withDemoNotices(real).settings, real.settings);
+  const route = read('src/routes/app-notices.js');
+  assert.match(route, /if \(IS_STAGING && req\.query\.demo === '1'\) return res\.json\(notices\.withDemoNotices\(found\)\);/);
+  assert.match(route, /appAccess\.getAppForUser\(\s*pool, req\.params\.slug, req\.user, 'view', appAccess\.ACCESS_COLUMNS\s*\);\s*if \(!app\) return res\.status\(404\)/,
+    'view access; a project the viewer cannot see is not disclosed');
+  assert.match(read('server.js'), /app\.use\(appNoticesRoutes\(config\)\);/);
+});
+
+test('what feeds it: the lock toggle and the Friday sweep record events, not channel lines', () => {
+  const apps = read('src/routes/apps.js');
+  const lock = apps.slice(apps.indexOf("router.post('/api/apps/:slug/lock'"), apps.indexOf("router.post('/api/apps/:slug/main-check/resume'"));
+  assert.match(lock, /type: events\.EVENT_TYPES\.APP_LOCK_CHANGED,\s*userId: req\.user\.id,\s*appId: app\.id,\s*metadata: \{ locked: app\.locked \},/);
+  assert.doesNotMatch(lock, /sendSystemMessage/);
+  const digest = read('src/services/weekly-digest.js');
+  assert.match(digest, /await events\.record\(pool, \{ type: events\.EVENT_TYPES\.WEEKLY_DIGEST, appId: app\.id, metadata: digest \}\);/);
+  assert.doesNotMatch(digest.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ''), /sendSystemMessage/, 'no call, only the history in its comments');
+  const { EVENT_TYPES } = require('../src/services/events');
+  assert.equal(EVENT_TYPES.APP_LOCK_CHANGED, 'app_lock_changed');
+  assert.equal(EVENT_TYPES.WEEKLY_DIGEST, 'weekly_digest');
+});
+
+test('the panel: nothing to say draws nothing; otherwise the card first, then each change with who and when', () => {
+  const { NoticesPanel, noticeMeta, hasNotices } = loadTsx(PANEL);
+  assert.equal(hasNotices(null), false);
+  assert.equal(hasNotices({ settings: [], week: null }), false);
+  assert.equal(renderToHtml(createElement(NoticesPanel, { notices: { settings: [], week: null } })), '');
+  assert.equal(noticeMeta({ kind: 'governance', by: null, at: null }), 'through a voted change');
+  assert.equal(noticeMeta({ kind: 'lock', by: 'ada', at: null }), 'by @ada');
+  assert.equal(noticeMeta({ kind: 'approver', by: null, at: null }), '', 'the line already names them');
+  const html = renderToHtml(createElement(NoticesPanel, { notices: {
+    week: { at: null, line: 'This week on Tiers: 1 change went live: Custom tier colors (evan).', mergedTotal: 1, openTotal: 0 },
+    settings: [{ kind: 'lock', text: 'Locked: merges also need an admin’s yes vote', by: 'ada', at: null }],
+  } }));
+  assert.match(html, /^<section class="dev-ws-strip" data-ws-notices=""><div class="dev-ws-head"><span class="dev-ws-head-title">Lately in this project<\/span><\/div><ul class="dev-ws-notices">/);
+  assert.match(html, /<li class="dev-ws-notice" data-ws-notice="week"><span class="dev-ws-notice-text"><b>This week\.<\/b> 1 change went live: Custom tier colors \(evan\)\.<\/span><\/li><li class="dev-ws-notice" data-ws-notice="lock">/,
+    'the card first, its "This week on <app>:" lead-in said once');
+  assert.match(html, /<span class="dev-ws-notice-meta">by @ada<\/span>/);
+  // Loaded in an effect, so the first render is nothing.
+  assert.match(read(PANEL), /const \[notices, setNotices\] = useState<Notices \| null>\(null\);/);
+  const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(lander, /\{tab === 'workshop' \? \(\n\s*<>\n[\s\S]{0,400}\{slug \? <WorkshopNotices slug=\{slug\} \/> : null\}/, 'at the head of the Workshop tab');
+});
+
+test('a door to a project\'s hub opens the hub; a page opened again reads the tab last shown', () => {
+  const view = read('public/js/app-view.js');
+  assert.match(view, /_landOnHub\(slug\) \{\n\s*AppView\._setWorkshopTab\('status'\);\n\s*try \{\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: 'status' \} \}\)\);/);
+  const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(lander, /if \(!door \|\| \(door\.slug && door\.slug !== v\.slug\)\) return;\n\s*setTab\(door\.tab\);/, 'a page already open switches; another project\'s door is not its');
+  assert.match(lander, /window\.addEventListener\('usernode:workshop-tab', onDoor\);/);
+  // Seeded from a fresh read, not the store's last publish: that one can be
+  // a tab the viewer has since left, which is what Back used to reopen on.
+  assert.match(lander, /useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\)/);
+  assert.match(lander, /export function freshTab\(\): TabKey \| null \{\n\s*const tab = callAppView\('_workshopTab'\);/);
+  // The doors: the logo menu row, Discover's rows, the Communities rows and a
+  // Needs you card's project name. Back and Forward are not doors.
+  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /onClick=\{\(e\) => \{\n\s*if \(slug\) \(window as any\)\.AppView\?\._landOnHub\?\.\(slug\);\n\s*followThenDismiss\(e,/);
+  assert.match(read('frontend/src/features/apps/browse.js'), /if \(typeof AppView !== 'undefined' && AppView\._landOnHub\) AppView\._landOnHub\(view\.slug\);\n\s*location\.hash = href;/);
+  assert.match(read('frontend/src/features/workshop/index.tsx'), /win\.AppView\?\._landOnHub\?\.\(row\.slug\);\n\s*win\.App\?\.navigateToApp\?\.\(row\.slug, 'dev'\);/);
+  assert.match(read('frontend/src/features/workshop/needs-reel.tsx'), /onClick=\{\(\) => \{ \(window as any\)\.AppView\?\._landOnHub\?\.\(item\.app\.slug\); \}\}/);
+});

@@ -87,6 +87,13 @@ function hasInFlightBuild(sessionId) {
   return _stagingBuilds.has(Number(sessionId));
 }
 
+// Every session with a staging build in flight (or queued) in this process.
+// For the shutdown path (server.js cleanup): a build dies with its process,
+// and nothing on the cluster outlives it to be harvested.
+function inFlightBuildSessionIds() {
+  return [..._stagingBuilds.keys()].map(Number);
+}
+
 // #866 — display-only preview state for a proposal row, derived on read.
 //
 // An imported PR is promoted the instant it's imported, so its card exists
@@ -924,6 +931,31 @@ async function rebuildProductionInner(config, app, options = {}) {
   const containerName = `usernode-app-${app.slug}`;
   const imageName = `usernode-app-${app.slug}:latest`;
 
+  // Recovery may arrive after the runtime switched successfully but before
+  // apps.main_sha was saved. Read the running revision under the production
+  // rebuild lock before doing another external deploy. Ordinary/manual
+  // rebuilds never pass this option: they may need to apply changed secrets.
+  if (options.reuseRunningRevision) {
+    const expected = String(options.reuseRunningRevision).toLowerCase();
+    const ref = applicationRuntime.productionRef(config, app);
+    try {
+      const live = await applicationRuntime.inspect(config, ref);
+      if (live.status === 'running'
+          && live.labels?.['social.usernode.io/source-revision'] === expected
+          && await applicationRuntime.probeHealth(config, ref)) {
+        return {
+          containerId: ref.runtimeKind === 'docker' ? ref.runtimeName : null,
+          runtimeKind: ref.runtimeKind, runtimeName: ref.runtimeName,
+          sha: expected, recovered: true,
+        };
+      }
+    } catch (err) {
+      log.warn('staging', 'Could not inspect production for merge recovery', {
+        app: app.slug, err: err.message,
+      });
+    }
+  }
+
   log.info('staging', 'Rebuilding production', { app: app.slug });
 
   // Single chokepoint for "this app is being rebuilt right now": every
@@ -1091,6 +1123,8 @@ async function rebuildProductionInner(config, app, options = {}) {
       environment: 'production',
       imageRef: build.imageRef,
       dockerName: containerName,
+      labels: /^[a-f0-9]{40}$/i.test(mainSha || '')
+        ? { 'social.usernode.io/source-revision': mainSha.toLowerCase() } : {},
       env: {
         DATABASE_URL: dbUrl,
         ...appIdentityEnv(app, config),
@@ -1138,6 +1172,17 @@ async function rebuildProductionInner(config, app, options = {}) {
       log.warn('staging', 'Production rebuild blocked — missing required secrets', {
         app: app.slug, missing: err.missingSecrets,
       });
+      // This failure happens before runtime replacement. Persist its exact
+      // attempted revision so a merged proposal never reads as delivered
+      // while the previous container still serves.
+      try {
+        await getPool(config).query('UPDATE apps SET last_failure = $1 WHERE id = $2',
+          [JSON.stringify(require('./deploy-failure').record(err, { sha: mainSha || null })), app.id]);
+      } catch (e) {
+        log.warn('staging', 'Failed to persist missing-secret deploy failure', {
+          app: app.slug, err: e.message,
+        });
+      }
     } else {
       log.error('staging', 'Production rebuild failed', { app: app.slug, err: err.message });
       // Persist the failure detail (#416) so the "View build log" panel
@@ -1216,6 +1261,7 @@ module.exports = {
   _imageStepLabelForTest: imageStepLabel,
   buildAndDeployStaging,
   hasInFlightBuild,
+  inFlightBuildSessionIds,
   previewDisplayState,
   verifyStagingEdge,
   warmStagingCert,

@@ -4,7 +4,8 @@
 //
 // Two responsibilities:
 //   1. Key validation + key-limit info via GET /api/v1/key.
-//   2. The user-filtered model catalog via GET /api/v1/models/user.
+//   2. The model catalog via GET /api/v1/models: one list for the whole
+//      platform (services/agent-models.js), which needs no key.
 //
 // The raw OpenRouter key is never persisted in the worker container; this
 // module runs on the platform. For Codex turns the key is injected only
@@ -77,27 +78,17 @@ async function validateKey(apiKey, { baseUrl, origin } = {}) {
   };
 }
 
-// Fetch the user-filtered model catalog (GET /api/v1/models/user).
-// Returns the raw models array; compatibility annotation and cost ordering
-// happen in agent-models.js. Never throws on a single bad model — surfaces a
-// structured error only when the whole call fails.
-async function fetchUserModels(apiKey, { baseUrl, origin } = {}) {
-  if (typeof apiKey !== 'string' || !apiKey.trim()) {
-    throw new Error('openrouter-client: apiKey required');
-  }
+// Fetch OpenRouter's model catalog (GET /api/v1/models). It is the same for
+// every caller and needs no key.
+async function fetchModels({ baseUrl, origin } = {}) {
   if (typeof baseUrl !== 'string' || baseUrl.length === 0) {
     throw new Error('openrouter-client: baseUrl required (callers pass the canonical config value)');
   }
   const { ok, status, body, error } = await fetchJson(
-    `${baseUrl.replace(/\/$/, '')}/models/user`,
-    { headers: { Authorization: `Bearer ${apiKey.trim()}`, ...platformHeaders(origin) }, timeoutMs: MODELS_TIMEOUT_MS }
+    `${baseUrl.replace(/\/$/, '')}/models`,
+    { headers: platformHeaders(origin), timeoutMs: MODELS_TIMEOUT_MS }
   );
   if (error) throw new Error(`OpenRouter catalog fetch failed: ${error}`);
-  if (status === 401 || status === 403) {
-    const e = new Error('OpenRouter rejected the key.');
-    e.code = 'invalid_key';
-    throw e;
-  }
   if (!ok || !body || !Array.isArray(body.data)) {
     throw new Error(`OpenRouter catalog fetch failed (HTTP ${status}).`);
   }
@@ -106,6 +97,6 @@ async function fetchUserModels(apiKey, { baseUrl, origin } = {}) {
 
 module.exports = {
   validateKey,
-  fetchUserModels,
+  fetchModels,
   platformHeaders,
 };

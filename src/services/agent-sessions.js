@@ -128,6 +128,10 @@ function shapeChangeRow(row) {
     // run, and whether the preview is the platform's own (its preview is
     // signed into as the self-hosted app, with its review fixtures on).
     checkFailing: Number(row.change_check_failing) || 0,
+    // #3180: why a skipped run was skipped, which the card and the drawer
+    // say in words. Read only for 'skipped': an error's detail is the
+    // checks panel's to show.
+    checkSkipReason: row.change_check_skip_reason || null,
     appSelfHosted: !!row.change_app_self_hosted,
     // The visual change preview being captured now, which the conversation
     // shows with a Stop. Null once it settles, and on the changes-list rows,
@@ -178,6 +182,10 @@ function shapeSession(row) {
     lastActivityAt: row.last_activity_at ? new Date(row.last_activity_at).toISOString() : null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     archivedAt: row.archived_at ? new Date(row.archived_at).toISOString() : null,
+    // Bumped by the database on every write a screen draws (schema.sql,
+    // "Keeping every screen of a conversation in step"). A screen holding an
+    // older one re-reads GET .../state.
+    version: Number(row.state_version) || 0,
   };
 }
 
@@ -214,16 +222,17 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
     `SELECT s.id, s.user_id, s.title, s.title_source, s.status, s.focus_app_id,
             s.focus_context, s.active_change_id, s.active_turn,
             s.agent_backend, s.agent_model, s.agent_reasoning_effort,
-            s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at,
+            s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at, s.state_version,
             (s.active_turn IS NOT NULL
              AND COALESCE(s.active_turn->>'renewedAt', s.active_turn->>'startedAt')::timestamptz
-                 >= NOW() - make_interval(mins => $5)) AS turn_live,
+                 >= NOW() - make_interval(secs => $5)) AS turn_live,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
+            CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
             c.visual_evidence_state AS change_evidence_state,
             (SELECT r.started_at FROM visual_evidence_runs r WHERE r.id = c.visual_evidence_run_id) AS change_evidence_started_at,
             ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
@@ -236,7 +245,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
         AND ($3::timestamptz IS NULL OR s.last_activity_at < $3::timestamptz)
       ORDER BY s.last_activity_at DESC, s.id DESC
       LIMIT $4`,
-    [userId, status, cursor, bounded + 1, TURN_LEASE_STALE_MINUTES]
+    [userId, status, cursor, bounded + 1, TURN_LEASE_STALE_SECONDS]
   );
   const page = rows.slice(0, bounded).map(shapeSession);
   return {
@@ -252,16 +261,17 @@ async function getAgentSession(pool, { userId, id }) {
     `SELECT s.id, s.user_id, s.title, s.title_source, s.status, s.focus_app_id,
             s.focus_context, s.active_change_id, s.active_turn,
             s.agent_backend, s.agent_model, s.agent_reasoning_effort,
-            s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at,
+            s.last_activity_at, s.created_at, s.archived_at, s.last_done_at, s.seen_at, s.state_version,
             (s.active_turn IS NOT NULL
              AND COALESCE(s.active_turn->>'renewedAt', s.active_turn->>'startedAt')::timestamptz
-                 >= NOW() - make_interval(mins => $3)) AS turn_live,
+                 >= NOW() - make_interval(secs => $3)) AS turn_live,
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
             c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
+            CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
             c.visual_evidence_state AS change_evidence_state,
             (SELECT r.started_at FROM visual_evidence_runs r WHERE r.id = c.visual_evidence_run_id) AS change_evidence_started_at,
             ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
@@ -271,7 +281,7 @@ async function getAgentSession(pool, { userId, id }) {
        LEFT JOIN chat_sessions c ON c.id = s.active_change_id
        LEFT JOIN apps ca ON ca.id = c.app_id
       WHERE s.id = $1 AND s.user_id = $2`,
-    [sessionId, userId, TURN_LEASE_STALE_MINUTES]
+    [sessionId, userId, TURN_LEASE_STALE_SECONDS]
   );
   if (!rows.length) return null;
   const session = shapeSession(rows[0]);
@@ -281,6 +291,7 @@ async function getAgentSession(pool, { userId, id }) {
     `SELECT c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
+            CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
             a.slug AS change_app_slug, a.name AS change_app_name, a.self_hosted AS change_app_self_hosted,
             (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM chat_sessions c JOIN apps a ON a.id = c.app_id
@@ -383,7 +394,7 @@ async function listMessages(pool, { userId, id, afterId = 0, limit = 100 }) {
   const bounded = Math.max(1, Math.min(MESSAGES_LIMIT_MAX, Number(limit) || 100));
   const after = Number.isSafeInteger(Number(afterId)) && Number(afterId) > 0 ? Number(afterId) : 0;
   const { rows } = await pool.query(
-    `SELECT id, session_id, role, content, model, cost_cents, metadata, created_at
+    `SELECT id, session_id, role, content, model, cost_cents, metadata, created_at, client_message_id, rev
        FROM chat_session_messages
       WHERE agent_session_id = $1 AND id > $2
       ORDER BY id ASC
@@ -392,18 +403,144 @@ async function listMessages(pool, { userId, id, afterId = 0, limit = 100 }) {
   );
   const page = rows.slice(0, bounded);
   return {
-    messages: page.map((row) => ({
-      id: row.id,
-      changeId: row.session_id || null,
-      role: row.role,
-      content: row.content,
-      model: row.model || null,
-      costCents: row.cost_cents == null ? null : Number(row.cost_cents),
-      metadata: row.metadata || {},
-      createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
-    })),
+    messages: page.map(shapeMessage),
     nextAfter: rows.length > bounded ? page[page.length - 1].id : null,
   };
+}
+
+function shapeMessage(row) {
+  return {
+    id: row.id,
+    changeId: row.session_id || null,
+    role: row.role,
+    content: row.content,
+    model: row.model || null,
+    costCents: row.cost_cents == null ? null : Number(row.cost_cents),
+    metadata: row.metadata || {},
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+    // The id the sending screen gave the message, so its "Sending" copy is
+    // replaced by this row in place.
+    clientMessageId: row.client_message_id || null,
+    // When the row was written or last edited, in the order the database
+    // did it: a screen asks for rows past the newest rev it holds.
+    rev: row.rev == null ? 0 : Number(row.rev),
+  };
+}
+
+// ── One consistent read of a conversation (GET .../state) ──────────────
+//
+// What a screen draws, read together: the session with its changes, whether
+// a turn is running, the messages, the cards, and the version and rev they
+// were read at, so none of them can be from before another. `version` is the
+// screen's own; when it is still current the answer is only that, and
+// `busy`, which can change with no write (a dead process's lease going
+// stale). `rev` asks for the rows written or edited since.
+const STATE_ROWS_MAX = 500;
+
+function leaseTurn(activeTurn) {
+  const turn = activeTurn || {};
+  const startedAt = Date.parse(turn.startedAt || '');
+  const phaseStartedAt = Number(turn.phaseStartedAt);
+  const phase = ['mayor', 'cc', 'mayor2'].includes(turn.phase) ? turn.phase : 'mayor';
+  return {
+    id: typeof turn.id === 'string' ? turn.id : null,
+    phase,
+    // What the screen's clock counts from: the build once one was
+    // dispatched, else the turn (agent-turn.js turnState's rule).
+    startedAt: phase !== 'mayor' && Number.isFinite(phaseStartedAt) && phaseStartedAt > 0
+      ? phaseStartedAt
+      : (Number.isFinite(startedAt) ? startedAt : null),
+  };
+}
+
+async function readState(pool, { userId, id, version = null, rev = null }) {
+  const sessionId = positiveInt(Number(id));
+  if (!sessionId) return null;
+  const { rows: head } = await pool.query(
+    `SELECT state_version, active_turn, active_change_id,
+            (active_turn IS NOT NULL
+             AND COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz
+                 >= NOW() - make_interval(secs => $3)) AS turn_live
+       FROM agent_sessions WHERE id = $1 AND user_id = $2`,
+    [sessionId, userId, TURN_LEASE_STALE_SECONDS]
+  );
+  if (!head.length) return null;
+  const current = Number(head[0].state_version) || 0;
+  // The running turn as its lease records it, for a screen on any pod.
+  const lease = head[0].turn_live && head[0].active_turn ? leaseTurn(head[0].active_turn) : null;
+  // A lease nobody renews any more: its process died mid-turn, and nothing
+  // has said so yet (the route ends it before answering).
+  const stale = !!head[0].active_turn && !head[0].turn_live;
+  const activeChangeId = head[0].active_change_id == null ? null : Number(head[0].active_change_id);
+  if (version != null && Number(version) === current) {
+    return { unchanged: true, version: current, busy: !!head[0].turn_live, lease, stale, activeChangeId };
+  }
+  const since = rev == null || !Number.isSafeInteger(Number(rev)) || Number(rev) < 0 ? null : Number(rev);
+  const read = async (db) => {
+    const session = await getAgentSession(db, { userId, id: sessionId });
+    if (!session) return null;
+    const { rows: top } = await db.query(
+      'SELECT COALESCE(MAX(rev), 0) AS rev FROM chat_session_messages WHERE agent_session_id = $1',
+      [sessionId]
+    );
+    let messages;
+    let nextAfter = null;
+    let full = true;
+    if (since != null) {
+      const { rows } = await db.query(
+        `SELECT id, session_id, role, content, model, cost_cents, metadata, created_at, client_message_id, rev
+           FROM chat_session_messages
+          WHERE agent_session_id = $1 AND rev > $2
+          ORDER BY id ASC
+          LIMIT $3`,
+        [sessionId, since, STATE_ROWS_MAX + 1]
+      );
+      // More changed than one answer carries: the screen reads it whole.
+      if (rows.length <= STATE_ROWS_MAX) {
+        messages = rows.map(shapeMessage);
+        full = false;
+      }
+    }
+    if (!messages) {
+      const page = await listMessages(db, { userId, id: sessionId, afterId: 0, limit: MESSAGES_LIMIT_MAX });
+      // Gone between the two reads (deleted with its account): not found.
+      if (!page) return null;
+      messages = page.messages;
+      nextAfter = page.nextAfter;
+    }
+    const actions = await require('./agent-session-actions').listActions(db, { userId, agentSessionId: sessionId });
+    return {
+      unchanged: false,
+      version: session.version,
+      lease,
+      stale,
+      activeChangeId,
+      session,
+      messages,
+      // true: `messages` is the transcript from its first row (with
+      // `nextAfter` to page the rest from GET .../messages); false: only the
+      // rows written or edited since `rev`, to merge by id.
+      full,
+      nextAfter,
+      rev: Number(top[0].rev) || 0,
+      actions,
+    };
+  };
+  // One snapshot for all of it. A test pool without connect() reads each
+  // statement as it comes, which is all a fake needs.
+  if (typeof pool.connect !== 'function') return read(pool);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const state = await read(client);
+    await client.query('COMMIT');
+    return state;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // A row that belongs to the conversation itself rather than to any one
@@ -616,26 +753,103 @@ async function setFocusApp(pool, { agentSessionId, user, slug }) {
 //
 // One Mayor turn at a time per conversation. The lease is a row write, not a
 // process-local lock, so two tabs (or two pods) cannot both start a turn. A
-// running turn renews it every half minute (a dispatch can run far longer
-// than the stale window), so a lease not renewed for TURN_LEASE_STALE_MINUTES
-// belongs to a turn whose process died without releasing it: it is not
-// busy, and it is taken over. A restart kills every turn in the process, so
+// running turn renews it every 15 seconds (a dispatch can run far longer than
+// the stale window), so a lease not renewed for TURN_LEASE_STALE_SECONDS
+// belongs to a turn whose process died without releasing it: it is not busy,
+// it is taken over, and the sweeper (services/mayor/agent-turn.js,
+// sweepInterruptedTurns) tells the conversation the turn was interrupted.
+// Every deploy replaces the platform's one pod and kills the turns in it, so
 // this window is how long a conversation can look busy with nobody working.
-const TURN_LEASE_STALE_MINUTES = 3;
+// schema.sql's agent_session_state_announce reads the same 90 seconds.
+const TURN_LEASE_STALE_SECONDS = 90;
 
 async function acquireTurnLease(pool, { agentSessionId, userId, turnId }) {
   const { rows } = await pool.query(
     `UPDATE agent_sessions
-        SET active_turn = jsonb_build_object('id', $3::text, 'startedAt', NOW()),
+        SET active_turn = jsonb_build_object('id', $3::text, 'startedAt', NOW(), 'phase', 'mayor'),
             last_activity_at = NOW()
       WHERE id = $1 AND user_id = $2 AND status = 'open'
         AND (active_turn IS NULL
              OR COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz
-                < NOW() - make_interval(mins => $4))
+                < NOW() - make_interval(secs => $4))
       RETURNING id`,
-    [agentSessionId, userId, turnId, TURN_LEASE_STALE_MINUTES]
+    [agentSessionId, userId, turnId, TURN_LEASE_STALE_SECONDS]
   );
   return rows.length > 0;
+}
+
+// The message and the turn that answers it, in one transaction: the lease
+// is taken and the user's row written together, before the stream opens, so
+// a message the server answered "accepted" to is in the conversation however
+// the connection ends, and a refusal (busy) writes nothing. `clientMessageId`
+// makes a retried send safe: a message already written answers
+// `{ duplicate }` and starts no second turn.
+//
+// Resolves to `{ ok: true, messageId }`, `{ duplicate: true, messageId,
+// turnId }` or `{ busy: true }`.
+async function startTurnWithMessage(pool, {
+  agentSessionId, userId, turnId, changeId = null, text, attachments = [], clientMessageId = null, title = null,
+}) {
+  const findSent = async (db) => {
+    if (!clientMessageId) return null;
+    const { rows } = await db.query(
+      `SELECT id, metadata->>'agentTurnId' AS turn_id FROM chat_session_messages
+        WHERE agent_session_id = $1 AND client_message_id = $2`,
+      [agentSessionId, clientMessageId]
+    );
+    return rows[0] ? { duplicate: true, messageId: rows[0].id, turnId: rows[0].turn_id || null } : null;
+  };
+  const write = async (db) => {
+    const sent = await findSent(db);
+    if (sent) return sent;
+    if (!await acquireTurnLease(db, { agentSessionId, userId, turnId })) return { busy: true };
+    const { rows } = await db.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, client_message_id)
+       VALUES ($1, $2, 'user', $3, $4::jsonb, $5)
+       RETURNING id`,
+      [changeId, agentSessionId, text,
+        JSON.stringify({ agentTurnId: turnId, ...(attachments.length ? { attachments } : {}) }),
+        clientMessageId]
+    );
+    const messageId = rows[0].id;
+    // The files belong to this message now: out of the orphan sweep's
+    // reach, and what the Mayor's history reads back.
+    if (attachments.length) {
+      await db.query(
+        `UPDATE chat_session_attachments SET message_id = $1
+          WHERE id = ANY($2) AND agent_session_id = $3 AND message_id IS NULL`,
+        [messageId, attachments.map((att) => att.id), agentSessionId]
+      );
+    }
+    if (title) {
+      await db.query(
+        `UPDATE agent_sessions SET title = $1
+          WHERE id = $2 AND title IS NULL AND title_source = 'auto'`,
+        [title, agentSessionId]
+      );
+    }
+    return { ok: true, messageId };
+  };
+  if (typeof pool.connect !== 'function') return write(pool);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const outcome = await write(client);
+    if (outcome.ok) await client.query('COMMIT');
+    else await client.query('ROLLBACK');
+    return outcome;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    // Two sends of the same message at once: the second one's insert meets
+    // the first one's row.
+    if (err && err.code === '23505' && clientMessageId) {
+      const sent = await findSent(pool);
+      if (sent) return sent;
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // Only the turn holding the lease renews it.
@@ -648,6 +862,18 @@ async function renewTurnLease(pool, { agentSessionId, turnId }) {
     [agentSessionId, turnId]
   );
   return rows.length > 0;
+}
+
+// Where the turn is (the Mayor, the coding agent, the wrap-up), on the lease
+// every screen reads, so one on another pod, or opened mid-turn, shows it.
+async function setTurnPhase(pool, { agentSessionId, turnId, phase, startedAt = null }) {
+  await pool.query(
+    `UPDATE agent_sessions
+        SET active_turn = active_turn || jsonb_strip_nulls(jsonb_build_object(
+              'phase', $3::text, 'phaseStartedAt', $4::bigint))
+      WHERE id = $1 AND active_turn->>'id' = $2`,
+    [agentSessionId, turnId, phase, startedAt]
+  );
 }
 
 // `finished` is a turn that ran, ending: it stamps last_done_at, which the
@@ -673,11 +899,80 @@ async function releaseStaleTurnLease(pool, { agentSessionId, userId, finished = 
             last_done_at = CASE WHEN $4::boolean THEN NOW() ELSE last_done_at END
       WHERE id = $1 AND user_id = $2 AND active_turn IS NOT NULL
         AND COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz
-            < NOW() - make_interval(mins => $3)
+            < NOW() - make_interval(secs => $3)
       RETURNING id`,
-    [agentSessionId, userId, TURN_LEASE_STALE_MINUTES, !!finished]
+    [agentSessionId, userId, TURN_LEASE_STALE_SECONDS, !!finished]
   );
   return rows.length > 0;
+}
+
+// The leases whose turn stopped renewing them: the process died (a deploy,
+// a crash). `changeTurn` says whether the active change still has a run of
+// its own on record: a build the dead turn dispatched, which restart recovery
+// adopts and hands back itself (agent-turn.js handBackAfterRecovery).
+async function staleTurnLeases(pool, { limit = 50, agentSessionId = null } = {}) {
+  const { rows } = await pool.query(
+    `SELECT s.id, s.user_id, s.active_turn->>'id' AS turn_id, s.active_change_id,
+            (c.active_turn IS NOT NULL) AS change_turn
+       FROM agent_sessions s
+       LEFT JOIN chat_sessions c ON c.id = s.active_change_id
+      WHERE s.active_turn IS NOT NULL
+        AND COALESCE(s.active_turn->>'renewedAt', s.active_turn->>'startedAt')::timestamptz
+            < NOW() - make_interval(secs => $1)
+        AND ($3::bigint IS NULL OR s.id = $3::bigint)
+      ORDER BY s.id
+      LIMIT $2`,
+    [TURN_LEASE_STALE_SECONDS, limit, agentSessionId == null ? null : Number(agentSessionId)]
+  );
+  return rows.map((row) => ({
+    agentSessionId: Number(row.id),
+    userId: Number(row.user_id),
+    turnId: row.turn_id,
+    activeChangeId: row.active_change_id == null ? null : Number(row.active_change_id),
+    changeTurn: !!row.change_turn,
+  }));
+}
+
+// A turn that ended without finishing (its process died, or is shutting
+// down): the lease is handed back and the conversation says so, together,
+// so a screen never sees one without the other. `stale` only takes a lease
+// nobody has renewed within the window; a shutting-down process ends its own
+// live one. The note carries `retryable`, which the screen offers as Retry.
+// True when this call ended it (a second caller finds it already ended).
+async function endInterruptedTurn(pool, { agentSessionId, turnId, content, stale = true }) {
+  const run = async (db) => {
+    const { rows } = await db.query(
+      `UPDATE agent_sessions
+          SET active_turn = NULL
+        WHERE id = $1 AND active_turn->>'id' = $2
+          AND (NOT $3::boolean
+               OR COALESCE(active_turn->>'renewedAt', active_turn->>'startedAt')::timestamptz
+                  < NOW() - make_interval(secs => $4))
+        RETURNING id`,
+      [agentSessionId, turnId, !!stale, TURN_LEASE_STALE_SECONDS]
+    );
+    if (!rows.length) return false;
+    await db.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata)
+       VALUES (NULL, $1, 'system', $2, $3::jsonb)`,
+      [agentSessionId, content, JSON.stringify({ agentSessionEvent: 'turn_interrupted', agentTurnId: turnId, retryable: true })]
+    );
+    return true;
+  };
+  if (typeof pool.connect !== 'function') return run(pool);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ended = await run(client);
+    if (ended) await client.query('COMMIT');
+    else await client.query('ROLLBACK');
+    return ended;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // The open conversations a change is the active change of: the ones whose
@@ -693,6 +988,8 @@ async function conversationsOfChange(pool, changeId) {
 
 // The owner read the conversation: whatever it finished is seen. True when
 // that cleared a green dot, so the caller can tell the owner's other tabs.
+// Written only when there is something unseen: an open screen re-reads its
+// conversation every few seconds while the Mayor works.
 async function markSeen(pool, { userId, id }) {
   const sessionId = positiveInt(Number(id));
   if (!sessionId) return false;
@@ -701,16 +998,15 @@ async function markSeen(pool, { userId, id }) {
        SELECT id, seen_at, last_done_at, active_turn
          FROM agent_sessions
         WHERE id = $1 AND user_id = $2
+          AND last_done_at IS NOT NULL AND (seen_at IS NULL OR last_done_at > seen_at)
      )
      UPDATE agent_sessions s SET seen_at = NOW()
        FROM prev
       WHERE s.id = prev.id
-     RETURNING ((prev.active_turn IS NULL
-                 OR COALESCE(prev.active_turn->>'renewedAt', prev.active_turn->>'startedAt')::timestamptz
-                    < NOW() - make_interval(mins => $3))
-                AND prev.last_done_at IS NOT NULL
-                AND (prev.seen_at IS NULL OR prev.last_done_at > prev.seen_at)) AS cleared`,
-    [sessionId, userId, TURN_LEASE_STALE_MINUTES]
+     RETURNING (prev.active_turn IS NULL
+                OR COALESCE(prev.active_turn->>'renewedAt', prev.active_turn->>'startedAt')::timestamptz
+                   < NOW() - make_interval(secs => $3)) AS cleared`,
+    [sessionId, userId, TURN_LEASE_STALE_SECONDS]
   );
   return !!(rows[0] && rows[0].cleared);
 }
@@ -732,6 +1028,8 @@ module.exports = {
   archiveAgentSession,
   unarchiveAgentSession,
   listMessages,
+  shapeMessage,
+  readState,
   appendConversationEvent,
   parkChange,
   prepareChangeStart,
@@ -741,11 +1039,15 @@ module.exports = {
   noteChangeClosed,
   switchActiveChange,
   setFocusApp,
-  TURN_LEASE_STALE_MINUTES,
+  TURN_LEASE_STALE_SECONDS,
   acquireTurnLease,
+  startTurnWithMessage,
   renewTurnLease,
+  setTurnPhase,
   releaseTurnLease,
   releaseStaleTurnLease,
+  staleTurnLeases,
+  endInterruptedTurn,
   conversationsOfChange,
   markSeen,
 };

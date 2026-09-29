@@ -385,6 +385,36 @@ test('Recents are desktop-only, and replace the Resume strip there', () => {
   assert.match(css, /THE RESUME STRIP GIVES WAY TO RECENTS[\s\S]{0,500}#platform-parked \{\s*display: none;\s*\}/);
 });
 
+test('blocking forgets only that app from Resume and persisted Recents', () => {
+  const previousWindow = global.window;
+  const storage = new Map();
+  global.window = { localStorage: {
+    getItem: key => storage.get(key) || null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: key => storage.delete(key),
+  } };
+  try {
+    const { parkedStore } = loadTsx('frontend/src/features/nav/mount.ts');
+    const nav = window.UsernodeReact.nav;
+    nav.setViewer('ana');
+    nav.park({ slug: 'allowed', name: 'Allowed' });
+    nav.park({ slug: 'blocked', name: 'Blocked' });
+    nav.forget('blocked');
+    assert.equal(parkedStore.get().app, null);
+    assert.equal(storage.has('usernode_parked_app_v1'), false);
+    const recents = () => JSON.parse(storage.get('usernode_recent_apps_v1'));
+    assert.equal(recents().owner, 'ana');
+    assert.deepEqual(recents().apps.map(app => app.slug), ['allowed']);
+    nav.park({ slug: 'allowed', name: 'Allowed' });
+    nav.forget('blocked');
+    assert.equal(parkedStore.get().app.slug, 'allowed', 'another app stays resumable');
+    assert.deepEqual(recents().apps.map(app => app.slug), ['allowed']);
+  } finally {
+    if (previousWindow === undefined) delete global.window;
+    else global.window = previousWindow;
+  }
+});
+
 test('recent apps are remembered per account, and park(null) forgets nothing', () => {
   const storage = new Map();
   global.window = {

@@ -97,7 +97,7 @@ function makeHarness(recordAnswers) {
     },
     fetch: async (url) => {
       const u = String(url);
-      if (u === '/api/apps/homeroom-self') {
+      if (u.split('?')[0] === '/api/apps/homeroom-self') {
         appRequests.push(u);
         const ok = answers.length ? answers.shift() : false;
         return ok
