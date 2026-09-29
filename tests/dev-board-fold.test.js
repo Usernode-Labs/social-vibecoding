@@ -1346,7 +1346,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 821);
+  //
+  // 821 → 822: +1 (#3222): the written guide in Settings → Welcome tour. The
+  // existing replay check is left byte-for-byte alone (the request pins the
+  // button and its copy), so the guide gets its own check on the same route.
+  checkCap.assertPinned(DAPP.tests.length, 822);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

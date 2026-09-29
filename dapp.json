@@ -2989,6 +2989,12 @@
       "expectText": "Replay the tour"
     },
     {
+      "name": "The welcome tour pane carries the written guide (#3222)",
+      "path": "/#settings/tour",
+      "expectSelector": "#settings-section-content [data-settings-section=\"tour\"]:not(.hidden) #settings-tour-section #settings-tour-guide",
+      "expectText": "A guide to Homeroom"
+    },
+    {
       "name": "The welcome tour ships hidden on Home and opens on nobody's first paint (#2255)",
       "path": "/",
       "expectSelector": "#home-tour.hidden #home-tour-card #home-tour-body #home-tour-next"

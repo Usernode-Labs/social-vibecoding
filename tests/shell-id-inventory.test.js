@@ -318,6 +318,7 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  'settings-tour-guide': '#3222 the written guide in the Welcome tour pane',
   'report-modal': '#2721 shared reporting dialog',
   // ── #2718: the platform's destinations leave the app's menu ──────
   //

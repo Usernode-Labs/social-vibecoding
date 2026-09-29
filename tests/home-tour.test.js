@@ -970,6 +970,23 @@ test('Settings offers Replay the tour, and it is a registered section', () => {
   assert.match(SETTINGS_JS, /\{ key: 'tour', label: 'Welcome tour', group: 'Preferences' \}/);
 });
 
+test('Settings offers a written guide below Replay the tour (#3222)', () => {
+  // The tour shows one thing at a time; the guide is the full picture in
+  // plain text, read without pressing anything.
+  const html = renderComponent('frontend/src/features/settings/sections/tour.tsx', 'TourSection');
+  assert.match(html, /id="settings-tour-guide"/);
+  // It sits after the replay hint, inside the tour section.
+  assert.ok(SETTINGS_SECTION_SRC.indexOf('id="settings-tour-hint"') < SETTINGS_SECTION_SRC.indexOf('id="settings-tour-guide"'),
+    'the guide comes after the replay hint');
+  // One short section per main part of Homeroom, named as the tab bar does.
+  for (const area of ['Home', 'Communities', 'Messages', 'Discover', 'Me']) {
+    assert.ok(html.includes(area), `the guide names ${area}`);
+  }
+  // The two in-app actions the guide has to explain.
+  assert.match(html, /Give feedback/);
+  assert.match(html, /New change/);
+});
+
 test('Replay clears the flag, asks for the tour, then goes to Home', () => {
   const fn = SETTINGS_SECTION_SRC.slice(SETTINGS_SECTION_SRC.indexOf('function replay'));
   const body = fn.slice(0, fn.indexOf('\n}'));

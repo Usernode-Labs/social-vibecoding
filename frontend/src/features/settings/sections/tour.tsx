@@ -53,6 +53,36 @@ export function TourSection() {
         <p id="settings-tour-hint" className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
           It starts again on your home screen.
         </p>
+        <div id="settings-tour-guide" className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-800">
+          <SectionHeading title="A guide to Homeroom">
+            What each part of the platform is for, beyond the one-minute tour.
+          </SectionHeading>
+          <SectionHeading title="Home">
+            Your apps are shortcuts to the projects you use. A small mark shows where each one
+            lives: people for a private community, a lock for one that is just yours. The last
+            tile starts a new project, and the Getting started card keeps your first steps handy.
+          </SectionHeading>
+          <SectionHeading title="Communities" className="mt-4">
+            This tab lists every project you belong to. A project opens on its hub, with the
+            workshop beside it where changes happen. Needs you is one list of decisions waiting
+            on you across all your projects.
+          </SectionHeading>
+          <SectionHeading title="Messages" className="mt-4">
+            Conversations with people and agents. A project's channel lives on its project page,
+            not here.
+          </SectionHeading>
+          <SectionHeading title="Discover" className="mt-4">
+            Find public projects to join, or start a new project of your own.
+          </SectionHeading>
+          <SectionHeading title="Feedback and votes" className="mt-4">
+            Inside any app, Give feedback sends the community a note about what should change.
+            New change starts one yourself: describe it, try the preview, then put it to a vote.
+          </SectionHeading>
+          <SectionHeading title="Me" className="mt-4">
+            Your profile, and Settings, where account, appearance and connection options live.
+            You can replay the welcome tour from Settings any time.
+          </SectionHeading>
+        </div>
       </div>
     </div>
   );
