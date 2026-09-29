@@ -64,6 +64,7 @@ const {
   ALL_CHALLENGE_WHERE,
 } = require('./home-panels');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
+const { MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE } = require('./workshop-overview');
 
 // ─── Field limits ──────────────────────────────────────────────────────
 //
@@ -119,6 +120,9 @@ const SUMMARY_CONTRIBUTIONS_LIMIT = 5;
 const SUMMARY_COUNTS_SQL = `
   SELECT COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS merged,
          COUNT(DISTINCT cs.app_id) FILTER (WHERE cs.status = 'merged')::int AS apps,
+         COUNT(*) FILTER (WHERE cs.status IN (
+           'active', 'paused', 'promoted', 'merging', 'merged', 'archived'
+         ))::int AS proposals_total,
          (SELECT COUNT(*)::int
             FROM pr_kudos pk
             JOIN chat_sessions ks ON ks.id = pk.session_id
@@ -206,6 +210,7 @@ function shapeSummary({ counts, contributions, challenges }) {
   return {
     merged: Number(c.merged) || 0,
     apps: Number(c.apps) || 0,
+    proposalsTotal: Number(c.proposals_total) || 0,
     kudos: (Number(c.direct_kudos) || 0) + (Number(c.bounty_kudos) || 0),
     memberSince: c.member_since ? new Date(c.member_since).toISOString() : null,
     challenges: {
@@ -241,10 +246,125 @@ function withDemoSummary(summary, selfApp, now = Date.now()) {
     ...summary,
     merged: contributions.length,
     apps: Math.max(summary.apps, 1),
+    proposalsTotal: Math.max(summary.proposalsTotal, contributions.length),
     kudos: Math.max(summary.kudos, contributions.reduce((n, row) => n + row.kudos, 0)),
     contributions,
     demo: true,
   };
+}
+
+// ── GET /api/me/proposals ──────────────────────────────────────────────
+//
+// "Your proposals" on Me: every proposal the viewer has ever started,
+// across every project, grouped by where it stands. Scoped to cs.user_id,
+// so a private/self-hosted app's own draft work is visible here regardless
+// of the app's visibility — the one surface where that's deliberate.
+const PROPOSALS_PER_BUCKET = 50;
+
+// MY_SESSIONS_WHERE and MY_PROPOSALS_WHERE come from workshop-overview.js.
+// MY_PROPOSALS_WHERE has no is_headless guard of its own (Workshop never
+// needed one there), so the open-for-vote branch below adds it inline.
+const MY_PROPOSALS_SQL = `
+  WITH items AS (
+    SELECT 'inProgress' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.app_id, cs.status, cs.last_activity_at AS at
+      FROM chat_sessions cs
+     WHERE ${MY_SESSIONS_WHERE}
+     UNION ALL
+    SELECT 'openForVote' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.app_id, cs.status, COALESCE(cs.promoted_at, cs.last_activity_at) AS at
+      FROM chat_sessions cs
+     WHERE ${MY_PROPOSALS_WHERE} AND cs.is_headless = FALSE
+     UNION ALL
+    SELECT 'merged' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.app_id, cs.status, COALESCE(cs.merged_at, cs.last_activity_at) AS at
+      FROM chat_sessions cs
+     WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'merged'
+     UNION ALL
+    SELECT 'closed' AS section, cs.id AS session_id, cs.session_title AS title,
+           cs.app_id, cs.status, COALESCE(cs.archived_at, cs.last_activity_at) AS at
+      FROM chat_sessions cs
+     WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'archived'
+  ),
+  ranked AS (
+    SELECT it.*, ROW_NUMBER() OVER (
+             PARTITION BY it.section ORDER BY it.at DESC NULLS LAST, it.session_id DESC
+           ) AS rn
+      FROM items it
+  )
+  SELECT r.section, r.session_id, r.title, r.status, r.at,
+         a.slug AS app_slug, a.name AS app_name
+    FROM ranked r
+    JOIN apps a ON a.id = r.app_id
+   WHERE r.rn <= $2
+   ORDER BY r.section, r.at DESC NULLS LAST, r.session_id DESC
+`;
+
+// Pure (exported for tests): raw rows → the response body's four buckets.
+function shapeProposalRow(r) {
+  return {
+    sessionId: Number(r.session_id),
+    title: r.title,
+    appSlug: r.app_slug,
+    appName: r.app_name,
+    status: r.status,
+    at: r.at ? new Date(r.at).toISOString() : null,
+  };
+}
+
+function shapeProposals(rows) {
+  const buckets = { openForVote: [], inProgress: [], merged: [], closed: [] };
+  for (const row of rows || []) {
+    const bucket = buckets[row.section];
+    if (bucket) bucket.push(shapeProposalRow(row));
+  }
+  return { proposals: buckets };
+}
+
+// Staging-only ?demo=1 rows, one per bucket. Ids follow src/routes/profile.js
+// and src/routes/votes.js's occupied 91000xx ranges (see their own comments);
+// 9100035-9100040 were unused before this. The merged bucket reuses
+// DEMO_CONTRIBUTIONS' own ids/titles so the same mock row opens the same
+// proposal page from either screen.
+const DEMO_PROPOSALS = {
+  inProgress: [
+    { sessionId: 9100035, title: '[Mock] Rework the onboarding checklist', status: 'active' },
+  ],
+  openForVote: [
+    { sessionId: 9100036, title: '[Mock] Ship the notification digest', status: 'promoted' },
+  ],
+  merged: [
+    { sessionId: 9100030, title: '[Mock] Completed: rework the onboarding checklist',
+      status: 'merged' },
+    { sessionId: 9100031, title: '[Mock] Completed: ship the notification digest',
+      status: 'merged' },
+  ],
+  closed: [
+    { sessionId: 9100063, title: '[Mock] Split settings into sections', status: 'archived' },
+  ],
+};
+
+// Pure (exported for tests): the ?demo=1 overlay. REAL DATA WINS, per
+// bucket — a bucket the real query already returned rows for is left alone;
+// only a bucket that came back empty gets the mock rows for it.
+function withDemoProposals(proposals, selfApp, now = Date.now()) {
+  if (!selfApp) return proposals;
+  const result = {};
+  for (const key of Object.keys(proposals)) {
+    if (proposals[key].length > 0) {
+      result[key] = proposals[key];
+      continue;
+    }
+    result[key] = (DEMO_PROPOSALS[key] || []).map((d) => ({
+      sessionId: d.sessionId,
+      title: d.title,
+      appSlug: selfApp.slug,
+      appName: selfApp.name || selfApp.slug,
+      status: d.status,
+      at: new Date(now).toISOString(),
+    }));
+  }
+  return result;
 }
 
 // Pure (exported for tests): validate an uploaded avatar body.
@@ -950,6 +1070,28 @@ function profileRoutes(config) {
     }
   });
 
+  // ── GET /api/me/proposals ────────────────────────────────────────────
+  //
+  // "Your proposals" screen: every proposal the viewer has started, in up
+  // to four buckets (openForVote, inProgress, merged, closed). See
+  // MY_PROPOSALS_SQL above for how each bucket is read and capped.
+  router.get('/api/me/proposals', requireUser, async (req, res) => {
+    try {
+      const { rows } = await pool.query(MY_PROPOSALS_SQL, [req.user.id, PROPOSALS_PER_BUCKET]);
+      let { proposals } = shapeProposals(rows);
+      if (IS_STAGING && req.query.demo === '1') {
+        const { rows: selfRows } = await pool.query(SELF_APP_SQL);
+        proposals = withDemoProposals(proposals, selfRows[0] || null);
+      }
+      return res.json({ proposals });
+    } catch (err) {
+      log.error('profile', 'Me proposals read failed', {
+        userId: req.user.id, err: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }
 
@@ -966,6 +1108,11 @@ module.exports = {
   withDemoSummary,
   DEMO_CONTRIBUTIONS,
   SUMMARY_CONTRIBUTIONS_LIMIT,
+  shapeProposals,
+  withDemoProposals,
+  DEMO_PROPOSALS,
+  MY_PROPOSALS_SQL,
+  PROPOSALS_PER_BUCKET,
   MAX_DISPLAY_NAME,
   MAX_BIO,
   MAX_AVATAR_BYTES,
