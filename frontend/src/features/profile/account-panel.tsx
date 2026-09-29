@@ -1,6 +1,29 @@
 /**
- * The "More" list on the Me screen — the prototype's three rows, plus Your
- * feedback (#3186), each with a line that says what is behind it.
+ * Profile's two lists of rows (UI overhaul): "Your work", then "More".
+ *
+ * ── Your work ──────────────────────────────────────────────────────────
+ *
+ * Your record of what you did here, one row each, every one a drill-in to
+ * the Your work screen (./my-proposals.tsx) on its view:
+ *
+ *   Your changes    "12 merged · 2 in progress". It was "Your proposals"
+ *                   (#5310), and it took the Communities tab's "What you are
+ *                   working on".
+ *   Your requests   "2 open · 1 done": what you asked for, from the Ask for a
+ *                   change dialog or a board. It was "Your feedback" (#3186),
+ *                   a card over this screen that listed only the dialog's.
+ *   Your votes      "Latest: …": what you voted on. It was a filter of Kudos ›
+ *                   My history.
+ *
+ * ── More ───────────────────────────────────────────────────────────────
+ *
+ * Challenges & standings, Kudos, Friends and Settings, each with a line that
+ * says what is behind it. Friends was a section of its own under these rows
+ * (#2386); it is a row now, with the one number it is allowed ("1 request
+ * waiting": friends themselves are never counted), and it opens the same
+ * section as a card over this screen (./friends-sheet.tsx), at its own
+ * address, `#profile?friends`. "Your contributions", the newest merged
+ * changes under everything, is gone: Your changes lists them all.
  *
  * ── How the rows got here ──────────────────────────────────────────────
  *
@@ -11,33 +34,20 @@
  * page. #2718 took that rule apart — the tab bar carries the platform's
  * places now — and put Challenges, Settings and the Admin console back here as
  * rows, with the native node, wallet and staking readouts and Log out under
- * them.
+ * them. The navigation prototype's Me then moved everything else the account
+ * group held inside Settings (features/settings/account-rows.tsx).
  *
- * The navigation prototype's Me settles it the other way round, and this is
- * that: three rows under "More" — Challenges & standings, Kudos, Settings —
- * and everything ELSE the account group held inside Settings, which is what
- * the spec's retired-chip table says ("Me, with Admin and Validator inside
- * Settings"). Admin & moderation, the node, the wallet, staking and Log out
- * render in Settings' own account block now
- * (features/settings/account-rows.tsx); Settings already had Log out.
- *
- * The row ids are the ones #2718 gave them, because dapp.json's checks and the
- * home tour select on them: #profile-row-challenges still leads to
- * #leaderboard/challenges, #profile-row-settings to #settings.
- * #profile-row-kudos is new; #profile-row-admin left with its row.
+ * The row ids are the ones they have always had, because dapp.json's checks
+ * and the home tour select on them: #profile-row-challenges still leads to
+ * #leaderboard/challenges, #profile-row-settings to #settings, and the Your
+ * work rows keep the ids of the rows they grew from (#profile-row-proposals,
+ * #profile-row-feedback).
  *
  * Real anchors, not buttons: cmd/ctrl-click, middle-click, "open in new tab",
  * the context menu and drag-to-bookmark are the browser's to give, and only an
- * anchor with an href gets them. Every one is a plain hash route the shell's
- * router already resolves, so there is no click handler to write.
- *
- * #profile-row-feedback (#3186) is the one row with a handler. What it opens
- * is a card over this screen, "Your feedback" (./feedback-sheet.tsx), not a
- * screen of its own, so a plain click opens it in place rather than
- * re-entering the route and re-reading the whole profile. It is still an
- * anchor, to the card's own address (`#profile?feedback`, which
- * Profile.open() honours), so every modified click keeps the browser's
- * behaviour.
+ * anchor with an href gets them. Friends is the one row with a handler: a
+ * plain click opens its card in place, and every modified click keeps the
+ * browser's behaviour on its address.
  *
  * Nothing here is in the prerendered shell: ProfileRoot returns null until its
  * store has data, so the admin flag read below cannot disagree with a first
@@ -48,7 +58,7 @@ import { type ReactNode } from 'react';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
-import { BallotIcon, ChatIcon, CogIcon, ThumbsUpIcon, TrophyIcon } from '@/components/ui/icons';
+import { BallotIcon, ChatIcon, CogIcon, HandRaisedIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon } from '@/components/ui/icons';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { walletSheetStore } from '../header/wallet-sheet-store';
@@ -58,13 +68,63 @@ import { Profile } from './profile.js';
 const TITLE = 'text-base font-semibold';
 const SUBTITLE = 'text-[0.8125rem]';
 
+type ProfileRows = {
+  challenges: string | null;
+  kudos: string | null;
+  changes?: string | null;
+  requests?: string | null;
+  votes?: string | null;
+  friends?: string | null;
+};
+
+/** A plain click that the row takes for itself; anything modified is the browser's. */
+function plainClick(event: { defaultPrevented: boolean; button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }): boolean {
+  return !(event.defaultPrevented || event.button !== 0
+    || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
+}
+
+export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
+  return (
+    <section id="profile-work" className="mt-2">
+      <SectionHeader>Your work</SectionHeader>
+      <GroupedList className="mx-0" tone="plane">
+        <ListRow
+          as="a"
+          id="profile-row-proposals"
+          href="#profile/your-changes"
+          leading={<IconTile size="sm"><BallotIcon /></IconTile>}
+          title="Your changes"
+          titleClassName={TITLE}
+          subtitle={rows.changes || 'Everything you have started'}
+          subtitleClassName={SUBTITLE}
+        />
+        <ListRow
+          as="a"
+          id="profile-row-feedback"
+          href="#profile/your-requests"
+          leading={<IconTile size="sm"><ChatIcon /></IconTile>}
+          title="Your requests"
+          titleClassName={TITLE}
+          subtitle={rows.requests || 'What you asked for, and where it stands'}
+          subtitleClassName={SUBTITLE}
+        />
+        <ListRow
+          as="a"
+          id="profile-row-votes"
+          href="#profile/your-votes"
+          leading={<IconTile size="sm"><HandRaisedIcon /></IconTile>}
+          title="Your votes"
+          titleClassName={TITLE}
+          subtitle={rows.votes || 'The changes and decisions you voted on'}
+          subtitleClassName={SUBTITLE}
+        />
+      </GroupedList>
+    </section>
+  );
+}
+
 export function MorePanel({ rows }: {
-  rows: {
-    challenges: string | null;
-    kudos: string | null;
-    proposals?: string | null;
-    feedback?: string | null;
-  };
+  rows: ProfileRows;
 }): ReactNode {
   // A CAPABILITY, published rather than fetched: App.renderAdminButton in
   // public/js/app.js writes it after the session resolves. The Admin console
@@ -79,8 +139,7 @@ export function MorePanel({ rows }: {
     .join(', ');
   return (
     <section id="profile-more" className="mt-2">
-      {/* SectionHeader's own `px-4`, on the rows' content edge (#2832) — see
-          Contributions in ./profile-view.tsx. */}
+      {/* SectionHeader's own `px-4`, on the rows' content edge (#2832). */}
       <SectionHeader>More</SectionHeader>
       <GroupedList className="mx-0" tone="plane">
         <ListRow
@@ -100,23 +159,24 @@ export function MorePanel({ rows }: {
           leading={<IconTile size="sm"><ThumbsUpIcon /></IconTile>}
           title="Kudos"
           titleClassName={TITLE}
-          subtitle={rows.kudos || 'Kudos on your proposals'}
+          // The number is the stat card's at the top of the screen; the row
+          // says what is behind it.
+          subtitle="Kudos on your changes"
           subtitleClassName={SUBTITLE}
         />
         <ListRow
           as="a"
-          id="profile-row-feedback"
-          href="#profile?feedback"
+          id="profile-row-friends"
+          href="#profile?friends"
           onClick={(event) => {
-            if (event.defaultPrevented || event.button !== 0
-              || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            if (!plainClick(event)) return;
             event.preventDefault();
-            Profile.showFeedback();
+            Profile.showFriends();
           }}
-          leading={<IconTile size="sm"><ChatIcon /></IconTile>}
-          title="Your feedback"
+          leading={<IconTile size="sm"><UserGroupIcon /></IconTile>}
+          title="Friends"
           titleClassName={TITLE}
-          subtitle={rows.feedback || 'What you sent, and whether it counted'}
+          subtitle={rows.friends || 'Only you can see your friends'}
           subtitleClassName={SUBTITLE}
         />
         <ListRow
@@ -127,16 +187,6 @@ export function MorePanel({ rows }: {
           title="Settings"
           titleClassName={TITLE}
           subtitle={settingsLine}
-          subtitleClassName={SUBTITLE}
-        />
-        <ListRow
-          as="a"
-          id="profile-row-proposals"
-          href="#profile/proposals"
-          leading={<IconTile size="sm"><BallotIcon /></IconTile>}
-          title="Your proposals"
-          titleClassName={TITLE}
-          subtitle={rows.proposals || 'Every proposal you have started'}
           subtitleClassName={SUBTITLE}
         />
       </GroupedList>

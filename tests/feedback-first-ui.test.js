@@ -130,7 +130,7 @@ test('an ordinary posted request stays on its own confirmation, with the way to 
   assert.equal(h.el('feedback-modal').classList.contains('hidden'), false, 'no auto-close');
   h.el('feedback-sent-mine').click();
   assert.ok(h.el('feedback-modal').classList.contains('hidden'));
-  assert.equal(h.sandbox.location.hash, '#profile/requests');
+  assert.equal(h.sandbox.location.hash, '#profile/your-requests');
   // The next open is the form again, not the last confirmation.
   h.sandbox.App.openFeedbackModal();
   assert.ok(sent.classList.contains('hidden'));
@@ -161,7 +161,7 @@ test('the first-request moment offers Your requests too, and replaces a sent con
   const h = harness(); await h.submit();
   h.el('feedback-first-mine').click();
   assert.ok(h.el('feedback-modal').classList.contains('hidden'));
-  assert.equal(h.sandbox.location.hash, '#profile/requests');
+  assert.equal(h.sandbox.location.hash, '#profile/your-requests');
   const q = harness({ response: {} }); await q.submit();
   q.flush();
   assert.ok(q.shown());

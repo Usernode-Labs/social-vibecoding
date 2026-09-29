@@ -69,14 +69,17 @@ export function FriendsSection({
   view,
   pendingId,
   status,
+  heading = true,
 }: {
   view: FriendsSectionView;
   pendingId: number | null;
   status: string;
+  /** Off in the Friends card (./friends-sheet.tsx), whose own title says it. */
+  heading?: boolean;
 }): ReactNode {
   return (
     <section id="profile-friends" className="mt-2" aria-label="Friends, visible only to you">
-      <SectionHeader>Friends</SectionHeader>
+      {heading ? <SectionHeader>Friends</SectionHeader> : null}
       {/* #3048: find people by username and add them right here. */}
       <FriendSearch lists={view} />
       {view.incoming.length ? (

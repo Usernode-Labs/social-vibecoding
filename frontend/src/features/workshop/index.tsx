@@ -592,7 +592,10 @@ export function WorkshopScreen() {
                   )}
                   title={`${totals.needs} ${totals.needs === 1 ? 'vote' : 'votes'} waiting on you`}
                   subtitle={needsApps(rows || [])}
+                  // "Review" is the row's affordance; a chevron beside it
+                  // would say the same thing twice.
                   trailing={<span className="text-sm font-semibold text-violet-700 dark:text-violet-300">Review</span>}
+                  chevron={false}
                 />
               </GroupedList>
             </section>

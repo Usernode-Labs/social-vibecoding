@@ -1,0 +1,239 @@
+'use strict';
+
+// Profile's "Your work" (UI overhaul): Your changes, Your requests and Your
+// votes, three rows on Me and three views of one screen
+// (frontend/src/features/profile/my-proposals.tsx, `#profile-proposals-screen`).
+//
+//   - the server's numbers and rows (src/routes/profile.js: the summary's
+//     in-progress count and GET /api/me/requests; the SQL itself runs in
+//     tests/me-requests-postgres.test.js);
+//   - what each view says, from ./profile-store.js;
+//   - the screen: hidden and empty in the prerender, one view at a time, the
+//     long groups folded, and Ask for a change at the foot of Your requests;
+//   - the router's three addresses.
+//
+// Run with: node --test tests/profile-your-work.test.js
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+
+const ROOT = path.join(__dirname, '..');
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const STORE = 'frontend/src/features/profile/profile-store.js';
+const SCREEN = 'frontend/src/features/profile/my-proposals.tsx';
+const NOW = Date.parse('2026-09-23T12:00:00Z');
+
+// ── The server ─────────────────────────────────────────────────────────
+
+test('the summary counts what is in progress: in an agent session or up for a vote', () => {
+  const profile = require('../src/routes/profile');
+  assert.equal(profile.shapeSummary({ counts: { merged: 9, in_progress: 2 } }).inProgress, 2);
+  const sql = read('src/routes/profile.js');
+  assert.match(sql, /COUNT\(\*\) FILTER \(WHERE cs\.status IN \(\s*'active', 'paused', 'promoted', 'merging'\s*\)\)::int AS in_progress,/);
+});
+
+test('your requests: each says where it stands, and the counts are the whole set\'s', () => {
+  const profile = require('../src/routes/profile');
+  const row = (number, over) => ({
+    number, title: `Request ${number}`, created_at: '2026-09-20T10:00:00Z',
+    app_slug: 'run-club', app_name: 'Run Club', self_hosted: false,
+    shipped: false, closed: false, underway: false, total: 9, done: 3, ...over,
+  });
+  const body = profile.shapeRequests([
+    row(1),
+    row(2, { underway: true }),
+    row(3, { shipped: true, underway: true }),
+    row(4, { closed: true }),
+    row(5, { app_slug: 'usernode-2d5619', app_name: 'usernode', self_hosted: true }),
+  ]);
+  assert.deepEqual(body.requests.map((r) => [r.number, r.state, r.appName]), [
+    [1, 'waiting', 'Run Club'],
+    [2, 'underway', 'Run Club'],
+    [3, 'shipped', 'Run Club'],
+    [4, 'closed', 'Run Club'],
+    [5, 'waiting', 'Homeroom'],
+  ], 'shipped wins over under way; the platform\'s own are Homeroom\'s');
+  assert.equal(body.open, 6);
+  assert.equal(body.done, 3);
+  assert.equal(body.truncated, true, 'nine in all, five shown');
+  assert.deepEqual(profile.shapeRequests([]), { requests: [], open: 0, done: 0 });
+  // Staging's demo fills an empty list only, with one of each standing.
+  const demo = profile.withDemoRequests({ requests: [], open: 0, done: 0 }, { slug: 'usernode-2d5619' }, NOW);
+  assert.deepEqual(demo.requests.map((r) => r.state), ['waiting', 'underway', 'shipped']);
+  assert.equal(demo.open, 2);
+  const real = { requests: [{ number: 7 }], open: 1, done: 0 };
+  assert.equal(profile.withDemoRequests(real, { slug: 'x' }), real, 'real rows win');
+  // Me-scoped, and registered behind the signed-in gate.
+  assert.match(read('src/routes/profile.js'), /router\.get\('\/api\/me\/requests', requireUser,/);
+});
+
+test('your votes can link a group decision to its page', () => {
+  const kudos = read('src/routes/kudos.js');
+  assert.match(kudos, /i\.github_issue_number AS issue_number, i\.title AS issue_title, i\.kind AS issue_kind, i\.id AS issue_id,/);
+  assert.equal((kudos.match(/NULL::int AS issue_id,/g) || []).length, 3, 'every other arm lines up with a NULL');
+  assert.match(kudos, /item\.issue = \{ id: r\.issue_id, number: r\.issue_number, title: r\.issue_title, kind: r\.issue_kind \};/);
+});
+
+// ── What each view says ────────────────────────────────────────────────
+
+test('Your changes: in progress (either kind, newest first), then merged, then closed', () => {
+  const { proposalsView } = loadTsx(STORE);
+  const row = (id, at, title) => ({ sessionId: id, title, appSlug: 'run-club', appName: 'Run Club', at });
+  const view = proposalsView({
+    proposals: {
+      openForVote: [row(2, '2026-09-22T10:00:00Z', 'Fix pace rounding')],
+      inProgress: [row(1, '2026-09-23T10:00:00Z', 'Dark mode for run logs')],
+      merged: [row(3, '2026-09-21T12:00:00Z', 'Pace calculator')],
+      closed: [row(4, '2026-08-01T12:00:00Z', 'Leaderboard badges')],
+    },
+  }, NOW);
+  assert.deepEqual(view.sections.map((s) => s.label), ['In progress', 'Merged', 'Closed']);
+  assert.deepEqual(view.sections[0].rows.map((r) => [r.title, r.meta, r.href]), [
+    ['Dark mode for run logs', 'Run Club · in progress', '#app/run-club/dev/sessions/1'],
+    ['Fix pace rounding', 'Run Club · in vote', '#app/run-club/dev/proposals/2'],
+  ]);
+  assert.equal(view.sections[1].rows[0].meta, 'Run Club · 2 days ago');
+  assert.equal(view.sections[2].rows[0].meta, 'Run Club · closed without merging');
+  assert.equal(proposalsView(null).loaded, false, 'a read that has not answered is not "nothing started"');
+  assert.equal(proposalsView({ proposals: { inProgress: [], merged: [] } }).empty, true);
+});
+
+test('Your requests: open, then done, each opening the request', () => {
+  const { requestsView } = loadTsx(STORE);
+  const view = requestsView({
+    requests: [
+      { number: 11, title: 'Export runs to CSV', appSlug: 'run-club', appName: 'Run Club', state: 'underway' },
+      { number: 12, title: 'Bigger tap targets', appSlug: 'game-corner', appName: 'Game Corner', state: 'waiting' },
+      { number: 21, title: 'Show times in my time zone', appSlug: 'usernode-2d5619', appName: 'Homeroom', state: 'shipped' },
+      { number: 13, title: null, appSlug: 'javascript:1', appName: 'Odd', state: 'closed' },
+    ],
+    truncated: true,
+  });
+  assert.deepEqual(view.sections.map((s) => [s.label, s.rows.map((r) => r.meta)]), [
+    ['Open', ['Run Club · someone is on it', 'Game Corner · nobody on it yet']],
+    ['Done', ['Homeroom · shipped', 'Odd · closed']],
+  ]);
+  assert.equal(view.sections[0].rows[0].href, '#app/run-club/dev/issues/11');
+  assert.equal(view.sections[1].rows[1].href, null, 'no address built from a slug the shell would not route');
+  assert.equal(view.sections[1].rows[1].title, 'Request #13');
+  assert.equal(view.truncated, true);
+  assert.equal(requestsView(undefined).loaded, false);
+});
+
+test('Your votes: still open, then decided, each saying your vote as it stands', () => {
+  const { votesView } = loadTsx(STORE);
+  const view = votesView({
+    items: [
+      { type: 'pr_vote', vote: 'yes', status: 'promoted', app: { slug: 'run-club', name: 'Run Club' },
+        pr: { sessionId: 31, number: 40, title: 'Weekly distance leaderboard' } },
+      { type: 'proposal_vote', vote: 'yes', status: 'open', app: { slug: 'run-club', name: 'Run Club' },
+        issue: { id: 77, number: null, title: 'Rename to Run Crew', kind: 'rename' } },
+      { type: 'pr_vote', vote: 'yes', status: 'merged', app: { slug: 'run-club', name: 'Run Club' },
+        pr: { sessionId: 32, title: 'Route map on the run page' } },
+      { type: 'pr_vote', vote: 'no', status: 'archived', app: { slug: 'game-corner', name: 'Game Corner' },
+        pr: { sessionId: 33, title: 'Timer sounds' } },
+      { type: 'kudos', app: { slug: 'x', name: 'X' } },
+    ],
+    nextBefore: '2026-09-01T00:00:00Z',
+  });
+  assert.deepEqual(view.sections.map((s) => [s.label, s.rows.map((r) => [r.title, r.meta, r.href])]), [
+    ['Still open', [
+      ['Weekly distance leaderboard', 'Run Club · you voted yes', '#app/run-club/dev/proposals/31'],
+      ['Rename to Run Crew', 'Run Club · you voted yes', '#app/run-club/dev/governance/77'],
+    ]],
+    ['Decided', [
+      ['Route map on the run page', 'Run Club · you voted yes · merged', '#app/run-club/dev/proposals/32'],
+      ['Timer sounds', 'Game Corner · you voted no · closed', '#app/game-corner/dev/proposals/33'],
+    ]],
+  ], 'kudos are not votes');
+  assert.equal(view.more, true);
+  assert.equal(votesView({ items: [] }).empty, true);
+});
+
+// ── The screen ─────────────────────────────────────────────────────────
+
+test('the screen ships hidden and empty, one root for all three views', () => {
+  const mod = loadTsx(SCREEN);
+  const html = renderToHtml(createElement(mod.ProfileProposalsScreen, {}));
+  assert.match(html, /^<main id="profile-proposals-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll"[^>]*data-profile-work="changes">/);
+  assert.doesNotMatch(html, /data-profile-work-group|Loading/, 'nothing but the frame until it is opened');
+  assert.equal(mod.workKind('votes'), 'votes');
+  assert.equal(mod.workKind('anything'), 'changes');
+  assert.deepEqual(mod.WORK_TITLES, { changes: 'Your changes', requests: 'Your requests', votes: 'Your votes' });
+});
+
+test('each view draws its own groups; long ones fold; Your requests ends on Ask for a change', () => {
+  const mod = loadTsx(SCREEN);
+  const html = () => renderToHtml(createElement(mod.ProfileProposalsScreen, {}));
+  const merged = Array.from({ length: 7 }, (_, i) => ({
+    sessionId: 100 + i, title: `Merged ${i}`, appSlug: 'run-club', appName: 'Run Club', at: '2026-09-20T10:00:00Z',
+  }));
+  mod.profileProposalsStore.set({
+    open: true, kind: 'changes', error: false,
+    data: { changes: { proposals: { inProgress: [], openForVote: [], merged, closed: [] } } },
+  });
+  let out = html();
+  assert.match(out, /data-profile-work-group="merged"/);
+  assert.equal((out.match(/Merged \d/g) || []).length, mod.FOLD_AT, 'five, then the fold');
+  assert.match(out, /data-profile-work-all="merged"[\s\S]*?Show all merged/);
+
+  mod.profileProposalsStore.set({
+    kind: 'requests',
+    data: { requests: { requests: [{ number: 1, title: 'Export runs', appSlug: 'run-club', appName: 'Run Club', state: 'waiting' }] } },
+  });
+  out = html();
+  assert.match(out, /data-profile-work="requests"/);
+  assert.match(out, /Export runs/);
+  assert.match(out, /data-profile-work-ask=""[^>]*>Ask for a change</);
+  assert.match(read(SCREEN), /onClick=\{\(\) => \{ \(window as any\)\.App\?\.openFeedbackModal\?\.\(\); \}\}/);
+
+  mod.profileProposalsStore.set({ kind: 'votes', data: {} });
+  assert.match(html(), /Loading…/, 'a view whose read has not answered says so');
+  mod.profileProposalsStore.set({ open: false, kind: 'changes', data: {}, error: false });
+});
+
+test('the controller reads the view it was opened on, and drops an answer for another', async () => {
+  const mod = loadTsx(SCREEN);
+  const { profileProposalsController: ctl, profileProposalsStore: store } = mod;
+  const prior = { fetch: globalThis.fetch, location: globalThis.location };
+  const asked = [];
+  let release;
+  globalThis.location = { search: '' };
+  globalThis.fetch = (url) => {
+    asked.push(url);
+    return new Promise((resolve) => { release = () => resolve({ ok: true, json: async () => ({ items: [] }) }); });
+  };
+  try {
+    const pending = ctl.open('votes');
+    assert.deepEqual(asked, ['/api/me/history?type=votes&limit=50']);
+    assert.equal(ctl.isOpen('votes'), true);
+    assert.equal(ctl.isOpen('requests'), false);
+    // The viewer moves on to Your requests before the votes answer.
+    store.set({ kind: 'requests' });
+    release();
+    await pending;
+    assert.equal(store.get().data.votes, undefined, 'the votes answer does not paint into Your requests');
+    globalThis.fetch = async (url) => { asked.push(url); return { ok: true, json: async () => ({ requests: [] }) }; };
+    await ctl.open('requests');
+    assert.equal(asked[asked.length - 1], '/api/me/requests');
+    assert.deepEqual(store.get().data.requests, { requests: [] });
+    ctl.close();
+  } finally {
+    globalThis.fetch = prior.fetch;
+    if (prior.location === undefined) delete globalThis.location; else globalThis.location = prior.location;
+  }
+});
+
+test('the router: three addresses no username can have, one screen, the bar named for the view', () => {
+  const app = read('public/js/app.js');
+  assert.match(app, /PROFILE_WORK: \{\s*proposals: 'changes',\s*'your-changes': 'changes',\s*'your-requests': 'requests',\s*'your-votes': 'votes',\s*\},/);
+  assert.match(app, /if \(parts\[0\] === 'profile' && App\.PROFILE_WORK\[parts\[1\]\]\) \{[\s\S]{0,600}?App\.navigateToProfileProposals\(App\.PROFILE_WORK\[parts\[1\]\]\);/);
+  assert.match(app, /App\.setHeaderTitle\(App\.PROFILE_WORK_TITLES\[view\]\);/);
+  assert.match(app, /window\.UsernodeReact\?\.profileProposals\?\.open\?\.\(view\);/);
+  // The dialog's "See your requests" lands on the view.
+  assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const SEE_MINE_ROUTE = '#profile\/your-requests';/);
+});

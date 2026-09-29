@@ -650,10 +650,10 @@
     },
     {
       "id": "profile.feedback-list",
-      "name": "Me: the \"More\" list is Challenges & standings, Kudos, Your feedback and Settings, and Your feedback lists what you sent with its status (#3186)",
+      "name": "Me: Your work leads, then More (Challenges & standings, Kudos, Friends, Settings); the feedback challenge's card lists what you sent with its status (#3186, UI overhaul)",
       "path": "/?demo=1#profile?feedback",
       "expectText": "Counted",
-      "expectSelector": "body:has(#profile-feedback-sheet a[data-feedback-status=\"received\"] ~ a[data-feedback-status=\"counted\"]) #profile-more #profile-row-challenges + #profile-row-kudos + #profile-row-feedback[href=\"#profile?feedback\"] + #profile-row-settings",
+      "expectSelector": "body:has(#profile-feedback-sheet a[data-feedback-status=\"received\"] ~ a[data-feedback-status=\"counted\"]) #profile-work + #profile-more #profile-row-challenges + #profile-row-kudos + #profile-row-friends[href=\"#profile?friends\"] + #profile-row-settings",
       "visual": true,
       "impact": [
         "frontend/src/features/profile/feedback-sheet.tsx",
@@ -663,10 +663,10 @@
       ]
     },
     {
-      "name": "Me: Your contributions lists merged proposals, each opening its proposal, and See all",
+      "name": "Me: Your work lists Your changes, Your requests and Your votes, each a way to its list (UI overhaul; it was Your contributions)",
       "path": "/?demo=1#profile",
-      "expectText": "Your contributions",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-contributions:has(#profile-contributions-all[href^=\"#leaderboard/users/\"]) a[data-contribution][href*=\"/dev/proposals/\"]"
+      "expectText": "Your work",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#profile/your-changes\"] + #profile-row-feedback[href=\"#profile/your-requests\"] + #profile-row-votes[href=\"#profile/your-votes\"]"
     },
     {
       "name": "A History tab after Standings lists the seasons that ended, with each season's and each event's winner",
@@ -686,10 +686,22 @@
       "expectSelector": "#profile-screen:not(.hidden) #public-profile-card:has([data-message-person=\"lin\"]) #public-profile-friend [data-friend-state=\"incoming\"] button[data-friend-action=\"accept\"] + button[data-friend-action=\"decline\"]"
     },
     {
-      "name": "Me: a private Friends section leads with a username search, then requests to answer, then your friends (#2386, #3048)",
-      "path": "/?demo=1#profile",
+      "name": "Me: Friends is a row, and its card leads with a username search, then requests to answer, then your friends (#2386, #3048, UI overhaul)",
+      "path": "/?demo=1#profile?friends",
       "expectText": "Only you can see your friends",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-more ~ #profile-friends:has(#profile-friend-search-input):has([data-friend-request-accept=\"lin\"] + [data-friend-request-decline=\"lin\"]) #profile-friends-list a[data-friend=\"ada\"][href=\"#profile/ada\"]"
+      "expectSelector": "#profile-friends-sheet #profile-friends:has(#profile-friend-search-input):has([data-friend-request-accept=\"lin\"] + [data-friend-request-decline=\"lin\"]) #profile-friends-list a[data-friend=\"ada\"][href=\"#profile/ada\"]"
+    },
+    {
+      "name": "Your changes groups what you started: in progress, then merged, then closed (UI overhaul)",
+      "path": "/?demo=1#profile/your-changes",
+      "expectSelector": "#profile-proposals-screen:not(.hidden)[data-profile-work=\"changes\"] [data-profile-work-group=\"inProgress\"] ~ [data-profile-work-group=\"merged\"] ~ [data-profile-work-group=\"closed\"]",
+      "expectText": "In progress"
+    },
+    {
+      "name": "Your requests lists what you asked for, open then done, with Ask for a change at the foot (UI overhaul)",
+      "path": "/?demo=1#profile/your-requests",
+      "expectSelector": "#profile-proposals-screen:not(.hidden)[data-profile-work=\"requests\"] [data-profile-work-group=\"open\"] ~ [data-profile-work-group=\"done\"] ~ div > button[data-profile-work-ask]",
+      "expectText": "someone is on it"
     },
     {
       "name": "Edit profile keeps social accounts proof-backed and sends management to Connectors (#982, #1939)",
