@@ -194,7 +194,7 @@ test('platform feedback sanitizes user-typed title and description before the ra
     assert.ok(posted.title.includes(`@${ZWSP}ghstranger`), 'title not sanitized');
     assert.ok(posted.body.includes(`@${ZWSP}ghstranger`), 'description not sanitized');
     // The Source line itself never used `@` — make sure that held.
-    assert.match(posted.body, /\*\*Source:\*\* usernode user \(evan\)/);
+    assert.match(posted.body, /\*\*Source:\*\* Homeroom user \(evan\)/);
     assertMentionSafe(posted.title, 'feedback title');
     assertMentionSafe(posted.body, 'feedback body');
   } finally {

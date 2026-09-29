@@ -23,6 +23,12 @@ export const CARD_GAP = 12;
 export const VIEWPORT_MARGIN = 12;
 /** The card's width on anything wider than a phone. */
 export const CARD_MAX_WIDTH = 340;
+/**
+ * The outline is `ring-2`: a 2px box-shadow drawn OUTSIDE the hole. A hole
+ * that reaches the edge of the screen therefore loses that side of its ring,
+ * which is how step 8's ring round the Me tab came to be cut off.
+ */
+export const RING_WIDTH = 2;
 
 /**
  * The first candidate that is really on screen.
@@ -57,7 +63,21 @@ export function findTarget(
   return null;
 }
 
-/** Grow a target's box by the spotlight padding, clamped to the viewport. */
+/**
+ * The padding for a target that is itself one cell of a bar (#3240): a tab.
+ * Tabs sit edge to edge, so the full padding cut the ring into the labels of
+ * the tabs either side; the tab's own tap area is the breathing room.
+ */
+export const BAR_PAD = 2;
+/**
+ * The smallest hole worth painting (#3240). Anything thinner is a target that
+ * is still arriving (below the screen, under a sheet that is still sliding
+ * in) or one the insets have squeezed away, and a ring drawn round it read
+ * as a stray blue line rather than a highlight.
+ */
+export const MIN_HOLE = 24;
+
+/** Grow a target's box by the spotlight padding. */
 export function padRect(rect: Box, pad = SPOTLIGHT_PAD): Box {
   return {
     top: rect.top - pad,
@@ -65,6 +85,80 @@ export function padRect(rect: Box, pad = SPOTLIGHT_PAD): Box {
     width: rect.width + pad * 2,
     height: rect.height + pad * 2,
   };
+}
+
+/** A box on whole pixels, so sub-pixel jitter is not a new geometry every frame. */
+export function roundBox(rect: Box): Box {
+  const top = Math.round(rect.top);
+  const left = Math.round(rect.left);
+  return {
+    top,
+    left,
+    width: Math.round(rect.left + rect.width) - left,
+    height: Math.round(rect.top + rect.height) - top,
+  };
+}
+
+/**
+ * Keep a hole, and the ring drawn just outside it, inside `bound`.
+ *
+ * Only ever shrinks the hole; one the bound would erase comes back with a
+ * zero side rather than a negative one, for `usableHole` to refuse.
+ */
+export function fitHoleIn(hole: Box, bound: Box): Box {
+  const left = Math.max(hole.left, bound.left + RING_WIDTH);
+  const right = Math.max(left, Math.min(hole.left + hole.width, bound.left + bound.width - RING_WIDTH));
+  const top = Math.max(hole.top, bound.top + RING_WIDTH);
+  const bottom = Math.max(top, Math.min(hole.top + hole.height, bound.top + bound.height - RING_WIDTH));
+  return { top, left, width: right - left, height: bottom - top };
+}
+
+/** Is this hole big enough to paint (see MIN_HOLE)? */
+export function usableHole(hole: Box | null): hole is Box {
+  return !!hole && hole.width >= MIN_HOLE && hole.height >= MIN_HOLE;
+}
+
+/**
+ * Keep the hole where its whole ring can be seen (QA 2026-09-24 Q30d).
+ *
+ * Three things clip a ring. The viewport's own edges: a target in a corner
+ * (the Me tab, bottom right) pads past them, and the ring goes with the
+ * overflow. The tab bar: a target taller than the screen (Challenges on a
+ * phone) padded straight down over the bar, so the ring was drawn across
+ * Home, Discover and the rest. And the header (#3240): a target scrolled up
+ * under it had its ring drawn across the header. `bottomInset` is the bar's
+ * height and `topInset` the header's bottom edge, each 0 when the target is
+ * IN that bar, so a step that points into a bar keeps its ring there.
+ *
+ * Only ever shrinks the hole; a hole the insets would erase is returned as a
+ * zero-height box at the band's edge rather than a negative one.
+ */
+export function fitHole(
+  hole: Box,
+  viewport: { width: number; height: number },
+  bottomInset = 0,
+  topInset = 0,
+): Box {
+  const top = Math.max(0, topInset);
+  return fitHoleIn(hole, {
+    top,
+    left: 0,
+    width: viewport.width,
+    height: viewport.height - Math.max(0, bottomInset) - top,
+  });
+}
+
+/**
+ * How much of the bottom of the screen a tab bar covers: its height when it
+ * is docked along the bottom edge, and 0 for anything else (#3240). From
+ * 768px up the same `#platform-tabs` is the sidebar RAIL down the left edge,
+ * and reading it as a bottom bar made the inset 748px on a 1280x800 screen,
+ * which clamped every hole below the header to zero height.
+ */
+export function bottomBarInset(bar: Box, viewport: { width: number; height: number }): number {
+  if (bar.width <= 0 || bar.height <= 0) return 0;
+  if (bar.top + bar.height < viewport.height - 1 || bar.width < viewport.width / 2) return 0;
+  return Math.max(0, viewport.height - bar.top);
 }
 
 /** The card's width for a viewport, so a phone gets a full-bleed card. */
@@ -79,18 +173,28 @@ export function cardWidth(viewportWidth: number): number {
  * pinned inside the viewport either way. With no hole (step 1, or a step
  * whose target went missing) the card centres, because there is nothing for
  * it to point at.
+ *
+ * `bottomInset` is the tab bar's height when the target is not in it: the
+ * card then stays above the bar rather than covering it.
  */
 export function placeCard(
   viewport: { width: number; height: number },
   card: { width: number; height: number },
   hole: Box | null,
+  safeTop = 0,
+  bottomInset = 0,
 ): { top: number; left: number } {
-  const maxTop = Math.max(VIEWPORT_MARGIN, viewport.height - card.height - VIEWPORT_MARGIN);
+  // The status bar is drawn over the page in the app, so the card's top
+  // edge keeps clear of it as well as of the viewport's own edge.
+  const minTop = VIEWPORT_MARGIN + Math.max(0, safeTop);
+  const maxTop = Math.max(
+    minTop, viewport.height - Math.max(0, bottomInset) - card.height - VIEWPORT_MARGIN,
+  );
   const maxLeft = Math.max(VIEWPORT_MARGIN, viewport.width - card.width - VIEWPORT_MARGIN);
 
   if (!hole) {
     return {
-      top: Math.max(VIEWPORT_MARGIN, Math.round((viewport.height - card.height) / 2)),
+      top: Math.max(minTop, Math.round((viewport.height - card.height) / 2)),
       left: Math.max(VIEWPORT_MARGIN, Math.round((viewport.width - card.width) / 2)),
     };
   }
@@ -98,15 +202,20 @@ export function placeCard(
   const below = hole.top + hole.height + CARD_GAP;
   const above = hole.top - CARD_GAP - card.height;
   let top: number;
-  if (below + card.height + VIEWPORT_MARGIN <= viewport.height) top = below;
-  else if (above >= VIEWPORT_MARGIN) top = above;
+  if (below <= maxTop) top = below;
+  else if (above >= minTop) top = above;
   // Neither side has room: the hole is taller than the space around it, so
-  // the card takes the larger gap and the clamp below does the rest.
-  else top = hole.top > viewport.height - (hole.top + hole.height) ? VIEWPORT_MARGIN : below;
+  // the card has to sit ON it. QA 2026-09-24 Q30d: it used to take the
+  // larger gap, which for a section taller than a phone meant the top, over
+  // the very heading and progress the step was describing. A target reads
+  // from its START, so while that start is on screen the card covers the
+  // END instead (the bottom of the band, above the tab bar); only a target
+  // whose start has scrolled off the top gets the card at the top.
+  else top = hole.top >= minTop ? maxTop : minTop;
 
   const centred = hole.left + hole.width / 2 - card.width / 2;
   return {
-    top: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(top, maxTop))),
+    top: Math.round(Math.max(minTop, Math.min(top, maxTop))),
     left: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(centred, maxLeft))),
   };
 }
@@ -185,25 +294,42 @@ export function roomLeftOfPanel(card: { width: number }, panel: Box): boolean {
  * straight across from the sentence to the control. Clamped to the viewport
  * like everything else here.
  *
- * NARROW, where the panel takes the whole width: there is no "beside" left,
- * so the rule relaxes to the weaker one the design asks for — clear of the
- * ROW rather than clear of the panel. That is exactly what `placeCard`
- * already does (below the hole when it fits, above it when it does not), so
- * the fallback is a call to it rather than a second arrangement to maintain.
+ * NARROW, where the panel takes the whole width: there is no "beside" left.
+ * The card goes above the whole sheet when it fits there (#3240), so the
+ * sheet's own title stays readable; when it does not, the rule relaxes to
+ * the weaker one — clear of the ROW rather than clear of the panel, which is
+ * exactly what `placeCard` already does, so that fallback is a call to it
+ * rather than a second arrangement to maintain.
  */
 export function placeCardForPanel(
   viewport: { width: number; height: number },
   card: { width: number; height: number },
   hole: Box | null,
   panel: Box | null,
+  safeTop = 0,
+  bottomInset = 0,
 ): { top: number; left: number } {
-  if (!hole || !panel || !roomLeftOfPanel(card, panel)) {
-    return placeCard(viewport, card, hole);
+  if (!hole || !panel) return placeCard(viewport, card, hole, safeTop, bottomInset);
+  const minTop = VIEWPORT_MARGIN + Math.max(0, safeTop);
+  if (!roomLeftOfPanel(card, panel)) {
+    // Narrow (#3240): clear the whole SHEET when there is room above it, so
+    // the card does not sit on its title and close button while pointing at
+    // a row below them; otherwise clear the row, as placeCard does.
+    const above = panel.top - CARD_GAP - card.height;
+    if (panel.top > minTop && hole.top >= panel.top && above >= minTop) {
+      const maxLeft = Math.max(VIEWPORT_MARGIN, viewport.width - card.width - VIEWPORT_MARGIN);
+      const centred = hole.left + hole.width / 2 - card.width / 2;
+      return {
+        top: Math.round(above),
+        left: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(centred, maxLeft))),
+      };
+    }
+    return placeCard(viewport, card, hole, safeTop, bottomInset);
   }
-  const maxTop = Math.max(VIEWPORT_MARGIN, viewport.height - card.height - VIEWPORT_MARGIN);
+  const maxTop = Math.max(minTop, viewport.height - card.height - VIEWPORT_MARGIN);
   const centred = hole.top + hole.height / 2 - card.height / 2;
   return {
-    top: Math.round(Math.max(VIEWPORT_MARGIN, Math.min(centred, maxTop))),
+    top: Math.round(Math.max(minTop, Math.min(centred, maxTop))),
     left: Math.round(Math.max(VIEWPORT_MARGIN, panel.left - CARD_GAP - card.width)),
   };
 }

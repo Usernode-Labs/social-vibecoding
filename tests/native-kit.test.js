@@ -37,12 +37,15 @@ const {
   remeasuredSheetY,
   keyboardInset,
   isTextEntryField,
+  keyboardCanBeUp,
   revealScrollDelta,
   reorderDropIndex,
   gridDropSide,
   autoScrollVelocity,
   createArbiter,
   createToastSlot,
+  toastDuration,
+  toastTapDismisses,
   zoomPose,
   zoomRectUsable,
 } = physics;
@@ -660,6 +663,31 @@ test('keyboardInset: explicit minInset override is honored, degenerate input is 
   );
   assert.equal(keyboardInset(null), 0);
   assert.equal(keyboardInset(undefined), 0);
+});
+
+test('keyboardCanBeUp: only a focused text field can hold the keyboard up', () => {
+  // The tracker zeroes its inset on blur rather than waiting for iOS to
+  // report the retraction, which lands after the keys have gone.
+  assert.equal(keyboardCanBeUp(null), false, 'nothing focused: no keyboard');
+  assert.equal(keyboardCanBeUp({ tag: 'BUTTON' }), false);
+  assert.equal(keyboardCanBeUp({ tag: 'INPUT', type: 'checkbox' }), false);
+  assert.equal(keyboardCanBeUp({ tag: 'INPUT', type: 'text' }), true);
+  assert.equal(keyboardCanBeUp({ tag: 'TEXTAREA' }), true);
+  assert.equal(keyboardCanBeUp({ tag: 'DIV', contentEditable: true }), true);
+  assert.equal(keyboardCanBeUp({ tag: 'TEXTAREA', readOnly: true }), false);
+  // A frame may hold a field of its own that the page cannot see.
+  assert.equal(keyboardCanBeUp({ tag: 'IFRAME' }), true);
+});
+
+test('native.css: a modal eases its height on the same clock as its top', () => {
+  // Centred on `top`, a card whose height snapped while `top` eased shrank
+  // around its middle: its top edge dropped by half the keyboard and slid
+  // back. The same duration and curve keep that edge still.
+  const modal = cssBlock('.un-modal');
+  const transition = /transition:\s*([^;]+);/.exec(modal)[1];
+  for (const prop of ['top', 'max-height', 'height']) {
+    assert.match(transition, new RegExp(`(^|,\\s*)${prop} 250ms ease-out`), `${prop} eases with the keyboard`);
+  }
 });
 
 // ── Keyboard-avoidance reveal math ─────────────────────────────────────
@@ -1751,4 +1779,69 @@ test('an icon row lets its label wrap, exactly as a bare label always did', () =
     'a menu label must keep wrapping');
   assert.doesNotMatch(rule, /text-overflow:\s*ellipsis/,
     'a menu label must not be truncated');
+});
+
+// ── Toast lifetime and shape (QA 2026-09-24 Q28) ───────────────────────
+//
+// Long errors (Claim, Start work) wrapped to four lines in a round blob over
+// the composer and the tab bar and were gone after 2.2s, before they could
+// be read. A longer message now stays longer, can be tapped away, and wraps
+// into a rounded rectangle; everything a caller already passes still wins.
+
+test('QA 2026-09-24 Q28: a longer toast stays longer, up to 8s; short ones keep 2.2s', () => {
+  assert.equal(toastDuration('Copied'), 2200, 'a short status is unchanged');
+  assert.equal(toastDuration(''), 2200);
+  assert.equal(toastDuration(null), 2200);
+  const claim = 'Cannot verify the issue right now: GitHub is unavailable for this app.';
+  assert.equal(toastDuration(claim), 1000 + 60 * claim.length, 'reading time, about 60ms a character');
+  assert.ok(toastDuration(claim) >= 5000 && toastDuration(claim) <= 8000);
+  assert.equal(toastDuration('x'.repeat(400)), 8000, 'capped at 8s');
+  assert.equal(toastDuration('Failed', { error: true }), 5000, 'an error holds at least 5s');
+  assert.equal(toastDuration('x'.repeat(400), { error: true }), 8000);
+  assert.equal(toastDuration('x'.repeat(400), { duration: 1500 }), 1500, 'an explicit duration always wins');
+  assert.equal(toastDuration('Deleted', { action: { label: 'Undo' } }), 4000, 'an undo window is not reading time');
+});
+
+test('QA 2026-09-24 Q28: only a lingering toast takes taps, never an action toast', () => {
+  assert.equal(toastTapDismisses({}, 2200), false, 'a 2.2s status stays pass-through, as the kit promised');
+  assert.equal(toastTapDismisses({}, 5320), true);
+  assert.equal(toastTapDismisses({ error: true }, 2200), true);
+  assert.equal(toastTapDismisses({ dismissible: false }, 8000), false, 'a caller can opt out');
+  assert.equal(toastTapDismisses({ dismissible: true }, 2200), true, 'or in');
+  assert.equal(toastTapDismisses({ action: { label: 'Undo' }, dismissible: true }, 4000), false,
+    'an action toast\'s only tappable part is its button');
+
+  const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'), 'utf8');
+  assert.match(js, /duration: duration,\n      tapDismiss: toastTapDismisses\(opts, duration\),/);
+  assert.match(js, /if \(shown && shown\.tapDismiss && !shown\.closed\) resolveToast\(shown, 'dismiss'\);/,
+    'a tap resolves the SHOWN record with the documented reason');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.css'), 'utf8');
+  const rule = css.slice(css.indexOf('.un-toast {'), css.indexOf('}', css.indexOf('.un-toast {')));
+  assert.match(rule, /pointer-events: none;/, 'pass-through by default');
+  assert.match(rule, /border-radius: calc\(10px \+ 0\.6125rem\);/,
+    'half a one-line toast: a capsule on one line, a rounded rectangle when it wraps');
+  assert.match(rule, /width: max-content;/, 'a long message uses the width it is allowed, not half the screen');
+  assert.match(rule, /bottom: calc\(16px \+ max\(var\(--un-toast-inset-bottom, 0px\), var\(--un-safe-inset-bottom/,
+    'it rests above the host\'s bottom chrome');
+  assert.match(css, /\.un-toast\.un-dismissible\.un-in \{\n  pointer-events: auto;/);
+  assert.match(css, /html\.un-android \.un-toast \{\n  left: 16px;\n  right: 16px;\n  width: auto;/,
+    'the Android snackbar keeps spanning its insets');
+});
+
+// ── A dismissed surface stops taking input at once ─────────────────────
+// The exit spring runs to rest well after a sheet has left the screen, and
+// until teardown its backdrop, faded to nothing, still covered the page: the
+// first tap after closing a sheet (a tab, a row) landed on it and did nothing.
+// Every spring-driven dismissal releases input before its exit spring starts,
+// as the modal's fade already does (animateDialog).
+
+test('sheet, panel and action sheet release pointer input when they start to leave', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'), 'utf8');
+  assert.match(src, /function releaseInput\(\) \{[\s\S]*?style\.pointerEvents = 'none';[\s\S]*?\n {2}\}/);
+  const exits = [
+    ['presentSheet', /function dismiss\(velocity\) \{\s*if \(closed\) return;\s*closed = true;\s*releaseInput\(backdrop, sheet\);\s*springTo\(height/],
+    ['presentPanel', /closed = true;\s*var i = modalStack\.indexOf\(entry\);\s*if \(i >= 0\) modalStack\.splice\(i, 1\);\s*releaseInput\(backdrop, panel\);\s*springTo\(width, teardown\)/],
+    ['actionSheet', /settled = true;\s*settleAction = action \|\| null;\s*releaseInput\(backdrop, wrap\);\s*springTo\(height, 0, finishSettle\)/],
+  ];
+  for (const [name, re] of exits) assert.match(src, re, `${name} releases input before its exit spring`);
 });

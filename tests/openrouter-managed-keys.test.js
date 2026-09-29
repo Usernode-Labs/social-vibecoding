@@ -166,6 +166,7 @@ test('default-open managed provisioning stores the key internally and returns on
   const client = {
     query: async (sql, params = []) => {
       const text = String(sql);
+      if (/SELECT id FROM users WHERE id = \$1 AND anonymised_at IS NULL FOR UPDATE/.test(text)) return { rows: [{ id: params[0] }] };
       if (/FROM user_social_identities/.test(text)) {
         identityQueries += 1;
         return { rows: [] };
@@ -877,4 +878,25 @@ test('configured GLM 5.3 Flash is preferred without filtering the remaining mode
   assert.deepEqual(catalog.models.map((model) => model.id), [
     'vendor/cheap', 'z-ai/glm-5.3-flash', 'vendor/other',
   ]);
+});
+
+// QA 2026-09-24: "Start work" toasted "Ask an administrator to check
+// USERNODE_OPENROUTER_MANAGEMENT_API_KEY". A person cannot act on a server
+// variable. Both user-facing doors (session creation and the managed-key
+// claim) answer in plain words and leave the variable to the server log;
+// the error itself, which the admin console and the log print, keeps it.
+test('an unconfigured deployment tells the person in plain words, and the log keeps the variable', () => {
+  const managed = require('../src/services/openrouter-managed-keys');
+  const text = managed.NOT_CONFIGURED_USER_MESSAGE;
+  assert.equal(typeof text, 'string');
+  assert.doesNotMatch(text, /USERNODE_|OPENROUTER|API_KEY/, 'no environment variable');
+  assert.doesNotMatch(text, /—/, 'and no em dash');
+  const service = fs.readFileSync(path.join(root, 'src/services/openrouter-managed-keys.js'), 'utf8');
+  assert.match(service, /'Company OpenRouter keys are not configured yet\. Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY\.'/,
+    'the error keeps the variable for the log and the admin console');
+  const sessions = fs.readFileSync(path.join(root, 'src/routes/sessions.js'), 'utf8');
+  assert.match(sessions, /err\.code === 'not_configured'\s*\? managedOpenRouter\.NOT_CONFIGURED_USER_MESSAGE/);
+  assert.doesNotMatch(sessions, /Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY/);
+  const credentials = fs.readFileSync(path.join(root, 'src/routes/credentials.js'), 'utf8');
+  assert.match(credentials, /if \(err\.code === 'not_configured'\) \{[\s\S]{0,300}?log\.warn\([\s\S]{0,200}?err: err\.message[\s\S]{0,200}?error: managedOpenRouter\.NOT_CONFIGURED_USER_MESSAGE/);
 });

@@ -157,6 +157,17 @@ test('firstFailingTest: the first `not ok` line, without its number or a SKIP/TO
   assert.equal(mainWatch.firstFailingTest('Suite setup failed: npm ci exited 1'), null, 'a setup failure names no test');
   assert.equal(mainWatch.firstFailingTest(''), null);
   assert.equal(mainWatch.firstFailingTest(null), null);
+  // The grouped-by-file reason unit-suite.js writes now.
+  assert.equal(mainWatch.firstFailingTest(
+    'tests/sessions.test.js (2): shared-sessions returns linked_issues per row; another | tests/b.test.js (1): c | # tests 9 | # fail 3'),
+  'shared-sessions returns linked_issues per row');
+  assert.equal(mainWatch.firstFailingTest('tests/a.test.js (3): only one fit… | # fail 3'), 'only one fit');
+  assert.equal(mainWatch.firstFailingTest('Suite run exceeded 600s and was killed. | tests/a.test.js (1): slow'), 'slow');
+  assert.equal(mainWatch.firstFailingTest('tests/a.test.js (40) | tests/b.test.js (1): named | # fail 41'), 'named',
+    'a file whose names did not fit is skipped, not misread');
+  assert.equal(mainWatch.firstFailingTest('tests/a.test.js (40) | (+3 more files, 9 failing tests) | # fail 49'), null);
+  assert.equal(mainWatch.firstFailingTest('not ok 7 - retries (2): then gives up | # fail 1'), 'retries (2): then gives up',
+    'a stored old-form reason is not misread as a file group');
 });
 
 test('classify: only a verdict ABOUT the code can pause merges', () => {
@@ -199,7 +210,18 @@ test('afterMerge: a green run records passing, clears the pause column, and tell
   } finally { suite.restore(); }
 });
 
-test('afterMerge: a first red is provisional — it holds the pause, says so, and re-runs once', async () => {
+test('afterMerge: a concurrent or completed claim for the same SHA does not run the suite again', async () => {
+  const pool = fakePool({ claim: null });
+  const suite = stubSuite(async () => pass);
+  try {
+    assert.equal(await run(pool), null);
+    assert.equal(suite.calls.length, 0);
+    assert.match(pool.calls[0].sql, /main_check_sha IS DISTINCT FROM \$2/);
+    assert.equal(pool.calls[0].params[3], false);
+  } finally { suite.restore(); }
+});
+
+test('afterMerge: a first red is provisional — it holds the pause (the banner says so) and re-runs once', async () => {
   const pool = fakePool();
   const suite = scripted(fail(TAP_RED), fail(TAP_RED));
   try {
@@ -220,11 +242,7 @@ test('afterMerge: a first red is provisional — it holds the pause, says so, an
     assert.equal(writes[1][1].confirmed, true);
     assert.equal(writes[1][1].firstRun.failureReason, TAP_RED);
     assert.deepEqual(writes[1].slice(2), [false, true]);
-    assert.equal(posted.length, 2);
-    assert.match(posted[0].content, /^⚠️ main's unit suite failed after PR #41 merged \(ccccccc\): shared-sessions returns linked_issues per row\. Re-running once to confirm; merges are paused meanwhile/);
-    assert.match(posted[0].content, /except for proposals already tested level with main/);
-    assert.match(posted[1].content, /is failing after PR #41 merged \(ccccccc\), confirmed on a second run: shared-sessions returns linked_issues per row\./);
-    assert.match(posted[1].content, /paused until a fix lands or an admin resumes them/);
+    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
     assert.equal(enqueued.length, 0, 'red kicks nothing');
   } finally { suite.restore(); }
 });
@@ -240,8 +258,7 @@ test('afterMerge: red then green is a flake — recorded as passing, the pause l
     assert.deepEqual(writes.map(([state, , clear, set]) => [state, clear, set]),
       [['confirming', false, true], ['passing', true, false]]);
     assert.equal(writes[1][1].flake.failureReason, TAP_RED, 'the failure that did not repeat is kept');
-    assert.equal(posted.length, 2);
-    assert.match(posted[1].content, /passed on the confirming run \(ccccccc\); the first failure was a flake: shared-sessions returns linked_issues per row\. Merges continue\./);
+    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
     assert.deepEqual(enqueued, [12], 'whatever waited out the re-run can go');
   } finally { suite.restore(); }
 });
@@ -257,7 +274,6 @@ test('afterMerge: a re-run that could not happen neither confirms nor clears —
     assert.equal(writes[1][1].confirmed, false);
     assert.match(writes[1][1].confirmation.failureReason, /docker daemon unreachable/);
     assert.equal(writes[1][1].failureReason, TAP_RED, 'the verdict is the first run');
-    assert.match(posted[1].content, /the confirming run could not complete \(docker daemon unreachable\)\. Merges for this app stay paused/);
     assert.equal(enqueued.length, 0);
   } finally { suite.restore(); }
 });
@@ -272,33 +288,29 @@ test('afterMerge: MAIN_WATCH_CONFIRM=0 takes the first red at its word', async (
     assert.equal(out.state, 'failing');
     assert.equal(suite.calls.length, 1, 'no re-run');
     assert.deepEqual(pool.writes().map(([state]) => state), ['failing']);
-    assert.equal(posted.length, 1);
-    assert.match(posted[0].content, /main's unit suite is failing after PR #41 merged \(ccccccc\)\. 1 of 40 tests failed: votes › tally/);
-    assert.match(posted[0].content, /paused until a fix lands or an admin resumes them/);
+    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
   } finally { suite.restore(); }
 });
 
-test('afterMerge: green after red announces the recovery and lets the queue go', async () => {
+test('afterMerge: green after red lifts the pause and lets the queue go', async () => {
   // The claim's prev block says what this run supersedes: a pause.
   const pool = fakePool({ claim: { was_state: 'failing', was_sha: OLD, was_paused_sha: OLD } });
   const suite = stubSuite(async () => pass);
   try {
     await run(pool, { session: { id: 4, pr_number: 42 } });
-    assert.equal(posted.length, 1);
-    assert.match(posted[0].content, /green again after PR #42 merged \(ccccccc\)\. Merges resume\./);
+    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
     assert.deepEqual(enqueued, [12], 'whatever was approved during the pause can merge now');
   } finally { suite.restore(); }
 });
 
-test('afterMerge: green after a pause the state no longer shows still announces it', async () => {
+test('afterMerge: green after a pause the state no longer shows still lets the queue go', async () => {
   // A red, then a merge whose run errored: state 'error', pause column still
   // set. The green that follows is a recovery, and is announced as one.
   const pool = fakePool({ claim: { was_state: 'error', was_sha: OLD, was_paused_sha: 'e'.repeat(40) } });
   const suite = stubSuite(async () => pass);
   try {
     await run(pool);
-    assert.equal(posted.length, 1);
-    assert.match(posted[0].content, /green again/);
+    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
     assert.deepEqual(enqueued, [12]);
   } finally { suite.restore(); }
 });
@@ -323,7 +335,7 @@ test('afterMerge: a merge that supersedes the row mid-confirmation discards the 
   try {
     const out = await run(pool);
     assert.equal(out, null);
-    assert.equal(posted.length, 1, 'only the "re-running" notice went out');
+    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
   } finally { suite.restore(); }
 });
 
@@ -371,7 +383,7 @@ test('the pause write is the same CASE for every verdict, keyed on the sha it is
 
 // ── resume ───────────────────────────────────────────────────────────────
 
-test('resume: lifts the pause, remembers its sha, tells the group, and kicks the queue', async () => {
+test('resume: lifts the pause, remembers its sha, and kicks the queue', async () => {
   const row = {
     main_check_state: 'failing', main_check_sha: SHA, main_check_at: new Date(), main_check_detail: {},
     main_check_resumed_sha: SHA, main_check_paused_sha: null,
@@ -382,8 +394,7 @@ test('resume: lifts the pause, remembers its sha, tells the group, and kicks the
   assert.equal(out.resumedSha, SHA, 'and remembered, so a red still in flight for this sha cannot re-pause');
   assert.match(pool.calls[0].sql, /SET main_check_resumed_sha = main_check_paused_sha, main_check_paused_sha = NULL/);
   assert.match(pool.calls[0].sql, /WHERE id = \$1 AND main_check_paused_sha IS NOT NULL/);
-  assert.equal(posted.length, 1);
-  assert.match(posted[0].content, /^evan resumed merges while main's unit suite is failing \(ccccccc\)/);
+  assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
   assert.deepEqual(enqueued, [12]);
 });
 
@@ -463,8 +474,7 @@ test('resumeInterrupted: an interrupted confirmation resumes at the re-run, with
     assert.equal(writes[1][1].flake.failureReason, TAP_RED, 'green on the re-run: a flake, like an uninterrupted one');
     // The group heard about the first red before the restart; it hears the
     // outcome, not the restart.
-    assert.equal(posted.length, 1);
-    assert.match(posted[0].content, /passed on the confirming run \(ccccccc\); the first failure was a flake/);
+    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
     assert.deepEqual(enqueued, [12]);
   } finally { suite.restore(); }
 });
@@ -480,8 +490,7 @@ test('resumeInterrupted: an interrupted confirmation that fails again is a confi
     assert.equal(writes[1][0], 'failing');
     assert.equal(writes[1][1].confirmed, true);
     assert.equal(writes[1][1].firstRun.failureReason, TAP_RED);
-    assert.equal(posted.length, 1);
-    assert.match(posted[0].content, /confirmed on a second run: shared-sessions returns linked_issues per row/);
+    assert.equal(posted.length, 0, 'a channel carries no activity: the board banner says it');
   } finally { suite.restore(); }
 });
 

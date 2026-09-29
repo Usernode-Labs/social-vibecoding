@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { confirmAction } from '../../lib/confirm';
 import { useDialog } from '../dialogs/use-dialog';
 import * as api from './api';
 import { createDirect, createGroup, setUserBlocked } from './store';
@@ -87,7 +88,14 @@ export function CreateConversationDialog() {
   }
 
   async function block(user: ConversationUser) {
-    if (!window.confirm(`Block @${user.username}? Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.`)) return;
+    // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
+    const ok = await confirmAction({
+      title: `Block @${user.username}?`,
+      message: 'Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.',
+      confirmLabel: 'Block',
+      danger: true,
+    });
+    if (!ok) return;
     setSubmitting(true); setError('');
     try {
       await setUserBlocked(user.id, true);

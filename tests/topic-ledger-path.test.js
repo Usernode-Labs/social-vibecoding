@@ -121,6 +121,11 @@ test('a conflict the lane owns is an automatic step, not the author’s (#2247)'
   const footText = sync.foot.filter(Array.isArray)
     .map((f) => f.map((x) => (typeof x === 'string' ? x : x.b)).join('')).join(' ');
   assert.match(footText, /can also bring it up to date sooner/, 'the author is told how to hurry it, not that they must');
+  // QA 2026-09-24: the foot is what a PERSON can do. The sentence above has
+  // already said what the platform does, and the remedy's own lead used to
+  // say it again right under it ("... then tries the merge again. The
+  // platform resolves it automatically.").
+  assert.doesNotMatch(footText, /resolves it automatically/, 'the platform\u2019s part is said once, in the sentence');
   assert.equal(find(rowsOf(AppView, CONFLICTED), 'behind'), undefined,
     'behind-main still folds into the sync step whoever does the sync');
 
@@ -128,11 +133,24 @@ test('a conflict the lane owns is an automatic step, not the author’s (#2247)'
   const working = find(rowsOf(AppView, { ...CONFLICTED, integration: { blockReasons: ['integrating'] } }), 'mergeability');
   assert.match(working.text.join(''), /Homeroom is resolving it now, then it tries the merge again/);
   assert.equal(working.sub, null);
+  const workingFoot = working.foot.filter(Array.isArray).map((f) => f.join('')).join(' ');
+  assert.equal(workingFoot, 'Nobody needs to do anything.', 'and the foot does not say "resolving it now" twice');
 
   // A conflict the lane resolves once the vote passes says so in the sentence.
   const later = find(rowsOf(AppView, { ...CONFLICTED, integration: { blockReasons: ['awaiting_approval'] } }), 'mergeability');
   assert.equal(later.sub, null);
   assert.match(later.text.join(''), /once the group approves, then tries the merge again/);
+  const laterFoot = later.foot.filter(Array.isArray)
+    .map((f) => f.map((x) => (typeof x === 'string' ? x : x.b)).join('')).join(' ');
+  assert.doesNotMatch(laterFoot, /once the vote passes/, 'nor the vote condition twice');
+  assert.match(laterFoot, /can bring it up to date sooner/);
+
+  // The remedy keeps its whole sentence for every other reader: the conflict
+  // box and the pill's detail still open with what the platform does.
+  const remedy = AppView._conflictRemedy(CONFLICTED, 'predicted');
+  assert.match(remedy.text, /^The platform resolves it automatically\. /);
+  assert.equal(remedy.parts[0], 'The platform resolves it automatically. ');
+  assert.deepEqual(remedy.parts.slice(1), remedy.followUp);
 });
 
 test('the sync step says how many files overlap and does not list them', () => {

@@ -78,8 +78,12 @@ const NEUTRAL_PAGE_BG = '#f5f5f7'; // zinc-50
 const NEUTRAL_HAIRLINE = '#e3e3e6'; // zinc-200
 const NEUTRAL_INK = '#1c1c1e'; // zinc-900
 const NEUTRAL_SECONDARY_INK = '#68686c'; // zinc-500
-const LOGO_URL = `${PRODUCTION_ORIGIN}/brand/homeroom-logo-black.png`;
-const LOGO_ALT = 'Homeroom in black';
+// #2908: the product's own script logotype (frontend/@/components/ui/
+// wordmark.tsx), rasterized, replacing #2673's pixel-font "HOMEROOM". A NEW
+// file name rather than new bytes under the old one: mail clients and image
+// proxies cache by URL, and the old file stays in place for mail already sent.
+const LOGO_URL = `${PRODUCTION_ORIGIN}/brand/homeroom-logotype-black.png`;
+const LOGO_ALT = 'Homeroom';
 const BODY_STYLE =
   `margin:0;padding:24px 12px;background:${NEUTRAL_PAGE_BG};font-family:-apple-system,`
   + 'Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;'
@@ -92,16 +96,22 @@ const FOOTER_STYLE =
   `margin:24px 0 0;padding-top:16px;border-top:1px solid ${NEUTRAL_HAIRLINE};`
   + `font-size:12px;line-height:1.5;color:${NEUTRAL_SECONDARY_INK}`;
 
-const HTML_SHELL = (body) =>
+// Why a mail arrived, for every kind but one: the recipient's own account
+// or waitlist place. A project invite goes to an address somebody ELSE
+// typed, so it says that instead (its template returns `why`); claiming the
+// recipient asked for it would be the one untrue sentence in the frame.
+const WHY_DEFAULT = 'You are receiving this because of activity on your account or your '
+  + 'place on the waitlist. We only send mail you asked for.';
+
+const HTML_SHELL = (body, why = WHY_DEFAULT) =>
   '<!doctype html><html><body style="' + BODY_STYLE + '">'
   + '<div style="' + CARD_STYLE + '">'
-  + `<img src="${LOGO_URL}" width="147" height="27" alt="${esc(LOGO_ALT)}" `
+  + `<img src="${LOGO_URL}" width="140" height="37" alt="${esc(LOGO_ALT)}" `
   + `style="${LOGO_STYLE}">`
   + body
   + '<div style="' + FOOTER_STYLE + '">'
   + BRAND_NAME
-  + '<br>You are receiving this because of activity on your account or your '
-  + 'place on the waitlist. We only send mail you asked for.'
+  + '<br>' + esc(why)
   + '</div>'
   + '</div>'
   + '</body></html>';
@@ -153,16 +163,16 @@ function otp(payload) {
   };
 }
 
-// Waitlist join confirmation. Two optional links, independent of each
-// other:
+// Waitlist join confirmation. One optional link:
 //   - payload.confirmUrl — the one-click "confirm this address" link.
 //     Following it stamps waitlist_signups.confirmed_at and lands on the
 //     stage-2 survey, so confirming and answering are one motion.
-//   - payload.url — the durable stage-2 survey link (#more/<token>). The
-//     join response shows it once; the email is its lasting home.
-// Either may be absent (an idempotent re-join carries neither), and the
-// copy must not grow an empty paragraph or the string "undefined" when
-// that happens.
+// It may be absent (an idempotent re-join carries none), and the copy must
+// not grow an empty paragraph or the string "undefined" when that happens.
+//
+// #2908 removed the closing "Want to increase your chances of getting into
+// an earlier group?" paragraph and its #more/<token> survey link. Callers
+// still pass payload.url; this template no longer prints it.
 //
 // The shape follows Andrea's copy (doc comment, 27 Aug 2026): thank, set
 // the expectation, confirm, and only then offer the optional questions.
@@ -176,7 +186,6 @@ function otp(payload) {
 // with the rest.
 function waitlistJoined(payload) {
   const confirmUrl = payload.confirmUrl || null;
-  const surveyUrl = payload.url || null;
 
   let text = '';
   let html = '';
@@ -213,14 +222,6 @@ function waitlistJoined(payload) {
   if (confirmUrl) {
     text += '\n\nOr confirm in one tap:\n' + confirmUrl;
     html += button(confirmUrl, 'Confirm my email');
-  }
-  if (surveyUrl) {
-    text += '\n\nWant to increase your chances of getting into an earlier group? '
-      + 'Answer a few optional questions, invite someone you would build with, '
-      + `and follow along: ${surveyUrl}`;
-    html += p('Want to increase your chances of getting into an earlier group? '
-      + 'Answer a few optional questions, invite someone you would build with, '
-      + `and follow along: ${link(surveyUrl)}`);
   }
 
   return { subject: "You're on the Homeroom waitlist 🎉", text, html };
@@ -391,6 +392,31 @@ function adminTest(payload) {
   };
 }
 
+// A project invite, to an address that is not on Homeroom yet (the create
+// dialog's "Will invite" rows; services/email-invites.js). One link: the
+// waitlist, joined with this address. Nothing here grants access; the invite
+// waits on the account and turns into an ordinary one once the address is
+// confirmed on it. Every field is optional so the kind still renders empty.
+function projectInvite(payload) {
+  const inviter = payload.inviter ? `@${payload.inviter}` : 'Someone';
+  const project = payload.project || 'a project';
+  const url = payload.url || '';
+  const lead = `${inviter} invited you to ${project}, a group on Homeroom, where communities build the apps they use together.`;
+  const how = 'Join the waitlist with this email address. Once you are in, the invite will be waiting for you.';
+  return {
+    why: 'You are receiving this because someone on Homeroom invited this address to a project. '
+      + 'You will not hear from us again unless you join, or somebody invites you again.',
+    subject: `${inviter} invited you to ${project} on Homeroom`,
+    text: `${lead}\n\n${how}${url ? `\n\n${url}` : ''}\n\nIf you were not expecting this, you can ignore this email.`,
+    html: (
+      p(lead)
+      + p(how)
+      + (url ? button(url, 'Join the waitlist') : '')
+      + p('If you were not expecting this, you can ignore this email.')
+    ),
+  };
+}
+
 /**
  * Every template returns a FRAGMENT; the frame is applied here, once (#1555).
  *
@@ -414,6 +440,7 @@ const TEMPLATES = {
   waitlist_released: waitlistReleased,
   password_reset: passwordReset,
   admin_test: adminTest,
+  project_invite: projectInvite,
 };
 
 function buildMessage(kind, payload = {}) {
@@ -421,8 +448,8 @@ function buildMessage(kind, payload = {}) {
     ? TEMPLATES[kind]
     : null;
   if (!template) throw new Error(`unknown mail kind: ${kind}`);
-  const message = template(payload);
-  return { ...message, html: HTML_SHELL(message.html) };
+  const { why, ...message } = template(payload);
+  return { ...message, html: HTML_SHELL(message.html, why) };
 }
 
 // Every kind this module can render, for the admin console and for tests

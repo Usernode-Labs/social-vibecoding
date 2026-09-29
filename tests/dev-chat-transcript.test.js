@@ -133,12 +133,14 @@ test('no path writes into #dc-messages any more', () => {
     'the rows are one publish');
   assert.doesNotMatch(body, /innerHTML\s*=/, 'renderMessages assigns no markup');
 
-  // The four in-place patch paths all collapse onto one publish.
+  // The four in-place patch paths all collapse onto one publish — the two
+  // progress-driven ones coalesced to one per frame (`_publishTranscriptSoon`,
+  // pinned in tests/dev-chat-smoothness.test.js).
   for (const fn of ['_patchProgressDom', '_syncActivityNode', '_clearEstimate']) {
     const fnAt = DEV_CHAT_SRC.indexOf(`  ${fn}(`);
     assert.ok(fnAt > 0, `${fn} is still the entry point`);
     const fnBody = DEV_CHAT_SRC.slice(fnAt, DEV_CHAT_SRC.indexOf('\n  },', fnAt));
-    assert.match(fnBody, /DevChat\._publishTranscript\(\)/, `${fn} publishes`);
+    assert.match(fnBody, /DevChat\._publishTranscript(Soon)?\(\)/, `${fn} publishes`);
     assert.doesNotMatch(fnBody, /innerHTML|textContent|insertAdjacentHTML/,
       `${fn} touches no node`);
   }
@@ -384,7 +386,9 @@ test('three foreign builders arrive whole, through hosts that generate no box', 
   // rather than the inputs. `contents` keeps `#dc-messages`' own children the
   // direct children of the scroll container.
   for (const sink of ['visualsHtml', 'devFlowHtml']) {
-    assert.match(TRANSCRIPT_TSX, new RegExp(`__html: (r|s)\\.${sink}`), `${sink} is rendered whole`);
+    // Through `Html`, which holds the `{ __html }` wrapper steady (see
+    // tests/dev-chat-smoothness.test.js).
+    assert.match(TRANSCRIPT_TSX, new RegExp(`html=\\{(r|s)\\.${sink}\\}`), `${sink} is rendered whole`);
   }
   const at = TRANSCRIPT_TSX.indexOf("case 'credits':");
   assert.match(TRANSCRIPT_TSX.slice(at, at + 200), /className="contents"/,

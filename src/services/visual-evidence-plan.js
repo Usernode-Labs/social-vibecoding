@@ -20,13 +20,14 @@ const MAX_LOCATOR_VALUE = 256;
 const MAX_PATH = 512;
 
 const IMPACTS = Object.freeze(['ui', 'motion', 'none']);
-const PERSONAS = Object.freeze(['member', 'read_only_admin']);
+const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin']);
 const ANIMATIONS = Object.freeze(['none', 'steps', 'motion']);
+const CONTROLLED_FAILURE_LABEL = 'Controlled test: deliberately block the declared API GET on both revisions.';
 const LOCATOR_KINDS = Object.freeze(['testId', 'role', 'label', 'placeholder', 'text', 'css']);
 const ACTION_TYPES = Object.freeze([
   'navigate', 'click', 'fill', 'press', 'select', 'check', 'uncheck',
-  'hover', 'drag', 'clickPoint', 'dragPoints', 'scrollIntoView', 'scrollBy',
-  'waitFor',
+  'hover', 'drag', 'hoverViewport', 'hoverPoint', 'clickPoint', 'dragPoints', 'scrollIntoView', 'scrollBy',
+  'waitFor', 'waitForHostedApp', 'requestFailure',
 ]);
 const ASSERTION_TYPES = Object.freeze([
   'visible', 'hidden', 'attached', 'detached', 'text', 'count', 'value',
@@ -94,6 +95,17 @@ const relativePathSchema = z.string().max(MAX_PATH)
     return !credentialLike(value) && !credentialLike(decoded);
   }, 'Must not contain credentials, tokens, or non-fixture email addresses');
 
+function validControlledFailurePath(value) {
+  if (!validRelativePath(value) || !value.startsWith('/api/') || value.includes('*')) return false;
+  try {
+    const parsed = new URL(value, 'https://evidence.invalid');
+    return !parsed.hash && `${parsed.pathname}${parsed.search}` === value;
+  } catch { return false; }
+}
+
+const controlledFailurePathSchema = relativePathSchema.refine(validControlledFailurePath,
+  'Must be one exact, same-origin /api/ GET path (optional query, no fragment or wildcard)');
+
 function credentialLike(value, fixtureDomains = ['example.test', 'example.invalid', 'test.invalid']) {
   const text = String(value || '');
   if (CREDENTIAL_PATTERNS.some((pattern) => pattern.test(text))) return true;
@@ -143,6 +155,7 @@ const intentSchema = z.object({
   // media is never inferred to mean absence.
   baseState: z.enum(['present', 'not_present']).default('present'),
   animation: z.enum(ANIMATIONS).default('none'),
+  controlledFailurePath: controlledFailurePathSchema.optional(),
 }).strict();
 
 const storyIntentObject = z.object({
@@ -154,6 +167,10 @@ const storyIntentObject = z.object({
 }).strict();
 
 const storyIntentSchema = storyIntentObject.superRefine((story, ctx) => {
+  if (story.intent.controlledFailurePath && story.intent.steps[0] !== CONTROLLED_FAILURE_LABEL) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['intent', 'steps', 0],
+      message: `A controlled failure must begin its reviewer-visible steps with: ${CONTROLLED_FAILURE_LABEL}` });
+  }
   const names = new Set();
   story.viewports.forEach((viewport, index) => {
     if (names.has(viewport.name)) {
@@ -194,6 +211,8 @@ const actionBase = {
 
 const pointerRatio = z.number().min(0).max(1);
 const actionSchema = z.union([
+  z.object({ ...actionBase, type: z.literal('requestFailure'), path: controlledFailurePathSchema,
+    enabled: z.boolean() }).strict(),
   z.object({ ...actionBase, type: z.literal('navigate'), path: relativePathSchema }).strict(),
   z.object({ ...actionBase, type: z.literal('click'), target: locatorSchema }).strict(),
   z.object({ ...actionBase, type: z.literal('fill'), target: locatorSchema, value: literalSchema() }).strict(),
@@ -204,6 +223,8 @@ const actionSchema = z.union([
   z.object({ ...actionBase, type: z.literal('uncheck'), target: locatorSchema }).strict(),
   z.object({ ...actionBase, type: z.literal('hover'), target: locatorSchema }).strict(),
   z.object({ ...actionBase, type: z.literal('drag'), from: locatorSchema, to: locatorSchema }).strict(),
+  z.object({ ...actionBase, type: z.literal('hoverViewport'), xRatio: pointerRatio, yRatio: pointerRatio }).strict(),
+  z.object({ ...actionBase, type: z.literal('hoverPoint'), surface: locatorSchema, xRatio: pointerRatio, yRatio: pointerRatio }).strict(),
   z.object({ ...actionBase, type: z.literal('clickPoint'), surface: locatorSchema, xRatio: pointerRatio, yRatio: pointerRatio }).strict(),
   z.object({
     ...actionBase,
@@ -213,6 +234,9 @@ const actionSchema = z.union([
     to: z.object({ xRatio: pointerRatio, yRatio: pointerRatio }).strict(),
   }).strict(),
   z.object({ ...actionBase, type: z.literal('scrollIntoView'), target: locatorSchema }).strict(),
+  z.object({ ...actionBase, type: z.literal('waitForHostedApp'),
+    slug: z.string().min(1).max(63).regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/),
+    timeoutMs: z.number().int().min(100).max(MAX_WAIT_MS).default(MAX_WAIT_MS) }).strict(),
   z.object({
     ...actionBase,
     type: z.literal('scrollBy'),
@@ -223,12 +247,15 @@ const actionSchema = z.union([
     ...actionBase,
     type: z.literal('waitFor'),
     target: locatorSchema.optional(),
+    state: z.enum(['visible', 'hidden']).optional(),
     text: textField(MAX_LOCATOR_VALUE).optional(),
     path: relativePathSchema.optional(),
     quietNetwork: z.boolean().optional(),
     timeoutMs: z.number().int().min(100).max(MAX_WAIT_MS).default(MAX_WAIT_MS),
   }).strict().refine((value) => [value.target, value.text, value.path, value.quietNetwork === true].filter(Boolean).length === 1,
-    'waitFor requires exactly one of target, text, path, or quietNetwork'),
+    'waitFor requires exactly one of target, text, path, or quietNetwork')
+    .refine((value) => value.state == null || value.target != null,
+      'waitFor state is only supported with a target'),
 ]);
 
 const assertionSchema = z.discriminatedUnion('type', [
@@ -270,8 +297,17 @@ const replaySchema = z.object({
   checkpoint: checkpointSchema,
 }).strict();
 
+const hostedReplayEntrySchema = z.object({
+  id: z.string().min(1).max(96).regex(ID_RE),
+  replay: replaySchema,
+}).strict();
+
 const executableStorySchema = storyIntentObject.extend({ replay: replaySchema }).strict()
   .superRefine((story, ctx) => {
+    if (story.intent.controlledFailurePath && story.intent.steps[0] !== CONTROLLED_FAILURE_LABEL) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['intent', 'steps', 0],
+        message: `A controlled failure must begin its reviewer-visible steps with: ${CONTROLLED_FAILURE_LABEL}` });
+    }
     const names = new Set();
     story.viewports.forEach((viewport, index) => {
       if (names.has(viewport.name)) {
@@ -301,23 +337,87 @@ const replayPlanSchema = z.object({
     }
     if (story.replay.checkpoint.animation === 'steps'
         && [story.replay.before, story.replay.after].some((side) =>
-          side.actions.every((action) => action.type === 'waitFor'))) {
+          side.actions.every((action) => ['waitFor', 'waitForHostedApp', 'requestFailure'].includes(action.type)))) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['stories', index, 'replay', 'checkpoint', 'animation'],
         message: 'Steps video requires a visible interaction on both revisions; wait-only flows use screenshots',
       });
     }
+    const expectedPath = story.intent.controlledFailurePath;
+    const toggles = ['before', 'after'].map((side) => story.replay[side].actions
+      .filter((action) => action.type === 'requestFailure')
+      .map((action) => ({ path: action.path, enabled: action.enabled })));
+    if (!expectedPath && toggles.some((sequence) => sequence.length)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['stories', index, 'replay'],
+        message: 'A request failure must be declared in the accepted intent' });
+    } else if (expectedPath && (toggles.some((sequence) =>
+      !sequence.length || sequence[0].enabled !== true
+      || sequence.some((toggle) => toggle.path !== expectedPath))
+      || canonicalJson(toggles[0]) !== canonicalJson(toggles[1]))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['stories', index, 'replay'],
+        message: 'Both revisions must use the same declared request failure toggle sequence, beginning enabled' });
+    }
   });
 });
 
-function normalizeZodIssues(error) {
-  return error.issues.map((issue) => ({ path: issue.path.map(String), message: issue.message }));
+function samePath(left, right) {
+  return left.length === right.length && left.every((part, index) => String(part) === String(right[index]));
+}
+
+function valueAtPath(value, path) {
+  return path.reduce((current, part) => current == null ? undefined : current[part], value);
+}
+
+function normalizeZodIssues(error, value) {
+  const flattened = [];
+  const visit = (issue) => {
+    if (issue.code === 'invalid_union' && Array.isArray(issue.unionErrors)) {
+      const variants = issue.unionErrors.map((branch) => branch.issues);
+      const submitted = valueAtPath(value, issue.path);
+      if (submitted == null || typeof submitted !== 'object' || Array.isArray(submitted)) {
+        flattened.push({ path: issue.path,
+          message: submitted == null ? 'Required' : 'Expected an action or locator object' });
+        return;
+      }
+      const discriminant = ['type', 'by'].find((key) => variants.some((branch) => branch.some((candidate) =>
+        candidate.code === 'invalid_literal' && samePath(candidate.path, [...issue.path, key]))));
+      if (discriminant) {
+        const allowed = discriminant === 'type' ? ACTION_TYPES : LOCATOR_KINDS;
+        if (!allowed.includes(submitted[discriminant])) {
+          flattened.push({ path: [...issue.path, discriminant],
+            message: `Expected one of: ${allowed.join(', ')}` });
+          return;
+        }
+        const matching = variants.find((branch) => !branch.some((entry) =>
+          entry.code === 'invalid_literal' && samePath(entry.path, [...issue.path, discriminant])));
+        if (matching) {
+          matching.forEach(visit);
+          return;
+        }
+      }
+      flattened.push({ path: issue.path, message: 'Expected a supported action or locator object' });
+      return;
+    }
+    // Zod includes the submitted field names in this message. The planner
+    // needs the expected field path, while diagnostics must not retain raw
+    // tool arguments (including arbitrary object keys).
+    flattened.push({ path: issue.path,
+      message: issue.code === 'unrecognized_keys'
+        ? 'Unexpected field(s); use only fields in the replay contract'
+        : issue.code === 'invalid_string' && issue.validation === 'regex'
+          ? 'Use a lowercase slug with letters, digits, hyphens or underscores'
+        : issue.message });
+  };
+  error.issues.forEach(visit);
+  return flattened.slice(0, 20).map((issue) => ({
+    path: issue.path.map(String), message: issue.message,
+  }));
 }
 
 function parseWith(schema, value) {
   const parsed = schema.safeParse(value);
-  if (!parsed.success) throw new VisualEvidenceValidationError(normalizeZodIssues(parsed.error));
+  if (!parsed.success) throw new VisualEvidenceValidationError(normalizeZodIssues(parsed.error, value));
   return parsed.data;
 }
 
@@ -375,6 +475,40 @@ function semanticIntentFromPlan(value) {
   });
 }
 
+// Hosted planners choose only browser actions and assertions. Semantic fields
+// come from the accepted run, so copying a claim or viewport cannot change it.
+function replayPlanFromIntent(rawIntent, rawReplays) {
+  const intent = parseIntent(rawIntent);
+  const replays = parseWith(z.array(hostedReplayEntrySchema).min(1).max(MAX_STORIES), rawReplays);
+  const expected = new Set(intent.stories.map((story) => story.id));
+  const byId = new Map();
+  for (const [index, entry] of replays.entries()) {
+    if (!expected.has(entry.id)) {
+      throw new VisualEvidenceValidationError([{
+        path: ['replays', index, 'id'], message: `Story id ${entry.id} is not in the accepted intent`,
+      }]);
+    }
+    if (byId.has(entry.id)) {
+      throw new VisualEvidenceValidationError([{
+        path: ['replays', index, 'id'], message: `Story id ${entry.id} is duplicated`,
+      }]);
+    }
+    byId.set(entry.id, entry.replay);
+  }
+  const missing = intent.stories.filter((story) => !byId.has(story.id));
+  if (missing.length) {
+    throw new VisualEvidenceValidationError([{
+      path: ['replays'], message: `Missing accepted story ids: ${missing.map((story) => story.id).join(', ')}`,
+    }]);
+  }
+  return parseReplayPlan({
+    version: intent.version,
+    impact: intent.impact,
+    rationale: intent.rationale,
+    stories: intent.stories.map((story) => ({ ...story, replay: byId.get(story.id) })),
+  });
+}
+
 // A local pass produces this small handoff, separately from its media and
 // verdict. The hashes bind the submitted flow to the exact two Git revisions;
 // hosted replay still independently decides whether it works there.
@@ -406,7 +540,7 @@ function parseAuthorPlanSubmission(value, intent, revisions = null) {
 function containsRelativePointer(plan) {
   const parsed = parseReplayPlan(plan);
   return parsed.stories.some((story) => ['before', 'after'].some((side) =>
-    story.replay[side].actions.some((action) => action.type === 'clickPoint' || action.type === 'dragPoints')));
+    story.replay[side].actions.some((action) => ['hoverViewport', 'hoverPoint', 'clickPoint', 'dragPoints'].includes(action.type))));
 }
 
 module.exports = {
@@ -423,6 +557,7 @@ module.exports = {
   IMPACTS,
   PERSONAS,
   ANIMATIONS,
+  CONTROLLED_FAILURE_LABEL,
   LOCATOR_KINDS,
   ACTION_TYPES,
   ASSERTION_TYPES,
@@ -436,6 +571,7 @@ module.exports = {
   canonicalJson,
   planHash,
   semanticIntentFromPlan,
+  replayPlanFromIntent,
   parseAuthorPlanSubmission,
   containsRelativePointer,
 };

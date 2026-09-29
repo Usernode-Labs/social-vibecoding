@@ -733,6 +733,7 @@ export function ConnectorsSection() {
         */}
         <select
           id="settings-dev-flow"
+          aria-label="Where changes get built"
           className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
           defaultValue=""
         >

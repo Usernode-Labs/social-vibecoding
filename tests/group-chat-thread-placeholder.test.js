@@ -83,3 +83,17 @@ test('a second message does not bring it back', () => {
   assert.doesNotMatch(t.after, /No messages yet/);
   assert.match(t.after, /<p>and another<\/p>/);
 });
+
+// #2992: a failed history load publishes `lead.error`; the transcript draws the
+// line with a "Try again" Button in place of "Loading…".
+test('a failed load draws the error line with Try again, not "Loading…"', () => {
+  const api = loadTsx(API);
+  api.publishTranscript([], 'thread', { earlier: false, placeholder: null, error: 'Couldn’t load this thread.', language: 'flat' });
+  const html = renderComponent(TRANSCRIPT, 'TranscriptRows', { view: api.transcriptStore.get().byKey.thread, source: 'thread' });
+  assert.match(html, /Couldn’t load this thread\./);
+  assert.match(html, /<button[^>]*>Try again<\/button>/);
+  assert.doesNotMatch(html, /Loading…/);
+  api.publishTranscript([], 'thread', flatLead('Loading…'));
+  const retrying = renderComponent(TRANSCRIPT, 'TranscriptRows', { view: api.transcriptStore.get().byKey.thread, source: 'thread' });
+  assert.doesNotMatch(retrying, /Try again/);
+});

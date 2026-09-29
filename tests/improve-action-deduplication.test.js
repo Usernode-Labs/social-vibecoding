@@ -25,7 +25,7 @@ const PANEL = read('frontend/src/features/improve/actions.tsx');
 // The "+" menu moved out of the frame into its own row component, which the
 // Board and the Workshop render one-at-a-time — so the menu's rows are
 // rendered from there now. Same markup, same props, one level less chrome.
-const { DevActionsRow } = loadTsx('frontend/src/features/dev-board/actions-row.tsx');
+const { DevActionsRow, DevPlusMenu } = loadTsx('frontend/src/features/dev-board/actions-row.tsx');
 const BASE = {
   selfHosted: false, readOnly: false, canCollaborate: true, showsMembers: true,
   cardCls: '', cardHoverCls: '',
@@ -47,7 +47,16 @@ test('read-only viewers still get only Fork, and no + button on the platform app
   assert.deepEqual(actions(board({ readOnly: true, canCollaborate: false })), ['fork']);
   const platform = board({ selfHosted: true, readOnly: true, canCollaborate: false });
   assert.deepEqual(actions(platform), []);
-  assert.match(platform, /class="relative ml-auto hidden"><button id="dev-plus-btn"/);
+  // The wrapper is `.dev-ws-plus` now — the "+" closes the Workshop's tab
+  // strip, and app.css positions it there — and it is still hidden outright.
+  assert.match(platform, /class="dev-ws-plus hidden"><button id="dev-plus-btn"/);
+  // The same component is what the Workshop's strip renders, so the gate
+  // holds there too, not only in the Board's row.
+  const strip = renderToHtml(createElement(DevPlusMenu, {
+    ...BASE, selfHosted: true, readOnly: true, canCollaborate: false,
+  }));
+  assert.match(strip, /^<div class="dev-ws-plus hidden"><button id="dev-plus-btn"/);
+  assert.deepEqual(actions(strip), []);
 });
 
 test('hiding import leaves File an issue under the heading, so neither the heading nor the divider goes', () => {
@@ -137,7 +146,13 @@ function menuHarness(touch) {
   const sandbox = {
     console, AbortController,
     addEventListener() {},
-    document: { getElementById: (id) => ({ 'dev-plus-btn': button, 'dev-plus-menu': menu })[id] || null },
+    document: {
+      getElementById: (id) => ({ 'dev-plus-btn': button, 'dev-plus-menu': menu })[id] || null,
+      // QA 2026-09-24 Q18: _wirePlusMenu now binds its outside-click and
+      // keyboard (Escape, arrows) dismissers on the document rather than on
+      // the content node. Neither is exercised here; the clicks below are.
+      addEventListener() {},
+    },
     PlatformUI: { isTouch: () => touch, actionSheet: (sheet) => sheets.push(sheet) },
     Secrets: { openForCurrentApp: () => calls.push('secrets') },
     // The issue row opens the shared feedback dialog by name, in its
@@ -146,7 +161,10 @@ function menuHarness(touch) {
     App: {
       openFeedbackModal: (opts) => {
         assert.equal(opts?.fromDev, true, 'the open app is preselected as the target');
-        assert.deepEqual(Object.keys(opts), ['fromDev']);
+        // QA 2026-09-24: and the dialog is told it was asked to file an issue,
+        // so it is headed "File an issue" rather than "Send feedback".
+        assert.equal(opts?.intent, 'issue', 'the dialog is headed with the row\'s own words');
+        assert.deepEqual(Object.keys(opts), ['fromDev', 'intent']);
         calls.push('issue');
       },
     },
@@ -250,7 +268,9 @@ test('File an issue is a real button[data-plus] row that leads the writeable men
   // its published name.
   assert.match(VIEW, /const issueBtn = menu\.querySelector\('\[data-plus="issue"\]'\);/);
   const wired = VIEW.slice(VIEW.indexOf('const issueBtn = '));
-  assert.match(wired.slice(0, 700), /App\.openFeedbackModal\(\{ fromDev: true \}\)/);
+  // QA 2026-09-24: with `intent: 'issue'`, so the dialog is headed with the
+  // row's own words ("File an issue") rather than "Send feedback".
+  assert.match(wired.slice(0, 700), /App\.openFeedbackModal\(\{ fromDev: true, intent: 'issue' \}\)/);
 });
 
 for (const touch of [false, true]) {

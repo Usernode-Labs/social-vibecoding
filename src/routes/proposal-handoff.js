@@ -4,13 +4,16 @@ const crypto = require('node:crypto');
 const express = require('express');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
+const communities = require('../services/communities');
 const github = require('../services/github');
 const staging = require('../services/staging');
 const stagingRecovery = require('../services/staging-recovery');
 const visuals = require('../services/visuals');
 const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
+const prMetadata = require('../services/pr-metadata');
 const prImportSync = require('../services/pr-import-sync');
+const summaryFreshness = require('../services/summary-freshness');
 const branchNames = require('../services/branch-names');
 const externalAgentHead = require('../services/external-agent-head');
 const topicAttrs = require('../services/topic-attributes');
@@ -651,7 +654,7 @@ function statusNextStep(state, revisionState, checks) {
     return 'This check run is overdue and no live worker owns it. Re-run checks on this same session with proposal_recheck, then keep polling proposal_status. Do not call proposal_start.';
   }
   if (progress === 'deploying' || progress === 'checking') {
-    return 'A build or check run is still in progress. Keep this session and request ID and poll proposal_status; do not push or call proposal_start.';
+    return 'A build or check run is still in progress. Keep this session and request ID and poll proposal_status; do not push or call proposal_start. If the user wants it opened for voting now, proposal_promote works while the checks run; it can merge only once they pass.';
   }
   if (progress === 'uploaded') {
     return 'Submit the uploaded head on this same session with proposal_submit_build.';
@@ -947,7 +950,7 @@ function proposalHandoffRoutes(config) {
   // earlier is deleted before the error is returned. A half-made card in
   // everyone's In-progress area, with no commits behind it, is worse than the
   // refusal it came from.
-  router.post('/api/apps/:slug/work/share-in-progress', proposalJson, drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/work/share-in-progress', proposalJson, drainGuard, communities.requireAppMembership(pool), async (req, res) => {
     let input;
     try {
       input = parseShareInProgressBody(req.body);
@@ -1067,7 +1070,7 @@ function proposalHandoffRoutes(config) {
     }
   });
 
-  router.post('/api/apps/:slug/proposal-handoffs', proposalJson, drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/proposal-handoffs', proposalJson, drainGuard, communities.requireAppMembership(pool), async (req, res) => {
     if (!requireCli(req, res)) return;
     let input;
     try {
@@ -1179,7 +1182,11 @@ function proposalHandoffRoutes(config) {
       );
       const replacedActiveSlot = replacementSession?.status === 'active' ? 1 : 0;
       if (Number(ownCounts[0].cnt) - replacedActiveSlot >= caps.activeSessions) {
-        return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
+        // Paused for the user rather than refused (session-lifecycle.freeUserSlot).
+        const { freed } = await sessionLifecycle.freeUserSlot({
+          pool, userId: req.user.id, excludeSessionId: replacementSession ? replacementSession.id : null,
+        });
+        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
       }
       const { rows: globalCounts } = await pool.query(
         `SELECT COUNT(*) AS cnt FROM chat_sessions
@@ -1454,6 +1461,7 @@ function proposalHandoffRoutes(config) {
             const advanced = await pool.query(
               `UPDATE chat_sessions
                 SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5,
+                    ${summaryFreshness.INVALIDATE_SQL},
                     handoff_upload_checked_sha = checks_commit_sha,
                     check_state = NULL, check_phase = NULL,
                     check_error_detail = NULL, test_results = '[]'::jsonb,
@@ -1476,6 +1484,22 @@ function proposalHandoffRoutes(config) {
             );
             if (!advanced.rowCount) {
               return res.status(409).json({ error: 'session_state_changed' });
+            }
+          }
+          if (revisionKind === 'session' && !session.pr_number) {
+            try {
+              await prMetadata.applyPrMetadata({
+                pool, session, repoOwner: repo.owner, repoName: repo.repo,
+                userMessage: '', ccSummary: '', username: req.user.username,
+                userId: req.user.id, allowModelGeneration: false,
+                preferredTitle: session.proposed_pr_title || session.session_title || null,
+              });
+            } catch (err) {
+              // The commit is durable. A retry can adopt a PR that GitHub
+              // created before the DB write, or promotion can create it.
+              log.warn('proposal-handoff', 'Draft PR creation deferred after commit upload', {
+                sessionId: session.id, code: err.code || null, err: err.message,
+              });
             }
           }
           if (revisionKind === 'proposal') {
@@ -1506,6 +1530,8 @@ function proposalHandoffRoutes(config) {
             headSha: uploaded.sha,
             treeSha: uploaded.treeSha,
             branch: session.branch_name,
+            prNumber: session.pr_number || null,
+            prUrl: session.pr_url || null,
             uploaded: alreadyRecorded ? false : uploaded.created,
             webPath: changeHashPath(session.app_slug, session.id),
           });
@@ -1851,10 +1877,22 @@ function proposalHandoffRoutes(config) {
 
   // Server-side counterpart to proposal_promote's preflight. This router is
   // mounted before voteRoutes, so a handoff promoted from either MCP or its
-  // optionally-open web page must still be on the exact currently checked
-  // head with live staging and a terminal passing verdict. Local and web
-  // turns retain the same source/session and can alternate.
-  router.post('/api/sessions/:id/promote', async (req, res, next) => {
+  // optionally-open web page goes up for review on exactly the commit its
+  // checks describe. Local and web turns retain the same source/session and
+  // can alternate.
+  //
+  // #3173 / #3043: submitting does NOT wait for staging or a verdict. The
+  // merge gate requires passing checks on the exact reviewed commit
+  // (services/merge-requirements.js), so a vote may open while they run, and
+  // a proposal whose preview the idle sweep reclaimed is rebuilt by the
+  // promote route rather than stranded. What this still refuses is only what
+  // would put the wrong commit, or no commit, in front of the group: nothing
+  // submitted yet, an upload that was never submitted, a coding turn or sync
+  // that may still move the branch, and a branch that moved past its checks.
+  // Membership first (services/communities.js): proposing is for the
+  // community's members whichever router ends up promoting, and this one
+  // runs ahead of voteRoutes' own copy of the same gate.
+  router.post('/api/sessions/:id/promote', communities.requireSessionMembership(pool), async (req, res, next) => {
     let releasePromotion = null;
     let releaseOnResponse = false;
     try {
@@ -1869,18 +1907,23 @@ function proposalHandoffRoutes(config) {
       if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
         return res.status(404).json({ error: 'Active handoff session not found' });
       }
-      if (!['active', 'paused'].includes(session.status)
-          || publicSessionStatus(session).revisionState !== 'ready') {
-        return res.status(409).json({
-          error: 'proposal_not_ready',
-          message: 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.',
-        });
+      const refuse = (message) => res.status(409).json({ error: 'proposal_not_ready', message });
+      if (!['active', 'paused'].includes(session.status)) {
+        return refuse(`This change is ${session.status || 'closed'}, so it cannot be submitted for review.`);
       }
-      if (isSessionBusy(Number(session.id))) {
-        return res.status(409).json({
-          error: 'proposal_not_ready',
-          message: 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.',
-        });
+      if (hasUnsubmittedUpload(session)) {
+        return refuse('A commit was uploaded to this change but has not been submitted for checks yet. Submit it first, then submit the change for review.');
+      }
+      if (!currentCheckedHead(session)) {
+        return refuse('Nothing has been submitted to this change yet, so there is nothing to put up for review.');
+      }
+      // A running handoff pipeline is checking this very commit and keeps
+      // publishing after promotion (services/handoff-pipeline.js). It holds
+      // the session for its whole run, so no coding turn or sync can start
+      // beside it; anything ELSE holding the session may still move its
+      // branch.
+      if (isSessionBusy(Number(session.id)) && !hasInFlightHandoffPipeline(session.id)) {
+        return refuse('An agent turn is still running on this change. Submit it for review when the turn finishes.');
       }
       // Hold the same cross-surface claim used by build/sync through the
       // downstream promotion handler. Releasing before next() would reopen a

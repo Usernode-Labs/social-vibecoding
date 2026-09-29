@@ -133,8 +133,14 @@ export function ApiKeySection() {
         </div>
       </div>
       <p className="text-[15px] text-zinc-500 dark:text-zinc-500 mt-3 leading-snug px-1">
-        Encrypted at rest, verified against Anthropic before saving, never shown in full after save.
-    The server decrypts it in memory to call Anthropic on your behalf, so don't paste keys into services you don't trust with that level of access.
+        {/* QA 2026-09-24 Q34: JSX drops the line break between text and a
+            tag, which ran "access." into the link and the link into "on".
+            The spaces ride inside the neighbouring strings, not as
+            whitespace-only children, which cannot survive hydration (React
+            #418; the same rule as notifications-list.tsx). */}
+        {'Encrypted at rest, verified against Anthropic before saving, never shown in full after save. '
+          + 'The server decrypts it in memory to call Anthropic on your behalf, so don\'t paste keys into '
+          + 'services you don\'t trust with that level of access. '}
         <a
           href="https://console.anthropic.com/settings/keys"
           target="_blank"
@@ -143,7 +149,7 @@ export function ApiKeySection() {
         >
           Set tight spend limits
         </a>
-        on the key itself for defense in depth.
+        {' on the key itself for defense in depth.'}
       </p>
       <StatusLine id="settings-status" spacing={3} />
     </div>

@@ -353,6 +353,33 @@ function emitDiagnosticOrError(state, msg, { nonfatal = false } = {}) {
   return emitError(state, msg);
 }
 
+/**
+ * Sum one model request's usage, as the worker-local relay saw it finish,
+ * into `state.relayUsage` (#3038).
+ *
+ * This is deliberately NOT folded into `inputTokens` / `outputTokens`: those
+ * are the agent's own turn.completed totals, which the platform ledger
+ * prices as a THREAD's running total. `relayUsage` is a separate, per-turn
+ * sum, and it exists for the one case the agent cannot report: a turn
+ * stopped before turn.completed. It is a floor — the request in flight at a
+ * stop never finishes, so its usage is never seen.
+ */
+function addRelayUsage(state, usage) {
+  const count = n => Number.isSafeInteger(n) && n >= 0 ? n : null;
+  const input = count(usage?.inputTokens);
+  const output = count(usage?.outputTokens);
+  if (input == null && output == null) return;
+  const sum = state.relayUsage || {
+    requests: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0,
+  };
+  sum.requests += 1;
+  sum.inputTokens += input ?? 0;
+  sum.cachedInputTokens += count(usage?.cachedInputTokens) ?? 0;
+  sum.outputTokens += output ?? 0;
+  sum.reasoningOutputTokens += count(usage?.reasoningOutputTokens) ?? 0;
+  state.relayUsage = sum;
+}
+
 // Parse one JSONL line into an array of normalized progress events
 // (empty array when the line should be dropped: unknown/malformed). `state`
 // accumulates the thread id, tool-use labels, error state and usage flags
@@ -367,10 +394,15 @@ function normalizeCodexLine(line, state) {
     state.providerRequest = sanitizeProviderRequest(ev.diagnostic);
     return [];
   }
+  if (ev.type === 'usernode.openrouter.usage') {
+    addRelayUsage(state, ev.usage);
+    return [];
+  }
   if (ev.type === 'thread.started') {
     const tid = ev.thread_id || ev.id;
     if (tid) state.agentThreadId = tid;
-    return [{ kind: 'thread_started', text: '[agent]', threadId: tid || null }];
+    // turn.started, which follows, prints the turn's marker.
+    return [{ kind: 'thread_started', text: null, threadId: tid || null }];
   }
   if (ev.type === 'turn.started') {
     return [{ kind: 'phase', text: '[agent]', lifecycle: 'turn_started' }];
@@ -555,6 +587,7 @@ function newCodexState() {
     requestedOutputTokens: null,
     affordableOutputTokens: null,
     providerRequest: null,
+    relayUsage: null,
     lastEmittedErrorText: null,
     usageSeen: false,
     cacheWriteInputTokens: null,

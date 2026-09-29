@@ -19,6 +19,13 @@
 //                           carry over when it's promoted)
 //   thread_type='governance' → out of scope (a dev chat can't act on a
 //                           rename / secret / close-issue vote).
+//   thread_type='message' → out of scope too: #2387's reply threads under
+//                           general-chat messages are app chatter, not a
+//                           card's discussion, and nothing here asks for
+//                           them (every loader names its own type).
+//
+// A message its author deleted (#2387, deleted_at set) is never read: its
+// text is gone, and an empty line would only tell the model someone spoke.
 //
 // Only `msg_type='message'` rows are read — the same "human messages
 // only" rule the per-issue unread badge uses (routes/issues.js). The
@@ -98,6 +105,7 @@ async function loadThread(pool, appId, threadType, threadRef) {
          LEFT JOIN users u ON u.id = m.user_id
         WHERE m.app_id = $1 AND m.thread_type = $2 AND m.thread_ref = $3
           AND m.msg_type = 'message'
+          AND m.deleted_at IS NULL
         ORDER BY m.id ASC
         LIMIT 200`,
       [app, threadType, ref]

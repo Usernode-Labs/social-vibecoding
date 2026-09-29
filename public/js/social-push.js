@@ -710,6 +710,35 @@
     return SocialPush.readinessState();
   };
 
+  // #2904: the app coming back to the foreground. While the WebView was
+  // suspended, alert pushes set the icon from their own `aps.badge`, so the
+  // count this realm last confirmed no longer describes the icon — and the
+  // coalescing in _badgePublishOnce would skip re-sending an unchanged total,
+  // leaving the icon on the pushed number while the bell read zero. Forget
+  // the confirmation and reconcile against a fresh server count: the refresh
+  // republishes through _publishAppBadge; without one, resend what we have.
+  // Native only — a desktop tab switch has no OS icon to correct.
+  SocialPush._onForeground = function onForeground() {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    if (!window.usernode || window.usernode.isNative !== true) return;
+    SocialPush._badgePublishedCount = null;
+    const notifications = window.Notifications;
+    const refresh = notifications && (
+      typeof notifications.refreshAfterInvalidation === 'function'
+        ? notifications.refreshAfterInvalidation
+        : notifications.refresh);
+    if (typeof refresh === 'function' && window.App && window.App.user) {
+      // A network read: a service-worker-cached feed would hand back the
+      // very count that went stale while the app was away.
+      Promise.resolve(refresh.call(notifications))
+        .then((ok) => { if (ok !== true) SocialPush._republishBadge(); })
+        .catch(() => SocialPush._republishBadge());
+      return;
+    }
+    SocialPush._republishBadge();
+  };
+  document.addEventListener('visibilitychange', SocialPush._onForeground);
+
   window.addEventListener('pagehide', () => {
     SocialPush._foregroundPageActive = false;
     SocialPush._clearTapRetry();

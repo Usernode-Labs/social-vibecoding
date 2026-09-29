@@ -66,10 +66,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import {
-  BoardIcon,
   ChatIcon,
+  CogIcon,
   HomeIcon,
   SearchIcon,
+  UserGroupIcon,
   UserIcon,
 } from '@/components/ui/icons';
 
@@ -79,16 +80,27 @@ import { useVisibility } from '../../lib/visibility-store';
 import { navStore } from './nav-store.js';
 import { clearPeekTimer, enterPeek, leavePeek } from './rail-peek';
 import { RecentsList } from './recents-list';
+import { schedulePress, type PendingPress } from './tab-press';
 
 /**
  * The five tabs, in order.
  *
- * WHY THESE FIVE, and why in this order: the bar reads left to right as
- * distance from you. Home is the launcher, Discover is everyone else's apps,
- * Messages and Workshop are the two things that can be WAITING for you (the
- * conversation and the change), and Me is your own account. Challenges,
+ * WHY THESE FIVE, and why in this order: Home is the launcher, Discover is
+ * everyone else's projects, Communities is the ones you are in, Messages is
+ * the people and agents you talk to, and Me is your own account. Challenges,
  * Settings, Wallet, Validator and Admin are all reached from Me, which is
  * why five is enough — a sixth tab would be a section nobody visits daily.
+ *
+ * MESSAGES SITS IN THE MIDDLE, COMMUNITIES FOURTH. Communities took the
+ * centre seat when it was renamed from "Workshop" (#3261), on the argument
+ * that most visits would go through it. In use the thumb's first stop was
+ * still the people and agents you talk to, so Messages has its centre seat
+ * back and Communities sits beside you, fourth. Communities' key is still
+ * `workshop`: the key names the screen (`#workshop-screen`) and the
+ * declared checks select on `#platform-tab-workshop`, while the words a
+ * person sees are Communities and `#communities` (AGENTS.md, "Communities
+ * own projects"). Inside a project, "Workshop" is the build tab beside its
+ * hub — the one place that word is shown now.
  *
  * Discover keeps the magnifier rather than taking a grid glyph: it is the
  * same row the app menu spelled `#switcher-row-discover` with a
@@ -108,7 +120,7 @@ const TABS = [
   },
   { key: 'discover' as const, label: 'Discover', href: '#apps', Icon: SearchIcon },
   { key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon },
-  { key: 'workshop' as const, label: 'Workshop', href: '#workshop', Icon: BoardIcon },
+  { key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon },
   // "Me" is the label only until somebody is signed in: from then on this tab
   // is named after them (#2760) — see tabLabel below.
   { key: 'me' as const, label: 'Me', href: '#profile', Icon: UserIcon },
@@ -130,7 +142,7 @@ const TABS = [
  * hydration, so the name arrives as an update — exactly how the lit tab does.
  *
  * THE ACCESSIBLE NAME KEEPS SAYING WHAT THE TAB IS. A bare username among
- * Home, Discover, Messages and Workshop would be read out as a person rather
+ * Home, Discover, Communities and Messages would be read out as a person rather
  * than a place, so the label names both, and it starts with the visible text
  * so a voice command that says what is on screen still finds it. Long names
  * are cut by app.css with an ellipsis; usernames are at most 32 characters
@@ -198,15 +210,19 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * The TEXT is React's, and it is empty at zero, so the prerender and the
  * first client render agree on an empty hidden span.
  */
-function TabBadge({ count }: { count: number }) {
+function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversations' }: {
+  count: number;
+  id?: string;
+  label?: string;
+}) {
   const ref = useRef<HTMLSpanElement | null>(null);
   useHiddenClass(ref, count <= 0);
   return (
     <span
       ref={ref}
-      id="platform-tabs-badge"
+      id={id}
       className="platform-tab-badge hidden"
-      aria-label="Unread conversations"
+      aria-label={label}
     >
       {count > 0 ? (count > 99 ? '99+' : String(count)) : ''}
     </span>
@@ -275,11 +291,17 @@ function useRailPeek(peek: boolean) {
  * null and the marker hides, so the next tab to light lands rather than
  * sliding in from wherever the last one was.
  *
- * The box is an INSET of the lit tab, not the tab itself: the tab is the
- * full 56px cell edge to edge, and a fill that met its neighbour's would read
- * as the bar being split into panels. The desktop rail does not use it at
- * all — its rows already carry a `--brand-tint` fill of their own, and
- * app.css hides the marker there.
+ * THE BOX HUGS THE TAB'S GLYPH AND LABEL, not the tab. The tab is the full
+ * 56px cell edge to edge, which is right for the thumb and wrong for the
+ * pill: a pill inset 4px from the cell was sized by the bar's width divided
+ * by five, so a long label ("Workshop", "Messages") met its edges with a
+ * pixel to spare and a short one ("Home") floated in a wide lozenge. The
+ * pill is now what it holds plus the same padding on every tab — 5px over
+ * the glyph, 8px either side, 3px under the label — with a floor so a
+ * three-letter label still gets a pill rather than a capsule, and the tab
+ * under it keeps the whole cell as its target. The desktop rail does not
+ * use it at all — its rows carry a fill of their own, and app.css hides the
+ * marker there.
  */
 interface TabMarkerBox {
   x: number;
@@ -289,53 +311,357 @@ interface TabMarkerBox {
   slide: boolean;
 }
 
+/** The fallback when the tab's contents cannot be measured: the cell, inset. */
 const MARKER_INSET = 4;
+/** The pill's padding around the glyph and label, and its narrowest width. */
+const MARKER_PAD = { top: 5, x: 8, bottom: 3 } as const;
+const MARKER_MIN_W = 58;
 
+/** A box relative to the tab it sits in, as getBoundingClientRect deltas. */
+export type ContentRect = { left: number; top: number; width: number; height: number };
+
+/**
+ * The marker's box on the bar. `content` is the union of the tab's glyph and
+ * label relative to the tab; without one (not measurable, or nothing laid
+ * out inside) the box falls back to the cell inset 4px, the old geometry.
+ * Integers, so a re-measure that lands on the same pixel keeps the previous
+ * box (useTabMarker compares them) rather than restarting a slide.
+ */
 export function markerBoxFor(
   el: { offsetLeft: number; offsetTop: number; offsetWidth: number; offsetHeight: number },
+  content?: ContentRect | null,
 ): Omit<TabMarkerBox, 'slide'> | null {
   // A bar that is not laid out (hidden, or the keyboard is up) has nothing to
   // say about where the tab is; keep the last box rather than collapse it.
   if (!(el.offsetWidth > 0) || !(el.offsetHeight > 0)) return null;
+  if (!content || !(content.width > 0) || !(content.height > 0)) {
+    return {
+      x: el.offsetLeft + MARKER_INSET,
+      y: el.offsetTop + MARKER_INSET,
+      w: Math.max(0, el.offsetWidth - MARKER_INSET * 2),
+      h: Math.max(0, el.offsetHeight - MARKER_INSET * 2),
+    };
+  }
+  const w = Math.round(Math.max(MARKER_MIN_W, content.width + MARKER_PAD.x * 2));
+  const h = Math.round(content.height + MARKER_PAD.top + MARKER_PAD.bottom);
+  const centre = el.offsetLeft + content.left + content.width / 2;
   return {
-    x: el.offsetLeft + MARKER_INSET,
-    y: el.offsetTop + MARKER_INSET,
-    w: Math.max(0, el.offsetWidth - MARKER_INSET * 2),
-    h: Math.max(0, el.offsetHeight - MARKER_INSET * 2),
+    x: Math.round(centre - w / 2),
+    y: Math.round(el.offsetTop + content.top - MARKER_PAD.top),
+    w,
+    h,
   };
+}
+
+/**
+ * The union of a tab's glyph and label, relative to the tab. Null when
+ * either is missing or not laid out, which sends markerBoxFor to its
+ * fallback.
+ */
+export function tabContentRect(tab: HTMLElement): ContentRect | null {
+  const parts = [tab.querySelector('.platform-tab-mark'), tab.querySelector('.platform-tab-label')]
+    .map((node) => (node as HTMLElement | null)?.getBoundingClientRect?.())
+    .filter((r): r is DOMRect => !!r && r.width > 0 && r.height > 0);
+  if (parts.length < 2) return null;
+  const base = tab.getBoundingClientRect();
+  const left = Math.min(...parts.map((r) => r.left));
+  const top = Math.min(...parts.map((r) => r.top));
+  const right = Math.max(...parts.map((r) => r.right));
+  const bottom = Math.max(...parts.map((r) => r.bottom));
+  return { left: left - base.left, top: top - base.top, width: right - left, height: bottom - top };
+}
+
+/**
+ * Run `fn` once the NEXT frame has been produced — two animation frames out,
+ * not one (#3046). Returns a cancel.
+ *
+ * WHY THE SLIDE WAITS A FRAME. A tab press is a screen swap, and on the phone
+ * the swap is synchronous (PlatformUI.phoneMotion makes every push/pop
+ * 'none'): the router reveals the incoming screen in the same task that
+ * lights the tab. So the first frame after the press is the EXPENSIVE one —
+ * style, layout and paint of a whole screen that was `hidden` a moment ago.
+ * A CSS transition's clock starts at the frame its style change is resolved
+ * in, so a marker written in that frame had already spent the heavy frame's
+ * duration by the time anything was painted, and on this curve (a steep
+ * ease-out: two-thirds of the travel in the first third of the time) that is
+ * most of the slide. What showed was the pill appearing half-way across and
+ * settling — "missing the first half of the animation". The Workshop's own
+ * strip runs the same hook on the same curve and looked right, because
+ * switching ITS tab swaps no screen.
+ *
+ * One `requestAnimationFrame` is not enough: it fires at the START of that
+ * heavy frame, before its style and layout, so a write there still lands in
+ * it. The second fires once it has been produced. The label colour still
+ * changes with the press (it keys off `aria-current`); only the pill's start
+ * is held, by one frame nobody saw anyway.
+ *
+ * A PRESS ON THE BAR NO LONGER TAKES THIS PATH (#3259). Waiting out one
+ * heavy frame was not enough on a phone: the swap is several long frames
+ * (measured in the iOS simulator: the router's own task, then frames of 40
+ * to 150ms while the new screen lays out and its data lands), so a slide
+ * started two frames out still began inside one of them and showed from its
+ * middle. So a press moves the pill FIRST, in the press's own task, and it is
+ * the NAVIGATION that waits, until the slide is running on the compositor
+ * where the swap cannot hold it (useTabMarker's `press`, schedulePress). This
+ * path is still what a tab change the bar did not start takes (Back, a link,
+ * a deep link).
+ *
+ * Without rAF (a test environment) it runs at once.
+ */
+export function afterNextFrame(
+  fn: () => void,
+  raf: ((cb: () => void) => number) | undefined
+    = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : undefined,
+  caf: ((id: number) => void) | undefined
+    = typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : undefined,
+): () => void {
+  if (!raf) {
+    fn();
+    return () => {};
+  }
+  let id = raf(() => {
+    id = raf(() => {
+      id = 0;
+      fn();
+    });
+  });
+  return () => {
+    if (id && caf) caf(id);
+    id = 0;
+  };
+}
+
+/**
+ * THE SLIDE ITSELF: the Workshop strip's duration and curve
+ * (`.dev-ws-tab-marker`), run as a transform-only animation (#3259).
+ *
+ * It was a CSS transition of transform, width and height. The transform ran
+ * on the compositor, but width and height are layout and ran on the main
+ * thread, so once a press started the slide ahead of the screen swap, the
+ * swap froze them mid-slide: the pill glided at the old tab's width (from
+ * Communities to Me it ran past the screen's right edge in the iOS
+ * simulator) and snapped to size when the swap let go. So the pill takes its
+ * new size at once, and the slide is a FLIP: it starts scaled to the box it
+ * is leaving and eases into the new one, all transform, all compositor.
+ *
+ * NO DELAY, deliberately. Measured on a test page in the iOS simulator with
+ * the main thread blocked for 250ms two frames after the press: a translate
+ * transition, a translate+scale transition and this animation all painted
+ * 20%, 43%, 68%… straight through the block, while the same animation or
+ * transition given a 34ms delay stood still and then appeared at the end.
+ * A delay keeps WebKit from handing it to the compositor.
+ */
+export const MARKER_SLIDE = { duration: 260, easing: 'cubic-bezier(.32, .72, 0, 1)' } as const;
+
+type Box = { x: number; y: number; w: number; h: number };
+
+const round4 = (n: number) => Math.round(n * 10000) / 10000;
+
+/**
+ * The two transforms of a slide from `from` to `to`, for a marker laid out
+ * at `to`'s size with `transform-origin: 0 0` (app.css).
+ *
+ * BOTH ENDS SPELL THE SAME FUNCTIONS, `translate() scale()`, the end with a
+ * scale of 1, so the two interpolate function by function rather than as
+ * matrices. That is the form measured running on the compositor through a
+ * blocked main thread (MARKER_SLIDE); keep the lists matched when changing it.
+ */
+export function slideKeyframes(from: Box, to: Box): [string, string] {
+  const sx = to.w > 0 ? round4(from.w / to.w) : 1;
+  const sy = to.h > 0 ? round4(from.h / to.h) : 1;
+  return [
+    `translate(${from.x}px, ${from.y}px) scale(${sx}, ${sy})`,
+    `translate(${to.x}px, ${to.y}px) scale(1, 1)`,
+  ];
+}
+
+/**
+ * Where a marker laid out at `laidOut`'s size is on screen under `transform`,
+ * a computed `matrix(a, b, c, d, e, f)`. A press during a slide starts the
+ * next one from where the pill IS, not from the box it was leaving.
+ */
+export function shownBox(laidOut: Box, transform: string): Box {
+  const m = /^matrix\(([^)]+)\)$/.exec(String(transform || '').trim());
+  const v = m ? m[1].split(',').map(Number) : [];
+  if (v.length !== 6 || v.some((n) => !Number.isFinite(n))) return laidOut;
+  return { x: v[4], y: v[5], w: laidOut.w * v[0], h: laidOut.h * v[3] };
+}
+
+/** Reduced motion asks for none; unreadable answers that motion is welcome. */
+function motionWelcome(): boolean {
+  try {
+    return !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  } catch (_) {
+    return true;
+  }
+}
+
+/** A press slides only where a slide can show: a placed, drawn marker, with motion welcome. */
+function canSlide(bar: HTMLElement): boolean {
+  const marker = bar.querySelector<HTMLElement>('.platform-tabs-marker[data-marker-at]');
+  // Unplaced (nothing lit yet), or `display: none` (the desktop rail).
+  if (!marker || marker.getClientRects().length === 0) return false;
+  return motionWelcome();
 }
 
 function useTabMarker(
   barRef: React.RefObject<HTMLElement | null>,
   tab: string | null,
-): TabMarkerBox | null {
+): {
+  box: TabMarkerBox | null;
+  lit: string | null;
+  markerRef: React.RefObject<HTMLSpanElement | null>;
+  press: (el: HTMLElement, key: string, go: () => void) => boolean;
+} {
   const [box, setBox] = useState<TabMarkerBox | null>(null);
+  const markerRef = useRef<HTMLSpanElement | null>(null);
+  // The box the marker was last laid out at, which the next slide leaves,
+  // and the slide playing now, whose start a press waits for.
+  const laidOut = useRef<TabMarkerBox | null>(null);
+  const slide = useRef<Animation | null>(null);
+  // THE TAB A PRESS LIT, until the router has answered it (#3259). The bar
+  // answers a press at once, pill and label together, and the router's tab
+  // takes over when it lands; `lit` is what the bar draws. Null at first,
+  // so the first render is the prerender's.
+  const [pressed, setPressed] = useState<string | null>(null);
+  const lit = pressed ?? tab;
+  // The press waiting for its route. A ref, not state: nothing renders from
+  // it, and the callbacks that read it outlive the render they came from.
+  const pending = useRef<PendingPress | null>(null);
+
+  const place = (el: HTMLElement, selectionChanged: boolean) => {
+    const next = markerBoxFor(el, tabContentRect(el));
+    if (!next) return;
+    setBox((prev) => {
+      if (prev && prev.x === next.x && prev.y === next.y
+        && prev.w === next.w && prev.h === next.h) return prev;
+      return { ...next, slide: !!prev && selectionChanged };
+    });
+  };
+
+  // The router lit the tab a press slid to: the press is answered, and the
+  // bar is the router's again with nothing to move.
+  useLayoutEffect(() => {
+    if (!pending.current || pending.current.key !== tab) return;
+    pending.current.cancel();
+    pending.current = null;
+    setPressed(null);
+  }, [tab]);
+
   useLayoutEffect(() => {
     const bar = barRef.current;
     if (!bar) return;
-    if (!tab) {
+    if (!lit) {
       setBox(null);
       return;
     }
+    // A slide waiting for the swap's frame to be painted (see afterNextFrame).
+    let cancelSlide: (() => void) | null = null;
     const measure = (selectionChanged: boolean) => {
       const el = bar.querySelector<HTMLElement>('.platform-tab[aria-current="page"]');
       if (!el) return;
-      const next = markerBoxFor(el);
-      if (!next) return;
-      setBox((prev) => {
-        if (prev && prev.x === next.x && prev.y === next.y
-          && prev.w === next.w && prev.h === next.h) return prev;
-        return { ...next, slide: !!prev && selectionChanged };
-      });
+      place(el, selectionChanged);
     };
     // This run is the tab having changed; the observer's are layout moving.
-    measure(true);
-    if (typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => measure(false));
+    // The first placement lands now; a move from a tab already marked waits
+    // out the screen swap's frame and then slides, re-measuring then so it
+    // goes where the tab IS rather than where it was a frame ago. After a
+    // press the pill is already there, so this lands on the same box.
+    const hadBox = bar.querySelector('.platform-tabs-marker[data-marker-at]') !== null;
+    if (hadBox) {
+      cancelSlide = afterNextFrame(() => {
+        cancelSlide = null;
+        measure(true);
+      });
+    } else {
+      measure(true);
+    }
+    if (typeof ResizeObserver === 'undefined') return () => cancelSlide?.();
+    // The observer delivers once on observe(); while a slide is pending that
+    // delivery must not land the marker at the new tab without it (the
+    // pending slide re-measures anyway), so it waits for the slide too.
+    const ro = new ResizeObserver(() => { if (!cancelSlide) measure(false); });
     ro.observe(bar);
-    return () => ro.disconnect();
-  }, [barRef, tab]);
-  return box;
+    // The pill is sized by the lit tab's label now, and a label can change
+    // width with the bar standing still (the Me tab takes the viewer's name
+    // once it has loaded), so the label is watched as well.
+    const label = bar.querySelector('.platform-tab[aria-current="page"] .platform-tab-label');
+    if (label) ro.observe(label);
+    return () => {
+      ro.disconnect();
+      cancelSlide?.();
+    };
+  }, [barRef, lit]);
+
+  // THE SLIDE (MARKER_SLIDE). React has just laid the marker out at `box`;
+  // a selection change plays it in from the box it left, or from wherever a
+  // slide still running had got to. Anything else lands where it is: the
+  // first placement, a re-measure, reduced motion, nothing lit.
+  useLayoutEffect(() => {
+    const el = markerRef.current;
+    const prev = laidOut.current;
+    laidOut.current = box;
+    if (!el || typeof el.animate !== 'function') return;
+    const running = typeof el.getAnimations === 'function' ? el.getAnimations() : [];
+    const from = prev && running.length ? shownBox(prev, getComputedStyle(el).transform) : prev;
+    for (const animation of running) animation.cancel();
+    slide.current = null;
+    if (!box || !from || !box.slide || !motionWelcome()) return;
+    const [start, end] = slideKeyframes(from, box);
+    slide.current = el.animate([{ transform: start }, { transform: end }], {
+      duration: MARKER_SLIDE.duration,
+      easing: MARKER_SLIDE.easing,
+    });
+  }, [box]);
+
+  // Unmounting abandons a press: its navigation and its settle timer.
+  useEffect(() => () => {
+    pending.current?.cancel();
+    pending.current = null;
+  }, []);
+
+  /**
+   * A press on another tab (#3259): light it and slide to it NOW, and
+   * navigate once the slide is running (schedulePress). The slide is made in
+   * the press's own task, and the swap's long frames begin only after it is
+   * on the compositor, where they cannot hold it. `go` is the tab's own
+   * navigation, run a few frames late.
+   *
+   * False when the pill cannot slide (the desktop rail, reduced motion,
+   * nothing lit yet): the caller navigates as it always did, at once.
+   *
+   * If the router never lights `key`, the bar goes back to the tab it did
+   * light after PRESS_SETTLE_MS rather than sitting on the wrong one.
+   */
+  const press = (el: HTMLElement, key: string, go: () => void): boolean => {
+    const bar = barRef.current;
+    if (!bar || !canSlide(bar)) return false;
+    place(el, true);
+    setPressed(key);
+    // A second press before the first has navigated replaces it.
+    schedulePress(pending, key, go, () => setPressed(null), () => slide.current?.ready ?? null);
+    return true;
+  };
+
+  return { box, lit, markerRef, press };
+}
+
+/**
+ * A tab's navigation, run by a press after the pill has started (#3259). The
+ * same three roads the bar's clicks take at once: Home through the router
+ * (onHomeClick), Communities back to the Workshop you left when there is one
+ * (onWorkshopClick), and otherwise the tab's own href.
+ */
+function goToTab(key: string, href: string): void {
+  const app = (window as unknown as {
+    App?: { navigateHome?: (opts?: { viaTab?: boolean }) => void; resumeWorkshopView?: () => boolean };
+  }).App;
+  if (key === 'home' && app?.navigateHome) {
+    app.navigateHome({ viaTab: true });
+    return;
+  }
+  if (key === 'workshop' && app?.resumeWorkshopView?.()) return;
+  window.location.assign(href);
 }
 
 export function PlatformTabs() {
@@ -344,7 +670,7 @@ export function PlatformTabs() {
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
   const visible = useVisibility('platform-tabs', true);
-  const { tab, messages, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
+  const { tab, messages, communities, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -354,6 +680,14 @@ export function PlatformTabs() {
   // the class it renders is the OR of the two and the overlay treatment is a
   // second class app.css keys the peeking case off.
   useHiddenClass(barRef, !visible && !peek);
+  // …AND THE ROUTE'S OWN ANSWER RIDES BESIDE IT, because `hidden` alone can
+  // no longer carry it. app.css decides whether the header's sidebar toggle
+  // exists from `#platform-tabs:not(.hidden)`, and a peek over a running app
+  // takes `hidden` off: pointing at the window's edge inside an app drew the
+  // toggle into the app's strip, shoved ✕, the tile and the name 34px right,
+  // and a press on it folded the docked rail behind the app. A rail that only
+  // the peek is showing is not the route's, so there is nothing to fold.
+  useClassToggle(barRef, 'platform-tabs-route-hidden', !visible);
   useClassToggle(barRef, 'platform-tabs-peek', collapsed && peek);
   // THE FADE OUT (#2795). The peek stays up for the length of the fade and
   // this class is what app.css turns into it; ./rail-peek.ts times both.
@@ -366,7 +700,26 @@ export function PlatformTabs() {
   // watch the viewport.
   useClassToggle(barRef, 'platform-tabs-folded', !railOpen);
   const { enter, leave } = useRailPeek(peek);
-  const marker = useTabMarker(barRef, tab);
+  const { box: marker, lit, markerRef, press } = useTabMarker(barRef, tab);
+  // A plain press on another tab lights it and slides the pill first, and
+  // navigates a frame later (useTabMarker's `press`, #3259). A modified click
+  // stays the browser's, a second press on a tab still waiting for its route
+  // adds nothing, and a press the pill cannot slide for navigates at once,
+  // the way every press did before.
+  const onTabClick = (event: React.MouseEvent<HTMLAnchorElement>, key: string, href: string) => {
+    const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
+    if (nav?.isNativeClick?.(event)) return;
+    if (key === lit && lit !== tab) {
+      event.preventDefault();
+      return;
+    }
+    if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href))) {
+      event.preventDefault();
+      return;
+    }
+    const now = key === 'home' ? onHomeClick : key === 'workshop' ? onWorkshopClick : undefined;
+    now?.(event);
+  };
 
   return (
     <>
@@ -415,13 +768,14 @@ export function PlatformTabs() {
           them (app.css raises each tab one step), `aria-hidden` because
           `aria-current` already says which tab is lit, and bare until
           measured — see useTabMarker. `data-marker-at` is what makes it
-          visible; `data-marker-slide` is what app.css hangs the slide on.
+          visible. The style is where it rests; the slide there is an
+          animation useTabMarker plays over it (MARKER_SLIDE).
       */}
       <span
+        ref={markerRef}
         className="platform-tabs-marker"
         aria-hidden="true"
         {...(marker ? { 'data-marker-at': '' } : {})}
-        {...(marker && marker.slide ? { 'data-marker-slide': '' } : {})}
         style={marker ? {
           transform: `translate(${marker.x}px, ${marker.y}px)`,
           width: `${marker.w}px`,
@@ -429,9 +783,10 @@ export function PlatformTabs() {
         } : undefined}
       />
       {TABS.flatMap(({ key, label, href, Icon }) => [
-        // RECENTS SIT BETWEEN THE SECTIONS AND YOU (#2802): after Workshop,
-        // before Me at the rail's foot, which is where the Resume strip it
-        // replaces sat. Desktop only; app.css keeps it off the phone's bar.
+        // RECENTS SIT BETWEEN THE SECTIONS AND YOU (#2802): after the last
+        // section (Communities), before Me at the rail's foot, which is where
+        // the Resume strip it replaces sat, so the four destinations stay one
+        // run. Desktop only; app.css keeps it off the phone's bar.
         key === 'me' ? <RecentsList key="recents" /> : null,
         <a
           key={key}
@@ -442,10 +797,12 @@ export function PlatformTabs() {
           // `aria-current="page"` and nothing else marks the active tab:
           // it is what a screen reader announces and what the declared
           // checks select on, and it costs no second attribute to keep in
-          // step with. The colour comes from app.css keying off it.
-          aria-current={tab === key ? 'page' : undefined}
+          // step with. The colour comes from app.css keying off it. It is the
+          // router's tab, except for the moment between a press and its route
+          // landing, when it is the tab pressed (useTabMarker, #3259).
+          aria-current={lit === key ? 'page' : undefined}
           aria-label={tabLabel(key, label, viewer).ariaLabel}
-          onClick={key === 'home' ? onHomeClick : key === 'workshop' ? onWorkshopClick : undefined}
+          onClick={(event) => onTabClick(event, key, href)}
         >
           <span className="platform-tab-mark">
             <Icon className="platform-tab-glyph" aria-hidden="true" />
@@ -465,12 +822,57 @@ export function PlatformTabs() {
                 because the number has to mean "how many things to open".
                 Rendered only above zero, so the prerender (INITIAL is 0)
                 and the first client render agree with no badge at all.
+
+                AND IT IS THE QUIET ONE (#2912). Unread messages are counted
+                in the bell too, so this one is grey rather than the bell's
+                red: on the phone's bar a grey disc on the glyph's corner, on
+                the desktop rail a grey pill at the row's far end. It stays
+                HERE in the markup for both; app.css moves it on the rail by
+                dissolving this wrapper, so the phone keeps its anchor and a
+                declared check keeps finding it inside the Messages tab.
             */}
             {key === 'messages' ? <TabBadge count={messages} /> : null}
+            {/*
+                THE CHANNELS' COUNT, on Communities. A project's channel lives
+                on its hub now, not in Messages, so "something was said in a
+                room you are in" is counted where the room is: how many of
+                your communities' channels have unread messages (#general is
+                Homeroom's). The same quiet grey disc, for the same reason.
+            */}
+            {key === 'workshop' ? (
+              <TabBadge count={communities} id="platform-tabs-badge-communities" label="Channels with unread messages" />
+            ) : null}
           </span>
           <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
         </a>,
       ])}
+      {/*
+          SETTINGS, ONE CLICK FROM THE RAIL'S FOOT (#3120). A cog beside the
+          account row, the way Slack, Discord and Linear put the settings
+          control next to you rather than inside a page about you. Before
+          this, Settings on a desktop was Me → scroll → the Settings row.
+
+          DESKTOP ONLY. app.css draws it inside `@media (min-width: 768px)`
+          and nowhere else: the phone's bar is five equal cells and stays
+          that way, and Settings stays a row of the Profile screen there.
+
+          AFTER Me in the markup, so the reading order is "you, then your
+          settings" and the declared check's sibling chain that ENDS at
+          #platform-tab-me is untouched. It is not a `.platform-tab` (the
+          phone's marker and the bar's grid count those), and it lights on
+          the Settings screen itself — the Me row stays lit too, because
+          Settings still belongs to the Me section on both bars.
+      */}
+      <a
+        id="platform-rail-settings"
+        className="platform-rail-settings"
+        href="#settings"
+        aria-label="Settings"
+        title="Settings"
+        aria-current={screen === 'settings-screen' ? 'page' : undefined}
+      >
+        <CogIcon className="platform-rail-settings-glyph" aria-hidden="true" />
+      </a>
       </nav>
     </>
   );

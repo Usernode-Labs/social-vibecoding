@@ -57,6 +57,12 @@ export interface WalletSheetState {
   /** Inline and non-blocking: Send, Receive and navigation stay usable. */
   stateError: string | null;
   staking: StakingView;
+  /**
+   * The native Android app (the kit's platform skin). Android keeps a
+   * persistent background service alive while this phone produces blocks,
+   * so the card says whether it is running (#3059). iOS has no such service.
+   */
+  isAndroid: boolean;
   stakingPending: boolean;
   refreshPending: boolean;
   /** Null is LOADING; an empty array is "none yet". Different sentences. */
@@ -72,6 +78,7 @@ export const WALLET_EMPTY: WalletSheetState = {
   submissionSupported: false,
   stateError: null,
   staking: { kind: 'absent' },
+  isAndroid: false,
   stakingPending: false,
   refreshPending: false,
   receipts: null,

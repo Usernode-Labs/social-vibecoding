@@ -78,6 +78,34 @@ function minutesSince(value, now) {
   return Math.floor(elapsed / (60 * 1000));
 }
 
+// services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
+// Parsed here rather than required from there: that module reaches the
+// database helpers, and copy assembly stays dependency-free.
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+
+function platformLimitCopy(detail) {
+  const m = PLATFORM_LIMIT_DETAIL_RE.exec(detail);
+  if (!m) {
+    return {
+      title: 'Platform limit',
+      body: 'The server is nearing one of its limits. Open Homeroom to see which',
+    };
+  }
+  const [, limit, level, used, cap] = m;
+  if (limit === 'apps') {
+    return level === 'full'
+      ? { title: 'App limit reached',
+        body: `${used} of ${cap} apps are in use. New apps are refused until the limit is raised in Admin \u2192 Limits` }
+      : { title: 'Nearing the app limit',
+        body: `${used} of ${cap} apps are in use. Raise the limit in Admin \u2192 Limits before new apps are refused` };
+  }
+  return level === 'full'
+    ? { title: 'Session limit reached',
+      body: `${used} of ${cap} coding sessions are running. New ones pause idle sessions or wait until MAX_GLOBAL_SESSIONS is raised` }
+    : { title: 'Nearing the session limit',
+      body: `${used} of ${cap} coding sessions are running. At the limit, idle sessions are paused to make room` };
+}
+
 // Kind-specific {title, body}, or null when the kind's essential context is
 // missing (e.g. a mention without a sender) — null means the generic copy.
 function buildCopy(kind, context, now) {
@@ -119,12 +147,30 @@ function buildCopy(kind, context, now) {
         title: withConversation(`@${actor} replied to you`),
         body: message,
       };
+    // #2387: the thread is the news, so the title says where it happened.
+    case 'conversation_thread_reply':
+      return actor && {
+        title: withConversation(`@${actor} replied in a thread`),
+        body: message,
+      };
     case 'conversation_reaction':
       return actor && {
         title: withConversation(detail
           ? `@${actor} reacted ${detail} to your message`
           : `@${actor} reacted to your message`),
         body: message && `You said: ${message}`,
+      };
+    // #2386. No app, no conversation: the person IS the news. The body says
+    // what to do about it, because the row it opens carries the buttons.
+    case 'friend_request':
+      return actor && {
+        title: `@${actor} sent you a friend request`,
+        body: 'Accept or decline in Notifications',
+      };
+    case 'friend_accept':
+      return actor && {
+        title: `@${actor} accepted your friend request`,
+        body: 'You\'re friends now. They show up first when you start a message',
       };
     case 'mention':
       return actor && {
@@ -136,6 +182,13 @@ function buildCopy(kind, context, now) {
       return actor && {
         title: withApp(quotedTitle
           ? `@${actor} replied in ${quotedTitle}` : `@${actor} replied to you`),
+        body: message,
+      };
+    // #2387: somebody answered in an app-chat reply thread you are in. The
+    // reply itself is the body, like a reply to you.
+    case 'thread_reply':
+      return actor && {
+        title: withApp(`@${actor} replied in a thread`),
         body: message,
       };
     case 'reaction':
@@ -185,6 +238,16 @@ function buildCopy(kind, context, now) {
         title: withApp('Your build is ready'),
         body: quoted && `${quoted} finished. Review it while it's fresh`,
       };
+    // #3181: the turn ended on an error, a timeout or a lost worker, or the
+    // platform paused the session mid-turn. The title says what happened and
+    // where; the body is the one thing to do about it.
+    case 'session_stalled':
+      return {
+        title: app
+          ? `Your session on ${truncate(app, TITLE_EMBED_MAX)} stopped before finishing`
+          : 'Your session stopped before finishing',
+        body: quoted ? `Open ${quoted} to continue` : 'Open it to continue',
+      };
     case 'auto_solve_done': {
       if (detail === 'question') {
         return {
@@ -230,18 +293,27 @@ function buildCopy(kind, context, now) {
           : 'Open the proposal to review their vote',
       };
     }
-    case 'pr_merged':
+    case 'pr_merged': {
       // #1688: `detail` names the people on a merge the vote carried
       // ("Backed by alice and bob, shaped by carol."); an admin override
       // keeps its marker and its own line.
+      // #2897: a child app's merge rebuilds production before this row is
+      // written, so "live" is true when it arrives. The platform's own merge
+      // is released afterwards, outside this process (GitHub Actions, then
+      // Argo CD; services/release-watch.js), so at merge time it is only on
+      // its way. Say so rather than claim a deploy that has not happened.
+      const outcome = context.appSelfHosted === true
+        ? 'Your change will be live in a few minutes'
+        : 'Your change is live';
       return {
         title: withApp(quotedTitle ? `${quotedTitle} merged` : 'Your proposal merged'),
         body: detail === 'forced'
-          ? 'An admin merged it. Your change is live'
+          ? `An admin merged it. ${outcome}`
           : detail
             ? `The vote carried. ${truncate(detail, 120)}`
-            : 'The vote carried. Your change is live',
+            : `The vote carried. ${outcome}`,
       };
+    }
     // #1688: the author pushed a new version of a proposal this person had
     // backed. Their yes no longer counts until they look again; the row in
     // the app carries the one tap that keeps it.
@@ -363,6 +435,11 @@ function buildCopy(kind, context, now) {
         title: withApp('App needs attention'),
         body: 'Open the app to see what needs attention',
       };
+    // A server-wide cap nearing or at its ceiling, for full admins only
+    // (services/platform-limit-alerts.js). The detail token carries which
+    // cap, the level and the figures, so the push can say how close it is.
+    case 'platform_limit':
+      return platformLimitCopy(detail);
     default:
       return null;
   }
@@ -432,6 +509,35 @@ function buildMessage({
   return message;
 }
 
+// #2904: a badge-only APNs push. iOS keeps the icon at whatever the LAST
+// push's `aps.badge` said until something sets it again, and the app is
+// the only other thing that can — so notifications read on another device
+// (or while the WebView was suspended) left the icon on a stale count with
+// nothing in-app to explain it. This carries the fresh total and nothing
+// else: no `notification` block, no `data`, so iOS updates the icon without
+// presenting a banner and the native shell has no social payload to route.
+// `alert` is still the right push type — Apple files badge changes under it
+// — and priority 5 keeps it off the immediate-delivery budget.
+const BADGE_TTL_MS = 60 * 60 * 1000;
+
+function buildBadgeMessage({ token, unreadCount, now = new Date() }) {
+  if (typeof token !== 'string' || !token) throw new Error('mobile_push_registration_missing');
+  if (!Number.isSafeInteger(unreadCount) || unreadCount < 0) {
+    throw new Error('mobile_push_badge_count_invalid');
+  }
+  return {
+    token,
+    apns: {
+      headers: {
+        'apns-push-type': 'alert',
+        'apns-priority': '5',
+        'apns-expiration': String(Math.floor((new Date(now).getTime() + BADGE_TTL_MS) / 1000)),
+      },
+      payload: { aps: { badge: unreadCount } },
+    },
+  };
+}
+
 module.exports = {
   ALLOWED_KINDS,
   MAX_TTL_MS,
@@ -440,4 +546,6 @@ module.exports = {
   isPushEnvironment,
   recipientBinding,
   buildMessage,
+  buildBadgeMessage,
+  BADGE_TTL_MS,
 };

@@ -33,12 +33,21 @@
 //      Enforced independently at the vote WRITE layer via
 //      appAccess.getAppForUser(..., 'collab', ...).
 //
+//   3. MEMBERSHIP (communities) — only members of the community the app
+//      belongs to may propose and vote (services/communities.js), so only
+//      members are counted: `community_members` for the app's
+//      `community_id`. An app with no community does not gate (a row between
+//      its insert and the schema backfill). On the platform's own project
+//      the membership is every account with platform access unless they
+//      left, so its union-of-all-apps activity below is narrowed only by
+//      people who chose to leave.
+//
 // The vote-facing helpers (`getActiveUserStats`, `listActiveUserIds`,
-// `isUserActive`) return the INTERSECTION (activity ∩ eligibility): the
-// majority denominator must only count users who can actually vote, or a
-// view-public/collab-private app's threshold becomes unreachable
-// (non-voting viewers inflating floor(active/2)+1). Display/"tested"
-// surfaces use concept #1 alone.
+// `isUserActive`) return the INTERSECTION (activity ∩ eligibility ∩
+// membership): the majority denominator must only count users who can
+// actually vote, or a threshold becomes unreachable (non-voting viewers —
+// and, since communities, people who never joined — inflating
+// floor(active/2)+1). Display/"tested" surfaces use concept #1 alone.
 //
 // Pragmatic-vs-strict note: a fully strict "lifecycle" reading of the
 // rule would say a 10-day absence un-qualifies the user, requiring
@@ -347,7 +356,16 @@ async function getActiveUserStats(pool, appId) {
                SELECT 1 FROM app_activity b
                WHERE b.user_id = a.user_id
                  AND b.seconds_spent >= 60
-             )`
+             )
+             AND EXISTS (
+               SELECT 1 FROM apps ap
+                WHERE ap.id = $1
+                  AND (ap.community_id IS NULL OR EXISTS (
+                    SELECT 1 FROM community_members cm
+                     WHERE cm.community_id = ap.community_id AND cm.user_id = a.user_id
+                  ))
+             )`,
+        [appId]
       )
     : await pool.query(
         `SELECT COUNT(DISTINCT a.user_id) AS cnt
@@ -363,7 +381,15 @@ async function getActiveUserStats(pool, appId) {
              AND (NOT $2::boolean OR EXISTS (
                SELECT 1 FROM app_collaborators c
                WHERE c.app_id = $1 AND c.user_id = a.user_id AND c.status = 'member'
-             ))`,
+             ))
+             AND EXISTS (
+               SELECT 1 FROM apps ap
+                WHERE ap.id = $1
+                  AND (ap.community_id IS NULL OR EXISTS (
+                    SELECT 1 FROM community_members cm
+                     WHERE cm.community_id = ap.community_id AND cm.user_id = a.user_id
+                  ))
+             )`,
         [appId, collabPrivate]
       );
   // Floor at 1 so the vote machinery's majority threshold is never
@@ -440,7 +466,27 @@ async function isCollabEligible(pool, appId, userId) {
 async function isUserActive(pool, appId, userId) {
   if (!userId) return false;
   if (!(await isCollabEligible(pool, appId, userId))) return false;
+  if (!(await isCommunityMember(pool, appId, userId))) return false;
   return hasQualifyingActivity(pool, appId, userId);
+}
+
+// Concept #3 — MEMBERSHIP (communities): is this user in the community the
+// app belongs to? The same rule the counts above apply inline, for the one
+// viewer: an app with no community (a row between its insert and the
+// backfill, see schema.sql) does not gate, and an answer the pool cannot give
+// (no row) does not either — this narrows who is counted, it never widens it
+// past what the older two concepts allow.
+async function isCommunityMember(pool, appId, userId) {
+  if (!userId) return false;
+  const { rows } = await pool.query(
+    `SELECT (ap.community_id IS NULL OR EXISTS (
+              SELECT 1 FROM community_members cm
+               WHERE cm.community_id = ap.community_id AND cm.user_id = $2
+            )) AS ok
+       FROM apps ap WHERE ap.id = $1`,
+    [appId, userId]
+  );
+  return rows.length ? rows[0].ok !== false : true;
 }
 
 // The full set of user ids currently counted as active for an app,
@@ -460,7 +506,16 @@ async function listActiveUserIds(pool, appId) {
                SELECT 1 FROM app_activity b
                WHERE b.user_id = a.user_id
                  AND b.seconds_spent >= 60
-             )`
+             )
+             AND EXISTS (
+               SELECT 1 FROM apps ap
+                WHERE ap.id = $1
+                  AND (ap.community_id IS NULL OR EXISTS (
+                    SELECT 1 FROM community_members cm
+                     WHERE cm.community_id = ap.community_id AND cm.user_id = a.user_id
+                  ))
+             )`,
+        [appId]
       )
     : await pool.query(
         `SELECT DISTINCT a.user_id AS id
@@ -476,7 +531,15 @@ async function listActiveUserIds(pool, appId) {
              AND (NOT $2::boolean OR EXISTS (
                SELECT 1 FROM app_collaborators c
                WHERE c.app_id = $1 AND c.user_id = a.user_id AND c.status = 'member'
-             ))`,
+             ))
+             AND EXISTS (
+               SELECT 1 FROM apps ap
+                WHERE ap.id = $1
+                  AND (ap.community_id IS NULL OR EXISTS (
+                    SELECT 1 FROM community_members cm
+                     WHERE cm.community_id = ap.community_id AND cm.user_id = a.user_id
+                  ))
+             )`,
         [appId, collabPrivate]
       );
   return rows.map((r) => r.id);
@@ -488,6 +551,7 @@ module.exports = {
   listActiveUserIds,
   hasQualifyingActivity,
   isCollabEligible,
+  isCommunityMember,
   requiredVotes,
   mergeWindowMs,
   lazyWindowMs,

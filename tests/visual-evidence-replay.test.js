@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { PNG } = require('pngjs');
 const replay = require('../evidence/replay-runner');
 const { plan } = require('./fixtures/visual-evidence');
 
@@ -17,7 +18,7 @@ function input(overrides = {}) {
       baseSha: 'b'.repeat(40), headSha: 'c'.repeat(40),
       fixtureFingerprint: 'fixture-123', baseImageDigest: 'sha256:base', headImageDigest: 'sha256:head',
     },
-    authTokens: { member: 'member.jwt', read_only_admin: 'admin.jwt' },
+    authTokens: { member: 'member.jwt', read_only_admin: 'admin.jwt', full_admin: 'full-admin.jwt' },
     plan: plan(),
     ...overrides,
   };
@@ -30,6 +31,174 @@ test('runner accepts a validated pair and only publishes artifacts on pass two',
   assert.match(parsed.planHash, /^[0-9a-f]{64}$/);
   const first = replay.validateInput(input({ pass: 1 }));
   assert.equal(first.publishArtifacts, false);
+  assert.equal(first.diagnosticArtifacts, false);
+  const diagnostic = replay.validateInput(input({ pass: 1, diagnosticArtifacts: true }));
+  assert.equal(diagnostic.diagnosticArtifacts, true);
+  assert.equal(diagnostic.publishArtifacts, false);
+  assert.equal(replay.validateInput(input({ diagnosticArtifacts: true })).diagnosticArtifacts, false);
+});
+
+test('controlled replay failure intercepts only its declared GET and counts a real hit', async () => {
+  let routeHandler;
+  const context = { route: async (_glob, handler) => { routeHandler = handler; } };
+  const diagnostics = { blockedRequests: [] };
+  const controlled = { path: '/api/lists/demo', enabled: false, hits: 0,
+    requests: new WeakSet(), urls: new Set() };
+  await replay.installOriginFence(context, new Set(['http://base-evidence:3000']), diagnostics, controlled);
+  await replay.executeAction(null, { type: 'requestFailure', path: controlled.path, enabled: true },
+    'http://base-evidence:3000', null, '', controlled);
+  const calls = [];
+  const request = { url: () => 'http://base-evidence:3000/api/lists/demo', method: () => 'GET' };
+  await routeHandler({ request: () => request, abort: async (code) => calls.push(['abort', code]),
+    continue: async () => calls.push(['continue']) });
+  assert.deepEqual(calls, [['abort', 'failed']]);
+  assert.equal(controlled.hits, 1);
+  assert.equal(controlled.requests.has(request), true);
+  assert.equal(controlled.urls.has(request.url()), true);
+
+  const other = { url: () => 'http://base-evidence:3000/api/lists/other', method: () => 'GET' };
+  await routeHandler({ request: () => other, abort: async (code) => calls.push(['abort', code]),
+    continue: async () => calls.push(['continue']) });
+  assert.deepEqual(calls.at(-1), ['continue']);
+  await replay.executeAction(null, { type: 'requestFailure', path: controlled.path, enabled: false },
+    'http://base-evidence:3000', null, '', controlled);
+  await routeHandler({ request: () => request, abort: async (code) => calls.push(['abort', code]),
+    continue: async () => calls.push(['continue']) });
+  assert.deepEqual(calls.at(-1), ['continue']);
+});
+
+test('only deployed public apps can load inside the managed app frame', async () => {
+  const platform = 'http://base-evidence:3000';
+  const appOrigin = 'https://real-app.onhomeroom.com';
+  const apps = [
+    { slug: 'staging-demo-app', status: 'running', view_visibility: 'public',
+      url: 'https://staging-demo-app.onhomeroom.com', repo_url: null, main_sha: null },
+    { slug: 'real-app', status: 'running', view_visibility: 'public',
+      url: appOrigin, repo_url: 'https://github.com/usernode-bot/real-app', main_sha: 'a'.repeat(40) },
+    { slug: 'private-app', status: 'running', view_visibility: 'private',
+      url: 'https://private-app.onhomeroom.com', repo_url: 'https://github.com/usernode-bot/private-app', main_sha: 'b'.repeat(40) },
+  ];
+  const catalog = replay.trustedHostedAppOrigins(apps, platform);
+  assert.deepEqual([...catalog], [[appOrigin, 'real-app']]);
+  let routeHandler;
+  const context = { route: async (_glob, handler) => { routeHandler = handler; } };
+  const diagnostics = { blockedRequests: [] };
+  const hostedOrigins = new Set();
+  let catalogReads = 0;
+  await replay.installOriginFence(context, new Set([platform]), diagnostics, null, {
+    hostedOrigins, loadHostedOrigins: async () => { catalogReads += 1; return catalog; },
+  });
+  const mainFrame = { parentFrame: () => null };
+  const appFrame = { parentFrame: () => mainFrame,
+    frameElement: async () => ({ getAttribute: async () => 'app-iframe' }) };
+  const calls = [];
+  const run = async (url, type, frame) => routeHandler({
+    request: () => ({ url: () => url, method: () => 'GET', resourceType: () => type,
+      frame: () => frame }),
+    continue: async () => calls.push('continue'),
+    abort: async () => calls.push('abort'),
+  });
+  await run(`${appOrigin}/`, 'document', appFrame);
+  await run(`${appOrigin}/style.css`, 'stylesheet', appFrame);
+  await run(`${appOrigin}/`, 'document', mainFrame);
+  await run('https://staging-demo-app.onhomeroom.com/', 'document', appFrame);
+  assert.deepEqual(calls, ['continue', 'continue', 'abort', 'abort']);
+  assert.equal(catalogReads, 1);
+  assert.equal(hostedOrigins.has(appOrigin), true);
+  assert.equal(diagnostics.blockedRequests.length, 2);
+});
+
+test('hosted app readiness waits for a successful document response', async () => {
+  const page = { waitForTimeout: async () => {} };
+  const action = { id: 'app-loaded', stage: 'app', type: 'waitForHostedApp',
+    slug: 'real-app', timeoutMs: 100 };
+  await assert.rejects(replay.executeAction(page, action, '', null, '', null,
+    { loaded: new Map() }), { code: 'hosted_app_not_loaded' });
+  assert.ok((await replay.executeAction(page, action, '', null, '', null,
+    { loaded: new Map([['real-app', 'https://real-app.onhomeroom.com']]) })) >= 0);
+});
+
+test('still-capture styling is limited to the platform document', () => {
+  const platform = 'https://app.onhomeroom.com';
+  const created = [];
+  const appended = [];
+  const document = {
+    documentElement: { appendChild: (node) => appended.push(node) },
+    createElement: (tag) => {
+      const node = { tag, dataset: {}, textContent: '' };
+      created.push(node);
+      return node;
+    },
+    addEventListener: () => { throw new Error('documentElement is already present'); },
+  };
+  assert.equal(replay.installCaptureStyle(platform, {
+    location: { origin: 'https://hosted-app.onhomeroom.com' }, document,
+  }), false);
+  assert.equal(created.length, 0, 'a hosted app frame is never modified');
+  assert.equal(replay.installCaptureStyle(platform, {
+    location: { origin: platform }, document,
+  }), true);
+  assert.equal(created.length, 1);
+  assert.equal(appended[0], created[0]);
+  assert.equal(created[0].dataset.usernodeEvidence, '1');
+  assert.match(created[0].textContent, /animation-duration:0s/);
+});
+
+test('relative point hover moves the pointer without clicking the surface', async () => {
+  const moves = [];
+  const surface = {
+    first: () => ({ waitFor: async () => {} }),
+    count: async () => 1,
+    nth: () => ({ isVisible: async () => true }),
+    boundingBox: async () => ({ x: 30, y: 80, width: 1200, height: 640 }),
+  };
+  const page = {
+    locator: () => surface,
+    mouse: { move: async (...args) => moves.push(args), click: async () => { throw new Error('Unexpected click'); } },
+  };
+  await replay.executeAction(page, {
+    id: 'hover-edge', stage: 'rail', type: 'hoverPoint',
+    surface: { by: 'css', value: '#app-view' }, xRatio: 0.005, yRatio: 0.5,
+  }, '', null);
+  assert.deepEqual(moves, [[36, 400]]);
+});
+
+test('viewport hover replays the observed coordinate without requiring a visible locator', async () => {
+  const moves = [];
+  const page = {
+    viewportSize: () => ({ width: 1440, height: 900 }),
+    mouse: { move: async (...args) => moves.push(args) },
+  };
+  await replay.executeAction(page, {
+    id: 'hover-edge', stage: 'rail', type: 'hoverViewport',
+    xRatio: 8 / 1440, yRatio: 450 / 900,
+  }, '', null);
+  assert.deepEqual(moves, [[8, 450]]);
+});
+
+test('only Chromium resource errors for deliberately failed exact requests are expected', () => {
+  const generated = { message: 'Failed to load resource: net::ERR_FAILED' };
+  const appError = { message: 'Could not load account data' };
+  const unrelated = { message: 'Failed to load resource: net::ERR_FAILED' };
+  const diagnostics = { consoleErrors: [generated, appError, unrelated] };
+  const failure = { hits: 1, urls: new Set(['http://base-evidence:3000/api/list']) };
+  const removed = replay.discardExpectedControlledFailureConsole(diagnostics, [
+    { entry: generated, url: 'http://base-evidence:3000/api/list', message: generated.message },
+    { entry: appError, url: 'http://base-evidence:3000/app.js', message: appError.message },
+    { entry: unrelated, url: 'http://base-evidence:3000/api/other', message: unrelated.message },
+  ], failure);
+  assert.equal(removed, 1);
+  assert.deepEqual(diagnostics.consoleErrors, [appError, unrelated]);
+});
+
+test('an isolated browser job can only select a declared story and viewport', () => {
+  const selection = { storyId: 'invite-suggestions', viewport: 'desktop' };
+  assert.deepEqual(replay.validateInput(input({ selection })).selection, selection);
+  assert.throws(() => replay.validateInput(input({ selection: {
+    storyId: 'invite-suggestions', viewport: 'undeclared',
+  } })), { code: 'invalid_selection' });
+  assert.throws(() => replay.validateInput(input({ selection: { ...selection, extra: 'ignored' } })),
+    { code: 'invalid_selection' });
 });
 
 test('runner refuses identical, credential-bearing, or non-origin targets', () => {
@@ -107,6 +276,88 @@ test('a readiness wait accepts repeated visible matches while an interaction sta
   await assert.rejects(replay.resolveOne(page, target, 'click-heading', {
     state: 'visible', timeoutMs: 1000,
   }), { code: 'ambiguous_locator' });
+});
+
+test('hidden wait waits until every matching element is no longer visible', async () => {
+  let visibleCount = 2;
+  const calls = [];
+  const visible = {
+    first: () => ({ waitFor: async (options) => {
+      calls.push(options);
+      assert.equal(options.state, 'hidden');
+      visibleCount = 0;
+    } }),
+    count: async () => visibleCount,
+  };
+  const matches = {
+    filter: (options) => {
+      assert.deepEqual(options, { visible: true });
+      return visible;
+    },
+  };
+  const page = { locator: (value) => {
+    assert.equal(value, '.is-animating');
+    return matches;
+  } };
+  await replay.waitForNotVisible(page, { by: 'css', value: '.is-animating' }, 'settled', 3000);
+  assert.deepEqual(calls, [{ state: 'hidden', timeout: 3000 }]);
+  assert.equal(visibleCount, 0);
+});
+
+test('hidden wait reports a still-visible marker and allows an absent marker', async () => {
+  let visibleCount = 1;
+  const visible = {
+    first: () => ({ waitFor: async () => {
+      if (visibleCount) throw new Error('timeout');
+    } }),
+    count: async () => visibleCount,
+  };
+  const matches = {
+    filter: () => visible,
+    count: async () => visibleCount,
+    nth: () => ({ isVisible: async () => visibleCount > 0 }),
+  };
+  const page = { locator: () => matches };
+  await assert.rejects(replay.waitForNotVisible(page, {
+    by: 'css', value: '.is-animating',
+  }, 'settled', 100), (error) => {
+    assert.equal(error.code, 'locator_still_visible');
+    assert.equal(error.detail.waitState, 'hidden');
+    assert.equal(error.detail.visibleCount, 1);
+    return true;
+  });
+  visibleCount = 0;
+  await replay.waitForNotVisible(page, { by: 'css', value: '.is-animating' }, 'settled', 100);
+});
+
+test('text readiness matches a visible substring and reports a missing one as a locator error', async () => {
+  let visible = true;
+  const locator = {
+    filter: ({ visible: onlyVisible }) => {
+      assert.equal(onlyVisible, true);
+      return {
+        first: () => ({ waitFor: async () => {
+          if (!visible) throw new Error('timeout');
+        } }),
+        count: async () => Number(visible),
+      };
+    },
+    count: async () => Number(visible),
+    nth: () => ({ isVisible: async () => visible }),
+  };
+  const page = { getByText: (value, options) => {
+    assert.equal(value, 'Ready');
+    assert.deepEqual(options, { exact: false });
+    return locator;
+  } };
+  await replay.waitForVisibleText(page, 'Ready', 'wait-ready', 1000);
+  visible = false;
+  await assert.rejects(replay.waitForVisibleText(page, 'Ready', 'wait-ready', 1000), (error) => {
+    assert.equal(error.code, 'locator_not_found');
+    assert.equal(error.detail.kind, 'text');
+    assert.equal(error.detail.visibleCount, 0);
+    return true;
+  });
 });
 
 test('element resolution distinguishes a hidden role target from a missing target', async () => {
@@ -189,7 +440,7 @@ test('failure diagnostics describe browser state without exposing tokens or cook
   assert.doesNotMatch(JSON.stringify(state), /secret\.jwt|never-emit-this/);
 });
 
-test('browser contexts forward the app-scoped token and failures never expose it', async () => {
+test('browser contexts never send the platform token as a global header', async () => {
   let contexts = 0;
   const options = [];
   const browser = { newContext: async (value) => {
@@ -207,7 +458,7 @@ test('browser contexts forward the app-scoped token and failures never expose it
     assert.doesNotMatch(error.message, /secret\.jwt/);
     return true;
   });
-  assert.deepEqual(options[1].extraHTTPHeaders, { 'x-usernode-token': 'member.jwt' });
+  assert.equal(options[1].extraHTTPHeaders, undefined);
 });
 
 test('internal HTTP replay bootstraps the clone-local platform session cookie', async () => {
@@ -254,6 +505,200 @@ test('internal HTTP replay bootstraps the clone-local platform session cookie', 
     httpOnly: true, secure: false, sameSite: 'Lax',
   }]);
   assert.equal(calls.some(([name]) => name === 'dispose'), true);
+  const navigationToken = replay.replayNavigationToken('member.jwt', diagnostic);
+  assert.equal(new URL(replay.authorizedUrl('http://base-evidence:3000', '/#home', navigationToken))
+    .searchParams.has('token'), false, 'a cookie-backed replay must see the same first-run UI as the planner');
+  assert.equal(replay.replayNavigationToken('member.jwt', { cookieAlreadyPresent: true }), '');
+  assert.equal(replay.replayNavigationToken('member.jwt', {}), 'member.jwt',
+    'apps without a session cookie still need token-bearing navigation');
+});
+
+test('the intentionally sandboxed pending app frame warning is counted separately from browser errors', () => {
+  const warning = "Blocked script execution in 'about:blank' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.";
+  assert.equal(replay.expectedPendingFrameWarning(warning, {
+    sameOrigin: true, pathname: '/shell/assets/shell.js',
+  }), true);
+  assert.equal(replay.expectedPendingFrameWarning(warning, {
+    sameOrigin: false, pathname: '/shell/assets/shell.js',
+  }), false);
+  assert.equal(replay.expectedPendingFrameWarning('Uncaught TypeError: failed', {
+    sameOrigin: true, pathname: '/shell/assets/shell.js',
+  }), false);
+});
+
+test('page exceptions report only their origin class, never their stack URL', () => {
+  const platform = 'http://base-evidence:3000';
+  const hosted = new Set(['https://real-app.onhomeroom.com']);
+  const appError = { stack: 'ReferenceError: tailwind is not defined\n    at https://real-app.onhomeroom.com/app.js?token=secret.jwt:12:2' };
+  assert.equal(replay.pageErrorOriginKind(appError, platform, hosted), 'hosted_app');
+  assert.equal(replay.pageErrorOriginKind({ stack: 'Error: failed\n    at http://base-evidence:3000/app.js:1:1' },
+    platform, hosted), 'platform');
+  assert.equal(replay.pageErrorOriginKind({ stack: 'Error: failed' }, platform, hosted), 'unknown');
+});
+
+test('initial navigation retries one transport failure and keeps the same route', async () => {
+  const route = 'http://base-evidence:3000/?demo=1&ws=status&token=member.jwt#app/demo/workshop';
+  const calls = [];
+  const retries = [];
+  const waits = [];
+  const response = { status: () => 200 };
+  const page = { goto: async (url, options) => {
+    calls.push({ url, options });
+    if (calls.length === 1) throw new Error('page.goto: net::ERR_NETWORK_CHANGED at ' + url);
+    return response;
+  } };
+  assert.equal(await replay.navigateStart(page, route,
+    (event) => retries.push(event), async (ms) => waits.push(ms)), response);
+  assert.deepEqual(calls, [
+    { url: route, options: { waitUntil: 'domcontentloaded', timeout: 10000 } },
+    { url: route, options: { waitUntil: 'domcontentloaded', timeout: 10000 } },
+  ]);
+  assert.deepEqual(retries, [{ attempt: 2, code: 'network_changed' }]);
+  assert.deepEqual(waits, [500]);
+  assert.doesNotMatch(JSON.stringify(retries), /member\.jwt/);
+});
+
+test('initial navigation never retries application failures or a second transport failure', async () => {
+  const appError = new Error('page.goto: HTTP 500');
+  let calls = 0;
+  await assert.rejects(replay.navigateStart({ goto: async () => {
+    calls += 1;
+    throw appError;
+  } }, 'http://base-evidence:3000/', () => { throw new Error('unexpected retry'); }), appError);
+  assert.equal(calls, 1);
+
+  const networkError = new Error('page.goto: net::ERR_NETWORK_CHANGED');
+  const retries = [];
+  await assert.rejects(replay.navigateStart({ goto: async () => {
+    calls += 1;
+    throw networkError;
+  } }, 'http://base-evidence:3000/', (event) => retries.push(event), async () => {}), networkError);
+  assert.equal(calls, 3, 'one application attempt plus two bounded transport attempts');
+  assert.deepEqual(retries, [{ attempt: 2, code: 'network_changed' }]);
+});
+
+test('a successful initial navigation retry discards only its recovered document failure', () => {
+  const mainFrame = {};
+  const page = { mainFrame: () => mainFrame };
+  const startUrl = 'http://base-evidence:3000/?demo=1&token=member.jwt#messages';
+  const request = (url, error, { frame = mainFrame, navigation = true, type = 'document' } = {}) => ({
+    url: () => url,
+    failure: () => ({ errorText: error }),
+    frame: () => frame,
+    isNavigationRequest: () => navigation,
+    resourceType: () => type,
+  });
+  const recovered = { error: 'net::ERR_NETWORK_CHANGED' };
+  const apiFailure = { error: 'net::ERR_NETWORK_CHANGED' };
+  const unrelatedDocument = { error: 'net::ERR_CONNECTION_RESET' };
+  const diagnostics = { failedRequests: [recovered, apiFailure, unrelatedDocument] };
+  const failures = [
+    { failure: recovered, request: request('http://base-evidence:3000/?demo=1&token=member.jwt', recovered.error) },
+    { failure: apiFailure, request: request('http://base-evidence:3000/api/messages', apiFailure.error, { navigation: false, type: 'fetch' }) },
+    { failure: unrelatedDocument, request: request('http://base-evidence:3000/other?demo=1&token=member.jwt', unrelatedDocument.error) },
+  ];
+
+  assert.equal(replay.discardRecoveredInitialNavigationFailures(
+    diagnostics, failures, page, startUrl, new Set(['network_changed']), 200
+  ), 1);
+  assert.deepEqual(diagnostics.failedRequests, [apiFailure, unrelatedDocument]);
+
+  const failedRetry = { failedRequests: [recovered] };
+  assert.equal(replay.discardRecoveredInitialNavigationFailures(
+    failedRetry, failures, page, startUrl, new Set(['network_changed']), 500
+  ), 0);
+  assert.deepEqual(failedRetry.failedRequests, [recovered]);
+});
+
+test('a later successful request clears only the matching transient network-change diagnostic', () => {
+  const recovered = { error: 'net::ERR_NETWORK_CHANGED' };
+  const wrongMethod = { error: 'net::ERR_NETWORK_CHANGED' };
+  const unrecovered = { error: 'net::ERR_NETWORK_CHANGED' };
+  const realFailure = { error: 'net::ERR_CONNECTION_RESET' };
+  const recoveredConsole = { message: 'Failed to load resource: net::ERR_NETWORK_CHANGED' };
+  const otherConsole = { message: 'Failed to load resource: net::ERR_NETWORK_CHANGED' };
+  const diagnostics = {
+    failedRequests: [recovered, wrongMethod, unrecovered, realFailure],
+    consoleErrors: [recoveredConsole, otherConsole],
+  };
+  const failures = [
+    { entry: recovered, url: 'http://evidence:3000/health', method: 'GET', error: recovered.error, order: 2 },
+    { entry: wrongMethod, url: 'http://evidence:3000/health', method: 'POST', error: wrongMethod.error, order: 3 },
+    { entry: unrecovered, url: 'http://evidence:3000/api/items', method: 'GET', error: unrecovered.error, order: 4 },
+    { entry: realFailure, url: 'http://evidence:3000/other', method: 'GET', error: realFailure.error, order: 5 },
+  ];
+  const successes = new Map([
+    ['GET http://evidence:3000/health', 6],
+    ['GET http://evidence:3000/api/items', 1],
+    ['GET http://evidence:3000/other', 7],
+  ]);
+  const consoleEvents = [
+    { entry: recoveredConsole, url: 'http://evidence:3000/health', method: 'GET', message: recoveredConsole.message },
+    { entry: otherConsole, url: 'http://evidence:3000/api/items', method: 'GET', message: otherConsole.message },
+  ];
+
+  assert.deepEqual(replay.discardRecoveredNetworkChanges(
+    diagnostics, failures, successes, consoleEvents
+  ), { requests: 1, consoleErrors: 1 });
+  assert.deepEqual(diagnostics.failedRequests, [wrongMethod, unrecovered, realFailure]);
+  assert.deepEqual(diagnostics.consoleErrors, [otherConsole]);
+});
+
+test('an asserted UI may cancel obsolete reads without hiding failed mutations or documents', () => {
+  const cancelled = { error: 'net::ERR_ABORTED' };
+  const sameRoute = { error: 'net::ERR_ABORTED' };
+  const mutation = { error: 'net::ERR_ABORTED' };
+  const document = { error: 'net::ERR_ABORTED' };
+  const reset = { error: 'net::ERR_CONNECTION_RESET' };
+  const cancelledConsole = { message: 'Failed to load resource: net::ERR_ABORTED' };
+  const otherConsole = { message: 'Unrelated application error' };
+  const diagnostics = {
+    failedRequests: [cancelled, sameRoute, mutation, document, reset],
+    consoleErrors: [cancelledConsole, otherConsole],
+  };
+  const failures = [
+    { entry: cancelled, url: 'http://evidence:3000/api/details', method: 'GET', resourceType: 'fetch', error: cancelled.error,
+      startRoute: '/#messages/1', endRoute: '/app/demo/dev/proposals/1' },
+    { entry: sameRoute, url: 'http://evidence:3000/api/current', method: 'GET', resourceType: 'fetch', error: sameRoute.error,
+      startRoute: '/app/demo/dev/proposals/1', endRoute: '/app/demo/dev/proposals/1' },
+    { entry: mutation, url: 'http://evidence:3000/api/action', method: 'POST', resourceType: 'fetch', error: mutation.error },
+    { entry: document, url: 'http://evidence:3000/page', method: 'GET', resourceType: 'document', error: document.error },
+    { entry: reset, url: 'http://evidence:3000/api/other', method: 'GET', resourceType: 'xhr', error: reset.error },
+  ];
+  const consoles = [
+    { entry: cancelledConsole, url: 'http://evidence:3000/api/details', method: 'GET', message: cancelledConsole.message },
+    { entry: otherConsole, url: 'http://evidence:3000/api/other', method: 'GET', message: otherConsole.message },
+  ];
+  assert.deepEqual(replay.discardCancelledReads(diagnostics, failures, consoles), {
+    requests: 1, consoleErrors: 1,
+  });
+  assert.deepEqual(diagnostics.failedRequests, [sameRoute, mutation, document, reset]);
+  assert.deepEqual(diagnostics.consoleErrors, [otherConsole]);
+});
+
+test('a read aborted during component cleanup uses the asserted final route when navigation has not updated yet', () => {
+  const startRoute = '/app/demo/dev/proposals/10';
+  const failure = { error: 'net::ERR_ABORTED' };
+  const consoleError = { message: 'Failed to load resource: net::ERR_ABORTED' };
+  const request = {
+    entry: failure, url: 'http://evidence:3000/api/apps/demo/proposals/10',
+    method: 'GET', resourceType: 'fetch', error: failure.error,
+    startRoute, endRoute: startRoute,
+  };
+  const consoleEvents = [{
+    entry: consoleError, url: request.url, method: 'GET', message: consoleError.message,
+  }];
+  const arrived = { failedRequests: [failure], consoleErrors: [consoleError] };
+  assert.deepEqual(replay.discardCancelledReads(
+    arrived, [request], consoleEvents, '/app/demo/workshop'
+  ), { requests: 1, consoleErrors: 1 });
+  assert.deepEqual(arrived, { failedRequests: [], consoleErrors: [] });
+
+  const stayed = { failedRequests: [failure], consoleErrors: [consoleError] };
+  assert.deepEqual(replay.discardCancelledReads(
+    stayed, [request], consoleEvents, startRoute
+  ), { requests: 0, consoleErrors: 0 });
+  assert.deepEqual(stayed, { failedRequests: [failure], consoleErrors: [consoleError] });
 });
 
 test('session bootstrap accepts only a bounded session cookie value', () => {
@@ -274,10 +719,12 @@ test('a failed browser action identifies its plan action and stage', async () =>
   replayPlan.stories[0].intent.animation = 'none';
   replayPlan.stories[0].replay.checkpoint.animation = 'none';
   let contexts = 0;
+  let navigatedUrl = null;
   const handlers = {};
   const page = {
     on: (name, callback) => { handlers[name] = callback; }, off: () => {},
-    goto: async () => {
+    goto: async (url) => {
+      navigatedUrl = url;
       handlers.response?.({
         status: () => 404,
         url: () => 'http://base-evidence:3000/favicon.ico',
@@ -295,7 +742,7 @@ test('a failed browser action identifies its plan action and stage', async () =>
       visibleTestIds: ['members-trigger'],
     }),
     waitForTimeout: async () => {}, screenshot: async () => Buffer.from('png'),
-    url: () => 'http://base-evidence:3000/?token=member.jwt',
+    url: () => navigatedUrl || 'http://base-evidence:3000/',
     getByRole: () => ({
       first: () => ({ waitFor: async () => { throw new Error('timeout'); } }),
       count: async () => 0,
@@ -319,6 +766,8 @@ test('a failed browser action identifies its plan action and stage', async () =>
       phase: 'action', actionId: 'open-members', actionStage: 'members', actionType: 'click',
     });
     assert.equal(error.detail.pageState.sameOrigin, true);
+    assert.equal(new URL(navigatedUrl).searchParams.has('token'), false,
+      'the real replay side must navigate with its installed session cookie');
     assert.equal(error.detail.pageState.queryKeys.includes('token'), false);
     assert.deepEqual(error.detail.pageState.visibleIds, ['members-screen', 'browse-all-apps']);
     assert.deepEqual(error.detail.pageState.visibleControlIds, ['browse-all-apps']);
@@ -357,6 +806,28 @@ test('perceptual hash distance is a bounded bit count', () => {
   assert.equal(replay.hammingHex('0000000000000000', '0000000000000003'), 2);
 });
 
+test('a static checkpoint takes its required third sample even when real screenshots are slow', async () => {
+  const png = new PNG({ width: 90, height: 80 });
+  png.data.fill(255);
+  const image = PNG.sync.write(png);
+  let captures = 0;
+  const page = {
+    evaluate: async () => {},
+    waitForTimeout: async () => {},
+    screenshot: async () => {
+      captures += 1;
+      await new Promise((resolve) => setTimeout(resolve, 1_600));
+      return image;
+    },
+  };
+  const result = await replay.captureStableCheckpoint(page, { quiet: async () => {} });
+  assert.equal(captures, 3);
+  assert.equal(result.stability.sampleCount, 3);
+  assert.ok(result.stability.captureWaitMs > 3_000);
+  assert.equal(result.stability.samples[1].distance, 0);
+  assert.equal(result.stability.samples[2].distance, 0);
+});
+
 test('capture image contains the separate evidence runtime and its pinned dependencies', () => {
   const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'capture/Dockerfile'), 'utf8');
   assert.match(dockerfile, /playwright-core@1\.55\.1/);
@@ -365,6 +836,17 @@ test('capture image contains the separate evidence runtime and its pinned depend
   assert.match(dockerfile, /COPY src\/services\/visual-evidence-plan\.js \/app\/visual-evidence-plan\.js/);
   const visuals = fs.readFileSync(path.join(__dirname, '..', 'src/services/visuals.js'), 'utf8');
   assert.match(visuals, /capture\/Dockerfile/);
+});
+
+test('capture image sets its sans-serif in Inter, not a fallback face', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'capture/Dockerfile'), 'utf8');
+  assert.match(dockerfile, /\bfonts-inter\b/, 'the face is installed');
+  assert.match(dockerfile, /COPY capture\/fonts\.conf \/etc\/fonts\/local\.conf/, 'and preferred');
+  const conf = fs.readFileSync(path.join(__dirname, '..', 'capture/fonts.conf'), 'utf8');
+  for (const generic of ['sans-serif', 'system-ui']) {
+    assert.match(conf, new RegExp(`<family>${generic}</family>\\s*<prefer><family>Inter</family></prefer>`),
+      `${generic} prefers Inter`);
+  }
 });
 
 test('image transforms share one explicitly-owned scratch context', () => {

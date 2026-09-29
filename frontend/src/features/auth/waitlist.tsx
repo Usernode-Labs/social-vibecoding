@@ -1055,14 +1055,14 @@ export function WaitlistScreen() {
           target rather than the transparent "← Back" text link this screen
           used to carry.
 
-          #1875: here alone it SCROLLS WITH THE PAGE. As `fixed` the step
-          label, the heading and the form all slid underneath it on a phone
-          and the two texts painted over each other. `absolute` inside the
-          screen's own scroller keeps it at the top-left corner above the
-          content and lets it leave with the rest of the page — nothing can
-          pass under it.
+          #1875: it SCROLLS WITH THE PAGE. As `fixed` the step label, the
+          heading and the form all slid underneath it on a phone and the two
+          texts painted over each other. `absolute` inside the screen's own
+          scroller keeps it at the top-left corner above the content and lets
+          it leave with the rest of the page — nothing can pass under it.
+          Sign-in and register do the same since QA 2026-09-24 Q8.
       */}
-      <AuthBackButton href="#landing" position="absolute" />
+      <AuthBackButton href="#landing" />
       <div className="max-w-2xl mx-auto px-6 py-16">
         {/*
             Where you are. Hidden for a waiting-room session, which is shown
@@ -1174,7 +1174,7 @@ export function WaitlistScreen() {
             {/* #1877: JSX drops the line break between a label's text and the
                 span after it, so without its own margin "Optional" rendered
                 glued to the word ("CountryOptional"). */}
-            <label className={SURVEY_LABEL}>
+            <label className={SURVEY_LABEL} htmlFor="waitlist-country">
               Country
               <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
                 Optional

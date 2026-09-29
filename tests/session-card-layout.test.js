@@ -252,6 +252,21 @@ test('an imported PR detail header shows all three editable attribute slots', ()
   assert.doesNotMatch(html, />Yes \(|>No \(/);
 });
 
+test('a new draft PR is reachable from both the owner and group Underway cards', () => {
+  const AppView = makeAppView();
+  const pr_url = 'https://github.com/acme/app/pull/2866';
+  const own = mySessionCardHtml(AppView, mySess({ pr_number: 2866, pr_url }));
+  const shared = sharedSessionCardHtml(AppView, sharedSess({ pr_number: 2866, pr_url }));
+  assert.match(own, /href="https:\/\/github\.com\/acme\/app\/pull\/2866"[^>]*>PR#2866<\/a>/);
+  assert.match(shared, /href="https:\/\/github\.com\/acme\/app\/pull\/2866"[^>]*>PR#2866<\/a>/);
+  assert.ok(menuHas(AppView, own, /View PR on GitHub/));
+  assert.ok(menuHas(AppView, shared, /View PR on GitHub/));
+  const ownAction = AppView._cardMenus[menuKeyOf(own)].find((a) => a.label === 'View PR on GitHub');
+  const sharedAction = AppView._cardMenus[menuKeyOf(shared)].find((a) => a.label === 'View PR on GitHub');
+  assert.equal(ownAction.title, pr_url);
+  assert.equal(sharedAction.title, pr_url);
+});
+
 // ── Preview pill gating (#689) ──────────────────────────────────────────────
 
 test('shared card: can_preview without a live staging_url still gets the icon (empty fallback)', () => {
@@ -537,7 +552,7 @@ test('kanban In progress: no visible sessions → nothing below the archived tog
 
 // ── #1112: the work-state chip belongs to issue cards only ─────────────────
 // Sessions and issues share the Underway column, and a session already says
-// what it is doing through _sessionStatusTagHtml ("working…" / "paused"). The
+// what it is doing through _sessionStatusTagHtml ("working…"). The
 // new chip must not double up on those rows — the issue rows are the ones that
 // previously said only "In progress".
 
@@ -559,7 +574,7 @@ test('kanban Underway: only the issue row carries the work-state chip', () => {
 
   // The session rows keep their own status tags, untouched by #1112.
   assert.match(html, /working…/, 'the busy session still says working…');
-  assert.match(html, /paused/, 'the shared paused session still says paused');
+  assert.doesNotMatch(html, />paused</, 'a paused session is not labelled so (#2779 follow-up)');
   // …and none of the seven issue-state labels leaked onto a session row.
   for (const label of ['Being worked on', 'In review', 'Claimed', 'Needs an answer',
     'Draft ready to review']) {
@@ -704,10 +719,12 @@ test('status tag: a live idle event clears a spinner the fetched row still asser
   assert.doesNotMatch(html, /working…/);
 });
 
-test('status tag: a paused session with no live entry still shows "paused"', () => {
+test('status tag: a paused session reads like an idle active one, never "paused"', () => {
+  // #2779 follow-up: pausing is the platform's bookkeeping (an idle session
+  // pauses by itself and resumes when opened), so it is not shown.
   const { AppView } = makeAppViewWithStore();
   const html = statusTagHtml(AppView, mySess({ busy: false, status: 'paused' }));
-  assert.match(html, /paused/);
+  assert.doesNotMatch(html, /paused/);
   assert.doesNotMatch(html, /working…/);
 });
 

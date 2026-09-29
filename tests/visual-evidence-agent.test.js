@@ -7,6 +7,17 @@ const worker = require('../src/services/worker');
 const fs = require('node:fs');
 const path = require('node:path');
 
+test('evidence uses temporary worker storage only when no coding session can resume', async () => {
+  const options = [];
+  const workerService = { ensureWorker: async (_id, config) => { options.push(config); return 'worker'; } };
+  const session = { id: 42, repo_url: 'https://github.com/acme/demo.git',
+    branch_name: 'proposal', status: 'promoted' };
+  await agent.ensureEvidenceWorker(session, { workerService });
+  await agent.ensureEvidenceWorker({ ...session, source: 'imported' }, { workerService });
+  await agent.ensureEvidenceWorker({ ...session, status: 'merged' }, { workerService });
+  assert.deepEqual(options.map((option) => option.temporary), [false, true, true]);
+});
+
 test('agent dispatch time is bounded and invokes worker cancellation', async () => {
   let stopped = 0;
   await assert.rejects(
@@ -57,7 +68,7 @@ test('hosted evidence dispatch forwards worker lifecycle diagnostics through the
       branch_name: 'proposal', agent_backend: 'claude_code',
     },
     runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
-    authTokens: { member: 'private-token', read_only_admin: 'private-token' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token', full_admin: 'private-token' },
     onEvidenceDiagnostic: (event) => events.push(event),
   }, { workerService });
   assert.equal(result.backend, 'claude_code');
@@ -68,18 +79,101 @@ test('hosted evidence dispatch forwards worker lifecycle diagnostics through the
   assert.doesNotMatch(JSON.stringify(events), /private-token/);
 });
 
+test('Codex evidence receives the planning contract as developer context in a fresh turn', async () => {
+  let dispatched;
+  const result = await agent.dispatch({ visualEvidence: { maxAgentMs: 500 } }, {
+    pool: {}, session: {
+      id: 42, user_id: 7, repo_url: 'https://github.com/acme/demo.git',
+      branch_name: 'proposal', agent_backend: 'codex_openrouter',
+      agent_model: 'z-ai/glm-test', agent_thread_id: 'coding-thread',
+    },
+    runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token', full_admin: 'private-token' },
+    resumeThreadId: null,
+  }, {
+    workerService: {
+      ensureWorker: async () => 'warm-worker',
+      execInWorker: async (_sessionId, options) => {
+        dispatched = options;
+        return { exitCode: 0, agentThreadId: 'evidence-thread' };
+      },
+    },
+    agentTurn: {
+      resolveCodexRuntimeContext: async () => ({
+        agentModel: 'z-ai/glm-test', agentModelMetadata: { supportsTools: true },
+      }),
+      startCodexAttempt: async ({ resumeThreadId }) => {
+        assert.equal(resumeThreadId, null);
+        return { turnUuid: 'attempt-1', journal: '/tmp/attempt-1' };
+      },
+      completeCodexAttempt: async () => {},
+      usageTotalFromResult: () => null,
+    },
+  });
+  assert.equal(result.threadId, 'evidence-thread');
+  assert.equal(dispatched.resumeSessionId, null);
+  assert.equal(dispatched.evidenceCompletionReminder, false);
+  assert.equal(dispatched.systemPrompt, agent.SYSTEM_PROMPT);
+  assert.match(dispatched.systemPrompt, /Use evidence_get_context first/);
+  assert.match(dispatched.systemPrompt, /submit them through the tool/);
+});
+
 test('the evidence prompt asks for a replay plan and leaves visual judgement to people', () => {
   assert.match(agent.SYSTEM_PROMPT, /platform code—not you—will reset both sides and\s+replay it twice/i);
-  assert.match(agent.SYSTEM_PROMPT, /human reviewers, who decide whether it proves the claim/i);
-  assert.match(agent.SYSTEM_PROMPT, /do not need image understanding or to issue a relevance verdict/i);
+  assert.match(agent.SYSTEM_PROMPT, /promptly acknowledges a\s+validated submission; it does not wait for replay or return a verdict/i);
+  assert.match(agent.SYSTEM_PROMPT, /platform waits for replay, starts a separate\s+correction turn for a repairable replay failure/i);
+  assert.match(agent.SYSTEM_PROMPT, /passing media available to human\s+reviewers/i);
+  assert.match(agent.SYSTEM_PROMPT, /do not need image understanding or a relevance verdict/i);
   assert.doesNotMatch(agent.SYSTEM_PROMPT, /evidence_finish/);
   assert.match(agent.SYSTEM_PROMPT, /page[\s\S]*untrusted data/i);
   assert.doesNotMatch(agent.promptFor(), /review was rejected|corrected plan/i);
+  assert.match(agent.promptFor({ completionReminder: true }), /ended normally without calling evidence_run_plan/i);
+  assert.match(agent.promptFor({ completionReminder: true }), /Do not reset the\s+exploration pair/i);
+  assert.match(agent.promptFor({ completionReminder: true }), /call evidence_run_plan now/i);
+  assert.match(agent.promptFor({ completionReminder: true }), /evidence_report_blocker/i);
+  assert.match(agent.promptFor({ completionReminder: true }), /only those two terminal\s+tools/i);
+  assert.match(agent.promptFor({ repair: true, completionReminder: true }),
+    /bounded repair exploration ended without calling/i);
+  assert.match(agent.promptFor({ repair: true, completionReminder: true }),
+    /preserving every accepted interaction and assertion unrelated to the\s+exact replay failure/i);
+  assert.match(agent.promptFor({ repair: true, completionReminder: true }),
+    /only those two terminal tools/i);
   assert.match(agent.promptFor({ repair: true }), /rejected plan and the exact replay failure/i);
-  assert.match(agent.promptFor({ repair: true }), /BOTH exact revisions/i);
+  assert.match(agent.promptFor({ repair: true }), /BOTH exact\s+revisions/i);
   assert.match(agent.replayPlanGuide(), /No arbitrary JavaScript/);
+  assert.match(agent.replayPlanGuide(), /id:"open-menu", stage:"menu"/);
+  assert.match(agent.replayPlanGuide(), /"type":"click",\s*"target"/);
+  assert.match(agent.replayPlanGuide(), /read the returned field paths/i);
+  assert.match(agent.replayPlanGuide(), /exactly one\s+entry for every accepted story id/i);
+  assert.match(agent.replayPlanGuide(), /Do not copy those fields yourself/);
   assert.match(agent.replayPlanGuide(), /Every interaction target and each checkpoint focus must\s+identify exactly one visible element/);
-  assert.match(agent.replayPlanGuide(), /waitFor target only needs one or more\s+visible matches/);
+  assert.match(agent.replayPlanGuide(), /Each visible, hidden, attached, text, value, checked,\s+or focusWithin checkpoint assertion must also use a unique target/);
+  assert.match(agent.replayPlanGuide(), /Use count only when the intended claim is the exact number of\s+matches/);
+  assert.match(agent.replayPlanGuide(), /A detached assertion means the intended target has no matches/);
+  assert.match(agent.replayPlanGuide(), /execute every accepted interaction step on both revisions/);
+  assert.match(agent.replayPlanGuide(), /initially\s+authenticated base and head pair/i);
+  assert.match(agent.replayPlanGuide(), /replacing\s+their databases invalidates the long-lived browser sessions/i);
+  assert.match(agent.replayPlanGuide(), /bootstraps fresh persona sessions before each\s+deterministic replay/i);
+  assert.match(agent.SYSTEM_PROMPT, /next action must be evidence_run_plan/i);
+  assert.match(agent.SYSTEM_PROMPT, /use evidence_report_blocker with the concrete\s+reason/i);
+  assert.doesNotMatch(agent.replayPlanGuide(), /evidence_reset_pair/);
+  assert.match(agent.replayPlanGuide(), /tour, dialog, banner, or saved preference/i);
+  assert.match(agent.replayPlanGuide(), /actually click it on both revisions and\s+assert the resulting page or URL/);
+  assert.match(agent.replayPlanGuide(), /state:"visible" or state:"hidden"/);
+  assert.match(agent.replayPlanGuide(), /waitFor target only needs one or more\s+visible matches when state is visible/);
+  assert.match(agent.replayPlanGuide(), /wait for its observed marker to appear,\s+then wait for it to become hidden/i);
+  assert.match(agent.promptFor({ repair: true }), /retaining the original checkpoint assertions unchanged/i);
+  assert.match(agent.replayPlanGuide(), /waitFor text matches a visible substring/);
+  assert.match(agent.replayPlanGuide(), /eligibleHostedAppSlugs/);
+  assert.match(agent.replayPlanGuide(), /generic hosted-app frame,\s+launch, or bridge, use the evidence-owned hosted app/i);
+  assert.match(agent.promptFor({ repair: true }), /must not be hidden by switching to a user app/i);
+  assert.match(agent.promptFor({ repair: true }), /one visible target timed out while becoming actionable/i);
+  assert.match(agent.promptFor({ repair: true }), /Never force-click/);
+  assert.match(agent.promptFor({ repair: true }), /supporting_visibility/);
+  assert.match(agent.promptFor({ repair: true }), /retain the separate base absence proof/i);
+  assert.match(agent.replayPlanGuide(), /browser_mouse_move_xy/);
+  assert.match(agent.replayPlanGuide(), /hoverViewport with/);
+  assert.match(agent.replayPlanGuide(), /image interpretation is not required/);
 });
 
 test('a second hosted dispatch receives an explicit repair task through the normal worker', async () => {
@@ -99,12 +193,44 @@ test('a second hosted dispatch receives an explicit repair task through the norm
       branch_name: 'proposal', agent_backend: 'claude_code',
     },
     runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
-    authTokens: { member: 'private-token', read_only_admin: 'private-token' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token', full_admin: 'private-token' },
     resumeThreadId: 'evidence-thread', repairAttempt: 1,
   }, { workerService });
   assert.equal(prompts.length, 1);
   assert.match(prompts[0], /first submitted plan failed deterministic replay/i);
   assert.match(prompts[0], /evidence_run_plan/);
+});
+
+test('a completion reminder is marked so the Codex runner can expose only terminal tools', async () => {
+  let dispatched;
+  await agent.dispatch({ visualEvidence: { maxAgentMs: 500 } }, {
+    pool: {}, session: {
+      id: 42, user_id: 7, repo_url: 'https://github.com/acme/demo.git',
+      branch_name: 'proposal', agent_backend: 'codex_openrouter',
+      agent_model: 'z-ai/glm-test',
+    },
+    runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token', full_admin: 'private-token' },
+    resumeThreadId: 'evidence-thread', completionReminder: true,
+  }, {
+    workerService: {
+      ensureWorker: async () => 'warm-worker',
+      execInWorker: async (_sessionId, options) => {
+        dispatched = options;
+        return { exitCode: 0, agentThreadId: 'evidence-thread' };
+      },
+    },
+    agentTurn: {
+      resolveCodexRuntimeContext: async () => ({
+        agentModel: 'z-ai/glm-test', agentModelMetadata: { supportsTools: true },
+      }),
+      startCodexAttempt: async () => ({ turnUuid: 'attempt-1', journal: '/tmp/attempt-1' }),
+      completeCodexAttempt: async () => {},
+      usageTotalFromResult: () => null,
+    },
+  });
+  assert.equal(dispatched.evidenceCompletionReminder, true);
+  assert.match(dispatched.prompt, /requires one tool call before any prose/i);
 });
 
 test('backend results cannot silently turn an errored model turn into success', () => {

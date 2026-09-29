@@ -94,7 +94,7 @@ test('Home is the one tab addressed as a path, so a modified click opens a tab',
   assert.match(html, /id="platform-tab-home"[^>]*href="\/"/);
   for (const [key, href] of [
     ['discover', '#apps'], ['messages', '#messages'],
-    ['workshop', '#workshop'], ['me', '#profile'],
+    ['workshop', '#communities'], ['me', '#profile'],
   ]) {
     assert.match(html, new RegExp(`id="platform-tab-${key}"[^>]*href="${href.replace('#', '\\#')}"`));
   }
@@ -321,6 +321,10 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   const roots = block.slice(block.indexOf('  :is(#home-screen'), block.indexOf('padding-left: calc('));
   assert.doesNotMatch(roots, /#app-view/, 'an app covers the rail');
   assert.match(roots, /#messages-screen/, 'every platform root does move over');
+  // QA 2026-09-24 Q23: the agent session's own screen drew from the window's
+  // edge, under the rail, with its chips and the start of its composer
+  // unreachable there.
+  assert.match(roots, /#agent-session-screen/, 'the agent session screen moves over too');
   // IT MOVES OVER ANYWAY WHILE ITS RAIL IS UP (#2718 review), through a rule
   // of its own keyed off the bar rather than off the screen id — because
   // `#app-view` is two screens behind one id, and only one of them covers the
@@ -474,10 +478,10 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.match(css,
     /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: none;/);
   assert.match(css,
-    /body:has\(#platform-tabs:not\(\.hidden\)\) #platform-header\s*\n\s*\.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: flex;/,
+    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) #platform-header\s*\n\s*\.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: flex;/,
     '…unless the toggle is in it, which needs both a rail and the width');
   assert.match(css,
-    /body:has\(#platform-tabs:not\(\.hidden\)\) \.platform-sidebar-toggle \{\s*\n\s*display: inline-flex;/,
+    /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) \.platform-sidebar-toggle \{\s*\n\s*display: inline-flex;/,
     'which is what replaces the `return null` the component used to do');
   // FOLDED RESERVES NOTHING, and only on the desktop layout.
   const zero = css.indexOf('body:has(#platform-tabs.platform-tabs-folded)');
@@ -485,6 +489,32 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.ok(css.lastIndexOf('@media (min-width: 768px) {', zero) > 0,
     'the zeroing rule is inside the desktop block, so a phone never sees it');
   assert.match(css.slice(zero, zero + 120), /\{\s*--platform-rail-w: 0px;/);
+});
+
+test('a peek over a running app never brings the sidebar toggle into the app\'s strip', () => {
+  // THE BUG: the peek takes `hidden` off #platform-tabs over a running app,
+  // and the toggle's rule asked `#platform-tabs:not(.hidden)` alone — so
+  // pointing at the window's left edge inside an app drew the toggle into the
+  // app's own strip, pushed ✕, the tile and the name 34px right, and a press
+  // on it folded the docked rail behind the app.
+  //
+  // The ROUTE'S answer rides beside the peek's as its own class, applied
+  // through a ref like the others (never a rendered className, so nothing
+  // about it can reach hydration)…
+  const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(bar, /useClassToggle\(barRef, 'platform-tabs-route-hidden', !visible\);/);
+  assert.match(bar, /useHiddenClass\(barRef, !visible && !peek\);/,
+    'while `hidden` is still the OR of the route and the peek, so the peek works');
+  // …and every rule that decides whether the toggle EXISTS reads it. A rail
+  // the viewer folded is still the route's rail, so its toggle stays: that is
+  // how the fold comes undone.
+  const decides = css.match(/body:has\(#platform-tabs:not\(\.hidden\)[^)]*\)[^{]*(?:platform-sidebar-toggle|platform-header-left)[^{]*\{/g) || [];
+  assert.equal(decides.length, 2, 'the toggle\'s own rule and its group\'s');
+  for (const rule of decides) {
+    assert.match(rule, /:not\(\.platform-tabs-route-hidden\)/, rule);
+    assert.doesNotMatch(rule, /platform-tabs-folded|platform-tabs-peek/,
+      'folding and peeking are not what decides it: the route is');
+  }
 });
 
 test('the reservation is keyed off the bar\'s own hidden class', () => {
@@ -566,6 +596,43 @@ test('a tab label has room for its descenders', () => {
     'a unitless multiplier is the one value correct at both sizes');
 });
 
+test('the Messages count is the quiet one: grey on the phone, at the row\'s end on the rail (#2912)', () => {
+  // Unread messages are counted in the bell as well, so a second RED count on
+  // the Messages tab said the same thing twice in the loudest colour on the
+  // screen. The bell keeps the red (#notifications-badge is not touched);
+  // this badge used to match it on purpose and now deliberately does not.
+  const phone = css.match(/\n\.platform-tab-badge \{[^}]*\}/);
+  assert.ok(phone, 'the badge has its base (phone) rule');
+  assert.match(phone[0], /background: var\(--text-faint, #8e8e93\);/,
+    'a grey disc on the phone, one value in both themes');
+  assert.doesNotMatch(phone[0], /--danger|#ef4444/, 'the red is the bell\'s alone');
+  assert.match(phone[0], /position: absolute;\s*top: -3px;\s*left: calc\(100% - 7px\);/,
+    'and it keeps its place on the glyph\'s corner');
+
+  // On the rail the count moves to the row's far end, where Recents draws its
+  // unread dots, as a pill in the rail's own muted ink. The glyph's wrapper
+  // dissolves so the badge is an item of the row, back in the flow, so the
+  // label can shrink before it but never run under it.
+  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
+  const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
+  assert.match(block, /\n {2}\.platform-tab-mark \{\s*display: contents;\s*\}/,
+    'the wrapper dissolves on the rail and only there');
+  const rail = block.match(/\n {2}\.platform-tab-badge \{[^}]*\}/);
+  assert.ok(rail, 'the rail restyles the badge inside the desktop block');
+  for (const decl of [
+    /position: static;/, /order: 1;/, /flex: none;/, /margin-left: auto;/,
+    /background: color-mix\(in srgb, var\(--text-muted\) 16%, transparent\);/,
+    /color: var\(--text-muted\);/,
+  ]) assert.match(rail[0], decl);
+
+  // THE MARKUP DOES NOT MOVE, which is what lets the phone keep its anchor
+  // and the declared checks keep finding the badge inside the Messages tab.
+  const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
+  assert.match(html,
+    /id="platform-tab-messages"[^>]*><span class="platform-tab-mark"><svg[^>]*class="platform-tab-glyph"[\s\S]*?<\/svg><span id="platform-tabs-badge"/,
+    'the badge is still the glyph wrapper\'s child, inside #platform-tab-messages');
+});
+
 test('the Messages tab cannot be dead, whatever the flag says', () => {
   // navigateToMessages returns EARLY when `_inMessages` is set — routing the
   // island and revealing nothing, because the screen is supposed to be up
@@ -583,26 +650,30 @@ test('the Messages tab cannot be dead, whatever the flag says', () => {
     /if \(App\._inMessages && App\._isScreenVisible\('messages-screen'\) && messages\?\.isOpen\?\.\(\)\)/);
 });
 
-test('an app\'s discussion belongs to Messages, and says so', () => {
-  // `dev/chat` is the app's general chat, and it is a row in the Messages
-  // inbox — which is why the Workshop's Current status stopped offering it.
-  // Lighting Workshop there put the reader in a section they had not been
-  // in, and the way out it offered led to the Workshop rather than to the
-  // list they opened the thread from.
+test('an app\'s channel belongs to its community, and a change to Messages', () => {
+  // `dev/chat` is the project's CHANNEL. It was a row in the Messages inbox
+  // (#2718 review) and lit Messages; the channels live on each community's
+  // hub now, so it lights Communities and its chevron goes up to the hub. A
+  // dev session is still an agent conversation (#2770), a thread of Messages.
   assert.match(read('public/js/app.js'),
     /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : 'workshop'\)/);
   const appJs = read('public/js/app.js');
   const pred = appJs.slice(appJs.indexOf('  _isMessagesThread() {'));
   assert.match(pred.slice(0, pred.indexOf('\n  },')),
-    /App\.currentTab === 'dev'\s*&& \(App\.currentSubTab === 'chat' \|\| App\.currentSubTab === 'sessions'\)/,
-    'the discussion and a dev session (#2770) are both threads of Messages');
+    /return App\.currentTab === 'dev' && App\.currentSubTab === 'sessions';/,
+    'a dev session alone is a thread of Messages');
+  assert.match(appJs, /_isChannelThread\(\) \{\s*return App\.currentTab === 'dev' && App\.currentSubTab === 'chat';/);
   assert.match(appJs, /if \(App\._isMessagesThread\(\)\) return \['arrow', '#messages'\];/,
     'and the back slot agrees with the tab that lights');
+  assert.match(appJs, /if \(App\._isChannelThread\(\)\) return \['arrow', App\._hubHref\(App\.currentApp\)\];/,
+    'the channel\'s way up is its hub');
+  assert.match(appJs, /_hubHref\(slug\) \{\s*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop` : '#communities';/,
+    'a hash, because the back button follows only a hash');
   const appView = read('public/js/app-view.js');
   const branch = appView.slice(appView.indexOf("if (subTab === 'chat') {"));
   assert.match(branch.slice(0, branch.indexOf('\n    }')),
-    /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
-    'a level inside Messages shows the way up to it');
+    /App\.setBackIcon\?\.\('arrow', App\._hubHref\?\.\(App\.currentApp\) \|\| '#communities'\);/,
+    'a level inside the hub shows the way up to it');
   // A CHANGE IS AN AGENT CONVERSATION (#2770): its screen hangs off Messages
   // the same way, rather than off the board it used to point at.
   const session = appView.slice(appView.indexOf("if (subTab === 'sessions' && ref) {"));
@@ -624,12 +695,30 @@ test('the marker ships bare, so the first render matches the prerender', () => {
   assert.ok(html.indexOf('platform-tabs-marker') < html.indexOf('id="platform-tab-home"'));
 });
 
-test('the marker is an inset of the lit tab, and an unlaid-out bar keeps the last box', () => {
+test('the marker hugs the lit tab\'s glyph and label, and an unlaid-out bar keeps the last box', () => {
   const { markerBoxFor } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  const cell = { offsetLeft: 150, offsetTop: 0, offsetWidth: 72, offsetHeight: 56 };
+  // "Workshop": a 56px label under a 22px glyph, centred in a 72px cell.
   assert.deepEqual(
-    { ...markerBoxFor({ offsetLeft: 150, offsetTop: 0, offsetWidth: 72, offsetHeight: 56 }) },
+    { ...markerBoxFor(cell, { left: 8, top: 9, width: 56, height: 37 }) },
+    { x: 150, y: 4, w: 72, h: 45 },
+    '8px either side of the label, 5px over the glyph, 3px under the label',
+  );
+  // "Home": narrower than the floor, so the pill is 58px, still centred.
+  assert.deepEqual(
+    { ...markerBoxFor(cell, { left: 20, top: 9, width: 32, height: 37 }) },
+    { x: 157, y: 4, w: 58, h: 45 },
+    'a short label still gets a pill, not a capsule',
+  );
+  // A label wider than its cell: the pill follows it past the cell's edges
+  // (the tab keeps the cell as its target; only the fill is wider).
+  assert.equal(markerBoxFor(cell, { left: 2, top: 9, width: 68, height: 37 }).w, 84);
+  // Nothing measurable inside: the old geometry, the cell inset 4px.
+  assert.deepEqual(
+    { ...markerBoxFor(cell) },
     { x: 154, y: 4, w: 64, h: 48 },
   );
+  assert.deepEqual({ ...markerBoxFor(cell, { left: 0, top: 0, width: 0, height: 0 }) }, { x: 154, y: 4, w: 64, h: 48 });
   assert.equal(markerBoxFor({ offsetLeft: 0, offsetTop: 0, offsetWidth: 0, offsetHeight: 0 }), null,
     'a hidden bar (an app, the keyboard) has no geometry to report');
 });
@@ -638,25 +727,199 @@ test('only a selection change slides, the Workshop\'s way (#2824)', () => {
   const src = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(src, /slide: !!prev && selectionChanged/,
     'the first placement and a re-measure land; only a new tab slides');
-  assert.match(src, /new ResizeObserver\(\(\) => measure\(false\)\)/);
+  assert.match(src, /new ResizeObserver\(\(\) => \{ if \(!cancelSlide\) measure\(false\); \}\)/);
   assert.match(src, /querySelector<HTMLElement>\('\.platform-tab\[aria-current="page"\]'\)/,
     'the marker follows the same attribute the declared checks and screen readers read');
+});
+
+// #3046: on the phone a tab press swaps the whole screen synchronously, so
+// the first frame after it is the expensive one. A transition written in that
+// frame had spent its duration before anything painted and showed only the
+// tail of the slide. The slide therefore starts two frames out.
+test('a slide waits out the screen swap\'s frame before it starts (#3046)', () => {
+  const { afterNextFrame } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  const queue = [];
+  let nextId = 0;
+  const raf = (cb) => { queue.push(cb); nextId += 1; return nextId; };
+  const cancelled = [];
+  const caf = (id) => cancelled.push(id);
+  let ran = 0;
+  afterNextFrame(() => { ran += 1; }, raf, caf);
+  assert.equal(ran, 0, 'not in the press\'s own task');
+  queue.shift()();
+  assert.equal(ran, 0, 'not at the start of the swap\'s frame either — that write lands in it');
+  queue.shift()();
+  assert.equal(ran, 1, 'once the swap\'s frame has been produced');
+
+  // A second press before it starts cancels the first slide.
+  let ran2 = 0;
+  const cancel = afterNextFrame(() => { ran2 += 1; }, raf, caf);
+  queue.shift()();
+  cancel();
+  assert.deepEqual(cancelled, [4], 'the pending second frame is cancelled');
+  assert.equal(ran2, 0);
+
+  // No rAF (a test environment, a worker): it runs at once.
+  let ran3 = 0;
+  afterNextFrame(() => { ran3 += 1; }, undefined, undefined);
+  assert.equal(ran3, 1);
+
+  const src = read('frontend/src/features/nav/tab-bar.tsx');
+  const hook = src.slice(src.indexOf('function useTabMarker('), src.indexOf('export function PlatformTabs()'));
+  assert.match(hook, /cancelSlide = afterNextFrame\(\(\) => \{\s*cancelSlide = null;\s*measure\(true\);/,
+    'a move from a marked tab re-measures and slides after the frame');
+  assert.match(hook, /new ResizeObserver\(\(\) => \{ if \(!cancelSlide\) measure\(false\); \}\)/,
+    'the observer\'s delivery on observe() cannot land the marker ahead of its pending slide');
+  assert.match(hook, /cancelSlide\?\.\(\);/, 'a tab change or unmount cancels a pending slide');
 });
 
 test('the marker is the Workshop\'s blue, on the Workshop\'s curve, phone only', () => {
   const rule = css.match(/\.platform-tabs-marker \{[^}]*\}/);
   assert.ok(rule);
   assert.match(rule[0], /position: absolute;/);
-  assert.match(rule[0], /background: var\(--brand-tint\);/);
-  assert.match(rule[0], /box-shadow: inset 0 0 0 1px var\(--brand-line\);/);
+  assert.match(rule[0], /background: var\(--lit-tint\);/);
+  assert.match(rule[0], /box-shadow: inset 0 0 0 1px var\(--lit-line\);/);
   assert.match(rule[0], /opacity: 0;/, 'hidden until measured');
+  assert.match(rule[0], /transform-origin: 0 0;/, 'the slide scales from the corner its translate places');
   assert.match(css, /\.platform-tabs-marker\[data-marker-at\] \{ opacity: 1; \}/);
-  assert.match(css,
-    /@media \(prefers-reduced-motion: no-preference\) \{\s*\.platform-tabs-marker\[data-marker-slide\] \{\s*transition:\s*transform \.26s cubic-bezier\(\.32, \.72, 0, 1\)/,
-    'the slide is the Workshop marker\'s, and reduced motion does without it');
   assert.match(css, /\.platform-tab \{\s*position: relative;\s*z-index: 1;\s*\}/,
     'the tabs sit over the marker');
   // The rail keeps its row fill; the marker is not drawn there.
-  const desktop = css.slice(css.indexOf('.platform-tab[aria-current="page"] {\n    background: var(--brand-tint);'));
+  const desktop = css.slice(css.indexOf('.platform-tab[aria-current="page"] {\n    background: var(--lit-tint);'));
   assert.match(desktop.slice(0, 400), /\.platform-tabs-marker \{\s*display: none;\s*\}/);
+  // The Workshop strip's duration and curve, as an animation now (#3259).
+  const { MARKER_SLIDE } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  assert.deepEqual({ ...MARKER_SLIDE }, { duration: 260, easing: 'cubic-bezier(.32, .72, 0, 1)' });
+  assert.match(css, /\.dev-ws-tab-marker\[data-ws-marker-slide\] \{[^}]*cubic-bezier\(\.32, \.72, 0, 1\)/,
+    'the curve is still the Workshop strip\'s');
+});
+
+// ── #3259: the slide starts before the swap, and the swap waits for it ──
+
+// Measured in the iOS simulator: with the slide written two frames after the
+// swap began, its first frames landed in the swap's long ones and it appeared
+// half-way across. A press now slides first and the navigation waits until
+// the slide is running on the compositor.
+test('the slide is transform only, a FLIP from the box it leaves (#3259)', () => {
+  const { slideKeyframes, shownBox } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
+  const [start, end] = slideKeyframes({ x: 150, y: 4, w: 88, h: 45 }, { x: 290, y: 4, w: 58, h: 45 });
+  assert.equal(start, 'translate(150px, 4px) scale(1.5172, 1)', 'starts looking like the box it leaves');
+  assert.equal(end, 'translate(290px, 4px) scale(1, 1)', 'and ends as laid out');
+  assert.deepEqual(
+    start.match(/[a-z]+\(/g), end.match(/[a-z]+\(/g),
+    'both ends spell the same functions, so they interpolate one by one',
+  );
+  // A press during a slide starts the next one from where the pill IS.
+  assert.deepEqual(
+    { ...shownBox({ x: 290, y: 4, w: 58, h: 45 }, 'matrix(1.2, 0, 0, 1, 210.5, 4)') },
+    { x: 210.5, y: 4, w: 69.6, h: 45 },
+  );
+  assert.deepEqual({ ...shownBox({ x: 1, y: 2, w: 3, h: 4 }, 'none') }, { x: 1, y: 2, w: 3, h: 4 });
+
+  const src = read('frontend/src/features/nav/tab-bar.tsx');
+  const hook = src.slice(src.indexOf('function useTabMarker('), src.indexOf('function goToTab('));
+  assert.match(hook, /slide\.current = el\.animate\(\[\{ transform: start \}, \{ transform: end \}\], \{\s*duration: MARKER_SLIDE\.duration,\s*easing: MARKER_SLIDE\.easing,\s*\}\);/,
+    'no delay and no fill: a delayed animation was not handed to the compositor');
+  assert.match(hook, /if \(!box \|\| !from \|\| !box\.slide \|\| !motionWelcome\(\)\) return;/,
+    'only a selection change slides, and reduced motion gets none');
+  assert.doesNotMatch(css, /\.platform-tabs-marker\[data-marker-slide\]/, 'no transition of width and height on the main thread');
+  assert.doesNotMatch(src, /'data-marker-slide'/);
+});
+
+test('a press waits for its slide to run before it navigates (#3259)', async () => {
+  const { schedulePress, SLIDE_START_WAIT_MS, PRESS_SETTLE_MS } = loadTsx('frontend/src/features/nav/tab-press.ts');
+  const frames = [];
+  const raf = (cb) => { frames.push(cb); return frames.length; };
+  const caf = (id) => { frames[id - 1] = null; };
+  const frame = () => { const due = frames.splice(0); for (const cb of due) if (cb) cb(); };
+  const timers = [];
+  const clock = {
+    set: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clear: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
+  };
+  const fire = (ms) => { for (const t of timers) if (t.ms === ms && t.fn) { const fn = t.fn; t.fn = null; fn(); } };
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  // The slide starts late: nothing navigates until it does, then a frame on.
+  const holder = { current: null };
+  let went = 0;
+  let start;
+  const ready = new Promise((resolve) => { start = resolve; });
+  schedulePress(holder, 'discover', () => { went += 1; }, () => {}, () => ready, raf, caf, clock);
+  assert.equal(went, 0, 'not in the press\'s own task');
+  frame();
+  await flush();
+  frame();
+  assert.equal(went, 0, 'not two frames out while the slide has not started');
+  start();
+  await flush();
+  assert.equal(went, 0, 'not in the task that learns it started');
+  frame();
+  assert.equal(went, 1, 'a frame after the slide is running');
+
+  // A slide that never starts cannot hold the navigation up.
+  const stuck = { current: null };
+  let stuckWent = 0;
+  schedulePress(stuck, 'me', () => { stuckWent += 1; }, () => {}, () => new Promise(() => {}), raf, caf, clock);
+  frame();
+  fire(SLIDE_START_WAIT_MS);
+  frame();
+  assert.equal(stuckWent, 1);
+
+  // No slide to wait for: two frames, as before.
+  const plain = { current: null };
+  let plainWent = 0;
+  schedulePress(plain, 'home', () => { plainWent += 1; }, () => {}, () => null, raf, caf, clock);
+  frame();
+  assert.equal(plainWent, 0);
+  frame();
+  assert.equal(plainWent, 1);
+
+  // A second press before the first navigates replaces it.
+  const twice = { current: null };
+  const gone = [];
+  schedulePress(twice, 'discover', () => gone.push('discover'), () => {}, () => null, raf, caf, clock);
+  schedulePress(twice, 'me', () => gone.push('me'), () => {}, () => null, raf, caf, clock);
+  frame();
+  frame();
+  assert.deepEqual(gone, ['me']);
+
+  // Unanswered, the bar goes back to the router's tab; answered, it stays.
+  const lost = { current: null };
+  let settled = 0;
+  schedulePress(lost, 'messages', () => {}, () => { settled += 1; }, () => null, raf, caf, clock);
+  frame();
+  frame();
+  fire(PRESS_SETTLE_MS);
+  assert.equal(settled, 1);
+  assert.equal(lost.current, null);
+  const answered = { current: null };
+  let settledAnswered = 0;
+  const entry = schedulePress(answered, 'messages', () => {}, () => { settledAnswered += 1; }, () => null, raf, caf, clock);
+  frame();
+  frame();
+  entry.cancel();
+  answered.current = null;
+  fire(PRESS_SETTLE_MS);
+  assert.equal(settledAnswered, 0);
+});
+
+test('a plain press on another tab lights it and slides first; the router answers after (#3259)', () => {
+  const src = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.match(src, /onClick=\{\(event\) => onTabClick\(event, key, href\)\}/);
+  assert.match(src, /aria-current=\{lit === key \? 'page' : undefined\}/,
+    'the pressed tab is lit until the router answers');
+  const click = src.slice(src.indexOf('const onTabClick = '), src.indexOf('return (', src.indexOf('const onTabClick = ')));
+  assert.match(click, /if \(nav\?\.isNativeClick\?\.\(event\)\) return;/, 'a modified click stays the browser\'s');
+  assert.match(click, /if \(key !== lit && press\(event\.currentTarget, key, \(\) => goToTab\(key, href\)\)\) \{\s*event\.preventDefault\(\);/);
+  const press = src.slice(src.indexOf('const press = (el: HTMLElement'), src.indexOf('return { box, lit, markerRef, press };'));
+  assert.ok(press.indexOf('place(el, true);') < press.indexOf('schedulePress('), 'the pill moves in the press\'s own task');
+  assert.match(press, /schedulePress\(pending, key, go, \(\) => setPressed\(null\), \(\) => slide\.current\?\.ready \?\? null\);/);
+  // The three roads the clicks take at once, taken late.
+  const go = src.slice(src.indexOf('function goToTab('), src.indexOf('export function PlatformTabs()'));
+  assert.match(go, /app\.navigateHome\(\{ viaTab: true \}\);/);
+  assert.match(go, /if \(key === 'workshop' && app\?\.resumeWorkshopView\?\.\(\)\) return;/);
+  assert.match(go, /window\.location\.assign\(href\);/);
+  // The router lighting the pressed tab answers the press.
+  assert.match(src, /if \(!pending\.current \|\| pending\.current\.key !== tab\) return;\s*pending\.current\.cancel\(\);\s*pending\.current = null;\s*setPressed\(null\);/);
 });

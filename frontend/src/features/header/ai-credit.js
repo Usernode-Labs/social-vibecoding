@@ -118,7 +118,7 @@ import { aiBudgetStore } from './ai-budget-store.js';
       _render: function () {
         var s = AiCredit.Budget.state;
         if (!s || typeof s.limitCents !== 'number') {
-          aiBudgetStore.set({ view: null, hidden: true });
+          aiBudgetStore.set({ view: null, hidden: true, figures: null });
           return;
         }
 
@@ -141,7 +141,18 @@ import { aiBudgetStore } from './ai-budget-store.js';
           : (s.capWindow === 'weekly'
             ? 'Free credits reset Monday 00:00 UTC.'
             : 'Free credits reset at midnight UTC.');
-        var show = function (view) { aiBudgetStore.set({ view: view, hidden: false }); };
+        // The raw figures ride along for a reader that draws them itself
+        // (the agent-session composer's "$ left" ring): the same numbers the
+        // words below are built from, so the two cannot disagree.
+        var figures = {
+          limitCents: limit,
+          remainingCents: remaining,
+          spentCents: spent,
+          byokCents: byok,
+          weekly: (state ? state.capWindow : s.capWindow) === 'weekly',
+          level: state ? state.level : null,
+        };
+        var show = function (view) { aiBudgetStore.set({ view: view, hidden: false, figures: figures }); };
 
         // A zero tier is a real state, not an unknown cap. Render the
         // unlock action without doing spend/limit division (which used to

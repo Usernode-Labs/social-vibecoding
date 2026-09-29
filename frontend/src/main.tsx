@@ -65,6 +65,7 @@ import { bootStep } from './lib/boot-guard';
 import { initOffline } from './lib/offline';
 import { registerServiceWorker } from './lib/service-worker';
 import { applyShellSnapshot } from './lib/shell-snapshot-apply';
+import { installJoinRequired } from './lib/join-required';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
 // because the Dev surfaces are runtime-injected into an empty #app-content and
@@ -144,6 +145,9 @@ import './features/dev-chat/dev-chat.js';
 // route, not only on one screen's first reveal. Its listener is guarded, so
 // an anonymous document costs it nothing.
 import './features/auth/username-first-run.js';
+// Communities, stage 5: "What communities do you want to join?", the step
+// after the username and the terms, imported here for the same two reasons.
+import './features/auth/communities-first-run.js';
 
 // ── Every step below is wrapped, and hydration is the one that matters ──
 //
@@ -159,6 +163,10 @@ import './features/auth/username-first-run.js';
 // why it records rather than console.error-ing.
 bootStep('registerServiceWorker', registerServiceWorker);
 bootStep('initOffline', initOffline);
+// Before hydration, so no island's first write can slip past it: a write
+// refused with `join_required` becomes a Join prompt and a retry
+// (./lib/join-required.ts), for every caller in both bundles.
+bootStep('installJoinRequired', () => installJoinRequired());
 
 // document.body is the hydration container, not a wrapper <div>, because the
 // body element itself is the flex column the layout depends on

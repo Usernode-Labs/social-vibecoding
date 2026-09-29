@@ -11,7 +11,7 @@ const appLlmEnv = require('./app-llm-env');
 const appStorageEnv = require('./app-storage-env');
 const { appIdentityEnv } = require('./app-identity-env');
 const deployFailure = require('./deploy-failure');
-const { getTemplateFiles, getConnectorScaffoldFiles } = require('./template');
+const { getTemplateFiles, getConnectorScaffoldFiles, getCanonicalRepoFile } = require('./template');
 const { getPool } = require('../db/pool');
 const appCreationPhase = require('./app-creation-phase');
 const { pushAppStatusUpdate, pushAppCreationPhase } = require('./ws');
@@ -43,6 +43,20 @@ function endPhases(slug) {
   } catch (err) {
     log.warn('app-creator', 'Phase clear failed', { slug, err: err.message });
   }
+}
+
+// The approval rule a new app's row carries (POST /api/apps writes the
+// create screen's choice there), for the template's dapp.json.
+function governanceOf(row) {
+  return { approverPolicy: row?.approver_policy || 'anyone', approvalsRequired: row?.approvals_required ?? null };
+}
+
+// The create screen's "What is it?" line. POST /api/apps seeds it into the
+// row's manifest snapshot (the dapp.json the template is about to write), so
+// a Retry after a failed create writes it too.
+function descriptionOf(row) {
+  const d = row?.manifest_snapshot?.description;
+  return typeof d === 'string' && d.trim() ? d.trim() : null;
 }
 
 async function createApp(config, appRow) {
@@ -114,7 +128,9 @@ async function createApp(config, appRow) {
         });
         repoUrl = repo.html_url;
 
-        const files = getTemplateFiles(name, slug, dbUrl);
+        // repoUrl makes the template name this repo as the app's canonical
+        // one (.claude/homeroom-canonical-repo, read by the freshness check).
+        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow) });
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });
@@ -140,8 +156,9 @@ async function createApp(config, appRow) {
       // follow-up an imported app never received `.claude/settings.json`
       // and its users kept getting a permission prompt on every read-only
       // connector call, forever. Add just the connector scaffold — an
-      // import must keep the repo it imported, so this is the two
-      // `.claude/` files and nothing else.
+      // import must keep the repo it imported, so this is the `.claude/`
+      // scaffold, plus the pointer naming this repo as the app's canonical
+      // one, and nothing else.
       //
       // Deliberately NOT fatal, and deliberately NOT `repoFailed`: the
       // fresh-create branch above fails the whole creation when its push
@@ -155,8 +172,13 @@ async function createApp(config, appRow) {
           const existing = await github.getFileContent(
             parsed.owner, parsed.repo, '.claude/settings.json', 'main');
           if (existing === null) {
-            await github.pushFiles(parsed.owner, parsed.repo, getConnectorScaffoldFiles(), {
-              message: 'Add Homeroom connector permissions',
+            const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
+            const scaffold = [
+              ...getConnectorScaffoldFiles(),
+              ...(canonicalRepoFile ? [canonicalRepoFile] : []),
+            ];
+            await github.pushFiles(parsed.owner, parsed.repo, scaffold, {
+              message: 'Add Homeroom connector permissions and checkout freshness check',
             });
             log.info('app-creator', 'Added connector scaffold to imported repo',
                      { appId, slug, repoUrl });
@@ -164,6 +186,21 @@ async function createApp(config, appRow) {
         }
       } catch (err) {
         log.warn('app-creator', 'Could not add connector scaffold to imported repo',
+                 { appId, slug, repoUrl, error: err.message });
+      }
+
+      // The create dialog's answers the repo's dapp.json does not already
+      // give (the one-line description, a non-default approval rule), into
+      // that file, before the clone below reads it. Non-fatal for the same
+      // reason as the scaffold: without them the import still works, and
+      // the repo's own file still decides.
+      try {
+        const added = await require('./import-manifest').commitCreateAnswers({
+          repoUrl, description: descriptionOf(appRow), governance: governanceOf(appRow),
+        });
+        if (added.length) log.info('app-creator', 'Committed create answers into imported dapp.json', { appId, slug, added });
+      } catch (err) {
+        log.warn('app-creator', 'Could not commit create answers into imported dapp.json',
                  { appId, slug, repoUrl, error: err.message });
       }
     }
@@ -215,7 +252,7 @@ async function createApp(config, appRow) {
       fs.mkdirSync(tempDir, { recursive: true });
       fs.mkdirSync(path.join(tempDir, 'public'), { recursive: true });
 
-      const files = getTemplateFiles(name, slug, dbUrl);
+      const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow), description: descriptionOf(appRow) });
       for (const f of files) {
         const filePath = path.join(tempDir, f.path);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });

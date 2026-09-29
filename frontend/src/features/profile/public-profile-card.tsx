@@ -9,6 +9,15 @@ import { openReport } from '../dialogs/report';
  * the identical card inside `#public-profile-preview` with the affordance off —
  * reporting yourself is not a thing.
  *
+ * `allowMessage` is the same split for the prototype's person-page "Message"
+ * button (./message-button.tsx): on for someone else's page and a viewer who
+ * can use Messages, off in the owner's preview and on your own page.
+ *
+ * `friendship` (#2386) is the signed-in viewer's own relationship with this
+ * person, straight off the profile payload; when present the friend control
+ * (features/friends/friend-button.tsx) gets its own row under the name, so
+ * the name keeps the width Message already shares with it.
+ *
  * The avatar keeps its layout trick: the initial sits in the box and the photo
  * is absolutely positioned over it, so a failed load drops the image and
  * reveals the fallback without shifting anything. The legacy code did that by
@@ -20,6 +29,11 @@ import { openReport } from '../dialogs/report';
 import { useState, type ReactNode } from 'react';
 
 import { publicAvatarView, verifiedSocialLinksView } from './profile-store.js';
+import { MessageButton } from './message-button';
+import { FriendButton } from '../friends/friend-button';
+import type { FriendState } from '../friends/api';
+import { PLANE_FILL } from '@/components/ui/grouped-list';
+
 function PublicAvatar({ profile }: { profile: any }): ReactNode {
   const { initial, url } = publicAvatarView(profile);
   const [failed, setFailed] = useState(false);
@@ -53,26 +67,49 @@ function ReportForm({ username }: { username: string }): ReactNode {
 export function PublicProfileCard({
   profile,
   allowReport,
+  allowMessage = false,
+  friendship = null,
 }: {
   profile: any;
   allowReport: boolean;
+  allowMessage?: boolean;
+  friendship?: { userId: number; state: FriendState } | null;
 }): ReactNode {
   const socialLinks = verifiedSocialLinksView(profile);
   return (
     <>
       <article
         id="public-profile-card"
-        className="rounded-2xl bg-white dark:bg-zinc-900 p-5"
+        className={`rounded-2xl ${PLANE_FILL} p-5`}
       >
         <div className="flex items-start gap-4">
           <PublicAvatar profile={profile} />
           <div className="min-w-0 flex-1">
-            <h2 className="text-xl font-bold break-words">
-              {profile.displayName || profile.username}
-            </h2>
-            <div className="text-sm text-zinc-500 dark:text-zinc-400 break-all">
-              {`@${profile.username}`}
+            {/*
+                The name row carries Message at its right end, as the
+                prototype's person card does, so the bio below keeps the
+                column's whole width.
+            */}
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <h2 className="text-xl font-bold break-words">
+                  {profile.displayName || profile.username}
+                </h2>
+                <div className="text-sm text-zinc-500 dark:text-zinc-400 break-all">
+                  {`@${profile.username}`}
+                </div>
+              </div>
+              {allowMessage ? <MessageButton username={profile.username} /> : null}
             </div>
+            {friendship ? (
+              <div id="public-profile-friend" className="mt-3">
+                <FriendButton
+                  userId={friendship.userId}
+                  username={profile.username}
+                  initialState={friendship.state}
+                />
+              </div>
+            ) : null}
             {profile.bio ? (
               <p className="mt-3 text-sm whitespace-pre-wrap break-words">{profile.bio}</p>
             ) : null}

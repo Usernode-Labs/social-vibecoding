@@ -45,6 +45,15 @@ command_windows = "<same generated Windows pinned-hook runner>"
 timeout = 5
 additionalContextLimit = 256
 
+# Advisory: tells the agent when HEAD does not contain the canonical
+# main. Runs its check on the first prompt of a session only.
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "<generated Node -e runner that verifies .agents/hooks/upstream-drift.js and fails open>"
+command_windows = "<same generated Windows runner>"
+timeout = 10
+additionalContextLimit = 1200
+
 [[hooks.PreToolUse]]
 matcher = "(^Bash$|api_write$)"
 

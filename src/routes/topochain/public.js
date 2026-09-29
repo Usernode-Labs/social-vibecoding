@@ -65,7 +65,11 @@ const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challen
 const {
   loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
 } = require('../../services/topochain/challenge-onboarding');
+const { loadCadence, intervalMinutes } = require('../../services/topochain/challenge-scorer');
 const events = require('../../services/events');
+const seasonHistory = require('../../services/topochain/season-history');
+
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // Fire-and-forget tally behind POST /app-version/check, so the admin screen
 // can report whether the release gate is being exercised. `events.record`
@@ -618,6 +622,27 @@ function topochainPublicRoutes(config) {
     }
   });
 
+  // ── GET /season-history (the Leaderboard screen's History segment) ──
+  //
+  // Past seasons newest first, each with its winner, every ended event's
+  // winner and — for a signed-in viewer — where they finished. See
+  // src/services/topochain/season-history.js for the rules and the cache.
+  // Optional auth like the rest of this group: signed out, `you` is null.
+  router.get('/api/v4/season-history', async (req, res) => {
+    try {
+      let seasons = await seasonHistory.seasonHistory(pool, { viewerId: req.user?.id ?? null });
+      let demo = false;
+      if (IS_STAGING && req.query.demo === '1' && !seasons.length) {
+        seasons = seasonHistory.demoSeasonHistory();
+        demo = true;
+      }
+      return ok(res, { data: { seasons }, ...(demo ? { demo: true } : {}) });
+    } catch (err) {
+      log.error('topochain-public', 'GET /season-history failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
   // ── GET /season-events/{event} (SPEC 1142-1160, v1 /phases/{phase}) ─
   router.get('/api/v4/season-events/:seasonEventId', async (req, res) => {
     try {
@@ -757,10 +782,24 @@ function topochainPublicRoutes(config) {
         ? await loadEventBlocks(pool, req.user.id, [id])
         : new Map();
 
+      // How often the background scorer counts each challenge, and when it
+      // last did (#3185). Progress on a scored challenge moves only when a
+      // run writes credits, so a card could sit on "1/3" for an interval
+      // with nothing saying why, and people redid what they had finished.
+      // The admin route had these two times; the card had neither. Not per
+      // viewer — the schedule is the challenge's — so one read for the list.
+      const cadence = await loadCadence(pool, id, visible, { defaultMinutes: intervalMinutes(config) });
+
       const data = visible
         .map((r) => {
           const item = buildChallengeListItem(r);
           item.metric = metricOf(r);
+          // `{ interval_minutes, last_scored_at }` for a challenge the scorer
+          // counts right now, else null; always present, like `completed`.
+          const counted = cadence.get(Number(item.id));
+          item.scoring = counted
+            ? { interval_minutes: counted.intervalMinutes, last_scored_at: iso(counted.lastScoredAt) }
+            : null;
           const category = challengeCategory(item.id, item.activity_type.category, onboarding);
           item.activity_type.category = category;
           item.card_preview.label = (category || '').toUpperCase();

@@ -72,27 +72,21 @@ test('the sheet is denser than the strip — the ladder still reads', () => {
   }
 });
 
-test('both planes blur their backdrop, and fall back to opaque without it', () => {
-  for (const sel of ['.dc-lift-strip', '.dc-lift-session']) {
+test('both planes keep their fills and blur nothing, on every platform', () => {
+  for (const [sel, fill] of [['.dc-lift-strip', '--dc-strip-fill'], ['.dc-lift-session', '--dc-sheet-fill']]) {
     const r = rule(sel);
+    assert.match(r, new RegExp(`background-color: var\\(${fill}\\)`), `${sel} is its translucent plane`);
+    // Still routed through the token, prefixed and not, so turning it back on
+    // stays a one-line change.
     assert.match(r, /backdrop-filter: var\(--dc-frost\)/);
-    // Safari has shipped the filter under the prefix for years and still
-    // needs it; dropping it turns the glass into an unblurred wash there.
     assert.match(r, /-webkit-backdrop-filter: var\(--dc-frost\)/);
   }
-  assert.match(APP_CSS, /--dc-frost: blur\(\d+px\)/);
-  // Without the blur the star and the washes sit UNBLURRED behind body text,
-  // which is worse than the flat surface this replaced. The effect depends on
-  // the blur, so the unsupported path takes the opaque values back.
-  // The lift's fallback is the first `@supports not` block AFTER the
-  // `.dc-lift-session` rule it backs up — not the first in the file, which
-  // is whichever frosted surface happens to be declared earliest (the #apps
-  // pane's is, since #1919).
-  const at = APP_CSS.indexOf('@supports not ((backdrop-filter', APP_CSS.indexOf('.dc-lift-session {'));
-  assert.ok(at > 0, 'the no-backdrop-filter fallback must exist');
-  const block = APP_CSS.slice(at, APP_CSS.indexOf('\n}\n', at));
-  assert.match(block, /\.dc-lift-strip \{ background-color: var\(--dc-strip\); \}/);
-  assert.match(block, /\.dc-lift-session \{ background-color: var\(--dc-sheet\); \}/);
+  // No blur on any platform, and no fallback that swaps the planes for the
+  // neutral #f5f5f7 / #ffffff on some of them: one colour scheme
+  // (app.css "No glass, on any platform").
+  assert.match(APP_CSS, /--dc-frost: none;/);
+  assert.doesNotMatch(APP_CSS, /\.dc-lift-strip \{ background-color: var\(--dc-strip\); \}/);
+  assert.doesNotMatch(APP_CSS, /\.dc-lift-session \{ background-color: var\(--dc-sheet\); \}/);
 });
 
 test('your message does not wear the agent cards\' fill', () => {

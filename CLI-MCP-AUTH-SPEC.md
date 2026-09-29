@@ -873,11 +873,18 @@ social-vibecoding mcp
 
 ### Server selection and credential identity
 
-The CLI has two immutable built-in profiles: `production` for the production
-platform origin, and `local` for exactly `http://localhost:3000`. Other
-self-hosted origins and local-development origins on a different port are added
-to the user-level configuration with `auth server add`; arbitrary commands do
-not accept a raw `--server` argument. Profile names must match
+The CLI has two immutable built-in profiles: `production` defaults to
+`https://app.onhomeroom.com`, and `local` is exactly `http://localhost:3000`.
+An explicit `USERNODE_DOMAIN` overrides the production origin for self-hosted
+deployments. The CLI, stdio MCP server, and local-agent commands share this
+production default; a named profile in one user's configuration does not
+change the committed default. Credentials remain keyed by origin, so a login
+issued for the old `my.onhomeroom.com` host is not reused for the new host.
+Users with only an old-host credential sign in to the new origin through the
+existing device login flow. Explicit named profiles retain their configured
+destinations. Other self-hosted origins and local-development origins on a
+different port are added to the user-level configuration with `auth server add`;
+arbitrary commands do not accept a raw `--server` argument. Profile names must match
 `^[a-z0-9][a-z0-9_-]{0,31}$`.
 
 `login`, `logout`, `auth status`, and `mcp` accept `--profile <name>`. Without

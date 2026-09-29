@@ -1065,55 +1065,8 @@ test('users: emails are stored lower-cased and the duplicate check is case-insen
   } finally { server.close(); }
 });
 
-test('users: DELETE guards against self-deletion and against deleting the last full admin (code-review finding)', async () => {
-  // buildSubApp's default 'admin' role injects req.user = { id: 902, ... }.
-  db.users.push({ id: 902, username: 'full-admin', is_admin: true, admin_readonly: false });
-  db.users.push({ id: 10, username: 'other-full-admin', is_admin: true, admin_readonly: false });
-  db.users.push({ id: 11, username: 'plain-topochain-user', is_admin: false, admin_readonly: false, email: 'plain@example.com' });
-
-  const { server, base } = await listen(buildSubApp(usersAdminRoutes));
-  try {
-    const selfDelete = await fetch(`${base}/api/v4/admin/users/902`, { method: 'DELETE' });
-    assert.equal(selfDelete.status, 400);
-    assert.equal((await selfDelete.json()).error, 'Cannot delete yourself.');
-    assert.ok(db.users.some((u) => u.id === 902), 'the caller must survive');
-
-    // Only two full admins exist (902 and 10); deleting 10 as a DIFFERENT
-    // caller would be fine, but the caller here IS 902, so the OTHER full
-    // admin (10) can still be deleted without threatening the invariant
-    // (two admins remain none... wait: deleting 10 leaves only 902, which
-    // is still >= 1, so this succeeds) — then deleting 902 (now the last)
-    // via a different route context is what MUST be blocked.
-    const deleteOther = await fetch(`${base}/api/v4/admin/users/10`, { method: 'DELETE' });
-    assert.equal(deleteOther.status, 200);
-    assert.ok(!db.users.some((u) => u.id === 10));
-
-    // A non-admin user has no bearing on the admin-count invariant at all.
-    const deletePlain = await fetch(`${base}/api/v4/admin/users/11`, { method: 'DELETE' });
-    assert.equal(deletePlain.status, 200);
-    assert.ok(!db.users.some((u) => u.id === 11));
-  } finally { server.close(); }
-});
-
-test('users: DELETE blocks removing the last full admin even when the caller is someone else', async () => {
-  db.users.push({ id: 902, username: 'full-admin', is_admin: true, admin_readonly: false });
-  db.users.push({ id: 20, username: 'lone-full-admin', is_admin: true, admin_readonly: false });
-  // Make 902 (the caller) a VIEW-ONLY admin so it doesn't count toward
-  // the invariant, isolating the "last FULL admin" check from the
-  // separate self-delete guard (different id, so that guard can't fire).
-  db.users[0].admin_readonly = true;
-  // Force the full-admin count down to exactly one (id 20) by removing
-  // any other full admin the fixture might otherwise imply.
-  db.users = db.users.filter((u) => u.id === 902 || u.id === 20);
-
-  const { server, base } = await listen(buildSubApp(usersAdminRoutes));
-  try {
-    const res = await fetch(`${base}/api/v4/admin/users/20`, { method: 'DELETE' });
-    assert.equal(res.status, 400);
-    assert.equal((await res.json()).error, "Can't delete the last full admin.");
-    assert.ok(db.users.some((u) => u.id === 20));
-  } finally { server.close(); }
-});
+// #2716: deletion authorization, shared-service behavior and last-admin
+// concurrency are covered through real PostgreSQL in account-deletion-postgres.test.js.
 
 test('users: enrollment (create, update, import-csv) rejects a season_event_id whose event has no season_id (NOT NULL guard)', async () => {
   db.seasonEvents.push({ id: 60, name: 'Seasonless Event', season_id: null, starts_at: T(0), ends_at: T(10) });

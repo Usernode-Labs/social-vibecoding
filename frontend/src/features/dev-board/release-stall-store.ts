@@ -49,8 +49,8 @@ export function releaseStallText(s: Pick<ReleaseStallState, 'kind' | 'sha' | 'pr
   const running = s.running ? ` The platform is still running ${s.running}.` : '';
   switch (s.kind) {
     case 'workflow_failed':
-      return `${merged} but was not released: its release workflow failed.${running}`
-        + ' Re-running the failed jobs releases it; so would the next merge.';
+      return `${merged} but was not released: its release workflow did not complete.${running}`
+        + ' Run it on main to release the latest commit; a later merge would also carry this change.';
     case 'workflow_running':
       return `${merged} and its release workflow is still running, well past the usual couple of minutes.${running}`;
     case 'rollout_missing':

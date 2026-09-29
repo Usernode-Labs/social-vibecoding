@@ -123,6 +123,47 @@ test('_proposalEvent: both merge wordings, the names from metadata first and the
   assert.equal(gc._proposalEvent({ content: NAMED }, 'message'), null, 'a person quoting the wording is a message');
 });
 
+// Follow-up to #2897: a merge on the platform's own app is released after it
+// merges, so its line says it "merged (PR #N) and will be live in a few
+// minutes". Both wordings are merges; the stored "is live" rows above keep
+// classifying exactly as they did, with no `liveSoon` on them.
+const SOON = 'Custom tier colors merged (PR #41) and will be live in a few minutes. Built by evan, backed by alice and bob, shaped by carol. (3/5 votes)';
+const SOON_OLD = 'Custom tier colors merged (PR #41) and will be live in a few minutes. Thanks to everyone who voted (3/5 votes)';
+
+test('_proposalEvent: the self-hosted "will be live in a few minutes" wording is a merge too, and says so', () => {
+  const gc = loadGroupChat();
+  assert.deepEqual(plain(gc._proposalEvent({ content: SOON }, 'system')), {
+    type: 'merged', sessionId: '', prNumber: '41', title: 'Custom tier colors', actor: '', force: false, votes: '3/5',
+    credits: CREDITS, liveSoon: true,
+  });
+  assert.deepEqual(plain(gc._proposalEvent({ content: 'PR #41 merged and will be live in a few minutes. Built by evan. (1/1 votes)' }, 'system')), {
+    type: 'merged', sessionId: '', prNumber: '41', title: '', actor: '', force: false, votes: '1/1',
+    credits: { author: 'evan', backers: [], shapers: [] }, liveSoon: true,
+  });
+  assert.deepEqual(plain(gc._proposalEvent({ content: SOON_OLD }, 'system')), {
+    type: 'merged', sessionId: '', prNumber: '41', title: 'Custom tier colors', actor: '', force: false, votes: '3/5',
+    liveSoon: true,
+  });
+  // The structured field wins: metadata saying `liveSoon` marks the event
+  // whatever the wording, and a row without it falls back to the wording.
+  const meta = { merged: { sessionId: 9, prNumber: 41, title: 'Custom tier colors', author: 'evan', backers: [], shapers: [], votes: '3/5', liveSoon: true } };
+  assert.equal(gc._proposalEvent({ content: NAMED, metadata: meta }, 'system').liveSoon, true);
+  assert.equal(gc._mergeLiveSoon({ metadata: meta }), true);
+  assert.equal(gc._mergeLiveSoon({ metadata: { merged: { liveSoon: 'yes' } } }), false);
+  assert.equal(gc._mergeLiveSoon({}), false);
+  // Backward compatibility: stored "is live" rows are merges without it.
+  for (const content of [NAMED, OLD, 'PR #41 is live. Thanks to everyone who voted (1/1 votes)']) {
+    const ev = gc._proposalEvent({ content }, 'system');
+    assert.equal(ev.type, 'merged', content);
+    assert.ok(!('liveSoon' in ev), `${content}: an "is live" row keeps its old shape`);
+  }
+  assert.equal(gc._proposalEvent({ content: SOON }, 'message'), null, 'a person quoting the wording is a message');
+  const here = gc._threadEvent({ content: SOON }, 'system');
+  assert.equal(here.type, 'merged');
+  assert.equal(here.here, true);
+  assert.equal(here.liveSoon, true, 'the change page reads the same wording');
+});
+
 // ── 3. The Friday card ────────────────────────────────────────────────
 
 const weekly = {
@@ -218,6 +259,27 @@ test('eventText, eventTail, creditsSentence: a named merge is the sentence, the 
   const card = { ...base, id: 3, event: { ...mergedEvent({ type: 'weekly', prNumber: '', title: '', votes: '', credits: null, icon: null }), weekly } };
   assert.equal(eventText(card), 'This week on Recipe App');
   assert.equal(eventTail(card), '');
+});
+
+test('eventText: a self-hosted merge says it merged and will be live in a few minutes, never that it is live', () => {
+  const { eventText, eventTail } = loadTsx(EVENT);
+  const named = { ...base, id: 2, systemText: SOON, event: mergedEvent({ liveSoon: true }) };
+  assert.equal(eventText(named), 'Custom tier colors merged and will be live in a few minutes. Built by evan, backed by alice and bob, shaped by carol.');
+  assert.equal(eventTail(named), 'PR #41 · 3/5 votes');
+  assert.equal(eventText({ ...named, event: mergedEvent({ liveSoon: true, title: '' }) }),
+    'PR #41 merged and will be live in a few minutes. Built by evan, backed by alice and bob, shaped by carol.');
+  assert.equal(eventText({ ...named, event: mergedEvent({ liveSoon: true, credits: null }) }),
+    'PR #41 merged with 3/5 votes and will be live in a few minutes: Custom tier colors');
+  assert.equal(eventText({ ...named, event: mergedEvent({ liveSoon: true, credits: null, here: true }) }),
+    'This change merged with 3/5 votes and will be live in a few minutes');
+  assert.equal(eventText({ ...named, event: mergedEvent({ liveSoon: true, here: true }) }),
+    'This change merged and will be live in a few minutes. Built by evan, backed by alice and bob, shaped by carol.');
+  // The older rows are untouched.
+  assert.equal(eventText({ ...named, event: mergedEvent({ credits: null, here: true }) }), 'This change went live with 3/5 votes');
+  assert.equal(eventText({ ...named, event: mergedEvent({ here: true }) }), 'This change is live. Built by evan, backed by alice and bob, shaped by carol.');
+  for (const t of [eventText(named), eventText({ ...named, event: mergedEvent({ liveSoon: true, credits: null }) })]) {
+    assert.doesNotMatch(t, /\bis live\b|went live/, t);
+  }
 });
 
 test('EventRow draws the named merge with its muted tail, and the Friday card with its sections and door', () => {

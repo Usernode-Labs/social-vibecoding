@@ -1,11 +1,14 @@
 // Admin & moderation entry point (#588 shipped it as a header shield; the
 // header slim-down moved it into the hamburger drawer; the Streamlined
 // Concept retired the drawer and put it in the app chip's menu; #2718 took
-// the platform's destinations out of that menu and it went back to Profile).
+// the platform's destinations out of that menu and it went back to Profile;
+// the prototype's Me moved it into SETTINGS — the spec's retired-chip table,
+// "Me, with Admin and Validator inside Settings").
 //
-// It is a row in the PROFILE screen's Platform group, beside Settings, and
-// is visible to platform admins AND view-only admins — never to regular
-// users, and never gated on the environment. Those three properties are the
+// It is a row of Settings' account block (features/settings/account-rows.tsx,
+// inside #settings-footer above Log out), and is visible to platform admins
+// AND view-only admins — never to regular users, and never gated on the
+// environment. Those three properties are the
 // whole contract, and all three are easy to break later by a well-meaning
 // edit (swapping `isAdmin` for the stricter `canAdminWrite`, or "just showing
 // it in staging"), so they are pinned here.
@@ -28,7 +31,7 @@
 // sanctioned way to drive a converted region's visibility from outside React.
 //
 // Complements the dapp.json check that asserts the row actually renders at
-// `/#profile` for the admin capture identity — this test guards the
+// `/#settings` for the admin capture identity — this test guards the
 // source-level gate that the rendered check cannot see (a check running as an
 // admin cannot prove a non-admin is excluded).
 //
@@ -41,35 +44,43 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
-const panel = read('frontend/src/features/profile/account-panel.tsx');
+const panel = read('frontend/src/features/settings/account-rows.tsx');
+const settingsChassis = read('frontend/src/features/settings/index.tsx');
+const mePanel = read('frontend/src/features/profile/account-panel.tsx');
 const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
 const appJs = read('public/js/app.js');
 const dapp = JSON.parse(read('dapp.json'));
 
-test('the row is on the Profile screen, not rendered at all without the flag', () => {
-  assert.match(panel, /id="profile-row-admin"/, 'the row is rendered');
-  assert.match(panel, /id="profile-row-admin"[\s\S]{0,200}?href="#admin"/,
+test('the row is in Settings, not rendered at all without the flag', () => {
+  assert.match(panel, /id="settings-row-admin"/, 'the row is rendered');
+  assert.match(panel, /id="settings-row-admin"[\s\S]{0,200}?href="#admin"/,
     'navigation rides the anchor hash');
-  // NOT RENDERED rather than rendered-and-hidden, which the menu had to do
-  // because its rows are in the prerendered document. ProfileRoot returns
-  // null until its store has data, so none of this is in public/index.html
-  // and a conditional render has no document to disagree with — and a hidden
-  // row still leaks its words to a find-in-page.
+  // NOT RENDERED rather than rendered-and-hidden. The block renders nothing
+  // until mounted, so none of it is in public/index.html and a conditional
+  // render has no document to disagree with — and a hidden row still leaks
+  // its words to a find-in-page.
   assert.match(panel, /\{isAdmin \? \(/,
     'the row is absent for an account without the capability');
+  assert.match(panel, /if \(!mounted\) return null;/,
+    'and the whole block waits for its mount, so hydration sees nothing');
 });
 
-test("it sits below Settings, in Profile's Platform group", () => {
-  const settings = panel.indexOf('id="profile-row-settings"');
-  const admin = panel.indexOf('id="profile-row-admin"');
-  assert.ok(settings !== -1 && admin !== -1, 'both rows are present');
-  assert.ok(settings < admin, 'Settings leads, Admin follows');
+test('it sits in the Settings footer, above Log out, and left the Me screen', () => {
+  const footer = settingsChassis.indexOf('id="settings-footer"');
+  const block = settingsChassis.indexOf('<SettingsAccountRows />');
+  const logout = settingsChassis.indexOf('id="settings-logout"');
+  assert.ok(footer !== -1 && block !== -1 && logout !== -1, 'all three are present');
+  assert.ok(footer < block && block < logout,
+    'inside the footer Settings._syncFooter moves, above the Log out it already had');
+  const meCode = mePanel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.doesNotMatch(meCode, /profile-row-admin|href="#admin"/,
+    'Me\'s "More" list is Challenges & standings, Kudos and Settings only');
 });
 
 test('and it is NOT in the app chip menu any more (#2718)', () => {
   // The menu holds the app's options now; the platform's destinations are
-  // tabs and Profile rows. A second entrance here would be the duplication
-  // the split exists to remove.
+  // tabs and Me/Settings rows. A second entrance here would be the
+  // duplication the split exists to remove.
   assert.doesNotMatch(menu, /id="switcher-row-admin"/,
     'the menu carries no platform destination');
   assert.doesNotMatch(menu, /Admin &amp; moderation|Admin & moderation/,
@@ -111,25 +122,26 @@ test('the row is not gated on the environment', () => {
   const body = appJs.slice(at, appJs.indexOf('\n  },', at));
   assert.doesNotMatch(body, /IS_STAGING|USERNODE_ENV/,
     'the row must exist identically in staging and production');
-  // Comments stripped first: account-panel.tsx SAYS "never gated on
-  // USERNODE_ENV", and a prose match for the thing being forbidden would
-  // fail on the note explaining that it is forbidden.
+  // Comments stripped first: a component that SAYS "never gated on
+  // USERNODE_ENV" would otherwise fail on the note explaining that it is
+  // forbidden.
   const panelCode = panel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.doesNotMatch(panelCode, /IS_STAGING|USERNODE_ENV/);
 });
 
 test('dapp.json locks the rendered row in with a check', () => {
   const hit = dapp.tests.find((t) => String(t.expectSelector || '')
-    .includes('#profile-row-admin'));
+    .includes('#settings-row-admin'));
   assert.ok(hit, 'a declared check must assert the row actually renders');
-  // NO `:not(.hidden)` any more, and its absence is the assertion. The menu
-  // row had to ship in the document and be revealed by a class, so a check
-  // that merely found it proved nothing; this row is not RENDERED at all
-  // without the capability, so selecting it IS proving it was revealed.
-  assert.doesNotMatch(String(hit.expectSelector), /#profile-row-admin:not\(\.hidden\)/,
+  // NO `:not(.hidden)` on the row, and its absence is the assertion: this
+  // row is not RENDERED at all without the capability, so selecting it IS
+  // proving it was revealed.
+  assert.doesNotMatch(String(hit.expectSelector), /#settings-row-admin:not\(\.hidden\)/,
     'a conditionally rendered row needs no hidden-class qualifier of its own');
-  // The Profile screen, not a sheet: it is a row of the Me tab now.
-  assert.match(String(hit.expectSelector), /#profile-screen:not\(\.hidden\)/,
+  // The Settings screen, where the row lives now.
+  assert.match(String(hit.expectSelector), /#settings-screen:not\(\.hidden\)/,
     'on the surface that renders it');
-  assert.match(String(hit.path), /#profile/, 'and at the address that reveals it');
+  assert.match(String(hit.path), /#settings/, 'and at the address that reveals it');
+  assert.ok(!dapp.tests.some((t) => String(t.expectSelector || '').includes('#profile-row-admin')),
+    'and nothing still expects it on Me');
 });

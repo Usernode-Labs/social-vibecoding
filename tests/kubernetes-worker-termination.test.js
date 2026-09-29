@@ -29,3 +29,24 @@ test('an inaccessible Pod API stays unknown and its wait is bounded', async t =>
   t.mock.timers.tick(20);
   assert.equal(await pending, null);
 });
+
+test('account workspace erasure requires Deployment, Secret, PVC and Pods to be absent', async () => {
+  const missing = async () => { throw Object.assign(new Error('not found'), { code: 404 }); };
+  const clients = {
+    apps: { deleteNamespacedDeployment: async () => {}, readNamespacedDeployment: missing },
+    core: {
+      deleteNamespacedSecret: async () => {}, deleteNamespacedPersistentVolumeClaim: async () => {},
+      readNamespacedSecret: missing, readNamespacedPersistentVolumeClaim: async () => ({ metadata: { deletionTimestamp: 'pending' } }),
+      listNamespacedPod: async () => ({ items: [] }),
+    },
+  };
+  kubernetes._setClientsForTest(clients);
+  await assert.rejects(kubernetes.eraseWorker(config, 42), /worker_erasure_pending/);
+  clients.core.readNamespacedPersistentVolumeClaim = missing;
+  clients.core.listNamespacedPod = async () => ({ items: [{ metadata: { deletionTimestamp: 'pending' } }] });
+  await assert.rejects(kubernetes.eraseWorker(config, 42), /worker_erasure_pending/);
+  clients.core.listNamespacedPod = async () => ({ items: [] });
+  await kubernetes.eraseWorker(config, 42);
+  clients.apps.readNamespacedDeployment = async () => { throw Object.assign(new Error('unauthorized'), { code: 403 }); };
+  await assert.rejects(kubernetes.eraseWorker(config, 42), /unauthorized/);
+});

@@ -391,7 +391,9 @@ test('while setup gates the rest the progress is Get started’s own; unlocked i
   pane._challenges = [ch(3, 'WEEKLY'), ch(1, 'ONBOARDING', DONE), ch(2, 'ONBOARDING', DONE)];
   pane._renderGrid();
   grid = gridOf(store);
-  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in Season 2' },
+  // QA 2026-09-24 Q17: the tab's tally names its scope as an event, since
+  // Home's and the profile's "done in Season 2" count the whole season.
+  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in this event · Season 2' },
     'the tally counts finished cards across groups, not a finished tail of the grid');
   assert.deepEqual(keysOf(grid), ['week', 'setup'], 'the finished Get started follows what is left to do');
   assert.equal('notice' in grid, false, 'unlocked, there is no notice');

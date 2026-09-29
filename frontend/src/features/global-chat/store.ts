@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
+import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
 import type {
   GlobalChatBootstrap,
@@ -105,6 +106,12 @@ function focusComposer() {
 
 function publish(next: Partial<GlobalChatState> | ((current: GlobalChatState) => Partial<GlobalChatState>)) {
   const patch = typeof next === 'function' ? next(state) : next;
+  // A patch that changes nothing is not a change. Several streaming paths
+  // answer `{}` for an event about another thread, and others set a field to
+  // the value it already has; each used to hand every subscriber (the chat,
+  // the inbox, Recents) a new snapshot and a render for nothing.
+  const keys = Object.keys(patch) as (keyof GlobalChatState)[];
+  if (keys.every((key) => Object.is(state[key], patch[key]))) return;
   state = { ...state, ...patch };
   for (const listener of [...listeners]) listener();
 }
@@ -300,12 +307,34 @@ export function useGlobalChatState() {
   return useSyncExternalStore(subscribe, () => state, () => INITIAL_STATE);
 }
 
+/**
+ * One value from the store, for a reader outside the chat (the inbox,
+ * Recents) that draws a field or two: it re-renders when that value changes,
+ * not for every progress line of a turn. `select` must return a primitive
+ * or an object the store already holds, never a fresh one.
+ */
+export function useGlobalChatSelector<T>(select: (current: GlobalChatState) => T): T {
+  return useSyncExternalStore(subscribe, () => select(state), () => select(INITIAL_STATE));
+}
+
 export function getGlobalChatState() {
   return state;
 }
 
+let bootstrapDeferred = false;
 export async function initializeGlobalChat({ force = false } = {}): Promise<GlobalChatBootstrap | null> {
   if (state.bootstrap && !force) return state.bootstrap;
+  // Messages asks at mount on every document, the signed-out landing and the
+  // waiting room included, where the bootstrap is a guaranteed 401 or 403
+  // and a red console line (QA 2026-09-24 Q35). Wait for a viewer it
+  // answers; `sv:authed` asks again (../../lib/platform-viewer.ts).
+  if (!hasPlatformViewer()) {
+    if (!bootstrapDeferred) {
+      bootstrapDeferred = true;
+      whenPlatformViewer(() => { bootstrapDeferred = false; void initializeGlobalChat(); });
+    }
+    return null;
+  }
   if (bootstrapPromise && !force) return bootstrapPromise;
   publish({ phase: state.open ? 'booting' : state.phase, error: '' });
   bootstrapPromise = api.bootstrap().then((value) => {

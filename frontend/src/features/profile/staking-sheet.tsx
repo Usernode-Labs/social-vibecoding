@@ -64,7 +64,7 @@ function StakingSheet({ onClose, preview }: { onClose: () => void; preview: Wall
     setAdopted(!!adoption);
     panel.current.querySelector<HTMLButtonElement>('button')?.focus();
     return () => {
-      if (adoption) { adoption.restore(); adoption.dismiss(); }
+      if (adoption) adoption.release();
       previousFocus?.focus?.();
     };
   }, []);

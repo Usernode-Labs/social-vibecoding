@@ -29,6 +29,13 @@
 // bought. Keystrokes go to Browse.setQuery, which still coalesces them on the
 // 100ms debounce the input listener used to own.
 //
+// The prototype's FILTER CHIPS (scrDiscover: All / Featured / Joined / New)
+// ride the same bar, between the search and Sort. `filter` is the second
+// CONTROLLED store field beside `sort` — the pressed chip is drawn off it, so
+// it can never disagree with the rows — rendered from a copy of Browse.FILTERS
+// for the reason SORT_OPTIONS is a copy of Browse.SORTS. 'all' is its prerender
+// value; ?filter= and the session's choice apply on screen entry.
+//
 // INITIAL RENDER is the shipped shell exactly: #browse-list and #browse-empty
 // empty, #browse-empty and #browse-detail hidden, the search bar and
 // #browse-list-level visible, the clear button hidden. Every one of those
@@ -45,6 +52,7 @@
 
 import { useRef } from 'react';
 
+import { Chip, ChipRail } from '@/components/ui/chip';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { SearchIcon } from '@/components/ui/icons';
@@ -80,6 +88,17 @@ const SORT_OPTIONS: Array<{ key: string; label: string }> = [
   { key: 'new', label: 'Newest' },
 ];
 
+// The four filter chips — Browse.FILTERS, labelled. A COPY for the same reason
+// SORT_OPTIONS is one: the controller is not on `window` in the SSG pass, and
+// a chip row that prerendered empty and hydrated full would be a mismatch.
+// tests/browse-screen.test.js pins the two lists together.
+const FILTER_CHIPS: Array<{ key: string; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'featured', label: 'Featured' },
+  { key: 'yours', label: 'Joined' },
+  { key: 'new', label: 'New' },
+];
+
 export function BrowseScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -93,6 +112,7 @@ export function BrowseScreen() {
     detail: any;
     showClear?: boolean;
     sort: string;
+    filter: string;
     curated: boolean;
     grouped: boolean;
     moreExpanded: boolean;
@@ -127,15 +147,16 @@ export function BrowseScreen() {
           across a cream page. Dark mode reads the same variable, which the
           body's dark rule points at the inverted ground.
 
-          ON A PHONE it is the HEAD of a pane (#1919): the search, the sort
-          and the list they narrow wear the Workshop's working-pane
-          treatment — one frosted sheet, a 22px radius, a hairline ring —
-          with the head pinned at the top and the rows sliding under its
-          frost. The pane is `browse-pane-head` / `browse-pane-body` /
-          `browse-pane-note` in app.css, next to the .browse-row rules, so
-          the phone padding and fill live there and only the md+ utilities
-          stay here. Page-scoped classes rather than the Workshop's own, so
-          the two panes can move independently.
+          ON A PHONE it sits ON THE GROUND, above the list's card, not as
+          the card's head. #1919 drew the search, the sort and the list as
+          one frosted pane; the communities prototype keeps the controls
+          outside the card they narrow, the way Home and the Communities
+          screen put a control row over a card, so the card holds only
+          what it lists. The head still pins at the top, on the ground's own
+          colour, and the rows slide under it. The parts keep their names —
+          `browse-pane-head` / `browse-pane-body` / `browse-pane-note` in
+          app.css, next to the .browse-row rules — so the phone padding and
+          fill live there and only the md+ utilities stay here.
       */}
       <div
         id="browse-search-bar"
@@ -172,6 +193,36 @@ export function BrowseScreen() {
             &times;
           </button>
         </div>
+        {/*
+            THE FILTER CHIPS (the prototype's scrDiscover): a chip picks WHICH
+            apps the list holds, Sort below orders them, and the search above
+            narrows them — see Browse.filterApps for what each chip admits.
+            The language's own filter chip (@/components/ui/chip): a toggle
+            with `aria-pressed`, selection drawn as the solid inversion, not
+            the accent. `bar` is its size for a control row; `px-4` (over the
+            primitive's `px-6`, through cn's twMerge) keeps all four on one
+            line at 390px, and the rail scrolls rather than wrapping if a
+            larger text size does not fit them.
+        */}
+        <ChipRail
+          id="browse-filter-chips"
+          role="group"
+          aria-label="Filter apps"
+          className="mt-2 max-w-xl gap-2 px-0 py-0"
+        >
+          {FILTER_CHIPS.map((f) => (
+            <Chip
+              key={f.key}
+              size="bar"
+              className="browse-filter-chip px-4"
+              selected={state.filter === f.key}
+              data-filter={f.key}
+              onClick={() => browse()?.setFilter(f.key)}
+            >
+              {f.label}
+            </Chip>
+          ))}
+        </ChipRail>
         {/*
             Sort (#1383). Rides the search bar rather than sitting in its own
             strip: both narrow the same list, and one sticky row costs the
@@ -217,6 +268,9 @@ export function BrowseScreen() {
           // order the rows below were actually built with, which a screenshot
           // of a <select> cannot be asserted on.
           data-sort={state.sort}
+          // The chip the rows were filtered with, beside the order: the
+          // declared check for the chips reads it for the same reason.
+          data-filter={state.filter}
           // Phone: the BODY of the pane whose head is the search bar above
           // (#1919) — one frosted sheet holding the hairline-separated rows,
           // continuing the head's ring and closing its radius. It used to be
@@ -224,7 +278,11 @@ export function BrowseScreen() {
           // the pane treatment is `browse-pane-body` in app.css, scoped to
           // below md. At md+ nothing changes: every row is its own box in the
           // grid (app.css), so only the grid utilities live here.
-          className="browse-pane-body md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3"
+          //
+          // Three columns only from xl (1280px), not lg (QA 2026-09-24 Q10):
+          // at 1024 the sidebar leaves ~770px, and a third column squeezed
+          // the name out of every box entirely.
+          className="browse-pane-body md:grid md:grid-cols-2 xl:grid-cols-3 md:gap-3 md:p-3"
         >
           {state.error
             ? (

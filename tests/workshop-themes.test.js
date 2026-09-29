@@ -1248,6 +1248,13 @@ test('digestDue: the version first, then the clocks', () => {
   assert.equal(svc.digestDue({ digest: null, digestAt: '2026-01-10T11:30:00Z', digestError: 'boom', digestVersion: v }, now), null);
   assert.equal(svc.digestDue({ digest: null, digestAt: '2026-01-10T10:30:00Z', digestError: 'boom', digestVersion: v }, now), 'retry');
   assert.equal(svc.digestDue({ digest: 'x', digestAt: '2026-01-09T11:00:00Z', digestVersion: v }, now), 'age');
+  // #3293: a digest from before this Monday is due however young it is: its
+  // "last week" is the week the derived history now also draws.
+  const monday = Date.parse('2026-01-12T00:30:00Z');
+  assert.equal(svc.digestDue({ digest: 'x', digestAt: '2026-01-11T23:00:00Z', digestVersion: v }, monday), 'age',
+    'an hour old, but written last week');
+  assert.equal(svc.digestDue({ digest: 'x', digestAt: '2026-01-12T00:10:00Z', digestVersion: v }, monday), null,
+    'written this week: the day\'s window decides');
   assert.equal(svc.digestStale({ ...fresh, digestVersion: v - 1 }, now), true, 'and digestStale is digestDue with a yes or no');
   assert.equal(svc.versionBehind(1, 2), true);
   assert.equal(svc.versionBehind(2, 2), false);
@@ -1542,6 +1549,92 @@ test('a week is fetched apart from the board snapshot, so it is never a slice of
   assert.equal(out.items[0].by, 'alice');
 });
 
+// ── #3293: every week before last, back to the project's start ───────
+
+test('#3293: the weeks before last week are derived in ONE grouped query, back to the project’s start', async () => {
+  // The walk ended at last week because the model writes two windows and
+  // nothing wrote a third. The older weeks are derived from what landed, not
+  // drafted: a model call per week per app per day would be a cost the walk
+  // cannot justify, for windows that will never change again.
+  const seen = [];
+  const wk = (iso) => new Date(iso);
+  queryHandler = async (sql, params) => {
+    seen.push({ sql, params });
+    if (/date_trunc\('week'/.test(sql)) {
+      return { rows: [
+        // Newest first, the newest few titles of each week, and the week's
+        // WHOLE count on every row of it: what the query's window functions
+        // return.
+        { week_start: wk('2026-08-31T00:00:00Z'), n: 5, title: 'Dark mode survives a refresh', pr: 12 },
+        { week_start: wk('2026-08-31T00:00:00Z'), n: 5, title: 'Close issue #4: "Login loops"', pr: null },
+        { week_start: wk('2026-08-31T00:00:00Z'), n: 5, title: 'Keyboard voting', pr: 10 },
+        { week_start: wk('2026-08-10T00:00:00Z'), n: 1, title: '  ', pr: 3 },
+      ] };
+    }
+    return { rows: [] };
+  };
+  const now = Date.parse('2026-09-16T12:00:00Z');
+  const out = await svc.fetchDigestHistory(pool, APP.id, { now, createdAt: wk('2026-08-05T09:00:00Z') });
+
+  // ONE query for the whole history, not one per week: a year-old project is
+  // ~52 groups, and each group returns at most DIGEST_HISTORY_TITLES rows.
+  assert.equal(seen.length, 1, 'one grouped query, whatever the project’s age');
+  const { sql, params } = seen[0];
+  assert.deepEqual(params, [APP.id, '2026-09-07T00:00:00.000Z', svc.DIGEST_HISTORY_TITLES],
+    'everything BEFORE last week’s Monday: the two windows the model writes are not derived twice');
+  assert.equal(svc.DIGEST_HISTORY_TITLES, 3);
+  assert.match(sql, /PARTITION BY date_trunc\('week', t AT TIME ZONE 'UTC'\)/, 'UTC calendar weeks, as weekStart');
+  assert.match(sql, /COUNT\(\*\) OVER \(PARTITION BY/, 'each week counted whole');
+  assert.match(sql, /WHERE rn <= \$3/, 'and only the newest few titles of it returned');
+  // The same rows the tiles count (#1922) and fetchDigestWeek reads, so a
+  // derived week and a drafted one can never disagree about what landed.
+  assert.match(sql, /cs\.app_id = \$1 AND cs\.status = 'merged'/);
+  assert.match(sql, /COALESCE\(cs\.merged_at, cs\.created_at\)/);
+  assert.match(sql, /i\.kind = 'close_issue' AND i\.status = 'closed'\s+AND i\.payload \? 'appliedAt'/);
+  assert.ok(!/LIMIT/i.test(sql), 'no horizon: the history is complete, which is what lets it name the start');
+
+  assert.deepEqual(out.older, [
+    {
+      start: '2026-08-31T00:00:00.000Z', closed: 5,
+      line: 'Dark mode survives a refresh; Close issue #4: "Login loops"; Keyboard voting; and 2 more.',
+    },
+    // A title-less merge still says something rather than dropping its week.
+    { start: '2026-08-10T00:00:00.000Z', closed: 1, line: 'PR #3.' },
+  ], 'newest first, one entry per week that held anything, and none for the weeks between');
+  // The Monday of the week the project was CREATED, which is earlier than
+  // anything landed: its first week held nothing, so it has no card, but it
+  // is still where the walk ends.
+  assert.equal(out.firstWeek, '2026-08-03T00:00:00.000Z');
+
+  // An import's history can predate the app row: the floor is whichever is
+  // older, so it never sits above a card the walk can reach.
+  const imported = await svc.fetchDigestHistory(pool, APP.id, { now, createdAt: '2026-09-15T10:00:00Z' });
+  assert.equal(imported.firstWeek, '2026-08-10T00:00:00.000Z');
+
+  // A brand-new project: nothing before last week, so no older windows, but
+  // its first week is still known and the walk can say so.
+  queryHandler = async () => ({ rows: [] });
+  const fresh = await svc.fetchDigestHistory(pool, APP.id, { now, createdAt: '2026-09-08T10:00:00Z' });
+  assert.deepEqual(fresh, { older: [], firstWeek: '2026-09-07T00:00:00.000Z' });
+  // And with no creation date and nothing landed there is no floor to name.
+  assert.deepEqual(await svc.fetchDigestHistory(pool, APP.id, { now }), { older: [], firstWeek: null });
+});
+
+test('#3293: a derived week names what landed, and counts the rest', () => {
+  // The card's own figure carries the count, so the line owes the reader
+  // only what the figure cannot say: what the changes were.
+  assert.equal(svc.historyLine(['Dark mode'], 1), 'Dark mode.');
+  assert.equal(svc.historyLine(['Dark mode survives a refresh.'], 1), 'Dark mode survives a refresh.',
+    'no doubled full stop');
+  assert.equal(svc.historyLine(['A', 'B', 'C'], 9), 'A; B; C; and 6 more.');
+  assert.equal(svc.historyLine(['A', 'B'], 2), 'A; B.');
+  assert.equal(svc.historyLine([], 1), 'One change landed.');
+  assert.equal(svc.historyLine([], 4), '4 changes landed.');
+  for (const line of [svc.historyLine(['A', 'B', 'C'], 9), svc.historyLine([], 4)]) {
+    assert.ok(!line.includes(String.fromCharCode(0x2014)), 'no em dash in what the reader sees');
+  }
+});
+
 test('the three lines flatten to the paragraph a pre-cards row still holds', () => {
   // digest_text is not a second rendering of the feature — the lander reads
   // the fields. It keeps a row readable to anything that only knows the
@@ -1635,6 +1728,56 @@ test('GET workshop-themes 404s on an unknown app', async () => {
     const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/nope/workshop-themes`);
     assert.equal(res.status, 404);
   } finally { server.close(); }
+});
+
+test('#3293: GET workshop-themes carries the derived weeks and the project’s first week beside the cards', async () => {
+  await settle();
+  boardOf(1);
+  const drafted = { lastWeek: 'The vote counter was rebuilt.', thisWeek: '', open: 'Preview reliability, mostly.' };
+  const history = [
+    { week_start: new Date('2026-08-24T00:00:00Z'), n: 2, title: 'Keyboard voting', pr: 10 },
+    { week_start: new Date('2026-08-24T00:00:00Z'), n: 2, title: 'Dark mode', pr: 9 },
+  ];
+  const row = () => freshRow({
+    themes_json: [{ id: 'a', name: 'A', description: 'd', saying: 's', anchors: [] }],
+    placements_json: { 'issue:1': 'a' }, discovered_at: ago(1000), discovery_key_count: 1,
+    digest_json: drafted,
+  });
+  const created = { ...appRow, created_at: '2026-07-01T12:00:00Z' };
+  const prev = llm._setClientForTests(null);
+  const server = await startServer();
+  const get = async () => (await fetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/workshop-themes`)).json();
+  try {
+    makeStore(row(), [[/FROM apps WHERE slug/i, [created]], [/date_trunc\('week'/, history]]);
+    const body = await get();
+    assert.deepEqual(body.digestCards, {
+      ...drafted,
+      older: [{ start: '2026-08-24T00:00:00.000Z', closed: 2, line: 'Keyboard voting; Dark mode.' }],
+      firstWeek: '2026-06-29T00:00:00.000Z',
+    }, 'the model’s lines untouched, and the weeks behind them back to the Monday the project was created');
+
+    // A history that cannot be read costs the cards nothing: the walk ends
+    // at last week and says that is as far as the summary goes, which is
+    // what it did before there was a history at all.
+    makeStore(row(), [[/FROM apps WHERE slug/i, [created]]]);
+    const inner = queryHandler;
+    queryHandler = async (sql, params) => {
+      if (/date_trunc\('week'/.test(sql)) throw new Error('history boom');
+      return inner(sql, params);
+    };
+    const failed = await get();
+    assert.deepEqual(failed.digestCards, drafted, 'the cards alone, with no floor claimed');
+
+    // No card set, no walk to extend, and no query spent on one.
+    queries.length = 0;
+    makeStore(freshRow({
+      themes_json: [{ id: 'a', name: 'A', description: 'd', saying: 's', anchors: [] }],
+      placements_json: { 'issue:1': 'a' }, discovered_at: ago(1000), discovery_key_count: 1,
+    }), [[/FROM apps WHERE slug/i, [created]], [/date_trunc\('week'/, history]]);
+    const bare = await get();
+    assert.equal(bare.digestCards, null);
+    assert.ok(!queries.some((q) => /date_trunc\('week'/.test(q.sql)), 'the history is read only for a walk');
+  } finally { server.close(); llm._setClientForTests(prev); resetBoard(); }
 });
 
 test('the staging demo themes name only mock keys', () => {

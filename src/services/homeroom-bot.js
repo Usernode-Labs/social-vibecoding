@@ -54,8 +54,11 @@ const bcrypt = require('bcrypt');
 
 const log = require('./logger');
 const { HOMEROOM_BOT_LOCK } = require('./advisory-locks');
+const live = require('./homeroom-bot-live');
+const followup = require('./homeroom-bot-followup');
 
-const BOT_USERNAME = 'homeroom_bot';
+// One name, in the live module, which compares thread authors against it.
+const { BOT_USERNAME } = live;
 const MODES = Object.freeze(['off', 'shadow', 'live']);
 // `empty` (#2737) is the fourth: a request with nothing in it to build or
 // even to ask about. It exists because the prompt's unclear branch used to
@@ -70,9 +73,12 @@ const KEY_BATCH_SIZE = 'homeroom_bot_batch_size';
 const KEY_PAUSED_APPS = 'homeroom_bot_paused_apps';
 const KEY_TURN_SECONDS = 'homeroom_bot_turn_seconds';
 const KEY_TURN_INPUT_TOKENS = 'homeroom_bot_turn_input_tokens';
+// #3146: the apps the bot acts on for real — posts on their issues, and
+// builds and proposes the clear ones. Everything else stays in shadow.
+const KEY_LIVE_APPS = 'homeroom_bot_live_apps';
 const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
-  KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS,
+  KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS,
 ]);
 
 // batchSize is how many of ONE app's issues a pass takes before the loop
@@ -84,6 +90,7 @@ const DEFAULTS = Object.freeze({
   concurrency: 1,
   batchSize: 100,
   pausedApps: [],
+  liveApps: [],
   turnSeconds: 20 * 60,
   turnInputTokens: 10_000_000,
 });
@@ -95,12 +102,13 @@ const MAX_BATCH_SIZE = 500;
 // and 13 more returned nothing at all after 25 to 149 minutes. The 67 that
 // behaved cost $1.36 between them, and 90% finished inside 9 minutes.
 //
-// Both limits are needed. The clock alone misses a turn that burns tokens
-// fast — two of the seven finished inside 20 minutes — and the token limit
-// alone misses a turn that hangs without spending. Note that input_tokens
-// as the worker reports it is the LAST usage event, not a running sum, and
-// excludes cached reads: it tracks cost well across the ledger but is a
-// tripwire here, not accounting.
+// Only the clock can STOP a turn (#3035). The token limit was meant to
+// catch a turn that burns tokens fast, but neither agent the bot runs
+// reports usage until the turn is over, so a token stop can only land on a
+// finished turn. It is read after the turn instead: the verdict is kept and
+// the overrun logged. The figure is the worker's `inputTokens`, which on
+// Codex is the THREAD's running total — meaningful per turn only because
+// each triage now starts a fresh thread.
 const MIN_TURN_SECONDS = 30;
 const MAX_TURN_SECONDS = 3 * 60 * 60;
 const MIN_TURN_INPUT_TOKENS = 100_000;
@@ -148,6 +156,8 @@ const TRIPWIRE_VERDICTS = Object.freeze(['question', 'empty']);
 // in the first day, a median of 31 seconds apart, which is the idle poll.
 const BACKOFF_BASE_MS = 2 * 60 * 1000;
 const BACKOFF_CEILING_MS = 60 * 60 * 1000;
+// How far past one turn's budget a claimed queue row counts as abandoned.
+const STALE_CLAIM_MARGIN_SECONDS = 10 * 60;
 
 // Bounds on what a verdict may carry into the ledger.
 const MAX_FIELD_CHARS = 4000;
@@ -174,6 +184,15 @@ const stoppedSessions = new Map();
 // What the last pass refused, for the dashboard's loop line. Refusals are
 // counted here instead of being written as verdict rows.
 let lastRefusals = [];
+// A platform fault backs off the WHOLE bot (#3122): the worker quota, a
+// missing key or a refused ledger fails every app the same way, and the
+// loop used to retry the same issue every 30 seconds, writing a failed row
+// each time — 60 rows in 70 minutes while the volume quota was full.
+// { attempts, until, error, at }. In memory for the same reason as
+// appBackoff: a restart is the event most likely to have cleared it.
+let platformFault = null;
+// When the bot last freed its own leftover worker volumes.
+let lastVolumeSweepAt = 0;
 // Apps whose issues changed since the last pass (wake), and whether a full
 // reconcile was asked for (the mode was switched on, say). Read and cleared
 // at the top of every pass; only meaningful on the Pod running the loop.
@@ -207,6 +226,13 @@ function parseSettings(rows) {
   } catch {
     pausedApps = DEFAULTS.pausedApps;
   }
+  let liveApps = DEFAULTS.liveApps;
+  try {
+    const parsed = JSON.parse(map.get(KEY_LIVE_APPS) || '[]');
+    if (Array.isArray(parsed)) liveApps = parsed.filter((s) => typeof s === 'string').slice(0, 50);
+  } catch {
+    liveApps = DEFAULTS.liveApps;
+  }
   const turnSeconds = clampInt(
     map.get(KEY_TURN_SECONDS), DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS,
   );
@@ -214,7 +240,7 @@ function parseSettings(rows) {
     map.get(KEY_TURN_INPUT_TOKENS), DEFAULTS.turnInputTokens,
     MIN_TURN_INPUT_TOKENS, MAX_TURN_INPUT_TOKENS,
   );
-  return { mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens };
+  return { mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens };
 }
 
 function clampInt(raw, fallback, min, max) {
@@ -288,6 +314,13 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: 'pausedApps must be an array of app slugs' };
     }
     updates.push([KEY_PAUSED_APPS, JSON.stringify([...new Set(body.pausedApps)])]);
+  }
+  if (body.liveApps !== undefined) {
+    if (!Array.isArray(body.liveApps) || body.liveApps.length > 50
+        || !body.liveApps.every((s) => typeof s === 'string' && /^[a-z0-9-]{1,120}$/.test(s))) {
+      return { ok: false, error: 'liveApps must be an array of up to 50 app slugs' };
+    }
+    updates.push([KEY_LIVE_APPS, JSON.stringify([...new Set(body.liveApps)])]);
   }
   let weeklyLimitCents;
   if (body.weeklyLimitCents !== undefined) {
@@ -474,10 +507,13 @@ function toMs(value) {
  *   threadLastAt newest Homeroom discussion message on it, or null
  *   busy         true when a person has a live claim, session or proposal
  *                on it — the bot never competes with a human who started
- *   lastRun      the bot's most recent run on it ({ thread_seen_at }), or null
+ *   lastRun      the bot's most recent run on it ({ thread_seen_at,
+ *                cap_suppressed }), or null
  *
  * `threadSeenAt` is the newest activity the bot knows of. A run is only
- * worth repeating when something happened after the last one saw it.
+ * worth repeating when something happened after the last one saw it, or
+ * (#3152) when a live cap held its verdict: that issue comes back as `held`,
+ * naming the cap, and refreshApp decides whether the cap has room again.
  */
 function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = null }) {
   if (!issue || !Number.isInteger(issue.number)) return { eligible: false, reason: 'invalid' };
@@ -487,7 +523,12 @@ function classifyIssue({ issue, threadLastAt = null, busy = false, lastRun = nul
   const threadSeenAt = seenMs ? new Date(seenMs).toISOString() : null;
   if (lastRun) {
     const lastSeenMs = toMs(lastRun.thread_seen_at);
-    if (lastSeenMs && seenMs <= lastSeenMs) return { eligible: false, reason: 'unchanged', threadSeenAt };
+    if (lastSeenMs && seenMs <= lastSeenMs) {
+      if (lastRun.cap_suppressed) {
+        return { eligible: false, reason: 'held', cap: lastRun.cap_suppressed, threadSeenAt };
+      }
+      return { eligible: false, reason: 'unchanged', threadSeenAt };
+    }
     return { eligible: true, reason: 'changed', priority: 2, threadSeenAt };
   }
   return { eligible: true, reason: 'new', priority: 1, threadSeenAt };
@@ -559,20 +600,69 @@ async function busyIssueNumbers(pool, appId) {
 
 async function threadActivityByIssue(pool, appId) {
   const { rows } = await pool.query(
-    `SELECT thread_ref AS n, MAX(created_at) AS last_at
-       FROM chat_messages
-      WHERE app_id = $1 AND thread_type = 'issue' AND msg_type = 'message'
-      GROUP BY thread_ref`,
+    // #3288: the bot's own posts are ordinary messages now, so "a person
+    // answered" has to say person: a synthetic author is never one.
+    `SELECT m.thread_ref AS n, MAX(m.created_at) AS last_at
+       FROM chat_messages m
+       LEFT JOIN users u ON u.id = m.user_id
+      WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.msg_type = 'message'
+        AND u.is_synthetic IS NOT TRUE
+      GROUP BY m.thread_ref`,
     [appId],
   );
   return new Map(rows.map((r) => [Number(r.n), r.last_at]));
 }
 
+/**
+ * #3264: the newest person's message in the discussion of each of the bot's
+ * open proposals on this app, by the issue it answers. Messages only
+ * (`msg_type = 'message'`), so the promote and vote-reset notices never
+ * re-queue it, and from people only (#3288): the bot's own replies there are
+ * ordinary messages too.
+ */
+async function proposalThreadActivityByIssue(pool, appId, botId) {
+  const { rows } = await pool.query(
+    `SELECT n, MAX(m.created_at) AS last_at
+       FROM chat_sessions cs
+       CROSS JOIN LATERAL UNNEST(cs.linked_issues) AS n
+       JOIN chat_messages m
+         ON m.app_id = cs.app_id AND m.thread_type = 'session' AND m.thread_ref = cs.id
+        AND m.msg_type = 'message' AND m.deleted_at IS NULL
+       LEFT JOIN users author ON author.id = m.user_id
+      WHERE cs.app_id = $1 AND cs.user_id = $2 AND cs.status = 'promoted'
+        AND author.is_synthetic IS NOT TRUE
+      GROUP BY n`,
+    [appId, botId],
+  );
+  return new Map(rows.map((r) => [Number(r.n), r.last_at]));
+}
+
+function latestOf(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return toMs(a) >= toMs(b) ? a : b;
+}
+
+/**
+ * The run each issue was last judged by, for the "unchanged since" check.
+ *
+ * Two kinds of row are not a judgement of the issue and are skipped (#3035):
+ * a turn killed as collateral from a stop on the same session, and a turn
+ * discarded by the token check between #2870 and #3035, which fired on every
+ * finished turn because it compared a whole conversation's running total.
+ * Counting either as "seen" left the issue unchanged-since-its-last-run and
+ * so never queued again, which is how issues dropped out without a verdict.
+ * Skipping them puts those issues back on the next refresh; no new rows of
+ * either kind are written once the causes are gone, so the filter is a
+ * recovery that costs nothing afterwards.
+ */
 async function lastRunsByIssue(pool, appId) {
   const { rows } = await pool.query(
-    `SELECT DISTINCT ON (issue_number) issue_number, thread_seen_at, verdict, created_at
+    `SELECT DISTINCT ON (issue_number) issue_number, thread_seen_at, verdict, cap_suppressed, created_at
        FROM homeroom_bot_runs
       WHERE app_id = $1
+        AND budget_stop IS DISTINCT FROM 'input tokens'
+        AND (error IS NULL OR error NOT LIKE 'collateral:%')
       ORDER BY issue_number, created_at DESC`,
     [appId],
   );
@@ -582,8 +672,15 @@ async function lastRunsByIssue(pool, appId) {
 /**
  * One refresh of one app's slice of the queue. Returns what it did so a
  * test can drive it directly. `github` is injectable for the same reason.
+ *
+ * `capRoom` (#3152) is how many more verdicts each live cap would let
+ * through on this app right now, from capRoomFor; null on a shadow app.
+ * An unchanged issue whose last verdict a cap held comes back once that
+ * cap has room: oldest hold first, and no more of them than there is room
+ * for, so a merged proposal brings back one held build rather than all of
+ * them at once.
  */
-async function refreshApp(pool, app, { github = require('./github') } = {}) {
+async function refreshApp(pool, app, { github = require('./github'), capRoom = null, bot = null } = {}) {
   const repo = parseRepo(app.repo_url);
   const out = { app: app.slug, queued: 0, removed: 0, skipped: null };
   if (!repo) { out.skipped = 'no_repo'; return out; }
@@ -591,22 +688,38 @@ async function refreshApp(pool, app, { github = require('./github') } = {}) {
   const issues = Array.isArray(fetched?.issues) ? fetched.issues : [];
   if (!issues.length && fetched?.note) { out.skipped = 'github_unavailable'; return out; }
 
-  const [busy, threads, lastRuns] = await Promise.all([
+  // #3264: on a live app (capRoom is set only there) a person's reply in the
+  // discussion of the bot's own open proposal is activity on its issue, so
+  // it comes back for a follow-up.
+  const [busy, threads, lastRuns, proposalThreads] = await Promise.all([
     busyIssueNumbers(pool, app.id),
     threadActivityByIssue(pool, app.id),
     lastRunsByIssue(pool, app.id),
+    capRoom && bot ? proposalThreadActivityByIssue(pool, app.id, bot.id) : new Map(),
   ]);
 
   const eligible = [];
+  const held = [];
   for (const issue of issues) {
     const n = Number(issue.number);
+    const lastRun = lastRuns.get(n) || null;
     const verdict = classifyIssue({
       issue,
-      threadLastAt: threads.get(n) || null,
+      threadLastAt: latestOf(threads.get(n), proposalThreads.get(n)),
       busy: busy.has(n),
-      lastRun: lastRuns.get(n) || null,
+      lastRun,
     });
     if (verdict.eligible) eligible.push({ n, ...verdict });
+    else if (verdict.reason === 'held') held.push({ n, heldAt: toMs(lastRun.created_at), ...verdict });
+  }
+  if (capRoom) {
+    const room = { ...capRoom };
+    held.sort((a, b) => a.heldAt - b.heldAt);
+    for (const h of held) {
+      if (!(room[h.cap] > 0)) continue;
+      room[h.cap] -= 1;
+      eligible.push({ n: h.n, eligible: true, reason: 'cap_freed', priority: 2, threadSeenAt: h.threadSeenAt });
+    }
   }
 
   for (const item of eligible) {
@@ -643,7 +756,9 @@ async function refreshQueue(pool, settings, deps = {}) {
     if (paused.has(app.slug)) continue;
     summary.apps += 1;
     try {
-      const r = await refreshApp(pool, app, deps);
+      const capRoom = deps.bot && live.isLiveFor(settings, app)
+        ? await capRoomFor(pool, deps.bot, app.id) : null;
+      const r = await refreshApp(pool, app, { ...deps, capRoom });
       summary.queued += r.queued;
       summary.removed += r.removed;
       if (r.skipped) summary.skipped += 1;
@@ -664,7 +779,9 @@ async function refreshApps(pool, settings, appIds, deps = {}) {
     if (paused.has(app.slug)) continue;
     summary.apps += 1;
     try {
-      const r = await refreshApp(pool, app, deps);
+      const capRoom = deps.bot && live.isLiveFor(settings, app)
+        ? await capRoomFor(pool, deps.bot, app.id) : null;
+      const r = await refreshApp(pool, app, { ...deps, capRoom });
       summary.queued += r.queued;
       summary.removed += r.removed;
       if (r.skipped) summary.skipped += 1;
@@ -680,6 +797,50 @@ async function refreshApps(pool, settings, appIds, deps = {}) {
  * `batchSize` of that app's items. Apps in `excludeAppIds` are skipped so
  * concurrent passes never share an app (one container, one turn at a time).
  */
+/**
+ * Release rows a pass claimed and never finished. runTriage claims its row
+ * (`started_at`) before it runs; nextBatch takes unclaimed rows only, and a
+ * refresh updates and deletes unclaimed rows only, so a row whose pass died
+ * mid-turn (a platform restart) was skipped for good and its issue never
+ * looked at again. Passes hold the loop's lock, so nothing live is older
+ * than one turn's budget; past that, with a margin, the claim is abandoned.
+ */
+async function releaseStaleClaims(pool, settings) {
+  const seconds = (Number(settings?.turnSeconds) || DEFAULTS.turnSeconds) + STALE_CLAIM_MARGIN_SECONDS;
+  const { rowCount } = await pool.query(
+    `UPDATE homeroom_bot_queue SET started_at = NULL
+      WHERE started_at IS NOT NULL AND started_at < NOW() - make_interval(secs => $1)`,
+    [seconds],
+  );
+  if (rowCount) log.info('homeroom-bot', 'Released queue rows an unfinished pass had claimed', { count: rowCount });
+  return rowCount || 0;
+}
+
+/**
+ * A triage that threw left its row claimed, recorded nothing, and so was
+ * never tried again (rss-reader #24, 2026-09-25: its "looking" post and then
+ * silence). Record it as a failed run and drop the row, as recordFailure does
+ * for a failure it sees. Not a retry: a throw that repeats would sit at the
+ * head of the queue and starve every other app. What it has seen is now, so
+ * the bot's own post just before the throw is not read as a change; the issue
+ * is looked at again when somebody changes it, or on an admin's Run now.
+ */
+async function recordThrownTriage(pool, { app, item, settings, err }) {
+  try {
+    await insertRun(pool, {
+      appId: app.id, issueNumber: item.issue_number,
+      mode: live.isLiveFor(settings, app) ? 'live' : settings.mode,
+      verdict: 'failed', error: `threw: ${err?.message || err}`,
+      threadSeenAt: new Date().toISOString(),
+    });
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+  } catch (recordErr) {
+    log.warn('homeroom-bot', 'Could not record a triage that threw', {
+      app: app.slug, issueNumber: item.issue_number, err: recordErr.message,
+    });
+  }
+}
+
 async function nextBatch(pool, { batchSize, excludeAppIds = [], pausedApps = [] }) {
   const { rows: head } = await pool.query(
     `SELECT q.app_id
@@ -713,6 +874,44 @@ function triagePrompt() {
   if (triagePromptCache) return triagePromptCache;
   triagePromptCache = fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8');
   return triagePromptCache;
+}
+
+// What the triage knows of the platform. A request often turns on it (its
+// native kit, its `--un-*` tokens, what an app may do), and the app's
+// repository does not hold those answers.
+//
+// The conventions are a TOOL CALL away, not inline. #3161 inlined all
+// 150 KB of them, as an agent-chat scout carries them, and on rss-reader #24
+// (2026-09-26) that went wrong twice: once the model took the whole message
+// for one conventions document and never triaged; once every request
+// carried 50k tokens before the first file read, the context crossed the
+// auto-compaction limit after 86 reads, and the model's own summary said
+// the task was "not visible in my surviving context". The Homeroom read
+// tool every scout has serves the same document on demand: the essentials
+// and an index of sections, then one section at a time. The UI design
+// guidance the coding agents build with is small, so it stays inline.
+//
+// It goes AFTER the request and the triage instructions, fenced and
+// labelled as reference, so it is never read as the task.
+function triageReference() {
+  const designGuidance = require('./prompts').getDesignGuidance({ readsImages: false });
+  return `==== PLATFORM REFERENCE (for looking things up; not the request) ====
+
+The Homeroom platform's own conventions (its rules for every app on it: its native UI kit, its \`--un-*\` theme tokens, its APIs and what an app may do) are one tool call away. Call \`get_platform_conventions\` with no arguments for the essentials and an index of its sections, then with a section's slug to read just that section. Use it when the request turns on the platform; nothing in this reference is a task.
+
+The UI design guidance every coding agent here builds with follows, for judging a request that changes what people see.
+
+${designGuidance}
+
+==== END PLATFORM REFERENCE ====`;
+}
+
+// The last thing the model reads says what it is doing and restates the one
+// format parseVerdict accepts, so the verdict does not depend on it
+// remembering instructions from earlier in the turn.
+function triageClosing(issueNumber) {
+  return `That is the end of the reference. Now answer the triage request above, for issue #${issueNumber}: decide which verdict is true, and END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:
+{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "..."}`;
 }
 
 /**
@@ -754,8 +953,8 @@ async function insertRun(pool, run) {
     `INSERT INTO homeroom_bot_runs
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
-        input_tokens, output_tokens, duration_ms, error, budget_stop)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
@@ -763,7 +962,7 @@ async function insertRun(pool, run) {
       run.capSuppressed || null, run.threadSeenAt || null, run.model || null,
       run.costUsd ?? null, run.inputTokens ?? null, run.outputTokens ?? null,
       run.durationMs ?? null, run.error ? clip(run.error, MAX_ERROR_CHARS) : null,
-      run.budgetStop || null],
+      run.budgetStop || null, run.proposalSessionId || null],
   );
   return rows[0]?.id || null;
 }
@@ -776,23 +975,51 @@ async function insertRun(pool, run) {
  */
 async function simulateCaps(pool, bot, appId, verdict) {
   if (verdict === 'ready') {
-    const { rows } = await pool.query(
-      `SELECT COUNT(*)::int AS cnt FROM chat_sessions
-        WHERE app_id = $1 AND user_id = $2 AND status IN ('promoted', 'merging')`,
-      [appId, bot.id],
-    );
-    if ((rows[0]?.cnt || 0) >= PROPOSALS_PER_APP_CAP) return 'proposals_per_app';
+    if (await openBotProposalCount(pool, bot, appId) >= PROPOSALS_PER_APP_CAP) return 'proposals_per_app';
   }
   if (TRIPWIRE_VERDICTS.includes(verdict)) {
-    const { rows } = await pool.query(
-      `SELECT COUNT(*)::int AS cnt FROM homeroom_bot_runs
-        WHERE app_id = $1 AND verdict = ANY($2::text[])
-          AND created_at > NOW() - INTERVAL '24 hours'`,
-      [appId, TRIPWIRE_VERDICTS],
-    );
-    if ((rows[0]?.cnt || 0) >= QUESTION_TRIPWIRE_PER_DAY) return 'question_tripwire';
+    if (await tripwireCount(pool, appId) >= QUESTION_TRIPWIRE_PER_DAY) return 'question_tripwire';
   }
   return null;
+}
+
+async function openBotProposalCount(pool, bot, appId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS cnt FROM chat_sessions
+      WHERE app_id = $1 AND user_id = $2 AND status IN ('promoted', 'merging')`,
+    [appId, bot.id],
+  );
+  return rows[0]?.cnt || 0;
+}
+
+// Only the verdicts that went out (or, in shadow, would have). A held one
+// said nothing but the one-line held note, and counting it would let each
+// retry of a held question push the window out again (#3152).
+async function tripwireCount(pool, appId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS cnt FROM homeroom_bot_runs
+      WHERE app_id = $1 AND verdict = ANY($2::text[])
+        AND cap_suppressed IS NULL
+        AND created_at > NOW() - INTERVAL '24 hours'`,
+    [appId, TRIPWIRE_VERDICTS],
+  );
+  return rows[0]?.cnt || 0;
+}
+
+/**
+ * How many more verdicts each cap would let through on this app now, keyed
+ * by the name simulateCaps records (#3152). The same two counts, so a held
+ * issue is only brought back when the check it failed would now pass.
+ */
+async function capRoomFor(pool, bot, appId) {
+  const [proposals, questions] = await Promise.all([
+    openBotProposalCount(pool, bot, appId),
+    tripwireCount(pool, appId),
+  ]);
+  return {
+    proposals_per_app: Math.max(0, PROPOSALS_PER_APP_CAP - proposals),
+    question_tripwire: Math.max(0, QUESTION_TRIPWIRE_PER_DAY - questions),
+  };
 }
 
 // Errors that mean "this app cannot be worked right now", as opposed to
@@ -829,6 +1056,90 @@ function clearRefusals(appId) {
   appBackoff.delete(Number(appId));
 }
 
+/**
+ * A platform fault, said the way the dashboard should say it (#3122). The
+ * quota refusal arrives as a Kubernetes Status body several hundred
+ * characters long; what anyone needs from it is which quota is full.
+ */
+function summarizeFault(error) {
+  const text = String(error || '').replace(/\s+/g, ' ').trim();
+  if (/exceeded quota/i.test(text)) {
+    return /persistentvolumeclaims|requests\.storage/i.test(text)
+      ? 'the worker storage quota is full'
+      : 'a worker quota is full';
+  }
+  return clip(text, 160) || 'unknown platform fault';
+}
+
+/** Whether the bot is inside a platform-fault backoff, and for how long. */
+function faultBackoff(now = Date.now()) {
+  if (!platformFault || platformFault.until <= now) return null;
+  return { ...platformFault, remainingMs: platformFault.until - now };
+}
+
+/** Double the bot-wide backoff, from 2 minutes up to an hour. */
+function noteFault(error, now = Date.now()) {
+  const attempts = (platformFault?.attempts || 0) + 1;
+  const delayMs = Math.min(BACKOFF_BASE_MS * (2 ** (attempts - 1)), BACKOFF_CEILING_MS);
+  platformFault = { attempts, until: now + delayMs, error: summarizeFault(error), at: now };
+  return { attempts, delayMs, summary: platformFault.error };
+}
+
+/**
+ * The same fault the current streak already recorded. A retry that fails
+ * the same way is logged, not written to the ledger again: one row says
+ * the bot hit it, and the loop line says it is still waiting.
+ */
+function isRepeatFault(error) {
+  return !!platformFault && platformFault.error === summarizeFault(error);
+}
+
+/** A turn ran, so the platform is fine again. */
+function clearFault() {
+  platformFault = null;
+}
+
+/**
+ * Free the worker volumes the bot's own sessions still hold (#3122).
+ *
+ * Every Kubernetes worker used to claim a 5Gi volume, and the bot keeps one
+ * session per app, paused forever, so every app it ever triaged held one:
+ * 26 of the namespace's 120 when the quota refused everybody's workers.
+ * The bot has needed no persistent storage since each issue got a fresh
+ * thread (#3036), and its workers now start on temporary storage, so what
+ * is left is only what it claimed before. A volume is freed only when no
+ * worker Deployment for that session exists, so a warm worker is never
+ * pulled from under a turn; its volume goes on a later sweep, once the
+ * worker has idled out.
+ */
+async function releaseBotVolumes(pool, bot, deps = {}) {
+  const worker = deps.worker || require('./worker');
+  if (typeof worker.listWorkerVolumes !== 'function') return [];
+  const volumes = await worker.listWorkerVolumes();
+  const detached = (volumes || []).filter((v) => !v.attached && !v.terminating
+    && Number.isSafeInteger(Number(v.sessionId)));
+  if (!detached.length) return [];
+  const { rows } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE user_id = $1 AND id = ANY($2::int[])',
+    [bot.id, detached.map((v) => Number(v.sessionId))],
+  );
+  const mine = new Set(rows.map((r) => Number(r.id)));
+  const freed = [];
+  for (const volume of detached) {
+    const sessionId = Number(volume.sessionId);
+    if (!mine.has(sessionId)) continue;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await worker.destroyCcVolume(sessionId);
+      freed.push(sessionId);
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not free a bot worker volume', { sessionId, err: err.message });
+    }
+  }
+  if (freed.length) log.info('homeroom-bot', 'Freed bot worker volumes', { sessionIds: freed });
+  return freed;
+}
+
 /** This session's container was just killed on a budget stop (#2870). */
 function noteStopped(sessionId, now = Date.now()) {
   stoppedSessions.set(Number(sessionId), now);
@@ -848,6 +1159,24 @@ function wasStoppedRecently(sessionId, now = Date.now()) {
   }
   const at = stoppedSessions.get(id);
   return at != null && now - at <= STOP_SETTLE_MS;
+}
+
+/**
+ * What a turn used, from the relay's per-request sum, and what that costs
+ * at the turn's catalog price (#3038). Null when the relay saw no request
+ * finish; `costUsd` is null when the turn had no pricing snapshot.
+ */
+function relaySpend(relayUsage, pricing, agentTurn) {
+  const count = n => Number.isSafeInteger(n) && n >= 0 ? n : null;
+  const requests = count(relayUsage?.requests);
+  if (!requests) return null;
+  const inputTokens = count(relayUsage.inputTokens) ?? 0;
+  const outputTokens = count(relayUsage.outputTokens) ?? 0;
+  const { estimatedCostUsd } = agentTurn.estimateRequestedModelCost({ inputTokens, outputTokens }, pricing);
+  return {
+    requests, inputTokens, outputTokens,
+    costUsd: Number.isFinite(estimatedCostUsd) ? estimatedCostUsd : null,
+  };
 }
 
 /**
@@ -938,6 +1267,11 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
 
   const issueNumber = Number(item.issue_number);
   const startedMs = Date.now();
+  // #3146: on an app in the live list the verdict is acted on, and the run
+  // is recorded as 'live' so the ledger says which runs spoke.
+  const liveMode = live.isLiveFor(settings, app);
+  const runMode = liveMode ? 'live' : mode;
+  const liveD = liveMode ? liveDeps(deps) : null;
   const turnBudgetMs = 1000 * clampInt(
     settings?.turnSeconds, DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS,
   );
@@ -965,8 +1299,10 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
 
   const recordFailure = async (error, extra = {}, { infra = false } = {}) => {
     if (REFUSAL_ERRORS.has(error)) return recordRefusal(error);
-    const id = await insertRun(pool, {
-      appId: app.id, issueNumber, mode, verdict: 'failed', error,
+    // A platform fault the current streak already recorded gets no second
+    // row (#3122); the retry is still logged below.
+    const id = infra && isRepeatFault(error) ? null : await insertRun(pool, {
+      appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error,
       threadSeenAt: item.thread_seen_at || null, model,
       durationMs: Date.now() - startedMs, ...extra,
     });
@@ -997,14 +1333,54 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
     return { ran: false, reason: 'not_open' };
   }
-  const [{ comments = [] } = {}, thread] = await Promise.all([
+  // #3146: what this run has posted on GitHub, so its own comments are not
+  // read back as a change (see homeroom-bot-live.js).
+  const postedAt = [];
+  if (liveMode) {
+    const open = await live.openBotProposal(pool, bot.id, app.id, issueNumber);
+    if (open) {
+      // One proposal per issue: the group is already voting on the bot's
+      // answer, and a second build would be a second, competing proposal.
+      // What people said since it proposed is answered ON that proposal
+      // (#3264), while it is still up for a vote.
+      if (open.status === 'promoted') {
+        return runFollowUp(pool, config, {
+          bot, app, repo, item, issue, proposal: open, runMode, model, turnBudgetMs, startedMs,
+          recordFailure,
+          deps: {
+            github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
+            activeWorkers, votes: deps.votes || null, ...liveD,
+          },
+        });
+      }
+      await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+      log.info('homeroom-bot', 'Issue\'s bot proposal is merging; not looking again', {
+        app: app.slug, issueNumber, sessionId: open.id,
+      });
+      return { ran: false, reason: 'has_proposal' };
+    }
+    const looked = await live.post({
+      pool, github, ws: liveD.ws, app, repo, issueNumber,
+      kind: 'looking', text: live.lookingText(), sender: bot,
+    }).catch((err) => {
+      log.warn('homeroom-bot', 'Looking post failed (continuing)', { app: app.slug, issueNumber, err: err.message });
+      return null;
+    });
+    if (looked?.githubCreatedAt) postedAt.push(looked.githubCreatedAt);
+  }
+  const seedReadAt = new Date().toISOString();
+  const [{ comments = [] } = {}, thread, botUsername] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
     threadContext.loadIssueThread(pool, app.id, issueNumber),
+    // Resolved, never the Promise: see live.botUsernameOf.
+    live.botUsernameOf(github),
   ]);
   const seed = sessions.buildHeadlessSeed(
-    issueNumber, issue, comments, github.getBotUsername(), thread?.messages || [],
+    issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
-  const prompt = `${seed}\n\n${triagePrompt()}`;
+  const prompt = [
+    seed, triagePrompt(), triageReference(), triageClosing(issueNumber),
+  ].join('\n\n');
 
   let session;
   try {
@@ -1018,6 +1394,10 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     await worker.ensureWorkerImage();
     containerName = await worker.ensureWorker(session.id, {
       repoOwner: repo.owner, repoName: repo.repo, branchName: session.branch_name,
+      // Scratch storage, not a volume (#3122, using #3119's option). Every
+      // issue starts a fresh thread, so nothing on the worker needs to
+      // outlive it, and a volume per app is what filled the quota.
+      temporary: true,
       onProgress: () => {},
     });
   } catch (err) {
@@ -1029,16 +1409,32 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   await clearStaleTurn(pool, session, { worker, maxAgeMs: turnBudgetMs })
     .catch((err) => log.warn('homeroom-bot', 'Stale turn check failed', { err: err.message }));
 
+  // A fresh model conversation for every issue (#3035). Passing a null
+  // thread below is NOT enough: the platform reads null as "carry on the
+  // session's saved thread" (resolveCodexRuntimeContext falls back to
+  // `session.agent_thread_id`, the attempt loop to the runtime's thread),
+  // and every finished turn saves its thread back. So the bot's one session
+  // per app was one conversation per app — the Homeroom app's ran from
+  // 2026-09-21 onward, every issue triaged with all the earlier ones in
+  // context, its usage a running total that passed 2.7 billion tokens.
+  // Clearing the saved thread here, in the row and in the object the
+  // runtime is resolved from, is what makes every path resolve to none.
   await pool.query(
-    "UPDATE chat_sessions SET status = 'active', last_activity_at = NOW() WHERE id = $1",
+    "UPDATE chat_sessions SET status = 'active', agent_thread_id = NULL, last_activity_at = NOW() WHERE id = $1",
     [session.id],
   );
+  session.agent_thread_id = null;
   activeWorkers.add(session.id);
 
-  // The budget (#2737). Both guards end the turn the same way a person's
+  // The budget (#2737). The wall clock ends the turn the same way a person's
   // Stop button does: the in-container kill plus the journal exit marker,
   // which the attempt loop below resolves on within milliseconds.
   let budgetHit = null;
+  // The kill in flight, awaited before this function returns (#3035). It
+  // used to be fire-and-forget, and the next issue starts in the same
+  // container the moment this one returns: a kill still landing takes that
+  // issue down one to three seconds in.
+  let stopping = null;
   const spendBudget = (kind) => {
     if (budgetHit) return;
     budgetHit = kind;
@@ -1048,7 +1444,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     // Recorded BEFORE the kill, not after it: the bystander dispatch this
     // protects has already failed by the time stopTurn resolves (#2870).
     noteStopped(session.id);
-    Promise.resolve(worker.stopTurn(session.id)).catch((err) => {
+    stopping = Promise.resolve(worker.stopTurn(session.id)).catch((err) => {
       log.warn('homeroom-bot', 'Budget stop failed', { sessionId: session.id, err: err.message });
     });
   };
@@ -1056,6 +1452,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   if (typeof budgetTimer.unref === 'function') budgetTimer.unref();
 
   let routed;
+  // The turn's pricing snapshot, as the runtime resolved it, so a turn the
+  // ledger could not price is priced from the same catalog (#3038).
+  let pricing = null;
   try {
     routed = await sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
@@ -1064,22 +1463,14 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
       }),
-      dispatchOnce: (ctx) => worker.execInWorker(session.id, {
+      dispatchOnce: (ctx) => { pricing = ctx?.pricingSnapshot || pricing; return worker.execInWorker(session.id, {
         mode: 'scout',
-        // The token half of the budget: a tripwire on a turn that has
-        // plainly run away, not an accounting limit — `inputTokens` is the
-        // last usage event rather than a running sum.
-        //
-        // #2870: this hook reached no path the bot actually takes until
-        // worker.js was corrected, and even now it only STOPS a turn on an
-        // agent that reports usage while the turn runs. `codex-openrouter`
-        // reports once, at turn.completed, so on the model the bot runs
-        // today the wall-clock half is what bounds a turn and this one
-        // reports the breach after the fact (see the warning below).
-        onUsage: (usage) => {
-          const seen = Number(usage?.inputTokens);
-          if (Number.isFinite(seen) && seen > turnInputTokens) spendBudget('input tokens');
-        },
+        // No `onUsage` here, deliberately (#3035). Neither agent the bot can
+        // run reports usage until its turn is over, so a token check wired
+        // to the stop can only ever fire on a finished turn — and did, on
+        // every one, discarding the verdict and killing the next issue. The
+        // token limit is read after the turn instead, below, and never
+        // throws a result away. The wall clock is what ends a runaway.
         prompt,
         model,
         commitMsg: '',
@@ -1088,7 +1479,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
         ...(ctx || {}),
         telemetryComponent: 'homeroom_bot_triage',
         onProgress: () => {},
-      }),
+      }); },
       retryPredicate: () => null,
       sendStatus: async () => {},
       waitForStopped: async () => {},
@@ -1100,6 +1491,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     routed = { error: `dispatch: ${err.message}` };
   } finally {
     clearTimeout(budgetTimer);
+    if (stopping) await stopping;
     activeWorkers.delete(session.id);
     await pool.query(
       "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1",
@@ -1113,13 +1505,35 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   // branch took first, so the turns that wasted the most were the only ones
   // the weekly cap never saw.
   const result = (routed && routed.result) || {};
-  const costUsd = Number.isFinite(routed && routed.estimatedCostUsd)
+  const ledgerCostUsd = Number.isFinite(routed && routed.estimatedCostUsd)
     ? routed.estimatedCostUsd
     : null;
+  // When the ledger has no figure — always, for a turn stopped before
+  // turn.completed — fall back to what the relay saw each model request use
+  // (#3038), priced by the same estimator the ledger uses for a finished
+  // turn, so a stopped turn and a finished one are measured alike. It is a
+  // floor: the request in flight at the stop never reports.
+  const relay = relaySpend(result.relayUsage, pricing, agentTurn);
+  const costUsd = ledgerCostUsd ?? relay?.costUsd ?? null;
   const usage = {
-    inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : null,
-    outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : null,
+    inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : (relay?.inputTokens ?? null),
+    outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : (relay?.outputTokens ?? null),
   };
+  if (ledgerCostUsd == null && relay) {
+    log.info('homeroom-bot', 'Turn priced from the relay: the agent reported no usage', {
+      app: app.slug, issueNumber, stopped: budgetHit || null, costUsd: relay.costUsd,
+      requests: relay.requests, inputTokens: relay.inputTokens, outputTokens: relay.outputTokens,
+    });
+  } else if (relay && Number.isFinite(result.inputTokens)) {
+    // Both figures exist on a finished turn. With a fresh thread per issue
+    // they should agree; this is how production confirms the relay figure
+    // before anything relies on it for a turn that did not finish.
+    log.info('homeroom-bot', 'Turn usage: agent total vs relay sum', {
+      app: app.slug, issueNumber, agentInputTokens: result.inputTokens, relayInputTokens: relay.inputTokens,
+      agentOutputTokens: result.outputTokens ?? null, relayOutputTokens: relay.outputTokens,
+      requests: relay.requests,
+    });
+  }
 
   // #2571: an included (company-funded) key's spend joins the shared weekly
   // pool the budget gate above measures; a personal key would be nobody's
@@ -1134,11 +1548,12 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     }
   }
 
-  // The token budget, observed rather than enforced (#2870). The agent the
-  // bot runs on reports usage once, when the turn is already over, so there
-  // is nothing left to stop by the time this is true — but a turn that ran
-  // away is worth saying out loud rather than leaving in a column nobody
-  // reads. The wall-clock half is what actually bounds these turns.
+  // The token budget, observed rather than enforced (#2870, #3035). Usage
+  // arrives once, when the turn is already over, so there is nothing left
+  // to stop and the verdict is kept — but a turn that ran away is worth
+  // saying out loud. With a fresh thread per issue this is the turn's own
+  // usage; before #3035 it was the conversation's running total, which is
+  // why it read in the billions. The wall clock is what bounds a turn.
   if (!budgetHit && usage.inputTokens != null && usage.inputTokens > turnInputTokens) {
     log.warn('homeroom-bot', 'Triage turn finished over its token budget', {
       app: app.slug, issueNumber, inputTokens: usage.inputTokens, budget: turnInputTokens,
@@ -1152,7 +1567,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   if (budgetHit) {
     const retried = String(item.reason || '') === 'budget_retry';
     const id = await insertRun(pool, {
-      appId: app.id, issueNumber, sessionId: session.id, mode, verdict: 'failed',
+      appId: app.id, issueNumber, sessionId: session.id, mode: runMode, verdict: 'failed',
       error: `budget: ${budgetHit}`, budgetStop: budgetHit,
       threadSeenAt: item.thread_seen_at || null, model,
       costUsd, ...usage,
@@ -1214,7 +1629,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   }
   const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict);
   const runId = await insertRun(pool, {
-    appId: app.id, issueNumber, sessionId: session.id, mode,
+    appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
@@ -1227,7 +1642,349 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   log.info('homeroom-bot', 'Triaged', {
     app: app.slug, issueNumber, verdict: parsed.verdict, costUsd, runId,
   });
-  return { ran: true, verdict: parsed.verdict, runId };
+  let acted = null;
+  if (liveMode) {
+    try {
+      acted = await actOnVerdict({
+        pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
+        seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin: botUsername,
+        deps: {
+          github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
+          activeWorkers, ...liveD,
+        },
+      });
+    } catch (err) {
+      log.error('homeroom-bot', 'Acting on a live verdict failed', { app: app.slug, issueNumber, err: err.message });
+    }
+  }
+  return { ran: true, verdict: parsed.verdict, runId, ...(acted ? { acted } : {}) };
+}
+
+/**
+ * #3264: a follow-up on the bot's own open proposal for this issue. Runs
+ * where runTriage would otherwise have stopped at "already has a bot
+ * proposal". See homeroom-bot-followup.js for what the turn may do.
+ *
+ * Activity is not the same as somebody talking to the bot: GitHub moves an
+ * issue's updated_at when a pull request references it, and a vote reset
+ * writes to the proposal thread. So the turn runs only when a PERSON said
+ * something since the bot last looked; otherwise that activity is recorded
+ * as seen and nothing is posted or spent.
+ */
+async function runFollowUp(pool, config, {
+  bot, app, repo, item, issue, proposal, runMode, model, turnBudgetMs, startedMs,
+  recordFailure, deps,
+}) {
+  const { github, threadContext, sessions, limits, managedOpenRouter, agentTurn } = deps;
+  const issueNumber = Number(item.issue_number);
+  const fail = (error, extra = {}, opts = {}) => recordFailure(error, { proposalSessionId: proposal.id, ...extra }, opts);
+
+  const { rows: lastRows } = await pool.query(
+    `SELECT id, thread_seen_at FROM homeroom_bot_runs
+      WHERE app_id = $1 AND issue_number = $2
+        AND budget_stop IS DISTINCT FROM 'input tokens'
+        AND (error IS NULL OR error NOT LIKE 'collateral:%')
+      ORDER BY created_at DESC LIMIT 1`,
+    [app.id, issueNumber],
+  );
+  const lastRun = lastRows[0] || null;
+
+  const seedReadAt = new Date().toISOString();
+  const [{ comments = [] } = {}, issueThread, proposalThread, botLogin] = await Promise.all([
+    github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
+    threadContext.loadIssueThread(pool, app.id, issueNumber),
+    threadContext.loadProposalThread(pool, app.id, proposal.id),
+    live.botUsernameOf(github),
+  ]);
+  const replies = followup.newReplies({
+    comments,
+    issueThread: issueThread?.messages || [],
+    proposalThread: proposalThread?.messages || [],
+    botLogin,
+    botUsername: BOT_USERNAME,
+    sinceMs: toMs(lastRun?.thread_seen_at),
+  });
+  if (!replies.length) {
+    if (lastRun && item.thread_seen_at) {
+      await pool.query(
+        `UPDATE homeroom_bot_runs
+            SET thread_seen_at = GREATEST(COALESCE(thread_seen_at, $2::timestamptz), $2::timestamptz)
+          WHERE id = $1`,
+        [lastRun.id, item.thread_seen_at],
+      );
+    }
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    log.info('homeroom-bot', 'Activity on a bot proposal\'s issue, but nobody said anything new', {
+      app: app.slug, issueNumber, sessionId: proposal.id,
+    });
+    return { ran: false, reason: 'no_new_replies' };
+  }
+
+  // The proposal as every revision path reads it (cs.* plus the app's
+  // identity), and only while it is still the bot's open proposal.
+  const { rows: sessionRows } = await pool.query(
+    `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
+       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+      WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'promoted'`,
+    [proposal.id, bot.id],
+  );
+  const session = sessionRows[0];
+  if (!session || !session.branch_name) {
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    return { ran: false, reason: 'has_proposal' };
+  }
+
+  const { rows: revisionRows } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs
+      WHERE proposal_session_id = $1 AND verdict = 'revise'`,
+    [session.id],
+  );
+  const canRevise = (revisionRows[0]?.n || 0) < followup.MAX_REVISIONS;
+  const mode = canRevise ? 'build' : 'scout';
+
+  const seed = sessions.buildHeadlessSeed(
+    issueNumber, issue, comments, botLogin, issueThread?.messages || [],
+  );
+  const proposalBlock = require('./thread-context').buildProposalDiscussionBlock({
+    sessionId: session.id, prNumber: session.pr_number,
+    threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
+  });
+  const prompt = followup.followUpPrompt({
+    seed, proposalBlock, prNumber: session.pr_number, replies, canRevise,
+  });
+
+  const turn = await followup.runFollowUpTurn({
+    pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
+  });
+  const result = turn.result || {};
+  const relay = relaySpend(result.relayUsage, turn.pricing, agentTurn);
+  const costUsd = turn.costUsd ?? relay?.costUsd ?? null;
+  const usage = {
+    inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : (relay?.inputTokens ?? null),
+    outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : (relay?.outputTokens ?? null),
+  };
+  if (costUsd > 0) {
+    try {
+      if (await managedOpenRouter.usesIncludedKey(pool, bot.id)) {
+        await limits.recordSpend(pool, bot.id, Math.round(costUsd * 1e6) / 1e4, { byok: false });
+      }
+    } catch (err) {
+      log.warn('homeroom-bot', 'Spend debit failed', { err: err.message });
+    }
+  }
+  const spent = { sessionId: session.id, costUsd, ...usage };
+
+  if (turn.stopped) {
+    return fail('budget: wall clock', { ...spent, budgetStop: 'wall clock' });
+  }
+  if (turn.routed?.error) {
+    const code = String(turn.routed.error);
+    return fail(code, spent, {
+      infra: !!turn.infra || INFRA_ERRORS.has(code) || code.startsWith('dispatch:'),
+    });
+  }
+
+  const parsed = followup.parseFollowUp(result.lastResultText);
+  const moved = followup.headMoved({
+    mode, result, reviewedHeadSha: session.reviewed_head_sha, action: parsed?.action,
+  });
+  if (!parsed && !moved) {
+    return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, spent);
+  }
+
+  let runId = null;
+  const say = async (kind, text, postedAt) => {
+    const posted = await live.post({
+      pool, github, ws: deps.ws, app, repo, issueNumber, kind, runId, text, sender: bot,
+      // Answered where it was asked: the proposal's thread too, when that
+      // is where somebody wrote.
+      proposalSessionId: replies.some((r) => r.where === 'proposal') ? session.id : null,
+    });
+    if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
+  };
+
+  // Said it would revise, but the push moved nothing.
+  if (parsed && parsed.action === 'revise' && !moved) {
+    const why = mode === 'build' && result.pushOk === false
+      ? 'its change could not be pushed' : 'the turn produced no change';
+    runId = await insertRun(pool, {
+      appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error: `revise: ${why}`,
+      reason: parsed.reply, threadSeenAt: item.thread_seen_at || null, model,
+      durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
+    });
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    const postedAt = [];
+    await say('followup_failed', followup.revisionFailedText({ why, prNumber: session.pr_number }), postedAt)
+      .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
+    await live.advanceSeen({
+      pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
+      proposalSessionId: session.id,
+    }).catch(() => {});
+    return { ran: true, verdict: 'failed', runId };
+  }
+
+  const action = moved ? 'revise' : parsed.action;
+  const reply = parsed?.reply || 'It changed the proposal to follow the latest replies.';
+  if (moved) {
+    // The same reconcile a person's revision reaches: the new head becomes
+    // the reviewed one, earlier votes stop counting, checks and the staging
+    // preview re-run on it, and the thread says so.
+    try {
+      const votes = deps.votes || require('../routes/votes');
+      const { rows: fresh } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
+           FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
+        [session.id],
+      );
+      await votes.reconcileNativeReviewedHead({
+        config, pool, session: fresh[0] || session, fresh: true, notify: true,
+      });
+    } catch (err) {
+      log.error('homeroom-bot', 'Follow-up revision pushed, but reconciling the proposal failed', {
+        app: app.slug, issueNumber, sessionId: session.id, err: err.message,
+      });
+    }
+  }
+
+  runId = await insertRun(pool, {
+    appId: app.id, issueNumber, mode: runMode, verdict: followup.VERDICT_FOR[action],
+    question: action === 'ask' ? reply : null,
+    reason: reply,
+    buildNote: action === 'revise' ? (parsed?.summary || null) : null,
+    threadSeenAt: item.thread_seen_at || null, model,
+    durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
+  });
+  await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+  clearRefusals(app.id);
+  log.info('homeroom-bot', 'Followed up on its proposal', {
+    app: app.slug, issueNumber, sessionId: session.id, action, costUsd, runId,
+  });
+
+  const prNumber = session.pr_number;
+  const text = action === 'revise'
+    ? followup.revisedText({
+      summary: parsed?.summary, reply: parsed?.reply, prNumber,
+      link: deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null,
+    })
+    : action === 'ask' ? followup.askText({ reply, prNumber })
+      : action === 'person' ? followup.personText({ reply, prNumber })
+        : followup.answerText({ reply, prNumber });
+  const postedAt = [];
+  await say(`followup_${action}`, text, postedAt)
+    .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
+  await live.advanceSeen({
+    pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
+    proposalSessionId: session.id,
+  }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
+  return { ran: true, verdict: followup.VERDICT_FOR[action], runId, acted: `followup_${action}` };
+}
+
+/**
+ * #3146: what a live verdict does. Posts to the issue, builds and proposes
+ * a ready request, then records what the bot has seen so its own comments
+ * are not read back as a change. A verdict the live caps hold back posts
+ * one line saying so (#3152), and only when that same line is not already
+ * the bot's newest post there: a held issue is retried whenever its cap has
+ * room, and a retry that is held again has nothing new to say.
+ */
+async function actOnVerdict({
+  pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
+  seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin = null, deps,
+}) {
+  const { github, ws } = deps;
+  // Whoever filed the issue is named on the answers that ask something of
+  // them, so they are notified (live.issuePoster). Looked up once, and only
+  // when such an answer is posted.
+  let poster;
+  const posterOnce = async () => {
+    if (poster === undefined) {
+      poster = await live.issuePoster(pool, { app, repo, issueNumber, issue, botLogin })
+        .catch((err) => {
+          log.warn('homeroom-bot', 'Could not find who filed the issue', { app: app.slug, issueNumber, err: err.message });
+          return null;
+        });
+      if (poster && bot.username && poster.toLowerCase() === String(bot.username).toLowerCase()) poster = null;
+    }
+    return poster;
+  };
+  const say = async (kind, text, extra = {}) => {
+    const mention = live.tagsPoster(kind) ? await posterOnce() : null;
+    const posted = await live.post({
+      pool, github, ws, app, repo, issueNumber, kind, runId, text, mention, senderId: bot.id, sender: bot,
+      notifications: deps.notifications || null, ...extra,
+    });
+    if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
+    return posted;
+  };
+  let acted = capSuppressed ? 'held' : parsed.verdict;
+  if (capSuppressed) {
+    const kind = live.heldKind(capSuppressed);
+    const already = await live.lastPostKind(pool, app.id, issueNumber) === kind;
+    log.info('homeroom-bot', 'Live verdict held by a cap', {
+      app: app.slug, issueNumber, verdict: parsed.verdict, cap: capSuppressed, noted: !already,
+    });
+    if (!already) {
+      await say(kind, live.heldText({
+        cap: capSuppressed,
+        verdict: parsed.verdict,
+        limit: capSuppressed === 'proposals_per_app' ? PROPOSALS_PER_APP_CAP : QUESTION_TRIPWIRE_PER_DAY,
+      }));
+    }
+  } else if (parsed.verdict === 'question') {
+    await say('question', live.questionText(parsed));
+  } else if (parsed.verdict === 'person') {
+    await say('person', live.personText(parsed));
+  } else if (parsed.verdict === 'empty') {
+    await say('empty', live.emptyText(parsed));
+  } else if (parsed.verdict === 'ready') {
+    const built = await live.buildAndPropose({
+      pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
+      turnBudgetMs, model, deps,
+    });
+    if (built.costUsd > 0) {
+      try {
+        if (await deps.managedOpenRouter.usesIncludedKey(pool, bot.id)) {
+          await deps.limits.recordSpend(pool, bot.id, Math.round(built.costUsd * 1e6) / 1e4, { byok: false });
+        }
+      } catch (err) {
+        log.warn('homeroom-bot', 'Build spend debit failed', { err: err.message });
+      }
+    }
+    if (built.ok) {
+      acted = 'proposed';
+      await pool.query(
+        'UPDATE homeroom_bot_runs SET proposal_session_id = $2 WHERE id = $1',
+        [runId, built.sessionId],
+      ).catch(() => {});
+      // The vote-card metadata the promote route's own activity rows carry,
+      // so the issue's thread shows the live proposal card, not only a link.
+      await say('proposal', live.proposalText({
+        link: live.proposalLink(deps.domain, app.slug, built.sessionId), prNumber: built.prNumber,
+      }), { msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } } });
+    } else {
+      acted = 'build_failed';
+      log.warn('homeroom-bot', 'Live build did not become a proposal', {
+        app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
+      });
+      await say('build_failed', live.buildFailedText(built.error));
+    }
+  }
+  await live.advanceSeen({
+    pool, github, threadContext: deps.threadContext, app, repo, issueNumber, runId,
+    since: seedReadAt, postedAt,
+  }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
+  return acted;
+}
+
+// Resolved lazily, and only for a live app: ws and session-lifecycle load
+// half the platform. Each is injectable for the tests.
+function liveDeps(deps = {}) {
+  return {
+    ws: deps.ws || require('./ws'),
+    sessionLifecycle: deps.sessionLifecycle || require('./session-lifecycle'),
+    domain: deps.domain || require('./caddy').USERNODE_DOMAIN,
+    votesRouter: deps.votesRouter || null,
+  };
 }
 
 // ── The work loop ───────────────────────────────────────────────────────
@@ -1254,6 +2011,9 @@ async function runOnce(pool, config, deps = {}) {
     out.mode = settings.mode;
     if (settings.mode === 'off') return out;
 
+    // Before anything is picked: a row an unfinished pass claimed is free again.
+    out.releasedClaims = await releaseStaleClaims(pool, settings);
+
     const now = deps.now ? deps.now() : Date.now();
     // Take the wakes that arrived before this pass. Ones that arrive DURING
     // it are left for the next, which tick() schedules at once.
@@ -1262,19 +2022,44 @@ async function runOnce(pool, config, deps = {}) {
     const forceAll = !!deps.forceRefresh || refreshAllRequested;
     refreshAllRequested = false;
     wakeRequested = false;
+    // Before the refresh: on a live app it asks how much room the caps have
+    // for the bot's held issues (#3152).
+    const bot = await ensureBotUser(pool, config);
     if (forceAll || now - lastRefreshAt >= REFRESH_INTERVAL_MS) {
-      const summary = await refreshQueue(pool, settings, deps);
+      const summary = await refreshQueue(pool, settings, { ...deps, bot });
       lastRefreshAt = now;
       out.refreshed = true;
       if (summary.queued) log.info('homeroom-bot', 'Queue refreshed', summary);
     } else if (targeted.length) {
-      const summary = await refreshApps(pool, settings, targeted, deps);
+      const summary = await refreshApps(pool, settings, targeted, { ...deps, bot });
       out.refreshed = true;
       out.woken = targeted.length;
       if (summary.queued) log.info('homeroom-bot', 'Queue refreshed on activity', summary);
     }
 
-    const bot = await ensureBotUser(pool, config);
+    // Free what the bot's own sessions still hold, on the refresh cadence
+    // (#3122). Runs before the fault check on purpose: a full quota is
+    // exactly when freeing a volume helps.
+    if (now - lastVolumeSweepAt >= REFRESH_INTERVAL_MS) {
+      lastVolumeSweepAt = now;
+      try {
+        const freed = await releaseBotVolumes(pool, bot, deps);
+        if (freed.length) out.volumesFreed = freed.length;
+      } catch (err) {
+        log.warn('homeroom-bot', 'Bot volume sweep failed', { err: err.message });
+      }
+    }
+
+    // Inside a platform-fault backoff nothing is dispatched (#3122). A wake
+    // still refreshes the queue above, but cannot restart the retry storm.
+    const fault = faultBackoff(now);
+    if (fault) {
+      out.paused = 'infra';
+      out.detail = fault.error;
+      out.retryInMs = fault.remainingMs;
+      return out;
+    }
+
     // An app inside its backoff window is skipped exactly like a paused one
     // (#2737). Without this, a session that refuses every turn is retried on
     // every wake, which is how one wedged app wrote 121 rows in a day.
@@ -1312,9 +2097,10 @@ async function runOnce(pool, config, deps = {}) {
           });
         } catch (err) {
           log.error('homeroom-bot', 'Triage threw', { app: batch.app.slug, issueNumber: item.issue_number, err: err.message });
+          await recordThrownTriage(pool, { app: batch.app, item, settings: live, err });
           r = { ran: false, reason: 'threw' };
         }
-        if (r.ran) processed += 1;
+        if (r.ran) { processed += 1; clearFault(); }
         if (r.budget) budgets.push({ app: batch.app.slug, issueNumber: item.issue_number, kind: r.budget });
         if (r.reason === 'budget') { out.paused = 'budget'; break; }
         // A refusal moves on to the next APP rather than stopping the pass:
@@ -1323,7 +2109,17 @@ async function runOnce(pool, config, deps = {}) {
           refusals.push({ app: r.app, error: r.detail, retryInMs: r.retryInMs });
           break;
         }
-        if (r.reason === 'infra') { out.paused = 'infra'; out.detail = r.detail || null; break; }
+        if (r.reason === 'infra') {
+          const fault = noteFault(r.detail);
+          log.warn('homeroom-bot', 'Platform fault; the bot backs off', {
+            app: batch.app.slug, issueNumber: item.issue_number, fault: fault.summary,
+            attempts: fault.attempts, retryInMs: fault.delayMs,
+          });
+          out.paused = 'infra';
+          out.detail = fault.summary;
+          out.retryInMs = fault.delayMs;
+          break;
+        }
       }
       return processed;
     }));
@@ -1361,6 +2157,8 @@ async function tick(config) {
     const { getPool } = require('../db/pool');
     const out = await runOnce(getPool(config), config);
     if (out.processed > 0 && !out.paused && out.mode !== 'off') delay = BUSY_PASS_DELAY_MS;
+    // A platform fault waits out its backoff rather than the 30-second idle.
+    if (out.paused === 'infra' && out.retryInMs > 0) delay = Math.max(IDLE_PASS_DELAY_MS, out.retryInMs);
     // A wake that landed while this pass ran is not made to wait out the
     // idle delay; a pass that paused (budget, fault) is not spun by it.
     if (wakeRequested && !out.paused && out.mode !== 'off') delay = 0;
@@ -1438,6 +2236,28 @@ function noteIssueActivity({ appId, issueNumber, reason = 'activity' } = {}) {
   return true;
 }
 
+/**
+ * #3264: somebody wrote in a proposal's discussion. When that proposal is
+ * the bot's own and still up for a vote, it is activity on the issue it
+ * answers; any other proposal's thread is none of the bot's business and
+ * costs one indexed lookup. Never throws.
+ */
+async function noteProposalActivity(pool, { appId, sessionId } = {}) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT cs.linked_issues FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+        WHERE cs.id = $1 AND cs.app_id = $2 AND cs.status = 'promoted' AND u.username = $3`,
+      [Number(sessionId), Number(appId), BOT_USERNAME],
+    );
+    const issueNumber = Array.isArray(rows[0]?.linked_issues) ? rows[0].linked_issues[0] : null;
+    if (!issueNumber) return false;
+    return noteIssueActivity({ appId, issueNumber, reason: 'proposal_thread' });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal activity check failed', { err: err.message });
+    return false;
+  }
+}
+
 /** ws._onBusMessage hands BUS_KIND envelopes here. */
 function onBusMessage(data) {
   if (!data || typeof data !== 'object') return false;
@@ -1458,6 +2278,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.question, r.question_default, r.build_note, r.reason, r.cap_suppressed,
             r.rating, r.rating_note, r.rated_at, r.thread_seen_at, r.model, r.cost_usd::float8 AS cost_usd,
             r.input_tokens, r.output_tokens, r.duration_ms, r.error, r.created_at,
+            r.proposal_session_id,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -1487,6 +2308,9 @@ const EXPORT_COLUMNS = Object.freeze([
   'rating', 'rating_note', 'rated_by', 'rated_at',
   'model', 'cost_usd', 'input_tokens', 'output_tokens', 'duration_ms',
   'error', 'budget_stop', 'thread_seen_at',
+  // #3146: the proposal a live `ready` run opened. Last, so an analysis
+  // that reads the earlier columns by position is not shifted.
+  'proposal_session_id',
 ]);
 
 /** One run as the values of EXPORT_COLUMNS, in that order. */
@@ -1706,7 +2530,15 @@ module.exports = {
   clearStaleTurn,
   noteStopped,
   wasStoppedRecently,
+  actOnVerdict,
+  summarizeFault,
+  faultBackoff,
+  noteFault,
+  isRepeatFault,
+  clearFault,
+  releaseBotVolumes,
   describeStop,
+  relaySpend,
   STOP_SETTLE_MS,
   BACKOFF_BASE_MS,
   BACKOFF_CEILING_MS,
@@ -1720,12 +2552,14 @@ module.exports = {
   KEY_TURN_INPUT_TOKENS,
   DEFAULTS,
   noteIssueActivity,
+  noteProposalActivity,
   onBusMessage,
   refreshApps,
   BUS_KIND,
   MAX_BATCH_SIZE,
   // Pure, exported for tests.
   classifyIssue,
+  capRoomFor,
   parseVerdict,
   parseRepo,
   BOT_USERNAME,
@@ -1735,6 +2569,7 @@ module.exports = {
   KEY_CONCURRENCY,
   KEY_BATCH_SIZE,
   KEY_PAUSED_APPS,
+  KEY_LIVE_APPS,
   DEFAULT_WEEKLY_LIMIT_CENTS,
   REFRESH_INTERVAL_MS,
   IDLE_PASS_DELAY_MS,
@@ -1743,7 +2578,7 @@ module.exports = {
   QUESTION_TRIPWIRE_PER_DAY,
   _resetForTests() {
     lastRefreshAt = 0; triagePromptCache = null; stopped = false; passInFlight = false; lastPass = null;
-    appBackoff.clear(); lastRefusals = [];
+    appBackoff.clear(); lastRefusals = []; platformFault = null; lastVolumeSweepAt = 0;
     if (timer) clearTimeout(timer);
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
   },

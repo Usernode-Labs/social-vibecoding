@@ -235,7 +235,10 @@ test('automatic OpenRouter provisioning failure returns its stable error code wi
   assert.strictEqual(res.status, 503);
   const body = await res.json();
   assert.strictEqual(body.code, 'not_configured');
-  assert.match(body.error, /USERNODE_OPENROUTER_MANAGEMENT_API_KEY/);
+  // QA 2026-09-24: the person who pressed "Start work" is told what it means
+  // for them; the environment variable stays in the server log.
+  assert.doesNotMatch(body.error, /USERNODE_OPENROUTER_MANAGEMENT_API_KEY/);
+  assert.match(body.error, /AI builds aren't available on this server yet/);
   assert.strictEqual(getInsert(), null, 'no chat_sessions INSERT was issued');
 });
 

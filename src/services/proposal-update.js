@@ -47,6 +47,7 @@
 // group has read.
 
 const log = require('./logger');
+const summaryFreshness = require('./summary-freshness');
 const externalAgentHead = require('./external-agent-head');
 const visualEvidencePlan = require('./visual-evidence-plan');
 const visualEvidenceState = require('./visual-evidence-state');
@@ -409,6 +410,7 @@ async function updateProposalFromForkBranch(deps, params) {
     try {
       const ctx = {
         pool, config, gh, head, votes, prImportSync, githubPublic,
+        prMetadata: deps.prMetadata || require('./pr-metadata'), username: user.username,
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
         expectedLogin: link.login, expectedHeadSha, sessionId,
         testing: normalizeTesting(params.testing),
@@ -801,6 +803,18 @@ async function applyProposedDescription({ pool, gh, session, owner, repo, descri
   let body = closing ? `${description}\n\n${closing}` : description;
   if (visuals) body = prMetadata.upsertVisualsBlock(body, visuals);
   if (body === existing) return nothing;
+
+  // GitHub is the body source of truth. Invalidate before touching it: a DB
+  // failure must not leave an older summary displayed beside newer prose.
+  try {
+    await summaryFreshness.invalidate(pool, Number(session.id));
+    session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+  } catch (err) {
+    log.warn('proposal-update', 'could not invalidate the summary before a description edit', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return { changed: false, rejected: 'summary_invalidation_failed' };
+  }
 
   try {
     await gh.updatePR(owner, repo, session.pr_number, { body });
@@ -1248,7 +1262,7 @@ function defaultBusyCheck(session) {
 // under a lease.
 async function advanceAppRepoBranch(ctx) {
   const {
-    pool, config, gh, head, votes, prImportSync, githubPublic, session,
+    pool, config, gh, head, votes, prImportSync, githubPublic, prMetadata, username, session,
     owner, repo, forkOwner, forkRepo, branch, expectedLogin, expectedHeadSha, sessionId,
   } = ctx;
   // The session tails talk to three modules that do real work — a staging
@@ -1375,6 +1389,13 @@ async function advanceAppRepoBranch(ctx) {
     });
   if (!pushed.ok) return renameHeadFailure(pushed, branch);
 
+  if (session.source !== 'imported') {
+    // The push has moved this proposal's code. Keep the previous summary out
+    // of every reader even if the later PR metadata or preview work fails.
+    await summaryFreshness.invalidate(pool, sessionId);
+    session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+  }
+
   // BEFORE the tails, every one of which ends in a capture that reads the
   // routes off this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
@@ -1397,6 +1418,26 @@ async function advanceAppRepoBranch(ctx) {
   const linkedApplied = await applyLinkedIssues({
     pool, gh, session, owner, repo, linkedIssues: ctx.linkedIssues,
   });
+
+  // A shared session has just gained its first pushed diff (or another
+  // revision). Give the group a stable draft PR link before its card is
+  // published. A transient GitHub failure does not discard the pushed code;
+  // the next update or promotion can adopt/create the same PR.
+  if (kind === 'session' && session.source !== 'imported' && !session.pr_number) {
+    try {
+      await prMetadata.applyPrMetadata({
+        pool, session, repoOwner: owner, repoName: repo,
+        userMessage: '', ccSummary: '', username,
+        userId: session.user_id, allowModelGeneration: false,
+        sourceHeadSha: verified.headSha,
+        preferredTitle: session.proposed_pr_title || session.session_title || null,
+      });
+    } catch (err) {
+      log.warn('proposal-update', 'Draft PR creation deferred after branch push', {
+        sessionId, code: err.code || null, err: err.message,
+      });
+    }
+  }
 
   // Everything the three tails agree on. They differ only in what they do to
   // the session afterwards and in the three booleans that describe it.

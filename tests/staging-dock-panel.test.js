@@ -237,6 +237,65 @@ test('closeStagingOverlay in docked mode collapses the slot and clears the ifram
   assert.ok(sandbox.DevChat.renderCalls > rendersBefore, 'chat re-rendered so the slot unmounts');
 });
 
+test('#2779: an agent session docks the same preview over its own slot, signed in to the app it names, and hears it close', async () => {
+  const requests = [];
+  const { AppView, getEl, sandbox } = makeAppViewHarness({
+    fetchImpl: async (url) => {
+      requests.push(url);
+      return {
+        ok: true,
+        json: async () => (String(url).startsWith('/api/iframe-token')
+          ? { token: 'tok-1' }
+          : { status: 'ready', url: 'https://s4850.example', verified: true }),
+      };
+    },
+  });
+  sandbox.AbortController = AbortController;
+  sandbox.URL = URL;
+  // The app on screen is another one: the preview must not sign in to it.
+  AppView.appData = { slug: 'whiteboard-7c21e4', self_hosted: false };
+  AppView.readOnly = true;
+  getEl('agent-session-preview-slot')._rect = { top: 64, left: 720, width: 520, height: 640, bottom: 704, right: 1240 };
+  const heard = [];
+  AppView.setStagingDockHost({
+    slotId: 'agent-session-preview-slot',
+    live: () => true,
+    collapse: () => heard.push('collapse'),
+    redock: () => heard.push('redock'),
+    closed: () => heard.push('closed'),
+  });
+
+  await AppView.ensureStaging(93, 'https://fallback.example', null, {
+    dock: true, readOnly: false, app: { slug: 'usernode-2d5619', self_hosted: true },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const overlay = getEl('staging-overlay');
+  assert.equal(AppView._stagingMode, 'docked');
+  assert.equal(overlay.style.left, '720px', 'pinned over the agent session\'s slot, not the dev chat\'s');
+  assert.equal(overlay.style.width, '520px');
+  assert.ok(requests.includes('/api/sessions/93/ensure-staging'), 'the owner\'s ensure route, whatever the screen\'s read-only flag says');
+  assert.ok(requests.includes('/api/iframe-token?app=usernode-2d5619'), 'signed in to the named app');
+  assert.ok(!requests.some((u) => /app=whiteboard/.test(u)), 'never to the app on screen');
+  const src = getEl('staging-iframe').src;
+  assert.match(src, /^https:\/\/s4850\.example\//);
+  assert.match(src, /token=tok-1/);
+  assert.match(src, /demo=1/, 'the self-hosted app\'s review fixtures, as for any platform preview');
+
+  AppView.expandStagingFullscreen();
+  assert.deepEqual(heard, ['collapse'], 'full screen goes through the host');
+  assert.equal(sandbox.DevChat.stagingPanel.open, true, 'and leaves the dev chat\'s slot alone');
+  AppView.dockStagingPanel();
+  assert.deepEqual(heard, ['collapse', 'redock']);
+  assert.equal(AppView._stagingMode, 'docked');
+
+  AppView.closeStagingOverlay();
+  assert.deepEqual(heard, ['collapse', 'redock', 'collapse', 'closed'], 'the host hears it close, once');
+  assert.equal(AppView._stagingDockHost, null);
+  assert.equal(AppView._currentDockHost().slotId, 'dc-staging-panel', 'the next preview starts from the dev chat\'s dock');
+  AppView.closeStagingOverlay();
+  assert.equal(heard.filter((h) => h === 'closed').length, 1, 'a second close is not the host\'s');
+});
+
 test('narrow viewport: dock request falls back to fullscreen', async () => {
   const { AppView, getEl } = makeAppViewHarness({
     fetchImpl: okJson({ status: 'ready', url: 'https://live.example' }),

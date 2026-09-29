@@ -315,7 +315,8 @@ test('server.js global 100kb parser skips the upload POST (scoped 256kb parser o
 });
 
 test('sessions.js syncs personal files on both build and scout dispatch', () => {
-  const src = read('src/routes/sessions.js');
+  // #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
+  const src = `${read('src/routes/sessions.js')}\n${read('src/services/mayor/turn.js')}`;
   const calls = src.match(/worker\.syncUserAgentFiles\(session\.id, personalFiles\)/g) || [];
   assert.ok(calls.length >= 2, `expected build + scout sync calls, found ${calls.length}`);
   assert.match(src, /loadAllForUser\(pool, session\.user_id\)/);

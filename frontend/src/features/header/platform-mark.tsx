@@ -1,6 +1,9 @@
 /**
  * #platform-mark-btn — the Homeroom mark, and the menu behind it.
  *
+ * The button now draws a sparkle glyph where the "H" brand tile was (see
+ * the comment above the glyph); the id and the argument below still hold.
+ *
  * ── What it replaces, and why the chip could not keep the job ──────────
  *
  * #1443's charter put one control at the top-left of every screen: the
@@ -60,7 +63,7 @@
 
 import { useRef } from 'react';
 
-import { ChevronDownIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, SparklesIcon, SpinnerRingIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -93,8 +96,19 @@ import { improveStore } from '../improve/improve-store.js';
  * costs and why the menu row's glyph is where it is paid. A 26px tile with
  * three coloured dots on it is a status readout, not a mark.
  */
+/*
+ * The working cue is a small blue spinner on a neutral disc, a badge on the
+ * tile's corner like the bell's (#2779 follow-up; it was an 8px emerald
+ * pulse). A spinner says "running right now" without a legend, which the
+ * green dot needed a tooltip for (#3015). Still top-right, still no count,
+ * still hidden at rest. The disc is the header's own bg-zinc-200 /
+ * dark:bg-zinc-900 (platform-header.tsx), so it separates the arc from the
+ * tile on any tint an app gives the bar.
+ */
 const WORKING_DOT_CLS =
-  'absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+  'absolute -top-1.5 -right-1.5 flex items-center justify-center w-[15px] h-[15px] rounded-full '
+  + 'bg-zinc-200 text-violet-600 dark:bg-zinc-900 dark:text-violet-400';
+const WORKING_TITLE = 'One of your changes is building';
 
 export function PlatformMark() {
   // The trigger reports its surface's state, read from the store rather than
@@ -132,34 +146,31 @@ export function PlatformMark() {
       aria-haspopup="dialog"
       aria-expanded={open ? 'true' : 'false'}
       aria-label="Homeroom menu"
+      /* What the spinner means, on hover (#3015). The menu this opens says
+         it too, for a touch screen (../improve/actions.tsx UpdateStatus). */
+      title={working ? WORKING_TITLE : undefined}
       onClick={() => (window as unknown as {
         AppContext?: { toggle?: () => void };
       }).AppContext?.toggle?.()}
     >
       {/*
-          `alt=""` and aria-hidden: the button's aria-label above is the only
-          producer of this control's accessible name, exactly as the chevron
-          below. A named image here would be read twice.
+          A sparkle, not the "H" tile it replaced: what this menu leads with
+          is making the app better (Give feedback, the Improve row, a new
+          change), and the sparkle is the icon that job already wears
+          elsewhere in the shell. Same 26px box the raster occupied, so the
+          #909 row height and the two corner dots below are unchanged.
 
-          NO `loading="lazy"`. It is in the first screenful on every route,
-          and a lazy header logo is a hole at the top of a cold paint.
+          aria-hidden: the button's aria-label above is the only producer of
+          this control's accessible name, exactly as the chevron below.
 
-          The rounded corner is the artwork's own — the file is a squircle
-          tile with its own radius — so `rounded-[7px]` here only clips the
-          box, it does not invent a shape. The hairline is what keeps a
-          near-black tile from disappearing into the dark bar behind it, and
-          it is the same inset hairline .app-icon-tile draws for the same
-          reason one screen down.
+          It takes the bar's brand ink from the button (`currentColor`) and
+          stays unframed, so it still differs in KIND from the framed bell
+          beside it rather than reading as one segmented control with it.
       */}
       <span className="relative shrink-0 inline-flex">
-        <img
-          src="/brand/homeroom-mark.png"
-          alt=""
+        <SparklesIcon
+          className="platform-mark-glyph w-[26px] h-[26px] shrink-0"
           aria-hidden="true"
-          draggable="false"
-          width={26}
-          height={26}
-          className="platform-mark-tile w-[26px] h-[26px] rounded-[7px] shrink-0"
         />
         {/* Bottom-LEFT: an unsent feedback draft, waiting for a connection. */}
         <span
@@ -167,7 +178,7 @@ export function PlatformMark() {
           id="feedback-queue-dot"
           className="hidden absolute -bottom-0.5 -left-0.5 w-2 h-2 rounded-full bg-amber-400"
         />
-        {/* Top-RIGHT: a turn is running right now. A live fact, true only
+        {/* Top-RIGHT: one of your changes is building right now. A live fact, true only
             while it is true, so it needs no dismissal and carries no count —
             the count that used to be here went to the bell in #1610, where
             the list that clears it lives. */}
@@ -176,6 +187,7 @@ export function PlatformMark() {
           className={working ? WORKING_DOT_CLS : `hidden ${WORKING_DOT_CLS}`}
           aria-hidden="true"
         >
+          <SpinnerRingIcon className="w-3 h-3 animate-spin motion-reduce:animate-none" />
         </span>
       </span>
       <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />

@@ -104,16 +104,25 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
     // inset a background would fill a square box starting at the first glyph,
     // and `.home-panel-body` clips overflow, so a negative-margin inset cannot
     // widen it past the text either.
+    //
+    // It opens something, so it is a real <button> (#1918, #2989): Tailwind's
+    // preflight already strips a button's background, border, padding and
+    // font, and `w-full text-left` keep the box and the glyphs where the <p>
+    // put them. The accessible name starts with the visible text (so a voice
+    // command that reads it still matches) and then says where it goes. The
+    // focus ring is inset because `.home-panel-body` clips overflow.
     return (
       <PanelShell panelKey={view.key} expanded={false} plate="none" stamps={{ rows: 0 }}>
         <div className="home-panel-body">
-          <p
-            className="home-panel-rows home-panel-row flex items-center text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
+          <button
+            type="button"
+            className="home-panel-rows home-panel-row flex w-full items-center text-left text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500"
             title="Go to the Challenges tab on the Leaderboard screen"
+            aria-label="No challenges are running right now. Go to the Challenges tab on the Leaderboard screen"
             onClick={() => panels()?.goToChallenges?.()}
           >
             No challenges are running right now
-          </p>
+          </button>
         </div>
       </PanelShell>
     );

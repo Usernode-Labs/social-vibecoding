@@ -211,10 +211,11 @@ test('an unknown credit policy fails boot instead of silently choosing a payer',
 });
 
 test('post-turn helper calls cannot deliberately continue on stale platform billing', () => {
-  const sessionsSource = fs.readFileSync(
+  // #2779: the Mayor's pill ladder moved to services/mayor/pills.js.
+  const sessionsSource = [
     path.join(__dirname, '..', 'src', 'routes', 'sessions.js'),
-    'utf8',
-  );
+    path.join(__dirname, '..', 'src', 'services', 'mayor', 'pills.js'),
+  ].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.doesNotMatch(sessionsSource, /continuing platform-billed|proceeds platform-billed/);
   assert.match(sessionsSource,
     /async function runHeadlessMayorEffect\(\{[\s\S]*allowInvoke = true/);

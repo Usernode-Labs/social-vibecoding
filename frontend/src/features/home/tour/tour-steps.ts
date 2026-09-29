@@ -1,5 +1,5 @@
 /**
- * The eight steps of the welcome tour, as data.
+ * The four steps of the welcome tour, as data.
  *
  * Kept as a plain table with no React in it so the order, the wording, the
  * anchoring and the interaction rules can be asserted without rendering
@@ -56,9 +56,9 @@
  * argument that pressing a control is a thing a viewer may do while the tour
  * is pointing at it. In use it is the other way round: every one of them
  * LEAVES the tour. Feedback presents a kit dialog, New change starts a
- * session, and Workshop navigates off Home — so a viewer four steps into an
- * eight step tour, following a spotlight that reads as an instruction, lands
- * somewhere else with the tour paused behind them. ./index.tsx's pause and
+ * session, and a tab navigates off Home — so a viewer partway through the
+ * tour, following a spotlight that reads as an instruction, lands somewhere
+ * else with the tour paused behind them. ./index.tsx's pause and
  * fallback rules recover from that, which is not the same as it being a good
  * thing to invite.
  *
@@ -74,8 +74,7 @@
  * A step points at an element that may or may not be on screen, so each one
  * names candidates in preference order and ./spotlight.ts takes the first
  * that is in the document, unhidden and has a box. A step whose list resolves
- * to nothing still runs: the screen dims whole and the card centres, which is
- * what step 1 wants anyway.
+ * to nothing still runs: the screen dims whole and the card centres.
  */
 
 export interface TourStep {
@@ -97,18 +96,29 @@ export interface TourStep {
   closesPanel?: boolean;
 }
 
+/*
+ * ── #3240: four stops, and only when asked ─────────────────────────────
+ *
+ * The tour used to start by itself right after "What communities do you want
+ * to join?" (../../auth/communities-first-run.js), and the two said the same
+ * things back to back: a welcome, then Discover, then where communities live.
+ * It starts only when asked now, from the first row of Home's Getting started
+ * card (../getting-started.tsx) or from Settings, and it keeps the four stops
+ * nothing else on the first run covers: the shortcuts on Home, the mark that
+ * opens the menu inside every app, the two actions in that menu, and where to
+ * find the tour again. Welcome, Workshop, Discover and Getting started left:
+ * the join screen and the card already say each of them, and the card is the
+ * thing the viewer has just pressed.
+ */
 export const TOUR_STEPS: readonly TourStep[] = [
   {
-    id: 'welcome',
-    title: 'Welcome to Homeroom',
-    body: 'Every app here is built by the people using it, and changes ship when the group votes them in.',
-    targets: [],
-  },
-  {
-    id: 'create',
-    title: 'Create a new app',
-    body: 'Create a new app here. Describe it and an AI builds the first version.',
-    targets: ['#home-create-section'],
+    // The Your apps section, heading and grid together, so the card never
+    // sits on the heading the step is about. `#app-list` is the fallback
+    // for a section that has not rendered its box yet.
+    id: 'apps',
+    title: 'Your apps',
+    body: 'Shortcuts to the apps you use. A small mark says where each one lives: people for a group, a lock for one that is just yours. The last tile starts a new project.',
+    targets: ['#home-apps-section', '#app-list'],
   },
   {
     // ONE STEP, WHERE THERE WERE TWO (#2718 review). The arc was "press the
@@ -118,58 +128,30 @@ export const TOUR_STEPS: readonly TourStep[] = [
     //
     // The step still ends on the menu opening, whoever opens it: the
     // viewer's press on the mark, or Next, which opens the menu the same
-    // way rather than skipping past it — step 4 points INSIDE the menu, so
-    // a Next that only moved the counter would land on nothing.
+    // way rather than skipping past it — the next step points INSIDE the
+    // menu, so a Next that only moved the counter would land on nothing.
     id: 'app-menu',
-    title: "The app's own menu",
-    body: 'The mark opens the menu for the app you are in. Press it.',
+    title: 'The Homeroom menu',
+    body: 'Inside any app, this mark opens its menu. Tap it, or tap Next to open it.',
     targets: ['#platform-mark-btn'],
     interactive: true,
     advanceOn: 'menu-open',
   },
   {
-    // BACK FROM THE MERGE, and correct again. #2718 deleted this step because
-    // it moved "Give feedback" out of the panel and into the mark's menu;
-    // its review moved the control back to a button in this very well, so
-    // the step it deleted is the step the product wants. Taking main's copy
-    // verbatim rather than rewriting it: nothing about what it teaches
-    // changed while it was away.
-    id: 'feedback',
-    title: 'Give feedback',
-    body: "Feedback sends the app's group a note about what should change.",
-    targets: ['#improve-row-feedback'],
+    // Give feedback and New change, as ONE step: they sit side by side in
+    // the menu's action well (`#improve-quick-actions`,
+    // ../../improve/actions.tsx), so one cut-out draws around both and one
+    // sentence says what each is for.
+    id: 'menu-actions',
+    title: 'Give feedback, or change it',
+    body: 'Feedback sends the community a note about what should change. New change starts one yourself: describe it, try the preview, then put it to a vote.',
+    targets: ['#improve-quick-actions', '#improve-row-feedback'],
     needsPanel: true,
   },
   {
-    id: 'new-change',
-    title: 'New change',
-    body: 'New change starts a working session on the app: describe it, try the preview, then put it to a vote.',
-    targets: ['#improve-row-new-session'],
-    needsPanel: true,
-  },
-  {
-    // `#app-context-row-workshop` until #2718, which is an id nothing has
-    // rendered for some time — the step fell through to no target and drew
-    // its card with no cut-out. Workshop is a TAB now, and the tab is on
-    // screen on every platform route, so the target resolves everywhere.
-    id: 'workshop',
-    title: 'Workshop',
-    body: 'Workshop shows what is in progress across your apps, and what needs you.',
-    targets: ['#platform-tab-workshop'],
-    // THE STEP THAT LEAVES THE MENU, and it is this one now rather than
-    // Challenges: the two steps before it point at rows INSIDE the menu, and
-    // the tab this one points at is behind it. Challenges keeps the flag too,
-    // for the arc that never opened the menu at all.
-    closesPanel: true,
-  },
-  {
-    id: 'challenges',
-    title: 'Challenges',
-    body: 'Complete challenges to finish onboarding and earn your first points.',
-    targets: ['#home-challenges-section'],
-    closesPanel: true,
-  },
-  {
+    // THE STEP THAT LEAVES THE MENU: the step before it points inside the
+    // menu, and the tab this one points at is behind it on a phone.
+    //
     // `#app-switcher-btn` until #2718, which retired the chip. Settings is a
     // row of the Profile screen the Me tab lands on, so the tab is where this
     // step points — the control that gets you there, rather than the sheet
@@ -180,6 +162,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     title: 'Replay this any time',
     body: 'You can replay this tour any time from Settings, on your profile.',
     targets: ['#platform-tab-me'],
+    closesPanel: true,
   },
 ];
 
@@ -204,6 +187,14 @@ export const IMPROVE_STEP_INDEX = TOUR_STEPS.findIndex(
 export function clampIndex(index: number): number {
   if (!Number.isFinite(index)) return 0;
   return Math.max(0, Math.min(TOUR_LENGTH - 1, Math.trunc(index)));
+}
+
+/**
+ * The step Next (`dir` 1) or Back (`dir` -1) lands on from `at`: the
+ * neighbour, or where it is when there is nowhere to go.
+ */
+export function stepFrom(at: number, dir: 1 | -1): number {
+  return clampIndex(clampIndex(at) + dir);
 }
 
 /**
@@ -233,7 +224,7 @@ export function nextOpensMenu(index: number): boolean {
   return stepAt(index).advanceOn === 'menu-open';
 }
 
-/** The counter the card prints, e.g. "3 of 8". */
+/** The counter the card prints, e.g. "3 of 4". */
 export function stepCounter(index: number): string {
   return `${clampIndex(index) + 1} of ${TOUR_LENGTH}`;
 }

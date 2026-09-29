@@ -60,6 +60,88 @@ $0.40 in `src/services/model-costs.js`. The live OpenRouter catalog is what a
 turn is priced with; the table only feeds estimates when no catalog is at
 hand.
 
+## Which CLI runs each OpenRouter model (#3296)
+
+An OpenRouter model used to mean the Codex CLI: `codex_openrouter` was the
+only way any OpenRouter model ran. #3296 reported that GLM 5.3 Flash does
+better in Claude Code, while DeepSeek v4.1 Flash does better in Codex, and
+asked for the harness to follow the model. So the platform now picks the CLI
+per model from `OPENROUTER_MODEL_HARNESSES` (`src/config.js`
+`openrouterModelHarnesses`):
+
+| Model | Harness |
+|---|---|
+| `z-ai/glm-5.3-flash` | Claude Code |
+| `deepseek/deepseek-v4.1-flash` | Codex |
+| anything not listed | Codex |
+
+Users do not choose it. The model picker marks the Claude Code models, and the
+OpenRouter settings description says what that mark means. The transcript
+names the CLI that actually ran. That description is written at runtime by
+`settings.js` `_normalizeOpenRouterCopy()`, over the static
+`sections/openrouter.tsx` markup, so an edit to one is an edit to both; a test
+holds them equal.
+
+What stays the same for either harness, because `codex_openrouter` is still
+the session's backend id and it identifies the OpenRouter venue: the user's
+key (included or personal), the `agent_turns` ledger and its cost estimate,
+the narrow capability tokens (push-only for a build, no general worker token,
+no production-debug grant), the model catalog, and the inline conventions
+block in the prompt.
+
+How a Claude Code turn reaches OpenRouter. `run-cc.sh` runs with
+`AGENT_PROVIDER=openrouter` and wraps `claude` in
+`worker/claude-openrouter-request.js`. That wrapper is the counterpart of
+Codex's request adapter: a listener on 127.0.0.1 for one invocation, holding
+that turn's key, forwarding Anthropic Messages requests to OpenRouter's
+`/messages` endpoint. There is still no platform relay. Claude Code gets the
+listener's address and a random local token, never the key. The wrapper
+scrubs the key and the Homeroom grant from everything Claude prints, and
+`run-cc.sh` removes the key from its own environment before git, the in-loop
+database, the commit or the push run. Every request is pinned to the
+session's model, because Claude Code's background calls ask for a Haiku
+alias that would bill a different model. Replies are capped at the catalog's
+output limit. Images and PDFs in a request are replaced with a short note: the
+platform runs OpenRouter models on text only, as Codex's model catalog does,
+and a text-only model would refuse the whole request.
+
+The thinking level still applies. The adapter sends the session's reasoning
+effort as the Messages API's `output_config.effort`. OpenRouter documents that
+field as its unified `reasoning.effort`, translated to each model's own levels,
+and ranks it above Claude Code's `thinking`. A `thinking: disabled` would
+still switch reasoning off for a non-Anthropic model, so the adapter drops it
+when an effort is set.
+
+Web search works, which it never did on this venue: Codex's OpenRouter model
+catalog declares `supports_search_tool: false`. Claude Code's WebSearch sends
+Anthropic's server-side search tool (`web_search_20250305`), which only
+Anthropic runs. The adapter swaps it for OpenRouter's `openrouter:web_search`
+server tool, which the Messages API accepts for any model. OpenRouter runs
+the search with the model's native search, or with Exa (about $0.007 a search,
+billed to the key) for models without one, GLM included. Searches are capped
+at 5 per WebSearch call. Claude Code sends that tool only on WebSearch's own
+sub-request, so a reply Claude Code cannot read fails that search, not the
+turn. OpenRouter's server tools are in beta.
+
+Known differences from a Codex turn:
+
+- **Usage covers the run, not the thread.** Claude Code reports totals for one
+  invocation, and Anthropic's `input_tokens` excludes cache reads and writes.
+  The ledger adds the three and skips the thread-delta step Codex's cumulative
+  totals need.
+- **Search fees are not in the ledger estimate.** The estimate prices tokens
+  from the catalog. OpenRouter bills each web search separately, and the key's
+  own limit still covers it.
+- **Scout and build only.** The dev chat and agent chats dispatch through the
+  same scout and build, so both use the map. Visual evidence and the Homeroom
+  bot still run Codex. They call the runtime without `harness: 'auto'`, and a
+  thread written by the other CLI is not resumed there.
+
+Changing the map mid-conversation is safe. The ledger records which CLI wrote
+each thread (`agent_turns.metadata.harness`). A turn whose harness differs
+from its saved thread's starts a fresh agent context instead of asking one
+CLI to resume the other's thread. The branch and the conversation are kept.
+
 ## Design guidance for every coding agent (#2817)
 
 Every build carries `src/prompts/design-guidance.md`, and every scout writes

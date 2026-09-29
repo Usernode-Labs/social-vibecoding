@@ -98,6 +98,8 @@ test('the authorization predicate requires BOTH stamps (or ownership)', async ()
     await get(server, '/api/sessions/5/transcript');
     const q = capturedQueries.find((c) => /transcript_shared_at/.test(c.sql) && /JOIN users u/.test(c.sql));
     assert.ok(q, 'transcript header query was issued');
+    assert.match(q.sql, /LEFT JOIN users u/, 'deleting the author must not hide a shared transcript');
+    assert.match(q.sql, /COALESCE\(u\.username, 'Deleted user'\)/);
     assert.match(q.sql, /cs\.shared_at IS NOT NULL/);
     assert.match(q.sql, /cs\.transcript_shared_at IS NOT NULL/);
     assert.match(q.sql, /cs\.is_headless = FALSE/);

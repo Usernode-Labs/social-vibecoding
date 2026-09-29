@@ -15,6 +15,17 @@ test('Kubernetes platform image contains PostgreSQL tools but no Docker CLI', ()
     'runAsNonRoot cannot verify a symbolic image user before startup');
 });
 
+test('Kubernetes hosted-app evidence image declares a numeric non-root user', () => {
+  const dockerfile = read('capture/Dockerfile');
+  // The evidence fixture deliberately runs this image through
+  // deployApplication(), whose pod security context sets runAsNonRoot without
+  // runAsUser. Kubernetes cannot resolve a symbolic image user such as
+  // `node` before startup, even when that account is non-root in /etc/passwd.
+  assert.match(dockerfile, /^USER 1000:1000$/m);
+  assert.doesNotMatch(dockerfile, /^USER node$/m,
+    'the hosted-app fixture must satisfy the same numeric-user contract as ordinary app images');
+});
+
 test('Kubernetes platform image builds and contains the generated shell assets', () => {
   const dockerfile = read('Dockerfile.kubernetes');
   assert.match(dockerfile, /FROM node:22-alpine AS asset-deps/);
@@ -100,6 +111,25 @@ test('Kubernetes platform rollout preserves availability and singleton ownership
   assert.doesNotMatch(platform, /type: Recreate/);
 });
 
+test('Kubernetes gives the platform a heap ceiling that fits its memory limit', () => {
+  // Node's default heap stops at about 1.5 GB whatever limits.memory says; on
+  // 2026-09-25 the platform crash-looped on heap exhaustion with half of its
+  // 3Gi container unused.
+  const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  assert.match(platform,
+    /\{\{- with \.Values\.platform\.nodeOptions \}\}\n\s+- \{name: NODE_OPTIONS, value: \{\{ \. \| quote \}\}\}\n\s+\{\{- end \}\}/,
+    'the platform container gets NODE_OPTIONS only when a value is set');
+  const heap = /nodeOptions: "--max-old-space-size=(\d+)"/.exec(values);
+  assert.ok(heap, 'the chart sets a default heap ceiling');
+  const limit = /limits:\n\s+cpu: "4"\n\s+memory: (\d+)Gi/.exec(values);
+  assert.ok(limit, 'the platform memory limit is in Gi');
+  const heapMb = Number(heap[1]);
+  const limitMb = Number(limit[1]) * 1024;
+  assert.ok(heapMb > 1536, 'above Node\'s default ceiling, or it changes nothing');
+  assert.ok(heapMb <= limitMb * 0.8, 'leaves room outside the heap for buffers, code and stacks');
+});
+
 test('Kubernetes enables visual evidence by default with one explicit kill switch', () => {
   const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
@@ -147,6 +177,19 @@ test('Kubernetes workflow resolves all three images before publishing a release'
   assert.match(workerDockerfile, /@anthropic-ai\/claude-code@\$\{CLAUDE_CODE_VERSION\}/);
 });
 
+test('Kubernetes workflow retains queued releases and only publishes the current branch tip', () => {
+  const workflow = read('.github/workflows/build-kubernetes-images.yml');
+  const release = workflow.slice(workflow.indexOf('\n  release:\n'));
+  assert.match(workflow,
+    /concurrency:\n  group: kubernetes-images-\$\{\{ github\.ref \}\}\n  cancel-in-progress: false\n(?:  #[^\n]*\n)*  queue: max/,
+    'a later waiting push must not cancel an earlier merge before it gets a release run');
+  assert.match(release, /git ls-remote --exit-code origin "\$GITHUB_REF"/);
+  assert.match(release, /if \[ "\$current_sha" = "\$GITHUB_SHA" \]; then/);
+  for (const step of ['Log in to GHCR for Helm', 'Publish OCI Helm release', 'Record atomic release']) {
+    assert.match(release, new RegExp(`- name: ${step}\\n        if: steps\\.current_head\\.outputs\\.publish == 'true'`));
+  }
+});
+
 test('Kubernetes workflow asks Argo CD to refresh on publish, and can never fail the release doing so', () => {
   // The step exists to remove Argo's up-to-three-minute reconcile wait from
   // the merge-to-running gap (#2545). Its safety properties matter more than
@@ -163,7 +206,7 @@ test('Kubernetes workflow asks Argo CD to refresh on publish, and can never fail
   const body = step.slice(0, step.indexOf('- name: Record atomic release'));
   assert.match(body, /continue-on-error: true/,
     'a failed refresh must not turn a published release red — release-watch would call it a stall');
-  assert.match(body, /if: steps\.chart\.outputs\.release_channel == 'stable' && env\.ARGOCD_REFRESH_TOKEN != ''/,
+  assert.match(body, /if: steps\.current_head\.outputs\.publish == 'true' && steps\.chart\.outputs\.release_channel == 'stable' && env\.ARGOCD_REFRESH_TOKEN != ''/,
     'inert until the infra side provisions the token, and only for the releases Argo tracks');
   assert.match(release, /^    env:\n(?:      #.*\n)*      ARGOCD_REFRESH_TOKEN: \$\{\{ secrets\.ARGOCD_REFRESH_TOKEN \}\}/m,
     'the secret is mapped through job env because a step `if:` cannot read `secrets`');

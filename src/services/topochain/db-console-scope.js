@@ -120,6 +120,10 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'cli_auth_rate_limits',
   'mcp_clients',
   'mcp_auth_audit_events',
+  // Delegated connector grants (#2779): who holds a grant, of which kind, for
+  // which change, and until when. The bearer itself lives in mcp_tokens,
+  // whose hash and hint stay masked.
+  'mcp_delegations',
   'user_agent_files',
   'moderation_cases',
   'moderation_reports',
@@ -144,6 +148,11 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'chat_session_spec_conversation_shares',
   'user_app_blocks',
   'user_blocks',
+  // Mutual friends (#2386): private relationships, like user_blocks beside
+  // them, and no credential among their columns.
+  'friendships',
+  'friend_request_sends',
+  'friend_request_declines',
   'conversation_message_reports',
   'app_reports',
   'chat_message_reports',
@@ -184,6 +193,11 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   sessions: ['token'],
   // Redeemable invite codes.
   activation_codes: ['code'],
+  // Invite links (services/community-invites.js): a live token is a way
+  // into a project, a private group's included. Who made it, its limits and
+  // its use count stay readable, which is what a "my link did not work"
+  // question needs.
+  community_invites: ['token'],
   // Encrypted app secrets + the last-4 hint that narrows a guess.
   app_secrets: ['value_enc', 'value_last4'],
   platform_env_values: ['value_enc', 'value_last4'],
@@ -246,6 +260,10 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // exact action payload. This mirrors debug-access.js explicitly so adding a
   // new whole-table denial always has a reviewed console-side decision.
   global_chat_action_tokens: ['token_hash', 'input_hash', 'normalized_input'],
+  // The agent-session Mayor's confirmation cards (#2779): the lifecycle
+  // columns stay readable for diagnosis; the sealed input and its
+  // fingerprint do not.
+  agent_session_actions: ['input_hash', 'sealed_input'],
 };
 
 // Columns denied per table: the prod-debug list, the topochain export's

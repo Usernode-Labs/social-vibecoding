@@ -21,6 +21,10 @@ const {
 const log = require('../services/logger');
 const usernames = require('../services/usernames');
 const socialIdentity = require('../services/social-identity');
+const friends = require('../services/friends');
+const { optionalSessionAuth } = require('../middleware/topochain-auth');
+
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 const REPORT_REASONS = new Set([
   'impersonation',
@@ -104,14 +108,36 @@ function publicProfileRoutes(config) {
   // Exact lookup only: there is deliberately no profile directory or search
   // endpoint. Missing, unpublished and moderation-disabled profiles return
   // the same response so this surface cannot reveal hidden account state.
+  //
+  // #2386: a SIGNED-IN viewer looking at someone else also gets `friendship`
+  // — { userId, state }, their OWN relationship with this person and nothing
+  // about anybody else's — which is what the page's friend button draws. This
+  // route sits under the anonymous /api/public prefix, so authMiddleware never
+  // runs for it; optionalSessionAuth reads the cookie if there is one and
+  // otherwise leaves the request anonymous, and an anonymous read is exactly
+  // what it always was. NO_STORE already keeps the per-viewer answer out of
+  // every shared cache.
   router.get(
     '/api/public/profiles/:username',
     publicProfileReadLimiter,
+    optionalSessionAuth(config),
     async (req, res) => {
       res.set('Cache-Control', NO_STORE);
       const username = profileUsername(req.params.username);
       if (!username) return res.status(404).json({ error: 'Profile not found' });
       try {
+        // Staging ?demo=1: `friendships` is staging:private, so a preview
+        // needs a person in each state to show the button at all
+        // (services/friends.js DEMO_PEOPLE). The relationship rides only for
+        // a signed-in viewer, exactly as the real field does.
+        const demo = IS_STAGING && req.query.demo === '1' ? friends.demoProfile(username) : null;
+        if (demo) {
+          return res.json({
+            profile: demo.profile,
+            ...(req.user ? { friendship: demo.friendship } : {}),
+            demo: true,
+          });
+        }
         // Resolved through the retired-handle ledger so a profile
         // link shared before the owner renamed still lands. `moved` carries
         // the canonical handle and the client rewrites its address; the body
@@ -140,9 +166,13 @@ function publicProfileRoutes(config) {
           return res.status(404).json({ error: 'Profile not found' });
         }
         const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, rows[0].id);
+        const friendship = req.user
+          ? await friends.relationshipFor(pool, req.user.id, rows[0].id)
+          : null;
         return res.json({
           profile: publicShape(rows[0], verifiedLinks),
           ...(resolved.retired ? { moved: { from: username, to: resolved.username } } : {}),
+          ...(friendship ? { friendship } : {}),
         });
       } catch (err) {
         log.error('profiles', 'Public profile read failed', { message: err.message });

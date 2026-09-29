@@ -79,15 +79,27 @@ export function toneOf(hex) {
   return l < DARK_LUMINANCE ? 'dark' : 'light';
 }
 
+/** The router's id for the screen a running app is shown on. */
+export const APP_SCREEN = 'app-view';
+
 /**
  * The tone the shell should show for a frame-store state: the mounted app's
  * page colour, but only while that app is actually ON SCREEN. A parked frame
  * (the Dev tab over it) and an empty store both answer null, so the strip
  * goes back to the shell's own theme the moment the app is not what is
  * under it.
+ *
+ * `screen` is the root the router has revealed (the nav store's `screen`).
+ * The frame's `active` flag alone does not say the app is on screen: only the
+ * ✕ back to Home retires the frame, and every other way out (a tab, the rail,
+ * New change from the app's menu) hides #app-view with the frame still
+ * active, so a dark app's tone stayed on <html> and the next screen drew the
+ * dark wallpaper under the light shell's panes. Leaving the argument out
+ * keeps the frame's answer alone, for callers that have no router.
  */
-export function toneForState(state) {
+export function toneForState(state, screen) {
   if (!state || !state.slug || !state.active) return null;
+  if (screen !== undefined && screen !== APP_SCREEN) return null;
   return toneOf(state.background);
 }
 
@@ -107,10 +119,12 @@ export function toneForState(state) {
  * the listener mount.ts registers on it passes `force` to put the app's
  * tone back on top.
  *
+ * `screen` is passed through to `toneForState`.
+ *
  * Returns the tone written, or null.
  */
-export function publishAppTone(doc, state, win, force = false) {
-  const tone = toneForState(state);
+export function publishAppTone(doc, state, win, force = false, screen) {
+  const tone = toneForState(state, screen);
   const root = doc && doc.documentElement;
   if (!root) return tone;
   const current = root.getAttribute(APP_TONE_ATTR);

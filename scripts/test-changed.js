@@ -36,6 +36,20 @@
 // the suites naming the module and nothing more — when one of those is
 // shared, run `npm test`.
 //
+// ── The guards that no change names ─────────────────────────────────────
+//
+// A few suites are rules over a whole tree rather than pins on a file: no
+// raw <svg> in a feature file, no unpaired zinc-400 ink, no em dash in copy,
+// the Global Chat route inventory, and the like. They walk a directory, so
+// they name no file and the mapping above never selects them, and a change
+// that breaks one found out only when Homeroom ran everything. Such a suite
+// opts in with a line of its own, at the start of a line:
+//
+//   // test:changed: always (<what it walks>)
+//
+// and every run with a change adds it. Keep it to fast guards: the ones
+// marked today take about five seconds together.
+//
 // The command is the `test` script from package.json with the selected
 // files in place of its glob, so the two cannot drift: same preload, same
 // flags, same timeout.
@@ -243,6 +257,12 @@ function selectSuites(changed, suiteTexts, importers = new Map()) {
   return { suites: [...bySuite.keys()].sort(), byFile, unmatched };
 }
 
+// The suites that run on every change, whatever it touched (see the header).
+const ALWAYS_MARKER = /^\/\/ test:changed: always\b/m;
+function alwaysSuites(suiteTexts) {
+  return [...suiteTexts].filter(([, text]) => ALWAYS_MARKER.test(text)).map(([suite]) => suite).sort();
+}
+
 // The `test` script with the selected suites in place of its glob.
 function testCommand(packageJson, suites) {
   const script = packageJson && packageJson.scripts && packageJson.scripts.test;
@@ -293,12 +313,18 @@ function main(argv = process.argv.slice(2)) {
       + '  if it is a screen, the test that should pin it does not exist yet:\n');
     for (const file of selection.unmatched) process.stdout.write(`    ${file}\n`);
   }
-  if (!selection.suites.length) {
+  const guards = alwaysSuites(suiteTexts).filter((suite) => !selection.suites.includes(suite));
+  if (guards.length) {
+    process.stdout.write(`  + ${guards.length} tree-wide guard suite${guards.length === 1 ? '' : 's'}, run on every change:\n`);
+    for (const suite of guards) process.stdout.write(`    ${suite}\n`);
+  }
+  const selected = [...selection.suites, ...guards].sort();
+  if (!selected.length) {
     process.stdout.write('test:changed: nothing to run — no suite reads any of the changed files.\n');
     return 0;
   }
-  const command = testCommand(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')), selection.suites);
-  process.stdout.write(`Running ${selection.suites.length} of ${suites.length} suites:\n  ${command.join(' ')}\n`);
+  const command = testCommand(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')), selected);
+  process.stdout.write(`Running ${selected.length} of ${suites.length} suites:\n  ${command.join(' ')}\n`);
   if (opts.list) return 0;
   const [bin, ...args] = command;
   const run = spawnSync(bin === 'node' ? process.execPath : bin, args, { cwd: ROOT, stdio: 'inherit' });
@@ -306,7 +332,7 @@ function main(argv = process.argv.slice(2)) {
 }
 
 module.exports = {
-  parseArgs, namePatterns, selectSuites, importersOf, importedPaths, testCommand, changedFiles, resolveBase, main,
+  parseArgs, namePatterns, selectSuites, alwaysSuites, importersOf, importedPaths, testCommand, changedFiles, resolveBase, main,
   SUITE_GLOB, IMPORT_ROOTS, DEFAULT_BASES,
 };
 

@@ -245,4 +245,19 @@ test('the banners: still good, this week, the quoted line, the named merge', () 
     title: '"Fix login redirect loop" merged · MyPage',
     body: 'The vote carried. Your change is live',
   });
+  // #2897: the platform's own merge is released after it, so its banner
+  // promises the change rather than claiming it is already running.
+  assert.deepEqual(banner('pr_merged', { ...CONTEXT, appSelfHosted: true }), {
+    title: '"Fix login redirect loop" merged · MyPage',
+    body: 'The vote carried. Your change will be live in a few minutes',
+  });
+  assert.deepEqual(banner('pr_merged', { ...CONTEXT, appSelfHosted: true, detail: 'forced' }), {
+    title: '"Fix login redirect loop" merged · MyPage',
+    body: 'An admin merged it. Your change will be live in a few minutes',
+  });
+  assert.equal(
+    banner('pr_merged', { ...CONTEXT, appSelfHosted: true, detail: 'Backed by alice and bob.' }).body,
+    'The vote carried. Backed by alice and bob.',
+    'the named merge makes no deploy claim either way',
+  );
 });

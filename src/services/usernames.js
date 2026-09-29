@@ -23,12 +23,15 @@ const crypto = require('crypto');
 // `resolveHandle` here, which answers from `users` first and the retired
 // ledger second.
 //
-// WHAT THIS MODULE DELIBERATELY DOES NOT DO: tighten registration.
-// POST /api/auth/register still accepts any non-empty unique string, as it
-// always has. `isValidUsername` below is stricter than the handles already
-// in the table, and applying it retroactively would be a breaking change to
-// a public endpoint that this feature has no business making. It gates the
-// NEW name on a rename, nothing else.
+// WHAT THIS MODULE DELIBERATELY DOES NOT DO: re-check handles that exist.
+// `validateUsername` below is stricter than the handles already in the
+// table (hyphenated seeds, legacy registrations), and applying it
+// retroactively would lock people out of names they hold. It gates a NEW
+// name only: a rename, a first choice, and (since QA 2026-09-24 Q11)
+// POST /api/auth/register, which used to accept any non-empty unique
+// string. That was the door #1377's unbranchable handle came through, and
+// it left the sign-up form with looser rules than the rename sheet, so a
+// person could register a name they could never rename back into.
 
 // ─── What a chosen handle may be ───────────────────────────────────────
 //
@@ -202,6 +205,14 @@ async function suggestAvailableUsernameFromEmail(db, rawEmail, userId = null) {
  */
 function placeholderUsername() {
   return `member_${crypto.randomBytes(9).toString('hex')}`;
+}
+
+// Is `name` exactly the shape placeholderUsername() mints? A placeholder is
+// a stand-in, never a suggestion: offering it back in a first-run field
+// would ask the person to keep a random string as their name.
+const PLACEHOLDER_RE = /^member_[0-9a-f]{18}$/;
+function isPlaceholderUsername(name) {
+  return typeof name === 'string' && PLACEHOLDER_RE.test(name);
 }
 
 /**
@@ -455,6 +466,7 @@ module.exports = {
   suggestUsernameFromEmail,
   suggestAvailableUsernameFromEmail,
   placeholderUsername,
+  isPlaceholderUsername,
   chooseFirstUsername,
   checkAvailability,
   checkCooldown,

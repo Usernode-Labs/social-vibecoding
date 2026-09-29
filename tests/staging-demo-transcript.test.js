@@ -49,7 +49,7 @@ require.cache[wsId] = {
   exports: { getReactionsForMessages: async () => ({}) },
 };
 
-const { chatRoutes, stagingMockGroupChat, stagingDemoTranscript } = require('../src/routes/chat');
+const { chatRoutes, stagingMockGroupChat, stagingMockGeneralStream, stagingDemoTranscript } = require('../src/routes/chat');
 
 const DEMO_ISSUE = { type: 'issue', ref: 900008 };
 const tester = (id, extra = {}) => ({
@@ -84,8 +84,16 @@ test('a real row sharing a mock id cannot displace the fixture row', () => {
 test('every other thread keeps the empty-transcript rule: a genuine transcript wins', () => {
   for (const thread of [{ type: 'issue', ref: 900001 }, { type: 'issue', ref: 42 }, { type: 'session', ref: 900008 }, null]) {
     assert.equal(stagingDemoTranscript(1, thread, [tester(5)]), null, JSON.stringify(thread));
-    assert.deepEqual(ids(stagingDemoTranscript(1, thread, [])), ids(stagingMockGroupChat(1, thread)));
+    // #2387 follow-up: the general stream's mock also carries its reply
+    // thread's replies, where they landed (straight after their root).
+    const mock = thread ? stagingMockGroupChat(1, thread) : stagingMockGeneralStream(1);
+    assert.deepEqual(ids(stagingDemoTranscript(1, thread, [])), ids(mock));
   }
+  const general = ids(stagingMockGeneralStream(1));
+  const root = general.indexOf(9902003);
+  assert.deepEqual(general.slice(root, root + 4), [9902003, 9902021, 9902022, 9902023]);
+  assert.ok(stagingMockGeneralStream(1).filter((m) => m.thread_type === 'message')
+    .every((m) => m.thread_root && m.thread_root.id === 9902003));
 });
 
 async function withServer(fn) {

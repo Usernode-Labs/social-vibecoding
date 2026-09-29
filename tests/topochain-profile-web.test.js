@@ -228,15 +228,21 @@ test('the signed-out branch is checked before the generic error branch', () => {
 test('the identity card renders picture, name and the way in to editing', () => {
   const fn = profileViewTsx.slice(
     profileViewTsx.indexOf('function IdentityCard('),
-    profileViewTsx.indexOf('function PublicControls(')
+    profileViewTsx.indexOf('function StatCards(')
   );
   assert.ok(fn.length, 'IdentityCard must exist');
   assert.match(fn, /IdentityAvatar/, 'the picture, or the initial-in-a-circle fallback');
   assert.match(fn, /profile-edit-btn/);
   assert.match(fn, /Profile\.showEditSheet\(\)/);
-  const chips = profileStoreJs.slice(profileStoreJs.indexOf('export function identityView'));
-  assert.match(chips, /Your builder profile/);
-  assert.match(chips, /#leaderboard\/users\//, 'the builder-profile link goes to the kudos page');
+  assert.match(fn, /identity\.sub/, 'the prototype card\'s one line of facts under the name');
+  // The builder-profile chip left the card: the viewer's proposed PRs are
+  // "See all" over Your contributions now, the same #leaderboard/users/<you>.
+  const identity = profileStoreJs.slice(profileStoreJs.indexOf('export function identityView'),
+    profileStoreJs.indexOf('export function statsView'));
+  assert.doesNotMatch(identity, /Your builder profile/);
+  const contributions = profileStoreJs.slice(profileStoreJs.indexOf('export function contributionsView'));
+  assert.match(contributions, /seeAllHref: username \? `#leaderboard\/users\/\$\{encodeURIComponent\(username\)\}`/,
+    'the builder page is where "See all" goes');
 });
 
 test('the bio is a text node, never innerHTML', () => {
@@ -489,20 +495,27 @@ test('field-level server errors keep the sheet open', () => {
   assert.match(profileSheetTsx, /if \(result\.ok\) return;/);
 });
 
-test('the completed list is the viewer’s own, and every row links out', () => {
+test('Me counts the viewer’s OWN completions, and its contributions link out', () => {
   assert.doesNotMatch(profileJs, /challenges\.filter\(\(c\) => c\.completed\)/,
     'c.completed is an ORGANISER flag — that filter showed 28 of production’s '
     + '34 live challenges to every signed-in person as their own completions');
-  assert.match(profileJs, /\/api\/me\/challenges\/completed/);
-  const shaping = profileStoreJs.slice(profileStoreJs.indexOf('export function completedView'));
-  assert.match(shaping, /href: '#leaderboard\/challenges\/'/);
+  // The prototype's Me counts completions on a stat card (from
+  // GET /api/me/summary, the same per-user done rule) instead of listing
+  // them; the list is the Challenges tab, where each one is a card.
+  assert.match(profileJs, /\/api\/me\/summary/);
+  const stats = profileStoreJs.slice(profileStoreJs.indexOf('export function statsView'),
+    profileStoreJs.indexOf('export function moreRowsView'));
+  assert.match(stats, /summary\.challenges && summary\.challenges\.done/);
+  // Every contribution is a real anchor to its proposal's page.
+  const shaping = profileStoreJs.slice(profileStoreJs.indexOf('export function contributionsView'));
+  assert.match(shaping, /href: `#app\/\$\{encodeURIComponent\(c\.appSlug\)\}\/dev\/proposals\/\$\{Number\(c\.sessionId\)\}`/);
   const fn = profileViewTsx.slice(
-    profileViewTsx.indexOf('function Completed('),
-    profileViewTsx.indexOf('function TokenCard(')
+    profileViewTsx.indexOf('function Contributions('),
+    profileViewTsx.indexOf('function ProfileSkeleton(')
   );
-  assert.match(fn, /See all challenges/);
-  assert.match(fn, /No completed challenges yet/);
-  assert.match(fn, /Browse challenges/, 'the empty state offers a way forward');
+  assert.match(fn, /as="a"/);
+  assert.match(fn, /href=\{row\.href\}/);
+  assert.match(fn, /Nothing merged yet/, 'an empty list says so, and why');
 });
 
 test('the stale "organiser flag" comments are gone', () => {
@@ -562,11 +575,14 @@ test('the profile checks assert on the changed screen, not on "/"', () => {
       'the self-app is hash-routed — a bare pathname boots the home feed');
     assert.ok(t.expectSelector, `${t.name} must assert on a real element`);
   }
-  // The screen check proves BOTH halves of the change in one slot: the
-  // corrected completed list (the selector) and the identity card above it
-  // (the text, which only the card renders).
-  const screen = mine.find((t) => t.path === '/#profile');
-  assert.match(screen.expectSelector, /data-completed-challenge/);
+  // The screen check proves the card and what now follows it in one slot:
+  // the identity card with its Edit button, then the prototype's three stat
+  // cards (the selector), and the card's own words (the text, which only the
+  // card renders). It rides ?demo=1 so a staging clone's empty
+  // chat_sessions still draws the lower half of the screen.
+  const screen = mine.find((t) => t.path === '/?demo=1#profile');
+  assert.ok(screen, 'the Me screen check is one of the two');
+  assert.match(screen.expectSelector, /#profile-identity-card:has\(#profile-edit-btn\) \+ #profile-stats/);
   assert.equal(screen.expectText, 'Edit profile');
 });
 
@@ -607,7 +623,12 @@ test('the profile no longer fetches the season challenge list via the old route'
   assert.doesNotMatch(body, /fetchJson\('\/challenges-api\/seasons/,
     'no seasons round before the real requests');
   assert.match(profileJs, /\/challenges-api\/me\/ranking\?season_id=active/);
-  assert.match(profileJs, /\/challenges-api\/me\/breakdown\?season_id=active/);
-  assert.match(profileJs, /include_activity=0&include_progress=0/,
-    'the breakdown skips the activity and progress lists this screen never draws');
+  // The breakdown left with the points it breaks down: the Challenges tab's
+  // standing card reads it (features/leaderboard/my-standing.js), with the
+  // same two trims.
+  assert.doesNotMatch(body, /\/challenges-api\/me\/breakdown/, 'Me draws no breakdown any more');
+  const standing = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/leaderboard/my-standing.js'), 'utf8');
+  assert.match(standing, /\/challenges-api\/me\/breakdown\?season_id=active&include_activity=0&include_progress=0/,
+    'the breakdown skips the activity and progress lists nothing draws');
 });

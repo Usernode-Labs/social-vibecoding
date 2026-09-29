@@ -56,6 +56,18 @@
 const UNGATED_CAPABILITIES = Object.freeze(['clipboard-write', 'pointer-lock']);
 
 /**
+ * Ungated capabilities that are delegated by the frame's SANDBOX token, not
+ * by `allow` (QA 2026-09-24 Q35). No browser recognises `pointer-lock` as a
+ * Permissions Policy feature: writing it into `allow` delegated nothing and
+ * made Chrome log "Unrecognized feature: 'pointer-lock'." on every page. The
+ * App-tab frame's `allow-pointer-lock` sandbox token is what grants it, and
+ * the unsandboxed landing and staging frames never restricted it. It stays
+ * ungated (an app asking about it is told "granted"); it only leaves the
+ * attribute.
+ */
+const SANDBOX_DELEGATED = Object.freeze(['pointer-lock']);
+
+/**
  * The gated capabilities, in prompt-ordering.
  *
  * `name` is the Permissions Policy token, so it goes into `allow` verbatim.
@@ -163,11 +175,15 @@ function normalizeCapabilities(list) {
  * capability name reaches a live DOM attribute.
  */
 function allowAttribute(granted) {
-  return UNGATED_CAPABILITIES.concat(normalizeCapabilities(granted)).join('; ');
+  return UNGATED_CAPABILITIES
+    .filter((name) => !SANDBOX_DELEGATED.includes(name))
+    .concat(normalizeCapabilities(granted))
+    .join('; ');
 }
 
 module.exports = {
   UNGATED_CAPABILITIES,
+  SANDBOX_DELEGATED,
   GATED_CAPABILITIES,
   GATED_NAMES,
   isGatedCapability,

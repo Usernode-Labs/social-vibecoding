@@ -127,13 +127,21 @@ export interface KitAdoption {
   /**
    * Put the node back and drop the adopted class, without telling the kit.
    *
-   * Idempotent, and separate from `dismiss()` on purpose: a caller closing
-   * the surface itself wants the node back BEFORE the kit runs its exit
-   * animation over an empty shell.
+   * Idempotent, and separate from `dismiss()` on purpose. Calling it before
+   * `dismiss()` makes the kit run its exit over an EMPTY shell — the card
+   * vanishes on the spot and a blank rounded box fades out where it was —
+   * so a component that is unmounting uses `release()` instead, and one that
+   * stays mounted calls `dismiss()` alone and lets `onDismiss` restore.
    */
   restore(): void;
   /** Ask the kit to tear the surface down. */
   dismiss(): void;
+  /**
+   * Close from a component that is unmounting: the node must be home before
+   * React removes the tree around it, so it comes back NOW, and an inert
+   * snapshot of it takes its place in the kit's shell to play the exit.
+   */
+  release(): void;
 }
 
 /**
@@ -268,7 +276,66 @@ export function adoptKitSurface(options: AdoptKitSurfaceOptions): KitAdoption | 
       releaseFocus(contentEl, handle.el);
       handle.dismiss();
     },
+    release: () => {
+      releaseFocus(contentEl, handle.el);
+      if (!undone) leaveSnapshot(contentEl);
+      undo();
+      handle.dismiss();
+    },
   };
+}
+
+/**
+ * Leave an inert copy of `el` in its place, for the kit's exit to animate.
+ *
+ * The copy is what the viewer last saw: form values, scroll offsets and
+ * canvas pixels are carried over, since a clone starts without them. It must
+ * not act like the original either: ids and names come off (a cloned radio
+ * would join the real group and uncheck it; a duplicate id would answer
+ * `getElementById` for the next 260ms), a frame keeps its box but loads
+ * nothing, and the copy is `inert` and hidden from assistive tech. The kit
+ * removes its shell, copy and all, when the exit ends.
+ *
+ * Purely cosmetic, so it never throws: without a copy the shell exits empty.
+ */
+function leaveSnapshot(el: HTMLElement): void {
+  const parent = el.parentNode;
+  if (!parent) return;
+  try {
+    const copy = el.cloneNode(true) as HTMLElement;
+    const from = [el, ...Array.from(el.querySelectorAll<HTMLElement>('*'))];
+    const to = [copy, ...Array.from(copy.querySelectorAll<HTMLElement>('*'))];
+    to.forEach((node, i) => {
+      const src = from[i];
+      node.removeAttribute('id');
+      node.removeAttribute('name');
+      node.removeAttribute('autofocus');
+      if (node instanceof HTMLIFrameElement) {
+        node.removeAttribute('src');
+        node.removeAttribute('srcdoc');
+      } else if (
+        (node instanceof HTMLTextAreaElement && src instanceof HTMLTextAreaElement)
+        || (node instanceof HTMLSelectElement && src instanceof HTMLSelectElement)
+      ) {
+        node.value = src.value;
+      } else if (node instanceof HTMLCanvasElement && src instanceof HTMLCanvasElement) {
+        node.width = src.width;
+        node.height = src.height;
+        try { node.getContext('2d')?.drawImage(src, 0, 0); } catch { /* tainted: left blank */ }
+      }
+    });
+    copy.setAttribute('inert', '');
+    copy.setAttribute('aria-hidden', 'true');
+    parent.insertBefore(copy, el);
+    // Offsets exist only once the copy is laid out.
+    to.forEach((node, i) => {
+      const src = from[i];
+      if (src.scrollTop) node.scrollTop = src.scrollTop;
+      if (src.scrollLeft) node.scrollLeft = src.scrollLeft;
+    });
+  } catch {
+    /* a detached node or an engine without these APIs — exit without a copy */
+  }
 }
 
 /**

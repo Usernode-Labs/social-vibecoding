@@ -131,6 +131,30 @@ test('the base-commit check is always-on, not only in the proposal skill', () =>
   );
 });
 
+// The base-commit rule above is scoped to writing code, and a session that
+// only answers a question never reaches it: one read a fork 1044 commits
+// behind the canonical main and answered from it. So the freshness check is
+// its own section, first after the scope note, covering reads as well, and it
+// names the one command that settles it plus the hook that runs it.
+test('the freshness check covers reading, comes first, and names its command and hook', () => {
+  const guidance = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+  const heading = '## Check that this checkout is current before you read or write code';
+  assert.ok(guidance.includes(heading));
+  const headings = guidance.match(/^## .+$/gm);
+  assert.deepEqual(headings.slice(0, 3), [
+    '## Scope of this guidance',
+    heading,
+    '## Know your base commit and create its work branch before you write code',
+  ]);
+  assert.match(guidance, /before you \*read\* code to answer a question/);
+  assert.match(guidance, /git fetch https:\/\/github\.com\/Usernode-Labs\/social-vibecoding main/);
+  assert.match(guidance, /git merge-base --is-ancestor FETCH_HEAD HEAD/);
+  assert.match(guidance, /git show FETCH_HEAD:<path>/);
+  assert.match(guidance, /\.agents\/hooks\/upstream-drift\.js/);
+  assert.match(guidance, /SOCIAL_VIBECODING_DRIFT_CHECK=off/);
+  assert.match(guidance, /Silence is therefore not proof the checkout is current/);
+});
+
 test('shared Homeroom skills retain API safety and scope the hook UI to Codex CLI', () => {
   const api = readSkill('usernode-api');
   assert.match(api, /social-vibecoding codex setup/);

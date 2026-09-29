@@ -227,10 +227,13 @@ test('managed provisioning failures stop with an actionable stable error', async
   const { pool } = makePool({ prefRow: null, credRow: null });
   await assert.rejects(
     () => resolveDefaultAgentPreference(pool, 7, BASE_CONFIG),
+    // QA 2026-09-24: actionable for the PERSON, who cannot set a server
+    // variable; the variable's name stays in the server log.
     (err) => err instanceof AgentSelectionError
       && err.statusCode === 503
       && err.code === 'not_configured'
-      && /USERNODE_OPENROUTER_MANAGEMENT_API_KEY/.test(err.message),
+      && !/USERNODE_OPENROUTER_MANAGEMENT_API_KEY/.test(err.message)
+      && /Ask an admin to finish setting them up/.test(err.message),
   );
 });
 

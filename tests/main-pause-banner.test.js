@@ -111,11 +111,11 @@ test('the button resolves to the one resume path the per-card ledger uses', () =
 });
 
 test('the store is published from the promoted list on the server\'s admin rule', () => {
-  // mount.ts exposes the setter; AppView publishes from `mainCheck`, beside the
-  // locked notice — the same load, the same moment.
+  // mount.ts exposes the setter; AppView publishes from `mainCheck` on the
+  // same load, at the same moment.
   assert.match(MOUNT_SRC, /publishMainPause\(state\) \{\s*mainPauseStore\.set\(state\);/);
-  assert.match(APP_VIEW_SRC, /AppView\._renderLockedNotice\(\);\s*AppView\._renderMainPauseNotice\(\);/,
-    'published where the locked notice is, on every promoted-list load');
+  assert.match(APP_VIEW_SRC, /return;\n\s*\}\n\s*AppView\._renderMainPauseNotice\(\);/,
+    'published on every promoted-list load');
   const fn = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('_renderMainPauseNotice() {'));
   const body = fn.slice(0, fn.indexOf('\n  },'));
   assert.match(body, /publishMainPause\?\.\(\{/);

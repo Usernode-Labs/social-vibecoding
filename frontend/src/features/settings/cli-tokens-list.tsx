@@ -67,7 +67,7 @@ export function CliTokensListView({ phase, tokens }: CliTokensState) {
             {token.revocable ? (
               <button
                 type="button"
-                className="shrink-0 rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 transition-colors"
+                className="shrink-0 rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32"
                 onClick={(e) => controller()?._revokeCliToken?.(token.id, e.currentTarget)}
               >
                 Revoke

@@ -33,13 +33,20 @@
  *    stop working.
  *  - #settings-footer is physically RE-PARENTED between the two columns by
  *    Settings._syncFooter() (sidebar on desktop, under the level-1 menu on
- *    mobile). React must therefore never re-render it either: this subtree is
- *    static for the same reason the panes are. Since conversion 8 the move
- *    leaves a comment behind in the sidebar column (lib/kit-surface.ts's
- *    createPlaceholderHome, planted by ./mount.ts), so the slot React
- *    rendered the footer into stays open while the node is away — the same
- *    seam the dialog cards' lift uses, and the reason there is no portal
- *    here.
+ *    mobile). React must therefore never re-render it either: the footer
+ *    node itself and #settings-logout are static for the same reason the
+ *    panes are. Since conversion 8 the move leaves a comment behind in the
+ *    sidebar column (lib/kit-surface.ts's createPlaceholderHome, planted by
+ *    ./mount.ts), so the slot React rendered the footer into stays open while
+ *    the node is away — the same seam the dialog cards' lift uses, and the
+ *    reason there is no portal here.
+ *
+ *    ONE React-owned child lives inside it, above Log out: the account block
+ *    Me's Admin & moderation row and native wallet / node / staking rows
+ *    moved into (./account-rows.tsx). Updates inside a moved node are safe —
+ *    React inserts relative to the footer, a valid parent wherever it is —
+ *    and the block renders nothing until mounted, so the prerendered footer
+ *    is unchanged.
  *
  * max-w-5xl (not the admin console's full width): every section here is a form
  * column, none is a wide chart grid.
@@ -70,6 +77,7 @@ import { ensureSettings, prefetchSettings, settingsChunkStore } from './facade.j
 // been opened would never fire.
 import './terms-first-run.js';
 import { SettingsMobileMenu, SettingsNavDesktop } from './settings-nav';
+import { SettingsAccountRows } from './account-rows';
 
 interface SettingsChunkState {
   Sections: ComponentType | null;
@@ -143,6 +151,7 @@ export function SettingsScreen() {
                 survives the trip.
             */}
             <div id="settings-footer" className="mt-6 pt-2">
+              <SettingsAccountRows />
               <button
                 id="settings-logout"
                 className="w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"

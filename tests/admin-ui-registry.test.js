@@ -1,3 +1,4 @@
+// test:changed: always (frontend and public/js, for stock palettes and AdminUI misuse; scripts/test-changed.js)
 // tests/admin-ui-registry.test.js — static analysis: every AdminUI.<key>
 // reference across the admin modules resolves to a key defined in the
 // registry in admin-console.js, so a typo fails CI instead of silently

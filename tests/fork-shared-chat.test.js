@@ -177,15 +177,25 @@ test('400 when forking your OWN chat (that is what "Start a new change" is for)'
   server.close();
 });
 
-test('429 when the forker is at their per-user active-session cap', async () => {
+test('at the per-user cap a fork frees the forker\'s least recently used slot, and is refused only when none frees', async () => {
   poolQueryHandler = makeDispatcher({ userActiveCount: 3 });
+  const sessionLifecycle = require('../src/services/session-lifecycle');
+  const realFree = sessionLifecycle.freeUserSlot;
+  const asked = [];
+  sessionLifecycle.freeUserSlot = async (args) => { asked.push(args.userId); return { freed: false }; };
   const server = await startServer();
-  await withStubs(async () => {
-    const { res, body } = await post(server, '/api/sessions/5/fork');
-    assert.strictEqual(res.status, 429);
-    assert.match(body.error, /Pause or archive one first/);
-  });
-  server.close();
+  try {
+    await withStubs(async () => {
+      const { res, body } = await post(server, '/api/sessions/5/fork');
+      assert.strictEqual(res.status, 429);
+      assert.deepEqual(asked, [FORKER.id], 'the forker\'s own slot, never somebody else\'s');
+      assert.match(body.error, /busy finishing turns/);
+      assert.doesNotMatch(body.error, /Pause/, 'nobody is asked to pause anything');
+    });
+  } finally {
+    sessionLifecycle.freeUserSlot = realFree;
+    server.close();
+  }
 });
 
 test('429 when the platform is at the global session cap and no slot frees', async () => {

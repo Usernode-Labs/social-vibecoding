@@ -59,6 +59,8 @@ const {
   classifyCorners,
   solveRegistration,
   registerFromFrames,
+  classifyRegistrationFailure,
+  isTabCapture,
   markersStillVisible,
   displayMediaOptions,
   REGISTRATION_VEIL_ALPHA,
@@ -494,6 +496,94 @@ test('registerFromFrames: no frames at all reports that, not a locate failure', 
   assert.equal(solved.reason, 'No video frame available');
 });
 
+// ── Firefox window share on a Retina Mac ────────────────────────────
+// What Firefox hands over when you share its WINDOW on a 2x display: device
+// pixels, the page below a title bar + tab strip + toolbar band, and a
+// getSettings() with no displaySurface at all.
+
+const RETINA = { viewportW: 640, viewportH: 400, scale: 2, toolbarCss: 108 };
+function buildFirefoxWindowFrame({ withMarkers = true, seed = 3 } = {}) {
+  const { viewportW, viewportH, scale, toolbarCss } = RETINA;
+  const frameW = viewportW * scale + 2;
+  const frameH = (viewportH + toolbarCss) * scale;
+  const offsetX = 1;
+  const offsetY = toolbarCss * scale;
+  const frame = makeFrame(frameW, frameH, 18);        // the veiled page
+  fillRect(frame, 0, 0, frameW, offsetY, 236);        // light browser chrome
+  fillRect(frame, 520, 40, 700, 56, 255);             // the URL bar
+  fillRect(frame, 40, 120, 20, 20, 60);               // toolbar glyphs
+  fillRect(frame, 80, 120, 20, 20, 60);
+  const centers = markerCssCenters(viewportW, viewportH);
+  if (withMarkers) {
+    for (const key of ['tl', 'tr', 'bl', 'br']) {
+      const c = centers[key];
+      drawFinder(frame, c.x * scale + offsetX, c.y * scale + offsetY, MARKER.MODULE * scale);
+    }
+  }
+  addNoise(frame, 6, seed);
+  return { frame, centers, offsetX, offsetY };
+}
+
+test('isTabCapture: a share that does not report its surface is registered, not trusted', () => {
+  assert.equal(isTabCapture({ displaySurface: 'browser' }), true);
+  assert.equal(isTabCapture({ width: 3024, height: 1964, frameRate: 30 }), false); // Firefox window
+  assert.equal(isTabCapture({ displaySurface: 'window' }), false);
+  assert.equal(isTabCapture({}), false);
+  assert.equal(isTabCapture(null), false);
+});
+
+test('registerFromFrames: Firefox window share at 2x below a toolbar registers and crops the page', async () => {
+  const stale = buildFirefoxWindowFrame({ withMarkers: false }).frame;  // before the markers painted
+  const { frame, centers, offsetX, offsetY } = buildFirefoxWindowFrame();
+  const solved = await registerFromFrames(frameSource([stale, stale, frame]).next, centers);
+  assert.ok(solved.ok, `registration failed: ${solved.reason}`);
+  assert.ok(Math.abs(solved.mapping.scaleX - 2) < 0.03, `scaleX ${solved.mapping.scaleX}`);
+  assert.ok(Math.abs(solved.mapping.scaleY - 2) < 0.03, `scaleY ${solved.mapping.scaleY}`);
+  assert.ok(Math.abs(solved.mapping.offsetX - offsetX) < 4, `offsetX ${solved.mapping.offsetX}`);
+  assert.ok(Math.abs(solved.mapping.offsetY - offsetY) < 4, `offsetY ${solved.mapping.offsetY}`);
+  // A selection in CSS px lands on the page, below the toolbar, in device px.
+  const crop = applyMapping({ x: 100, y: 50, w: 200, h: 120 }, solved.mapping, solved.width, solved.height);
+  assert.ok(Math.abs(crop.sx - (200 + offsetX)) <= 3, `sx ${crop.sx}`);
+  assert.ok(Math.abs(crop.sy - (100 + offsetY)) <= 3, `sy ${crop.sy}`);
+  assert.ok(Math.abs(crop.sw - 400) <= 3 && Math.abs(crop.sh - 240) <= 3, `size ${crop.sw}x${crop.sh}`);
+});
+
+// ── Telling "found 0" apart ─────────────────────────────────────────
+// The failure reported from Firefox on a Mac was "expected 4 markers, found
+// 0": no frame in the budget had a marker in it. A blank share and a video
+// stuck on a stale frame both produce that, and they need different answers.
+
+test('registerFromFrames: an all-blank share is reported as blank, with the frame stats', async () => {
+  const blank = makeFrame(1282, 1016, 0);
+  const solved = await registerFromFrames(frameSource([blank]).next, RETINA_CENTERS(), { maxFrames: 4 });
+  assert.equal(solved.ok, false);
+  assert.match(solved.reason, /^expected 4 markers, found 0 \(4 frames at 1282x1016, 4 blank, 1 distinct\)$/);
+  assert.equal(classifyRegistrationFailure(solved), 'blank');
+});
+
+test('registerFromFrames: a video stuck on one pre-marker frame is reported as frozen', async () => {
+  const stale = buildFirefoxWindowFrame({ withMarkers: false }).frame;
+  const solved = await registerFromFrames(frameSource([stale]).next, RETINA_CENTERS(), { maxFrames: 5 });
+  assert.equal(solved.ok, false);
+  assert.match(solved.reason, /found 0 \(5 frames at \d+x\d+, 0 blank, 1 distinct\)/);
+  assert.equal(classifyRegistrationFailure(solved), 'frozen');
+});
+
+test('registerFromFrames: changing frames that never show the page are a plain locate failure', async () => {
+  const a = buildFirefoxWindowFrame({ withMarkers: false, seed: 1 }).frame;
+  const b = buildFirefoxWindowFrame({ withMarkers: false, seed: 2 }).frame;
+  const solved = await registerFromFrames(frameSource([a, b]).next, RETINA_CENTERS(), { maxFrames: 2 });
+  assert.equal(solved.ok, false);
+  assert.equal(classifyRegistrationFailure(solved), 'not-found');
+});
+
+test('classifyRegistrationFailure: no frames at all stays a capture failure', async () => {
+  const solved = await registerFromFrames(async () => null, RETINA_CENTERS(), { maxFrames: 2 });
+  assert.equal(classifyRegistrationFailure(solved), 'no-frames');
+});
+
+function RETINA_CENTERS() { return markerCssCenters(RETINA.viewportW, RETINA.viewportH); }
+
 test('markersStillVisible: a stale frame of the veil is recognised; the clean page is not', () => {
   const { frame: veiled, centers } = buildRegistrationFrame({ ...REG_VIEW, bg: 10 });
   const mapping = { scaleX: 1.5, scaleY: 1.5, offsetX: 64, offsetY: 48 };
@@ -570,4 +660,111 @@ test('the registration veil hides marker-shaped page content while leaving the p
 test('without the veil the same page content is detected — the dim is load-bearing', () => {
   const { frame } = veiledPageFrame(0);
   assert.equal(detectMarkers(frame).length, 7);
+});
+
+// ── #3011: a window/screen share that never starts, and refusals nobody chose
+
+test('classifyDisplayMediaError: only NotAllowedError is a decline', () => {
+  const { classifyDisplayMediaError } = loadScreenshotSelect();
+  assert.equal(classifyDisplayMediaError({ name: 'NotAllowedError' }), 'denied');
+  // Firefox's refusals for reasons the viewer did not choose.
+  for (const name of ['InvalidStateError', 'NotFoundError', 'NotReadableError', 'AbortError', 'TypeError']) {
+    assert.equal(classifyDisplayMediaError({ name }), 'capture_failed', name);
+  }
+  assert.equal(classifyDisplayMediaError(undefined), 'capture_failed');
+});
+
+test('settleWithin: passes a value through, times out a pending promise, keeps a rejection', async () => {
+  const { settleWithin, TIMED_OUT } = loadScreenshotSelect();
+  assert.equal(await settleWithin(Promise.resolve(7), 50), 7);
+  assert.equal(await settleWithin(new Promise(() => {}), 5), TIMED_OUT);
+  await assert.rejects(settleWithin(Promise.reject(new Error('nope')), 50), /nope/);
+});
+
+// The real start(), run against a fake browser: the module's IIFE reads
+// window / navigator / document as free names, so they can be handed in.
+function loadBrowserScreenshotSelect({ getDisplayMedia, video }) {
+  const stopped = [];
+  const appended = [];
+  const el = () => ({
+    style: {}, children: [], appendChild(c) { this.children.push(c); }, remove() {},
+    addEventListener() {}, setAttribute() {},
+  });
+  const document = {
+    createElement: (tag) => (tag === 'video' ? video : el()),
+    body: { appendChild: (n) => appended.push(n) },
+    documentElement: { style: {} },
+    addEventListener() {}, removeEventListener() {},
+  };
+  const track = { getSettings: () => ({}), addEventListener() {}, stop() { stopped.push('video'); } };
+  const stream = { getVideoTracks: () => [track], getTracks: () => [track] };
+  const navigator = { mediaDevices: { getDisplayMedia: (opts) => getDisplayMedia(opts, stream) } };
+  const window = { innerWidth: 800, innerHeight: 600 };
+  const mod = { exports: {} };
+  // eslint-disable-next-line no-new-func
+  new Function('module', 'exports', 'window', 'navigator', 'document', fs.readFileSync(SRC, 'utf8'))(
+    mod, mod.exports, window, navigator, document,
+  );
+  return { api: window.ScreenshotSelect, stopped, appended };
+}
+
+function silentVideo() {
+  // A capture stream with no first frame: play() never settles and the
+  // element never learns a frame size.
+  return {
+    style: {}, videoWidth: 0, videoHeight: 0, muted: false, playsInline: false, srcObject: null,
+    play: () => new Promise(() => {}),
+    addEventListener() {}, remove() {},
+  };
+}
+
+test('start(): a share that never delivers a frame fails as blank instead of hanging (#3011)', async () => {
+  const { api, stopped, appended } = loadBrowserScreenshotSelect({
+    getDisplayMedia: async (_opts, stream) => stream,
+    video: silentVideo(),
+  });
+  api.FIRST_FRAME_TIMEOUTS_MS.play = 20;
+  api.FIRST_FRAME_TIMEOUTS_MS.metadata = 20;
+  let started = false;
+  const outcome = await Promise.race([
+    api.start({ onCaptureStart: () => { started = true; } }).then(
+      () => ({ ok: true }),
+      (err) => ({ ok: false, code: err.code }),
+    ),
+    new Promise((resolve) => setTimeout(() => resolve({ hung: true }), 2000)),
+  ]);
+  assert.deepEqual(outcome, { ok: false, code: 'capture_blank' });
+  // Nothing was put over the page for a selection that could never be cut
+  // out, and the share was ended rather than left running.
+  assert.equal(started, false, 'the dialog is not hidden for a capture that cannot happen');
+  assert.equal(appended.length, 1, 'only the capture video was added, and it was removed again');
+  assert.deepEqual(stopped, ['video']);
+});
+
+test('start(): a refusal the viewer did not choose is a failure, not "declined" (#3011)', async () => {
+  for (const [name, code] of [['NotAllowedError', 'denied'], ['NotFoundError', 'capture_failed'], ['InvalidStateError', 'capture_failed']]) {
+    const { api } = loadBrowserScreenshotSelect({
+      getDisplayMedia: async () => { const e = new Error(name); e.name = name; throw e; },
+      video: silentVideo(),
+    });
+    await assert.rejects(api.start(), (err) => err.code === code, name);
+  }
+});
+
+test('start(): a play() that rejects still fails the capture and ends the share', async () => {
+  const video = { ...silentVideo(), play: () => Promise.reject(new Error('play refused')) };
+  const { api, stopped } = loadBrowserScreenshotSelect({
+    getDisplayMedia: async (_opts, stream) => stream,
+    video,
+  });
+  await assert.rejects(api.start(), /play refused/);
+  assert.deepEqual(stopped, ['video']);
+});
+
+test('no capture path awaits video.play() without a bound (#3011)', () => {
+  // Registration re-plays a paused or re-attached video too; any of these
+  // waiting on a share that sends nothing is the same hang.
+  const src = fs.readFileSync(SRC, 'utf8');
+  assert.doesNotMatch(src, /await\s+video\.play\(\)/);
+  assert.equal((src.match(/settleWithin\(video\.play\(\)/g) || []).length, 3);
 });

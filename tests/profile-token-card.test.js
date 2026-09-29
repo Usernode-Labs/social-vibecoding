@@ -14,6 +14,12 @@
 // terms are accepted, so a gated allocation must keep showing the terms
 // notice and never a "nothing allocated" claim it cannot support.
 //
+// The CARD moved with the rest of the standing when Me became the
+// prototype's Me: it is the foot of the Challenges tab's "your standing" card
+// now (frontend/src/features/leaderboard/your-standing.tsx), behind the
+// "Challenges & standings" row. Its rules — the shaping below and the three
+// states — moved unchanged.
+//
 // Run with: node --test tests/profile-token-card.test.js
 'use strict';
 
@@ -53,7 +59,7 @@ test('a real allocation is unchanged: formatted, and blurred until revealed', ()
 
 test('the card names what the figure is, not only what it is subject to', () => {
   const src = require('node:fs').readFileSync(
-    require('node:path').join(__dirname, '..', 'frontend/src/features/profile/profile-view.tsx'),
+    require('node:path').join(__dirname, '..', 'frontend/src/features/leaderboard/your-standing.tsx'),
     'utf8');
   // The allocated card explains the quantity …
   assert.match(src, /Your share of the season&rsquo;s token pool\./);
@@ -61,7 +67,7 @@ test('the card names what the figure is, not only what it is subject to', () => 
 
 test('someone with no allocation sees no token card at all (#1825)', () => {
   const src = require('node:fs').readFileSync(
-    require('node:path').join(__dirname, '..', 'frontend/src/features/profile/profile-view.tsx'),
+    require('node:path').join(__dirname, '..', 'frontend/src/features/leaderboard/your-standing.tsx'),
     'utf8');
   assert.match(src, /if \(token\.empty\) return null;/,
     'the empty state renders nothing: no blurred 0, no "nothing allocated" card');

@@ -26,6 +26,7 @@
 const SENSITIVE_PATTERNS = [
   [/sk-or-v1-[A-Za-z0-9_-]+/g],           // OpenRouter API keys
   [/sk-ant-[A-Za-z0-9_-]+/g],             // Anthropic API keys (user + admin)
+  [/svmc[pd]_[A-Za-z0-9_-]{43}/g],         // Homeroom MCP bearers (connector + delegated, #2779)
   [/ghp_[A-Za-z0-9]{20,}/g],              // GitHub personal access tokens
   [/ghs_[A-Za-z0-9]{20,}/g],              // GitHub app installation tokens
   [/x-access-token:[^@\s]+@/g],           // credentialed git URLs

@@ -31,6 +31,7 @@
  */
 
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
+import { prepareAgentDraft } from '../agent-session/store';
 import { headerTitleStore } from '../header/header-title-store.js';
 import type { PanelHint } from './controller';
 import { appTabSlug, embeddedAllows, isShellAddress, routeFromUrl } from './routes';
@@ -232,13 +233,21 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
     schedule();
   });
 
+  // A hint rides with the navigation it was given for, and is in place
+  // before that page routes: New change's "what a proposal is", and what an
+  // unsent agent session is about (created from it on the first message).
+  function applyHint(hint: PanelHint | null): void {
+    if (!hint) return;
+    if (hint.proposalHint && win.AppView) win.AppView._proposalHint = true;
+    if (hint.agentHint !== undefined) prepareAgentDraft(hint.agentHint);
+  }
+
   // ── 2. Boot ────────────────────────────────────────────────────────────
   // The first page is the frame's own address. A hint the top had for it (New
   // change's one-shot "what a proposal is") has to be in place before the
   // router runs, which is on DOMContentLoaded — after this module.
   try {
-    const hint = top()?.takeBootHint?.();
-    if (hint && hint.proposalHint && win.AppView) win.AppView._proposalHint = true;
+    applyHint(top()?.takeBootHint?.() || null);
   } catch { /* no top panel: nothing to apply */ }
 
   // `sv:authed` fires once, from the authed boot, right before its first
@@ -265,7 +274,7 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
   const runtime: EmbeddedRuntime = {
     go(next: string, hint: PanelHint | null) {
       fromTop = true;
-      if (hint && hint.proposalHint && win.AppView) win.AppView._proposalHint = true;
+      applyHint(hint);
       const url = next.startsWith('app/')
         ? `/${next}${loc.search}`
         : `/${loc.search}#${next}`;

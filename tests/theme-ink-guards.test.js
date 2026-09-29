@@ -1,3 +1,4 @@
+// test:changed: always (the shell sources, for inks that fail on the light page; scripts/test-changed.js)
 // Guards for the three ways a colour picked against the pre-reskin DARK shell
 // goes wrong once the same markup renders on a light page.
 //

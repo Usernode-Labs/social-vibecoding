@@ -45,7 +45,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const SRC = fs.readFileSync(path.join(root, 'src', 'routes', 'sessions.js'), 'utf8');
+// #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
+const SRC = [['src', 'services', 'mayor', 'turn.js'], ['src', 'routes', 'sessions.js']]
+  .map((p) => fs.readFileSync(path.join(root, ...p), 'utf8')).join('\n');
 
 test('the bound is a named constant, not a number sprinkled through the file', () => {
   assert.match(SRC, /const MAYOR_TOOL_RESULT_CHAR_MAX = 4000;/);

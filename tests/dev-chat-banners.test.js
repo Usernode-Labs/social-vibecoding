@@ -300,6 +300,26 @@ test('the declared checks\' hooks all survive the conversion', () => {
   assert.match(BANNERS_TSX, /className="contents" dangerouslySetInnerHTML/);
 });
 
+test('on a phone the banner folds to its lead and a Details toggle (QA 2026-09-24 Q27)', () => {
+  // At 360x740 the whole strip took ~130px under the session header, and its
+  // "Check API key" sat over the identical button on the transcript's card.
+  // Below 640px the lead stays and the rest waits behind "Details". It is all
+  // still RENDERED, so the declared checks' hooks resolve at every width.
+  const html = bannersHtml({ sync: null, newChange: null, credits: CREDITS, creditsLow: null });
+  assert.match(html, /<span id="dc-credits-banner-more" class="dc-credits-banner-more"><span data-credits-reset="1">/,
+    'what follows the lead is one hideable run, reset line included');
+  assert.match(html, /<button type="button" class="dc-credits-banner-toggle [^"]*" aria-expanded="false" aria-controls="dc-credits-banner-more">Details<\/button>/,
+    'the toggle starts closed and names what it opens');
+  assert.doesNotMatch(html, /data-credits-open/, 'and the banner starts folded');
+  const css = read('public', 'css', 'app.css');
+  assert.match(css, /\.dc-credits-banner-toggle \{ display: none; \}/, 'no toggle on a wide screen');
+  const phone = /@media \(max-width: 639\.98px\) \{\n  #dc-credits-banner:not\(\[data-credits-open\]\)([\s\S]*?)\n\}/.exec(css);
+  assert.ok(phone, 'a phone-only rule folds the banner');
+  assert.match(phone[0], /#dc-credits-low-banner:not\(\[data-credits-open\]\) :is\(\.dc-credits-banner-more, \.dc-credits-banner-actions\)/);
+  assert.match(phone[0], /display: none;/);
+  assert.match(BANNERS_TSX, /\{\.\.\.\(open \? \{ 'data-credits-open': '1' \} : null\)\}/, 'opening sets the attribute the CSS reads');
+});
+
 test('the low banner is the same shape, tagged for its own check', () => {
   const low = {
     ...CREDITS, id: 'dc-credits-low-banner', tone: 'amber', icon: 'clock',

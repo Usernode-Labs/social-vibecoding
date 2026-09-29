@@ -32,6 +32,7 @@
 const log = require('./logger');
 const { changeWebPath } = require('./change-destination');
 const visualEvidencePlan = require('./visual-evidence-plan');
+const unitSuiteRow = require('./unit-suite-row');
 const {
   READ_SCOPE,
   WRITE_SCOPE,
@@ -94,6 +95,7 @@ const MAX_REQUEST_PAGE = { titles: 200, full: MAX_LIST_ITEMS };
 const MAX_REQUEST_TITLE_CHARS = 256;    // GitHub's own issue-title limit.
 const MAX_REQUEST_BODY_CHARS = 65536;   // GitHub's own issue-body limit.
 const MAX_ANSWER_CHARS = 8000;          // MAX_CHAT_LEN in services/ws.js.
+const MAX_CLOSE_REASON_CHARS = 2000;    // MAX_CLOSE_REASON_LENGTH in routes/issues.js.
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
@@ -120,6 +122,13 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 // confirmation for implementation work, while an issue-link edit is already
 // bounded to the caller's own proposal and changes neither code nor votes.
 //
+//   recheck_change         — re-runs a proposal's checks on its current commit
+//                            (a staging build, but no code or vote moves)
+//   start_change,
+//   promote_change,
+//   sync_change,
+//   withdraw_change        — the native change lifecycle (#2779), registered
+//                            only for an agent session's Mayor
 //   submit_work            — opens or advances a proposal, for the group to vote on
 //   create_request         — files on the app's board and as a GitHub issue
 //   prepare_work           — claims the request on the app's board; mints a
@@ -150,9 +159,18 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 // `answer_questions` is a write and is deliberately NOT here: it only feeds
 // text to a build the user already started.
 const ACTING_TOOLS = Object.freeze([
+  // #2779: the change lifecycle. recheck_change is on every surface; the
+  // other four are registered only for the Mayor of an agent session, whose
+  // writes the user confirms first (services/mcp-audiences.js).
+  'recheck_change',
+  'start_change',
+  'promote_change',
+  'sync_change',
+  'withdraw_change',
   'submit_work',
   'submit_visual_evidence_plan',
   'create_request',
+  'propose_close_request',
   'prepare_work',
   'start_platform_build',
   'submit_platform_build',
@@ -278,6 +296,18 @@ function platformError(result, fallbackCode = 'platform_error') {
   const message = (result.body && (result.body.error || result.body.message))
     || `Homeroom returned HTTP ${result.status}.`;
   if (result.status === 401) return toolError('not_connected', 'This connector is no longer authorized. Reconnect Homeroom in your chat product settings.');
+  // A MEMBERSHIP REFUSAL IS NOT A SCOPE PROBLEM. Taking part in a project is
+  // for its community's members (services/communities.js), and the route
+  // says so with `join_required` and the app it is about. Kept as its own
+  // code, with the app, so the Mayor's confirmation card can offer Join in
+  // place of a sentence, and an outside assistant is not told to reconnect
+  // a connector that is working.
+  if (result.status === 403 && result.body && result.body.code === 'join_required') {
+    const app = result.body.app && typeof result.body.app === 'object'
+      ? { slug: result.body.app.slug || null, name: result.body.app.name || null }
+      : null;
+    return toolError('join_required', message, app ? { app } : {});
+  }
   if (result.status === 403) return toolError('insufficient_scope', message);
   if (result.status === 404) return toolError('no_access', 'That app or proposal does not exist, or you do not have access to it.');
   if (result.status === 429) {
@@ -584,10 +614,19 @@ function shapeChecks(session) {
     failingTruncated: failed.length > MAX_LIST_ITEMS,
     // And WHY they failed, which the capture stored per row and this shape
     // used to drop on the floor.
-    failures: failed.slice(0, MAX_FAILURE_DETAILS).map((t) => ({
+    //
+    // The repo unit suite's row leads and keeps its whole reason: it is one
+    // row for every failing unit test, appended after the browser checks,
+    // and its reason is the per-file list that tells the agent which test
+    // files to run. Ten rows and 400 characters in, it held neither.
+    failures: [
+      ...failed.filter(unitSuiteRow.isUnitSuiteRow),
+      ...failed.filter((t) => !unitSuiteRow.isUnitSuiteRow(t)),
+    ].slice(0, MAX_FAILURE_DETAILS).map((t) => ({
       name: untrusted(t.name || t.path || 'unnamed test', MAX_TITLE_CHARS),
       path: t.path ? untrusted(String(t.path), MAX_TITLE_CHARS) : null,
-      reason: untrusted(failureReasonOf(t), MAX_FAILURE_REASON_CHARS) || null,
+      reason: untrusted(failureReasonOf(t), unitSuiteRow.isUnitSuiteRow(t)
+        ? unitSuiteRow.FAILURE_DETAIL_MAX : MAX_FAILURE_REASON_CHARS) || null,
     })),
     total: results.length,
     error: session.check_error_detail
@@ -975,12 +1014,173 @@ function shapeProposal(session, origin) {
   };
 }
 
+// ── A native change (#2779) ────────────────────────────────────────────
+//
+// get_change is the in-platform twin of get_proposal. get_proposal is written
+// for an agent OUTSIDE the platform that pushes to a fork and submits through
+// submit_work, and its nextStep says so. A change an agent session drives has
+// no fork and no work order: the coding agent runs in the change's own
+// worker, and the Mayor moves it on with the change tools. So the same row is
+// projected again, with the live half of GET /status (is a turn running, is a
+// sync in flight) and a nextStep in that vocabulary.
+//
+// Pure, so the wording is testable without the server stack.
+function changeRefSentence(session) {
+  const id = Number(session.id);
+  return Number(session.pr_number) > 0
+    ? `PR #${Number(session.pr_number)} (change ${id})`
+    : `Change ${id}`;
+}
+
+// The same situations read differently to each caller: the Mayor moves a
+// change with the change tools, the coding agent inside it fixes things in
+// its own turn, and an external client has neither and is pointed at the
+// change's page. One table, so the three cannot describe different states.
+const CHANGE_NEXT_STEP_WORDS = Object.freeze({
+  agent_mayor: {
+    build: 'Dispatch the coding agent to start it.',
+    fixTests: 'Dispatch the coding agent to fix the failing tests. Use recheck_change only when the failure came from outside this change.',
+    fixBuild: 'Dispatch the coding agent to fix the build; checks gate merge.',
+    deferred: 'sync_change merges main in (the user confirms it, and it clears any votes).',
+    ready: 'promote_change puts it there once the user confirms.',
+    behind: 'sync_change would clear its votes, so only when needed.',
+    closed: 'Further work on it is a new change (start_change).',
+  },
+  worker_read: {
+    build: 'This turn is where it gets built.',
+    fixTests: 'Fix the failing tests in this turn; the checks run again after your push.',
+    fixBuild: 'Fix the build in this turn; the checks run again after your push.',
+    deferred: 'The Mayor can sync it with main, with the user\'s confirmation.',
+    ready: 'the Mayor puts it there once the user confirms.',
+    behind: 'syncing it would clear its votes.',
+    closed: 'Further work on it is a new change.',
+  },
+  external: {
+    build: 'Its coding agent runs inside Homeroom, from the change\'s own page.',
+    fixTests: 'Its coding agent fixes them from the change\'s own page; recheck_change re-runs the checks when the failure came from outside this change.',
+    fixBuild: 'The build needs fixing from the change\'s own page; checks gate merge.',
+    deferred: 'Syncing it with main from its page merges main in and clears any votes.',
+    ready: 'its owner puts it there from its page on Homeroom.',
+    behind: 'syncing it with main would clear its votes.',
+    closed: 'Further work on it is a new change.',
+  },
+});
+
+function changeNextStep(session, checks, live, kind = 'agent_mayor') {
+  const words = CHANGE_NEXT_STEP_WORDS[kind] || CHANGE_NEXT_STEP_WORDS.external;
+  const ref = changeRefSentence(session);
+  const status = session.status || null;
+  if (status === 'archived') {
+    return `${ref} was withdrawn and is closed for good. ${words.closed}`;
+  }
+  if (status === 'merged') {
+    return `${ref} merged: the group voted it in and it is part of the app now. ${words.closed}`;
+  }
+  if (status === 'merging') {
+    return `${ref} won its vote and is merging now. Nothing to do; call get_change again to see it land.`;
+  }
+  if (!['active', 'paused', 'promoted'].includes(status)) {
+    return `${ref} is ${status || 'no longer open'}, so there is nothing to move on it.`;
+  }
+  if (live.busy && kind !== 'worker_read') {
+    return `The coding agent is working on ${ref} right now. Wait for that turn to finish before asking for more.`;
+  }
+  if (live.syncing) {
+    return `${ref} is being synced with main right now. Call get_change again once it finishes.`;
+  }
+  if (!session.branch_name) {
+    return `Nothing has been built on ${ref} yet. ${words.build}`;
+  }
+  const paused = status === 'paused'
+    ? ' It is idle, so its worker is released until it is next used; its branch, preview and pull request are kept.'
+    : '';
+  const failing = checks.state === 'error' || checks.state === 'failing' || checks.state === 'fail'
+    || (Array.isArray(checks.failing) && checks.failing.length > 0);
+  if (checks.state === 'pending') {
+    return checks.phase === 'deferred'
+      ? `Checks on ${ref} are held back because it conflicts with main. ${words.deferred}${paused}`
+      : `Checks are running on ${ref}'s current commit. Call get_change again for the verdict.${paused}`;
+  }
+  if (failing) {
+    return checks.state === 'error' && !(checks.failing && checks.failing.length)
+      ? `The checks run on ${ref} errored before any test reported: the preview build itself broke. `
+        + `${words.fixBuild}${paused}`
+      : `Checks on ${ref} are failing and they gate merge. ${words.fixTests}${paused}`;
+  }
+  if (!checks.state) {
+    return `No checks have reported on ${ref} yet. They run after the coding agent pushes and the preview builds.${paused}`;
+  }
+  const stale = checks.stale
+    ? ' The verdict is for an older commit, so a fresh run should follow on its own.'
+    : '';
+  if (status === 'promoted') {
+    const tally = typeof session.votes_required === 'number'
+      ? ` It has ${Number(session.yes_count) || 0} of ${session.votes_required} yes votes.`
+      : '';
+    const behind = typeof session.behind_main === 'number' && session.behind_main > 0
+      ? ` It is ${session.behind_main} commit(s) behind main; ${words.behind}`
+      : '';
+    return `${ref} is up for the group's vote.${tally}${behind}${stale}`;
+  }
+  return `${ref} is ready to go up for a vote: ${words.ready}${stale}${paused}`;
+}
+
+function shapeChange(session, live, origin, kind = 'agent_mayor') {
+  const status = (live && typeof live === 'object') ? live : {};
+  const sync = status.sync && typeof status.sync === 'object' ? status.sync : null;
+  const liveState = {
+    busy: typeof status.busy === 'boolean' ? status.busy : false,
+    syncing: !!(sync && sync.phase),
+  };
+  const checks = shapeChecks(session);
+  return {
+    changeId: Number(session.id),
+    appSlug: session.app_slug || null,
+    title: untrusted(session.pr_title || session.session_title, MAX_TITLE_CHARS),
+    status: session.status || null,
+    busy: typeof status.busy === 'boolean' ? status.busy : null,
+    syncing: liveState.syncing,
+    hasBranch: !!session.branch_name,
+    branchName: session.branch_name || null,
+    linkedIssues: require('./pr-metadata').sanitizeIssueNumbers(session.linked_issues),
+    prNumber: session.pr_number || null,
+    prUrl: session.pr_url || null,
+    stagingUrl: session.staging_url || null,
+    checks,
+    yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
+    noVotes: typeof session.no_count === 'number' ? session.no_count : null,
+    votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
+    behindMain: typeof session.behind_main === 'number' ? session.behind_main : null,
+    mergeability: session.mergeability || null,
+    nextStep: changeNextStep(session, checks, liveState, kind),
+    webPath: session.app_slug ? changeWebPath(origin, session.app_slug, session.id) : null,
+  };
+}
+
 // ── The request's discussion, for a work order ─────────────────────────
 //
 // Budgeted well under MAX_BRIEF_CHARS (6000 in services/external-agent-tasks.js,
 // which clips the whole brief): the title and body come first and must not be
 // squeezed out by a long argument in the comments.
 const MAX_DISCUSSION_CHARS = 2500;
+
+// One change for SEVERAL requests puts every one's title, body and discussion
+// into that same clipped brief. At the one-request budgets, three requests
+// with long threads fill it before the third is reached, and the clip falls
+// on whatever came last: the last request, then the caller's own brief. So
+// each request gets an even share of what the caller's brief leaves, a little
+// under half of it for the body and the rest for the discussion. A single
+// request keeps the budgets it always had.
+const REQUEST_PART_OVERHEAD = 180; // its "Also request #N:" line, envelopes and clip marks
+const MIN_REQUEST_PART_CHARS = 200;
+function requestTextBudget(count, brief, briefLimit) {
+  if (!(count > 1)) return { body: MAX_BODY_CHARS, discussion: MAX_DISCUSSION_CHARS };
+  const briefChars = brief ? Math.min(String(brief).length, MAX_BODY_CHARS) + 64 : 0;
+  const share = Math.floor((briefLimit - briefChars) / count) - MAX_TITLE_CHARS - REQUEST_PART_OVERHEAD;
+  const body = Math.max(MIN_REQUEST_PART_CHARS, Math.min(MAX_BODY_CHARS, Math.floor(share * 0.45)));
+  const discussion = Math.max(MIN_REQUEST_PART_CHARS, Math.min(MAX_DISCUSSION_CHARS, share - body));
+  return { body, discussion };
+}
 
 // Both halves of one request's discussion, rendered by the module that
 // already owns that rendering for every other agent surface. Never throws:
@@ -1195,8 +1395,16 @@ function registerTools(server, ctx) {
   const { z } = require('zod');
   const {
     accessToken, scopes, user, clientName, clientId, origin, pool, baseUrl, config,
-    tokenId, grantId,
+    tokenId, grantId, delegation = null,
   } = ctx;
+  // #2779: one registry, three kinds of caller. The kind comes from the
+  // token's delegation (none means an external client that went through
+  // consent), and a tool this kind may not see is simply never registered —
+  // see services/mcp-audiences.js for who sees what, and why.
+  const audiences = require('./mcp-audiences');
+  const kind = audiences.kindOf(ctx);
+  server = audiences.scopedServer(server, kind);
+  const charter = require('./mcp-charter');
   const canWrite = scopes.includes(WRITE_SCOPE);
   const canRead = scopes.includes(READ_SCOPE);
   const visualEvidenceOutputSchema = z.object({
@@ -1210,7 +1418,7 @@ function registerTools(server, ctx) {
     claims: z.array(z.object({
       id: z.string(),
       claim: z.string(),
-      persona: z.enum(['member', 'read_only_admin']),
+      persona: z.enum(['member', 'read_only_admin', 'full_admin']),
       viewports: z.array(z.string()),
       steps: z.array(z.string()),
       baseState: z.enum(['present', 'not_present']),
@@ -1263,7 +1471,9 @@ function registerTools(server, ctx) {
   const claimSetupHint = () => {
     if (hintClaim) return hintClaim;
     hintClaim = (async () => {
-      if (!grantId || hintSuppressedForClient(clientName)) return null;
+      // A delegated grant is the platform's own agent: nobody reads its
+      // permission prompts, so there is nothing for the tip to stop.
+      if (!grantId || delegation || hintSuppressedForClient(clientName)) return null;
       // Delegated for the same reason every other database read in this
       // module is: no tool here talks to the database directly. The throttle
       // owns mcp_connector_hints and swallows its own failures.
@@ -1341,10 +1551,11 @@ function registerTools(server, ctx) {
     // Platform-authored text, so it is NOT untrusted-wrapped — the same
     // treatment get_platform_conventions gives its sections, and the charter
     // says so about itself in its opening paragraph.
-    const charter = require('./mcp-charter');
+    // The charter for THIS caller's kind: identical to before for an
+    // external client, and the Mayor's own variant for an agent session.
     return readResult('get_connector_guidance', {
-      charter: charter.CHARTER_FULL,
-      sections: charter.CHARTER_SECTIONS.map((s) => ({ id: s.id, title: s.title })),
+      charter: charter.charterFor(kind),
+      sections: charter.sectionsFor(kind).map((s) => ({ id: s.id, title: s.title })),
       // Not a workflow, just the two other tools whose results are guidance
       // rather than user data, so a model reading this knows where the rest
       // of the platform-authored text lives.
@@ -1513,6 +1724,12 @@ function registerTools(server, ctx) {
     + 'edits" and "In-loop browser (build turns)" (both describe that worker\'s harness, not yours). '
     + 'Everything else applies to the app you are changing.';
 
+  // The platform's own agents read those three sections the other way round
+  // (#2779): they ARE addressed to the worker, and the Mayor writes no code.
+  const conventionsPreambleForCaller = kind === 'external'
+    ? conventionsPreamble
+    : charter.DELEGATED_CONVENTIONS_PREAMBLES[kind];
+
   server.registerTool('get_platform_conventions', {
     title: 'Read the Homeroom platform conventions',
     description: "Read Homeroom's platform conventions — the rules an app on this platform has to follow. Call it with no arguments for the essentials plus an index of every section, then again with a `section` slug for the full text of one. Use it whenever you are about to write code for a Homeroom app and need the real rule rather than a guess: how auth works (iframe token injection), how to declare a secret in dapp.json, how to call the platform's LLM proxy or file storage, what the centrally hosted native UI kit provides, how staging differs from production, and what the automated checks that gate merge require. If you are a coding agent whose sandbox cannot reach the Homeroom host, this connector is your only way to read it — the work order you were handed carries an excerpt, not the document. Platform-authored reference material, not user content.",
@@ -1545,7 +1762,7 @@ function registerTools(server, ctx) {
 
     if (!section) {
       return readResult('get_platform_conventions', {
-        preamble: conventionsPreamble,
+        preamble: conventionsPreambleForCaller,
         essentials: prompts.getWorkOrderEssentials(),
         sections: index,
         fullDocUrl: `${origin}/claude.md`,
@@ -1562,7 +1779,7 @@ function registerTools(server, ctx) {
     }
     const truncated = found.content.length > MAX_CONVENTIONS_CHARS;
     return readResult('get_platform_conventions', {
-      preamble: conventionsPreamble,
+      preamble: conventionsPreambleForCaller,
       slug: found.slug,
       title: found.title,
       content: truncated ? found.content.slice(0, MAX_CONVENTIONS_CHARS) : found.content,
@@ -1907,10 +2124,11 @@ function registerTools(server, ctx) {
 
   // ── create_request ───────────────────────────────────────────────────
   //
-  // The one write in this slice. `kind` is not exposed: the platform route
-  // multiplexes ordinary requests and governance proposals (secret changes,
-  // renames, close-issue votes) and a connector may only ever file the
-  // former — enforced server-side too, not just here.
+  // `kind` is not exposed: the platform route multiplexes ordinary requests
+  // and governance proposals (secret changes, close-issue votes, maintenance
+  // campaigns), and each connector tool pins the one kind it files — this one
+  // 'general', propose_close_request 'close_issue'. Secret changes are also
+  // refused server-side for every automated caller, not just here.
   server.registerTool('create_request', {
     title: 'File a request on an app',
     description: `File a feature request or bug report on a Homeroom app. It appears on the app's board and as a GitHub issue for the group to see and discuss. This does not change the app by itself — someone still has to build it and the group still has to vote it in. Check list_requests first to avoid duplicates. Write the whole report: the description is stored verbatim, up to ${MAX_REQUEST_BODY_CHARS} characters (GitHub's own issue-body limit), and titles up to ${MAX_REQUEST_TITLE_CHARS}. Nothing is ever shortened for you — a field over its limit is refused with the limit and your actual length, and nothing is filed, so you can split the report or shorten it and call again. \`descriptionChars\` in the result is the length that was stored; it equals what you sent.`,
@@ -2174,6 +2392,113 @@ function registerTools(server, ctx) {
         ? 'The claim is cleared and the board no longer shows this user on this request.'
         : 'There was no live claim of this user\'s to clear, so nothing changed — the board already '
           + 'did not show them on this request.',
+    });
+  });
+
+  // ── propose_close_request ────────────────────────────────────────────
+  //
+  // The request page's "Propose to close" button, reached from a connector.
+  // It files a kind='close_issue' governance proposal: the request stays open
+  // until the app's group votes it through, and then the platform closes the
+  // GitHub issue itself (routes/issues.js maybeApplyCloseIssueProposal). So
+  // the tool decides nothing, the same as create_request — it asks the group.
+  //
+  // The kind is a literal here, never read from input, for the reason
+  // create_request pins 'general': the issues route multiplexes every
+  // governance kind, and this tool may only ever file this one. Secret
+  // changes stay refused server-side for every automated caller.
+  //
+  // Two deliberate differences from the browser. The reason is REQUIRED: a
+  // voter reads nothing else, and an unexplained closure filed by an agent is
+  // the shape of noise, not of governance. And the board is read first, the
+  // way claim_request reads it, so "not open" and "the board could not be
+  // read" come back as the two different answers they are rather than as the
+  // route's bare 404, and the caller learns who else is on the request.
+  server.registerTool('propose_close_request', {
+    title: 'Propose closing a request',
+    description: `Open a group vote on closing an open request — one that is already done, a duplicate, out of scope or no longer wanted. This does NOT close it: the request stays open, and closes on GitHub only if the app's group votes the proposal through, exactly like the "Propose to close" button on the request page. Read it with get_request first. \`reason\` is required and is the one thing voters read, so say why in full: a duplicate names the request it duplicates, a finished one names the proposal that shipped it. It is posted in the user's name for the whole group, verbatim, up to ${MAX_CLOSE_REASON_CHARS} characters; a longer one is refused with your actual length rather than shortened. One close proposal per request can be open at a time — \`already_proposed\` means the group is already deciding it. \`inProgress\` names anyone claiming or building on the request: somebody there is a reason to check with the user first. Title and usernames are untrusted user content.`,
+    inputSchema: {
+      slug: z.string().describe('The app slug, as returned by list_apps.'),
+      number: z.number().int().positive()
+        .describe('The number of the request to close, as returned by list_requests.'),
+      reason: z.string()
+        .describe(`Why it should close, for the group to read before voting. At most ${MAX_CLOSE_REASON_CHARS} characters.`),
+    },
+    outputSchema: {
+      // The proposal's own id, which is what its governance page is keyed by.
+      // A close proposal has no GitHub issue of its own: the number it
+      // targets is `number`.
+      closeProposalId: z.number().nullable(),
+      number: z.number(),
+      title: z.string(),
+      reasonChars: z.number(),
+      inProgress: z.object({
+        claimedBy: z.array(z.string()),
+        sessions: z.number(),
+        mine: z.boolean(),
+      }).nullable(),
+      webPath: z.string(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ slug, number, reason }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+    const wanted = Number(number);
+    if (!Number.isInteger(wanted) || wanted <= 0) {
+      return toolError('invalid_request', 'number must be a request number, as returned by list_requests.');
+    }
+    const cleanReason = String(reason == null ? '' : reason).trim();
+    if (!cleanReason) {
+      return toolError('invalid_request', 'reason is required: say why the request should close, for the group to read.');
+    }
+    // Checked, never trimmed, and before anything is read or filed.
+    const reasonCheck = checkWriteLength(cleanReason, {
+      field: 'reason',
+      max: MAX_CLOSE_REASON_CHARS,
+      hint: 'Shorten the reason and call propose_close_request again.',
+    });
+    if (!reasonCheck.ok) return writeLengthError(reasonCheck);
+
+    const state = await readRequestState(slug, wanted);
+    if (state.error) return state.error;
+
+    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/issues`, {
+      kind: 'close_issue',
+      payload: { issueNumber: wanted, reason: reasonCheck.value },
+    });
+    if (!result.ok) {
+      // The route's own dedupe: one open close proposal per request.
+      if (result.status === 409) return platformError(result, 'already_proposed');
+      // The board said open a moment ago, so a 404 here is the route's own
+      // fresh read disagreeing — its wording says which request and why.
+      if (result.status === 404 && result.body && result.body.error) {
+        return toolError('no_access', result.body.error);
+      }
+      return platformError(result);
+    }
+    const proposal = (result.body && result.body.issue) || {};
+    const proposalId = Number.isSafeInteger(Number(proposal.id)) && Number(proposal.id) > 0
+      ? Number(proposal.id) : null;
+    const inProgress = shapeInProgress(state.issue.in_progress);
+    const busy = state.others.length > 0 || !!(inProgress && inProgress.sessions > 0);
+    return toolResult({
+      closeProposalId: proposalId,
+      number: wanted,
+      title: untrusted((proposal.payload && proposal.payload.issueTitle) || state.issue.title, MAX_REQUEST_TITLE_CHARS),
+      reasonChars: reasonCheck.value.length,
+      inProgress,
+      webPath: proposalId
+        ? `${origin}/#app/${slug}/dev/governance/${proposalId}`
+        : `${origin}/#app/${slug}/dev/issues/${wanted}`,
+      nextStep: `The group is now voting on closing request #${wanted}. It stays open until that vote passes, `
+        + 'and the platform closes it then; nothing else is needed from you, and this connector cannot vote. '
+        + (busy
+          ? 'This request has work in progress (see inProgress) — tell the user who, because they may object '
+            + 'to closing it. '
+          : '')
+        + 'Say it is proposed, never that it is closed.',
     });
   });
 
@@ -2584,10 +2909,275 @@ function registerTools(server, ctx) {
     });
   });
 
+  // ── Native changes (#2779) ───────────────────────────────────────────
+  //
+  // Homeroom's own changes: a session on the platform, built by the coding
+  // agent in the change's worker rather than by a coding agent the user runs
+  // elsewhere. get_change and recheck_change are on every surface; the other
+  // four are the change lifecycle an agent session drives, and are registered
+  // only for the Mayor (services/mcp-audiences.js). Every one is a loopback
+  // to the route the change page's own buttons call, under this caller's own
+  // token, so ownership, caps and state checks are the route's and never
+  // restated here.
+  const changeIdSchema = () => z.number().int().positive().max(2147483647)
+    .describe('The change id: what get_change and start_change report as changeId, and what get_proposal and '
+      + 'list_my_proposals call proposalId. The last number in its webPath.');
+
+  // A refusal from a lifecycle route, in its own words. Several of them send
+  // a machine code in `error` and the sentence in `message`; the sentence is
+  // what the user should hear.
+  const changeRouteError = (result) => {
+    const body = result.body || {};
+    if (result.ok || result.networkError || ![400, 409].includes(result.status)) return platformError(result);
+    const coded = typeof body.error === 'string' && /^[a-z_]+$/.test(body.error);
+    const message = (coded && typeof body.message === 'string' && body.message)
+      || body.error || body.message || `Homeroom returned HTTP ${result.status}.`;
+    return toolError(coded ? body.error : 'refused', String(message));
+  };
+
+  const changeSummarySchema = {
+    changeId: z.number(),
+    appSlug: z.string().nullable(),
+    status: z.string().nullable(),
+    nextStep: z.string(),
+    webPath: z.string().nullable(),
+  };
+
+  // ── get_change ───────────────────────────────────────────────────────
+  server.registerTool('get_change', {
+    title: 'Get a change',
+    description: 'Where one of Homeroom\'s own changes stands: a change built inside Homeroom by its coding agent, as opposed to work pushed from a fork. Returns its status, whether a turn or a sync is running right now, its branch, pull request, staging preview, checks (failing test NAMES and why), votes, and a nextStep in plain words: follow it. Takes the change id, which get_proposal and list_my_proposals call proposalId. Name the change by its pull request number first when it has one: "PR #2151 (change 4223)". Read-only.',
+    inputSchema: { changeId: changeIdSchema() },
+    outputSchema: {
+      ...changeSummarySchema,
+      title: z.string(),
+      busy: z.boolean().nullable()
+        .describe('Whether the coding agent is running a turn on it right now. Null when the live status could not be read.'),
+      syncing: z.boolean(),
+      hasBranch: z.boolean()
+        .describe('False until the first turn has built anything.'),
+      branchName: z.string().nullable(),
+      linkedIssues: z.array(z.number()),
+      prNumber: z.number().nullable(),
+      prUrl: z.string().nullable(),
+      stagingUrl: z.string().nullable(),
+      checks: z.unknown()
+        .describe('The checks snapshot, in the same shape get_proposal reports: state, phase, failing names, failures with reasons, stale, error.'),
+      yesVotes: z.number().nullable(),
+      noVotes: z.number().nullable(),
+      votesRequired: z.number().nullable(),
+      behindMain: z.number().nullable(),
+      mergeability: z.string().nullable(),
+    },
+    annotations: readAnnotations,
+  }, async ({ changeId }) => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    const result = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${changeId}`);
+    if (!result.ok) return platformError(result);
+    const session = (result.body && result.body.session) || {};
+    // The live half is advisory: an unreadable status leaves `busy` unknown
+    // rather than failing a read the row already answers.
+    const live = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${changeId}/status`);
+    return readResult('get_change', shapeChange(session, live.ok ? live.body : null, origin, kind));
+  });
+
+  // ── recheck_change ───────────────────────────────────────────────────
+  server.registerTool('recheck_change', {
+    title: 'Re-run a change\'s checks',
+    description: 'Re-run the automated checks on the commit a change or proposal already has: the same act as its "Re-run checks" button. No code moves and no votes are cleared. Use it when a verdict is stale or failed for a reason outside the change (a flaky preview, an infrastructure error), never to retry code that really fails — fix that instead. Only the owner (or a platform admin) can, and only while it is still open. Returns straight away; call get_change for the verdict.',
+    inputSchema: { changeId: changeIdSchema() },
+    outputSchema: {
+      changeId: z.number(),
+      started: z.boolean(),
+      checkState: z.string().nullable(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ changeId }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${changeId}/recheck`, {});
+    if (!result.ok) return changeRouteError(result);
+    const body = result.body || {};
+    if (body.status === 'unavailable') {
+      return toolResult({
+        changeId,
+        started: false,
+        checkState: null,
+        nextStep: 'Checks cannot run inside a staging preview of Homeroom itself, so nothing was started.',
+      });
+    }
+    return toolResult({
+      changeId,
+      started: true,
+      checkState: typeof body.checkState === 'string' ? body.checkState : 'pending',
+      nextStep: 'The checks are running again on the current commit. Call get_change for the verdict; a run '
+        + 'takes a few minutes.',
+    });
+  });
+
+  // ── start_change ─────────────────────────────────────────────────────
+  server.registerTool('start_change', {
+    title: 'Start a change',
+    description: 'Open a new Homeroom change on an app: a session of the user\'s own that its coding agent builds on, with a staging preview and checks, which goes to the group vote only when promoted. Counts against the user\'s running-change limit. Starting from requests links them, and the first one is also claimed for the user on the app\'s board. Nothing is built until the coding agent is dispatched on it.',
+    inputSchema: {
+      slug: z.string().describe('The app slug, as list_apps returns it.'),
+      title: z.string()
+        .describe('A short name for the change, as the user would call it. Up to 256 characters.'),
+      linkedIssues: z.array(z.number().int().positive().max(2147483647)).max(10).optional()
+        .describe('Request numbers this change addresses. The first is claimed for the user.'),
+    },
+    outputSchema: {
+      ...changeSummarySchema,
+      title: z.string(),
+      linkedIssues: z.array(z.number()),
+      warnings: z.array(z.string()),
+    },
+    annotations: writeAnnotations,
+  }, async ({ slug, title, linkedIssues }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug, as list_apps returns it.');
+    const name = String(title == null ? '' : title).replace(/\s+/g, ' ').trim();
+    if (!name) return toolError('invalid_request', 'title is required. Nothing was created.');
+    const length = checkWriteLength(name, {
+      field: 'title', max: 256, hint: 'Shorten the title and call start_change again.',
+    });
+    if (!length.ok) return writeLengthError(length);
+    const issues = [...new Set(Array.isArray(linkedIssues) ? linkedIssues : [])];
+
+    // The name rides on the create itself (#2779 step 3), so the change is
+    // never briefly nameless and an agent session's "started" note can say
+    // what it is.
+    const created = await callPlatform(baseUrl, accessToken, 'POST', `/api/apps/${slug}/sessions`,
+      issues.length ? { issueNumber: issues[0], title: name } : { title: name });
+    if (!created.ok) return changeRouteError(created);
+    const session = (created.body && created.body.session) || {};
+    const changeId = Number(session.id);
+    if (!Number.isSafeInteger(changeId) || changeId <= 0) {
+      return toolError('platform_error', 'Homeroom did not report the new change. Check list_my_proposals before trying again.');
+    }
+
+    // The change exists from here on. A name or a link that does not stick is
+    // reported alongside it, never as a failure that invites a second change.
+    const warnings = [];
+    let linked = issues.slice(0, 1);
+    if (issues.length > 1) {
+      const more = await callPlatform(baseUrl, accessToken, 'PATCH', `/api/sessions/${changeId}/linked-issues`,
+        { addIssues: issues.slice(1) });
+      if (more.ok && Array.isArray(more.body && more.body.linkedIssues)) linked = more.body.linkedIssues;
+      else warnings.push('The change was created but not every request was linked; update_proposal_issues can add them.');
+    }
+    return toolResult({
+      changeId,
+      appSlug: slug,
+      title: untrusted(name, MAX_TITLE_CHARS),
+      status: session.status || 'active',
+      linkedIssues: linked,
+      warnings,
+      nextStep: `Change ${changeId} is open on ${slug}. Nothing is built yet: dispatch the coding agent on it.`,
+      webPath: changeWebPath(origin, slug, changeId),
+    });
+  });
+
+  // ── promote_change ───────────────────────────────────────────────────
+  server.registerTool('promote_change', {
+    title: 'Put a change up for the vote',
+    description: 'Put one of the user\'s changes up for the app\'s group vote: opens its pull request if it has none and starts the vote, the same act as its "Propose to group" button. Refused while its preview or checks are not ready, when it has no committed code, or when the user already has as many proposals up for vote as they may. The group decides whether it ships; nothing merges here.',
+    inputSchema: { changeId: changeIdSchema() },
+    outputSchema: {
+      changeId: z.number(),
+      prNumber: z.number().nullable(),
+      prUrl: z.string().nullable(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ changeId }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${changeId}/promote`, {});
+    if (!result.ok) return changeRouteError(result);
+    const body = result.body || {};
+    const prNumber = Number(body.prNumber) > 0 ? Number(body.prNumber) : null;
+    return toolResult({
+      changeId,
+      prNumber,
+      prUrl: typeof body.prUrl === 'string' ? body.prUrl : null,
+      nextStep: `${prNumber ? `PR #${prNumber} (change ${changeId})` : `Change ${changeId}`} is up for the group's `
+        + 'vote. It ships only if the group votes it in; get_change reports the tally.',
+    });
+  });
+
+  // ── sync_change ──────────────────────────────────────────────────────
+  server.registerTool('sync_change', {
+    title: 'Sync a change with main',
+    description: 'Merge the app\'s latest main into one of the user\'s changes, resolving conflicts with the coding agent when there are any: the same act as its "Sync with main" button. This revises the change, so a change that is up for a vote LOSES the votes it has collected. Can take a few minutes; if the call times out, the sync carries on and get_change reports it.',
+    inputSchema: { changeId: changeIdSchema() },
+    outputSchema: {
+      changeId: z.number(),
+      synced: z.boolean(),
+      result: z.string().nullable(),
+      behind: z.number(),
+      pushed: z.boolean(),
+      conflictFiles: z.array(z.string()),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ changeId }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${changeId}/sync-main`, {});
+    if (!result.ok) return changeRouteError(result);
+    const body = result.body || {};
+    const conflictFiles = (Array.isArray(body.conflictFiles) ? body.conflictFiles : [])
+      .slice(0, MAX_LIST_ITEMS).map((f) => untrusted(f, MAX_TITLE_CHARS));
+    const synced = body.ok !== false;
+    return toolResult({
+      changeId,
+      synced,
+      result: typeof body.syncResult === 'string' ? body.syncResult : null,
+      behind: Number(body.behind) || 0,
+      pushed: body.pushOk === true,
+      conflictFiles,
+      nextStep: synced
+        ? 'The change is up to date with main. Its checks run again on the new commit; get_change reports them.'
+        : 'The conflicts with main could not be resolved, so the branch is unchanged. Dispatch the coding agent '
+          + 'to resolve them, or try sync_change again.',
+    });
+  });
+
+  // ── withdraw_change ──────────────────────────────────────────────────
+  server.registerTool('withdraw_change', {
+    title: 'Withdraw a change',
+    description: 'Withdraw one of the user\'s changes for good: its worker and preview are removed and its pull request is closed, taking it off the vote if it was on one. It cannot be reopened. Only the user\'s own changes.',
+    inputSchema: { changeId: changeIdSchema() },
+    outputSchema: {
+      changeId: z.number(),
+      withdrawn: z.boolean(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ changeId }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    const result = await callPlatform(baseUrl, accessToken, 'POST', `/api/sessions/${changeId}/archive`, {});
+    if (!result.ok) return changeRouteError(result);
+    return toolResult({
+      changeId,
+      withdrawn: true,
+      nextStep: `Change ${changeId} is withdrawn and closed for good. Further work on it is a new change.`,
+    });
+  });
+
   // ── Shared plumbing for the build tools ──────────────────────────────
 
   const externalAgentTasks = require('./external-agent-tasks');
   const connectorLimits = require('./connector-limits');
+  // How many requests one work order may implement (prepare_work's
+  // requestNumbers), read once so the input schema does not reach into the
+  // service ahead of the tool's scope check.
+  const MAX_WORK_ORDER_REQUESTS = externalAgentTasks.MAX_TASK_ISSUES;
 
   // Everything services/external-agent-tasks.js needs, assembled once. The
   // service holds the fork/branch/attribution logic; the token stays here,
@@ -2676,10 +3266,18 @@ function registerTools(server, ctx) {
     const open = Array.isArray(result.openProposals) ? result.openProposals : [];
     if (!open.length) return '';
     const mine = open.filter((p) => p.mine);
+    // A work order for several requests says which one each proposal is for.
+    const several = Array.isArray(result.requestNumbers) && result.requestNumbers.length > 1;
+    const tags = (p) => [
+      p.mine ? 'the user\'s own' : '',
+      several && Array.isArray(p.requests) && p.requests.length
+        ? `for ${p.requests.map((n) => `#${n}`).join(' and ')}`
+        : '',
+    ].filter(Boolean);
     const ids = open.map((p) => (Number(p.prNumber) > 0
-      ? `PR #${Number(p.prNumber)} (proposal ${p.proposalId}${p.mine ? ', the user\'s own' : ''})`
-      : `proposal ${p.proposalId}${p.mine ? ' (the user\'s own)' : ''}`));
-    return `THIS REQUEST IS ALREADY UP FOR A VOTE — ${ids.join(', ')}. `
+      ? `PR #${Number(p.prNumber)} (${[`proposal ${p.proposalId}`, ...tags(p)].join(', ')})`
+      : `proposal ${p.proposalId}${tags(p).length ? ` (${tags(p).join(', ')})` : ''}`));
+    return `${several ? 'ONE OF THESE REQUESTS IS ALREADY UP FOR A VOTE' : 'THIS REQUEST IS ALREADY UP FOR A VOTE'} — ${ids.join(', ')}. `
       + 'Say so before the user pastes anything, because a second proposal for '
       + 'work that is already built and waiting on the group is the failure this warning exists to '
       + 'stop. '
@@ -2691,6 +3289,30 @@ function registerTools(server, ctx) {
         : 'Only its author can update it, so the options are commenting on theirs or a deliberate '
           + 'rival approach — the user\'s call, not yours. ')
       + 'If they want the second proposal anyway, carry on below. ';
+  };
+
+  // A proposal linked to no request, whose brief names requests that are open.
+  // Nothing links them by itself — a number in free text may be a request the
+  // work only touches, or one it deliberately leaves — so the agent is pointed
+  // at update_proposal_issues, the owner's own metadata-only link, with the
+  // numbers filled in. Only open requests are named: the mentions are checked
+  // against the app's open list, which excludes pull requests, and a failed
+  // read says nothing rather than guessing.
+  const unlinkedRequestsNote = async (result) => {
+    const mentioned = Array.isArray(result.mentionedIssues) ? result.mentionedIssues : [];
+    if (!result.proposalId || !mentioned.length) return '';
+    if (Array.isArray(result.linkedIssues) && result.linkedIssues.length) return '';
+    const issues = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${result.appSlug}/github-issues`);
+    if (!issues.ok) return '';
+    const list = Array.isArray(issues.body && issues.body.issues) ? issues.body.issues : [];
+    const open = mentioned.filter((n) => list.some((i) => i.number === n));
+    if (!open.length) return '';
+    const refs = open.map((n) => `#${n}`).join(', ');
+    return ` It is linked to no request, so no request closes when it merges. Its brief mentions open `
+      + `request${open.length === 1 ? '' : 's'} ${refs}: if this change implements `
+      + `${open.length === 1 ? 'it' : 'them'}, call update_proposal_issues with proposalId ${result.proposalId} `
+      + `and addIssues [${open.join(', ')}], which links ${open.length === 1 ? 'it' : 'them'} and adds the `
+      + '`Closes` lines to the pull request. Next time, name them in prepare_work\'s requestNumbers.';
   };
 
   // The stale-checkout warning, and it leads even the duplicate one (#1462).
@@ -2742,6 +3364,8 @@ function registerTools(server, ctx) {
       slug: z.string().describe('The app slug, as returned by list_apps.'),
       requestNumber: z.number().int().positive().optional()
         .describe('The number of an existing request to implement, from list_requests. Its title and body become the task description.'),
+      requestNumbers: z.array(z.number().int().positive().max(2147483647)).max(MAX_WORK_ORDER_REQUESTS).optional()
+        .describe(`Several existing requests this one change implements, from list_requests (at most ${MAX_WORK_ORDER_REQUESTS}; the first leads, and requestNumber, if also given, goes first). Each one's title, body and discussion go into the work order, each is marked as being worked on, and the pull request closes every one when it merges. Only requests named here or in requestNumber are linked: a number written into brief is not.`),
       brief: z.string().optional()
         .describe('What to build, when there is no existing request (or to add detail to one).'),
       proposalId: z.number().int().positive().optional()
@@ -2798,7 +3422,11 @@ function registerTools(server, ctx) {
         note: z.string(),
       }).nullable(),
       claimedRequest: z.boolean()
-        .describe('Whether the request was marked as being worked on. False when this work order names no request, or when the claim did not land — the work order itself is unaffected either way, and claim_request retries it.'),
+        .describe('Whether the request was marked as being worked on — every one of them, when it names several. False when this work order names no request, or when a claim did not land — the work order itself is unaffected either way, and claim_request retries it.'),
+      claimedRequests: z.array(z.number())
+        .describe('The requests whose claim landed. Any in requestNumbers missing from here can be claimed with claim_request.'),
+      requestNumbers: z.array(z.number())
+        .describe('Every request this work order implements. Its pull request gets a `Closes #N` line for each, and the proposal is linked to each, so all of them close when it merges. Empty for a brief with no request behind it.'),
       // Proposals the group is ALREADY voting on for this same request
       // (#1216) — empty when there are none, and never the same thing as
       // `proposalId` above. A job and a proposal are tracked separately, so
@@ -2816,11 +3444,13 @@ function registerTools(server, ctx) {
         mine: z.boolean(),
         author: z.string().nullable(),
         webPath: z.string().nullable(),
+        requests: z.array(z.number()).optional()
+          .describe('Which of the requests this work order names that proposal is for.'),
       })),
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, requestNumber, brief, restart, proposalId, headSha, remoteUrl }) => {
+  }, async ({ slug, requestNumber, requestNumbers, brief, restart, proposalId, headSha, remoteUrl }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -2846,44 +3476,64 @@ function registerTools(server, ctx) {
     // people's writing on its way to a second agent with a shell, so it
     // keeps its envelope all the way into the work order.
     const parts = [];
-    const issueNumber = Number.isInteger(requestNumber) ? requestNumber : null;
-    if (issueNumber) {
+    // Every request this change implements, the single-request parameter
+    // first. The first is the job's issue_number; all of them are linked.
+    const asked = [
+      ...(Number.isInteger(requestNumber) ? [requestNumber] : []),
+      ...(Array.isArray(requestNumbers) ? requestNumbers : []),
+    ];
+    if (new Set(asked).size > MAX_WORK_ORDER_REQUESTS) {
+      return toolError('invalid_request', `One work order implements at most ${MAX_WORK_ORDER_REQUESTS} requests. `
+        + 'Split the rest into another change.');
+    }
+    const requested = externalAgentTasks.normalizeIssueNumbers(asked);
+    if (requested.length) {
       const issues = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/github-issues`);
       if (!issues.ok) return platformError(issues);
       const list = Array.isArray(issues.body && issues.body.issues) ? issues.body.issues : [];
-      const match = list.find((i) => i.number === issueNumber);
-      if (!match) {
-        return toolError('no_access', `Request #${issueNumber} is not open on this app. Check list_requests.`);
+      const missing = requested.filter((n) => !list.some((i) => i.number === n));
+      if (missing.length) {
+        return toolError('no_access', missing.length === 1
+          ? `Request #${missing[0]} is not open on this app. Check list_requests.`
+          : `Requests ${missing.map((n) => `#${n}`).join(', ')} are not open on this app. Check list_requests.`);
       }
-      parts.push(untrusted(match.title, MAX_TITLE_CHARS));
-      if (match.body) parts.push(untrusted(match.body, MAX_BODY_CHARS));
+      const budget = requestTextBudget(requested.length, brief, externalAgentTasks.MAX_BRIEF_CHARS);
+      for (const [index, number] of requested.entries()) {
+        const match = list.find((i) => i.number === number);
+        // The first request's title stays the brief's first line — it names
+        // the job in the Improve panel and the pull request by default — and
+        // each one after it is introduced by its number.
+        if (index > 0) parts.push(`Also request #${number}:`);
+        parts.push(untrusted(match.title, MAX_TITLE_CHARS));
+        if (match.body) parts.push(untrusted(match.body, budget.body));
 
-      // The request's DISCUSSION, not just its body. A request on this
-      // platform is a conversation: the reporter opens it in one line, then
-      // the requirements, the reproduction and the "actually, not like that"
-      // all land in replies — the Homeroom thread on the app's Dev page and
-      // the GitHub issue's comments. The Mayor has read both since #945; a
-      // connector work order carried only the opening line, so the agent
-      // outside the platform built from strictly less than the agent inside
-      // it, and rediscovered answers already given.
-      //
-      // Advisory throughout: both loaders swallow their own errors and both
-      // halves are optional, so a GitHub hiccup or an empty thread costs the
-      // block and nothing else.
-      const discussion = await buildRequestDiscussion({
-        pool, baseUrl, accessToken, appId: app.id, slug, issueNumber,
-      });
-      if (discussion) parts.push(untrusted(discussion, MAX_DISCUSSION_CHARS));
+        // The request's DISCUSSION, not just its body. A request on this
+        // platform is a conversation: the reporter opens it in one line, then
+        // the requirements, the reproduction and the "actually, not like that"
+        // all land in replies — the Homeroom thread on the app's Dev page and
+        // the GitHub issue's comments. The Mayor has read both since #945; a
+        // connector work order carried only the opening line, so the agent
+        // outside the platform built from strictly less than the agent inside
+        // it, and rediscovered answers already given.
+        //
+        // Advisory throughout: both loaders swallow their own errors and both
+        // halves are optional, so a GitHub hiccup or an empty thread costs the
+        // block and nothing else.
+        const discussion = await buildRequestDiscussion({
+          pool, baseUrl, accessToken, appId: app.id, slug, issueNumber: number,
+        });
+        if (discussion) parts.push(untrusted(discussion, budget.discussion));
+      }
     }
     if (brief) parts.push(untrusted(brief, MAX_BODY_CHARS));
     if (!parts.length) {
-      return toolError('invalid_request', 'Pass requestNumber, brief, or both — there has to be something to build.');
+      return toolError('invalid_request', 'Pass requestNumber (or requestNumbers), brief, or both — there has to be something to build.');
     }
 
     const result = await externalAgentTasks.prepareWork(taskDeps(), {
       user,
       app,
-      issueNumber,
+      issueNumbers: requested,
       brief: parts.join('\n\n'),
       clientId: clientId || clientName || null,
       // The client's own registered name is what picks Claude Code vs Codex
@@ -2907,18 +3557,20 @@ function registerTools(server, ctx) {
     // work order names a request — a `brief`-only one has no board row to
     // mark. Renewals are silent platform-side, so calling prepare_work twice
     // does not announce twice.
-    let claimedRequest = false;
-    if (issueNumber) {
+    // Every request the work order names is claimed, one call each.
+    const claimedRequests = [];
+    for (const number of requested) {
       const claimed = await callPlatform(
-        baseUrl, accessToken, 'POST', `/api/apps/${slug}/github-issues/${issueNumber}/claim`
+        baseUrl, accessToken, 'POST', `/api/apps/${slug}/github-issues/${number}/claim`
       );
-      claimedRequest = !!claimed.ok;
-      if (!claimed.ok) {
+      if (claimed.ok) claimedRequests.push(number);
+      else {
         log.warn('mcp-tools', 'prepare_work claim failed (continuing)', {
-          slug, issueNumber, status: claimed.status,
+          slug, issueNumber: number, status: claimed.status,
         });
       }
     }
+    const claimedRequest = requested.length > 0 && claimedRequests.length === requested.length;
 
     // THE CHECKOUT CHECK, MOVED FORWARD (#1462).
     //
@@ -2993,6 +3645,8 @@ function registerTools(server, ctx) {
       branchHome: result.branchHome || null,
       checkout,
       claimedRequest,
+      claimedRequests,
+      requestNumbers: Array.isArray(result.requestNumbers) ? result.requestNumbers : requested,
       // The title is the proposal's own heading and the author is a username:
       // both are other Homeroom users' writing, so both keep the envelope
       // every other request- and proposal-shaped string here carries.
@@ -3130,6 +3784,8 @@ function registerTools(server, ctx) {
       // to promote it. `null` on every ordinary submission.
       shared: z.boolean().nullable(),
       sessionId: z.number().nullable(),
+      linkedIssues: z.array(z.number()).nullable().optional()
+        .describe('On a new proposal, the requests it is linked to and will close when it merges. Empty means none: a request number written only in the brief is never linked by itself, and nextStep says how to link one.'),
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
@@ -3346,7 +4002,7 @@ function registerTools(server, ctx) {
           + `routes you passed were different, so they are now this proposal's.${shotOn}`
           + (result.captureRerun
             ? ' Its checks and screenshots are being re-shot against them right now; use get_proposal to follow them.'
-            : ' It is paused, so the new screenshots are taken when it is reopened.')
+            : ' It is idle, so the new screenshots are taken when it is next opened.')
         : `${named} was already at that commit and the testing routes you passed are the ones it already had, `
           + `so nothing changed and no votes were affected.${shotOn} If you meant to change the code, commit and `
           + 'push first, then submit again.';
@@ -3452,7 +4108,7 @@ function registerTools(server, ctx) {
       // the same payload. `targetKind` already says which this is; the propose
       // branch below reads it for exactly this reason.
       const buildNote = result.resumeRequired
-        ? ' It is paused, so the commit landed and no preview was built — reopen it when you want one.'
+        ? ' It is idle, so the commit landed and no preview was built; opening it builds one.'
         : result.previewRebuilding
           ? ' Its staging preview is rebuilding now; use get_proposal to follow it.'
           : ' No preview build started for this push.';
@@ -3628,10 +4284,12 @@ function registerTools(server, ctx) {
       webPath: result.proposalId
         ? changeWebPath(origin, result.appSlug, result.proposalId)
         : `${origin}/#app/${result.appSlug}`,
+      linkedIssues: Array.isArray(result.linkedIssues) ? result.linkedIssues : null,
       nextStep: 'It is now up for a vote'
         + `${proposalRef(result.proposalId, result.prNumber) ? ` as ${proposalRef(result.proposalId, result.prNumber)}` : ''}. `
         + 'Checks and the staging preview build automatically — use get_proposal to follow it. It merges when the group approves it.'
-        + testingRouteNote(testing, false),
+        + testingRouteNote(testing, false)
+        + await unlinkedRequestsNote(result),
     });
   });
 
@@ -4177,6 +4835,7 @@ module.exports = {
   SERVER_NAME,
   SERVER_VERSION,
   SERVER_INSTRUCTIONS,
+  instructionsFor: require('./mcp-charter').instructionsFor,
   MAX_LIST_ITEMS,
   MAX_REQUEST_PAGE,
   MAX_TITLE_CHARS,
@@ -4184,6 +4843,7 @@ module.exports = {
   MAX_REQUEST_TITLE_CHARS,
   MAX_REQUEST_BODY_CHARS,
   MAX_ANSWER_CHARS,
+  MAX_CLOSE_REASON_CHARS,
   MAX_CONVENTIONS_CHARS,
   PLATFORM_INTERNAL_URL,
   ACTING_TOOLS,
@@ -4207,9 +4867,12 @@ module.exports = {
   decodeRequestCursor,
   pageRequests,
   shapeProposal,
+  shapeChange,
+  changeNextStep,
   proposalRef,
   shapeChecks,
   shapeTestingNotes,
   testingRouteNote,
+  requestTextBudget,
   registerTools,
 };

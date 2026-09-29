@@ -179,7 +179,8 @@ export type TranscriptRow =
     t: 'attached';
     key: string;
     details: DetailsSpec;
-    icon: 'spinner' | 'check';
+    /** `flag`: an agent session's run that failed or was stopped (#2779). */
+    icon: 'spinner' | 'check' | 'flag';
     text: string;
     html?: string;
     /** #2597's venue caption, under the card's head row. */
@@ -218,8 +219,7 @@ export type TranscriptRow =
      * explicit is what lets an already-proposed card stay visibly disabled
      * across success re-renders, status polls and a fresh session load.
      */
-    propose: { kind: 'ready' } | { kind: 'pending' } | { kind: 'completed' }
-      | { kind: 'blocked'; label: string; reason: string } | null;
+    propose: { kind: 'ready'; note?: string } | { kind: 'pending' } | { kind: 'completed' } | null;
     /** MergeStatus's badge for the card, or the merged sentence. */
     status2: { kind: 'none' } | { kind: 'merged' } | { kind: 'badge'; html: string };
   }

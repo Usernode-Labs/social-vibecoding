@@ -67,11 +67,21 @@ export function appIconKind(app: AppRecord): string {
  * public app — callers check `hasAppPills` before drawing the wrapper, because
  * the wrapper's `mt-1` / `mt-2` is a gap nobody wants on an empty run.
  */
-export function AppPills({ app }: { app: AppRecord }): ReactNode {
-  const { chips, vis } = appPillsFor(app) as {
+export function AppPills({ app, limit }: {
+  app: AppRecord;
+  /**
+   * At most this many pills, taken in appPillsFor's order (what needs
+   * attention first) with the visibility chip last. Unset: every pill.
+   */
+  limit?: number;
+}): ReactNode {
+  const all = appPillsFor(app) as {
     chips: Array<{ cls: string; label: string; tip: string }>;
     vis: { icon: 'lock' | 'mail'; label: string; tip: string } | null;
   };
+  const max = limit == null ? Infinity : Math.max(0, limit);
+  const chips = all.chips.slice(0, max);
+  const vis = chips.length < max ? all.vis : null;
   return (
     <>
       {chips.map((c) => (

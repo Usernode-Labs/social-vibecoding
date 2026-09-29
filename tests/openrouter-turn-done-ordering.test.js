@@ -1,5 +1,5 @@
 // #2599: the direct OpenRouter turn in POST /api/sessions/:id/chat
-// (src/routes/sessions.js) must stop reporting the session as busy BEFORE it
+// (src/services/mayor/turn.js since #2779) must stop reporting the session as busy BEFORE it
 // tells clients the turn is over.
 //
 // The Claude path ends with its `finally` — which releases the session
@@ -23,7 +23,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SRC = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
+// #2779: the dev-chat turn moved from routes/sessions.js into
+// services/mayor/turn.js, two indentation levels shallower.
+const SRC = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'mayor', 'turn.js'), 'utf8');
 
 function sliceBetween(start, end, what) {
   const a = SRC.indexOf(start);
@@ -39,8 +41,8 @@ function sliceBetween(start, end, what) {
 // Mayor setup that follows it. Its last exit is the closure's end rather
 // than a `return;`, and the split below still yields it as its own exit.
 const BRANCH = sliceBetween(
-  '        const runOpenRouterDirectTurn = async () => {\n          // #1949',
-  "        // The Mayor's model, key and payer for this turn.",
+  '    const runOpenRouterDirectTurn = async () => {\n      // #1949',
+  "    // The Mayor's model, key and payer for this turn.",
   'the direct OpenRouter branch',
 );
 
@@ -76,8 +78,8 @@ test('every OpenRouter exit that dispatched a turn releases the busy hold and st
 
 test('the reference: the Claude path releases in its finally ahead of its own send(\'done\')', () => {
   const tail = sliceBetween(
-    '      } finally {\n        if (releaseDispatchOperation) releaseDispatchOperation();',
-    '      setTimeout(() => sessionBus.clearSession(session.id), 30000);\n    } catch (err) {',
+    '  } finally {\n    if (releaseDispatchOperation) releaseDispatchOperation();',
+    '  setTimeout(() => sessionBus.clearSession(session.id), 30000);\n}',
     "the chat route's finally + done tail",
   );
   const release = tail.indexOf('releaseDispatchOperation();');

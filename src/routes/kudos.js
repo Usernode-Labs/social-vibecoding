@@ -388,14 +388,20 @@ function kudosRoutes(config) {
 
       // Best-effort cleanup of the author's "gave kudos" notification —
       // the underlying event no longer stands, read or unread. Never
-      // fail the retract itself over it. (No WS "notification removed"
-      // push exists; an open dropdown stays stale until next load.)
+      // fail the retract itself over it.
       try {
-        await pool.query(
+        const { rows: cleared = [] } = await pool.query(
           `DELETE FROM notifications
-             WHERE kind = 'kudos' AND session_id = $1 AND source_user_id = $2`,
+             WHERE kind = 'kudos' AND session_id = $1 AND source_user_id = $2
+           RETURNING user_id`,
           [sessionId, req.user.id]
         );
+        // #3050: the recipient's unread total may just have dropped —
+        // refresh their bell and re-badge their iPhone.
+        const { pushNotificationToUser } = require('../services/ws');
+        for (const userId of new Set(cleared.map((r) => r.user_id))) {
+          pushNotificationToUser(userId, { type: 'notifications_changed' });
+        }
       } catch (err) {
         log.warn('kudos', 'notification cleanup failed', {
           sessionId, giver: req.user.id, err: err.message,

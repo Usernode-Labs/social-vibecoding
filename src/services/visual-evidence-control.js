@@ -10,6 +10,7 @@ const planContract = require('./visual-evidence-plan');
 
 const controls = new Map();
 const FINISH_STATUSES = new Set(['verified', 'not_relevant', 'failed']);
+const MAX_REPAIR_ATTEMPTS = 2;
 
 class EvidenceControlError extends Error {
   constructor(code, message, status = 409) {
@@ -30,15 +31,77 @@ function cloneJson(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+function preservesTimingRepair(rejected, corrected, failure) {
+  if (!rejected || rejected.stories.length !== corrected.stories.length) return false;
+  const unchangedFlow = rejected.stories.every((story, index) => {
+    const next = corrected.stories[index];
+    if (story.id !== next.id || planContract.canonicalJson(story.replay.checkpoint)
+        !== planContract.canonicalJson(next.replay.checkpoint)) return false;
+    return ['before', 'after'].every((side) => story.replay[side].startPath === next.replay[side].startPath
+      && planContract.canonicalJson(story.replay[side].actions.filter((action) => action.type !== 'waitFor'))
+        === planContract.canonicalJson(next.replay[side].actions.filter((action) => action.type !== 'waitFor')));
+  });
+  if (!unchangedFlow) return false;
+
+  // The wait must observe the exact marker that failed and occur after the
+  // final interaction. Waiting on an unrelated control only burns time and
+  // can make a broken motion flow appear to have settled.
+  const detail = failure?.detail;
+  const side = detail?.side === 'base' ? 'before' : detail?.side === 'head' ? 'after' : null;
+  const oldStory = rejected.stories.find((story) => story.id === detail?.storyId);
+  const newStory = corrected.stories.find((story) => story.id === detail?.storyId);
+  const failedAssertion = side && Number.isInteger(detail?.assertionIndex)
+    ? oldStory?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex] : null;
+  if (!failedAssertion?.target || !newStory) return false;
+  const actions = newStory.replay[side].actions;
+  const finalInteraction = actions.findLastIndex((action) => action.type !== 'waitFor');
+  return actions.slice(finalInteraction + 1).some((action) => action.type === 'waitFor'
+    && action.state === 'hidden'
+    && action.target
+    && planContract.canonicalJson(action.target) === planContract.canonicalJson(failedAssertion.target));
+}
+
+function preservesAssertionLocatorRepair(rejected, corrected, failure) {
+  const detail = failure?.detail;
+  const side = detail?.side === 'base' ? 'before' : detail?.side === 'head' ? 'after' : null;
+  if (!rejected || !side || !Number.isInteger(detail?.assertionIndex)) return false;
+  const oldStory = rejected.stories.find((story) => story.id === detail.storyId);
+  const newStory = corrected.stories.find((story) => story.id === detail.storyId);
+  const oldAssertion = oldStory?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex];
+  const newAssertion = newStory?.replay?.checkpoint?.assertions?.[side]?.[detail.assertionIndex];
+  if (!oldAssertion?.target || !newAssertion?.target
+      || planContract.canonicalJson(oldAssertion) !== planContract.canonicalJson(detail.assertion)
+      || planContract.canonicalJson(oldAssertion.target)
+        === planContract.canonicalJson(newAssertion.target)) return false;
+
+  // A failed positive assertion may have pointed at the wrong element, but
+  // that does not authorize the repair turn to rewrite what the checkpoint
+  // proves. Put the old target back into a copy of the proposed correction;
+  // the entire plan must then be byte-for-byte equivalent to the rejected
+  // plan. This pins the assertion type and expected count/value as well as
+  // every action, route, focus target, sibling assertion, and other story.
+  const normalized = cloneJson(corrected);
+  const normalizedStory = normalized.stories.find((story) => story.id === detail.storyId);
+  normalizedStory.replay.checkpoint.assertions[side][detail.assertionIndex].target
+    = cloneJson(oldAssertion.target);
+  return planContract.canonicalJson(normalized) === planContract.canonicalJson(rejected);
+}
+
 class RunControl {
-  constructor({ runId, sessionId, intent, context, resetSide, runPlan, expiresAt }) {
+  constructor({ runId, sessionId, intent, context, resetPair, runPlan, expiresAt }) {
     this.runId = runId;
     this.sessionId = Number(sessionId);
     this.intent = planContract.parseIntent(intent);
     this.context = cloneJson(context);
-    this.resetSideCallback = resetSide;
+    this.resetPairCallback = resetPair;
+    // During a rolling deploy an older evidence worker may still call the
+    // retired one-side endpoint twice, once for base and once for head. Keep
+    // the first atomic pair available for the companion call so that the
+    // second request cannot invalidate the origin returned by the first.
+    this.legacyResetPair = null;
+    this.legacyResetSides = new Set();
     this.runPlanCallback = runPlan;
-    this.expiresAt = Number(expiresAt || Date.now() + 4 * 60_000);
+    this.expiresAt = Number(expiresAt || Date.now() + 8 * 60_000);
     this.planCalls = 0;
     this.maxPlanCalls = 1;
     this.latestHard = null;
@@ -55,6 +118,7 @@ class RunControl {
     this.repairFailure = null;
     this.rejectedPlan = null;
     this.lastSubmittedPlan = null;
+    this.planTask = null;
     this.waiters = new Set();
     this.busy = null;
   }
@@ -77,27 +141,59 @@ class RunControl {
     });
   }
 
-  async resetSide(side) {
+  async resetPair() {
     try {
       this.assertLive();
-      if (!['base', 'head'].includes(side)) throw new EvidenceControlError('invalid_evidence_side', 'Side must be base or head.', 400);
       if (this.finished) throw new EvidenceControlError('evidence_turn_finished', 'This evidence turn is already finished.');
-      if (typeof this.resetSideCallback !== 'function') {
-        throw new EvidenceControlError('evidence_reset_unavailable', 'Side reset is unavailable for this run.', 503);
+      if (typeof this.resetPairCallback !== 'function') {
+        throw new EvidenceControlError('evidence_reset_unavailable', 'Paired reset is unavailable for this run.', 503);
       }
       if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
       this.busy = 'resetting paired state';
-      try { return await this.resetSideCallback(side); }
+      try {
+        const result = await this.resetPairCallback();
+        if (!result?.origins?.base || !result?.origins?.head) {
+          throw new EvidenceControlError(
+            'invalid_evidence_reset', 'Paired reset did not return both replacement origins.', 500
+          );
+        }
+        this.legacyResetPair = null;
+        this.legacyResetSides.clear();
+        return cloneJson(result);
+      }
       finally { this.busy = null; }
     } catch (error) {
       if (this.lastToolFailure?.operation !== 'run-plan') {
-        this.lastToolFailure = { operation: 'reset-side', error };
+        this.lastToolFailure = { operation: 'reset-pair', error };
       }
       throw error;
     }
   }
 
-  async runPlan(rawPlan) {
+  async resetSide(side) {
+    if (!['base', 'head'].includes(side)) {
+      throw new EvidenceControlError('invalid_evidence_side', 'Side must be base or head.', 400);
+    }
+    this.assertLive();
+    if (this.finished) throw new EvidenceControlError('evidence_turn_finished', 'This evidence turn is already finished.');
+    if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
+    let pair = this.legacyResetPair;
+    if (!pair || this.legacyResetSides.has(side)) {
+      pair = await this.resetPair();
+      this.legacyResetPair = pair;
+      this.legacyResetSides.clear();
+    }
+    this.legacyResetSides.add(side);
+    return {
+      side,
+      origin: pair.origins[side],
+      origins: cloneJson(pair.origins),
+      bothSidesReset: true,
+    };
+  }
+
+  queuePlan(rawPlan) {
+    let plan;
     try {
       this.assertLive();
       if (this.finished) throw new EvidenceControlError('evidence_turn_finished', 'This evidence turn is already finished.');
@@ -105,7 +201,7 @@ class RunControl {
         throw new EvidenceControlError('evidence_plan_attempt_exhausted', 'No additional replay-plan attempt is available.');
       }
       if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
-      const plan = planContract.parseReplayPlan(rawPlan);
+      plan = planContract.parseReplayPlan(rawPlan);
       const projected = planContract.semanticIntentFromPlan(plan);
       if (planContract.canonicalJson(projected) !== planContract.canonicalJson(this.intent)) {
         throw new EvidenceControlError(
@@ -114,7 +210,7 @@ class RunControl {
           400
         );
       }
-      if (this.planCalls === 1 && this.maxPlanCalls === 2
+      if (this.planCalls > 0 && this.planCalls === this.maxPlanCalls - 1
           && planContract.planHash(plan) === planContract.planHash(this.rejectedPlan)) {
         throw new EvidenceControlError(
           'evidence_repair_unchanged',
@@ -122,32 +218,99 @@ class RunControl {
           400
         );
       }
-      // Reserve the attempt before awaiting so concurrent calls cannot execute
-      // multiple expensive paired replays.
-      this.lastSubmittedPlan = cloneJson(plan);
-      this.planCalls += 1;
-      this.busy = 'replaying the submitted plan';
-      const replayStartedAt = Date.now();
-      try {
-        const result = await this.runPlanCallback(plan, { attempt: this.planCalls });
+      if (this.repairFailure?.kind === 'motion_timing'
+          && !preservesTimingRepair(this.rejectedPlan, plan, this.repairFailure)) {
+        throw new EvidenceControlError(
+          'evidence_timing_repair_changed_flow',
+          'A motion timing correction may change waits only. Keep the original interactions, routes, and assertions, then wait for the failed marker to become hidden before the checkpoint.',
+          400
+        );
+      }
+      if (this.repairFailure?.kind === 'assertion_locator'
+          && !preservesAssertionLocatorRepair(this.rejectedPlan, plan, this.repairFailure)) {
+        throw new EvidenceControlError(
+          'evidence_assertion_locator_repair_changed_plan',
+          'An assertion locator correction may change only the failed assertion target. Keep its type and expected value or count, plus every action, route, focus target, and other assertion unchanged.',
+          400
+        );
+      }
+    } catch (error) {
+      this.lastToolFailure = { operation: 'run-plan', error };
+      throw error;
+    }
+    // Reserve before starting the asynchronous replay. The MCP request can
+    // acknowledge this immutable plan without holding an HTTP connection
+    // open through every browser case and both passes.
+    this.lastSubmittedPlan = cloneJson(plan);
+    const attempt = ++this.planCalls;
+    const planHash = planContract.planHash(plan);
+    this.busy = 'replaying the submitted plan';
+    const replayStartedAt = Date.now();
+    const completion = Promise.resolve().then(() => this.runPlanCallback(plan, { attempt }))
+      .then((result) => {
         this.lastToolFailure = null;
         this.lastReplayFailure = null;
         this.latestHard = result?.hardVerdict?.passed === true
-          ? { passed: true, planHash: result.planHash, attempt: this.planCalls }
+          ? { passed: true, planHash: result.planHash, attempt }
           : null;
         return result;
-      } catch (error) {
-        // A corrected replay may supersede an earlier failed replay. Keep the
-        // latest execution failure, separate from validation/quota errors.
+      }, (error) => {
+        // A corrected replay may supersede an earlier failure. Keep the
+        // browser error even if the model submits a duplicate afterward.
         this.lastReplayFailure = { operation: 'run-plan', error };
+        this.lastToolFailure = { operation: 'run-plan', error };
         throw error;
-      } finally {
+      }).finally(() => {
         // Each deterministic replay pass has its own container deadline. Do
-        // not expire the agent's control window while that bounded platform
-        // work is running; it still needs to inspect the media and finish.
+        // not expire the run's control window while that bounded platform
+        // work is running; a locator failure may need a new correction turn.
         this.expiresAt += Date.now() - replayStartedAt;
         this.busy = null;
+      });
+    // The hosted agent may exit after receiving the acknowledgement. The
+    // orchestrator still awaits this promise; attach a handler immediately so
+    // a replay that fails first cannot become an unhandled rejection.
+    completion.catch(() => {});
+    this.planTask = completion;
+    return { attempt, planHash, completion };
+  }
+
+  async runPlan(rawPlan) {
+    return this.queuePlan(rawPlan).completion;
+  }
+
+  submitPlan(rawPlan) {
+    try {
+      this.assertLive();
+      const candidate = planContract.parseReplayPlan(rawPlan);
+      const planHash = planContract.planHash(candidate);
+      if (!this.finished && this.planCalls === this.maxPlanCalls && this.lastSubmittedPlan
+          && planHash === planContract.planHash(this.lastSubmittedPlan)) {
+        return { accepted: true, attempt: this.planCalls, planHash, duplicate: true };
       }
+      const queued = this.queuePlan(candidate);
+      return { accepted: true, attempt: queued.attempt, planHash: queued.planHash, duplicate: false };
+    } catch (error) {
+      this.lastToolFailure = { operation: 'run-plan', error };
+      throw error;
+    }
+  }
+
+  submitReplays(rawReplays) {
+    try { return this.submitPlan(planContract.replayPlanFromIntent(this.intent, rawReplays)); }
+    catch (error) {
+      this.lastToolFailure = { operation: 'run-plan', error };
+      throw error;
+    }
+  }
+
+  waitForPlan() {
+    return this.planTask || Promise.resolve(null);
+  }
+
+  async runReplays(rawReplays) {
+    try {
+      return await this.runPlan(planContract.replayPlanFromIntent(this.intent, rawReplays));
     } catch (error) {
       this.lastToolFailure = { operation: 'run-plan', error };
       throw error;
@@ -179,11 +342,11 @@ class RunControl {
 
   allowRepair(reason, failure) {
     if (this.busy) throw new EvidenceControlError('evidence_control_busy', `Evidence is already ${this.busy}.`, 409);
-    if (this.planCalls !== 1 || this.maxPlanCalls !== 1
+    if (this.planCalls !== this.maxPlanCalls || this.planCalls > MAX_REPAIR_ATTEMPTS
         || !this.lastReplayFailure || !this.lastSubmittedPlan) {
-      throw new EvidenceControlError('evidence_repair_unavailable', 'The single repair attempt is not available.');
+      throw new EvidenceControlError('evidence_repair_unavailable', 'No additional repair attempt is available.');
     }
-    this.maxPlanCalls = 2;
+    this.maxPlanCalls += 1;
     this.repairReason = boundedReason(reason);
     this.repairFailure = cloneJson(failure);
     this.rejectedPlan = cloneJson(this.lastSubmittedPlan);
@@ -191,7 +354,7 @@ class RunControl {
     this.latestHard = null;
   }
 
-  waitForFinish({ signal = null, timeoutMs = 240_000 } = {}) {
+  waitForFinish({ signal = null, timeoutMs = 480_000 } = {}) {
     if (this.finished) return Promise.resolve(cloneJson(this.finished));
     return new Promise((resolve, reject) => {
       let timer = null;

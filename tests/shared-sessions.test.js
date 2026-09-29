@@ -173,11 +173,9 @@ test('shared-sessions WHERE clause is the privacy contract', async () => {
     // teardownStaging does not clear it the way it clears staging_url.
     assert.match(q.sql,
       /\(cs\.pr_number IS NOT NULL OR cs\.checks_commit_sha IS NOT NULL\s*OR cs\.shared_at IS NOT NULL\)\s*AS can_preview/);
-    // …but nothing that opens the owner's dev chat — pr_number itself is
-    // never selected bare, only inside the boolean above.
-    assert.doesNotMatch(q.sql, /pr_url/);
+    // GitHub identity is visible with the shared change; private chat is not.
+    assert.match(q.sql, /cs\.pr_number, cs\.pr_url/);
     assert.doesNotMatch(q.sql, /cc_session_id/);
-    assert.doesNotMatch(q.sql, /cs\.pr_number,/);
     // Transcript sharing adds a BOOLEAN plus a count for the chip label —
     // never the transcript itself, and never the raw timestamp column
     // (the card only needs "is it readable?").
@@ -221,9 +219,12 @@ test('shared-sessions rows pass through with a busy annotation', async () => {
   }
 });
 
-test('shared imported Underway rows gain full proposal details without widening regular sessions', async () => {
+test('shared imported Underway rows gain full proposal details without exposing regular session internals', async () => {
   capturedQueries = [];
-  const regular = sharedRow({ id: 70, source: null });
+  const regular = sharedRow({
+    id: 70, source: null, pr_number: 1660,
+    pr_url: 'https://github.example/pull/1660',
+  });
   const imported = sharedRow({
     id: 88,
     source: 'imported',
@@ -261,8 +262,8 @@ test('shared imported Underway rows gain full proposal details without widening 
     const { res, body } = await get(server, '/api/apps/demo/shared-sessions');
     assert.strictEqual(res.status, 200);
     const byId = Object.fromEntries(body.sessions.map((row) => [row.id, row]));
-    assert.equal(Object.hasOwn(byId[70], 'pr_url'), false,
-      'ordinary shared sessions retain the metadata-only response');
+    assert.equal(byId[70].pr_url, 'https://github.example/pull/1660');
+    assert.equal(byId[70].pr_number, 1660);
     assert.equal(Object.hasOwn(byId[70], 'test_results'), false);
 
     assert.equal(byId[88].pr_url, 'https://github.example/pull/1659');

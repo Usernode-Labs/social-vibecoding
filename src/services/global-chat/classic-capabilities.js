@@ -1122,7 +1122,9 @@ function routeDefinition(route) {
     mobileSupported: route.mobileSupported,
     sensitiveFields: [],
     handler: routeHandler(route),
-    tests: [`${route.source}:${route.line}`],
+    // Where the route is declared, by method and path rather than line: the
+    // inventory carries no line numbers (scripts/generate-global-chat-inventory.js).
+    tests: [`${route.source} ${route.method} ${route.path}`],
   };
 }
 

@@ -75,7 +75,7 @@ function loadForker({ cloneDatabase, execFileAsync, githubEnabled = true } = {})
     reportPhase: (...args) => phases.push(args),
     endPhases: (slug) => cleared.push(slug),
   });
-  stub(ids.template, { getConnectorScaffoldFiles: () => [] });
+  stub(ids.template, { getConnectorScaffoldFiles: () => [], getCanonicalRepoFile: () => null });
 
   const subject = require(ids.appForker);
   return {

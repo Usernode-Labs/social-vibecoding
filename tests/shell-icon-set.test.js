@@ -1,3 +1,4 @@
+// test:changed: always (every feature file, for glyphs drawn outside icons.tsx; scripts/test-changed.js)
 // The shell's glyphs come from ONE module, and their path data never moves.
 //
 // #1120 slice 4 pulled 36 inline `<svg>` blocks out of frontend/src/features/**
@@ -193,13 +194,19 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // count glyphs are the same pair the app's own Workshop tab uses, which is
   // the point: the number on a row and the pane it counts wear one mark.
   const expected = [
+    // ── The create dialog's rework took four paths OUT of this list ──
+    //
+    // "What are you making?" became rows like "Who is it for?", each with
+    // its glyph, and the dialog prerenders every step: AppWindowIcon (two
+    // paths) on App, NewspaperIcon on Document and PlayIcon on Video are now
+    // in the static document.
     // ── #2718 moved paths across this line, in both directions ───────
     //
     // OUT OF IT, because the navigation change draws them unconditionally:
     // the tab bar's five glyphs are in the document on every route, the app
     // menu draws a chat bubble and an info circle, and the parked strip draws
     // an ✕. (The Workshop's scope chip drew the grid until #2759 took it off
-    // the all-apps screen; the grid is listed below again.)
+    // the all-apps screen, and draws it again since #3051 brought it back.)
     //
     // INTO IT, and every one is a row of the app chip's menu that is not
     // there any more. The platform's destinations left that menu for the tab
@@ -212,10 +219,15 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // glyph that stops prerendering because a surface was retired is
     // expected, and one that stops because a component broke is a hydration
     // bug wearing the same clothes.
-    'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z',
+    // CogIcon's two paths (the gear, and the hub 'M15 12a3…') LEFT this list
+    // with #3120: the desktop rail's Settings cog (#platform-rail-settings)
+    // sits beside Me at the rail's foot and renders unconditionally, so the
+    // cog is in the cold document again.
     'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
     'M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z',
-    'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
+    // LockIcon and UserGroupIcon LEFT this list with communities, stage 3:
+    // the create dialog's first step (who it is for) draws them on its
+    // "A group" and "A community" rows, and the dialog prerenders every step.
     'M12 20h9',
     'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
     'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
@@ -230,21 +242,20 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M12 4.5v15m7.5-7.5h-15',
     'M12 5.5v13',
     'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z',
-    'M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z',
+    // WarningTriangleIcon left this list with #2716: Settings → Delete
+    // account draws it on the initial confirmation-entry button, including
+    // when the lazily mounted Settings interior first renders.
     'M13 7l5 5m0 0l-5 5m5-5H6',
     'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',
-    'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
     'M15 18l-6-6 6-6',
     'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z',
     'M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6',
-    'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zm8-1a3 3 0 010 6m4 5v-2a4 4 0 00-3-3.9',
     'M16.023 9.348h4.992V4.356m-4.992 4.992l3.181-3.183a8.25 8.25 0 00-13.803 3.7M4.031 9.865v4.99m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7',
     'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
     'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
     'M16.5 6.5a2.12 2.12 0 0 1 3 3L9 20l-4 1 1-4z',
     'M17 21v-8H7v8',
     'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',
-    'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
     'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z',
     'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6',
     'M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859',
@@ -257,20 +268,18 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M4 20 20 4',
     'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
     'M4 5a8 3 0 1 0 16 0 8 3 0 1 0-16 0',
+    // BoardIcon came back to this list with #3287: the app chip's menu row
+    // is "Go to community hub" and wears the Communities glyph, so the board
+    // mark is drawn only by a project page's Workshop tab, behind state.
+    'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
     'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6',
-    'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
-    // THE GRID, back behind state (#2759). The all-apps Workshop screen's
-    // scope chip drew it unconditionally as its "All apps" tile; that chip is
-    // gone — the screen is itself the list of apps — and the grid is left
-    // only in the app Workshop's "Which workshop?" panel, which renders once
-    // somebody taps.
-    'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
+    // THE GRID left this list again with #3051. #2759 had put it behind state
+    // when the all-apps Workshop's scope chip went; the owner brought that
+    // chip back as "All apps", and it draws the grid unconditionally.
     'M4 6h16M4 12h16M4 18h16',
-    'M4 9.5h16',
     'M4.5 12.75l6 6 9-13.5',
     'M5 13l4 4L19 7',
     'M5 15l7-7 7 7',
-    'M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z',
     'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
     // HashIcon (#2802): a channel's glyph in the desktop rail's Recents,
@@ -297,7 +306,35 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // exported and still drawn: the Workshop toolbar's "+" menu offers
     // "New change" with it, behind that menu's own state.
     'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
-    'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z',
+    // SparklesIcon LEFT this list when the header menu button traded the
+    // Homeroom "H" tile for a sparkle: #platform-mark-btn renders on every
+    // route, so the glyph is in the cold document.
+    // THE MESSAGE ACTIONS (#2387): the hover bar's smile and reply arrow, the
+    // ⋯ menu's thread, copy, link, envelope, flag and struck circle, and the
+    // emoji picker's heart and cup tabs. Every one draws only once a row is
+    // hovered, pressed or opened, never in a cold document.
+    'M15.182 15.182a4.5 4.5 0 0 1-6.364 0',
+    'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
+    'M9 9.75h.01M15 9.75h.01',
+    'M9 17l-5-5 5-5',
+    'M20 18v-2a4 4 0 0 0-4-4H4',
+    'M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155',
+    'M9 9h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11a2 2 0 0 1-2-2V9Z',
+    'M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4',
+    // (LinkIcon left this list with invite links: it is the "Invite to
+    // community" row's mark in the app chip's menu, which prerenders.)
+    'M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75',
+    'M3 3v1.5M3 21v-6m0 0 2.77-.693a9 9 0 0 1 6.208.682l.108.054a9 9 0 0 0 6.086.71l3.114-.732a48.524 48.524 0 0 1-.005-10.499l-3.11.732a9 9 0 0 1-6.085-.711l-.108-.054a9 9 0 0 0-6.208-.682L3 4.5M3 15V4.5',
+    'M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636',
+    'M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z',
+    'M17 8h1a4 4 0 1 1 0 8h-1',
+    'M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8Z',
+    'M7 2v2M11 2v2M15 2v2',
+    // THE FULL-WIDTH TOGGLE (#2387 follow-up): arrows out, and arrows in once
+    // the list is hidden. Drawn in an open conversation's header, which only
+    // renders once one is open.
+    'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7',
+    'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

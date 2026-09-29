@@ -154,7 +154,7 @@ test('superseded recovery fences terminalization to its old owner and idle thres
   });
   assert.deepEqual(result, { examined: 1, failed: 0, cancelled: 0, cleanupRetried: 0 });
   const update = statements.find(({ sql }) => sql.includes("SET state = 'cancelled'"));
-  assert.deepEqual(update.values, [720_000, gc.LEGACY_RUN_GRACE_MS, id]);
+  assert.deepEqual(update.values, [300_000, gc.LEGACY_RUN_GRACE_MS, id]);
   assert.match(update.sql, /s\.visual_evidence_run_id IS DISTINCT FROM r\.id/);
   assert.match(update.sql, /r\.updated_at < NOW\(\)/);
 });

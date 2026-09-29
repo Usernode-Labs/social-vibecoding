@@ -175,7 +175,8 @@ test('valid screenshotId appends the exact embed line and links the row', async 
       `issue body should end with the embed line, got: ${ghCreates[0].body}`);
     const link = poolQueries.find((q) => q.sql.includes('UPDATE issue_screenshots'));
     assert.ok(link, 'expected the row to be linked to the filed issue');
-    assert.deepEqual(link.params, [GOOD_ID, 'plat', 'repo', 42]);
+    // #3027: linking takes the list of ids and stays bound to the uploader.
+    assert.deepEqual(link.params, [[GOOD_ID], 'plat', 'repo', 42, 7]);
   } finally {
     server.close();
   }
@@ -218,7 +219,7 @@ test('omitted screenshotId leaves the issue body byte-identical to today', async
     const res = await postFeedback(server, { description: 'Something is broken', title: 'My title' });
     assert.equal(res.status, 200);
     assert.equal(ghCreates.length, 1);
-    assert.equal(ghCreates[0].body, '**Source:** usernode user (tester)\n\nSomething is broken');
+    assert.equal(ghCreates[0].body, '**Source:** Homeroom user (tester)\n\nSomething is broken');
     assert.equal(poolQueries.some((q) => q.sql.includes('issue_screenshots')), false);
   } finally {
     server.close();

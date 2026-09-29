@@ -183,6 +183,9 @@ const Kudos = {
       }
       if (popover) {
         // Lazy-load givers on first hover. Cached afterwards.
+        // #2994: a failed load is not "nobody gave kudos" (the count beside
+        // the popover says otherwise). It says the list couldn't load, and
+        // drops loadPromise so the next hover asks again.
         let loadPromise = null;
         wrap.addEventListener('mouseenter', () => {
           popover.classList.remove('hidden');
@@ -191,10 +194,15 @@ const Kudos = {
             popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">No kudos yet. Be the first.</span>';
             return;
           }
-          if (!entry.givers && !loadPromise) {
-            loadPromise = Kudos.fetchGivers(sid).then(() => {
-              if (!popover.classList.contains('hidden')) Kudos._renderPopover(sid, popover);
-            });
+          if (!entry.givers) {
+            if (!loadPromise) {
+              loadPromise = Kudos.fetchGivers(sid).then((ok) => {
+                if (!ok) loadPromise = null;
+                if (popover.classList.contains('hidden')) return;
+                if (ok) Kudos._renderPopover(sid, popover);
+                else popover.innerHTML = Kudos.GIVERS_ERROR_HTML;
+              });
+            }
             popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">Loading…</span>';
             return;
           }
@@ -228,10 +236,16 @@ const Kudos = {
     popover.innerHTML = `<div class="mb-1 text-zinc-500 dark:text-zinc-400">Kudos givers (${entry.givers.length})</div>${items}`;
   },
 
+  // Shown in place of the giver list when it couldn't be fetched (#2994).
+  GIVERS_ERROR_HTML: '<span class="text-zinc-500 dark:text-zinc-400">Couldn\u2019t load who gave kudos.</span>',
+
+  // Resolves true once the giver list is cached, false when the request
+  // failed (non-2xx or network error), so a caller can tell "no givers"
+  // from "don't know" and try again later.
   async fetchGivers(sessionId) {
     try {
       const res = await fetch(`/api/sessions/${sessionId}/kudos`);
-      if (!res.ok) return;
+      if (!res.ok) return false;
       const data = await res.json();
       const entry = Kudos._ensureCache(sessionId);
       entry.count = data.count || 0;
@@ -240,8 +254,10 @@ const Kudos = {
       entry.givers = Array.isArray(data.givers) ? data.givers : [];
       // Bump the in-DOM counter in case the cache was stale.
       Kudos._refreshButton(sessionId);
+      return true;
     } catch (err) {
       console.warn('[kudos] fetchGivers failed', err);
+      return false;
     }
   },
 

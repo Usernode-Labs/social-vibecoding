@@ -411,3 +411,64 @@ test('dapp.json exercises the dashboard on ids the module renders', () => {
     assert.ok(id && tsx.includes(`id="${id}"`), `${t.expectSelector} is rendered by the module`);
   }
 });
+
+test('every verdict opens to its own detail, and only a real failure shows the failure line (#3144)', () => {
+  // `empty` got a label and a badge but no branch in VerdictBody, so opening
+  // one fell through to "The run failed before it produced a verdict." The
+  // verdicts are read from VERDICT_LABEL, the table a new verdict has to be
+  // added to anyway, so the next one cannot fall through the same way.
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  const table = tsx.slice(tsx.indexOf('const VERDICT_LABEL'), tsx.indexOf('};', tsx.indexOf('const VERDICT_LABEL')));
+  const verdicts = [...table.matchAll(/^\s+(\w+): '/gm)].map((m) => m[1]);
+  assert.ok(verdicts.includes('empty') && verdicts.includes('failed'), 'the table was read');
+  const body = tsx.slice(tsx.indexOf('function VerdictBody'), tsx.indexOf('\n}\n', tsx.indexOf('function VerdictBody')));
+  for (const verdict of verdicts.filter((v) => v !== 'failed')) {
+    assert.match(body, new RegExp(`if \\(run\\.verdict === '${verdict}'\\)`),
+      `${verdict} has its own branch rather than falling through to the failure line`);
+  }
+  const empty = body.slice(body.indexOf("if (run.verdict === 'empty')"));
+  assert.match(empty.slice(0, 200), /run\.reason/, 'and an empty verdict shows the reason the bot gave');
+});
+
+test('the live list is set from the dashboard, and a proposal the bot opened is one click away (#3146)', () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(tsx, /id="admin-homeroom-bot-live-apps"/);
+  // #3152: one row per app, picked from the running apps, and an explicit
+  // Save through the same settings route as every other knob.
+  assert.match(tsx, /id=\{`admin-homeroom-bot-live-app-\$\{i\}`\}/);
+  assert.match(tsx, /id="admin-homeroom-bot-live-apps-add"/);
+  assert.match(tsx, /id="admin-homeroom-bot-live-apps-save"/);
+  assert.match(tsx, /disabled=\{!liveDirty \|\| !!busy\}/, 'Save is live only when the list differs from what is saved');
+  assert.match(tsx, /write\('\/api\/admin\/homeroom-bot\/settings', 'PUT', \{ liveApps: liveChosen \}/);
+  // The rows are the SAVED list until someone edits them, so a refresh shows
+  // what the bot will act on, and the 30-second poll never wipes an edit.
+  assert.match(tsx, /const liveRows = liveDraft \?\? savedLive;/);
+  assert.match(tsx, /const savedLive = payload\?\.settings\.liveApps \|\| \[\];/);
+  assert.match(tsx, /setLiveDraft\(null\);\s*apply\(data as Payload\);/, 'a successful save goes back to showing the saved list');
+  assert.match(tsx, /id="admin-homeroom-bot-live-apps-state"/);
+  assert.match(tsx, /id="admin-homeroom-bot-live-apps-note"/);
+  assert.match(tsx, /a staging copy never acts/);
+  // The link is built from the run's own app slug and session id, never
+  // from a URL the API handed over.
+  assert.match(tsx, /href=\{`#app\/\$\{encodeURIComponent\(run\.app_slug\)\}\/dev\/proposals\/\$\{Number\(run\.proposal_session_id\)\}`\}/);
+  assert.match(tsx, /className=\{AdminUI\.btn\.link\}/);
+});
+
+test('the ledger, the dashboard and the filter agree on every verdict, follow-ups included (#3264)', () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  const table = tsx.slice(tsx.indexOf('const VERDICT_LABEL'), tsx.indexOf('};', tsx.indexOf('const VERDICT_LABEL')));
+  const labelled = [...table.matchAll(/^\s+(\w+): '/gm)].map((m) => m[1]).sort();
+  const schema = read('src/db/schema.sql');
+  const checks = [...schema.matchAll(/CHECK \(verdict IN \(([^)]*)\)\)/g)].map((m) => m[1]);
+  assert.equal(checks.length, 2, 'the CREATE TABLE and the widening on boot');
+  for (const list of checks) {
+    const allowed = [...list.matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
+    assert.deepEqual(allowed, labelled, 'a verdict the ledger can hold is one the dashboard can show');
+  }
+  for (const v of ['answer', 'revise']) {
+    assert.match(tsx, new RegExp(`<option value="${v}">`), `${v} can be filtered to`);
+  }
+  const admin = read('src/routes/admin.js');
+  assert.match(admin, /\['question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'\]\.includes\(q\.verdict\)/);
+  assert.match(tsx, /isFollowUp\(run\) \? <span className=\{`\$\{AdminUI\.badge\.outline\} ml-1`\}>follow-up<\/span>/);
+});

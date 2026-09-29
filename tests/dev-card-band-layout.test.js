@@ -252,7 +252,7 @@ test('#1139: each thing a card can say has one home — the bar in the status ro
   assert.doesNotMatch(closes, /dev-card-facts/);
   const cases = {
     'one metadata chip': { badges: [CHIP('High')] },
-    'a work-state chip': { badges: [CHIP('Paused · maya', { 'data-work-state': 'paused' })] },
+    'a work-state chip': { badges: [CHIP('Started · maya', { 'data-work-state': 'paused' })] },
   };
   for (const [what, over] of Object.entries(cases)) {
     const html = BANDS(over);

@@ -5,12 +5,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
-// Spend limits (#admin/limits) — the platform's LLM budget dials, plus the
-// Anthropic credit balance the remaining-credit figure is derived from.
+// Limits (#admin/limits) — the server's app limit, the platform's LLM budget
+// dials, and the Anthropic credit balance the remaining-credit figure is
+// derived from.
 //
-// PERMISSIONS: visible to any admin; every field and both Save buttons are
+// PERMISSIONS: visible to any admin; every field and every Save button is
 // gated on AdminConsole.canWrite() (canAdminWrite). The server enforces the
-// same on PUT /api/admin/limits and PUT /api/admin/anthropic-credits.
+// same on PUT /api/admin/app-limit, PUT /api/admin/limits and
+// PUT /api/admin/anthropic-credits.
 //
 // ── Sixth section out of the chassis (#1120 slice 21) ─────────────────
 //
@@ -66,6 +68,126 @@ function StatusLine({ id, status, okClass }: { id: string; status: Status | null
       : 'text-xs mt-2 hidden'}>
       {status ? status.text : ''}
     </p>
+  );
+}
+
+// The server-wide app limit (services/app-limit.js). Its own card, endpoint
+// and Save, not a field of the spend form below: a different unit, a
+// different audience (it is what "This server is at its app limit" asks an
+// admin to raise), and the platform limit alert opens this section for it.
+//
+// The field is blank while the deploy's MAX_APPS is in force, with MAX_APPS
+// as its placeholder, and "Use MAX_APPS" clears a stored value. When the
+// deploy has switched the cap off (MAX_APPS=0) there is nothing to set, and
+// the card says so instead of offering a field the server would refuse.
+function AppLimitCard({ canWrite }: { canWrite: boolean }) {
+  const console_ = () => (window as any).AdminConsole;
+  const [data, setData] = useState<any>(null);
+  const [value, setValue] = useState('');
+  const [status, setStatus] = useState<Status | null>(null);
+  const [saving, setSaving] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const fill = useCallback((next: any) => {
+    setData(next);
+    setValue(next && next.setting ? String(next.setting.value) : '');
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const { data: next } = await console_().fetchJson('/api/admin/app-limit');
+      if (alive.current && next && typeof next === 'object') fill(next);
+    })();
+  }, [fill]);
+
+  const put = async (limit: number | null) => {
+    setStatus(null);
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/app-limit', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit }),
+      });
+      const next = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(next.error || `Save failed (${res.status})`);
+      if (!alive.current) return;
+      fill(next);
+      setStatus({ text: limit === null ? 'Using MAX_APPS again.' : 'Saved. It applies within ten seconds.', tone: 'ok' });
+    } catch (err: any) {
+      if (alive.current) setStatus({ text: err.message, tone: 'err' });
+    } finally {
+      if (alive.current) setSaving(false);
+    }
+  };
+
+  const save = () => {
+    const raw = value.trim();
+    if (!raw) { put(null); return; }
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1) {
+      setStatus({ text: 'Enter a whole number of apps, 1 or more.', tone: 'err' });
+      return;
+    }
+    put(n);
+  };
+
+  const off = data && data.source === 'disabled';
+  const usage = !data ? 'Loading…'
+    : off ? `${data.used} live apps · no limit`
+      : `${data.used} of ${data.limit} live apps`;
+  let source = '';
+  if (data && off) {
+    source = 'The deploy has switched the limit off (MAX_APPS is 0), so anyone with app slots can create apps.';
+  } else if (data && data.source === 'admin') {
+    const who = data.setting.updatedBy ? ` by @${data.setting.updatedBy}` : '';
+    const when = data.setting.updatedAt ? ` on ${String(data.setting.updatedAt).slice(0, 10)}` : '';
+    source = `Set here${who}${when}. Without it, the deploy's MAX_APPS (${data.defaultLimit}) applies.`;
+  } else if (data) {
+    source = `Using the deploy's MAX_APPS (${data.defaultLimit}). Enter a number to change it here.`;
+  }
+
+  return (
+    <div id="admin-app-limit" className={`${AdminUI.card} p-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className={AdminUI.cardTitle}>App limit</h2>
+        <span id="admin-app-limit-usage" className="text-xs text-zinc-500 dark:text-zinc-400">{usage}</span>
+      </div>
+      <p className={`${AdminUI.muted} mb-3`}>
+        How many live apps the whole server allows. At the limit, everyone but full admins is
+        told the server is full when they create or fork an app. Apps that failed to build
+        do not count. Full admins are notified at {data ? data.warnPercent : 80}% of the limit
+        and again when it is reached. A change applies to every server within ten seconds,
+        with no deploy.
+      </p>
+      {off ? null : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <label className="block">
+            <span className={LABEL}>Live apps allowed</span>
+            <input id="admin-app-limit-input" type="number" min="1" step="1" inputMode="numeric"
+              disabled={!canWrite || !data}
+              className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
+              placeholder={data ? String(data.defaultLimit) : ''}
+              value={value} onChange={(e) => setValue(e.target.value)} />
+          </label>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p id="admin-app-limit-source" className="text-xs text-zinc-500 dark:text-zinc-400">{source}</p>
+        {canWrite && !off ? (
+          <div className="flex items-center gap-2">
+            {data && data.source === 'admin' ? (
+              <button id="admin-app-limit-reset-btn" type="button" className={AdminUI.btn.outline}
+                disabled={saving} onClick={() => put(null)}>Use MAX_APPS</button>
+            ) : null}
+            <button id="admin-save-app-limit-btn" type="button" className={AdminUI.btn.primary}
+              disabled={saving || !data} onClick={save}>Save</button>
+          </div>
+        ) : null}
+      </div>
+      <StatusLine id="admin-app-limit-status" status={status} okClass="text-green-800 dark:text-green-400" />
+    </div>
   );
 }
 
@@ -215,7 +337,9 @@ function LimitsSection() {
 
   return (
     <>
-      <div className={`${AdminUI.card} p-4`}>
+      <AppLimitCard canWrite={canWrite} />
+
+      <div className={`${AdminUI.card} p-4 mt-4`}>
         <div className="flex items-center justify-between mb-3">
           <h2 className={AdminUI.cardTitle}>LLM Spend Limits</h2>
           <span className="text-xs text-zinc-500 dark:text-zinc-400">USD · per-user cap resets Monday 00:00 UTC, platform caps midnight UTC</span>
@@ -322,4 +446,5 @@ const AdminLimits = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminLimits = AdminLimits;
 
-export { AdminLimits };
+// AppLimitCard is exported for tests/app-limit.test.js, which renders it.
+export { AdminLimits, AppLimitCard };

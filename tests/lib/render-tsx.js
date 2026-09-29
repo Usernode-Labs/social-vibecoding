@@ -96,11 +96,22 @@ function createElement(type, props, ...children) {
   return React.createElement(type, props, ...children);
 }
 
+/**
+ * Whether `value` is something createElement can draw: a function component,
+ * or the object `memo()` / `forwardRef()` return, which is not a function.
+ * Rows are memo()'d where a list re-renders often (#3104).
+ */
+function isComponent(value) {
+  if (typeof value === 'function') return true;
+  const kind = value && typeof value === 'object' ? value.$$typeof : null;
+  return kind === Symbol.for('react.memo') || kind === Symbol.for('react.forward_ref');
+}
+
 /** Convenience: bundle, render one export with `props`, return the HTML. */
 function renderComponent(entry, exportName, props) {
   const mod = loadTsx(entry);
   const Component = mod[exportName];
-  if (typeof Component !== 'function') {
+  if (!isComponent(Component)) {
     throw new Error(`${entry} does not export a component named ${exportName}`);
   }
   return renderToHtml(createElement(Component, props));

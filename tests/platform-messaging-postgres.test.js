@@ -29,6 +29,7 @@ const DDL = `
     id SERIAL PRIMARY KEY,
     kind VARCHAR(16) NOT NULL CHECK (kind IN ('direct', 'group', 'channel')),
     title VARCHAR(80),
+    deleted_peer BOOLEAN NOT NULL DEFAULT FALSE,
     channel_key VARCHAR(40) UNIQUE,
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     status VARCHAR(16) NOT NULL DEFAULT 'active'
@@ -72,7 +73,9 @@ const DDL = `
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     edited_at TIMESTAMPTZ,
-    moderation_hidden_at TIMESTAMPTZ
+    moderation_hidden_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ,
+    thread_root_id INTEGER REFERENCES conversation_messages(id) ON DELETE CASCADE
   );
   CREATE UNIQUE INDEX conversation_message_idempotency
     ON conversation_messages (conversation_id, sender_id, idempotency_key)
@@ -133,6 +136,19 @@ const DDL = `
     detail VARCHAR(32),
     read_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  -- #2386: createDirect reads it (friends skip the invitation) and setBlock
+  -- clears it. The full DDL is schema.sql's; tests/friends-postgres.test.js
+  -- runs that.
+  CREATE TABLE friendships (
+    user_low_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_high_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    responded_at TIMESTAMPTZ,
+    PRIMARY KEY (user_low_id, user_high_id),
+    CHECK (user_low_id < user_high_id)
   );
   CREATE TABLE chat_session_spec_conversation_shares (
     session_id INTEGER NOT NULL,
@@ -222,6 +238,13 @@ test('postgres serializes conversation consent, retries, and revocation', async 
     assert.equal(await conversations.listMessages(pool, dave, pending.conversationId), null,
       'invitee cannot read retained history before acceptance');
 
+    // QA 2026-09-24 Q2: the requester's side says it is waiting, and may
+    // still send its one opening message; the invitee's side does not.
+    const beforeOpening = await conversations.getConversation(pool, carol, pending.conversationId);
+    assert.equal(beforeOpening.awaitingAcceptance, true);
+    assert.equal(beforeOpening.canSend, true, 'the opening message is still available');
+    assert.equal((await conversations.getConversation(pool, dave, pending.conversationId)).awaitingAcceptance, false);
+
     // A lost-response retry of the one allowed opening message returns the
     // same row even when both requests overlap. A new key remains rejected.
     const retryInput = { content: 'opening message', idempotency_key: 'opening-retry-1' };
@@ -235,9 +258,33 @@ test('postgres serializes conversation consent, retries, and revocation', async 
       'SELECT COUNT(*) AS n FROM conversation_messages WHERE conversation_id = $1',
       [pending.conversationId]
     )).rows[0].n), 1);
-    assert.equal(await conversations.sendMessage(pool, carol, pending.conversationId, {
+    // QA 2026-09-24 Q2: refused as awaiting acceptance (the route's 409),
+    // not as a missing conversation, and the requester's canSend says so.
+    assert.deepEqual(await conversations.sendMessage(pool, carol, pending.conversationId, {
       content: 'second opening', idempotency_key: 'opening-retry-2',
-    }), null);
+    }), { error: 'awaiting_acceptance' });
+    const afterOpening = await conversations.getConversation(pool, carol, pending.conversationId);
+    assert.equal(afterOpening.awaitingAcceptance, true);
+    assert.equal(afterOpening.canSend, false, 'the opening message is spent until they accept');
+
+    // ...and once the other person accepts, sending works as it always did.
+    const gina = await addUser(pool, 'gina');
+    const hank = await addUser(pool, 'hank');
+    const request = await conversations.createDirect(pool, gina, hank.id);
+    assert.ok(await conversations.sendMessage(pool, gina, request.conversationId, {
+      content: 'hello hank', idempotency_key: 'gina-opening-1',
+    }));
+    assert.deepEqual(await conversations.sendMessage(pool, gina, request.conversationId, {
+      content: 'are you there?', idempotency_key: 'gina-second-1',
+    }), { error: 'awaiting_acceptance' });
+    assert.ok(await conversations.respond(pool, hank, request.conversationId, 'accept'));
+    const accepted = await conversations.getConversation(pool, gina, request.conversationId);
+    assert.equal(accepted.awaitingAcceptance, false);
+    assert.equal(accepted.canSend, true);
+    const second = await conversations.sendMessage(pool, gina, request.conversationId, {
+      content: 'are you there?', idempotency_key: 'gina-second-2',
+    });
+    assert.ok(second && !second.error && second.messageId, 'a follow-up sends once accepted');
 
     await conversations.setBlock(pool, dave.id, carol.id, true);
     const terminal = (await pool.query(
@@ -302,6 +349,117 @@ test('postgres serializes conversation consent, retries, and revocation', async 
     assert.deepEqual((await conversations.listMessages(pool, frank, shared.conversationId)).messages
       .map((message) => message.content), ['before block', 'after block'],
     'unblocking restores retained shared-room history');
+  } finally {
+    if (pool) await pool.end().catch(() => {});
+    await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
+    await client.end().catch(() => {});
+  }
+});
+
+// #3188: #general is everybody, so it rings a bell only for an @mention. A
+// plain message, a reply to your message, a thread you are in and a reaction
+// all stay silent there, and a reply that @mentions you is a mention. The
+// same moves in a group chat notify exactly as before.
+test('a channel notifies only the people a message @mentions', async (t) => {
+  const connection = await connect();
+  if (!connection) return t.skip('the pg driver is not installed in this environment');
+  if (connection.error) return t.skip(`no postgres reachable at ${DSN}: ${connection.error}`);
+
+  const { client, Pool } = connection;
+  const schema = `platform_messaging_channel_test_${process.pid}`;
+  let pool;
+  try {
+    await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await client.query(`CREATE SCHEMA ${schema}`);
+    pool = new Pool({
+      connectionString: DSN,
+      connectionTimeoutMillis: 3000,
+      max: 4,
+      options: `-c search_path=${schema}`,
+    });
+    await pool.query(DDL);
+
+    const ada = await addUser(pool, 'ada');
+    const lin = await addUser(pool, 'lin');
+    const max = await addUser(pool, 'max');
+    const general = (await pool.query(
+      `INSERT INTO conversations (kind, title, channel_key)
+       VALUES ('channel', 'general', 'general') RETURNING id`
+    )).rows[0].id;
+    for (const user of [ada, lin, max]) await conversations.ensureChannelMemberships(pool, user);
+
+    const rowsFor = async (messageId) => (await pool.query(
+      `SELECT user_id, kind FROM notifications
+        WHERE conversation_message_id = $1 ORDER BY user_id`, [messageId]
+    )).rows;
+    const send = async (user, conversationId, input) => {
+      const result = await conversations.sendMessage(pool, user, conversationId, input);
+      assert.ok(result && !result.error && result.messageId, `sent ${input.idempotency_key}`);
+      return result;
+    };
+
+    const root = await send(ada, general, { content: 'hello everyone', idempotency_key: 'general-plain' });
+    const reply = await send(lin, general, {
+      content: 'hi ada', reply_to_id: root.messageId, idempotency_key: 'general-reply',
+    });
+    assert.deepEqual(await rowsFor(reply.messageId), [], 'a reply to your channel message is silent');
+    await send(lin, general, {
+      content: 'first in the thread', thread_root_id: root.messageId, idempotency_key: 'general-thread-1',
+    });
+    const threadReply = await send(max, general, {
+      content: 'second in the thread', thread_root_id: root.messageId, idempotency_key: 'general-thread-2',
+    });
+    assert.deepEqual(await rowsFor(threadReply.messageId), [],
+      'a thread reply rings neither the root author nor earlier repliers');
+    const reaction = await conversations.toggleReaction(pool, lin, general, root.messageId, '👍');
+    assert.deepEqual(reaction.notifications, []);
+    assert.deepEqual(await rowsFor(root.messageId), [],
+      'a plain channel message, and a reaction to it, ring no one');
+
+    const mention = await send(max, general, { content: 'ping @lin', idempotency_key: 'general-mention' });
+    assert.deepEqual(await rowsFor(mention.messageId), [{ user_id: lin.id, kind: 'conversation_mention' }]);
+    const mentionReply = await send(lin, general, {
+      content: '@ada have a look', reply_to_id: root.messageId, idempotency_key: 'general-mention-reply',
+    });
+    assert.deepEqual(await rowsFor(mentionReply.messageId), [{ user_id: ada.id, kind: 'conversation_mention' }],
+      'a reply that @mentions its author is one mention row');
+    const mentionThread = await send(ada, general, {
+      content: 'thanks @max', thread_root_id: root.messageId, idempotency_key: 'general-mention-thread',
+    });
+    assert.deepEqual(await rowsFor(mentionThread.messageId), [{ user_id: max.id, kind: 'conversation_mention' }],
+      'in a thread only the mentioned participant is rung');
+
+    // The room still counts as unread in Messages; the bell holds only the
+    // one mention.
+    assert.equal((await conversations.getConversation(pool, ada, general)).unreadCount, 3);
+    assert.deepEqual((await pool.query(
+      'SELECT kind FROM notifications WHERE user_id = $1', [ada.id]
+    )).rows, [{ kind: 'conversation_mention' }]);
+
+    // A group chat is unchanged: its messages, replies, threads and
+    // reactions still notify.
+    const group = await conversations.createGroup(pool, ada, 'Unchanged room', [lin.id, max.id]);
+    assert.ok(await conversations.respond(pool, lin, group.conversationId, 'accept'));
+    assert.ok(await conversations.respond(pool, max, group.conversationId, 'accept'));
+    const groupRoot = await send(ada, group.conversationId, { content: 'group hello', idempotency_key: 'group-root' });
+    assert.deepEqual(await rowsFor(groupRoot.messageId), [
+      { user_id: lin.id, kind: 'conversation_message' },
+      { user_id: max.id, kind: 'conversation_message' },
+    ]);
+    const groupReply = await send(lin, group.conversationId, {
+      content: 'hi ada', reply_to_id: groupRoot.messageId, idempotency_key: 'group-reply',
+    });
+    assert.deepEqual(await rowsFor(groupReply.messageId), [
+      { user_id: ada.id, kind: 'conversation_reply' },
+      { user_id: max.id, kind: 'conversation_message' },
+    ]);
+    const groupThread = await send(max, group.conversationId, {
+      content: 'in the thread', thread_root_id: groupRoot.messageId, idempotency_key: 'group-thread',
+    });
+    assert.deepEqual(await rowsFor(groupThread.messageId), [{ user_id: ada.id, kind: 'conversation_thread_reply' }]);
+    const groupReaction = await conversations.toggleReaction(pool, lin, group.conversationId, groupRoot.messageId, '👍');
+    assert.deepEqual(groupReaction.notifications.map((row) => [row.user_id, row.kind]),
+      [[ada.id, 'conversation_reaction']]);
   } finally {
     if (pool) await pool.end().catch(() => {});
     await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});

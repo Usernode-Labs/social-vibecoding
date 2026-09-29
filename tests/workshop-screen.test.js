@@ -288,13 +288,14 @@ test('the empty state is a card that offers the directory, not a grey caption', 
 
   // A link, so cmd-click, middle-click and "open in new tab" work — the same
   // argument AppRow makes for being an anchor.
-  assert.match(inner, /^<a\b[^>]*\bhref="#apps"/,
-    'the card is an anchor, and it goes where Discover\'s own empty card '
-    + 'goes — the directory');
+  assert.match(inner, /^<div\b[^>]*>\s*<a\b[^>]*\bhref="#apps"/,
+    'the card (a GroupedList of its own) is an anchor, and it goes where '
+    + 'Discover\'s own empty card goes — the directory, where you join');
 
-  assert.match(inner, /font-bold[^"]*">You have no apps yet</,
-    'a title in the row\'s own subject weight');
-  assert.match(inner, /text-zinc-500[^"]*">Browse the directory to find one to join\.</,
+  assert.match(inner, /font-\[650\][^"]*">You haven’t joined anything yet</,
+    'a title in the row\'s own subject weight — the list is the communities '
+    + 'you are in, so the empty state says you are in none');
+  assert.match(inner, /text-zinc-500[^"]*">Browse the directory to find a project to join\.</,
     'a quieter second line under it');
   assert.match(inner, /<svg[^>]*>\s*<path[^>]*d="M9 5l7 7-7 7"/,
     'and ListRow\'s trailing disclosure chevron — the "tap through" mark the '
@@ -376,58 +377,48 @@ function listChildren(html) {
   return out;
 }
 
-test('an app row, never the empty card, is the first <a> in #workshop-list', () => {
-  // THE REGRESSION THIS FILE EXISTS FOR, SECOND TIME. dapp.json declares
-  //
-  //   #workshop-list a[data-workshop-app]:first-of-type
-  //     [data-workshop-needs]:not([data-workshop-needs="0"])
-  //
-  // to prove that an app with a decision waiting LEADS the list. That check
-  // does not name the empty state at all, which is exactly why #2445's first
-  // cut broke it and got all the way to the platform: the empty card became an
-  // `<a>` sitting among the rows, so the first app row stopped being the first
-  // `<a>` among its siblings and the compound matched nothing.
-  //
-  // `:first-of-type` counts siblings sharing a TAG NAME and is purely
-  // structural — `display: none` does not exempt an element from it, so
-  // `hidden` is no defence. The rule is therefore about the TREE, and it is
-  // asserted here on the tree rather than inferred from the JSX.
+test('#workshop-list holds the empty card, then one section per audience, in order', () => {
+  // THE LIST IS A WRAPPER NOW (communities). Its children are the empty
+  // card and up to three SECTIONS — Communities, Groups, Just you — each a
+  // SectionHeader over a GroupedList of its own. The declared checks select
+  // through it with DESCENDANT combinators (`#workshop-list
+  // a[data-workshop-app=…]`) and name the sections by attribute, so what this
+  // pins is the tree they resolve against.
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
 
   // The demo payload the declared check runs against (/?demo=1#workshop):
-  // route.DEMO_COUNTS' own numbers, so "leads the list" means what it means
-  // in the browser.
+  // src/routes/apps.js demoIconApps' three member rows, one per audience.
   mod.workshopStore.set({
     open: true,
     error: false,
     rows: [
-      { slug: 'staging-demo-image-icon', name: 'Image', working: 1, needs: 0 },
-      { slug: 'staging-demo-your-app', name: 'Your app', working: 2, needs: 3 },
+      { slug: 'staging-demo-emoji-icon', name: 'Emoji', audience: 'solo', last_active_at: '2026-09-24T10:00:00Z', working: 0, needs: 5 },
+      { slug: 'staging-demo-long-name', name: 'Long', audience: 'invited', member_count: 4, last_active_at: '2026-09-25T09:00:00Z', working: 4, needs: 1 },
+      { slug: 'staging-demo-your-app', name: 'Your app', audience: 'open', member_count: 12, last_active_at: '2026-09-25T11:30:00Z', working: 2, needs: 3 },
     ],
   });
 
   const kids = listChildren(html());
-  const anchors = kids.filter((k) => k.tag === 'a');
-  assert.ok(anchors.length > 0, 'the rows render as anchors');
-  assert.ok('data-workshop-app' in anchors[0].attrs,
-    'the FIRST <a> child of #workshop-list is an app row — anything else '
-    + 'here steals `a[data-workshop-app]:first-of-type` and silently kills a '
-    + 'merge-gating check');
-  assert.equal(anchors[0].attrs['data-workshop-app'], 'staging-demo-your-app',
-    'and it is the app with votes waiting, which is what that check asserts');
+  assert.equal(kids[0].attrs.id, 'workshop-empty',
+    'the empty card first, so it never sits between a header and its rows');
+  assert.notEqual(kids[0].tag, 'a', 'a wrapper, never an anchor among the rows');
+  assert.match(kids[0].attrs.class || '', /\bhidden\b/, 'and hidden while there are rows');
+  assert.deepEqual(kids.slice(1).map((k) => [k.tag, k.attrs['data-workshop-section']]),
+    [['section', 'open'], ['section', 'invited'], ['section', 'solo']],
+    'Communities, Groups, Just you — the order a person reaches for them');
 
-  // The empty card is still present, still first, and still out of the
-  // anchors' way — it is a wrapper, and its own link is one level down.
-  const empty = kids.find((k) => k.attrs.id === 'workshop-empty');
-  assert.ok(empty, '#workshop-empty is a direct child of the list');
-  assert.equal(kids[0], empty, 'and the FIRST child, so no row draws a '
-    + 'hairline under nothing');
-  assert.notEqual(empty.tag, 'a',
-    'but NOT an <a>: that is the whole regression. Keep the id on a wrapper '
-    + 'and put the ListRow anchor inside it.');
-  assert.match(empty.attrs.class || '', /\bhidden\b/,
-    'and with rows it is hidden, for #workshop-empty.hidden');
+  const out = html();
+  for (const [section, slug] of [['open', 'staging-demo-your-app'], ['invited', 'staging-demo-long-name'], ['solo', 'staging-demo-emoji-icon']]) {
+    const at = out.indexOf(`data-workshop-section="${section}"`);
+    const row = out.indexOf(`data-workshop-app="${slug}"`);
+    assert.ok(at >= 0 && row > at, `${slug} is drawn inside the ${section} section`);
+  }
+  for (const label of ['Communities', 'Groups', 'Just you']) {
+    assert.match(out, new RegExp(`<span>${label}</span>`), `the ${label} header is drawn`);
+  }
+  assert.match(out, /data-workshop-audience="invited"/, 'each row says its audience');
+  assert.match(out, />12 members</, 'and its second line says who is in it');
 });
 
 test('the screen is built from the grouped-list primitives, not a copy of them', () => {
@@ -470,33 +461,121 @@ test('a row goes to that app\'s own Workshop page, as an anchor', () => {
   assert.match(src, /App\?\.navigateToApp\?\.\(row\.slug, 'dev'\)/);
 });
 
-test('an app that wants a decision leads the list, and the rest keep their order', () => {
+test('rows go most recently active first; undated ones last, in the server\'s order', () => {
   const { orderRows } = loadTsx('frontend/src/features/workshop/index.tsx');
   const rows = orderRows([
-    { slug: 'quiet-a', working: 0, needs: 0 },
-    { slug: 'mine-a', working: 2, needs: 0 },
-    { slug: 'quiet-b', working: 0, needs: 0 },
-    { slug: 'owed-a', working: 0, needs: 1 },
-    { slug: 'owed-b', working: 3, needs: 4 },
+    { slug: 'undated-a', working: 0, needs: 0, last_active_at: null },
+    { slug: 'old', working: 0, needs: 4, last_active_at: '2026-09-01T00:00:00Z' },
+    { slug: 'undated-b', working: 0, needs: 0 },
+    { slug: 'new', working: 0, needs: 0, last_active_at: '2026-09-25T00:00:00Z' },
+    { slug: 'mid', working: 2, needs: 0, last_active_at: '2026-09-20T00:00:00Z' },
   ]);
-  assert.deepEqual(rows.map((r) => r.slug),
-    ['owed-a', 'owed-b', 'mine-a', 'quiet-a', 'quiet-b'],
-    'votes owed, then your own work, then the quiet ones — and inside each '
-    + 'band the platform\'s own "Your apps" order survives, because the sort '
-    + 'is stable and the comparator answers 0');
+  assert.deepEqual(rows.map((r) => r.slug), ['new', 'mid', 'old', 'undated-a', 'undated-b'],
+    'recency, not urgency: an ordering by "needs you" is how a quiet project '
+    + 'falls off the bottom, and the counts on each row already say which ones '
+    + 'are asking — and the sort is stable, so ties keep the server\'s order');
   assert.ok(orderRows([]).length === 0);
+  // A ?demo=1 fixture row leads, whatever its time: on a staging clone the
+  // backfill stamps every real membership newer than the fixture, and the
+  // declared checks look for the fixture inside a section's first three.
+  const withDemo = orderRows([
+    { slug: 'real-new', working: 0, needs: 0, last_active_at: '2026-09-25T12:00:00Z' },
+    { slug: 'staging-demo-your-app', demo: true, working: 2, needs: 3, last_active_at: '2026-09-01T00:00:00Z' },
+    { slug: 'real-old', working: 0, needs: 0, last_active_at: '2026-09-02T00:00:00Z' },
+  ]);
+  assert.deepEqual(withDemo.map((r) => r.slug), ['staging-demo-your-app', 'real-new', 'real-old']);
+});
+
+test('groupRows: three sections in order, empty ones left out, an unknown audience read as open', () => {
+  const { groupRows, SECTIONS, SECTION_LIMIT } = loadTsx('frontend/src/features/workshop/index.tsx');
+  assert.deepEqual(SECTIONS.map((s) => [s.key, s.label]),
+    [['open', 'Communities'], ['invited', 'Groups'], ['solo', 'Just you']]);
+  assert.equal(SECTION_LIMIT, 3, 'three most recent, then "Show N more"');
+  const out = groupRows([
+    { slug: 'a', audience: 'solo', last_active_at: '2026-09-02T00:00:00Z', working: 0, needs: 0 },
+    { slug: 'b', audience: 'open', last_active_at: '2026-09-01T00:00:00Z', working: 0, needs: 0 },
+    { slug: 'c', audience: 'mystery', last_active_at: '2026-09-03T00:00:00Z', working: 0, needs: 0 },
+    { slug: 'd', audience: 'solo', last_active_at: '2026-09-04T00:00:00Z', working: 0, needs: 0 },
+  ]);
+  assert.deepEqual(out.map((s) => [s.key, s.rows.map((r) => r.slug)]),
+    [['open', ['c', 'b']], ['solo', ['d', 'a']]],
+    'no Groups section when there are no groups, and a row is never dropped');
+});
+
+test('a section shows its three most recent and folds the rest under "Show N more"', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const rows = Array.from({ length: 5 }, (_, i) => ({
+    slug: `c${i}`, name: `C${i}`, audience: 'open', member_count: 3,
+    last_active_at: new Date(Date.UTC(2026, 8, 20 - i)).toISOString(), working: 0, needs: 0,
+  }));
+  mod.workshopStore.set({ open: true, error: false, rows });
+  const html = renderToHtml(createElement(mod.WorkshopScreen, {}));
+  assert.deepEqual([...html.matchAll(/data-workshop-app="([^"]+)"/g)].map((m) => m[1]), ['c0', 'c1', 'c2'],
+    'the three most recent');
+  assert.match(html, /<button[^>]*data-workshop-more="open"[^>]*aria-expanded="false"/,
+    'the fold is a button row of the same card, never an anchor');
+  assert.match(html, />Show 2 more</);
+  assert.match(html, /aria-label="5 in Communities"/, 'the header counts the whole section');
+});
+
+test('"Show N more" reveals five at a time, then folds back (#3269)', () => {
+  const { sectionFold, SECTION_STEP } = loadTsx('frontend/src/features/workshop/index.tsx');
+  assert.equal(SECTION_STEP, 5);
+  // Twelve rows: 3, then 8, then 12, then back to 3.
+  let fold = sectionFold(12, 3);
+  assert.deepEqual(fold, { shown: 3, label: 'Show 5 more', next: 8 });
+  fold = sectionFold(12, fold.next);
+  assert.deepEqual(fold, { shown: 8, label: 'Show 4 more', next: 13 }, 'the last press names what is left');
+  fold = sectionFold(12, fold.next);
+  assert.deepEqual(fold, { shown: 12, label: 'Show fewer', next: 3 });
+  assert.deepEqual(sectionFold(12, fold.next), { shown: 3, label: 'Show 5 more', next: 8 });
+  // Three or fewer: no fold at all.
+  assert.deepEqual(sectionFold(3, 3), { shown: 3, label: null, next: 3 });
+  assert.equal(sectionFold(0, 3).label, null);
+});
+
+test('rowSubtitle: one short fact, members for a community or group, recency for "Just you"', () => {
+  const { rowSubtitle } = loadTsx('frontend/src/features/workshop/index.tsx');
+  const now = Date.parse('2026-09-25T12:00:00Z');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'open', member_count: 12, last_active_at: '2026-09-25T10:00:00Z', working: 0, needs: 0 }, now),
+    '12 members', 'the section\'s order already says which moved last');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'invited', member_count: 1, working: 0, needs: 0 }, now), '1 member');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', member_count: 1, last_active_at: '2026-09-25T11:55:00Z', working: 0, needs: 0 }, now),
+    '5m ago', 'just you: when it last moved, never "1 member"');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', last_active_at: '2026-09-22T12:00:00Z', working: 0, needs: 0 }, now), '3d ago');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'open', member_count: 0, working: 0, needs: 0 }, now), '');
+  assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', last_active_at: null, working: 0, needs: 0 }, now), '');
+});
+
+test('a row says its status in words, leaves zeroes out, and keeps both numbers in the document', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const line = (working, needs) => renderToHtml(createElement(mod.StatusLine, { working, needs }));
+  const both = line(2, 3);
+  assert.match(both, /<span data-workshop-working="2" class="[^"]*">2 in progress<\/span><span data-workshop-needs="3" class="[^"]*violet[^"]*">/,
+    'working then needs, adjacent siblings: the declared check reads `[data-workshop-working] + [data-workshop-needs]`');
+  assert.match(both, />3 to vote<\/span>$/);
+  assert.match(both, /aria-hidden="true"> · </, 'the separator is decoration');
+  const quiet = line(0, 0);
+  assert.match(quiet, /data-workshop-working="0" class="hidden"/, 'a zero says nothing');
+  assert.match(quiet, /data-workshop-needs="0" class="hidden"/);
+  assert.doesNotMatch(line(0, 1), / · /, 'no separator ahead of the only half showing');
+  assert.doesNotMatch(read('frontend/src/features/workshop/index.tsx'), /function Count\(/,
+    'the glyph pills are gone from the rows');
 });
 
 test('the controller loads both reads and survives losing the counts', async () => {
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const { workshopController, workshopStore } = mod;
+  // The list is MEMBERSHIP (Home.isJoined), not Home's "Your apps": a pin
+  // alone ('pinned') is a shortcut, and is not one of your communities.
   const apps = [
-    { slug: 'a', name: 'A', is_favorited: true },
-    { slug: 'b', name: 'B', is_favorited: true },
+    { slug: 'a', name: 'A', is_member: true },
+    { slug: 'b', name: 'B', is_member: true },
+    { slug: 'pinned', name: 'Pinned', is_favorited: true },
   ];
   const priorWindow = global.window;
   const priorFetch = global.fetch;
-  global.window = { Home: { partitionApps: (list) => ({ yours: list, rest: [] }) } };
+  global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
   try {
     const answers = new Map([
       ['/api/apps', { ok: true, json: async () => ({ apps }) }],
@@ -559,24 +638,23 @@ test('coming back from an app re-reveals the screen', () => {
   assert.match(beforeTransition, /App\._inWorkshop = true;/);
   assert.match(beforeTransition, /App\.currentApp = null;/);
   // The other half of the same fact: nothing on the way into an app clears
-  // the flag, which is what leaves the breadcrumb readable on the lander.
+  // the flag, so the pair above is what tells "here" from "came from here".
   const enter = appJs.slice(appJs.indexOf('  async navigateToApp('));
   const chain = enter.slice(0, enter.indexOf('PlatformUI.transition('));
   assert.doesNotMatch(chain, /_exitWorkshop/,
-    'entering an app must not clear _inWorkshop — navigateToApp reads it');
+    'entering an app must not clear _inWorkshop — the way back reads it');
 });
 
-test('#workshop is a route of its own', () => {
-  assert.match(appJs, /if \(parts\[0\] === 'workshop'\) \{[\s\S]*?App\.navigateToWorkshop\(\);/,
-    'restoreFromHash resolves it, so a bookmark and a cold boot both land here');
+test('#communities is a route of its own, and #workshop still lands there', () => {
+  assert.match(appJs, /if \(parts\[0\] === 'communities' \|\| parts\[0\] === 'workshop'\) \{[\s\S]*?App\.navigateToWorkshop\(\);/,
+    'restoreFromHash resolves both, so an old bookmark and a cold boot land here');
   assert.match(appJs, /navigateToWorkshop\(\) \{/);
   assert.match(appJs, /_exitWorkshop\(\) \{[\s\S]*?App\._inWorkshop = false;/);
-  assert.match(appJs, /App\.setHeaderTitle\('Workshop'\)/);
-  // THE DOOR IS A TAB (#2718). It was a menu row between Home and Discover,
-  // on the rule that the app chip's menu listed every destination; the bar
-  // carries them now, and Workshop is the fourth of five.
+  assert.match(appJs, /App\.setHeaderTitle\('Communities'\)/);
+  // THE DOOR IS A TAB (#2718), the middle one of five since the rename: the
+  // screen is Communities to the people who use it, and keeps its key.
   const html = read('public/index.html');
-  assert.match(html, /id="platform-tab-workshop"[^>]*href="#workshop"/,
+  assert.match(html, /id="platform-tab-workshop"[^>]*href="#communities"/,
     'the unscoped screen is a tab');
   // The app menu keeps the SCOPED entrance — the link-out every mini-app host
   // in the study draws under a mini-app — as a plain "Go to workshop" row
@@ -588,27 +666,38 @@ test('#workshop is a route of its own', () => {
   assert.ok(!/AppViewTabs/.test(sheetTsx), 'and not as a toggle segment');
 });
 
-test('the app-entry breadcrumb has one writer and one clearer', () => {
-  // Read by AppView._repaintDevBody to turn the Dev lander's house into a
-  // real ← back to #workshop. Anything that can set it from a second place,
-  // or fail to clear it, leaves an arrow pointing at a screen the viewer
-  // never came from.
-  const writes = appJs.match(/App\._appBackHref = /g) || [];
-  assert.equal(writes.length, 2,
-    'navigateToApp\'s write and _showOnlyScreen\'s clear — no more');
-  assert.match(appJs, /^ {2}_appBackHref: null,$/m,
-    'and the slot is declared on App with the prose that says who owns it');
-  assert.match(appJs, /App\._appBackHref = App\._inWorkshop \? '#workshop' : null;/,
-    'a BARE fragment: #back-btn\'s handler follows its href only when it '
-    + 'startsWith("#"), and anything else falls through to navigateHome');
-  assert.match(appJs, /if \(href && href\.startsWith\('#'\) && href\.length > 1\) \{/,
-    'and that is still the rule the handler applies');
-  // The mixed address the fragment produces — /app/<slug>/workshop#workshop —
-  // is healed to /#workshop by restoreFromHash, which is what makes a
-  // middle-click into a new tab land on the screen rather than the app.
+test('the ✕ knows the page the app was opened from, and forgets it with the visit', () => {
+  // The breadcrumb this replaced said '#workshop' when the Workshop screen was
+  // the origin and nothing otherwise, so the ✕ went Home from every other
+  // page — a thread, Discover, Me. The ✕ now goes back to whichever page it
+  // was (App.closeApp, driven for real in tests/app-close-origin.test.js);
+  // what is pinned here is who writes that memory and who clears it.
+  assert.ok(!/_appBackHref/.test(appJs), 'the Workshop-only breadcrumb is retired');
+  assert.match(appJs, /^ {2}_appReturn: null,$/m,
+    'the slot is declared on App with the prose that says who owns it');
+  // Written as an app's App tab is about to come on screen, BEFORE its
+  // entry is pushed over the page it was opened from — by navigateToApp…
+  const enter = appJs.slice(appJs.indexOf('  async navigateToApp('));
+  const noted = enter.indexOf("if (initialRoute.tab === 'app') App._noteAppReturn(slug);");
+  const pushed = enter.indexOf('App.updateHash({ ref: initialRoute.ref });');
+  assert.ok(noted > 0 && pushed > noted, 'noted before the app\'s own address is written');
+  assert.ok(enter.indexOf('App._pinAppReturn();') > pushed, 'and pinned once it has been');
+  // …and by switchTab, when the app's own Workshop hands over to the app.
+  const sw = appJs.slice(appJs.indexOf('  async switchTab('));
+  assert.match(sw, /if \(tab === 'app' && App\.currentTab !== 'app' && !options\?\.replaceRoute\) \{\s*App\._noteAppReturn\(App\.currentApp\);/);
+  // One clearer: revealing any other screen ends the visit it was about.
+  assert.match(appJs, /if \(revealId !== 'app-view'\) App\._appReturn = null;/,
+    'revealing any other screen ends the app visit it was about');
+  // The ✕ is App.closeApp's, ahead of the handler's own href-following rule —
+  // which still serves every ARROW: the href IS the answer, and home is the
+  // fallback for a screen that named no parent.
+  const handler = appJs.slice(appJs.indexOf("document.getElementById('back-btn').addEventListener('click'"));
+  const close = handler.indexOf("if (App.currentApp && App.currentTab === 'app' && App.closeApp()) return;");
+  const follow = handler.indexOf("if (href && href.startsWith('#') && href.length > 1) {");
+  assert.ok(close > 0 && follow > close, 'the ✕ is claimed before the href is followed');
+  // The mixed address a fragment produces — /app/<slug>/workshop#workshop —
+  // is still healed to /#workshop by restoreFromHash.
   assert.match(appJs, /if \(rawHash && pathRoute && !rawHash\.startsWith\('app\/'\)\) \{/);
-  assert.match(appJs, /if \(revealId !== 'app-view'\) App\._appBackHref = null;/,
-    'revealing any other screen ends the app visit the breadcrumb was about');
 });
 
 test('the Dev lander needs no back arrow, because the rail is beside it', () => {
@@ -636,9 +725,8 @@ test('the Dev lander needs no back arrow, because the rail is beside it', () => 
   const sessionBranch = appViewJs.slice(session, appViewJs.indexOf('\n    }', session));
   assert.match(sessionBranch, /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
     'and a session leads with a real ← up to Messages (#2770)');
-  // `_appBackHref` is not retired: the ✕ on the app tab still lands wherever
-  // the visit began.
-  assert.match(read('public/js/app.js'), /App\.setBackIcon\('close', App\._appBackHref \|\| undefined\);/);
+  // The ✕ is the app TAB's alone, and it lands wherever the visit began.
+  assert.match(read('public/js/app.js'), /App\.setBackIcon\('close', App\._closeAppHref\(\)\);/);
   // An arrow WITH an href is what turns the phone's back gesture on — still
   // true, and still what the session sub-view relies on.
   assert.match(read('frontend/src/features/header/native-back-navigation.ts'),
@@ -685,36 +773,41 @@ test('the app\'s own Workshop keeps the rail, and lights the tab it came through
     /--ws-area: calc\([\s\S]*?max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom, 0px\)\)\s*\);/);
 });
 
-test('the app\'s own Workshop wears the same scope chip, read from the other end', () => {
+test('the app\'s own Workshop wears the same scope panel, read from the other end', () => {
   // "should preserve the app switcher". The all-apps screen's chip says "All
-  // apps" and picking one navigates here; this one names the app and its
-  // panel offers the others — and All apps, which is the way back up and the
-  // other half of why the back arrow is gone.
+  // apps" and picking one navigates here; here the header's tile and name are
+  // the chip (#2768, and at every width since #3295) and the panel offers the
+  // others — and All apps, which is the way back up and the other half of why
+  // the back arrow is gone.
   const chrome = read('frontend/src/features/workshop/workshop-chrome.tsx');
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
 
   assert.match(ws, /import \{ AppWorkshopScope \} from '\.\.\/\.\.\/workshop\/workshop-chrome';/,
     'ONE component, not a second chip that can drift from the first');
-  assert.match(ws, /<AppWorkshopScope\n\s+slug=\{slug\}/);
-  // Its name and artwork come from the store the header's own tile reads, so
-  // the two cannot disagree about which app this is, and no second fetch.
+  assert.match(ws, /<AppWorkshopScope slug=\{slug\} \/>/);
+  // The page's own picture of the app (the hero) reads its name and artwork
+  // from the store the header's tile reads, so the two cannot disagree about
+  // which app this is, and no second fetch.
   assert.match(ws, /name=\{app\.name \|\| undefined\}/);
   assert.match(ws, /iconUrl=\{app\.iconUrl\}/);
   assert.match(ws, /const app = useStoreState\(improveStore\);/);
 
-  // THE PANEL'S "All apps" ROW IS THE WAY BACK UP.
-  assert.match(chrome, /onClick=\{\(\) => \{ onClose\(\); goToAllApps\(\); \}\}/);
-  assert.match(chrome, /function goToAllApps\(\): void \{[\s\S]{0,200}window\.location\.hash = '#workshop';/,
-    'a hash assignment, so the rail\'s Workshop tab and this are one route');
+  // THE PANEL'S "All apps" ROW IS THE WAY BACK UP — from an app's Workshop.
+  // On the all-apps screen itself (#3051, `scope === null`) it only closes.
+  assert.match(chrome, /onClose\(\);\n\s*if \(scope === null\) return;\n\s*goToAllApps\(\);/);
+  assert.match(chrome, /function goToAllApps\(\): void \{[\s\S]{0,200}window\.location\.hash = '#communities';/,
+    'a hash assignment, so the rail\'s Communities tab and this are one route');
   // The app you are already in closes the panel and goes nowhere: a row that
   // re-navigated to the current route would throw this screen's scroll
   // position and its open windows away to arrive where it started.
-  assert.match(chrome, /onClose\(\);\n\s*if \(scope\.slug === app\.slug\) return;/);
+  assert.match(chrome, /onClose\(\);\n\s*if \(scope\?\.slug === app\.slug\) return;/);
 
-  // ITS OPEN STATE IS A STORE OF ITS OWN (#2768): two controls open this
-  // panel — the chip above 700px, the header's tile and name below it — so
-  // the flag cannot be the chip's `useState`. And it is still not
-  // workshopStore: that was the all-apps screen's, which wears no chip now.
+  // ITS OPEN STATE IS A STORE OF ITS OWN (#2768): the control that opens this
+  // panel is the header's tile and name, in another React root, so the flag
+  // cannot be a `useState` here. And it is still not
+  // workshopStore: the all-apps screen's chip (#3051) keeps its flag there,
+  // and a flag shared between two screens is a panel left open on one
+  // greeting the other.
   const island = chrome.slice(chrome.indexOf('export function AppWorkshopScope('));
   assert.match(island, /const \{ open \} = useStoreState\(appScopeStore\)/);
   assert.ok(!island.includes('workshopStore'), 'the two screens share no flag');
@@ -722,5 +815,191 @@ test('the app\'s own Workshop wears the same scope chip, read from the other end
   assert.match(island, /useEffect\(\(\) => \{\n\s*appScopeStore\.set\(\{ open: false \}\);\n\s*return \(\) => appScopeStore\.set\(\{ open: false \}\);\n\s*\}, \[slug\]\);/);
   // The list loads in an effect and never during render.
   assert.match(island, /useEffect\(\(\) => \{[\s\S]{0,600}fetch\(`\/api\/apps\$\{demoQuery\(\)\}`\)/);
-  assert.match(island, /catch \{/, 'and offline leaves the chip working');
+  assert.match(island, /catch \{/, 'and offline leaves the panel working');
+});
+
+// ── 4. The rows behind the counts (#3051) ──────────────────────────────
+//
+// The all-apps screen's two tabs list, item by item, what its two numbers
+// count. The failure this section exists for is the one section 1 guards
+// against for the counts: a SECOND spelling of the populations that drifts,
+// so a row says "3 votes waiting" over a tab that lists two.
+
+test('#3051: the items query reads the counts\' own five predicates, once each', () => {
+  const src = read('src/routes/workshop-overview.js');
+  // One definition per population, interpolated into both queries.
+  for (const name of ['MY_SESSIONS_WHERE', 'MY_PROPOSALS_WHERE', 'MY_GOVERNANCE_WHERE',
+    'OWED_PROPOSALS_WHERE', 'OWED_GOVERNANCE_WHERE']) {
+    assert.equal((src.match(new RegExp(`const ${name} = `, 'g')) || []).length, 1, `${name} is defined once`);
+    // The owed populations are read a third time, by the Needs you feed
+    // (#3270), so the tab's cards and the counts beside it cannot disagree.
+    const reads = name.startsWith('OWED_') ? 3 : 2;
+    assert.equal((src.match(new RegExp(`\\$\\{${name}\\}`, 'g')) || []).length, reads,
+      `${name} is read by COUNTS_SQL and ITEMS_SQL alike${reads === 3 ? ', and by NEEDS_FEED_SQL' : ''}`);
+  }
+  assert.equal((src.match(/\$\{VISIBLE_APP_WHERE\}/g) || []).length, 3,
+    'and all three apply GET /api/apps\'s visibility filter');
+  const items = route.ITEMS_SQL;
+  assert.ok(items.includes(require('../src/services/pr-vote-revision').currentVotePredicateSql('pv', 'cs')));
+  assert.equal((items.match(new RegExp(require('../src/services/governance-kinds')
+    .governanceKindsSql('i').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 2,
+  'both `issues` branches read governance proposals, never the request board');
+  // Five branches, in the order the sections are named.
+  const sections = [...items.matchAll(/SELECT '(working|needs)'/g)].map((m) => m[1]);
+  assert.deepEqual(sections, ['working', 'working', 'working', 'needs', 'needs']);
+});
+
+test('#3051: the items read is bounded per app and in all', () => {
+  const sql = route.ITEMS_SQL;
+  assert.match(sql, /PARTITION BY it\.app_id, it\.section/);
+  assert.match(sql, /WHERE r\.rn <= \$4/);
+  assert.match(sql, /LIMIT \$5/);
+  // Newest-first rank ahead of slug, so the overall cap trims every app's
+  // oldest rows before it drops any app's newest.
+  assert.match(sql, /ORDER BY r\.rn, a\.slug, r\.section/);
+  assert.ok(route.ITEMS_PER_APP > 0 && route.ITEMS_PER_APP <= 10);
+  assert.ok(route.ITEMS_TOTAL > 0 && route.ITEMS_TOTAL <= 500);
+});
+
+test('#3051: GET /api/workshop/items refuses an anonymous caller', async () => {
+  const router = route.workshopOverviewRoutes({ databaseUrl: 'postgres://stub/stub' });
+  const layer = router.stack.find((l) => l.route?.path === '/api/workshop/items');
+  assert.ok(layer, 'GET /api/workshop/items is registered');
+  assert.ok(layer.route.methods.get && Object.keys(layer.route.methods).length === 1, 'and it only reads');
+  let status = null;
+  let body = null;
+  await layer.route.stack[0].handle(
+    { user: null, query: {}, params: {} },
+    { status(code) { status = code; return this; }, json(payload) { body = payload; return this; } },
+    () => {},
+  );
+  assert.equal(status, 401);
+  assert.deepEqual(body, { error: 'Not authenticated' });
+});
+
+test('#3051: rows group by app and section, and the demo agrees with the demo counts', () => {
+  const at = new Date('2026-09-24T09:00:00Z');
+  const grouped = route.groupItems([
+    { slug: 'a', section: 'working', kind: 'session', id: '4', title: 'T', status: 'active', at },
+    { slug: 'a', section: 'needs', kind: 'governance', id: 5, title: null, status: 'rename', at: null },
+    { slug: 'b', section: 'needs', kind: 'proposal', id: 6, title: 'P', status: 'promoted', at },
+  ]);
+  assert.deepEqual(grouped.a.working, [{ kind: 'session', id: 4, title: 'T', status: 'active', at: at.toISOString() }]);
+  assert.deepEqual(grouped.a.needs.map((i) => [i.id, i.title, i.at]), [[5, '', null]]);
+  assert.deepEqual(grouped.b.working, []);
+  // The demo rows sit under the demo counts, so the preview's row and tab agree.
+  for (const [slug, slot] of Object.entries(route.DEMO_ITEMS)) {
+    assert.equal(slot.working.length, route.DEMO_COUNTS[slug].working, `${slug} working`);
+    assert.equal(slot.needs.length, route.DEMO_COUNTS[slug].needs, `${slug} needs`);
+  }
+  const real = { 'staging-demo-your-app': { working: [], needs: [] } };
+  assert.deepEqual(route.withDemoItems(real)['staging-demo-your-app'], { working: [], needs: [] },
+    'real rows win, as they do for the counts');
+});
+
+test('#3051: each tab lists its items under each of your apps, in the list\'s order', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const rows = [
+    { slug: 'owed', name: 'Owed', working: 0, needs: 7 },
+    { slug: 'mine', name: 'Mine', working: 1, needs: 0 },
+    { slug: 'quiet', name: 'Quiet', working: 0, needs: 0 },
+  ];
+  const item = (kind, id) => ({ kind, id, title: `#${id}`, status: 'promoted', at: null });
+  const items = {
+    owed: { working: [], needs: [item('proposal', 1), item('governance', 2)] },
+    mine: { working: [item('session', 3)], needs: [] },
+    // An app that is NOT one of yours: the endpoint answers for every app the
+    // viewer can see, and the screen keeps to the rows /api/apps called yours.
+    stranger: { working: [item('session', 9)], needs: [item('proposal', 9)] },
+  };
+  const needs = mod.groupItems(rows, items, 'needs');
+  assert.deepEqual(needs.map((g) => [g.app.slug, g.items.length, g.more]), [['owed', 2, 5]],
+    'the bounded read left five of seven out, and the tab says so');
+  const status = mod.groupItems(rows, items, 'status');
+  assert.deepEqual(status.map((g) => [g.app.slug, g.items.length, g.more]), [['mine', 1, 0]]);
+
+  assert.equal(mod.itemHref('my app', item('proposal', 1)), '#app/my%20app/dev/proposals/1');
+  assert.equal(mod.itemHref('x', item('governance', 2)), '#app/x/dev/governance/2');
+  assert.equal(mod.itemHref('x', item('session', 3)), '#app/x/dev/sessions/3');
+  assert.equal(mod.itemCaption(item('governance', 2), 'needs'), 'Group decision waiting on your vote');
+  assert.equal(mod.itemCaption({ ...item('session', 3), status: 'paused' }, 'status'), 'Your change, paused');
+  assert.doesNotMatch(read('frontend/src/features/workshop/index.tsx'), /—'|'[^'\n]*—[^'\n]*'/,
+    'no em dash in the screen\'s copy');
+
+  assert.equal(mod.tabFromQuery('?demo=1&ws=needs'), 'needs');
+  assert.equal(mod.tabFromQuery('?ws=all'), null, 'All items is an app\'s own tab, not this screen\'s');
+  assert.equal(mod.tabFromQuery(''), null);
+});
+
+test('#3270: the Needs you pane is one feed, every project mixed, one card per screen', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
+  const card = (kind, id, slug, extra = {}) => ({
+    kind, id, title: `Item ${id}`, summary: null, author: 'ada', number: null, epoch: 2,
+    at: null, yes: 1, no: 0, app: { slug, name: slug.toUpperCase(), icon_url: null, icon_emoji: null }, ...extra,
+  });
+  mod.workshopStore.set({
+    open: true, error: false, tab: 'needs', scopeOpen: false, itemsError: false, items: {},
+    rows: [{ slug: 'garden', name: 'Garden', working: 0, needs: 2 }, { slug: 'swap', name: 'Swap', working: 0, needs: 1 }],
+    feed: [card('proposal', 8, 'garden'), card('governance', 9, 'swap'), card('proposal', 7, 'garden')],
+    feedError: false, feedCapped: false,
+  });
+  let out = html();
+  const pane = out.slice(out.indexOf('data-workshop-pane="needs"'));
+  assert.match(pane, /<div class="workshop-reel" data-needs-reel="" role="feed" aria-label="Decisions waiting on you">/);
+  assert.deepEqual([...pane.matchAll(/data-needs-card="(\w+)" data-needs-app="([\w-]+)"/g)].map((m) => `${m[2]}:${m[1]}`),
+    ['garden:proposal', 'swap:governance', 'garden:proposal'], 'in the order the server mixed them, not grouped');
+  assert.doesNotMatch(pane, /data-workshop-group=/, 'no list of lists any more');
+  assert.match(pane, /href="#app\/garden\/dev\/proposals\/8"/);
+  assert.match(pane, /data-needs-answer="yes"/, 'a change is answered on its card');
+  assert.match(pane, /<a class="workshop-reel-decide" href="#app\/swap\/dev\/governance\/9" data-needs-answer="open">/,
+    'a group decision opens its own page');
+  assert.match(pane, />1 of 3</);
+
+  mod.workshopStore.set({ feed: [] });
+  out = html();
+  assert.match(out.slice(out.indexOf('data-workshop-pane="needs"')), /data-needs-empty="">Nothing is waiting on your vote in any of your projects\./);
+  mod.workshopStore.set({ feed: null, feedError: true });
+  out = html();
+  assert.match(out.slice(out.indexOf('data-workshop-pane="needs"')), /data-needs-error=""/);
+  mod.workshopStore.set({ open: false, tab: 'status', rows: null, items: null, itemsError: false, feed: null, feedError: false });
+});
+
+test('#3051: the controller reads the items alongside, and survives losing them', async () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const { workshopController, workshopStore } = mod;
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
+  try {
+    const answers = new Map([
+      ['/api/apps', { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A', is_member: true }] }) }],
+      ['/api/workshop/counts', { ok: true, json: async () => ({ counts: { a: { working: 0, needs: 1 } } }) }],
+      ['/api/workshop/items', { ok: true, json: async () => ({ items: { a: { working: [], needs: [{ kind: 'proposal', id: 1 }] } } }) }],
+      ['/api/workshop/needs-feed', { ok: true, json: async () => ({ items: [{ kind: 'proposal', id: 1, app: { slug: 'a' } }], max: 60 }) }],
+    ]);
+    const asked = [];
+    global.fetch = async (url) => { asked.push(url); return answers.get(url) || { ok: false, json: async () => ({}) }; };
+    await workshopController.open();
+    assert.ok(asked.includes('/api/workshop/items'), 'the items are read with the other two');
+    assert.equal(workshopStore.get().itemsError, false);
+    assert.equal(workshopStore.get().items.a.needs.length, 1);
+    assert.ok(asked.includes('/api/workshop/needs-feed'), 'and the Needs you feed with them (#3270)');
+    assert.equal(workshopStore.get().feed.length, 1);
+    assert.equal(workshopStore.get().feedCapped, false);
+
+    answers.set('/api/workshop/items', { ok: false, json: async () => ({}) });
+    await workshopController.reload();
+    assert.equal(workshopStore.get().error, false, 'losing the items is not the error card');
+    assert.equal(workshopStore.get().itemsError, true, 'the tabs say so instead');
+    answers.set('/api/workshop/needs-feed', { ok: false, json: async () => ({}) });
+    await workshopController.reload();
+    assert.equal(workshopStore.get().error, false, 'losing the feed is not the error card either');
+    assert.equal(workshopStore.get().feedError, true);
+    assert.deepEqual(workshopStore.get().rows.map((r) => r.slug), ['a']);
+    workshopController.close();
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    global.fetch = priorFetch;
+  }
 });

@@ -4,11 +4,13 @@ const { Router, json } = require('express');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
+const github = require('../services/github');
 const log = require('../services/logger');
 const orchestrator = require('../services/visual-evidence-orchestrator');
 const plan = require('../services/visual-evidence-plan');
 const state = require('../services/visual-evidence-state');
 const view = require('../services/visual-evidence-view');
+const { repoParts } = require('../services/visual-evidence-environment');
 const { visualHeadForSession } = require('../services/pr-vote-revision');
 
 const ARTIFACT_ID_RE = /^[0-9a-f]{32}$/;
@@ -24,7 +26,7 @@ async function loadContext(pool, slug, id, user, level = 'view') {
     slug,
     user,
     level,
-    'id, slug, created_by, collab_visibility, view_visibility'
+    'id, slug, repo_url, created_by, collab_visibility, view_visibility'
   );
   if (!app) return null;
   const { rows } = await pool.query(
@@ -140,6 +142,15 @@ function visualEvidenceRoutes(config) {
           LIMIT 256`,
         [run.id]
       );
+      const diagnosticArtifacts = await pool.query(
+        `SELECT id, attempt, pass, story_id, viewport, side, variant,
+                bytes, width, height, sha256
+           FROM visual_evidence_diagnostic_artifacts
+          WHERE run_id = $1
+          ORDER BY attempt, pass, story_id, viewport, side, variant
+          LIMIT 32`,
+        [run.id]
+      );
       res.set({
         'Cache-Control': 'private, no-store',
         Vary: 'Cookie, Authorization',
@@ -176,20 +187,42 @@ function visualEvidenceRoutes(config) {
           height: artifact.height,
           sha256: artifact.sha256,
         })),
+        diagnosticArtifacts: diagnosticArtifacts.rows.map((artifact) => ({
+          id: artifact.id,
+          attempt: artifact.attempt,
+          pass: artifact.pass,
+          storyId: artifact.story_id,
+          viewport: artifact.viewport,
+          side: artifact.side,
+          variant: artifact.variant,
+          bytes: artifact.bytes,
+          width: artifact.width,
+          height: artifact.height,
+          sha256: artifact.sha256,
+          url: `/api/apps/${encodeURIComponent(ctx.app.slug)}/proposals/${id}/evidence/diagnostics/${artifact.id}`,
+        })),
         failureCode: run.failure_code,
         failureReason: run.failure_reason,
+        observer: orchestrator.liveRunObserver(run.id, pool),
         trace: {
           progress: trace.progress || null,
+          heartbeat: trace.heartbeat || null,
           timingsMs: trace.timingsMs || null,
+          idleWait: trace.idleWait || null,
           replayPasses: trace.replayPasses || [],
+          replayRetries: trace.replayRetries || [],
           replayRuntime: trace.replayRuntime || null,
           lastReplayEvent: trace.lastReplayEvent || null,
           replayEvents: trace.replayEvents || [],
+          fixtureResets: trace.fixtureResets || [],
           agentAttempts: trace.agentAttempts || 0,
           agentDispatches: trace.agentDispatches || [],
           agentActivity: trace.agentActivity || null,
           agentFinalResponse: trace.agentFinalResponse || null,
+          agentFinalResponses: trace.agentFinalResponses || [],
           repairCount: trace.repairCount || 0,
+          repairTrigger: trace.repairTrigger || null,
+          repairTriggers: trace.repairTriggers || [],
           planSource: trace.planSource || null,
           tokenUsage: trace.tokenUsage || null,
           artifactBytes: trace.artifactBytes || 0,
@@ -203,6 +236,42 @@ function visualEvidenceRoutes(config) {
       } });
     } catch (err) {
       log.error('visual-evidence', 'Evidence diagnostics read failed', { sessionId: id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.get('/api/apps/:slug/proposals/:sessionId/evidence/diagnostics/:artifactId', async (req, res) => {
+    const id = sessionId(req.params.sessionId);
+    if (!config.visualEvidence?.present || !id || !ARTIFACT_ID_RE.test(String(req.params.artifactId || ''))) {
+      return res.status(404).json({ error: 'Evidence diagnostic image not found' });
+    }
+    try {
+      const ctx = await loadContext(pool, req.params.slug, id, req.user, 'view');
+      if (!ctx || (ctx.session.user_id !== req.user?.id
+          && !(await appAdmins.canManageApp(pool, ctx.app, req.user)))) {
+        return res.status(404).json({ error: 'Evidence diagnostic image not found' });
+      }
+      const { rows } = await pool.query(
+        `SELECT a.data, a.bytes, a.sha256
+           FROM visual_evidence_diagnostic_artifacts a
+           JOIN visual_evidence_runs r ON r.id = a.run_id
+          WHERE a.id = $1 AND r.session_id = $2`,
+        [req.params.artifactId, id]
+      );
+      if (!rows[0]) return res.status(404).json({ error: 'Evidence diagnostic image not found' });
+      const data = Buffer.isBuffer(rows[0].data) ? rows[0].data : Buffer.from(rows[0].data || '');
+      res.set({
+        'Content-Type': 'image/png',
+        'Content-Length': String(data.length),
+        'Cache-Control': 'private, no-store',
+        ETag: `"${rows[0].sha256}"`,
+        Vary: 'Cookie, Authorization',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': 'inline',
+      });
+      return res.end(data);
+    } catch (err) {
+      log.error('visual-evidence', 'Evidence diagnostic image read failed', { sessionId: id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -357,8 +426,36 @@ function visualEvidenceRoutes(config) {
       const currentId = ctx.session.visual_evidence_run_id;
       let run;
       if (currentId) {
+        const old = await state.getRun(pool, currentId);
+        const intent = plan.parseIntent(replacement || old.intent);
+        let heuristicUi = false;
+        if (intent.impact === 'none') {
+          // A past run's `required` flag can be stale or wrong. Reclassify the
+          // immutable revisions it actually used, not today's moving main.
+          const { owner, repo } = repoParts(ctx.app.repo_url);
+          let comparison;
+          try {
+            comparison = await github.compareRefs(owner, repo, `${old.base_sha}...${old.head_sha}`);
+          } catch (error) {
+            log.warn('visual-evidence', 'Could not classify evidence retry files', {
+              sessionId: id, runId: currentId, error: error.message,
+            });
+            throw new state.VisualEvidenceStateError(
+              'evidence_change_set_unavailable',
+              'The original changed files could not be checked. Retry when GitHub is available.', 503
+            );
+          }
+          if (comparison.filesComplete !== true) {
+            throw new state.VisualEvidenceStateError(
+              'evidence_change_set_incomplete',
+              'The original changed-file list is incomplete; this retry cannot safely decide whether browser evidence is required.'
+            );
+          }
+          heuristicUi = orchestrator.uiFileHeuristic(comparison.files);
+        }
         run = await state.rerunSameHead(pool, currentId, {
           trigger: 'manual-rerun', intent: replacement || null,
+          heuristicUi,
         });
       } else if (replacement) {
         await state.recordIntent(pool, id, replacement);
@@ -379,6 +476,26 @@ function visualEvidenceRoutes(config) {
     } catch (err) {
       if (err?.code || err instanceof plan.VisualEvidenceValidationError) return sendError(res, err);
       log.error('visual-evidence', 'Evidence rerun failed', { sessionId: id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Stop the running visual change preview. The same people as Rerun, which
+  // is how a stopped run is started again.
+  router.post('/api/apps/:slug/proposals/:sessionId/evidence/stop', async (req, res) => {
+    const id = sessionId(req.params.sessionId);
+    if (!id) return res.status(404).json({ error: 'Proposal not found' });
+    try {
+      const ctx = await loadContext(pool, req.params.slug, id, req.user, 'collab');
+      if (!ctx) return res.status(404).json({ error: 'Proposal not found' });
+      const canManage = ctx.session.user_id === req.user?.id
+        || await appAdmins.canManageApp(pool, ctx.app, req.user);
+      if (!canManage) return res.status(404).json({ error: 'Proposal not found' });
+      const result = await orchestrator.stopForSession(pool, id);
+      return res.json(result);
+    } catch (err) {
+      if (err?.code) return sendError(res, err);
+      log.error('visual-evidence', 'Evidence stop failed', { sessionId: id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

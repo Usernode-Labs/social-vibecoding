@@ -53,7 +53,8 @@ test('the nine gated capabilities are the ones the request asked for', () => {
 });
 
 test('the ungated base is the two capabilities that need no prompt', () => {
-  // Both shipped in the frame's `allow` before this change and both stay.
+  // Both shipped in the frame's `allow` before this change and both stay
+  // ungated (pointer-lock now through the sandbox only, see below).
   // `geolocation` was the third and is deliberately not here.
   assert.deepEqual([...appPermissions.UNGATED_CAPABILITIES], ['clipboard-write', 'pointer-lock']);
   assert.ok(!appPermissions.UNGATED_CAPABILITIES.includes('geolocation'));
@@ -92,18 +93,39 @@ test('the DOM adapter copy agrees with the server catalogue', () => {
   assert.deepEqual(parse(gated[1]), appPermissions.GATED_NAMES);
 });
 
+// QA 2026-09-24 Q35: `pointer-lock` stays UNGATED (an app asking about it is
+// told "granted") but is no longer written into `allow`. No browser knows it
+// as a Permissions Policy feature, so it delegated nothing and Chrome logged
+// "Unrecognized feature: 'pointer-lock'." on every page; the App-tab frame's
+// `allow-pointer-lock` sandbox token is what grants it. All three copies
+// agree on which ungated names are sandbox-delegated.
+test('pointer-lock is ungated but delegated by the sandbox, never by allow', async () => {
+  assert.deepEqual([...appPermissions.SANDBOX_DELEGATED], ['pointer-lock']);
+  assert.ok(appPermissions.UNGATED_CAPABILITIES.includes('pointer-lock'));
+  assert.doesNotMatch(appPermissions.allowAttribute(['camera']), /pointer-lock/);
+  const policy = await loadPolicy();
+  assert.deepEqual(policy.SANDBOX_DELEGATED, [...appPermissions.SANDBOX_DELEGATED]);
+  assert.doesNotMatch(policy.BASE_ALLOW, /pointer-lock/);
+  assert.match(policy.APP_FRAME_SANDBOX, /\ballow-pointer-lock\b/);
+  const src = read('public/js/app-view.js');
+  const delegated = src.match(/_appIframeSandboxDelegated: \[([^\]]+)\]/);
+  assert.ok(delegated, 'the DOM adapter names its sandbox-delegated list');
+  assert.equal(delegated[1].trim(), "'pointer-lock'");
+  assert.match(src, /_appIframeSandbox: '[^']*\ballow-pointer-lock\b/);
+});
+
 // ── 2. allowAttribute is the last line before the DOM ───────────────────
 
 test('no grants delegates exactly the ungated base', () => {
-  assert.equal(appPermissions.allowAttribute([]), 'clipboard-write; pointer-lock');
-  assert.equal(appPermissions.allowAttribute(null), 'clipboard-write; pointer-lock');
-  assert.equal(appPermissions.allowAttribute(undefined), 'clipboard-write; pointer-lock');
+  assert.equal(appPermissions.allowAttribute([]), 'clipboard-write');
+  assert.equal(appPermissions.allowAttribute(null), 'clipboard-write');
+  assert.equal(appPermissions.allowAttribute(undefined), 'clipboard-write');
 });
 
 test('a granted capability is appended after the base', () => {
   assert.equal(
     appPermissions.allowAttribute(['microphone']),
-    'clipboard-write; pointer-lock; microphone'
+    'clipboard-write; microphone'
   );
 });
 
@@ -111,7 +133,7 @@ test('the attribute is catalogue-ordered, so it is stable and comparable', () =>
   const a = appPermissions.allowAttribute(['midi', 'camera', 'geolocation']);
   const b = appPermissions.allowAttribute(['geolocation', 'camera', 'midi']);
   assert.equal(a, b);
-  assert.equal(a, 'clipboard-write; pointer-lock; geolocation; camera; midi');
+  assert.equal(a, 'clipboard-write; geolocation; camera; midi');
 });
 
 test('anything not in the catalogue is dropped rather than delegated', () => {
@@ -120,19 +142,19 @@ test('anything not in the catalogue is dropped rather than delegated', () => {
   // something upstream put it in a list.
   assert.equal(
     appPermissions.allowAttribute(['payment', 'idle-detection', 'camera', '', null, 42]),
-    'clipboard-write; pointer-lock; camera'
+    'clipboard-write; camera'
   );
 });
 
 test('an injected attribute fragment cannot escape into the allow value', () => {
   const evil = 'camera; geolocation *; fullscreen" onload="x';
-  assert.equal(appPermissions.allowAttribute([evil]), 'clipboard-write; pointer-lock');
+  assert.equal(appPermissions.allowAttribute([evil]), 'clipboard-write');
 });
 
 test('duplicates collapse', () => {
   assert.equal(
     appPermissions.allowAttribute(['camera', 'camera', 'camera']),
-    'clipboard-write; pointer-lock; camera'
+    'clipboard-write; camera'
   );
 });
 
@@ -201,7 +223,7 @@ test('a manifest with no permissions block declares nothing', () => {
     assert.deepEqual(m.permissions, []);
     assert.equal(appPermissions.allowAttribute(
       m.permissions.map((p) => p.capability)
-    ), 'clipboard-write; pointer-lock');
+    ), 'clipboard-write');
   });
 });
 
@@ -248,7 +270,7 @@ test('dropping a declaration stops the delegation but keeps the grant', () => {
   assert.deepEqual(effectiveCapabilities(stillDeclared, granted), ['camera']);
   assert.equal(
     appPermissions.allowAttribute(effectiveCapabilities(stillDeclared, granted)),
-    'clipboard-write; pointer-lock; camera'
+    'clipboard-write; camera'
   );
   // And the other way round: declared but not granted delegates nothing.
   assert.deepEqual(effectiveCapabilities(

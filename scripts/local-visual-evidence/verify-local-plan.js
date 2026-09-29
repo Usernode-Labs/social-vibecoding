@@ -11,6 +11,8 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { Pool } = require('pg');
 const contract = require('../../src/services/visual-evidence-plan');
+const dbManager = require('../../src/services/db-manager');
+const evidenceFixtures = require('../../src/services/visual-evidence-fixtures');
 const lab = require('./run');
 
 const execFileAsync = promisify(execFile);
@@ -183,6 +185,36 @@ async function writeResult(options, runId, plan, intent, provenance, first, seco
   return { outputDir, artifacts, reviewExports };
 }
 
+function failureLocation(error) {
+  const detail = error?.detail;
+  if (!detail || typeof detail !== 'object') return null;
+  const location = {};
+  for (const key of ['storyId', 'viewport', 'side', 'phase', 'actionId', 'actionType', 'assertionType']) {
+    if (typeof detail[key] === 'string') location[key] = detail[key].slice(0, 96);
+  }
+  if (Number.isInteger(detail.assertionIndex)) location.assertionIndex = detail.assertionIndex;
+  if (Number.isInteger(detail.count)) location.matchedCount = detail.count;
+  if (Array.isArray(detail.targetStates)) {
+    location.targetStates = detail.targetStates.slice(0, 4).map((state) => ({
+      kind: state.kind, matchedCount: state.matchedCount,
+      attachedCount: state.attachedCount, visibleCount: state.visibleCount,
+      ...(state.roleHints ? { roleHints: state.roleHints } : {}),
+    }));
+  }
+  if (detail.pageState && typeof detail.pageState === 'object') {
+    location.pageState = {
+      pathname: detail.pageState.pathname,
+      hash: detail.pageState.hash,
+      visibleIds: Array.isArray(detail.pageState.visibleIds)
+        ? detail.pageState.visibleIds.slice(0, 30) : [],
+      visibleLandmarkIds: Array.isArray(detail.pageState.visibleLandmarkIds)
+        ? detail.pageState.visibleLandmarkIds.slice(0, 10) : [],
+    };
+  }
+  if (detail.execution?.lastEvent) location.lastEvent = detail.execution.lastEvent;
+  return Object.keys(location).length ? location : null;
+}
+
 async function verifyLocalPlan(options) {
   const plan = contract.parseReplayPlan(JSON.parse(await fs.readFile(options.planFile, 'utf8')));
   const intent = contract.parseIntent(JSON.parse(await fs.readFile(options.intentFile, 'utf8')));
@@ -193,12 +225,27 @@ async function verifyLocalPlan(options) {
   await assertLocalConfig(options.envFile);
   await assertLocalPlatform();
   await docker(['network', 'inspect', NETWORK]);
+  // docker.js captures this network when visuals/replay is first required.
+  process.env.DOCKER_NETWORK = NETWORK;
+  // Review-video export binds this directory into the capture image. Colima
+  // and remote Docker daemons do not necessarily share the host's /tmp.
+  await require('../../src/services/visuals').ensureCaptureImage();
+  await fs.mkdir(options.outputRoot, { recursive: true });
+  const mountedOutputRoot = await fs.realpath(options.outputRoot);
+  try {
+    await docker(['run', '--rm', '--network', 'none',
+      '--mount', `type=bind,source=${mountedOutputRoot},target=/evidence,readonly`,
+      'usernode-capture:latest', 'test', '-d', '/evidence']);
+  } catch {
+    throw new Error('Docker cannot mount the local evidence output directory. Choose a Docker-shared path, such as the repository’s .local-visual-evidence directory.');
+  }
   const runId = crypto.randomBytes(16).toString('hex');
   const checkouts = {};
   const names = { base: `usernode-pre-pr-${runId.slice(0, 8)}-base`,
     head: `usernode-pre-pr-${runId.slice(0, 8)}-head` };
-  const databases = { base: `evidence_pre_pr_${runId.slice(0, 12)}_base`,
-    head: `evidence_pre_pr_${runId.slice(0, 12)}_head` };
+  const selfAppSlug = 'usernode-2d5619';
+  const databases = { base: dbManager.evidenceDbName(selfAppSlug, runId, 'base'),
+    head: dbManager.evidenceDbName(selfAppSlug, runId, 'head') };
   const dump = `/tmp/evidence-pre-pr-${runId}.dump`;
   const stop = async () => lab.stopFixtures(Object.values(names));
   let pool;
@@ -217,6 +264,8 @@ async function verifyLocalPlan(options) {
       baseSha: options.baseSha, headSha: options.headSha, fixtureFingerprint: fingerprint,
       baseImageDigest: images.base.digest, headImageDigest: images.head.digest,
     };
+    let fixtureProfileSet = false;
+    let fixtureProfile = null;
     require('dotenv').config({ path: options.envFile, quiet: true });
     pool = new Pool({ connectionString: 'postgres://usernode:localdev@127.0.0.1:5440/usernode' });
     const { rows: users } = await pool.query(
@@ -225,6 +274,10 @@ async function verifyLocalPlan(options) {
     if (users[0]?.has_platform_access !== true) {
       throw new Error('Local capture member lacks platform access. Restart local Homeroom to apply its fixture seed.');
     }
+    const { rows: apps } = await pool.query('SELECT slug FROM apps WHERE id = 1');
+    if (apps[0]?.slug !== selfAppSlug) {
+      throw new Error('Local platform app identity differs from the evidence fixture profile.');
+    }
     process.env.DOCKER_NETWORK = NETWORK;
     const authTokens = await require('../../src/services/visual-evidence-identities')
       .mintEvidenceAuthTokens(pool, 1);
@@ -232,6 +285,7 @@ async function verifyLocalPlan(options) {
     const config = { captureRuntime: 'docker', visualEvidence: { maxRunMs: 240_000 } };
     const origins = { base: `http://${names.base}:3000`, head: `http://${names.head}:3000` };
     const input = (pass) => ({ runId, pass, publishArtifacts: pass === 2,
+      diagnosticArtifacts: pass === 1,
       plan, origins, provenance, authTokens, cookies: {},
       browser: { locale: 'en-US', timezoneId: 'UTC', colorScheme: 'light', deviceScaleFactor: 1 } });
     const onEvent = (event) => {
@@ -240,24 +294,52 @@ async function verifyLocalPlan(options) {
       }
     };
     const startPair = async () => {
-      const restored = await Promise.allSettled(['base', 'head'].map((side) =>
-        restoreDatabase(databases[side], dump)));
-      const restoreFailure = restored.find((result) => result.status === 'rejected');
-      if (restoreFailure) throw restoreFailure.reason;
+      for (const side of ['base', 'head']) await restoreDatabase(databases[side], dump);
       const started = await Promise.allSettled(['base', 'head'].map((side) =>
         startApp(names[side], databases[side], images[side].tag, options.envFile)));
       const failed = started.find((result) => result.status === 'rejected');
       if (failed) throw failed.reason;
+      const fixtureInputs = Object.fromEntries(['base', 'head'].map((side) => [side, {
+        databaseUrl: `postgres://usernode:localdev@127.0.0.1:5440/${databases[side]}`,
+        slug: selfAppSlug, runId, side,
+      }]));
+      const ready = await Promise.all(['base', 'head'].map((side) =>
+        evidenceFixtures.canCopyMemberAgentSession(fixtureInputs[side])));
+      const currentProfile = ready.every(Boolean) ? evidenceFixtures.PROFILE : null;
+      if (fixtureProfileSet && fixtureProfile !== currentProfile) {
+        throw new Error('The local paired reset changed its evidence fixture profile.');
+      }
+      fixtureProfileSet = true;
+      fixtureProfile = currentProfile;
+      if (currentProfile) {
+        await Promise.all(['base', 'head'].map((side) =>
+          evidenceFixtures.copyMemberAgentSession({
+            ...fixtureInputs[side], selfAppSlug,
+          })));
+      }
+      provenance.fixtureFingerprint = currentProfile
+        ? crypto.createHash('sha256').update(`${fingerprint}\n${currentProfile}`).digest('hex')
+        : fingerprint;
     };
-    await startPair();
+    const prepareCase = async () => {
+      await stop();
+      await startPair();
+      return { origins };
+    };
     const captureId = Number.parseInt(runId.slice(0, 6), 16) + 1;
-    const first = await replay.runPass(config, captureId, input(1), { onEvent });
-    await stop();
-    await startPair();
-    const second = await replay.runPass(config, captureId, input(2), { onEvent });
+    const first = await replay.runPassCases(config, captureId, input(1), { prepareCase, onEvent });
+    const second = await replay.runPassCases(config, captureId, input(2), { prepareCase, onEvent });
     const verdict = replay.comparePasses(first, second, { plan, provenance, runId });
     if (!verdict.passed) {
       if (verdict.code === 'non_reproducible') {
+        const diagnosticDir = path.join(options.outputRoot, `pre-pr-${runId}-diagnostics`);
+        await fs.mkdir(diagnosticDir, { recursive: true });
+        for (const [pass, result] of [[1, first], [2, second]]) {
+          for (const artifact of result.artifacts.filter((item) => item.media === 'png')) {
+            const filename = `${artifact.storyId}-${artifact.viewport}-pass${pass}-${artifact.side}-${artifact.variant}.png`;
+            await fs.writeFile(path.join(diagnosticDir, filename), artifact.data);
+          }
+        }
         const changes = first.result.stories.flatMap((left, index) => {
           const right = second.result.stories[index];
           return ['base', 'head'].flatMap((side) => {
@@ -272,7 +354,7 @@ async function verifyLocalPlan(options) {
               focusRect: [before.focusRect, after?.focusRect] }];
           });
         });
-        throw new Error(`${verdict.code}: ${verdict.reason} ${JSON.stringify(changes)}`);
+        throw new Error(`${verdict.code}: ${verdict.reason} ${JSON.stringify(changes)} Diagnostic images: ${diagnosticDir}`);
       }
       throw new Error(`${verdict.code}: ${verdict.reason}`);
     }
@@ -286,7 +368,10 @@ async function verifyLocalPlan(options) {
     await fs.writeFile(path.join(options.outputRoot, `pre-pr-${runId}-failure.json`),
       `${JSON.stringify({ passed: false, runId, baseSha: options.baseSha,
         headSha: options.headSha, planHash: contract.planHash(plan),
-        code: error.code || null, message: error.message }, null, 2)}\n`).catch(() => {});
+        code: error.code || null, message: error.message,
+        location: failureLocation(error),
+        browserDiagnostics: error?.detail?.browserDiagnostics || null,
+        trustedAppSlugs: error?.detail?.trustedAppSlugs || null }, null, 2)}\n`).catch(() => {});
     throw error;
   } finally {
     await stop();
@@ -318,4 +403,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, verifyLocalPlan, writeResult };
+module.exports = { parseArgs, verifyLocalPlan, writeResult, failureLocation };

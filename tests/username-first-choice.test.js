@@ -427,8 +427,10 @@ test('the users INSERT no longer puts the email in the username column', () => {
 });
 
 test('the created row is marked as still needing a choice', () => {
+  // Communities, stage 5 added the join screen's flag to the same INSERT,
+  // one step later in the same first run: TRUE for both.
   assert.match(signupJs,
-    /needs_username_choice\)\s*\n\s*VALUES \(\$1, \$2, \$3, TRUE, NOW\(\), FALSE, FALSE, TRUE\)/);
+    /needs_username_choice, needs_communities_choice\)\s*\n\s*VALUES \(\$1, \$2, \$3, TRUE, NOW\(\), FALSE, FALSE, TRUE, TRUE\)/);
 });
 
 test('the username comes from the suggestion helper, with an opaque fallback', () => {

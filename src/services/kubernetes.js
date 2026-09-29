@@ -64,6 +64,13 @@ function isNotFound(err) {
   return err?.code === 404 || err?.response?.statusCode === 404 || err?.response?.status === 404;
 }
 
+// The namespace's ResourceQuota refused an object: every slot it allows (for
+// a worker, a volume claim or the storage those claims request) is taken.
+function isQuotaExceeded(err) {
+  const code = err?.code ?? err?.response?.statusCode ?? err?.response?.status;
+  return code === 403 && /exceeded quota/i.test(String(err?.message || ''));
+}
+
 function dnsName(value, max = 63) {
   const clean = String(value || '')
     .toLowerCase()
@@ -791,8 +798,12 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
 async function deployApplication(config, {
   app, environment, sessionId, imageRef, env, cpus = null,
   labels: extraLabels = {}, runtimeName = null, internalOnly = false,
+  command = [],
 }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
+  if (!Array.isArray(command) || command.some((part) => typeof part !== 'string' || !part)) {
+    throw new Error('Kubernetes container command must be an array of non-empty strings');
+  }
   const cfg = config.kubernetes;
   const namespace = cfg.appNamespace;
   const name = runtimeName || appResourceName(app, environment, sessionId);
@@ -834,6 +845,7 @@ async function deployApplication(config, {
           ...previewDatabaseAffinity(cfg, environment),
           containers: [{
             name: 'app', image: imageRef, imagePullPolicy: 'IfNotPresent',
+            ...(command.length ? { command } : {}),
             ports: [{ name: 'http', containerPort: 3000 }],
             env: app.slug === config.selfAppSlug
               ? [{ name: 'USERNODE_SHELL_ASSETS_PREBUILT', value: '1' }]
@@ -1147,7 +1159,15 @@ async function deleteBuildSnapshot(config, build) {
   });
 }
 
-async function ensureWorker(config, { sessionId, env, onProgress }) {
+const VOLUME_QUOTA_RETRY_MS = 2000;
+const VOLUME_QUOTA_RETRIES = 10;
+
+// `reclaimVolumes({ sessionId })` frees other changes' idle volumes when the
+// quota refuses this one and resolves how many it deleted. The quota's usage
+// drops only once the controller observes those deletions, so the claim is
+// retried for a short while rather than once.
+async function ensureWorker(config, { sessionId, env, onProgress, temporary = false,
+  reclaimVolumes = null, retryDelayMs = VOLUME_QUOTA_RETRY_MS }) {
   const cfg = config.kubernetes;
   if (!cfg.workerImage?.includes('@sha256:')) throw new Error('KUBERNETES_WORKER_IMAGE must be an immutable digest');
   const namespace = cfg.workerNamespace;
@@ -1160,18 +1180,39 @@ async function ensureWorker(config, { sessionId, env, onProgress }) {
     : {};
   const selectorLabels = { 'social.usernode.io/runtime-name': name };
   const { core, apps } = getClients();
-  try {
-    const pvc = { apiVersion: 'v1', kind: 'PersistentVolumeClaim', metadata: { name: pvcName, namespace, labels: resourceLabels }, spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage: cfg.workerStorageSize } } } };
-    if (cfg.workerStorageClass) pvc.spec.storageClassName = cfg.workerStorageClass;
-    await core.createNamespacedPersistentVolumeClaim({ namespace, body: pvc });
-  } catch (err) { if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err; }
+  const claimVolume = async () => {
+    try {
+      const pvc = { apiVersion: 'v1', kind: 'PersistentVolumeClaim', metadata: { name: pvcName, namespace, labels: resourceLabels }, spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage: cfg.workerStorageSize } } } };
+      if (cfg.workerStorageClass) pvc.spec.storageClassName = cfg.workerStorageClass;
+      await core.createNamespacedPersistentVolumeClaim({ namespace, body: pvc });
+    } catch (err) { if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err; }
+  };
+  if (!temporary) {
+    try {
+      await claimVolume();
+    } catch (err) {
+      if (!isQuotaExceeded(err) || typeof reclaimVolumes !== 'function') throw err;
+      const freed = await reclaimVolumes({ sessionId }).catch(() => 0);
+      if (!(freed > 0)) throw err;
+      let last = err;
+      for (let attempt = 0; attempt < VOLUME_QUOTA_RETRIES; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        try { await claimVolume(); last = null; break; } catch (retryErr) {
+          if (!isQuotaExceeded(retryErr)) throw retryErr;
+          last = retryErr;
+        }
+      }
+      if (last) throw last;
+    }
+  }
   await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, {
     apiVersion: 'v1', kind: 'Secret', metadata: { name: secretName, namespace, labels: resourceLabels }, type: 'Opaque',
     stringData: Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)])),
   });
   const deployed = await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
     apiVersion: 'apps/v1', kind: 'Deployment', metadata: {
-      name, namespace, labels: { ...resourceLabels, ...workerContractLabels },
+      name, namespace, labels: { ...resourceLabels, ...workerContractLabels,
+        'social.usernode.io/storage-mode': temporary ? 'temporary' : 'persistent' },
     },
     spec: {
       replicas: 1,
@@ -1196,7 +1237,9 @@ async function ensureWorker(config, { sessionId, env, onProgress }) {
             resources: { requests: { cpu: '250m', memory: '512Mi' }, limits: { cpu: config.workerCpus || '2', memory: (config.workerMemory || '2Gi').replace(/g$/i, 'Gi') } },
             securityContext: containerSecurityContext(),
           }],
-          volumes: [{ name: 'state', persistentVolumeClaim: { claimName: pvcName } }],
+          volumes: [{ name: 'state', ...(temporary
+            ? { emptyDir: {} }
+            : { persistentVolumeClaim: { claimName: pvcName } }) }],
         },
       },
     },
@@ -1204,7 +1247,7 @@ async function ensureWorker(config, { sessionId, env, onProgress }) {
   await waitForWorkerBootstrap(core, apps, { namespace, name, onProgress,
     imageRef: cfg.workerImage, environmentChecksum: envChecksum(env),
     generation: deployed?.metadata?.generation || 0 });
-  return { runtimeKind: 'kubernetes', runtimeName: name, pvcName };
+  return { runtimeKind: 'kubernetes', runtimeName: name, pvcName: temporary ? null : pvcName };
 }
 
 async function getWorkerStatus(config, runtimeName) {
@@ -1276,9 +1319,11 @@ async function getWorkerRuntimeMetadata(config, runtimeName) {
     return {
       contractVersion: deployment.metadata?.labels?.['social.usernode.io/worker-contract'] || null,
       imageRef: worker?.image || null,
+      storageMode: deployment.spec?.template?.spec?.volumes?.find((volume) => volume.name === 'state')?.emptyDir
+        ? 'temporary' : 'persistent',
     };
   } catch (err) {
-    if (isNotFound(err)) return { contractVersion: null, imageRef: null };
+    if (isNotFound(err)) return { contractVersion: null, imageRef: null, storageMode: null };
     throw err;
   }
 }
@@ -1294,6 +1339,25 @@ async function deleteWorker(config, sessionId, { deleteVolume = false } = {}) {
   if (deleteVolume) await deleteIfPresent(core, 'deleteNamespacedPersistentVolumeClaim', withSuffix(name, 'state'), namespace);
 }
 
+// A deletion acceptance is not proof that pods/PVCs finished terminating.
+// Account erasure keeps its durable task pending while finalizers run.
+async function eraseWorker(config, sessionId) {
+  await deleteWorker(config, sessionId, { deleteVolume: true });
+  const { apps, core } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const name = dnsName(`sv-worker-s${sessionId}`);
+  const absent = async (api, method, resourceName) => {
+    try { await api[method]({ namespace, name: resourceName }); }
+    catch (err) { if (isNotFound(err)) return; throw err; }
+    throw new Error('worker_erasure_pending');
+  };
+  await absent(apps, 'readNamespacedDeployment', name);
+  await absent(core, 'readNamespacedSecret', withSuffix(name, 'env'));
+  await absent(core, 'readNamespacedPersistentVolumeClaim', withSuffix(name, 'state'));
+  const pods = await core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${name}` });
+  if (pods.items?.length) throw new Error('worker_erasure_pending');
+}
+
 async function listWorkers(config) {
   const namespace = config.kubernetes.workerNamespace;
   const deployments = await getClients().apps.listNamespacedDeployment({
@@ -1305,6 +1369,31 @@ async function listWorkers(config) {
     sessionId: Number(deployment.metadata.labels?.['social.usernode.io/session-id']),
     state: deploymentState(deployment) === 'creating' ? 'created' : deploymentState(deployment),
   })).filter((item) => Number.isFinite(item.sessionId));
+}
+
+// Every worker state volume, with whether a worker Deployment still mounts it.
+async function listWorkerVolumes(config) {
+  const namespace = config.kubernetes.workerNamespace;
+  const { core, apps } = getClients();
+  const labelSelector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/environment=worker`;
+  const [claims, deployments] = await Promise.all([
+    core.listNamespacedPersistentVolumeClaim({ namespace, labelSelector }),
+    apps.listNamespacedDeployment({ namespace, labelSelector }),
+  ]);
+  const mounted = new Set((deployments.items || []).map((deployment) => deployment.metadata?.name));
+  return (claims.items || []).map((claim) => {
+    const sessionId = Number(claim.metadata?.labels?.['social.usernode.io/session-id']);
+    const runtimeName = dnsName(`sv-worker-s${sessionId}`);
+    return {
+      name: claim.metadata?.name,
+      sessionId,
+      createdAt: claim.metadata?.creationTimestamp || null,
+      terminating: !!claim.metadata?.deletionTimestamp,
+      attached: mounted.has(runtimeName),
+      state: claim.metadata?.name === withSuffix(runtimeName, 'state'),
+    };
+  }).filter((volume) => Number.isSafeInteger(volume.sessionId) && volume.state)
+    .map(({ state, ...volume }) => volume);
 }
 
 function deploymentState(deployment) {
@@ -1552,16 +1641,18 @@ async function runUnitSuiteJob(config, options) {
 
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
-async function cancelPreviewChecks(config, sessionId) {
+async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
   const { batch, core } = getClients();
   const namespace = config.kubernetes.workerNamespace;
-  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`
+    + (previewRunId ? `,social.usernode.io/preview-run-id=${previewRunId}` : '');
   const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
   await Promise.all((jobs.items || []).map(async job => {
     const name = job.metadata.name;
     if (!name.startsWith(`sv-capture-s${sessionId}-`)
         && !name.startsWith(`sv-evidence-s${sessionId}-`)
         && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
+    if (previewRunId && job.metadata.labels?.['social.usernode.io/preview-run-id'] !== previewRunId) return;
     const podsStopped = async () => {
       const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
       return (pods.items || []).every(pod => ['Succeeded', 'Failed'].includes(pod.status?.phase));
@@ -2209,7 +2300,8 @@ module.exports = {
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runEvidenceJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   execInWorker, _getClients: getClients,
-  getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, listWorkers, cloneWorkerVolume,
+  getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
+  listWorkerVolumes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,

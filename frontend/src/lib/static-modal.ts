@@ -151,6 +151,33 @@ function present(
   });
 }
 
+/**
+ * Give the kit's modal shell an accessible name (QA 2026-09-24 Q20).
+ *
+ * The shell is what carries `role="dialog"` and `aria-modal` — the kit makes
+ * it, not the dialog — so the dialog's own heading was never its name, and a
+ * screen reader announced an unnamed dialog. The name is the card's first
+ * heading: by reference when it has an id, so a title that changes while the
+ * dialog is up (Create's "Create a new app" / "Import existing app") is read
+ * as it is now; by its text otherwise. The shell is a node the kit created and
+ * owns, never one React rendered, so this write has nothing to reconcile with.
+ */
+function nameKitShell(adoption: KitAdoption | null): void {
+  const shell = adoption?.handle?.el as HTMLElement | null | undefined;
+  const card = adoption?.contentEl;
+  if (!shell || !card || typeof shell.setAttribute !== 'function') return;
+  if (shell.hasAttribute?.('aria-labelledby') || shell.hasAttribute?.('aria-label')) return;
+  const heading = typeof card.querySelector === 'function'
+    ? card.querySelector('h1, h2, h3') as HTMLElement | null
+    : null;
+  if (!heading) return;
+  if (heading.id) shell.setAttribute('aria-labelledby', heading.id);
+  else {
+    const text = (heading.textContent || '').replace(/\s+/g, ' ').trim();
+    if (text) shell.setAttribute('aria-label', text);
+  }
+}
+
 export interface StaticModalOptions {
   /**
    * Called when the KIT dismissed the modal on its own — backdrop tap or
@@ -262,6 +289,7 @@ export function useStaticModal(
         const generation = (generationRef.current += 1);
         const stillOwns = () => generationRef.current === generation;
         adoptionRef.current = present(root, dismissFromKit, stillOwns);
+        nameKitShell(adoptionRef.current);
       }
     } else {
       const adoption = adoptionRef.current;

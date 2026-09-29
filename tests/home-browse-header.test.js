@@ -61,7 +61,7 @@ function harness({ improveAvailable = true } = {}) {
     addEventListener() {},
     PlatformUI: { transition: (fn, options) => transitions.push({ fn, options }) },
     Home: { _apps: [{ slug: 'notes', name: 'Notes' }], load() {}, publishImproveTarget() {} },
-    AppView: { close() {}, _teardownDevRoots() {}, _unmountAppFrame() {} },
+    AppView: { close() {}, _teardownDevRoots() {}, _unmountAppFrame() {}, _retireAppFrame() {} },
     UsernodeReact: {
       backButton: { set(mode, href) {
         writes.push({ mode, href });

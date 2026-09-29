@@ -124,7 +124,9 @@ test('the create dialog loads and renders the quota without reset copy', () => {
     'the dialog reads the independent current allowance endpoint');
   assert.match(source, /id="create-app-quota"/);
   assert.match(shared, /`\$\{quota\.used\} of \$\{quota\.limit\} app/);
-  assert.match(source, /disabled=\{quotaBlocksCreation\}/,
+  // Next is also dimmed until its step is answered (the create dialog's
+  // rework); the quota still dims it on its own.
+  assert.match(source, /id="create-next"[\s\S]{0,200}disabled=\{quotaBlocksCreation \|\| !stepAnswered\}/,
     'the visible at-limit dialog must not offer a submit the server will refuse');
   assert.match(source, /disabledStyle="block"/,
     'the disabled submit must look unavailable, not only reject clicks');
@@ -135,8 +137,10 @@ test('the create dialog loads and renders the quota without reset copy', () => {
 });
 
 test('locked create entries still open the dialog so the quota is reachable', () => {
-  const panel = read('frontend/src/features/home/panels/create.tsx');
-  const click = panel.slice(panel.indexOf('onClick={(e) =>'));
+  // Home's Create entry is the launcher grid's trailing tile now (it was a
+  // section below Challenges); one button, both quota states.
+  const panel = read('frontend/src/features/home/create-tile.tsx');
+  const click = panel.slice(panel.indexOf('onClick={() =>'));
   assert.match(click, /App\?\.showCreateModal\?\.\(\)/);
   assert.doesNotMatch(click, /PlatformUI\?\.toast/,
     'a generic toast would hide the exact quota at the moment it matters');

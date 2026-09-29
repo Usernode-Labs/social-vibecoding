@@ -336,7 +336,9 @@ function runSummary(row, artifactSummary = []) {
     headSha: row.head_sha,
     failureCode: row.failure_code || null,
     failureReason: row.failure_reason || null,
-    repairAvailable: row.state === 'failed' && Number(row.repair_attempt || 0) < 1,
+    repairAvailable: row.state === 'failed'
+      && row.failure_code !== 'visual_evidence_intent_conflict'
+      && Number(row.repair_attempt || 0) < 1,
     planHash: row.plan_hash || null,
     replayCount: Number.isInteger(trace?.runs) ? Math.max(0, Math.min(2, trace.runs)) : null,
     repairCount: Number.isInteger(Number(row.repair_attempt))
@@ -601,6 +603,7 @@ async function heartbeatRun(pool, runId, phase, progress = null) {
     } : {}),
     ...(progress.agentActivity ? { agentActivity: progress.agentActivity } : {}),
     ...(progress.agentFinalResponse ? { agentFinalResponse: progress.agentFinalResponse } : {}),
+    ...(progress.heartbeat ? { heartbeat: progress.heartbeat } : {}),
   });
   if (progressPatch && progressPatch.length > 64_000) {
     throw new VisualEvidenceStateError('invalid_evidence_heartbeat', 'Evidence heartbeat trace is too large.', 400);
@@ -757,6 +760,7 @@ async function getRun(pool, runId, { forUpdate = false } = {}) {
 // unique index guarantees there is still one reviewer-visible owner.
 async function rerunSameHead(pool, runId, {
   trigger = 'manual-rerun', intent: replacementIntent = null, authorPlan: replacementPlan = undefined,
+  heuristicUi = undefined,
 } = {}) {
   return withTransaction(pool, async (client) => {
     const old = await getRun(client, runId, { forUpdate: true });
@@ -773,7 +777,12 @@ async function rerunSameHead(pool, runId, {
         !== planContract.canonicalJson(intent)) {
       throw new VisualEvidenceStateError('evidence_intent_mismatch', 'The replacement plan changes the accepted visual evidence intent.', 400);
     }
-    const heuristicUi = old.current_evidence_detail?.required === true && intent.impact === 'none';
+    if (intent.impact === 'none' && typeof heuristicUi !== 'boolean') {
+      throw new VisualEvidenceStateError(
+        'evidence_change_set_unverified',
+        'The original changed files must be checked before retrying a no-visual-change declaration.'
+      );
+    }
     const required = requiredForIntent(intent, { heuristicUi });
     const initialState = intent.impact === 'none' && !required ? 'not_required' : 'planned';
     await client.query(

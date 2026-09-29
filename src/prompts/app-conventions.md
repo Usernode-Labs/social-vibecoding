@@ -1017,6 +1017,88 @@ Rules:
   voted in, merged, and redeployed — not before. Don't mutate the
   icon through any other channel.
 
+#### Icon style: one set on the home screen
+
+When you give an app an icon, draw it in this style unless the group
+has chosen its own artwork. Every app's tile then reads as part of one
+set instead of a mix of emoji, letters and one-off logos.
+
+- **Where the file goes.** Commit it as `brand/icon.png`, declare
+  `{ "icon": { "image": "brand/icon.png" } }`, and add a short
+  `brand/ICON.md` naming the glyph and colour so someone can redraw it.
+  Keep it out of `public/`, `assets/` and other served folders: the
+  platform reads the file at deploy time and the app never serves it,
+  and a file under those folders counts as a browser UI change, so an
+  icon-only proposal there cannot declare `visualEvidence` impact
+  `none`.
+- **Format.** A 512 × 512 PNG: opaque, full bleed, square corners (the
+  tile rounds and crops it), no text or letters. A render in this style
+  is 50–80 KB, well under the 256 KB limit. SVG is not accepted, so
+  render the template below to PNG (for example
+  `rsvg-convert -w 512 -h 512 icon.svg -o brand/icon.png`).
+- **Glyph.** One [Lucide](https://lucide.dev) icon (ISC licence) in
+  white, with Lucide's own 2px round strokes on its 24-unit grid,
+  scaled × 12 into the middle 288 px (112 px of margin on each side)
+  over a soft drop shadow. Pick the object the app is about (a chef hat
+  for recipes, a dumbbell for a gym log), not an abstract mark. When
+  Lucide has nothing that fits, draw one on the same grid with the same
+  strokes; never mix in a filled, multicolour or emoji glyph.
+- **Colour.** A diagonal two-stop gradient, top left to bottom right,
+  from this palette, under a faint white highlight at the top left.
+  Choose by what the app is for:
+
+  | Hue | From | To | For |
+  |---|---|---|---|
+  | orange | `#FFA552` | `#E05A12` | food, making, building |
+  | amber | `#FBB43C` | `#C9570A` | pets, notes, farming, time |
+  | brown | `#C98C5E` | `#6E3F22` | coffee, crafts |
+  | red | `#FF7163` | `#D1321F` | sport, video, voting, places |
+  | magenta | `#FF6AB8` | `#CF1F74` | social, art, people, personal pages |
+  | violet | `#B574FF` | `#7327DB` | games, quests, rankings |
+  | indigo | `#8577FF` | `#4432D1` | lists, work, markets, security |
+  | blue | `#5B9BFF` | `#1F57E6` | tools, lists, language, weather |
+  | teal | `#34D3C3` | `#0B7D84` | kids, drawing, surveys |
+  | green | `#3DD68A` | `#0E8A4C` | money, growth, luck |
+  | slate | `#6A7B93` | `#27313F` | utilities, tests, diagnostics, spooky |
+
+  A fork keeps its parent's glyph on a different hue, so the two tiles
+  can be told apart.
+- **Keep the emoji** beside the image when the app had one
+  (`{ "image": "brand/icon.png", "emoji": "🍳" }`): it is what the tile
+  shows if the image ever fails validation.
+
+The template, with the orange pair filled in and one Lucide glyph's
+`<path>`/`<circle>` elements pasted into the inner group:
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFA552"/><stop offset="1" stop-color="#E05A12"/>
+    </linearGradient>
+    <radialGradient id="gloss" cx="0.25" cy="0.12" r="0.8">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect width="512" height="512" fill="url(#gloss)"/>
+  <g filter="url(#shadow)">
+    <g transform="translate(112 112) scale(12)" fill="none" stroke="#fff"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <!-- the glyph's elements, copied from its Lucide SVG -->
+    </g>
+  </g>
+</svg>
+```
+
+Keep the shadow filter on the outer, unscaled group: on the scaled
+group its offset and blur are multiplied by 12 and leave a visible
+box on the tile.
+
 Per-field rules:
 
 - `key` — `UPPER_SNAKE_CASE`. The literal name `process.env.<KEY>` will be.
@@ -1843,6 +1925,37 @@ credentials, and the only outbound calls back to the platform are
 the push/PR proxy endpoints (which only accept the session's
 canonical branch). Commit cleanly and let the harness finish the job.
 
+## Outside dev-chat: check that your checkout is current
+
+For a coding agent working on an app from its own checkout: Claude Code on
+someone's machine or on the web, Codex, and the like. Inside Homeroom's
+dev-chat the platform fixes your base commit; skip this section.
+
+The checkout you were handed may be a fork whose `main` is behind the app's
+canonical repository, and nothing in it says so: `git fetch origin` compares
+the fork with itself. So before you read code to answer a question about how
+the app behaves now, not only before you edit, check against the canonical
+repository. Homeroom names it in `.claude/homeroom-canonical-repo` in the
+repos it creates, imports and forks; otherwise it is the app's `repoUrl` from
+the connector's `list_apps`, and the connector's `get_checkout_status`
+answers the whole question for you.
+
+```sh
+git fetch <canonical repository URL> main
+git merge-base --is-ancestor FETCH_HEAD HEAD && echo current || echo behind
+```
+
+`behind` means the checkout does not contain the canonical `main`. To answer
+a question, read the canonical code instead: `git show FETCH_HEAD:<path>` or
+`git grep <pattern> FETCH_HEAD`. To change code, start from the exact base
+commit your work order (`prepare_work`) gives, and never merge or rebase onto
+the canonical `main` yourself: which commit a change is diffed against
+decides what the group votes on.
+
+Scaffolded repos run this check when a Claude Code session starts
+(`.claude/hooks/homeroom-freshness.sh`) and tell you when you are behind. It
+is silent offline, so its silence is not proof the checkout is current.
+
 ## Bridge — centrally hosted (not vendored)
 
 `usernode-bridge.js` is the one piece of cross-dapp infrastructure
@@ -2029,6 +2142,74 @@ Notes:
 - Your app's own viewport meta does **not** need `viewport-fit=cover` for
   the forwarded properties to work (it is still required for bare `env()`
   to work standalone).
+
+## The platform's light/dark theme inside the app frame
+
+Viewers choose Light, Dark or System in the platform's own settings.
+**`prefers-color-scheme` inside your frame cannot see that choice**: in a
+cross-origin iframe it follows the operating system, not the page around
+it. So an app that only reads the media query shows light to a viewer who
+picked Dark on a light-mode OS, and a staging preview does the same.
+
+The platform forwards the **resolved** theme (`light` or `dark`, never
+`system`). The hosted bridge publishes it; no app-side plumbing beyond the
+bridge `<script>`:
+
+- **`usernode.theme`** is `"light"`, `"dark"`, or `null` when the app is
+  opened standalone (outside the platform). It is set synchronously when the
+  bridge loads, from the frame URL's `?un-theme=` parameter, so a bootstrap
+  script placed *after* the bridge tag can read it before first paint.
+- **`usernode:theme-changed`** is a `CustomEvent` on `window` whose `detail`
+  is `{ theme }`. It fires when the viewer changes the platform theme while
+  your app is open. The app is never reloaded for it.
+
+The bridge only reports the value. Your app decides what dark means (a
+`.dark` class on `<html>` for Tailwind's `dark:` variant and the
+usernode-native kit, your own tokens, and so on). Recommended wiring, with
+the OS preference as the standalone fallback:
+
+```html
+<script src="/usernode-bridge/v1/bridge.js"></script>
+<script>
+  (function () {
+    var media = window.matchMedia('(prefers-color-scheme: dark)');
+    function applyTheme() {
+      var theme = (window.usernode && window.usernode.theme)
+        || (media.matches ? 'dark' : 'light');
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      document.documentElement.style.colorScheme = theme;
+    }
+    applyTheme();
+    window.addEventListener('usernode:theme-changed', applyTheme);
+    media.addEventListener('change', applyTheme);
+  })();
+</script>
+```
+
+Notes:
+
+- Read `usernode.theme`, not `?un-theme=` directly: the URL keeps the value
+  the frame loaded with, and the bridge keeps `usernode.theme` current.
+- `un-theme` is namespaced so it never collides with a query parameter your
+  app uses itself. Do not strip it or depend on its position in the URL.
+- An app that offers its own light/dark picker may keep it. Treat the
+  platform theme as the default until the viewer picks something in your app.
+
+## Staying loaded in the background
+
+The shell keeps the last few apps a viewer opened **loaded but hidden**, so
+coming back to yours shows it exactly as they left it — no reload. While
+hidden your document keeps running, but it cannot be seen, focused or
+clicked. The bridge handles the common case for you: on hide it pauses any
+playing `<audio>`/`<video>`, and on show it resumes what it paused. For
+anything else that should stop while nobody is looking (Web Audio, timers
+that animate, polling), listen for:
+
+- **`usernode:visibility-changed`** — a `CustomEvent` on `window` whose
+  `detail` is `{ hidden: boolean }`.
+
+An app that is not reopened soon is dropped and loads fresh next time, so
+keep durable state server-side (or in `localStorage`) as you already should.
 
 ## Browser capabilities in the app frame
 
@@ -2334,7 +2515,11 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   especially on desktop/tablet where a bottom sheet reads as a phone
   idiom. Keyboard avoidance is built in (see below): with the
   on-screen keyboard up, the card re-centers in the visible strip
-  above it and shrinks to fit. Returns `{ dismiss(), el }`.
+  above it and shrinks to fit, its top edge holding still while its
+  bottom follows the keys. A tap on a text field in the card focuses
+  it without letting iOS scroll the page under the dialog, and a field
+  below the fold is scrolled into view inside the card instead.
+  Returns `{ dismiss(), el }`.
 - **Side panel / drawer.** `unNative.presentPanel({ side?, content |
   contentEl, width?, onDismiss? })` — a full-height surface that springs
   in from the **right** edge (`side: 'left'` for the other one) over the
@@ -2411,6 +2596,8 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   in px) plus class `un-kb` on `<html>` while it is non-zero. Sheets,
   action sheets, modals and alerts consume it automatically and ride
   above the keyboard — smoothly, without disturbing drag-to-dismiss.
+  The inset clears the moment focus leaves the text field, so those
+  surfaces move with the retracting keyboard rather than after it.
   **Do not hand-roll `.un-sheet { bottom: … }` overrides or per-app
   visualViewport plumbing anymore** — delete them when adopting this;
   the kit owns the inset now. Apps may consume `var(--un-kb-inset,
@@ -2936,7 +3123,7 @@ Behaviour:
   platform shell (the app iframe); standalone pages register
   harmlessly.
 
-## In-loop browser (build turns) — optional, encouraged
+## In-loop browser (build turns)
 
 On a **build** turn (not scout/sync) both hosted Claude Code and hosted Codex
 have a headless browser
@@ -2947,12 +3134,12 @@ catching a blank page, a JS crash on load, a broken layout, or a failing
 API call that source-reading alone would miss — and fix it before
 committing.
 
-It is **optional and encouraged, never a gate.** Reach for it when a
-change is user-visible and a visual check is genuinely informative; skip
-it for backend-only / refactor / docs work where rendering tells you
-nothing. Turns that don't use it behave exactly as before, and Chromium
-only launches on the first browser tool call, so there's no cost when
-it's unused. Scout and sync turns have no browser at all.
+Use it before declaring a `ui` or `motion` visual evidence story. A story
+must describe a checkpoint you actually reached in the local app, including
+the state the evidence runner will need to reproduce. For backend-only,
+refactor, or docs work, rendering may tell you nothing and the browser is
+optional. Chromium only launches on the first browser tool call. Scout and
+sync turns have no browser at all.
 
 ### Launch contract
 
@@ -2962,10 +3149,12 @@ locally inside the worker the same way a staging container does:
 - **`USERNODE_ENV=staging`** against a **fresh, empty local database** —
   the build turn exposes `INLOOP_ENV`, `INLOOP_PORT`, and
   `INLOOP_DATABASE_URL` for exactly this. Typical launch:
-  `USERNODE_ENV=$INLOOP_ENV PORT=$INLOOP_PORT DATABASE_URL=$INLOOP_DATABASE_URL node server.js &`
+  `usernode-run-inloop node server.js &`
   (or this app's declared `dapp.json` entrypoint).
-- Private secrets resolve from the manifest's `staging_default` /
-  `default` only, same as a real staging build — never the prod store.
+- The launch command supplies the manifest's committed `staging_default` /
+  `default` values, as staging does. If a required value has no committed
+  fallback, it reports the missing key and stops. Never copy a production
+  secret or invent a credential just to make the local check run.
 - Navigate to `http://127.0.0.1:$INLOOP_PORT` at the real starting route for
   the flow you will declare. Self-app app screens stay under
   `/app/<slug>/...`; put its other SPA routes after the `#`.
@@ -2974,19 +3163,23 @@ locally inside the worker the same way a staging container does:
   390×844). This local check helps you fix the head revision; the later paired
   evidence run independently explores and replays both revisions.
 - A **blank or empty page usually means missing seed data, not a bug** —
-  the local DB starts empty. Add the `IS_STAGING` seed (or a `?demo=1`
-  route) per "Staging mock data" and re-check, rather than "fixing"
-  code that already works.
+  the local DB starts empty. Check the app's existing staging fixtures or
+  `?demo=1` route first. A sign-in screen means this browser is signed out;
+  use an existing documented fake staging account through the normal UI if
+  possible. Do not change auth code or seed passwords solely for this check.
 - Keep it tight (a couple of launch→check→fix cycles, a minute or two).
   **If the app won't boot** — no local Postgres, a missing required
-  secret, a crash on start — don't fight it: note that you skipped the
-  visual check and commit anyway. The in-loop browser must never block
-  or fail the turn.
+  secret, a crash on start — report the blocker. You can still finish
+  non-visual work, but do not submit an unverified visible story. If the
+  claim needs data or a fault that the local app cannot reproduce, add a
+  representative fixture exercised by the normal test route. Do not add a
+  screenshot-only route or invent a state just to get a capture.
 
-This is an agent-facing quality aid. Before finishing a user-visible build,
-call `record_visual_evidence_intent`; the exact-revision paired replay creates
-captures for people to review, and the "Test this change" action remains a separate
-manual aid.
+This is an agent-facing quality gate for the claimed head state. Before
+finishing a user-visible build, call `record_visual_evidence_intent` only for
+a flow you actually reached. The exact-revision paired replay still verifies
+both sides independently, and the "Test this change" action remains a
+separate manual aid.
 
 ## Writing user-facing copy: no em dashes
 

@@ -278,7 +278,7 @@ test('evidence clone names are bounded, side-specific, and connection-limited wi
 });
 
 test('one immutable prepared source feeds both evidence sides before cleanup', async () => {
-  const { dbManager, calls, restore } = loadDbManager({ templateComment: fresh() });
+  const { dbManager, calls, connections, restore } = loadDbManager({ templateComment: fresh() });
   try {
     const prepared = await dbManager.prepareStagingCloneSource('app_demo', {
       sourceId: 'evidence-run-0123456789abcdef',
@@ -286,8 +286,21 @@ test('one immutable prepared source feeds both evidence sides before cleanup', a
     assert.equal(dbManager.isPreparedCloneSource(prepared.templateDb), true);
     assert.match(prepared.fingerprint, /^[0-9a-f]{64}$/);
     assert.equal(prepared.refreshedAt.length > 0, true);
-    await dbManager.cloneFromPreparedSource(prepared, 'app_demo_staging_s91_aaaaaa');
+    const phases = [];
+    await dbManager.cloneFromPreparedSource(prepared, 'app_demo_staging_s91_aaaaaa', {
+      onProgress: (phase) => phases.push(phase),
+    });
+    assert.deepEqual(phases, [
+      'drop_target', 'create_role', 'copy_template', 'reassign_ownership',
+      'truncate_private', 'scrub_private', 'redaction_complete', 'connection_limit',
+    ]);
     await dbManager.cloneFromPreparedSource(prepared, 'app_demo_staging_s92_bbbbbb');
+    const evidenceConnections = connections.filter((connection) =>
+      connection.db.startsWith('app_demo_staging_s9'));
+    assert.equal(evidenceConnections.length, 2);
+    assert.ok(evidenceConnections.every((connection) =>
+      connection.config.query_timeout === 90_000
+        && connection.config.statement_timeout === 90_000));
     await dbManager.releasePreparedCloneSource(prepared);
 
     const creates = sqls(calls).filter((sql) => /CREATE DATABASE app_demo_staging_s9[12]_/.test(sql));

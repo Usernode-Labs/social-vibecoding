@@ -47,7 +47,8 @@ function makeRows(n) {
   return out;
 }
 
-function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary }) {
+function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary, legacyCursor,
+  childDeploymentState = 'unknown' }) {
   const routes = [];
   const ids = {
     express: 'express',
@@ -65,6 +66,7 @@ function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary }) {
     appAccess: require.resolve('../src/services/app-access'),
     topicAttrs: require.resolve('../src/services/topic-attributes'),
     visuals: require.resolve('../src/services/visuals'),
+    delivery: require.resolve('../src/services/proposal-delivery'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
@@ -86,6 +88,9 @@ function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary }) {
     getPool: () => ({
       async query(sql, params) {
         captured.calls.push({ sql, params });
+        if (/AS completed_at\s+FROM chat_sessions WHERE app_id = \$1 AND id = \$2/.test(sql)) {
+          return { rows: legacyCursor ? [{ completed_at: legacyCursor }] : [] };
+        }
         if (/FROM chat_sessions live/.test(sql)) {
           return { rows: deploymentBoundary ? [deploymentBoundary] : [] };
         }
@@ -130,6 +135,16 @@ function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary }) {
     emptySummary: () => ({ priority: null, assignee: null }),
   });
   stub(ids.visuals, { shapeAgg: () => null });
+  stub(ids.delivery, { annotateChild: async (_config, _pool, _app, rows) => {
+    for (const row of rows) {
+      if ((row.row_type || 'pr') === 'pr') {
+        row.deployment_state = childDeploymentState;
+        row.deployment_kind = 'child';
+      }
+    }
+    return { kind: 'child', state: childDeploymentState, runningSha: null,
+      liveSessionId: null, livePrNumber: null, pendingCount: null };
+  } });
 
   delete require.cache[ids.subject];
   const { voteRoutes } = require('../src/routes/votes');
@@ -168,10 +183,10 @@ test('default page fetches limit+1, trims look-ahead row, reports hasMore', asyn
   assert.equal(payload.merged.length, 20, 'page trimmed to limit');
   assert.equal(payload.hasMore, true, 'more pages flagged');
   const mergedCall = captured.calls.find((c) => /cs\.status = 'merged'/.test(c.sql));
-  assert.match(mergedCall.sql, /ORDER BY cs\.created_at DESC, cs\.id DESC/, 'tiebreak ordering');
+  assert.match(mergedCall.sql, /ORDER BY COALESCE\(cs\.merged_at, cs\.created_at\) DESC, cs\.id DESC/, 'tiebreak ordering');
   // limit+1 (=21) bound as the LIMIT param on the no-cursor path ($3).
   assert.equal(mergedCall.params[mergedCall.params.length - 1], 21, 'limit+1 bound');
-  assert.ok(!/cs\.created_at, cs\.id\) </.test(mergedCall.sql), 'no cursor predicate on first page');
+  assert.ok(!/COALESCE\(cs\.merged_at, cs\.created_at\), cs\.id\) </.test(mergedCall.sql), 'no cursor predicate on first page');
 });
 
 test('last page reports hasMore=false', async () => {
@@ -200,7 +215,7 @@ test('before/before_id cursor adds keyset predicate and binds it', async () => {
   const cursor = '2026-01-50T00:00:00.000Z';
   await callMerged(routes, captured, { before: '2026-01-30T00:00:00.000Z', before_id: '900' });
   const mergedCall = captured.calls.find((c) => /cs\.status = 'merged'/.test(c.sql));
-  assert.match(mergedCall.sql, /\(cs\.created_at, cs\.id\) < \(\$3, \$4\)/, 'keyset predicate present');
+  assert.match(mergedCall.sql, /\(COALESCE\(cs\.merged_at, cs\.created_at\), cs\.id\) < \(\$3, \$4\)/, 'keyset predicate present');
   assert.match(mergedCall.sql, /LIMIT \$5/, 'limit bound after cursor params');
   assert.equal(mergedCall.params[2], new Date('2026-01-30T00:00:00.000Z').toISOString(), 'before bound');
   assert.equal(mergedCall.params[3], 900, 'before_id bound');
@@ -213,10 +228,40 @@ test('malformed cursor is ignored — newest page, no predicate', async () => {
   const { payload } = await callMerged(routes, captured, { before: 'not-a-date', before_id: 'x' });
   assert.equal(payload.merged.length, 3);
   const mergedCall = captured.calls.find((c) => /cs\.status = 'merged'/.test(c.sql));
-  assert.ok(!/\(cs\.created_at, cs\.id\) </.test(mergedCall.sql), 'no cursor predicate for bad cursor');
+  assert.ok(!/\(COALESCE\(cs\.merged_at, cs\.created_at\), cs\.id\) </.test(mergedCall.sql), 'no cursor predicate for bad cursor');
 });
 
-test('hosted apps expose every merged proposal as deployed', async () => {
+test('explicit completion cursor wins over creation date and needs no row lookup', async () => {
+  const { routes, captured } = loadVotes({ mergedRows: [] });
+  await callMerged(routes, captured, {
+    before: '2026-01-01T00:00:00.000Z',
+    before_completed_at: '2026-09-23T18:22:52.898Z', before_id: '4697',
+  });
+  const query = captured.calls.find(c => /cs\.status = 'merged'/.test(c.sql));
+  assert.equal(query.params[2], '2026-09-23T18:22:52.898Z');
+  assert.equal(query.params[3], 4697);
+  assert.ok(!captured.calls.some(c => /FROM chat_sessions WHERE app_id = \$1 AND id = \$2/.test(c.sql)));
+});
+
+test('legacy creation cursor resolves its merge time within the requested app', async () => {
+  const { routes, captured } = loadVotes({ mergedRows: [], legacyCursor: '2026-09-23T18:22:52.898Z' });
+  await callMerged(routes, captured, { before: '2026-01-01T00:00:00.000Z', before_id: '4697' });
+  const lookup = captured.calls.find(c => /FROM chat_sessions WHERE app_id = \$1 AND id = \$2/.test(c.sql));
+  assert.deepEqual(lookup.params, [1, 4697]);
+  const query = captured.calls.find(c => /cs\.status = 'merged'/.test(c.sql));
+  assert.equal(query.params[2], '2026-09-23T18:22:52.898Z');
+});
+
+test('completed_at exposes merge time and a creation fallback for historical rows', async () => {
+  const rows = makeRows(2);
+  rows[0].merged_at = '2026-09-23T18:22:52.898Z';
+  const { routes, captured } = loadVotes({ mergedRows: rows });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.equal(payload.merged[0].completed_at, rows[0].merged_at);
+  assert.equal(payload.merged[1].completed_at, rows[1].created_at);
+});
+
+test('child apps report delivery separately from merged status', async () => {
   const rows = makeRows(2);
   const { routes, captured } = loadVotes({
     mergedRows: rows,
@@ -227,14 +272,14 @@ test('hosted apps expose every merged proposal as deployed', async () => {
     },
   });
   const { payload } = await callMerged(routes, captured, {});
-  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['deployed', 'deployed']);
+  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['unknown', 'unknown']);
   assert.deepEqual(payload.deployment, {
-    state: 'deployed',
-    runningSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    kind: 'child', state: 'unknown', runningSha: null,
     liveSessionId: null,
-    livePrNumber: 500,
-    pendingCount: 0,
+    livePrNumber: null,
+    pendingCount: null,
   });
+  assert.ok(payload.merged.every((row) => row.deployment_kind === 'child'));
 });
 
 test('self-hosted apps derive deployed and deploying rows from the live merge boundary', async () => {
@@ -310,7 +355,7 @@ test('#433: returns a numeric `total` independent of limit and cursor', async ()
   assert.equal(payload.total, 47, 'total reflects the whole column, not the page');
   const countCall = captured.calls.find((c) => /COUNT\(\*\)::int AS total/.test(c.sql));
   assert.ok(countCall, 'a COUNT query was issued for the total');
-  assert.ok(!/\(cs\.created_at, cs\.id\) </.test(countCall.sql), 'total COUNT carries no cursor predicate');
+  assert.ok(!/\(COALESCE\(cs\.merged_at, cs\.created_at\), cs\.id\) </.test(countCall.sql), 'total COUNT carries no cursor predicate');
   assert.ok(!/LEFT JOIN/.test(countCall.sql), 'total COUNT omits the revert LEFT JOIN');
 
   // A second page (cursor set, smaller limit) reports the SAME total.

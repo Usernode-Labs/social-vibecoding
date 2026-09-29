@@ -87,6 +87,8 @@ function makeBrowse(opts = {}) {
 
   const fetchCalls = [];
   const storage = opts.storage || {};
+  // What the Share row said, for the tests that assert on it.
+  const toasts = [];
   const sandbox = {
     console,
     App: {
@@ -97,11 +99,18 @@ function makeBrowse(opts = {}) {
       navigateHome: () => { chrome.wentHome = (chrome.wentHome || 0) + 1; },
     },
     PlatformUI: {
-      toast: () => {},
+      toast: (message) => { toasts.push(message); },
+      // The shell's clipboard helper; resolves true unless a test says not.
+      copyText: opts.copyText || (async () => true),
       // The kit wrapper runs fn directly when the kit is absent; do the
       // same and record the animation type the level change asked for.
       transition: (fn, o) => { chrome.transitions.push(o?.type); fn(); },
     },
+    // Only when a test hands one in: the default is a browser with no Web
+    // Share API, which is what most desktops are.
+    ...(opts.navigator ? { navigator: opts.navigator } : {}),
+    // public/js/dev-host.js's global, when a test wants the rewrite.
+    ...(opts.resolveDevHost ? { resolveDevHost: opts.resolveDevHost } : {}),
     document: {
       getElementById: (id) => nodes[id] || null,
       querySelector: () => null,
@@ -169,7 +178,7 @@ function makeBrowse(opts = {}) {
   vm.runInContext(BROWSE_SRC, sandbox);
   // The store ./mount.ts plants, with the same initial value browse-store.js
   // ships (which is also the shell's prerendered empty state).
-  const state = { level: 'list', rows: null, empty: null, error: false, detail: null, sort: 'recommended' };
+  const state = { level: 'list', rows: null, empty: null, error: false, detail: null, sort: 'recommended', filter: 'all' };
   sandbox.Browse._store = {
     get: () => state,
     set: (patch) => Object.assign(state, patch),
@@ -185,7 +194,7 @@ function makeBrowse(opts = {}) {
   return {
     Browse: sandbox.Browse, Home: sandbox.__Home, AppCard: sandbox.AppCard,
     state, nodes, fetchCalls, chrome, history, location: sandbox.location,
-    storage, renders,
+    storage, renders, toasts, win: sandbox,
   };
 }
 
@@ -567,6 +576,155 @@ test("the screen's <option> list is a faithful copy of Browse.SORTS", () => {
     'the <option> list and the comparators must name the same five orders');
 });
 
+// ── Filter chips: All / Featured / Joined / New (the prototype's scrDiscover) ──
+
+const DAY = 24 * 60 * 60 * 1000;
+const NOW = Date.parse('2026-09-23T12:00:00Z');
+const ago = (days) => new Date(NOW - days * DAY).toISOString();
+
+test("the chip row is a faithful copy of Browse.FILTERS, in the prototype's order", () => {
+  const { Browse } = makeBrowse();
+  assert.deepEqual(Array.from(Browse.FILTERS, (f) => f.label), ['All', 'Featured', 'Joined', 'New']);
+  // Same reason SORT_OPTIONS is a copy: window.Browse does not exist in the
+  // SSG pass, so the chips carry their own labels.
+  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  const block = src.match(/const FILTER_CHIPS[\s\S]*?\n\];/);
+  assert.ok(block, 'FILTER_CHIPS is still declared in browse-screen.tsx');
+  const copied = [...block[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
+    .map((m) => ({ key: m[1], label: m[2] }));
+  assert.deepEqual(copied, Array.from(Browse.FILTERS, (f) => ({ key: f.key, label: f.label })));
+});
+
+test('resolveFilter: anything unrecognised is All, never an empty screen', () => {
+  const { Browse } = makeBrowse();
+  for (const key of ['all', 'featured', 'yours', 'new']) assert.equal(Browse.resolveFilter(key), key);
+  assert.equal(Browse.resolveFilter(' Featured '), 'featured');
+  for (const bad of ['mine', '', null, undefined, 42, 'drop-tables']) {
+    assert.equal(Browse.resolveFilter(bad), 'all', String(bad));
+  }
+});
+
+test('filterApps: each chip admits the set its name promises', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'plain', created_at: ago(90) }),
+    app({ slug: 'curated', featured: true, featured_order: 0, created_at: ago(60) }),
+    app({ slug: 'curated-mine', featured: true, is_favorited: true, is_member: true, created_at: ago(40) }),
+    app({ slug: 'member', is_collaborator: true, is_member: true, created_at: ago(30) }),
+    app({ slug: 'member-hidden', is_collaborator: true, your_apps_hidden: true, is_member: true, created_at: ago(20) }),
+    // Pinned to Home by an older client but not in the community: the pin
+    // is a shortcut, and the chip is membership.
+    app({ slug: 'pinned-only', is_favorited: true, created_at: ago(50) }),
+    app({ slug: 'fresh', created_at: ago(3) }),
+  ];
+  const keys = (list) => Array.from(list, (a) => a.slug);
+  assert.deepEqual(keys(Browse.filterApps(apps, 'all', NOW)), keys(apps), 'All is everything');
+  // Featured is the admin's `featured` flag — the one Home's featured lane
+  // reads — and the directory shows the WHOLE set, apps you have included.
+  assert.deepEqual(keys(Browse.filterApps(apps, 'featured', NOW)), ['curated', 'curated-mine']);
+  // Joined is Home.isJoined: the communities you are in, the same predicate
+  // as the rows' Join / Joined pill. Taking an app off Home is not leaving,
+  // so the hidden member is still here, and a pin alone is not membership.
+  assert.deepEqual(keys(Browse.filterApps(apps, 'yours', NOW)), ['curated-mine', 'member', 'member-hidden']);
+  assert.deepEqual(keys(Browse.filterApps(apps, 'new', NOW)), ['fresh'], 'created in the last 14 days');
+  // Pure: the input is untouched and the default key is the current chip.
+  assert.equal(apps.length, 7);
+  Browse._filter = 'featured';
+  assert.deepEqual(keys(Browse.filterApps(apps)), ['curated', 'curated-mine']);
+});
+
+test('New is the last 14 days, or the newest six when nothing is that young', () => {
+  const { Browse } = makeBrowse();
+  assert.equal(Browse.NEW_WINDOW_DAYS, 14);
+  assert.equal(Browse.NEW_FALLBACK_COUNT, 6);
+  const keys = (list) => Array.from(list, (a) => a.slug);
+  // The window is inclusive at 14 days and excludes the day after.
+  const edge = [app({ slug: 'd14', created_at: ago(14) }), app({ slug: 'd15', created_at: ago(15) })];
+  assert.deepEqual(keys(Browse.newApps(edge, NOW)), ['d14']);
+  // A quiet fortnight: the chip still answers, with what arrived last, newest
+  // first and capped. Undated rows carry no information and never lead.
+  const old = Array.from({ length: 9 }, (_, i) => app({ slug: `old-${i}`, created_at: ago(30 + i * 10) }))
+    .concat([app({ slug: 'undated', created_at: null })]);
+  assert.deepEqual(keys(Browse.newApps(old, NOW)),
+    ['old-0', 'old-1', 'old-2', 'old-3', 'old-4', 'old-5']);
+  assert.deepEqual(keys(Browse.newApps([], NOW)), [], 'an empty directory is still empty');
+});
+
+test('the chip picks the set, Sort orders it, and the search narrows it', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'f-few', name: 'Chess Few', featured: true, featured_order: 0, active_users: 1 }),
+    app({ slug: 'f-many', name: 'Chess Many', featured: true, featured_order: 1, active_users: 50 }),
+    app({ slug: 'loud', name: 'Chess Loud', active_users: 999 }),
+  ];
+  Browse.setFilter('featured');
+  assert.equal(state.filter, 'featured', 'the chips and #browse-list[data-filter] read the store');
+  assert.deepEqual(slugs(state), ['f-few', 'f-many'], 'Recommended keeps the curated order');
+  Browse.setSort('users');
+  assert.deepEqual(slugs(state), ['f-many', 'f-few'], 'Sort works WITHIN the chip');
+  Browse.setQuery('many', { immediate: true });
+  assert.deepEqual(slugs(state), ['f-many'], 'and the search narrows it further');
+  Browse.setQuery('', { immediate: true });
+  Browse.setFilter('all');
+  assert.deepEqual(slugs(state), ['loud', 'f-many', 'f-few'], 'All brings the rest back, still sorted');
+  assert.equal(state.sort, 'users', 'and switching chips never lost the order');
+});
+
+test('an empty chip says which set is empty', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [app({ slug: 'plain', name: 'Plain' })];
+  Browse.setFilter('featured');
+  assert.equal(state.empty, 'No featured apps yet.');
+  Browse.setFilter('yours');
+  assert.equal(state.empty, 'You haven’t joined anything yet. Join apps from All.');
+  Browse.setQuery('zzz', { immediate: true });
+  assert.equal(state.empty, 'Nothing you’ve joined matches “zzz”.');
+  Browse.setFilter('featured');
+  assert.equal(state.empty, 'No featured apps match “zzz”.');
+  Browse.setFilter('new');
+  assert.equal(state.empty, 'No new apps match “zzz”.');
+  Browse.setFilter('all');
+  assert.equal(state.empty, 'No apps match “zzz”.', 'All keeps the sentence it always had');
+});
+
+test('the chip is remembered for the session only, and ?filter= seeds the first entry', () => {
+  const { Browse, state, storage } = makeBrowse({ search: '?filter=new' });
+  Browse._load = () => {};
+  Browse.open(null);
+  assert.equal(state.filter, 'new', 'a link lands on its chip');
+  Browse.setFilter('featured');
+  Browse.close();
+  Browse.open(null);
+  assert.equal(state.filter, 'featured',
+    'the choice survives leaving Discover, and the spent link does not override it');
+  assert.equal(Object.keys(storage).some((k) => /filter/i.test(k)), false,
+    'nothing is stored: a reload starts on All');
+  const fresh = makeBrowse();
+  fresh.Browse._load = () => {};
+  fresh.Browse.open(null);
+  assert.equal(fresh.state.filter, 'all');
+  const junk = makeBrowse({ search: '?filter=bananas' });
+  junk.Browse._load = () => {};
+  junk.Browse.open(null);
+  assert.equal(junk.state.filter, 'all');
+});
+
+test('the chips prerender with All pressed, from the store\'s initial value', () => {
+  const src = read('frontend/src/features/apps/browse-store.js');
+  assert.match(src, /filter: 'all',/);
+  // Applied on ENTRY, never during render: location.search does not exist in
+  // the SSG pass.
+  assert.match(BROWSE_SRC, /Browse\._applyInitialSort\(\);\n\s+Browse\._applyInitialFilter\(\);/);
+  const bar = INDEX.slice(INDEX.indexOf('id="browse-search-bar"'), INDEX.indexOf('id="browse-sort-bar"'));
+  const chips = [...bar.matchAll(/<button[^>]*aria-pressed="(true|false)"[^>]*data-filter="([a-z]+)"[^>]*>([^<]+)</g)]
+    .map((m) => `${m[2]}:${m[1]}:${m[3]}`);
+  assert.deepEqual(chips, ['all:true:All', 'featured:false:Featured', 'yours:false:Joined', 'new:false:New']);
+  assert.match(bar, /id="browse-filter-chips" role="group" aria-label="Filter apps"/);
+  assert.match(INDEX, /id="browse-list"[^>]*data-filter="all"/);
+  // The language's own filter chip, not a hand-rolled one.
+  assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /from '@\/components\/ui\/chip'/);
+});
+
 // ── Search covers EVERY visible app (home's is scoped to yours) ────
 
 test('visibleApps: filters on Home.matchesQuery over the whole list', () => {
@@ -602,11 +760,11 @@ test('visibleApps: the search narrows, the sort orders, and they compose', () =>
 
 // ── render ───────────────────────────────────────────────────────
 
-test('rowView: an app-store row — icon, name, meta, Add state', () => {
+test('rowView: an app-store row — icon, name, meta, Join state', () => {
   const { Browse, state } = makeBrowse();
   Browse._apps = [
     app({ slug: 'fresh', name: 'Fresh App', active_users: 3 }),
-    app({ slug: 'mine', name: 'My App', is_favorited: true }),
+    app({ slug: 'mine', name: 'My App', is_favorited: true, is_member: true }),
   ];
   Browse.render();
   assert.deepEqual(slugs(state), ['fresh', 'mine'], 'rows, not launcher tiles');
@@ -616,11 +774,13 @@ test('rowView: an app-store row — icon, name, meta, Add state', () => {
   // The whole app record rides the descriptor, because the icon tile and the
   // chip strip are shared decisions (app-card.js) the row does not re-make.
   assert.equal(fresh.app.slug, 'fresh');
-  // Added rows read "Added", fresh ones "Add to Your apps" (#1553) — the flag
-  // is the descriptor's, the two labels are browse-list.tsx's.
+  // Joined rows read "Joined", fresh ones "Join" (communities) — the flag
+  // is the descriptor's (`added`, the name the declared checks' data-added
+  // attribute keeps), the two labels are browse-list.tsx's.
   assert.equal(fresh.added, false);
+  assert.equal(fresh.addTitle, 'Join Fresh App');
   assert.equal(rowFor(state, 'mine').added, true);
-  assert.match(rowFor(state, 'mine').addTitle, /Tap to remove/);
+  assert.match(rowFor(state, 'mine').addTitle, /Tap to leave My App/);
   // The "…" menu is gone from this screen — the detail page absorbed it.
   assert.doesNotMatch(BROWSE_SRC, /card-menu-btn/);
   assert.doesNotMatch(BROWSE_SRC, /card-add-btn/, 'the corner badge is a real button now');
@@ -633,7 +793,10 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   const listTag = INDEX.match(/<div id="browse-list"[^>]*>/)[0];
   assert.match(listTag, /md:grid/);
   assert.match(listTag, /md:grid-cols-2/);
-  assert.match(listTag, /lg:grid-cols-3/);
+  // QA 2026-09-24 Q10: the third column waits for xl. From lg (1024px) it
+  // left the name column 0px wide beside the sidebar.
+  assert.match(listTag, /xl:grid-cols-3/);
+  assert.doesNotMatch(listTag, /lg:grid-cols-3/);
   assert.doesNotMatch(BROWSE_SRC, /matchMedia\(/, 'the breakpoint is CSS, not JS');
 
   // NO divide-* utility on the container. Tailwind's divide-y sets
@@ -645,22 +808,21 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   assert.doesNotMatch(listTag, /divide-/,
     'the phone hairline is .browse-row + .browse-row in app.css');
 
-  // Phone: the rows sit in ONE PANE with the search bar above them (#1919):
-  // the search bar is the pane's head and this container is its body. The
-  // surface — the frosted sheet fill, the hairline ring, the 22px radius —
-  // is `browse-pane-*` in app.css beside the row rules, NOT utilities on the
-  // tag (it used to be `max-md:rounded-2xl max-md:bg-white`, a plain white
-  // card under a wallpaper-coloured bar). The hairline between rows is INSET
-  // to the text column, so it stops short of the pane's corner radius. It is
-  // a pseudo-element rather than `border-top` — a border cannot be inset —
-  // which is also what frees the md+ block below to own the `border`
-  // shorthand outright.
-  assert.match(listTag, /browse-pane-body/, 'phone: the rows sit in the pane body');
+  // Phone: the rows sit in a CARD, with the search, the chips and Sort on
+  // the ground above it (the communities prototype; #1919 made the bar the
+  // card's head). The surface — the sheet fill, the hairline ring, the 22px
+  // radius — is `browse-pane-*` in app.css beside the row rules, NOT
+  // utilities on the tag (it used to be `max-md:rounded-2xl max-md:bg-white`).
+  // The hairline between rows is INSET to the text column, so it stops short
+  // of the card's corner radius. It is a pseudo-element rather than
+  // `border-top` — a border cannot be inset — which is also what frees the
+  // md+ block below to own the `border` shorthand outright.
+  assert.match(listTag, /browse-pane-body/, 'phone: the rows sit in the card');
   assert.doesNotMatch(listTag, /max-md:/, 'phone: the surface is app.css, not utilities');
   const barTag = INDEX.match(/<div id="browse-search-bar"[^>]*>/)[0];
-  assert.match(barTag, /browse-pane-head/, 'phone: the search bar is the pane head');
+  assert.match(barTag, /browse-pane-head/, 'phone: the search bar keeps its part name');
   assert.match(barTag, /md:bg-\[color:var\(--home-ground\)\]/,
-    'md+: the bar keeps the wallpaper fill; the pane is a phone treatment');
+    'md+: the bar keeps the wallpaper fill');
   const css = read('public/css/app.css');
   assert.match(css, /\.browse-row \+ \.browse-row::before \{/,
     'phone: a hairline between consecutive rows');
@@ -673,26 +835,29 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   assert.ok(browseStart > -1 && browseEnd > browseStart,
     'the Browse-owned CSS section must remain identifiable');
   const browseCss = css.slice(browseStart, browseEnd);
-  // The pane (#1919): the Workshop's working-pane recipe — --dc-sheet-fill
-  // over --dc-frost, an --app-sheet-line ring, 22px corners — split across
-  // the two sibling parts, head over body, below md only. Page-scoped
-  // classes, so the Workshop's pane and this one can move independently.
+  // Below md only. The head is ON THE GROUND: no fill, no ring, and not
+  // pinned (a pinned head needs a fill, which would band the wallpaper). The
+  // body (or the empty note in its place) is a whole card: sheet fill over
+  // --dc-frost, an --app-sheet-line ring, 22px corners all round.
   const paneBlock = browseCss.slice(browseCss.indexOf('@media (max-width: 767px)'));
-  assert.ok(paneBlock.length > 0, 'phone: the pane block sits in the Browse-owned section');
+  assert.ok(paneBlock.length > 0, 'phone: the card block sits in the Browse-owned section');
+  const head = paneBlock.match(/#browse-screen \.browse-pane-head \{[^}]*\}/);
+  assert.ok(head, 'phone: the head has its own rule');
+  assert.match(head[0], /position: static;/, 'phone: the controls scroll with the list');
+  assert.match(head[0], /background: transparent;/, 'phone: the controls sit on the ground');
+  assert.doesNotMatch(head[0], /border|radius|frost/, 'phone: the controls are not in the card');
   assert.match(paneBlock,
-    /#browse-screen \.browse-pane-head,\s*\n\s*#browse-screen \.browse-pane-body,\s*\n\s*#browse-screen \.browse-pane-note \{[\s\S]*?background-color: var\(--dc-sheet-fill\);[\s\S]*?backdrop-filter: var\(--dc-frost\);[\s\S]*?border: 1px solid var\(--app-sheet-line\);/,
-    'phone: head, body and note share one frosted fill and one ring');
-  assert.match(paneBlock,
-    /#browse-screen \.browse-pane-head \{[\s\S]*?border-bottom: 0;[\s\S]*?border-radius: 22px 22px 0 0;/,
-    'phone: the head carries the top of the ring');
-  assert.match(paneBlock,
-    /#browse-screen \.browse-pane-body,\s*\n\s*#browse-screen \.browse-pane-note \{[\s\S]*?border-top: 0;[\s\S]*?border-radius: 0 0 22px 22px;/,
-    'phone: the body (or the empty note) closes it');
+    /#browse-screen \.browse-pane-body,\s*\n\s*#browse-screen \.browse-pane-note \{[\s\S]*?background-color: var\(--dc-sheet-fill\);[\s\S]*?backdrop-filter: var\(--dc-frost\);[\s\S]*?border: 1px solid var\(--app-sheet-line\);[\s\S]*?border-radius: 22px;/,
+    'phone: the list (or the empty note) is one whole card');
   assert.match(paneBlock, /\.browse-pane-body:empty \{ display: none; \}/,
-    'phone: an empty list collapses so the note can be the body');
+    'phone: an empty list collapses so the note can be the card');
+  // No blur on any platform (app.css "No glass, on any platform"): the card
+  // and the note go solid together, the same on every platform.
   assert.match(paneBlock,
-    /@supports not \(\(backdrop-filter: blur\(1px\)\) or \(-webkit-backdrop-filter: blur\(1px\)\)\) \{[\s\S]*?\.browse-pane-note \{ background-color: var\(--dc-sheet\); \}/,
-    'phone: without a backdrop filter all three parts go opaque together');
+    /@media \(max-width: 767px\) \{\s*#browse-screen \.browse-pane-body,\s*#browse-screen \.browse-pane-note \{ background-color: var\(--dc-sheet-solid\); \}\s*\}/,
+    'phone: the card and the note go solid together, the same on every platform');
+  assert.doesNotMatch(browseCss, /@supports not \(\(backdrop-filter/,
+    'no per-platform glass fallback is left in the Browse section');
   const mdBlock = browseCss.slice(browseCss.indexOf('@media (min-width: 768px)'));
   const box = mdBlock.slice(0, mdBlock.indexOf('}\n}') + 3);
   assert.match(box, /\.browse-row,\s*\n\s*\.browse-row \+ \.browse-row \{/);
@@ -928,6 +1093,100 @@ test('the detail page keeps its action closures off the store, reachable by inde
   assert.equal(ran.length, 2, 'a stale index is inert, never a crash');
 });
 
+// ── Share on the app's page (the prototype's About sheet: More, then Share) ──
+
+test("shareUrlFor: the app's public link, behind the same gate as the menu's Share app", () => {
+  const { Browse } = makeBrowse();
+  const url = 'https://chess-1a2b.apps.example';
+  // The link the mark menu's About > "Share app" hands out is the running
+  // app's own `url` (features/dialogs/share.tsx reads AppView.appData.url),
+  // and it is drawn only on `canShare`: running, with a URL, never the
+  // platform itself. The directory reads the same field off the row.
+  assert.equal(Browse.shareUrlFor(app({ url })), url);
+  assert.equal(Browse.shareUrlFor(app({ url, status: 'error' })), null, 'not running');
+  assert.equal(Browse.shareUrlFor(app({ url, status: 'creating' })), null);
+  assert.equal(Browse.shareUrlFor(app({ url: null })), null, 'no public link to give');
+  assert.equal(Browse.shareUrlFor(app({ url, self_hosted: true })), null,
+    'the platform row has no per-slug app URL');
+  assert.equal(Browse.shareUrlFor(null), null);
+  // Through the same dev-host rewrite the share dialog applies, so a phone on
+  // the LAN is handed a link it can open.
+  const lan = makeBrowse({ resolveDevHost: (u) => u.replace('localhost', '192.168.1.7') });
+  assert.equal(lan.Browse.shareUrlFor(app({ url: 'http://localhost:4100' })), 'http://192.168.1.7:4100');
+});
+
+test('the page describes a Share row only when there is a link to share', () => {
+  const { Browse, Home, state } = makeBrowse();
+  Home.menuItemsFor = () => [{ key: 'fork', label: 'Fork this app', run: () => {} }];
+  Browse._apps = [app({ slug: 'live', url: 'https://live.apps.example' }), app({ slug: 'down', status: 'error', url: null })];
+  Browse.showDetail('live');
+  assert.equal(state.detail.canShare, true);
+  assert.deepEqual(state.detail.actions.map((a) => a.label), ['Fork this app'],
+    'Share is its own row, not one of the home card menu\'s items');
+  assert.equal(JSON.stringify(state.detail).includes('live.apps.example'), true, 'the app record rides along');
+  Browse.showDetail('down');
+  assert.equal(state.detail.canShare, false);
+  // …and the component leads the action card with it, as its own button.
+  const detailSrc = read('frontend/src/features/apps/browse-detail.tsx');
+  assert.match(detailSrc, /\{view\.actions\.length \|\| view\.canShare \? \(/);
+  assert.match(detailSrc, /id="browse-detail-share"[\s\S]{0,600}title="Share"[\s\S]{0,120}onClick=\{\(\) => controller\(\)\?\.shareDetailApp\(view\.app\)\}/);
+  assert.ok(detailSrc.indexOf('id="browse-detail-share"') < detailSrc.indexOf('view.actions.map('),
+    'Share comes first, as in the prototype\'s More list');
+});
+
+test('Share uses the Web Share API where there is one', async () => {
+  const shared = [];
+  const copied = [];
+  const { Browse, toasts } = makeBrowse({
+    navigator: { share: async (data) => { shared.push(data); }, canShare: () => true },
+    copyText: async (text) => { copied.push(text); return true; },
+  });
+  await Browse.shareDetailApp(app({ slug: 'chess', name: 'Chess Arena', url: 'https://chess.apps.example' }));
+  assert.deepEqual(JSON.parse(JSON.stringify(shared)),
+    [{ title: 'Chess Arena', url: 'https://chess.apps.example' }]);
+  assert.deepEqual(copied, [], 'the share sheet is the whole answer');
+  assert.deepEqual(toasts, []);
+});
+
+test('a dismissed share sheet is an answer, not a failure: no copy, no toast', async () => {
+  const copied = [];
+  const { Browse, toasts } = makeBrowse({
+    navigator: { share: async () => { const e = new Error('dismissed'); e.name = 'AbortError'; throw e; } },
+    copyText: async (text) => { copied.push(text); return true; },
+  });
+  await Browse.shareDetailApp(app({ url: 'https://x.apps.example' }));
+  assert.deepEqual(copied, []);
+  assert.deepEqual(toasts, []);
+});
+
+test('without the Web Share API it copies the link and says so', async () => {
+  const copied = [];
+  const { Browse, toasts } = makeBrowse({
+    copyText: async (text) => { copied.push(text); return true; },
+  });
+  await Browse.shareDetailApp(app({ url: 'https://x.apps.example' }));
+  assert.deepEqual(copied, ['https://x.apps.example']);
+  assert.deepEqual(toasts, ['Link copied']);
+
+  // A share target that refuses (not a dismissal) falls through to the copy.
+  const refused = makeBrowse({
+    navigator: { share: async () => { throw new Error('NotAllowedError'); } },
+    copyText: async () => true,
+  });
+  await refused.Browse.shareDetailApp(app({ url: 'https://x.apps.example' }));
+  assert.deepEqual(refused.toasts, ['Link copied']);
+
+  // …and a clipboard that refuses says THAT, rather than claiming a copy.
+  const noClip = makeBrowse({ copyText: async () => false });
+  await noClip.Browse.shareDetailApp(app({ url: 'https://x.apps.example' }));
+  assert.deepEqual(noClip.toasts, ['Couldn’t copy the link']);
+
+  // Nothing to share, nothing happens.
+  const none = makeBrowse({ copyText: async () => { throw new Error('should not copy'); } });
+  await none.Browse.shareDetailApp(app({ url: null }));
+  assert.deepEqual(none.toasts, []);
+});
+
 test('showDetail / showList publish the level, which drives both containers', () => {
   // The three nodes _syncLevel used to classList.toggle from outside React
   // (#browse-list-level, #browse-detail, #browse-search-bar) all read one
@@ -1012,13 +1271,16 @@ test('the origin defaults to the list for a deep link, and never leaks', () => {
   assert.equal(Browse._pendingOrigin, null);
 });
 
-test('a browse row tap declares the list as its origin; the home menu declares home', () => {
-  // Both call sites note the origin BEFORE writing the hash — the
-  // hashchange lands in a later task, so the note is always in place.
+test('a browse row tap opens the project hub; the home menu opens About and declares home', () => {
+  // The row goes to the project's hub (the communities prototype), not to
+  // the About page, so it notes no About origin: the hub is not a level of
+  // Discover.
   const tap = BROWSE_SRC.slice(BROWSE_SRC.indexOf('openRow(view) {'),
     BROWSE_SRC.indexOf('warmRow(view) {'));
-  assert.match(tap, /noteDetailOrigin\('list'\)/);
-  assert.ok(tap.indexOf("noteDetailOrigin('list')") < tap.indexOf('location.hash'));
+  assert.doesNotMatch(tap, /noteDetailOrigin/);
+  assert.match(BROWSE_SRC, /rowHref\(view\) \{[\s\S]*?return `#app\/\$\{encodeURIComponent\(view\.slug\)\}\/workshop`;/);
+  // Home's menu still drills into About and notes the origin BEFORE writing
+  // the hash — the hashchange lands in a later task.
   // And the #1036 modified-click href repeats openRow's guard, so a demo row
   // stays inert under cmd/middle-click too.
   assert.match(BROWSE_SRC, /rowHref\(view\) \{[\s\S]*?view\.demo/);
@@ -1251,6 +1513,118 @@ test('toggleAdded reverts the optimistic flip when the write fails', async () =>
   assert.ok(nodes);
 });
 
+// ── Join / Leave (Home.setMembership — Discover's pill, communities) ──
+
+test('the Discover pill joins: POST { joined: true }, and the row, the chip and Home agree at once', async () => {
+  const { Browse, Home, fetchCalls, toasts } = makeBrowse();
+  const fresh = app({ slug: 'fresh', name: 'Fresh App', member_count: 2 });
+  Home._apps = [fresh];
+  Browse._apps = [fresh];
+  Browse.toggleRowAdded(Browse.rowView(fresh));
+  assert.equal(fresh.is_member, true, 'optimistic: the pill reads Joined before the write lands');
+  assert.equal(fresh.is_favorited, true, 'and it is pinned, as Add pinned it');
+  assert.equal(fresh.member_count, 3);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(fetchCalls[0], {
+    url: '/api/apps/fresh/membership', method: 'POST', body: { joined: true },
+  });
+  assert.equal(Browse.filterApps([fresh], 'yours').length, 1, 'and the Joined chip holds it');
+  assert.deepEqual(toasts, ['Joined Fresh App']);
+});
+
+test('leaving asks first, and a No leaves everything as it was', async () => {
+  const { Home, fetchCalls, win } = makeBrowse();
+  const mine = app({ slug: 'mine', name: 'Mine', is_member: true, is_favorited: true });
+  Home._apps = [mine];
+  const asked = [];
+  win.ConfirmModal = { show: async (o) => { asked.push(o); return false; } };
+  assert.equal(await Home.setMembership('mine', false), false);
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].title, 'Leave Mine?');
+  assert.equal(asked[0].danger, true);
+  assert.match(asked[0].message, /propose or vote/);
+  assert.equal(mine.is_member, true);
+  assert.equal(fetchCalls.length, 0, 'nothing is sent');
+
+  win.ConfirmModal = { show: async () => true };
+  assert.equal(await Home.setMembership('mine', false), true);
+  assert.equal(mine.is_member, false);
+  assert.equal(mine.is_favorited, false, 'leaving takes it off Home too');
+  assert.deepEqual(fetchCalls[0].body, { joined: false });
+});
+
+test('leaving a private app says it costs access', async () => {
+  const { Home, win } = makeBrowse();
+  Home._apps = [app({ slug: 'priv', name: 'Priv', is_member: true, view_visibility: 'private' })];
+  let message = '';
+  win.ConfirmModal = { show: async (o) => { message = o.message; return false; } };
+  await Home.setMembership('priv', false);
+  assert.match(message, /lose access/);
+});
+
+test('with no confirm dialog there is no leaving', async () => {
+  const { Home, fetchCalls } = makeBrowse();
+  const mine = app({ slug: 'mine', is_member: true });
+  Home._apps = [mine];
+  assert.equal(await Home.setMembership('mine', false), false);
+  assert.equal(mine.is_member, true);
+  assert.equal(fetchCalls.length, 0);
+});
+
+test('unpinning a member app asks, once, whether to leave too', async () => {
+  const { Home, fetchCalls, win } = makeBrowse();
+  const mine = app({ slug: 'mine', name: 'Mine', is_member: true, is_favorited: true, created_by: 77 });
+  Home._apps = [mine];
+  const asked = [];
+  win.ConfirmModal = { show: async (o) => { asked.push(o); return true; } };
+  await Home.toggleAdded('mine', false, () => {});
+  assert.equal(asked.length, 1, 'one question, the leave question — not a second confirm after it');
+  assert.equal(asked[0].title, 'Leave Mine too?');
+  assert.equal(asked[0].cancelLabel, 'Stay a member');
+  assert.deepEqual(fetchCalls.map((c) => [c.url, c.body]), [
+    ['/api/apps/mine/favorite', { favorited: false }],
+    ['/api/apps/mine/membership', { joined: false }],
+  ]);
+  assert.equal(mine.is_member, false);
+});
+
+test('"Stay a member" keeps the membership; nobody is asked who is not in it, or who started it', async () => {
+  const { Home, fetchCalls, win } = makeBrowse({ user: { id: 5 } });
+  const asked = [];
+  win.ConfirmModal = { show: async (o) => { asked.push(o); return false; } };
+  const stay = app({ slug: 'stay', is_member: true, is_favorited: true, created_by: 77 });
+  const outsider = app({ slug: 'pinned', is_favorited: true });
+  const mine = app({ slug: 'mine', is_member: true, is_favorited: true, created_by: 5 });
+  Home._apps = [stay, outsider, mine];
+  await Home.toggleAdded('stay', false, () => {});
+  assert.equal(stay.is_member, true, 'Stay a member');
+  await Home.toggleAdded('pinned', false, () => {});
+  await Home.toggleAdded('mine', false, () => {});
+  assert.equal(asked.length, 1, 'only the member who could leave was asked');
+  assert.ok(fetchCalls.every((c) => !/membership/.test(c.url)));
+});
+
+test('pinning marks the app joined at once, because the pin joins it', async () => {
+  const { Home } = makeBrowse();
+  const fresh = app({ slug: 'fresh' });
+  Home._apps = [fresh];
+  await Home.toggleAdded('fresh', true, () => {});
+  assert.equal(fresh.is_member, true);
+});
+
+test('a refused join puts the flags back and re-syncs', async () => {
+  const { Home, toasts } = makeBrowse({ fetchOk: false });
+  const fresh = app({ slug: 'fresh', name: 'Fresh' });
+  Home._apps = [fresh];
+  let reloaded = 0;
+  Home.load = async () => { reloaded += 1; };
+  assert.equal(await Home.setMembership('fresh', true), false);
+  assert.ok(!fresh.is_member, 'back to what the server last said');
+  assert.ok(!fresh.is_favorited);
+  assert.equal(reloaded, 1);
+  assert.match(toasts[0], /^Couldn’t join/);
+});
+
 test('toggleAdded ignores staging demo tiles (their slugs have no DB row)', async () => {
   const { Home, fetchCalls } = makeBrowse();
   Home._apps = [app({ slug: 'staging-demo-featured', demo: true })];
@@ -1319,15 +1693,20 @@ test('browse.js is a bundle module the #browse-screen island imports', () => {
     /from '\.\/app-card-view'/);
 });
 
-test('#1553: the row button names the destination, like every other surface', () => {
-  // "Add" alone did not say add to WHAT, and this row was the only place the
-  // platform left that a guess — the detail page's button, the app-chip menu
-  // and this button's own title attribute all spell out "Your apps".
+test('#1553: the row button names what it acts on, like every other surface', () => {
+  // "Add" alone did not say add to WHAT (#1553); the pill is Join now
+  // (communities), and "Join" alone would not say join WHAT for someone not
+  // reading the row. The accessible name and the title spell out the app.
   const listSrc = read('frontend/src/features/apps/browse-list.tsx');
-  assert.match(listSrc, /'Added' : 'Add to Your apps'/);
-  assert.doesNotMatch(listSrc, /'Added' : 'Add'/);
+  // QA 2026-09-24 Q10: a long pill squeezed the app's name to ten characters
+  // on desktop and to nothing at 1024, so the visible label stays one short
+  // word and the rest rides the accessible name and the title.
+  assert.match(listSrc, /'Joined' : 'Join'/);
+  assert.match(listSrc, /aria-label=\{view\.added \? undefined : `Join \$\{view\.name\}`\}/);
+  assert.match(listSrc, /title=\{view\.addTitle\}/);
+  assert.match(listSrc, /<PlusIcon /);
   // The state label stays short: the row it sits on already says which app.
-  assert.match(listSrc, /view\.added \? 'Added'/);
+  assert.match(listSrc, /view\.added \? 'Joined'/);
 });
 
 // ── app.js routing ───────────────────────────────────────────────
@@ -1562,6 +1941,10 @@ test('contributors: the list folds at 5 with a Show-all toggle, and expands in p
   assert.equal(open.rows.length, 7);
   assert.equal(open.toggle, 'Show fewer');
   assert.equal(open.rows.some((r) => r.who === 'u6'), true);
+  // The fold state rides the descriptor so the toggle can expose it as
+  // aria-expanded rather than only through its label (#2991).
+  assert.equal(folded.expanded, false);
+  assert.equal(open.expanded, true);
 });
 
 test('contributors: exactly 5 rows need no toggle', () => {

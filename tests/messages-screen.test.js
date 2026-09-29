@@ -40,10 +40,12 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   assert.match(html, /id="platform-tabs-badge"/, 'the tab is what can carry a count');
   // The bar's order, pinned as a declared check. `+` rather than `~`: the
   // five tabs are adjacent siblings, with only the desktop rail's Recents
-  // (#2802) between Workshop and Me — it is never drawn on the phone's bar.
+  // (#2802) between the last section and Me — it is never drawn on the
+  // phone's bar. Messages sits in the middle; Communities (key `workshop`)
+  // comes after it, beside you.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
     === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages'
-      + ' + #platform-tab-workshop + #platform-recents + #platform-tab-me'),
+      + ' + #platform-tab-workshop[href="#communities"] + #platform-recents + #platform-tab-me'),
   'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   // Membership INSIDE the array literal. The previous form,
@@ -61,7 +63,7 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,1400}navigateToMessages/);
 });
 
-test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
+test('an app\'s channel keeps its address here, though it is listed on its hub', () => {
   // #2718 review. The row was listed in this inbox and addressed as
   // `#app/<slug>/dev/chat` — a different SCREEN ROOT — so a row in this list
   // opened a full-window takeover with the app view's own back slot instead
@@ -70,17 +72,21 @@ test('an app\'s discussion is a thread of THIS inbox, addressed here', () => {
   const routeStart = app.indexOf("if (parts[0] === 'messages')");
   const messagesRoute = app.slice(routeStart, app.indexOf("if (parts[0] === 'topochain')", routeStart));
   assert.match(messagesRoute, /parts\[1\] === 'app' && parts\[2\]/, 'the inbox owns the address');
-  assert.match(messagesRoute, /App\.navigateToMessages\(null, parts\[2\]\)/);
-  // #2813 added the agent thread as a third argument, last in precedence.
-  assert.match(app, /navigateToMessages\(conversationId, appSlug, agent\)/);
-  // The ROW points here, not at the app view.
-  assert.match(screen, /href=\{`#messages\/app\/\$\{encodeURIComponent\(discussion\.slug\)\}`\}/);
+  // #2387: what follows the slug — a reply thread, a message link — rides
+  // along as a fourth argument (App._messagesExtras).
+  assert.match(messagesRoute, /App\.navigateToMessages\(null, parts\[2\], null, App\._messagesExtras\(parts\.slice\(3\)\)\)/);
+  // #2813 added the agent thread as a third argument, last in precedence;
+  // #2387 the thread/link extras as a fourth.
+  assert.match(app, /navigateToMessages\(conversationId, appSlug, agent, extras\)/);
+  // The hub's channel card points here, not at the app view.
+  assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'),
+    /const href = channel\.href \|\| `#messages\/app\/\$\{encodeURIComponent\(slug\)\}`;/);
   // ONE THREAD IS OPEN: naming an app clears the conversation and the other
   // way round, so the pane never holds half of each.
   assert.match(store, /const nextSlug = nextId \? null : validSlug\(appSlug\);/);
   // The pane is a HOST for features/group-chat, not a second transcript.
   assert.match(screen, /function AppDiscussionThread/);
-  assert.match(screen, /renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly \}\)/);
+  assert.match(screen, /renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly, archived \}\)/);
   // …and it drops BOTH portals on the way out, the transcript's first.
   assert.match(screen, /unmountTranscript\?\.\(list\)[\s\S]{0,120}unmountGeneralChat\?\.\(el\)/);
   // The list collapses for a discussion exactly as it does for a thread.
@@ -146,13 +152,15 @@ test('message creation realtime carries ids and refetches viewer-authorized REST
   ]) {
     assert.match(app, new RegExp(`case '${type}'`));
   }
+  // #2387: created and updated share one block (a thread reply re-reads its
+  // thread as well as the conversation), so the slice runs to the next case.
   const created = store.slice(store.indexOf("case 'conversation_message_created'"),
-    store.indexOf("case 'conversation_message_updated'"));
+    store.indexOf("case 'conversation_reaction_updated'"));
   assert.match(created, /loadThread\(conversationId, true\)/);
   assert.doesNotMatch(created, /normalizeMessage\(event\.message/,
     'WS must never trust a sender-hydrated private object card');
-  assert.match(store, /filter\(\(item\) => item\.id !== optimisticId && item\.id !== message\.id\)/,
-    'HTTP completion removes both optimistic and raced-in server rows');
+  assert.match(store, /filter\(\(item\) => item\.clientKey !== key && item\.id !== message\.id\)/,
+    'HTTP completion removes both the local row and a raced-in server row');
   const reaction = store.slice(store.indexOf("case 'conversation_reaction_updated'"),
     store.indexOf("case 'conversation_read'"));
   assert.match(reaction, /loadThread\(conversationId, true\)/);
@@ -235,7 +243,9 @@ test('blocking and access-revocation purge an active direct thread locally', () 
 
 test('message Markdown delegates only to the established DOMPurify allowlist', () => {
   assert.match(markdown, /window\.DevChat\.renderMarkdown\(content, \{ breaks: true \}\)/);
-  assert.match(devChat, /return DOMPurify\.sanitize\(html, \{/);
+  // `out`, because the sanitized html is cached before it is returned
+  // (tests/dev-chat-smoothness.test.js pins that it is byte-identical).
+  assert.match(devChat, /const out = DOMPurify\.sanitize\(html, \{/);
   assert.match(devChat, /ALLOW_DATA_ATTR: false/);
   assert.match(devChat, /ALLOWED_TAGS:/);
 });

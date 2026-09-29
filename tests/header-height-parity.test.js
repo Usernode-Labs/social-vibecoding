@@ -196,9 +196,9 @@ test('CEILING: the Homeroom mark is exactly the 28px row', () => {
   // cost only, so the 28px ceiling above is untouched either way.
   assert.match(tag, /\bgap-0\.5\b/,
     'the tile and its chevron are spaced, not fused');
-  const tile = html.match(/<img[^>]*class="platform-mark-tile[^"]*"/)[0];
+  const tile = html.match(/<svg[^>]*class="platform-mark-glyph[^"]*"/)[0];
   assert.match(tile, /(?:^|\s)h-\[26px\](?:\s|$)/,
-    'the artwork is 26px, so it fits the row with a pixel to spare');
+    'the sparkle is 26px, so it fits the row with a pixel to spare');
 });
 
 test('CEILING: the landing bar is the wordmark at 28px, and carries no CTA', () => {
@@ -274,7 +274,7 @@ test('badges still overflow the row rather than being clipped', () => {
   const platform = BARS.find((b) => b.id === 'platform-header').slice;
   assert.match(platform, /id="notifications-badge"[^>]*-top-1/,
     'the bell badge still hangs off the top-right corner');
-  assert.match(platform, /id="improve-working-dot"[^>]*-top-1/,
+  assert.match(platform, /id="improve-working-dot"[^>]*-top-1\.5/,
     'and the work dot hangs off the same corner of the mark it moved to when '
     + '#2718 retired the Improve pill (#1610 had already retired the green '
     + 'count that used to sit there)');

@@ -91,12 +91,16 @@ const DENIED_TABLES = new Set([
   'chat_session_spec_conversation_shares', // private spec access grants
   'user_app_blocks',
   'user_blocks',          // private user safety relationships
+  'friendships',          // private friend graph and pending requests (#2386)
+  'friend_request_declines', // who declined whom — silent by product rule (#2386)
+  'friend_request_sends', // per-person request activity (#2386)
   'conversation_message_reports', // private abuse evidence and reporter identity
   'app_reports',             // private mini-app report details and reporter identity
   'chat_message_reports',    // private Workshop post evidence and reporter identity
   'mcp_clients',              // hosted-connector client registrations
   'mcp_authorization_codes',  // hosted-connector PKCE codes (hashed, short-lived)
   'mcp_tokens',               // hosted-connector bearer hashes and hints
+  'mcp_delegations',          // which of the platform's own agents holds a grant for whom (#2779)
   'mcp_auth_audit_events',    // security audit trail for connector credentials
   'user_social_identities',   // private provider ownership proofs
   'social_identity_oauth_states', // social-link state hashes + PKCE verifiers
@@ -106,6 +110,7 @@ const DENIED_TABLES = new Set([
   'global_chat_messages', // private user/assistant transcript content
   'global_chat_tool_runs', // private action inputs and authoritative results
   'global_chat_action_tokens', // one-use action capabilities and sealed payloads
+  'agent_session_actions', // the agent-session Mayor's sealed confirmation cards (#2779)
 ]);
 
 const DENIED_COLUMNS = {
@@ -137,6 +142,11 @@ const DENIED_COLUMNS = {
     'input_hash',
     'normalized_input',
   ],
+  agent_session_actions: [
+    // The sealed exact input of a pending write and its fingerprint (#2779).
+    'input_hash',
+    'sealed_input',
+  ],
   onchain_accounts: [
     'secret_key',        // topochain: on-chain account private key (SPEC §6)
     'registration_code', // topochain: single-use account claim code (SPEC §6)
@@ -145,6 +155,7 @@ const DENIED_COLUMNS = {
     'ip',         // submitter IP — same treatment as users.waitlist_ip
     'more_token', // stage-2 survey capability — editing rights over the signup's answers
     'invite_code', // shareable capability — anyone holding it is attributed as this signup's invitee
+    'project_invite_id', // which private app_email_invites row (project, inviter) brought this address in
   ],
 };
 

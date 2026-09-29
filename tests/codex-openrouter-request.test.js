@@ -39,6 +39,32 @@ async function json(req) {
   return JSON.parse(Buffer.concat(chunks).toString());
 }
 
+// Sanitized from an actual @openai/codex 0.146.0 request with agents disabled
+// and the completion runner's evidence MCP allowlist. The production trace
+// reported the same 13 top-level definitions. Schemas/descriptions are
+// intentionally omitted because this adapter relies only on type, namespace,
+// and membership.
+function codex0146CompletionTools() {
+  return [
+    { type: 'function', name: 'exec_command' },
+    { type: 'function', name: 'write_stdin' },
+    { type: 'function', name: 'list_mcp_resources' },
+    { type: 'function', name: 'list_mcp_resource_templates' },
+    { type: 'function', name: 'read_mcp_resource' },
+    { type: 'function', name: 'update_plan' },
+    { type: 'function', name: 'request_user_input' },
+    { type: 'function', name: 'view_image' },
+    { type: 'namespace', name: 'mcp__evidence', tools: [
+      { type: 'function', name: 'evidence_report_blocker' },
+      { type: 'function', name: 'evidence_run_plan' },
+    ] },
+    { type: 'function', name: 'get_goal' },
+    { type: 'function', name: 'create_goal' },
+    { type: 'function', name: 'update_goal' },
+    { type: 'web_search' },
+  ];
+}
+
 test('the wire cap is enforced on every GLM request, independently of history size', async t => {
   const calls = [];
   const base = await upstream(t, async (req, res) => {
@@ -80,6 +106,182 @@ test('the wire cap is enforced on every GLM request, independently of history si
   assert.equal(diagnostics[0].httpStatus, 200);
   assert.equal(diagnostics[0].requestId, 'req-glm-1');
   assert.doesNotMatch(JSON.stringify(diagnostics), /test-openrouter-key|coding instructions|Short request|long history/);
+});
+
+test('an evidence completion retry must choose one terminal tool on its first provider response', async t => {
+  const calls = [];
+  const base = await upstream(t, async (req, res) => {
+    calls.push(await json(req));
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const item = calls.length === 2
+      ? { type: 'function_call', namespace: 'mcp__evidence', name: 'evidence_run_plan' }
+      : { type: 'message', role: 'assistant' };
+    res.end(`data: ${JSON.stringify({ type: 'response.output_item.done', item })}\n\n`);
+  });
+  const events = [];
+  const instance = await adapter(t, base, {
+    requireEvidenceTerminalTool: true,
+    reportEvidenceToolConfig: true,
+    onTiming: event => events.push(event),
+  });
+  const tools = codex0146CompletionTools();
+  const compaction = await request(instance, {
+    model: MODEL, stream: true, input: [], tools: [],
+  });
+  assert.equal(compaction.status, 200);
+  await compaction.text();
+  const first = await request(instance, {
+    model: MODEL, stream: true, input: [], tools,
+    tool_choice: 'auto', parallel_tool_calls: true,
+  });
+  assert.equal(first.status, 200);
+  await first.text();
+  const second = await request(instance, {
+    model: MODEL, stream: true, input: [], tools,
+    tool_choice: 'auto', parallel_tool_calls: true,
+  });
+  assert.equal(second.status, 200);
+  await second.text();
+  assert.equal(calls[0].tool_choice, undefined, 'tool-free compaction is allowed before the recovery prompt');
+  assert.equal(calls[1].tool_choice, 'required');
+  assert.equal(calls[1].parallel_tool_calls, false);
+  assert.deepEqual(calls[1].tools, [{ type: 'namespace', name: 'mcp__evidence', tools: [
+    { type: 'function', name: 'evidence_report_blocker' },
+    { type: 'function', name: 'evidence_run_plan' },
+  ] }], 'Codex built-ins are removed from the provider-facing recovery request');
+  assert.equal(calls[2].tool_choice, 'auto', 'only the recovery turn\'s first eligible response is forced');
+  assert.equal(calls[2].parallel_tool_calls, true);
+  assert.equal(calls[2].tools.length, 13, 'the adapter stops filtering after the terminal call');
+  const starts = events.filter(event => event.kind === 'provider_request_start');
+  assert.equal(starts[0].terminalToolChoiceRequired, undefined);
+  assert.equal(starts[1].terminalToolChoiceRequired, true);
+  assert.equal(starts[1].terminalToolDefinitionCount, 2);
+  assert.equal(starts[2].terminalToolChoiceRequired, undefined);
+  const config = events.find(event => event.kind === 'provider_tool_config');
+  assert.equal(config.mcpServerCount, 1);
+  assert.equal(config.toolDefinitionCount, 13);
+  assert.equal(config.topLevelFunctionToolCount, 11);
+  assert.equal(config.topLevelNamespaceToolCount, 1);
+  assert.equal(config.topLevelOtherToolCount, 1);
+  assert.equal(config.nestedToolDefinitionCount, 2);
+  assert.equal(config.nestedFunctionToolCount, 2);
+  assert.equal(config.evidenceToolDefinitionCount, 2);
+  assert.equal(config.evidenceGetContextAvailable, false);
+  assert.equal(config.evidenceRunPlanAvailable, true);
+  assert.equal(config.evidenceReportBlockerAvailable, true);
+  assert.equal(config.completionReminder, true);
+  assert.equal(config.terminalToolChoiceRequired, true);
+  assert.equal(config.terminalToolWireFormat, 'namespace');
+  assert.equal(config.toolSurfaceFiltered, true);
+  assert.equal(config.removedToolDefinitionCount, 12);
+  assert.equal(config.forwardedToolDefinitionCount, 1);
+});
+
+test('forced evidence completion refuses an unexpected tool surface', async t => {
+  let upstreamCalls = 0;
+  const base = await upstream(t, async (_req, res) => {
+    upstreamCalls += 1;
+    res.end('{}');
+  });
+  const instance = await adapter(t, base, { requireEvidenceTerminalTool: true });
+  const response = await request(instance, {
+    model: MODEL,
+    tools: [...codex0146CompletionTools(), {
+      type: 'namespace', name: 'mcp__browser_member',
+      tools: [{ type: 'function', name: 'browser_click' }],
+    }],
+  });
+  assert.equal(response.status, 500);
+  assert.match((await response.json()).error.message, /not configured safely/i);
+  assert.equal(upstreamCalls, 0);
+});
+
+test('forced evidence completion refuses a partial terminal namespace', async t => {
+  let upstreamCalls = 0;
+  const base = await upstream(t, async (_req, res) => {
+    upstreamCalls += 1;
+    res.end('{}');
+  });
+  const instance = await adapter(t, base, { requireEvidenceTerminalTool: true });
+  const tools = codex0146CompletionTools();
+  tools.find(tool => tool.name === 'mcp__evidence').tools.pop();
+  const response = await request(instance, { model: MODEL, tools });
+  assert.equal(response.status, 500);
+  assert.match((await response.json()).error.message, /not configured safely/i);
+  assert.equal(upstreamCalls, 0);
+});
+
+test('forced evidence completion still accepts the older flat MCP encoding', async t => {
+  let providerBody;
+  const base = await upstream(t, async (req, res) => {
+    providerBody = await json(req);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"id":"response-flat"}');
+  });
+  const events = [];
+  const instance = await adapter(t, base, {
+    requireEvidenceTerminalTool: true,
+    reportEvidenceToolConfig: true,
+    onTiming: event => events.push(event),
+  });
+  const response = await request(instance, { model: MODEL, tools: [
+    { type: 'function', name: 'exec_command' },
+    { type: 'function', name: 'mcp__evidence__evidence_run_plan' },
+    { type: 'function', name: 'mcp__evidence__evidence_report_blocker' },
+  ] });
+  assert.equal(response.status, 200);
+  assert.deepEqual(providerBody.tools.map(tool => tool.name), [
+    'mcp__evidence__evidence_run_plan', 'mcp__evidence__evidence_report_blocker',
+  ]);
+  assert.equal(providerBody.tool_choice, 'required');
+  const config = events.find(event => event.kind === 'provider_tool_config');
+  assert.equal(config.terminalToolWireFormat, 'flat');
+  assert.equal(config.removedToolDefinitionCount, 1);
+});
+
+test('evidence timing separates provider wait, first byte, and stream completion without content', async t => {
+  const privateText = 'private model output';
+  const base = await upstream(t, async (req, res) => {
+    await json(req);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write(`data: ${JSON.stringify({ delta: privateText })}\n\n`);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    res.end('data: [DONE]\n\n');
+  });
+  const events = [];
+  const instance = await adapter(t, base, {
+    onTiming: event => events.push(event), timingIntervalMs: 5,
+  });
+  const response = await request(instance, {
+    model: MODEL, stream: true, input: [{ role: 'user', content: 'private input' }],
+    instructions: 'private instructions', previous_response_id: 'private-response-id',
+  });
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /private model output/);
+  assert.equal(events[0].kind, 'provider_request_start');
+  assert.ok(events[0].payloadBytes > events[0].inputBytes + events[0].instructionBytes);
+  assert.equal(events[0].inputBytes, Buffer.byteLength(JSON.stringify([
+    { role: 'user', content: 'private input' },
+  ])));
+  assert.equal(events[0].instructionBytes, Buffer.byteLength(JSON.stringify('private instructions')));
+  assert.equal(events[0].inputItems, 1);
+  assert.equal(events[0].previousResponseLinked, true);
+  assert.equal(events[0].maxOutputTokens, 32000);
+  assert.ok(events.some(event => event.kind === 'provider_request_pending'
+    && event.stage === 'await_headers'));
+  assert.ok(events.some(event => event.kind === 'provider_request_pending'
+    && event.stage === 'streaming' && event.responseBytes > 0 && event.chunkCount > 0));
+  assert.deepEqual(events.filter(event => [
+    'provider_response_headers', 'provider_response_first_byte', 'provider_request_end',
+  ].includes(event.kind)).map(event => event.kind), [
+    'provider_response_headers', 'provider_response_first_byte', 'provider_request_end',
+  ]);
+  assert.equal(events.at(-1).outcome, 'ok');
+  assert.ok(events.at(-1).durationMs >= events.find(event => event.kind === 'provider_response_first_byte').durationMs);
+  assert.ok(events.at(-1).responseBytes > 0);
+  assert.equal(events.at(-1).httpStatus, 200);
+  assert.doesNotMatch(JSON.stringify(events), /private|api\/v1/i);
 });
 
 test('a real HTTP refusal is retried with the smaller limit on the wire and safe ledger evidence', async t => {
@@ -284,4 +486,108 @@ test('closing the invocation releases its listener', async t => {
     const req = http.get(`${instance.baseUrl}/responses`, () => reject(new Error('listener still open')));
     req.on('error', err => err.code === 'ECONNREFUSED' ? resolve() : reject(err));
   });
+});
+
+// ── Per-request usage, for a turn that never reaches turn.completed (#3038) ──
+
+const sse = event => `data: ${JSON.stringify(event)}\n\n`;
+const COMPLETED_USAGE = {
+  input_tokens: 1200, input_tokens_details: { cached_tokens: 800 },
+  output_tokens: 90, output_tokens_details: { reasoning_tokens: 30 }, total_tokens: 1290,
+};
+
+test('each finished request reports its usage as it ends, counts only, even when the final event is large', async t => {
+  // The terminal event carries the whole response object. A long answer or
+  // a big tool call makes it far larger than an error envelope, which is
+  // exactly when losing its usage would hurt.
+  const secret = 'model output that must not leave the worker ';
+  const body = sse({ type: 'response.output_text.delta', delta: 'hello' })
+    + sse({ type: 'response.completed', response: {
+      id: 'resp-1', status: 'completed',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: secret.repeat(5000) }] }],
+      usage: COMPLETED_USAGE,
+    } });
+  assert.ok(body.length > 64 * 1024, 'bigger than the error-diagnostic cap');
+  const base = await upstream(t, (req, res) => {
+    req.resume();
+    res.setHeader('content-type', 'text/event-stream');
+    // Split into small writes so the event boundary search is exercised
+    // across chunks.
+    let i = 0;
+    const next = () => {
+      if (i >= body.length) { res.end(); return; }
+      res.write(body.slice(i, i + 4096));
+      i += 4096;
+      setImmediate(next);
+    };
+    next();
+  });
+  const usages = [];
+  const instance = await adapter(t, base, { onUsage: u => usages.push(u) });
+  const response = await request(instance, { model: MODEL, stream: true, input: [] });
+  assert.equal(await response.text(), body, 'the stream is forwarded byte for byte');
+  assert.deepEqual(usages, [{ inputTokens: 1200, cachedInputTokens: 800, outputTokens: 90, reasoningOutputTokens: 30 }]);
+  assert.doesNotMatch(JSON.stringify(usages), /must not leave|resp-1/);
+});
+
+test('incomplete and failed responses report usage too; a stream cut off before its end reports none', async t => {
+  let mode = 'incomplete';
+  const base = await upstream(t, (req, res) => {
+    req.resume();
+    res.setHeader('content-type', 'text/event-stream');
+    if (mode === 'incomplete') {
+      res.end(sse({ type: 'response.incomplete', response: { status: 'incomplete', usage: { input_tokens: 500, output_tokens: 4000 } } }));
+    } else if (mode === 'failed') {
+      res.end(sse({ type: 'response.failed', response: { status: 'failed', usage: { input_tokens: 300, output_tokens: 0 } } }));
+    } else {
+      // A stream that stops mid-answer: what a stopped turn's last request
+      // looks like. Nothing reports, which is why the turn's figure is a floor.
+      res.end(sse({ type: 'response.output_text.delta', delta: 'partial' }));
+    }
+  });
+  const usages = [];
+  const instance = await adapter(t, base, { onUsage: u => usages.push(u) });
+  await (await request(instance, { model: MODEL, stream: true, input: [] })).text();
+  mode = 'failed';
+  await (await request(instance, { model: MODEL, stream: true, input: [] })).text();
+  mode = 'cut';
+  await (await request(instance, { model: MODEL, stream: true, input: [] })).text();
+  assert.deepEqual(usages.map(u => [u.inputTokens, u.outputTokens]), [[500, 4000], [300, 0]]);
+});
+
+test('a terminal event past the usage cap is forwarded untouched and simply unreported', async t => {
+  const body = sse({ type: 'response.completed', response: {
+    output: [{ type: 'message', content: [{ type: 'output_text', text: 'x'.repeat(5 * 1024 * 1024) }] }],
+    usage: COMPLETED_USAGE,
+  } });
+  const base = await upstream(t, (req, res) => {
+    req.resume();
+    res.setHeader('content-type', 'text/event-stream');
+    res.end(body);
+  });
+  const usages = [];
+  const instance = await adapter(t, base, { onUsage: u => usages.push(u) });
+  const response = await request(instance, { model: MODEL, stream: true, input: [] });
+  assert.equal((await response.text()).length, body.length);
+  assert.deepEqual(usages, [], 'memory stays bounded; the figure is only ever lower, never wrong');
+});
+
+test('the invocation writes each usage as a content-free line the normalizer sums', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'worker', 'codex-openrouter-request.js'), 'utf8');
+  assert.match(src, /onUsage: usage => process\.stdout\.write\(`\$\{JSON\.stringify\(\{ type: 'usernode\.openrouter\.usage', usage \}\)\}\\n`\)/);
+});
+
+test('relay usage lines sum per turn through the real worker parser, apart from the agent totals', () => {
+  const worker = require('../src/services/worker');
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  const feed = line => worker.parseLine(JSON.stringify(line), () => {}, state);
+  feed({ type: 'usernode.openrouter.usage', usage: { inputTokens: 1200, cachedInputTokens: 800, outputTokens: 90, reasoningOutputTokens: 30 } });
+  feed({ type: 'usernode.openrouter.usage', usage: { inputTokens: 1500, cachedInputTokens: 1100, outputTokens: 40, reasoningOutputTokens: null } });
+  feed({ type: 'usernode.openrouter.usage', usage: { inputTokens: -5, outputTokens: 'lots' } });
+  assert.deepEqual(state.relayUsage, {
+    requests: 2, inputTokens: 2700, cachedInputTokens: 1900, outputTokens: 130, reasoningOutputTokens: 30,
+  }, 'a malformed line is ignored rather than counted');
+  assert.equal(state.inputTokens ?? null, null, "the agent's own totals are untouched: the ledger prices those");
+  assert.equal(codex.newCodexState().relayUsage, null);
 });

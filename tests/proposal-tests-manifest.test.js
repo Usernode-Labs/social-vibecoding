@@ -8,6 +8,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const appManifest = require('../src/services/app-manifest');
+const checkCap = require('./lib/check-cap');
 
 test('absent / non-array tests resolve to []', () => {
   assert.deepEqual(appManifest.readTests({}), []);
@@ -141,13 +142,12 @@ test("every declared selector fits the cap the reader and the capture clip at", 
 test("this repo's own manifest fits under the ceiling, with room to grow", () => {
   const meta = appManifest.readTestsWithMeta(require('../dapp.json'));
   assert.equal(meta.ceilingDropped, 0,
-    'declared checks are being dropped again — raise MAX_DECLARED_TESTS (and the '
-    + 'capture budget in tests/checks-budget.test.js) rather than deleting checks');
+    `${meta.ceilingDropped} declared checks are past MAX_DECLARED_TESTS `
+    + `${appManifest.MAX_DECLARED_TESTS} and are being dropped. ${checkCap.REMEDY}`);
   assert.equal(meta.tests.length, meta.rawCount,
     'every declared check survives validation, so the count here is the real one');
-  assert.ok(meta.tests.length + 20 <= appManifest.MAX_DECLARED_TESTS,
-    `only ${appManifest.MAX_DECLARED_TESTS - meta.tests.length} slots left — the next `
-    + 'few proposals would hit the ceiling mid-review');
+  // The same remedy as the other two guards (tests/lib/check-cap.js).
+  checkCap.assertFloor(meta.tests.length);
 });
 
 test('readTestsWithMeta separates ceiling drops from invalid drops', () => {

@@ -100,7 +100,7 @@ test('the console Users section embeds the programme users screen (merged, #1179
     path.join(__dirname, '..', 'frontend/src/features/admin/admin-users.tsx'), 'utf8');
   assert.match(fn, /id="admin-users-programme"/,
     'the section still renders the programme card, under its own id');
-  assert.match(fn, /<ProgrammeUsers \/>/, 'as a child component');
+  assert.match(fn, /<ProgrammeUsers\b[^>]*\/>/, 'as a child component');
   assert.match(fn, /^import \{ ProgrammeUsers \} from '\.\/topochain\/programme-users\.tsx';$/m,
     'imported rather than read off the AdminTopochain global');
   // The `_sub = 'users'` guard and the renderUsers() call are gone with the
@@ -503,7 +503,7 @@ test('every screen renders its API fields as text children', () => {
   // pass by the column quietly disappearing.
   for (const [file, cell] of [
     ['season-events.tsx', /cell: \(ev\) => ev\.name/],
-    ['programme-users.tsx', /cell: \(u\) => u\.email \|\| '—'/],
+    ['programme-users.tsx', /cell: \(u\) => u\.telegram \|\| '—'/],
     ['onchain-accounts.tsx', /\{a\.public_key\}/],
     ['onchain-accounts.tsx', /cell: \(a\) => a\.tier/],
     ['challenge-templates.tsx', /cell: \(t\) => t\.category/],

@@ -701,7 +701,7 @@ function templateIdle(sourceDb) {
 }
 
 // The fast clone: a file copy of the template, handed to a fresh role.
-async function cloneFromTemplate(templateDb, targetDb) {
+async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000, onProgress = null } = {}) {
   if (!SAFE_IDENT.test(templateDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`cloneFromTemplate: unsafe identifiers ${templateDb}/${targetDb}`);
   }
@@ -714,20 +714,33 @@ async function cloneFromTemplate(templateDb, targetDb) {
   const password = generatePassword();
   await withDatabaseConnection('usernode', async (execute) => {
     const admin = (sql, opts) => execute('usernode', sql, opts);
+    onProgress?.('drop_target');
     await dropDatabase(targetDb, { strict: true, execute: admin });
+    onProgress?.('create_role');
     await admin(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
+    onProgress?.('copy_template');
     await admin(`CREATE DATABASE ${targetDb} TEMPLATE ${templateDb} OWNER ${targetRole}`);
     await admin(`REVOKE CONNECT ON DATABASE ${targetDb} FROM PUBLIC`);
     await admin(`GRANT ALL PRIVILEGES ON DATABASE ${targetDb} TO ${targetRole}`);
-  });
+  }, { queryTimeoutMs });
   // One connection for the whole ownership/redaction pass, including discovery.
   // Never pool it: the caller may need to drop this database immediately on
   // failure, and a later preview must not inherit an administrative session.
   await withDatabaseConnection(targetDb, async (execute) => {
-    await reassignUserObjectsTo(targetDb, templateRole, targetRole, execute);
-    await truncatePrivateTables(targetDb, execute);
-    await scrubPrivateColumns(targetDb, execute);
-  });
+    for (const [phase, run] of [
+      ['reassign_ownership', () => reassignUserObjectsTo(targetDb, templateRole, targetRole, execute)],
+      ['truncate_private', () => truncatePrivateTables(targetDb, execute)],
+      ['scrub_private', () => scrubPrivateColumns(targetDb, execute)],
+    ]) {
+      onProgress?.(phase);
+      try { await run(); }
+      catch (error) {
+        error.message = `Database clone ${phase}: ${error.message}`;
+        throw error;
+      }
+    }
+  }, { queryTimeoutMs });
+  onProgress?.('redaction_complete');
   log.info('db-manager', 'Database cloned from staging template', {
     templateDb, targetDb, targetRole, durationMs: Date.now() - startedAt,
   });
@@ -794,12 +807,16 @@ async function prepareStagingCloneSource(sourceDb, { sourceId } = {}) {
   });
 }
 
-async function cloneFromPreparedSource(prepared, targetDb) {
+async function cloneFromPreparedSource(prepared, targetDb, { onProgress = null } = {}) {
   const templateDb = typeof prepared === 'string' ? prepared : prepared?.templateDb;
   if (!isPreparedCloneSource(templateDb)) {
     throw new Error(`cloneFromPreparedSource: invalid prepared source ${JSON.stringify(templateDb)}`);
   }
-  const result = await cloneFromTemplate(templateDb, targetDb);
+  // Paired evidence resets repeat this clone and have their own bounded
+  // lifetime. A large ownership/redaction query may exceed the ordinary
+  // preview's 30-second ceiling without being stuck.
+  const result = await cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs: 90_000, onProgress });
+  onProgress?.('connection_limit');
   await applyStagingConnectionLimit(targetDb);
   return {
     ...result,
@@ -1063,15 +1080,16 @@ async function roleExists(roleName) {
 // connection within one clone phase. Other administration keeps its existing
 // one-shot behavior. SQL stays in autocommit: CREATE/DROP DATABASE cannot run
 // inside a transaction, and a failed redaction must not abort later attempts.
-async function withDatabaseConnection(dbName, fn) {
+async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000 } = {}) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`Unsafe connection database: ${dbName}`);
+  const timeoutMs = Math.max(30_000, Math.min(120_000, Number(queryTimeoutMs) || 30_000));
   const url = adminConnection();
   url.pathname = `/${dbName}`;
   const client = new Client({
     connectionString: url.toString(),
     connectionTimeoutMillis: 30000,
-    statement_timeout: 30000,
-    query_timeout: 30000,
+    statement_timeout: timeoutMs,
+    query_timeout: timeoutMs,
     application_name: 'social-template-clone',
   });
   let lost;

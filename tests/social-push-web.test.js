@@ -1650,3 +1650,61 @@ test('a badge send failure warns and leaves the count retryable', async () => {
     'a failed send is not remembered as applied'
   );
 });
+
+// ── #2904: the icon badge is reconciled when the app returns ────────────
+//
+// While the WebView was suspended, alert pushes moved the iOS icon via their
+// own `aps.badge`. The realm's remembered confirmation then no longer
+// describes the icon, so coming back must resend even an unchanged total.
+
+test('foregrounding re-reads the feed and resends an unchanged count', async () => {
+  const loaded = loadCoordinator({
+    caps: BADGE_CAPS,
+    // The refreshed feed says zero — as the bell does — and publishes it.
+    refreshImpl: () => loaded.sandbox.SocialPush.publishBadgeCount(0).then(() => true),
+  });
+
+  await loaded.sandbox.SocialPush.publishBadgeCount(0);
+  assert.deepEqual(loaded.calls.filter(([name]) => name === 'badge'), [['badge', 0]]);
+
+  // Two pushes arrive in the background (the icon now reads 2), the user
+  // reads them elsewhere, and reopens the app.
+  loaded.fireDocument('visibilitychange');
+  await settle();
+  await settle();
+  assert.ok(loaded.calls.some(([name]) => name === 'refresh'),
+    'the foreground reads a fresh count from the network');
+  assert.deepEqual(
+    loaded.calls.filter(([name]) => name === 'badge'),
+    [['badge', 0], ['badge', 0]],
+    'the unchanged zero is sent again so it overwrites the pushed badge'
+  );
+});
+
+test('a failed foreground refresh still resends the remembered count', async () => {
+  const loaded = loadCoordinator({ caps: BADGE_CAPS, refreshImpl: () => false });
+
+  await loaded.sandbox.SocialPush.publishBadgeCount(1);
+  loaded.fireDocument('visibilitychange');
+  await settle();
+  await settle();
+  assert.deepEqual(
+    loaded.calls.filter(([name]) => name === 'badge'),
+    [['badge', 1], ['badge', 1]]
+  );
+});
+
+test('a hidden transition and a non-native page leave the badge alone', async () => {
+  const loaded = loadCoordinator({ caps: BADGE_CAPS });
+  await loaded.sandbox.SocialPush.publishBadgeCount(2);
+
+  loaded.sandbox.document.visibilityState = 'hidden';
+  loaded.fireDocument('visibilitychange');
+  await settle();
+  loaded.sandbox.document.visibilityState = 'visible';
+  loaded.sandbox.usernode.isNative = false;
+  loaded.fireDocument('visibilitychange');
+  await settle();
+  assert.equal(loaded.calls.some(([name]) => name === 'refresh'), false);
+  assert.deepEqual(loaded.calls.filter(([name]) => name === 'badge'), [['badge', 2]]);
+});

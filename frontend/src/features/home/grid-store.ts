@@ -79,6 +79,13 @@ export interface HomeAppView {
   showRetry: boolean;
   /** Resolved live name of the app this was forked from, or null. */
   forkName: string | null;
+  /**
+   * Who the project is for (communities; services/communities.js): 'open'
+   * (a Community), 'invited' (a Group) or 'solo' (Just you). The tile draws
+   * a small mark for the last two and none for a community, which is what
+   * most of the grid is.
+   */
+  audience: 'open' | 'invited' | 'solo';
 }
 
 /**
@@ -87,6 +94,24 @@ export interface HomeAppView {
  * canvas is an app.
  */
 export type GridItem = { kind: 'card'; placement: GridPlacement | null; app: HomeAppView };
+
+/**
+ * The launcher's trailing "Create an app" tile (the prototype's scrHome ends
+ * Your apps with it). NOT a `GridItem`: it has no app, no layout entry and no
+ * drag. Its cell is derived per paint by HomeLayout.trailingCell — straight
+ * after the last tile on screen — so the tile always ends the grid, collapsed
+ * or expanded. A collapsed grid whose last shown row is full holds it behind
+ * "Show all N apps" rather than drawing a row for it alone (#3047;
+ * HomeLayout.createTileCollapsed). `placement` is null when the tile must FLOW instead: after the
+ * empty-launcher note, or after overflow tiles that have no cell of their own.
+ */
+export interface CreateTileView {
+  /** Home.canCreate(): creation is available, or the locked treatment. */
+  enabled: boolean;
+  /** The ask-an-admin sentence the locked tile announces. */
+  hint: string;
+  placement: GridPlacement | null;
+}
 
 export interface HomeGridState {
   /** False until the first `Home.render()` push — see the header. */
@@ -107,6 +132,13 @@ export interface HomeGridState {
    * second writer, and would be painted straight back over by the next push.
    */
   notice: { text: string; tone: 'muted' | 'error' } | null;
+  /**
+   * The trailing Create tile, or null: before the first paint (so the
+   * prerender and the first client render agree — the tile is data-placed),
+   * in the search view, with a load notice on screen, and in a collapsed grid
+   * it would add a row to (#3047) — there it is behind "Show all N apps".
+   */
+  create: CreateTileView | null;
 }
 
 export const INITIAL_GRID: HomeGridState = {
@@ -117,6 +149,7 @@ export const INITIAL_GRID: HomeGridState = {
   resultsHeading: null,
   emptyQuery: null,
   notice: null,
+  create: null,
 };
 
 export const gridStore = createStore<HomeGridState>(INITIAL_GRID);

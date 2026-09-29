@@ -139,11 +139,22 @@ async function checkActiveCap(pool, config, user) {
   );
   if (count === null) return UNAVAILABLE;
   if (count >= caps.activeSessions) {
-    return limitError(
-      'at_capacity',
-      `You already have ${caps.activeSessions} sessions open. Pause or archive one first, `
-      + 'or submit this work for review instead of sharing it as in-progress.'
-    );
+    // Paused for the user rather than refused, as the browser's own start
+    // does (session-lifecycle.freeUserSlot). Required here, not at load:
+    // the lifecycle service pulls in the worker and staging modules.
+    const lifecycle = require('./session-lifecycle');
+    let freed = false;
+    try {
+      ({ freed } = await lifecycle.freeUserSlot({ pool, userId: user.id }));
+    } catch (err) {
+      log.warn('connector-limits', 'Could not free a session slot', { userId: user.id, err: err.message });
+    }
+    if (!freed) {
+      return limitError(
+        'at_capacity',
+        `${lifecycle.USER_SLOTS_BUSY} Or submit this work for review instead of sharing it as in-progress.`
+      );
+    }
   }
   return null;
 }

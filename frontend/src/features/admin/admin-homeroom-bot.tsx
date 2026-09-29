@@ -27,6 +27,8 @@ interface Settings {
   concurrency: number;
   batchSize: number;
   pausedApps: string[];
+  // #3146: the apps the bot acts on for real. Shadow everywhere else.
+  liveApps: string[];
   turnSeconds: number;
   turnInputTokens: number;
 }
@@ -69,7 +71,8 @@ interface Run {
   id: number;
   issue_number: number;
   mode: string;
-  verdict: 'question' | 'ready' | 'person' | 'empty' | 'failed';
+  // #3264: 'answer' and 'revise' are follow-ups on the bot's own proposal.
+  verdict: 'question' | 'ready' | 'person' | 'empty' | 'failed' | 'answer' | 'revise';
   determined: boolean | null;
   missing_fact: string | null;
   question: string | null;
@@ -87,6 +90,8 @@ interface Run {
   duration_ms: number | null;
   error: string | null;
   created_at: string;
+  // #3146: the proposal a live `ready` run opened.
+  proposal_session_id: number | null;
   app_slug: string;
   app_name: string;
   issueUrl: string | null;
@@ -106,7 +111,17 @@ interface LastPass {
   processed: number;
   paused: string | null;
   detail?: string | null;
+  // How long the bot waits before trying again after a platform fault (#3122).
+  retryInMs?: number | null;
   refusals?: Refusal[];
+}
+
+/** When a paused pass will try again, from the pass time and its backoff. */
+function retryAt(loop: LastPass): string {
+  if (!loop.retryInMs) return '';
+  const at = Date.parse(loop.at);
+  if (Number.isNaN(at)) return '';
+  return when(new Date(at + loop.retryInMs).toISOString());
 }
 
 interface Payload {
@@ -147,6 +162,8 @@ const VERDICT_LABEL: Record<Run['verdict'], string> = {
   person: 'Needs a person',
   empty: 'Nothing to build',
   failed: 'Failed',
+  answer: 'Answered',
+  revise: 'Revised its proposal',
 };
 
 const VERDICT_BADGE: Record<Run['verdict'], string> = {
@@ -155,7 +172,22 @@ const VERDICT_BADGE: Record<Run['verdict'], string> = {
   person: AdminUI.badge.secondary,
   empty: AdminUI.badge.outline,
   failed: AdminUI.badge.destructive,
+  answer: AdminUI.badge.secondary,
+  revise: AdminUI.badge.success,
 };
+
+/** #3264: a run that followed up on a proposal the bot had already opened. */
+function isFollowUp(run: Run): boolean {
+  return !!run.proposal_session_id && run.verdict !== 'ready';
+}
+
+function ProposalLink({ run, children }: { run: Run; children: string }) {
+  return (
+    <a className={AdminUI.btn.link} href={`#app/${encodeURIComponent(run.app_slug)}/dev/proposals/${Number(run.proposal_session_id)}`}>
+      {children}
+    </a>
+  );
+}
 
 const CAP_LABEL: Record<string, string> = {
   proposals_per_app: 'would be held: 2 bot proposals already open on this app',
@@ -175,9 +207,57 @@ function VerdictBody({ run }: { run: Run }) {
     );
   }
   if (run.verdict === 'ready') {
-    return <p className="text-sm whitespace-pre-line">{run.build_note || '(no build note)'}</p>;
+    return (
+      <div className="space-y-1">
+        <p className="text-sm whitespace-pre-line">{run.build_note || '(no build note)'}</p>
+        {run.proposal_session_id ? (
+          <p className={AdminUI.muted}>
+            {'Built and '}
+            <a className={AdminUI.btn.link} href={`#app/${encodeURIComponent(run.app_slug)}/dev/proposals/${Number(run.proposal_session_id)}`}>
+              opened as a proposal
+            </a>
+            .
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+  // #3264: what it answered on its own proposal, and what it changed there.
+  if (run.verdict === 'answer') {
+    return (
+      <div className="space-y-1">
+        <p className="text-sm whitespace-pre-line">{run.reason || '(no reply recorded)'}</p>
+        {run.proposal_session_id ? (
+          <p className={AdminUI.muted}>
+            {'Replied about '}
+            <ProposalLink run={run}>its proposal</ProposalLink>
+            .
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+  if (run.verdict === 'revise') {
+    return (
+      <div className="space-y-1">
+        <p className="text-sm whitespace-pre-line">{run.build_note || run.reason || '(no summary recorded)'}</p>
+        {run.build_note && run.reason ? <p className={`${AdminUI.muted} whitespace-pre-line`}>{run.reason}</p> : null}
+        {run.proposal_session_id ? (
+          <p className={AdminUI.muted}>
+            {'Pushed to '}
+            <ProposalLink run={run}>its proposal</ProposalLink>
+            {', which cleared its votes and re-ran its checks.'}
+          </p>
+        ) : null}
+      </div>
+    );
   }
   if (run.verdict === 'person') {
+    return <p className="text-sm">{run.reason || '(no reason given)'}</p>;
+  }
+  // A verdict, not a failure (#3144): the bot found nothing to build and says
+  // why. Without its own branch it fell through to the red failure line below.
+  if (run.verdict === 'empty') {
     return <p className="text-sm">{run.reason || '(no reason given)'}</p>;
   }
   if (run.budget_stop) {
@@ -188,6 +268,10 @@ function VerdictBody({ run }: { run: Run }) {
         </p>
         <p className={AdminUI.muted}>
           It goes back to the end of the queue once. A second stop lets the issue go, rather than retrying it forever.
+        </p>
+        <p className={AdminUI.muted}>
+          Its cost counts the model requests that finished before the stop. The one still running when it was
+          stopped never reports what it used, so the real cost is a little higher.
         </p>
       </div>
     );
@@ -208,6 +292,10 @@ function HomeroomBotSection() {
   const [capDraft, setCapDraft] = useState('');
   const [runSlug, setRunSlug] = useState('');
   const [runIssue, setRunIssue] = useState('');
+  // #3152: the live list being edited, or null while it matches what is
+  // saved. Null is what lets the 30-second poll refresh the rows without
+  // throwing away an edit in progress.
+  const [liveDraft, setLiveDraft] = useState<string[] | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -286,6 +374,24 @@ function HomeroomBotSection() {
     const data = await write('/api/admin/homeroom-bot/run', 'POST', { slug: runSlug, issueNumber: n },
       `#${n} on ${runSlug} is at the head of the queue${payload?.settings.mode === 'off' ? ' (the bot is off, so it waits)' : ''}.`);
     if (data) { setRunIssue(''); load(); }
+  };
+
+  const savedLive = payload?.settings.liveApps || [];
+  const liveRows = liveDraft ?? savedLive;
+  const liveChosen = [...new Set(liveRows.filter(Boolean))];
+  const liveDirty = liveChosen.join(',') !== savedLive.join(',');
+  const appName = (slug: string) => payload?.apps.find((a) => a.slug === slug)?.name || slug;
+  const editLive = (rows: string[]) => setLiveDraft(rows);
+
+  const saveLive = async () => {
+    if (!liveDirty) return;
+    const data = await write('/api/admin/homeroom-bot/settings', 'PUT', { liveApps: liveChosen }, liveChosen.length
+      ? `Saved. The bot now acts for real on ${liveChosen.map(appName).join(', ')}.`
+      : 'Saved. The bot is back to shadow on every app.');
+    if (data) {
+      setLiveDraft(null);
+      apply(data as Payload);
+    }
   };
 
   const togglePause = async (slug: string) => {
@@ -442,15 +548,96 @@ function HomeroomBotSection() {
                     setStatus({ text: 'Millions of tokens must be a whole number from 1 to 5000.', tone: 'err' });
                     return;
                   }
-                  saveSettings({ turnInputTokens: n }, `The bot now stops an issue after ${millions} million tokens.`);
+                  saveSettings({ turnInputTokens: n }, `The bot now warns when an issue reads more than ${millions} million tokens.`);
                 }}
               />
             </div>
             <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-turn-tokens-note">
-              Only binds on models that report what they have read while they are
-              still reading. The model the bot runs today reports once, at the end,
-              so this is a warning in the logs rather than a stop. The minute limit
-              above is what actually ends a runaway turn.
+              A warning, not a stop. The bot only learns what a turn read once the
+              turn is over, so a turn past this keeps its verdict and the overrun is
+              logged. The minute limit above is what actually ends a runaway turn.
+            </p>
+          </div>
+
+          <div>
+            <p className={AdminUI.label} id="admin-homeroom-bot-live-apps-label">Apps it acts on for real</p>
+            <div id="admin-homeroom-bot-live-apps" role="group" aria-labelledby="admin-homeroom-bot-live-apps-label" className="mt-1 space-y-2">
+              {liveRows.length ? liveRows.map((slug, i) => (
+                <div key={i} className="flex items-center gap-2" data-live-app-row={slug || 'new'}>
+                  <select
+                    id={`admin-homeroom-bot-live-app-${i}`}
+                    aria-label={`Live app ${i + 1}`}
+                    className={AdminUI.select}
+                    value={slug}
+                    disabled={!canWrite}
+                    onChange={(e) => editLive(liveRows.map((v, j) => (j === i ? e.target.value : v)))}
+                  >
+                    <option value="">Pick an app…</option>
+                    {slug && !payload?.apps.some((a) => a.slug === slug)
+                      ? <option value={slug}>{`${slug} (not running)`}</option>
+                      : null}
+                    {(payload?.apps || [])
+                      .filter((a) => a.slug === slug || !liveRows.includes(a.slug))
+                      .map((a) => <option key={a.slug} value={a.slug}>{a.name}</option>)}
+                  </select>
+                  {canWrite ? (
+                    <button
+                      type="button"
+                      className={AdminUI.btn.outlineSm}
+                      aria-label={`Remove ${slug ? appName(slug) : 'this row'}`}
+                      onClick={() => editLive(liveRows.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              )) : (
+                <p className={AdminUI.muted} id="admin-homeroom-bot-live-apps-none">None: it only records verdicts, on every app.</p>
+              )}
+            </div>
+            {canWrite ? (
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <button
+                  type="button"
+                  id="admin-homeroom-bot-live-apps-add"
+                  className={AdminUI.btn.outlineSm}
+                  onClick={() => editLive([...liveRows, ''])}
+                >
+                  Add app
+                </button>
+                <button
+                  type="button"
+                  id="admin-homeroom-bot-live-apps-save"
+                  className={AdminUI.btn.primarySm}
+                  disabled={!liveDirty || !!busy}
+                  onClick={saveLive}
+                >
+                  Save
+                </button>
+                {liveDraft !== null ? (
+                  <button
+                    type="button"
+                    id="admin-homeroom-bot-live-apps-reset"
+                    className={AdminUI.btn.ghost}
+                    onClick={() => setLiveDraft(null)}
+                  >
+                    Undo changes
+                  </button>
+                ) : null}
+                <span className={AdminUI.muted} id="admin-homeroom-bot-live-apps-state">
+                  {liveDirty
+                    ? 'Not saved yet.'
+                    : savedLive.length
+                      ? `Saved: acts for real on ${savedLive.map(appName).join(', ')}${settings?.mode === 'off' ? ', once the bot is turned on' : ''}.`
+                      : 'Saved: shadow on every app.'}
+                </span>
+              </div>
+            ) : null}
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-live-apps-note">
+              On these apps it posts on each issue it looks at, asks its questions
+              there, and builds the clear requests into proposals for the group to
+              vote on. Everywhere else it only records verdicts. The mode above has
+              to be on, and a staging copy never acts.
             </p>
           </div>
         </div>
@@ -465,7 +652,8 @@ function HomeroomBotSection() {
           {payload?.loop
             ? `Last pass ${when(payload.loop.at)}: ${payload.loop.processed} triaged${payload.loop.refreshed ? ', queue refreshed' : ''}${
               payload.loop.paused === 'budget' ? '; paused on the weekly cap'
-                : payload.loop.paused === 'infra' ? `; paused on a platform fault (${payload.loop.detail || 'see the logs'})`
+                : payload.loop.paused === 'infra' ? `; paused on a platform fault (${payload.loop.detail || 'see the logs'})${
+                  retryAt(payload.loop) ? `, trying again at ${retryAt(payload.loop)}` : ''}`
                   : payload.loop.paused === 'mode_off' ? '; stopped because the mode was switched off'
                     : payload.loop.busy ? '; another instance held the loop' : ''}.`
             : 'No pass has run since the platform started.'}
@@ -564,6 +752,8 @@ function HomeroomBotSection() {
               <option value="ready">Ready to build</option>
               <option value="empty">Nothing to build</option>
               <option value="person">Needs a person</option>
+              <option value="answer">Answered (follow-up)</option>
+              <option value="revise">Revised its proposal</option>
               <option value="failed">Failed</option>
               <option value="budget">Stopped on budget</option>
             </select>
@@ -623,6 +813,7 @@ function HomeroomBotSection() {
                           {run.budget_stop ? `Stopped: ${run.budget_stop}` : VERDICT_LABEL[run.verdict]}
                         </span>
                         {run.cap_suppressed ? <span className={`${AdminUI.badge.outline} ml-1`}>held</span> : null}
+                        {isFollowUp(run) ? <span className={`${AdminUI.badge.outline} ml-1`}>follow-up</span> : null}
                         <span className={`${AdminUI.muted} ml-2`}>{isOpen ? 'hide' : 'show'}</span>
                       </button>
                     </td>
@@ -659,6 +850,7 @@ function HomeroomBotSection() {
                           <div className={AdminUI.muted}>{ratingLabel}</div>
                           <VerdictBody run={run} />
                           <div className={`${AdminUI.muted} flex flex-wrap gap-x-4 gap-y-1`}>
+                            {run.mode === 'live' ? <span>live: acted on the issue</span> : null}
                             <span>determined: {run.determined == null ? '–' : run.determined ? 'yes' : 'no'}</span>
                             {run.missing_fact ? <span>missing: {run.missing_fact}</span> : null}
                             {run.cap_suppressed ? <span>{CAP_LABEL[run.cap_suppressed] || run.cap_suppressed}</span> : null}

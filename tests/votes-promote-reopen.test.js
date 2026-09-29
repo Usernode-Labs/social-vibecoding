@@ -69,10 +69,15 @@ function promotePool(session = sessionRow, { promotionMatches = true } = {}) {
         if (matches) session = { ...session, status: 'promoted' };
         return { rows: [], rowCount: matches ? 1 : 0 };
       }],
+    [/SET status = \$1, promoted_at = \$2,[\s\S]*reviewed_head_sha = \$4/,
+      (params) => {
+        session = { ...session, status: params[0] };
+        return { rows: [], rowCount: 1 };
+      }],
   ]);
 }
 
-function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
+function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineInFlight = false } = {}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
@@ -89,6 +94,7 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
     topicAttrs: require.resolve('../src/services/topic-attributes'),
     visuals: require.resolve('../src/services/visuals'),
     prImportSync: require.resolve('../src/services/pr-import-sync'),
+    pipeline: require.resolve('../src/services/handoff-pipeline'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
@@ -100,6 +106,8 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
   const octokitRequests = [];
   const pendingCalls = [];
   const rerunCalls = [];
+  const stagingBuilds = [];
+  const captures = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => pool });
@@ -107,23 +115,31 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
     isEnabled: () => true,
     getPR: async (owner, repo, pr) => {
       getPRCalls.push({ owner, repo, pr });
-      if (!getPRImpl) return { state: 'open', merged: false, head: { sha: HEAD } };
-      return getPRImpl(owner, repo, pr);
+      if (!getPRImpl) return { state: 'open', merged: false, draft: true,
+        node_id: 'PR_26', head: { sha: HEAD } };
+      return { draft: true, node_id: 'PR_26', ...(await getPRImpl(owner, repo, pr)) };
     },
     reopenPR: async (owner, repo, pr) => {
       reopenCalls.push({ owner, repo, pr });
       if (reopenImpl) return reopenImpl(owner, repo, pr);
       return {};
     },
-    // The ready-for-review PATCH goes through a bare installation client.
-    getInstallationOctokit: async () => ({
-      request: async (route, params) => {
-        octokitRequests.push({ route, params });
-        return { data: {} };
-      },
-    }),
+    markPrReadyForReview: async (owner, repo, pr, existing) => {
+      octokitRequests.push({ owner, repo, pr, existing });
+      if (markReadyImpl) return markReadyImpl(owner, repo, pr, existing);
+      return { ...existing, draft: false };
+    },
   });
-  stub(ids.staging, { rebuildProduction: async () => ({ ok: true }), teardownStaging: async () => {} });
+  stub(ids.staging, {
+    rebuildProduction: async () => ({ ok: true }),
+    teardownStaging: async () => {},
+    buildAndDeployStaging: async (_config, session, _app, sha) => {
+      stagingBuilds.push({ sessionId: session.id, sha });
+      return { containerId: 'c1', stagingUrl: 'https://stage.example', hostname: 'stage' };
+    },
+    verifyStagingEdge: async () => {},
+  });
+  stub(ids.pipeline, { hasInFlightHandoffPipeline: () => pipelineInFlight });
   stub(ids.docker, {});
   stub(ids.resolver, {
     checkAndResolveConflicts: async () => {},
@@ -155,6 +171,9 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
       return true;
     },
     notifyChecksPending() {},
+    captureForSession: async (_config, session, _app, sha, _result, opts) => {
+      captures.push({ sessionId: session.id, sha, opts });
+    },
   });
   stub(ids.prImportSync, {
     rerunChecksForNewHead: async (args) => { rerunCalls.push(args); },
@@ -170,15 +189,16 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
   };
   return {
     voteRoutes, getPRCalls, reopenCalls, systemMessages, octokitRequests,
-    pendingCalls, rerunCalls, restore,
+    pendingCalls, rerunCalls, stagingBuilds, captures, restore,
   };
 }
 
 async function withServer({
-  getPRImpl, reopenImpl, session, expectedHandoffHead, expectedHandoffStatus, promotionMatches,
+  getPRImpl, reopenImpl, markReadyImpl, session, expectedHandoffHead, expectedHandoffStatus, promotionMatches,
+  pipelineInFlight,
 } = {}, fn) {
   const pool = promotePool(session, { promotionMatches });
-  const ctx = loadVotesRouter({ getPRImpl, reopenImpl, pool });
+  const ctx = loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineInFlight });
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -223,7 +243,10 @@ test('paused promotion preserves ownership, headless, and terminal status exclus
       const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
       assert.equal(response.status, 404);
       assert.equal(ctx.getPRCalls.length, 0);
-      const lookup = ctx.pool.queries[0].sql;
+      // The promote route's own lookup, found by what it selects rather than
+      // by position: the community membership gate (services/communities.js)
+      // runs its read ahead of it on the same pool.
+      const lookup = ctx.pool.queries.find((q) => /SELECT cs\.\*/.test(q.sql)).sql;
       assert.match(lookup, /cs.user_id = \$2/);
       assert.match(lookup, /cs.is_headless = FALSE/);
     });
@@ -237,6 +260,39 @@ test('a lifecycle change after native preflight requires a fresh submission', as
     assert.equal(response.status, 409);
     assert.equal((await response.json()).error, 'session_state_changed');
     assert.equal(ctx.getPRCalls.length, 0);
+  });
+});
+
+// #3173 / #3043: a managed change can now be submitted with its preview
+// gone (the idle sweep reclaimed it) or while its own run is still checking
+// it. The first must get its preview back and its checks re-run on the
+// reviewed commit; the second must not start a second build racing the run
+// that is already producing exactly that verdict.
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+test('promote rebuilds a reclaimed preview and re-runs checks on the reviewed head', async () => {
+  await withServer({ session: { ...sessionRow, source: 'cli_handoff', status: 'paused',
+    staging_url: null, check_state: 'passing' },
+  expectedHandoffHead: HEAD, expectedHandoffStatus: 'paused' }, async (ctx) => {
+    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(response.status, 200);
+    await settle();
+    assert.deepEqual(ctx.stagingBuilds, [{ sessionId: 7, sha: HEAD }]);
+    assert.equal(ctx.captures.length, 1);
+    assert.equal(ctx.captures[0].sha, HEAD);
+    assert.equal(ctx.captures[0].opts.force, true, 'a fresh verdict, not the one the old preview earned');
+  });
+});
+
+test('promote leaves a running check of the reviewed head to finish on its own', async () => {
+  await withServer({ session: { ...sessionRow, source: 'cli_handoff', status: 'paused',
+    staging_url: null, check_state: 'pending' },
+  expectedHandoffHead: HEAD, expectedHandoffStatus: 'paused', pipelineInFlight: true }, async (ctx) => {
+    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(response.status, 200);
+    await settle();
+    assert.deepEqual(ctx.stagingBuilds, [], 'no second build');
+    assert.equal(ctx.captures.length, 0);
   });
 });
 
@@ -262,7 +318,22 @@ test('promote: an open PR captures its head and promotes (no reopen call)', asyn
     const update = ctx.pool.queries.find((q) => /reviewed_head_sha/.test(q.sql));
     assert.equal(update.params[1], HEAD, 'live PR head persisted as the reviewed revision');
     assert.equal(ctx.octokitRequests.length, 1, 'a native draft is marked ready at promotion');
-    assert.equal(ctx.octokitRequests[0].params.draft, false);
+    assert.equal(ctx.octokitRequests[0].pr, 26);
+  });
+});
+
+test('promote: GitHub refusal to mark a draft ready leaves the session Underway', async () => {
+  await withServer({
+    getPRImpl: async () => ({ state: 'open', merged: false, draft: true,
+      node_id: 'PR_26', head: { sha: HEAD } }),
+    markReadyImpl: async () => { throw new Error('GraphQL unavailable'); },
+  }, async (ctx) => {
+    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(response.status, 503);
+    assert.match((await response.json()).error, /ready for review/);
+    assert.equal(ctx.pool.issued(/SET status = 'promoted'/), true);
+    assert.equal(ctx.pool.issued(/SET status = \$1, promoted_at = \$2/), true,
+      'GitHub failure restores the pre-review session');
   });
 });
 
@@ -293,6 +364,7 @@ test('promote: a concurrent pause/archive cannot be overwritten by the final pro
     const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
     assert.equal(r.status, 409);
     assert.deepEqual(await r.json(), { error: 'session_state_changed' });
+    assert.equal(ctx.octokitRequests.length, 0, 'no GitHub transition after a lost status CAS');
     assert.equal(ctx.systemMessages.length, 0,
       'a promotion that lost the active-state CAS emits no proposal announcement');
   });

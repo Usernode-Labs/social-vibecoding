@@ -413,10 +413,14 @@ export interface DevWorkshopView {
   canPost?: boolean;
   /** Who is reading, so a dismissal is per account on a shared device. */
   viewerId?: number | null;
-  /** The no-items note, with its load-failure prefix. */
+  /**
+   * The no-items note, with its load-failure prefix. About the whole board,
+   * so `filtered` is false since #2915: a search narrows All items alone,
+   * which says "Nothing here matches" from `meta.filtered` itself.
+   */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
-  tab: 'status' | 'needs' | 'all' | null;
+  tab: 'status' | 'workshop' | 'needs' | 'all' | null;
   /**
    * The models the ask box may talk to — the dev session's own list
    * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and
@@ -550,9 +554,18 @@ export interface DevWorkshopView {
       lastWeek: string;
       thisWeek: string;
       open: string;
-      /** Weeks before last week, newest first: one Monday-anchored window each. */
-      older: { start: number; line: string }[];
-      /** Monday of the app's first week of activity, when the server says. */
+      /**
+       * Weeks before last week, newest first: one Monday-anchored window
+       * each, derived by the server from what landed in it (#3293), back to
+       * the project's first week. `closed` is how many changes landed, over
+       * the whole history; null where the server sent no count.
+       */
+      older: { start: number; line: string; closed: number | null }[];
+      /**
+       * Monday of the week the project began, sent only beside a complete
+       * `older`, so a walk that reaches the end with it set has reached the
+       * project's start.
+       */
       firstWeek: number | null;
     } | null;
     /**
@@ -576,8 +589,9 @@ export interface DevWorkshopView {
       endMs: number;
       /**
        * What the server can stand behind for this window. Null where it has
-       * written nothing — an older window, or a board with no server counts
-       * — and the pane then draws the line alone rather than a zero.
+       * written nothing — an older window from a cache that predates #3293,
+       * or a board with no server counts — and the pane then draws the line
+       * alone rather than a zero.
        * `partial` marks a page-counted floor, as the tiles' own does.
        */
       counts: { closed: number; partial: boolean } | null;
@@ -588,7 +602,7 @@ export interface DevWorkshopView {
      * written, and `summary` then supplies the fallback.
      */
     openLine: string;
-    /** Monday of the app's first week of activity, when the server says. */
+    /** Monday of the week the project began, when the server says (`cards.firstWeek`). */
     firstWeek: number | null;
     /**
      * The same answer flattened to one paragraph. It is what a row last
@@ -599,12 +613,15 @@ export interface DevWorkshopView {
      */
     summary: string | null;
   } | null;
-  /** One unclaimed open issue to suggest, as a row. Null while filtering. */
+  /**
+   * One unclaimed open issue to suggest, as a row. Null when there is none;
+   * All items' search and filters do not reach it (#2915).
+   */
   nextUp: ListRow | null;
   /**
    * #1934: the next unclaimed issues after `nextUp`, capped at
-   * WORKSHOP_LANE_MAX — shown under it behind "Show N more". Empty while
-   * filtering or when there is nothing past the first.
+   * WORKSHOP_LANE_MAX — shown under it behind "Show N more". Empty when
+   * there is nothing past the first.
    */
   nextMore: ListRow[];
   /** The app's general discussion, as a row — see AppView._discussionCardModel. */
@@ -633,7 +650,11 @@ export interface DevWorkshopView {
     coverage: { total: number; placed: number; unplaced: number; pending: number } | null;
     /** Cards on screen the server has themes for but has not placed yet. */
     placing: number;
-    /** The shared filter bar is narrowing what the themes hold. */
+    /**
+     * The shared filter bar is narrowing what the themes hold. It narrows
+     * All items alone (#2915): nothing on Current status or Needs you reads
+     * it, and the tab strip draws its dot on All items from it.
+     */
     filtered: boolean;
   };
   /**

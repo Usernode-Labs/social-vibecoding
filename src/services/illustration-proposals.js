@@ -138,12 +138,10 @@ async function createProposal(pool, { app, user, proposed, images = {} }) {
     client.release();
   }
 
-  // Announce it the way the other governance kinds are announced: once in
-  // group chat, once in the proposal's own thread so the discussion opens
-  // with its origin in context. Best-effort, outside the transaction.
+  // Announce it the way the other governance kinds are announced: in the
+  // proposal's own thread, so the discussion opens with its origin in
+  // context. Best-effort, outside the transaction.
   const createdMsg = `${user.username} proposed ${remove ? 'removing' : 'changing'} the featured illustration`;
-  await sendSystemMessage(pool, app.id, createdMsg, 'system')
-    .catch((err) => log.warn('illustrations', 'Proposal chat message failed', { err: err.message }));
   await sendSystemMessage(pool, app.id, createdMsg, 'system',
     null, { type: 'governance', ref: issue.id }).catch(() => {});
   pushIssueUpdate({ action: 'created', appSlug: app.slug, appId: app.id, issueId: issue.id, kind: KIND });

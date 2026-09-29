@@ -42,6 +42,12 @@ platform:
       cpu: "4"
       memory: 3Gi
       ephemeral-storage: 4Gi
+  # Node's heap ceiling for the platform process. Without it Node stops at
+  # about 1.5 GB whatever limits.memory says, and on 2026-09-25 the platform
+  # crash-looped on "JavaScript heap out of memory" with half its container
+  # unused. Keep it below limits.memory: buffers, code and stacks live outside
+  # the heap. An empty value leaves Node's default.
+  nodeOptions: "--max-old-space-size=2304"
   tmpSizeLimit: 2Gi
 
 postgresql:

@@ -40,8 +40,9 @@ import { createStore } from '../../lib/plain-store.js';
  * block in app.js's `restoreFromHash`, which also applies it. So "go to the
  * board" is not a fixed address, and the two places that answer it have to
  * agree: `Improve._routeHref` (what a session captures as its origin) and
- * `appRouteUpHref` in ../header/platform-header.tsx (where the back arrow
- * points from a topic or the general chat). One expression, imported by both.
+ * `topicBackHref` below (where a topic's back control points: the header's
+ * arrow until #2916, the in-pane "‹ Workshop" chip since). One expression,
+ * used by both.
  *
  * Anything that is not 'kanban' is the Workshop, matching
  * `AppView._getViewMode()`'s own terminal fallback.
@@ -52,6 +53,53 @@ import { createStore } from '../../lib/plain-store.js';
  */
 export function boardHref(slug, boardView) {
   return `#app/${slug}/${boardView === 'kanban' ? 'board' : 'workshop'}`;
+}
+
+/**
+ * Where a Workshop TOPIC's back control goes, or null off a topic route.
+ *
+ * A topic is an issue, a proposal, a governance vote or a shared session
+ * opened full-screen from the Workshop (`#app/<slug>/dev/{issues|proposals|
+ * governance|shared}/<id>`, subTab 'topic'). It is still the Workshop's
+ * content, so its level up is the board it was opened from, in the layout
+ * that was on screen: `boardHref`.
+ *
+ * #2916 MOVED THAT CONTROL INTO THE PANE. It was the header's chevron; it is
+ * the "‹ Workshop" chip at the top of the topic now
+ * (../dev-board/topic/topic-back.tsx), and the header draws no back control
+ * on these routes (../header/platform-header.tsx). Both read THIS function,
+ * so the chip showing and the bar's arrow hiding are one fact rather than two
+ * call sites that have to agree: a topic page has exactly one back control.
+ *
+ * …UNLESS IT WAS OPENED FROM MESSAGES (#3103). A proposal or issue card
+ * shared into a conversation opens the same topic route, and its way back is
+ * the conversation it was tapped in, not a Workshop the reader never saw.
+ * The card records that as it navigates (`Improve.enterTopicFrom`, the
+ * sibling of `enterSessionFrom`), `Improve.setTab` captures it as
+ * `topicOrigin`, and it wins over the board here.
+ *
+ * Dev SESSIONS are not topics (subTab 'sessions'). A change is an agent
+ * conversation, a thread of Messages, and keeps the header's arrow (#2770).
+ *
+ * @param {{ slug: string|null, tab: string|null, subTab: string|null, boardView: string, topicOrigin?: string|null }} route
+ * @returns {string|null}
+ */
+export function topicBackHref({ slug, tab, subTab, boardView, topicOrigin = null }) {
+  if (!(slug && tab === 'dev' && subTab === 'topic')) return null;
+  return topicOrigin || boardHref(slug, boardView);
+}
+
+/**
+ * The name the topic's back chip carries for `href`: the screen it returns
+ * to. A card opened from a Messages conversation (#3103) goes back to that
+ * conversation, and a chip reading "Workshop" there would promise the wrong
+ * screen.
+ *
+ * @param {string|null} href
+ * @returns {'Messages'|'Workshop'}
+ */
+export function topicBackLabel(href) {
+  return typeof href === 'string' && href.startsWith('#messages') ? 'Messages' : 'Workshop';
 }
 
 /**
@@ -88,7 +136,7 @@ export function boardHref(slug, boardView) {
  * @property {boolean} awaitingInput
  *   The session is waiting on the user (#1959): answer chips still up, or a
  *   finished spec with open Questions. Never true while busy; never true
- *   for a task. The pill reads "Ready for your input" from it.
+ *   for a task. The pill reads "Needs you" from it.
  * @property {number} sortAt      Recency, ms since epoch. Mixed-kind ordering.
  */
 
@@ -98,6 +146,7 @@ export function boardHref(slug, boardView) {
  * @property {string|null} slug
  * @property {string} name
  * @property {boolean} selfHosted
+ * @property {boolean} restricted
  * @property {string|null} repoUrl
  * @property {string|null} iconUrl
  * @property {string|null} iconEmoji
@@ -108,6 +157,7 @@ export function boardHref(slug, boardView) {
  * @property {boolean} canShare
  * @property {boolean} canReport
  * @property {string|null} sessionOrigin
+ * @property {string|null} topicOrigin
  * @property {'app'|'dev'|'other'} tab
  * @property {ImproveSession[]} sessions
  * @property {ImproveSession[]} otherSessions
@@ -179,6 +229,15 @@ const INITIAL = {
   name: '',
   /** True when the target is the platform's own self-hosted row. */
   selfHosted: false,
+  /**
+   * The target is Homeroom, for a viewer who is NOT served its self-hosted
+   * row (SELF_APP_PUBLIC_VOTING off, not an admin). The platform they are
+   * standing in is still the menu's subject — feedback on it and About it
+   * work for everyone — but its workshop and discussion answer 404, so the
+   * rows that go there are hidden rather than left leading nowhere.
+   * Published by ../app-context/platform-target.js through Home.
+   */
+  restricted: false,
   /** `appData.repo_url`, or null — gates the "View on GitHub" row. */
   repoUrl: null,
   /** The open app's own artwork, for the header cluster's 28px tile. Both
@@ -290,6 +349,15 @@ const INITIAL = {
    * the session's own card lives.
    */
   sessionOrigin: null,
+  /**
+   * WHERE THE OPEN TOPIC WAS ENTERED FROM, as an href, when that was not its
+   * board — or null (#3103). Only a door that knows says so: a shared card
+   * in a Messages conversation records the conversation's address before it
+   * navigates (`Improve.enterTopicFrom`). `topicBackHref` prefers it to the
+   * board. Kept across re-publishes of the topic route, cleared by any other
+   * route and by leaving the app view (App._showOnlyScreen).
+   */
+  topicOrigin: null,
   /**
    * The open session's staging PREVIEW, or null when there is none.
    *

@@ -569,8 +569,10 @@ test('the ⋯ offers exactly the actions the list computes for the same session'
   const { DevChat, sandbox, view } = makeDevChat();
   sandbox.App.user = OWNER;
   const cases = [
-    [{ ...OWNED, status: 'active' }, ['pause', 'archive']],
-    [{ ...OWNED, status: 'paused' }, ['resume', 'archive']],
+    // #2779 follow-up: no Pause and no Resume. The platform pauses an idle
+    // session by itself and resumes it when it is opened or messaged.
+    [{ ...OWNED, status: 'active' }, ['archive']],
+    [{ ...OWNED, status: 'paused' }, ['archive']],
     [{ ...OWNED, status: 'promoted', warm: true }, ['free', 'archive']],
     [{ ...OWNED, status: 'promoted', warm: false }, ['archive']],
     [{ ...OWNED, status: 'archived' }, ['unarchive']],
@@ -621,7 +623,7 @@ test('“Free worker” survives the open session having no `warm` of its own', 
   // fresher of the two, because openSession flips paused → active on
   // auto-resume before any list reload.
   DevChat.sessions = [{ ...OWNED, status: 'paused', warm: true }];
-  assert.deepEqual(view({ ...OWNED, status: 'active' }).actions.map(a => a.key), ['pause', 'archive']);
+  assert.deepEqual(view({ ...OWNED, status: 'active' }).actions.map(a => a.key), ['archive']);
 });
 
 test('mid-turn, Archive stays gated exactly as the list gates it', () => {
@@ -634,7 +636,7 @@ test('mid-turn, Archive stays gated exactly as the list gates it', () => {
   const v = view({ ...OWNED, status: 'active' });
   assert.equal(v.busy, true, 'the strip is painted busy');
   assert.equal(v.venue.disabled, true, 'and the venue is locked, as before');
-  assert.deepEqual(v.actions.map(a => a.key), ['pause', 'archive']);
+  assert.deepEqual(v.actions.map(a => a.key), ['archive']);
   assert.deepEqual(v.actions, listActions(DevChat, { ...OWNED, status: 'active' }));
 });
 
@@ -755,7 +757,7 @@ test('an action’s outcome is folded back into the strip', async () => {
     return { ok: true, json: async () => ({}) };
   };
   DevChat.currentSession = { ...OWNED, status: 'active' };
-  assert.deepEqual(view(DevChat.currentSession).actions.map(a => a.key), ['pause', 'archive']);
+  assert.deepEqual(view(DevChat.currentSession).actions.map(a => a.key), ['archive']);
   published.length = 0;
 
   await DevChat._sessionListArchive(SESSION.id, 'Widget language');

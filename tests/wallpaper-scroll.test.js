@@ -71,12 +71,12 @@ test('the wallpaper follows document scrolling on mobile web', () => {
     'home-screen': { scrollTop: 0 },
   });
   doc.documentElement.dataset = { browserScroller: 'home-screen' };
-  doc.scrollingElement = { scrollTop: 172 };
+  doc.scrollingElement = { scrollTop: 92 };
   apply();
-  assert.equal(doc.props['--home-star-y'], '-120px');
-  doc.scrollingElement.scrollTop = 252;
+  assert.equal(doc.props['--home-star-y'], '-40px');
+  doc.scrollingElement.scrollTop = 112;
   doc.listeners.scroll.fn({ target: doc });
-  assert.equal(doc.props['--home-star-y'], '-200px');
+  assert.equal(doc.props['--home-star-y'], '-60px');
 });
 
 test('scrolling the launcher moves the star up by the distance past rest', () => {
@@ -84,9 +84,9 @@ test('scrolling the launcher moves the star up by the distance past rest', () =>
     'home-search-bar': { offsetHeight: 52 },
     'home-screen': { scrollTop: 52 },
   });
-  doc.els['home-screen'].scrollTop = 172;
+  doc.els['home-screen'].scrollTop = 112;
   doc.fire('scroll', 'home-screen');
-  assert.equal(doc.props['--home-star-y'], '-120px', 'written inside the scroll event, no frame later');
+  assert.equal(doc.props['--home-star-y'], '-60px', 'written inside the scroll event, no frame later');
   // Pulling the search bar into view moves the page — and the star — down.
   doc.els['home-screen'].scrollTop = 0;
   doc.fire('scroll', 'home-screen');
@@ -119,16 +119,45 @@ test('the peer screens scroll from zero, and the landing overlay wins while it s
 
 test('a screen change re-reads the offset from the store, a frame later', () => {
   const { doc, win } = boot({
-    'home-screen': { scrollTop: 200 },
+    'home-screen': { scrollTop: 60 },
     'browse-screen': { hidden: true, scrollTop: 0 },
   });
-  assert.equal(doc.props['--home-star-y'], '-200px');
+  assert.equal(doc.props['--home-star-y'], '-60px');
   doc.els['home-screen'].classList.add('hidden');
   doc.els['browse-screen'].classList.remove('hidden');
   for (const fn of globalThis.__usernodeVisibility.listeners) fn();
-  assert.equal(doc.props['--home-star-y'], '-200px', 'deferred: the DOM may not have settled');
+  assert.equal(doc.props['--home-star-y'], '-60px', 'deferred: the DOM may not have settled');
   win.flush();
   assert.equal(doc.props['--home-star-y'], '0px');
+});
+
+test('once the star is out of sight the offset stops moving, so scrolling writes nothing', () => {
+  // Every write restyles the whole document (the shorthand that reads the
+  // property is inherited), so past the point where the star has left the
+  // top edge a deeper scroll must not write at all.
+  const { doc } = boot({ 'settings-screen': { scrollTop: 0 } });
+  let writes = 0;
+  const set = doc.documentElement.style.setProperty;
+  doc.documentElement.style.setProperty = (k, v) => { writes += 1; set(k, v); };
+  for (const top of [40, 78, 79, 200, 900, 4000]) {
+    doc.els['settings-screen'].scrollTop = top;
+    doc.fire('scroll', 'settings-screen');
+  }
+  assert.equal(doc.props['--home-star-y'], `-${mod.STAR_HEIGHT_PX}px`);
+  assert.equal(writes, 2, 'one write at 40, one at the clamp; nothing past it');
+  doc.els['settings-screen'].scrollTop = 10;
+  doc.fire('scroll', 'settings-screen');
+  assert.equal(doc.props['--home-star-y'], '-10px', 'coming back into view writes again');
+});
+
+test('the clamp is the star layer\'s own height in app.css', () => {
+  const css = fs.readFileSync(path.join(ROOT, 'public', 'css', 'app.css'), 'utf8');
+  const layers = css.match(/var\(--home-star\) right 32px top var\(--home-star-y, 0px\) \/ \d+px \d+px/g) || [];
+  assert.equal(layers.length, 4, 'phone + desktop, light + dark');
+  for (const layer of layers) {
+    assert.equal(Number(layer.match(/(\d+)px$/)[1]), mod.STAR_HEIGHT_PX,
+      'a taller star would be cut off above the clamp; change STAR_HEIGHT_PX with it');
+  }
 });
 
 test('inside an app (no wallpaper scroller showing) the star sits at rest', () => {

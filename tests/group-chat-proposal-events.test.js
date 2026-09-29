@@ -442,7 +442,7 @@ test('refreshVoteControls patches the phase with the tint on hosts, and the phas
   const html = renderComponent(EVENT, 'EventRow', { msg: submitted('open') });
   assert.match(html, /data-session-id="5" data-pr-number="12"/);
 
-  const render = stripped.match(/\n {2}render\(\) \{([\s\S]*?)\n {2}\},/);
+  const render = stripped.match(/\n {2}render\((?:opts)?\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(render, 'render() found');
   assert.match(render[1], /publishTranscript\(\s*GroupChat\.messages\.map\(GroupChat\._messageView\),\s*'main',/);
   assert.match(render[1], /exhausted: !GroupChat\.hasMore/);
@@ -462,7 +462,7 @@ test('refreshVoteControls patches the phase with the tint on hosts, and the phas
 
 // ── The fixture and the declared checks ───────────────────────────────
 
-test('the quiet fixture app holds two settled submissions with their merges, two notices the chat hides, and one open vote; the checks read exactly them', () => {
+test('the quiet fixture app has a channel nobody has spoken in and one open vote whose line is in its own thread; the checks read exactly them', () => {
   const migrate = read('src/db/migrate.js');
   assert.match(migrate, /await seedStagingQuietDiscussion\(pool\);/);
   const seed = migrate.match(/async function seedStagingQuietDiscussion\(pool\) \{([\s\S]*?)\n\}\n/);
@@ -472,48 +472,46 @@ test('the quiet fixture app holds two settled submissions with their merges, two
   assert.match(seed[1], /'staging-demo-quiet-builder'/);
   assert.match(seed[1], /ON CONFLICT DO NOTHING/);
   const gc = loadGroupChat();
-  const rows = [...seed[1].matchAll(/\((9001\d\d), 900110, NULL,\s*'((?:[^']|'')*)',\s*'(vote|system|message)', '([^']*)'/g)]
-    .map(([, id, content, type, meta]) => ({ id, content: content.replace(/''/g, "'"), type, meta }));
-  assert.deepEqual(rows.map((r) => r.id), ['900111', '900112', '900113', '900114', '900115', '900116', '900117']);
-  const events = rows.map((r) => gc._proposalEvent({ content: r.content, metadata: JSON.parse(r.meta) }, r.type));
-  assert.deepEqual(events.map((e) => (e ? e.type : null)),
-    ['submitted', 'merged', 'submitted', null, 'merged', null, 'submitted']);
-  assert.equal(events[6].sessionId, '900110', 'the open one carries the tag the live path writes');
-  assert.equal(events[0].sessionId, '', 'the settled ones predate it');
-  assert.equal(events[4].votes, '1/1');
-  assert.ok(rows.every((r) => r.type !== 'message'), 'no row from a person');
+  // A channel carries no activity (ws.sendSystemMessage): the one line the
+  // fixture writes is the open proposal's, in that proposal's thread, under
+  // an id none of the old channel lines had.
+  const rows = [...seed[1].matchAll(/\((9001\d\d), 900110, NULL,\s*'((?:[^']|'')*)',\s*'(vote|system|message)', '([^']*)', '(session)', (\d+)/g)]
+    .map(([, id, content, type, meta, threadType, ref]) => ({ id, content: content.replace(/''/g, "'"), type, meta, threadType, ref }));
+  assert.deepEqual(rows.map((r) => [r.id, r.threadType, r.ref]), [['900118', 'session', '900110']]);
+  assert.doesNotMatch(seed[1], /\(90011[1-7], 900110, NULL/, 'none of the channel lines it used to seed');
+  const event = gc._threadEvent({ content: rows[0].content, metadata: JSON.parse(rows[0].meta) }, rows[0].type);
+  assert.equal(event.type, 'submitted');
+  assert.equal(event.actor, 'staging-demo-quiet-builder');
+  assert.equal(event.here, true, 'on its own page, the row is no door');
   assert.match(seed[1], /INSERT INTO chat_sessions[\s\S]*?VALUES \(900110, 900110, 900110, [^)]*'promoted'/);
 
   const dapp = JSON.parse(read('dapp.json'));
-  const checks = dapp.tests.filter((t) => /staging-demo-quiet\/dev\/chat/.test(t.path));
+  const checks = dapp.tests.filter((t) => /staging-demo-quiet/.test(t.path));
   assert.equal(checks.length, 4);
   assert.ok(!dapp.tests.some((t) => /activity-open|gc-activity/.test(`${t.path} ${t.expectSelector}`)), 'no digest anywhere in the manifest');
   const visual = checks.find((t) => t.visual);
   assert.ok(visual && visual.id === 'group-chat.proposal-event');
+  assert.equal(visual.path, '/?demo=1#app/staging-demo-quiet/dev/proposals/900110');
   assert.ok(visual.impact.includes('frontend/src/features/group-chat/**'));
   assert.ok(visual.impact.includes('src/db/migrate.js'), 'the fixture is part of what the shot shows');
   // One selector asserting the whole row, not an OR of two halves. The
   // header line is the row primitive's markup (chat.tsx `ChatMessageRow`):
   // the name and the stamp each sit in their OWN wrapper span, so the sender
-  // and `.gc-msg-time` are cousins, never siblings — a `~` between them
-  // could not match anything, and did not. The box is asserted through
-  // `:has()` on the row, and its href by SUBSTRING: the check runner opens
-  // every page as `…/dev/chat?token=<jwt>` (capture/capture.js), and
-  // App._appUrl carries the page's query onto every link it serialises, so on
-  // staging the door reads `/dev/proposals/900110?token=…` and `href$=` fails
-  // where `href*=` holds.
-  assert.match(visual.expectSelector, /^#gc-messages > \.gc-event\[data-event="submitted"\]\[data-open\]\[data-msg-id="900117"\]:has\(a\.gc-event-box\[href\*="\/dev\/proposals\/900110"\] > \.dev-card-icon \+ \.gc-event-text\) span:has\(> \[data-event-sender\]\) \+ span > \.gc-msg-time\[title\]$/, 'the row: open, its box a door with a glyph and a line, the sender then the stamp on the header line');
-  assert.doesNotMatch(visual.expectSelector, /href\$=/, 'never the suffix match: the runner\'s ?token= rides on every link');
+  // and `.gc-msg-time` are cousins, never siblings. On its own page the box
+  // is a div, not a door: the proposal is the page.
+  assert.match(visual.expectSelector, /^\[data-change-discussion\] \.gc-event\[data-event="submitted"\]\[data-here\]\[data-msg-id="900118"\]:has\(div\.gc-event-box > \.dev-card-icon \+ \.gc-event-text\) span:has\(> \[data-event-sender\]\) \+ span > \.gc-msg-time\[title\]$/);
   assert.ok(visual.expectSelector.length <= 256, 'app-manifest.js truncates a longer selector, silently breaking it');
-  assert.equal(visual.expectText, 'Proposed PR #900110 for a vote');
+  assert.equal(visual.expectText, 'Proposed this change for a vote');
   const sender = checks.find((t) => t.expectText === 'staging-demo-quiet-builder');
-  assert.ok(sender && /\[data-event-sender\]/.test(sender.expectSelector));
-  const merge = checks.find((t) => /data-event="merged"/.test(t.expectSelector));
-  assert.ok(merge && /:not\(\[data-open\]\) div\.gc-event-box > \.dev-card-icon \+ \.gc-event-text/.test(merge.expectSelector), 'a merge: no door until its proposal is known, never open');
-  assert.equal(merge.expectText, 'went live with 1/1 votes');
-  const quiet = checks.find((t) => /gc-quiet\[data-quiet-chat\]/.test(t.expectSelector));
-  assert.ok(quiet && quiet.expectText === 'Nobody has said anything here yet');
-  assert.match(quiet.expectSelector, /\.gc-event\[data-msg-id="900117"\] ~ \.gc-quiet/, 'after the open proposal');
+  assert.ok(sender && /\[data-msg-id="900118"\] \[data-event-sender\]/.test(sender.expectSelector));
+  // The channel, in the project and in Messages: the quiet card and nothing
+  // else — no event row and no message row beside it.
+  const quiet = checks.filter((t) => /gc-quiet\[data-quiet-chat\]/.test(t.expectSelector));
+  assert.deepEqual(quiet.map((t) => t.path), ['/app/staging-demo-quiet/dev/chat', '/#messages/app/staging-demo-quiet']);
+  for (const t of quiet) {
+    assert.equal(t.expectText, 'Nobody has said anything here yet');
+    assert.match(t.expectSelector, /#gc-messages:not\(:has\(\.gc-event, \.gc-msg\)\) > \.gc-quiet\[data-quiet-chat\]:only-child$/);
+  }
 });
 
 test('every class in the components is a complete literal, so Tailwind compiles it', () => {

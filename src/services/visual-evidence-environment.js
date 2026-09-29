@@ -6,6 +6,7 @@
 // public hostname and the app is not told which side it is rendering.
 
 const fs = require('fs/promises');
+const crypto = require('crypto');
 const os = require('os');
 const path = require('path');
 const applicationRuntime = require('./application-runtime');
@@ -17,6 +18,7 @@ const github = require('./github');
 const log = require('./logger');
 const pendingSecrets = require('./pending-secrets');
 const stagingEnv = require('./staging-env');
+const evidenceFixtures = require('./visual-evidence-fixtures');
 const { getPool } = require('../db/pool');
 
 const IMAGE_RECIPE = 'v1';
@@ -70,6 +72,82 @@ function dockerImageName(app, sha) {
   const appId = Number(app?.id);
   if (!Number.isInteger(appId) || appId <= 0) throw new VisualEvidenceEnvironmentError('invalid_evidence_app', 'Evidence app id is invalid.');
   return `usernode-evidence-${appId}:${exactSha(sha).slice(0, 16)}-${IMAGE_RECIPE}`;
+}
+
+function evidenceCapacityEnv(config, app) {
+  return app?.slug === config?.selfAppSlug ? { MAX_APPS: '0' } : {};
+}
+
+function hostedFixtureApp(runId) {
+  return {
+    id: evidenceFixtures.HOSTED_APP_ID,
+    slug: evidenceFixtures.hostedAppSlug(runId),
+    name: 'Homeroom evidence app',
+  };
+}
+
+async function hostedFixtureImageRef(config) {
+  if (applicationRuntime.mode(config) === 'kubernetes') {
+    const imageRef = config?.kubernetes?.captureImage;
+    if (!imageRef?.includes('@sha256:')) {
+      throw new VisualEvidenceEnvironmentError(
+        'missing_evidence_fixture_image',
+        'The hosted-app evidence fixture requires the immutable capture image.'
+      );
+    }
+    return imageRef;
+  }
+  const visuals = require('./visuals');
+  await visuals.ensureCaptureImage();
+  return visuals.CAPTURE_IMAGE;
+}
+
+async function ensureHostedFixtureRuntime(config, pair, { onProgress = null } = {}) {
+  const app = hostedFixtureApp(pair.runId);
+  const ref = applicationRuntime.productionRef(config, app);
+  pair.hostedFixtureRef = ref;
+  if (pair.hostedFixtureDeployment
+      && await applicationRuntime.probeHealth(config, ref, { timeoutMs: 3_000 })) {
+    return pair.hostedFixtureDeployment;
+  }
+  if (pair.hostedFixtureDeployment) {
+    await applicationRuntime.remove(config, ref).catch(() => {});
+    pair.hostedFixtureDeployment = null;
+  }
+  onProgress?.({ stage: 'deploy_hosted_app_fixture' });
+  const imageRef = await hostedFixtureImageRef(config);
+  const imageDigest = await immutableImageDigest(config, imageRef);
+  if (pair.hostedFixtureImageDigest && pair.hostedFixtureImageDigest !== imageDigest) {
+    throw new VisualEvidenceEnvironmentError(
+      'evidence_fixture_mismatch',
+      'The hosted-app evidence fixture image changed during the run.'
+    );
+  }
+  pair.hostedFixtureImageDigest = imageDigest;
+  try {
+    pair.hostedFixtureDeployment = await applicationRuntime.deploy(config, {
+      app,
+      environment: 'production',
+      sessionId: pair.sessionId,
+      imageRef,
+      dockerName: ref.runtimeName,
+      runtimeName: ref.runtimeName,
+      internalOnly: false,
+      command: ['node', '/app/evidence-hosted-app-fixture.js'],
+      env: { NODE_ENV: 'production', PORT: '3000' },
+      port: 3000,
+      memory: '256m',
+      cpus: '0.5',
+      labels: {
+        [EVIDENCE_LABEL]: pair.runId,
+        [EVIDENCE_SIDE_LABEL]: 'hosted-app',
+      },
+    });
+    return pair.hostedFixtureDeployment;
+  } catch (error) {
+    await applicationRuntime.remove(config, ref).catch(() => {});
+    throw error;
+  }
 }
 
 async function git(args, options = {}) {
@@ -222,6 +300,12 @@ async function preparePair(config, { pool = getPool(config), run, session, app, 
       rootDir,
       preparedSource: source,
       fixtureFingerprint: source.fingerprint,
+      fixtureProfileSet: false,
+      fixtureProfile: null,
+      availableFixtures: [],
+      hostedFixtureRef: null,
+      hostedFixtureDeployment: null,
+      hostedFixtureImageDigest: null,
       sides: {
         base: {
           sha: baseSha, checkout: baseCheckout.dir, env: baseEnv,
@@ -268,18 +352,32 @@ async function stopPair(config, pair, { strict = false } = {}) {
   return { stopped: errors.length === 0, errors };
 }
 
-async function resetPair(config, pair) {
+async function resetPair(config, pair, { onProgress = null } = {}) {
   if (!pair?.preparedSource || !pair?.sides) throw new VisualEvidenceEnvironmentError('invalid_evidence_pair', 'Prepared evidence pair is required.');
   await stopPair(config, pair, { strict: true });
   try {
-    const clones = await allSettledValues(['base', 'head'].map(async (side) => {
+    // Two real evidence resets timed out while the clone passes ran together.
+    // The ownership/redaction passes scan this app's large schema; serialize
+    // them to reduce contention against the same immutable source.
+    const clones = [];
+    for (const side of ['base', 'head']) {
+      onProgress?.({ stage: `clone_${side}` });
       const spec = pair.sides[side];
-      const cloned = await dbManager.cloneFromPreparedSource(pair.preparedSource, spec.dbName);
-      return [side, cloned];
-    }));
+      const cloned = await dbManager.cloneFromPreparedSource(pair.preparedSource, spec.dbName, {
+        onProgress: (phase) => onProgress?.({ stage: `clone_${side}_${phase}` }),
+      });
+      clones.push([side, cloned]);
+    }
     const cloneBySide = Object.fromEntries(clones);
+    onProgress?.({ stage: 'deploy_pair' });
     const deployments = await allSettledValues(['base', 'head'].map(async (side) => {
       const spec = pair.sides[side];
+      // A production clone can legitimately sit at the platform's app cap.
+      // That makes ordinary create-dialog stories unreachable even though
+      // the feature works for a member on a server with capacity. Disable
+      // only this self-app limit inside disposable evidence runtimes; neither
+      // production nor an ordinary staging preview receives the override.
+      const evidenceEnv = evidenceCapacityEnv(config, pair.app);
       const deployed = await applicationRuntime.deploy(config, {
         app: pair.app,
         environment: 'staging',
@@ -291,6 +389,7 @@ async function resetPair(config, pair) {
         env: {
           DATABASE_URL: dbManager.connectionUrl(spec.dbName, cloneBySide[side].password),
           ...spec.env,
+          ...evidenceEnv,
         },
         port: 3000,
         memory: docker.STAGING_MEMORY,
@@ -298,12 +397,57 @@ async function resetPair(config, pair) {
         labels: {
           [EVIDENCE_LABEL]: pair.runId,
           [EVIDENCE_SIDE_LABEL]: side,
-          [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(spec.env),
+          [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint({ ...spec.env, ...evidenceEnv }),
         },
       });
       return [side, deployed];
     }));
     pair.deployments = Object.fromEntries(deployments);
+    let fixtureProfile = null;
+    let availableFixtures = [];
+    if (pair.app.slug === config.selfAppSlug) {
+      const fixtureProfiles = [];
+      const fixtureInputs = Object.fromEntries(['base', 'head'].map((side) => [side, {
+        databaseUrl: dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password),
+        slug: pair.app.slug, runId: pair.runId, side,
+      }]));
+      onProgress?.({ stage: 'seed_evidence_identities' });
+      const admins = await allSettledValues(['base', 'head'].map((side) =>
+        evidenceFixtures.ensureFullAdminIdentity(fixtureInputs[side])));
+      fixtureProfiles.push(evidenceFixtures.FULL_ADMIN_PROFILE);
+      availableFixtures.push(admins[0]);
+      await ensureHostedFixtureRuntime(config, pair, { onProgress });
+      onProgress?.({ stage: 'seed_hosted_app_fixture' });
+      const hostedApps = await allSettledValues(['base', 'head'].map((side) =>
+        evidenceFixtures.ensureHostedAppFixture(fixtureInputs[side])));
+      fixtureProfiles.push(`${evidenceFixtures.HOSTED_APP_PROFILE}@${pair.hostedFixtureImageDigest}`);
+      availableFixtures.push(hostedApps[0]);
+      onProgress?.({ stage: 'inspect_evidence_fixtures' });
+      const ready = await allSettledValues(['base', 'head'].map((side) =>
+        evidenceFixtures.canCopyMemberAgentSession(fixtureInputs[side])));
+      // A fixture must exist on BOTH exact revisions. Never insert a state
+      // on only one side of a before/after comparison.
+      if (ready.every(Boolean)) {
+        onProgress?.({ stage: 'seed_evidence_fixtures' });
+        const seeded = await allSettledValues(['base', 'head'].map((side) =>
+          evidenceFixtures.copyMemberAgentSession({
+            ...fixtureInputs[side], selfAppSlug: config.selfAppSlug,
+          })));
+        fixtureProfiles.push(evidenceFixtures.PROFILE);
+        availableFixtures.push(seeded[0]);
+      }
+      fixtureProfile = fixtureProfiles.join('+');
+    }
+    if (pair.fixtureProfileSet && pair.fixtureProfile !== fixtureProfile) {
+      throw new VisualEvidenceEnvironmentError('evidence_fixture_mismatch',
+        'A paired evidence reset changed the available fixture profile.');
+    }
+    pair.fixtureProfileSet = true;
+    pair.fixtureProfile = fixtureProfile;
+    pair.availableFixtures = availableFixtures;
+    pair.fixtureFingerprint = fixtureProfile
+      ? crypto.createHash('sha256').update(`${pair.preparedSource.fingerprint}\n${fixtureProfile}`).digest('hex')
+      : pair.preparedSource.fingerprint;
     return {
       origins: {
         base: applicationRuntime.appOrigin(config, pair.deployments.base),
@@ -312,6 +456,7 @@ async function resetPair(config, pair) {
       baseSha: pair.sides.base.sha,
       headSha: pair.sides.head.sha,
       fixtureFingerprint: pair.fixtureFingerprint,
+      availableFixtures,
       baseImageDigest: pair.sides.base.imageDigest,
       headImageDigest: pair.sides.head.imageDigest,
     };
@@ -327,6 +472,11 @@ async function cleanupPair(config, pair) {
   const errors = [];
   const stopped = await stopPair(config, pair).catch((err) => ({ errors: [err] }));
   errors.push(...(stopped.errors || []));
+  if (pair.hostedFixtureRef) {
+    await applicationRuntime.remove(config, pair.hostedFixtureRef)
+      .catch((err) => errors.push(err));
+    pair.hostedFixtureDeployment = null;
+  }
   for (const side of ['base', 'head']) {
     const dbName = pair.sides?.[side]?.dbName;
     if (dbName) await dbManager.dropDatabase(dbName, { strict: true }).catch((err) => errors.push(err));
@@ -353,6 +503,10 @@ module.exports = {
   repoParts,
   runtimeName,
   dockerImageName,
+  evidenceCapacityEnv,
+  hostedFixtureApp,
+  hostedFixtureImageRef,
+  ensureHostedFixtureRuntime,
   checkoutExactRevision,
   resolvedStagingEnv,
   buildRevision,

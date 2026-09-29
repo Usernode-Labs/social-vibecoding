@@ -16,10 +16,13 @@ export {
   drop,
   back,
   expand,
+  pend,
+  clearPending,
   appPresence,
   onClickCapture,
   onNavigate,
   embeddedApi,
+  sideRouteFrom,
   DESKTOP_QUERY,
   _resetForTests,
 } from '../../frontend/src/features/side-panel/controller';

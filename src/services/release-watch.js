@@ -38,10 +38,10 @@
  *   unknown           past the grace, and no run to read (a token without
  *                     actions:read, or a workflow that never started).
  *
- * Each (sha, kind) is reported once — a group message, an app_health
- * notification to the admins, and a record on apps.release_stall that the
- * board banner draws — and the record is cleared with a closing message when
- * the running build catches up. Main moving on to a further commit starts
+ * Each (sha, kind) is reported once — an app_health notification to the
+ * admins, and a record on apps.release_stall that the board banner draws
+ * (dev-board/release-stall-store.ts words it) — and the record is cleared
+ * when the running build catches up. Main moving on to a further commit starts
  * over for that commit; a release of it carries the earlier one too.
  */
 const log = require('./logger');
@@ -107,55 +107,6 @@ function classify({ ageMs, run, grace = graceMs() }) {
   if (run && run.status !== 'completed') return 'workflow_running';
   if (run && run.conclusion === 'success') return 'rollout_missing';
   return 'unknown';
-}
-
-function minutes(ms) {
-  const m = Math.round(ms / 60000);
-  return `${m} minute${m === 1 ? '' : 's'}`;
-}
-
-// The group message for a verdict. One spelling, so the record, the chat and
-// the tests agree.
-function stallMessage(record) {
-  const merged = record.prNumber
-    ? `PR #${record.prNumber} merged (${short(record.sha)})`
-    : `Commit ${short(record.sha)} landed on main`;
-  const ago = record.since && record.detectedAt
-    ? ` ${minutes(Date.parse(record.detectedAt) - Date.parse(record.since))} ago` : '';
-  const running = record.running ? ` The platform is still running ${short(record.running)}.` : '';
-  const run = record.runUrl ? ` ${record.runUrl}` : '';
-  switch (record.kind) {
-    case 'workflow_failed':
-      return `⚠️ ${merged}${ago} but was not released: the "Build Kubernetes images" workflow failed.${run}`
-        + `${running} Re-run its failed jobs to release it; the next merge would carry it too.`;
-    case 'workflow_running':
-      return `⚠️ ${merged}${ago} and its release workflow is still running; a release normally takes `
-        + `a couple of minutes.${run}${running}`;
-    case 'rollout_missing':
-      return `⚠️ ${merged}${ago} and its release workflow succeeded, but the platform has not rolled onto it.`
-        + `${running} Check Argo CD and the platform Deployment.`;
-    default:
-      return `⚠️ ${merged}${ago} but is not running yet, and no release workflow run could be found for it.`
-        + `${running} Check the repository's Actions.`;
-  }
-}
-
-function releasedMessage(record, runningSha) {
-  const what = record && record.prNumber
-    ? `PR #${record.prNumber} (${short(record.sha)})`
-    : `Commit ${short(record && record.sha)}`;
-  const carried = record && runningSha && !sameSha(record.sha, runningSha)
-    ? `, carried by ${short(runningSha)}` : '';
-  return `✅ ${what} is live now${carried}.`;
-}
-
-async function postGroup(pool, appId, content) {
-  try {
-    const { sendSystemMessage } = require('./ws');
-    await sendSystemMessage(pool, appId, content, 'system');
-  } catch (err) {
-    log.warn('release-watch', 'group message failed', { appId, err: err.message });
-  }
 }
 
 async function notifyAdmins(pool, appId) {
@@ -226,7 +177,6 @@ async function observe(config, pool, app, head, { now = Date.now(), octokit = nu
     appId: app.id, slug: app.slug, sha: short(sha), running: short(running), kind,
     prNumber: record.prNumber, ageMs, runUrl: record.runUrl,
   });
-  await postGroup(pool, app.id, stallMessage(record));
   // A red is news the moment it is red; the same commit escalating from
   // "still running" to "failed" is too. Notifications de-duplicate on
   // unread, so a stall nobody has looked at does not stack.
@@ -237,7 +187,7 @@ async function observe(config, pool, app, head, { now = Date.now(), octokit = nu
 /**
  * The running build is at main again. Clears a recorded stall (the release
  * landed — this is the new process, or a later merge carried the commit)
- * and closes the thread in the group. A no-op when nothing was recorded.
+ * and the banner goes with it. A no-op when nothing was recorded.
  */
 async function converged(config, pool, app) {
   const record = asRecord(app.release_stall);
@@ -251,7 +201,6 @@ async function converged(config, pool, app) {
   log.info('release-watch', 'The stalled self-app commit is running now', {
     appId: app.id, slug: app.slug, sha: short(record.sha), running: short(app.main_sha),
   });
-  await postGroup(pool, app.id, releasedMessage(record, app.main_sha));
   return { cleared: true, record };
 }
 
@@ -306,8 +255,6 @@ module.exports = {
   readStall,
   classify,
   prNumberFrom,
-  stallMessage,
-  releasedMessage,
   graceMs,
   WORKFLOW_PATH,
   _forTest: { resetFirstSeen: () => firstSeen.clear() },

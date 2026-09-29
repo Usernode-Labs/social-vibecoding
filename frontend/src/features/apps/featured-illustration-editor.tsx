@@ -74,7 +74,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     if (!root.current || !card.current) return;
     let adoption: KitAdoption | null = adoptKitSurface({ kind: 'modal', contentEl: card.current,
       adoptedOn: root.current, home: 'placeholder', gate: 'kit', onDismiss: () => { adoption = null; close.current(); } });
-    return () => { if (adoption) { adoption.restore(); adoption.dismiss(); } };
+    return () => { if (adoption) adoption.release(); };
   }, []);
   const interactive = !!art && !busy && !loading && !sent;
   // The art block, not the whole card: the name and blurb below it are not a

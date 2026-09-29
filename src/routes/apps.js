@@ -1,4 +1,6 @@
 const appAllowance = require('../services/app-allowance');
+const platformLimits = require('../services/platform-limit-alerts');
+const appLimit = require('../services/app-limit');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -24,25 +26,23 @@ const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
 const discoveryCuration = require('../services/discovery-curation');
+const communities = require('../services/communities');
+const governance = require('../services/governance');
+const activeUsers = require('../services/active-users');
+const createOptions = require('../services/create-options');
+const collabInvites = require('../services/collab-invites');
+const emailInvites = require('../services/email-invites');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
 const MAX_INITIAL_APPROVERS = 20;
 
-const VISIBILITY_VALUES = new Set(['public', 'private']);
-
 // Validate a (collabVisibility, viewVisibility) pair against the
 // invariants (see schema.sql): both must be public|private, and
 // collab-public implies view-public. Returns an error string or null.
-function validateVisibilityCombo(collabVisibility, viewVisibility) {
-  if (!VISIBILITY_VALUES.has(collabVisibility) || !VISIBILITY_VALUES.has(viewVisibility)) {
-    return 'Visibility must be "public" or "private"';
-  }
-  if (collabVisibility === 'public' && viewVisibility === 'private') {
-    return 'An app that everyone can build cannot be private to view';
-  }
-  return null;
-}
+// The rule lives in services/create-options.js, which the create route's
+// audience parsing shares.
+const validateVisibilityCombo = createOptions.visibilityComboError;
 
 // A source must have finished the durable parts of provisioning before a
 // fork can take a database/repository snapshot. `awaiting_secrets` is safe:
@@ -564,6 +564,17 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           (fa.app_id IS NOT NULL) AS featured,
           fa.sort_order AS featured_order,
           (me.user_id IS NOT NULL) AS is_collaborator,
+          -- The community the app belongs to (services/communities.js):
+          -- whether you are in it, how many are, who it is for, and when
+          -- it last moved for you. The Workshop lists your communities by
+          -- audience and by that recency; Discover's Join button reads
+          -- is_member. last_active_at is the latest of your joining, your
+          -- own last visit and the last thing that happened in its changes,
+          -- so a community you have not opened but that has news rises.
+          (cm.user_id IS NOT NULL) AS is_member,
+          COALESCE(cmc.cnt, 0) AS member_count,
+          ${communities.audienceSql('a', 'cmc.cnt')} AS audience,
+          GREATEST(cm.joined_at, mine.last_visit::timestamptz, dev.last_activity_at) AS last_active_at,
           COALESCE(dev.open_prs, 0) AS open_prs,
           COALESCE(dev.active_sessions, 0) AS active_sessions,
           -- "How actively developed is this app?" (#1383). All three ride
@@ -604,8 +615,17 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         LEFT JOIN featured_apps fa ON fa.app_id = a.id
         LEFT JOIN app_collaborators me
           ON me.app_id = a.id AND me.user_id = $2 AND me.status = 'member'
+        LEFT JOIN community_members cm
+          ON cm.community_id = a.community_id AND cm.user_id = $2
+        LEFT JOIN (
+          SELECT community_id, COUNT(*) AS cnt FROM community_members GROUP BY community_id
+        ) cmc ON cmc.community_id = a.community_id
+        LEFT JOIN (
+          SELECT app_id, MAX(date) AS last_visit FROM app_activity WHERE user_id = $2 GROUP BY app_id
+        ) mine ON mine.app_id = a.id
         LEFT JOIN (
           SELECT app_id,
+            MAX(last_activity_at) AS last_activity_at,
             COUNT(*) FILTER (WHERE status IN ('promoted', 'merging')) AS open_prs,
             COUNT(*) FILTER (WHERE status = 'active') AS active_sessions,
             -- A merged chat_session IS an accepted community proposal —
@@ -774,6 +794,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           merged_prs_recent: parseInt(a.merged_prs_recent, 10) || 0,
           last_merged_at: a.last_merged_at || null,
           open_issues: parseInt(a.open_issues, 10) || 0,
+          is_member: !!a.is_member,
+          member_count: parseInt(a.member_count, 10) || 0,
+          audience: a.audience || 'open',
+          last_active_at: a.last_active_at || null,
           ...accessFlags(a, req.user, a.is_collaborator, adminAppIds, contributorCount,
             config.selfAppSlug),
         };
@@ -821,6 +845,32 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // githubLookupLimiter (#2519): same shared installation quota as
   // repo-info above, plus step 1 is a side effect worth bounding on its
   // own. One bucket covers both routes.
+  // The four dapp.json fields that replace a create answer on an import's
+  // first deploy, read with the deploy's own readers: its name, description,
+  // visibility and approval rule. An unparseable file reads as {}, the way
+  // the deploy reader treats it.
+  async function readImportManifest(parsed) {
+    try {
+      const raw = await github.getFileContent(parsed.owner, parsed.repo, appManifest.MANIFEST_FILENAME);
+      if (raw == null) return {};
+      let json;
+      try { json = JSON.parse(raw); } catch { return {}; }
+      const governance = appManifest.readGovernance(json);
+      return {
+        name: appManifest.readName(json),
+        description: appManifest.readDescription(json),
+        visibility: appManifest.readVisibility(json),
+        governance: governance ? {
+          approvers: governance.approvers || 'anyone',
+          approvals: typeof governance.approvals === 'number' ? governance.approvals : null,
+        } : null,
+      };
+    } catch (err) {
+      log.warn('apps', 'Import dapp.json read failed', { repo: `${parsed.owner}/${parsed.repo}`, err: err.message });
+      return null;
+    }
+  }
+
   router.get('/api/github/verify-access', githubLookupLimiter, async (req, res) => {
     const parsed = github.parseGithubUrl(req.query.url || '');
     if (!parsed) return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
@@ -842,6 +892,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       name: verify.name,
       description: verify.description,
       fullName: verify.fullName,
+      // What the repo's own dapp.json already says, so the dialog can say
+      // which answers it replaces. {} when there is no dapp.json; null when
+      // it could not be read, which the dialog says as well.
+      manifest: await readImportManifest(parsed),
     });
   });
 
@@ -849,7 +903,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     res.set('Cache-Control', 'private, no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
-      res.json(await appAllowance.read(pool, req.user));
+      res.json(await appAllowance.read(pool, req.user, { maxApps: await appLimit.effective(pool, config) }));
     } catch (err) {
       log.error('apps', 'App allowance lookup failed', { message: err.message });
       res.status(500).json({ error: 'Could not load your app allowance. Please try again.' });
@@ -861,7 +915,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     if (req.user.canAdminWrite) return res.status(400).json({ error: 'Your account already has unlimited app slots.' });
     try {
-      res.json(await appAllowance.requestMore(pool, req.user));
+      res.json(await appAllowance.requestMore(pool, req.user, { maxApps: await appLimit.effective(pool, config) }));
     } catch (err) {
       log.error('apps', 'App allowance request failed', { message: err.message });
       res.status(500).json({ error: 'Could not send your request. Please try again.' });
@@ -875,13 +929,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       return res.status(400).json({ error: 'App name is required' });
     }
 
-    // Creation-time visibility (defaults preserve today's behavior).
-    const collabVisibility = req.body.collabVisibility || 'public';
-    const viewVisibility = req.body.viewVisibility || 'public';
-    const visibilityError = validateVisibilityCombo(collabVisibility, viewVisibility);
-    if (visibilityError) {
-      return res.status(400).json({ error: visibilityError });
+    // Who it is for, who is invited and who approves (communities, stage
+    // 3; services/create-options.js). A body with none of them is an older
+    // client and keeps today's visibility fields and defaults.
+    const options = createOptions.parseCreateOptions(req.body, { imported: !!repoUrl });
+    if (options.error) {
+      return res.status(400).json({ error: options.error });
     }
+    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description } = options;
 
     // Import-existing pre-flight: parse URL, accept any pending invite
     // for this exact repo, then verify Write access. Anything other
@@ -923,22 +978,49 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
 
+      // A Group's invitees resolve BEFORE anything is created: a typo in a
+      // username is a 400 with the name in it, not a project that exists
+      // with half its people missing.
+      let inviteTargets = [];
+      if (invitees.length) {
+        const { rows: found } = await pool.query(
+          `SELECT id, username FROM users WHERE LOWER(username) = ANY($1::text[])`,
+          [invitees.map((u) => u.toLowerCase())]
+        );
+        const byName = new Map(found.map((u) => [u.username.toLowerCase(), u]));
+        const missing = invitees.filter((u) => !byName.has(u.toLowerCase()));
+        if (missing.length) {
+          return res.status(400).json({
+            error: missing.length === 1
+              ? `There is no Homeroom user named @${missing[0]}.`
+              : `There are no Homeroom users named ${missing.map((u) => '@' + u).join(', ')}.`,
+          });
+        }
+        inviteTargets = invitees
+          .map((u) => byName.get(u.toLowerCase()))
+          .filter((u) => u.id !== req.user.id);
+      }
+
       // Enforce global app cap (full admins bypass; view-only admins
       // don't — issue #311). Errored apps don't count
       // toward the limit — they hold ~no resources and can be deleted to
-      // free a slot.
-      if (!req.user?.canAdminWrite && config.maxApps > 0) {
+      // free a slot. The cap is the admin's setting when one is stored,
+      // else MAX_APPS (services/app-limit.js).
+      const maxApps = req.user?.canAdminWrite ? 0 : await appLimit.effective(pool, config);
+      if (maxApps > 0) {
         const { rows: countRows } = await pool.query(
           `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
         );
-        if (countRows[0].n >= config.maxApps) {
+        if (countRows[0].n >= maxApps) {
           log.warn('apps', 'App creation blocked by max-apps cap', {
             userId: req.user.id,
             active: countRows[0].n,
-            cap: config.maxApps,
+            cap: maxApps,
           });
+          // Somebody was just refused: make sure the admins have heard.
+          platformLimits.nudge(pool, config, 'apps');
           return res.status(429).json({
-            error: `This server is at its app limit (${config.maxApps}). Ask an admin to remove an app or raise the limit.`,
+            error: `This server is at its app limit (${maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
         }
       }
@@ -961,7 +1043,70 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         [name.trim(), slug, repoUrlNormalized, req.user.id, collabVisibility, viewVisibility]
       );
 
-      const appRow = rows[0];
+      let appRow = rows[0];
+
+      // WHO APPROVES, chosen on the create screen. Written to the row now so
+      // the rule holds from the first proposal, and passed to the template
+      // (appRow → app-creator → template.js) so the new repository's
+      // dapp.json says the same thing: that file is the rule's source of
+      // truth, and the first deploy's reconcile then finds nothing to change.
+      // "People I pick" starts with the creator as its one approver, the
+      // same seed applyGovernanceChange plants when a manifest switches a
+      // live app to invited approvers.
+      if (rule) {
+        const { rows: governed } = await pool.query(
+          `UPDATE apps SET approver_policy = $1, approvals_required = $2
+            WHERE id = $3 RETURNING *`,
+          [rule.approverPolicy, rule.approvalsRequired, appRow.id]
+        );
+        appRow = governed[0] || appRow;
+        if (rule.approverPolicy === 'invited') {
+          await pool.query(
+            `INSERT INTO app_approvers (app_id, user_id, status, accepted_at)
+             VALUES ($1, $2, 'member', NOW())
+             ON CONFLICT (app_id, user_id) DO NOTHING`,
+            [appRow.id, req.user.id]
+          );
+        }
+      }
+
+      // WHAT IT IS, if the creator said. Seeded as the manifest snapshot the
+      // template's dapp.json is about to match ({ description, secrets: [] }),
+      // so app-creator writes it into the new repository and a Retry still
+      // has it. The first deploy then snapshots the real file over it.
+      if (description) {
+        const { rows: described } = await pool.query(
+          `UPDATE apps SET manifest_snapshot = $1 WHERE id = $2 RETURNING *`,
+          [JSON.stringify({ description, secrets: [] }), appRow.id]
+        );
+        appRow = described[0] || appRow;
+      }
+
+      // A Group's invites go out now, each the same invite (and the same
+      // notification) Members & approvals sends. Best-effort per person: the
+      // project exists either way, and anyone missed can be invited from
+      // its page.
+      let invited = 0;
+      for (const target of inviteTargets) {
+        try {
+          const sent = await collabInvites.sendInvite(pool, { app: appRow, target, inviterId: req.user.id });
+          if (sent.ok) invited += 1;
+        } catch (err) {
+          log.warn('apps', 'Create-time invite failed', { appId: appRow.id, invitee: target.username, err: err.message });
+        }
+      }
+      // Addresses: an account that already has one confirmed is invited as
+      // that account; anyone else gets a mail pointing at the waitlist, and
+      // the invite waits on their account (services/email-invites.js). The
+      // response counts them together, so it says nothing about who has an
+      // account.
+      if (inviteEmails.length) {
+        const byEmail = await emailInvites.inviteByEmail(pool, config, {
+          app: appRow, emails: inviteEmails, inviter: { id: req.user.id, username: req.user.username },
+        });
+        invited += byEmail.invited + byEmail.mailed;
+      }
+
       log.info('apps', repoUrlNormalized ? 'App imported (pending)' : 'App created (pending)', {
         appId: appRow.id,
         slug,
@@ -971,7 +1116,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         type: events.EVENT_TYPES.APP_CREATED,
         userId: req.user.id,
         appId: appRow.id,
-        metadata: { imported: !!repoUrlNormalized, collabVisibility, viewVisibility },
+        metadata: {
+          imported: !!repoUrlNormalized,
+          collabVisibility,
+          viewVisibility,
+          ...(options.audience ? { audience: options.audience } : {}),
+          ...(invited ? { invited } : {}),
+          ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
+          ...(description ? { described: true } : {}),
+        },
       });
 
       // Kick off async creation — don't await. If it throws, flip to error.
@@ -989,7 +1142,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // watchdog will unstick the row after CREATION_TIMEOUT_MS.
       scheduleCreationWatchdog(pool, appRow.id);
 
-      res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
+      res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited });
+      platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
@@ -1032,13 +1186,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         const allowance = await appAllowance.read(pool, req.user);
         if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
-      if (!req.user?.canAdminWrite && config.maxApps > 0) {
+      const maxApps = req.user?.canAdminWrite ? 0 : await appLimit.effective(pool, config);
+      if (maxApps > 0) {
         const { rows: countRows } = await pool.query(
           `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
         );
-        if (countRows[0].n >= config.maxApps) {
+        if (countRows[0].n >= maxApps) {
+          platformLimits.nudge(pool, config, 'apps');
           return res.status(429).json({
-            error: `This server is at its app limit (${config.maxApps}). Ask an admin to remove an app or raise the limit.`,
+            error: `This server is at its app limit (${maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
         }
       }
@@ -1085,6 +1241,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       scheduleCreationWatchdog(pool, appRow.id);
 
       res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
+      platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
@@ -2098,14 +2255,16 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
 
-      const { sendSystemMessage, pushAppUpdate } = require('../services/ws');
-      await sendSystemMessage(pool, app.id,
-        locked
-          ? `${req.user.username} locked this app, so merges now also require an admin yes vote`
-          : `${req.user.username} unlocked this app, so merges no longer require an admin yes vote`,
-        'system'
-      ).catch((err) => log.warn('apps', 'Lock chat msg failed', { err: err.message }));
+      // On the record for the project's Workshop notices
+      // (services/app-notices.js): a channel carries no activity.
+      events.record(pool, {
+        type: events.EVENT_TYPES.APP_LOCK_CHANGED,
+        userId: req.user.id,
+        appId: app.id,
+        metadata: { locked: app.locked },
+      });
 
+      const { pushAppUpdate } = require('../services/ws');
       pushAppUpdate({
         action: 'lock_changed',
         appSlug: app.slug,
@@ -2965,6 +3124,151 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       res.json({ ok: true, is_favorited: favorited });
     } catch (err) {
       log.error('apps', 'Failed to toggle favorite', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The community an app belongs to, as its page's community card draws it
+  // (features/dev-board/workshop/community-card.tsx): who it is for, who is
+  // in it, whether you are, and the rule a change has to meet to merge.
+  // View-gated like the page itself — a private app's community is as
+  // invisible to an outsider as the app.
+  //
+  // THE APPROVAL RULE IS READ, NOT RESTATED. `required` is what the merge
+  // gate would ask of an unopposed proposal right now: the app's own
+  // `approvals_required` when dapp.json sets one, otherwise
+  // active-users.requiredVotes over the same electorate governance.js
+  // counts (approvers on an invited-policy app, active members otherwise).
+  // It is the headline number, not the whole gate — opposition raises it
+  // and the lazy-consensus window can merge below it — and the card says
+  // "to merge", not "exactly".
+  router.get('/api/apps/:slug/community', async (req, res) => {
+    try {
+      const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
+      const { rows: appRows } = await pool.query(
+        `SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url,
+                LEFT(manifest_snapshot->>'description', 280) AS description
+           FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
+        [req.params.slug, showSelfHosted]
+      );
+      const app = appRows[0];
+      if (!app || !(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      const membership = await communities.getMembership(pool, app, req.user?.id);
+      const members = await communities.listMembers(pool, app.id);
+      // The channel is the app's group chat, which is COLLAB-gated
+      // (app-access.js): a viewer who may see a view-public,
+      // collab-private app but not talk in it gets no row for it rather
+      // than a preview of a room they cannot enter.
+      const canChat = await appAccess.checkAppAccess(pool, app, req.user, 'collab');
+      // THE HOMEROOM COMMUNITY'S CHANNEL IS #general. The platform's own
+      // project talks in the platform's one channel, which every signed-in
+      // person can read; its old project discussion stays reachable as
+      // read-only history (`archive_href`). Any other project's channel is
+      // its own discussion, at its own address.
+      let channel = null;
+      if (app.slug === config.selfAppSlug) {
+        const general = await communities.generalChannelSummary(pool, req.user?.id);
+        if (general) {
+          const { conversation_id: conversationId, ...summary } = general;
+          channel = {
+            ...summary,
+            href: `#messages/${conversationId}`,
+            // Where the hub's composer posts: the room's own write route,
+            // which gates it on Homeroom membership (generalNeedsJoin).
+            post_url: `/api/conversations/${conversationId}/messages`,
+            handle: 'general',
+            archive_href: `#messages/app/${encodeURIComponent(app.slug)}`,
+          };
+        }
+      } else if (canChat) {
+        channel = {
+          ...(await communities.channelSummary(pool, app.id, req.user?.id)),
+          href: `#messages/app/${encodeURIComponent(app.slug)}`,
+          // The app chat's REST write path, the one CLI and MCP clients use:
+          // the same handler as the browser's socket, membership-gated.
+          post_url: `/api/apps/${encodeURIComponent(app.slug)}/messages`,
+          handle: null,
+        };
+      }
+      const activity = await communities.activitySummary(pool, app.id);
+      // WHO IT IS FOR, AS SOMETHING TO CHANGE. Opening a project up (or
+      // closing it to a group) is the visibility PR the settings dialog
+      // opens, offered on the hero to the people POST /visibility-pr lets
+      // open it: the creator, an app admin or a platform admin, on an app
+      // with a repository, never the platform's own. One in flight at a
+      // time, and the hero points at it rather than offering a second.
+      const canManage = !app.self_hosted && !!app.repo_url
+        && await appAdmins.canManageApp(pool, app, req.user);
+      const pendingAudience = canManage || membership?.is_member
+        ? await renamePr.findVisibilityPr(pool, app.id) : null;
+      const gov = await governance.getGovernance(pool, app.id);
+      const electorate = await governance.getElectorate(pool, app.id, gov);
+      const required = gov.approvalsRequired != null
+        ? gov.approvalsRequired
+        : activeUsers.requiredVotes(electorate.active, 0);
+      res.json({
+        slug: app.slug,
+        name: app.name,
+        // dapp.json's one line about what the app is, for the page's hero.
+        description: typeof app.description === 'string' && app.description.trim()
+          ? app.description.replace(/\s+/g, ' ').trim() : null,
+        ...membership,
+        members,
+        channel,
+        activity,
+        can_manage: !!canManage,
+        audience_change: pendingAudience ? {
+          session_id: pendingAudience.id,
+          pr_number: pendingAudience.pr_number,
+          title: pendingAudience.pr_title || null,
+        } : null,
+        approval: {
+          policy: gov.approverPolicy,
+          approvals_required: gov.approvalsRequired,
+          electorate: electorate.active,
+          required,
+        },
+      });
+    } catch (err) {
+      log.error('apps', 'Failed to load community', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Join or leave the community an app belongs to. `joined: true` needs only
+  // VIEW access: joining an open community is the point of the button, and a
+  // private app's community can only be seen by someone already in it.
+  // Joining also pins the app to Home (see communities.join) — the button
+  // this replaced was "Add to Your apps", and the directory's one tap keeps
+  // doing what it did. Leaving takes you out of the community, off the
+  // app's collaborators and off Home in one transaction (communities.leave).
+  router.post('/api/apps/:slug/membership', async (req, res) => {
+    const { joined } = req.body || {};
+    if (typeof joined !== 'boolean') {
+      return res.status(400).json({ error: 'joined must be a boolean' });
+    }
+    try {
+      const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
+      const { rows: appRows } = await pool.query(
+        `SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
+        [req.params.slug, showSelfHosted]
+      );
+      const app = appRows[0];
+      if (!app || !(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (joined) {
+        await communities.join(pool, app, req.user.id);
+      } else {
+        const result = await communities.leave(pool, app, req.user.id);
+        if (!result.ok) return res.status(result.status).json({ error: result.error });
+      }
+      const membership = await communities.getMembership(pool, app, req.user.id);
+      res.json({ ok: true, ...membership });
+    } catch (err) {
+      log.error('apps', 'Failed to change membership', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

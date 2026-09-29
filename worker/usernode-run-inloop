@@ -1,0 +1,90 @@
+#!/usr/bin/env node
+'use strict';
+
+// Start an app inside a build worker with the same manifest-committed fallback
+// values staging uses. No stored production secret is available here. An app
+// with a required value and no local fallback reports that gap explicitly.
+
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
+
+const ENV_KEY = /^[A-Z][A-Z0-9_]*$/;
+const LAUNCH_KEYS = new Set(['DATABASE_URL', 'USERNODE_ENV', 'PORT']);
+const WORKER_ONLY_KEYS = [
+  'OPENROUTER_API_KEY', 'WORKER_JWT', 'HOMEROOM_MCP_TOKEN',
+  'ISSUES_JWT', 'PROD_DEBUG_JWT', 'EVIDENCE_JWT',
+];
+
+function environmentForInLoop(manifest, workerEnv) {
+  if (workerEnv.INLOOP_BROWSER !== '1' || workerEnv.INLOOP_ENV !== 'staging'
+    || !workerEnv.INLOOP_PORT || !workerEnv.INLOOP_DATABASE_URL) {
+    throw new Error('this command requires a build turn with INLOOP_* values');
+  }
+  const env = { ...workerEnv,
+    USERNODE_ENV: workerEnv.INLOOP_ENV,
+    PORT: workerEnv.INLOOP_PORT,
+    DATABASE_URL: workerEnv.INLOOP_DATABASE_URL,
+  };
+  for (const key of WORKER_ONLY_KEYS) delete env[key];
+  const missing = [];
+  const secrets = Array.isArray(manifest?.secrets) ? manifest.secrets : [];
+  for (const secret of secrets) {
+    if (!secret || !ENV_KEY.test(secret.key || '') || LAUNCH_KEYS.has(secret.key)) continue;
+    // Worker env must never become a source of app secrets. Match staging's
+    // private fallback precedence; non-private stored values are unavailable
+    // locally, so use only their manifest default or report the missing key.
+    delete env[secret.key];
+    const isPrivate = !!(secret.private || secret.sensitive);
+    const stagingDefault = isPrivate && typeof secret.staging_default === 'string'
+      ? secret.staging_default : null;
+    const fallback = stagingDefault != null ? stagingDefault
+      : (typeof secret.default === 'string' ? secret.default : null);
+    if (fallback != null) env[secret.key] = fallback;
+    else if (secret.required) missing.push(secret.key);
+  }
+  if (missing.length) {
+    throw new Error(`local staging launch needs committed fallbacks for: ${missing.join(', ')}`);
+  }
+  return env;
+}
+
+function readManifest(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (err) {
+    if (err.code === 'ENOENT') return {};
+    throw err;
+  }
+}
+
+function main() {
+  const command = process.argv[2];
+  if (!command) {
+    process.stderr.write('usage: usernode-run-inloop <app command> [args...]\n');
+    process.exitCode = 2;
+    return;
+  }
+  let manifest;
+  let env;
+  try {
+    manifest = readManifest(path.resolve('dapp.json'));
+    env = environmentForInLoop(manifest, process.env);
+  } catch (err) {
+    process.stderr.write(`usernode-run-inloop: ${err.message}\n`);
+    process.exitCode = 2;
+    return;
+  }
+  const child = spawn(command, process.argv.slice(3), { env, stdio: 'inherit' });
+  child.on('error', (err) => {
+    process.stderr.write(`usernode-run-inloop: could not start app command: ${err.message}\n`);
+    process.exitCode = 2;
+  });
+  child.on('exit', (code, signal) => {
+    process.exitCode = code == null ? (signal ? 128 : 2) : code;
+  });
+}
+
+if (require.main === module) main();
+
+module.exports = { environmentForInLoop, readManifest };

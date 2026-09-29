@@ -31,7 +31,11 @@ test('preview lifecycle across independent owners', { skip: !url }, async t => {
       checks_commit_sha TEXT, staging_commit_sha TEXT, imported_pr_head_sha TEXT);
       CREATE TABLE artifacts (value TEXT); INSERT INTO artifacts VALUES ('new');`);
     const schemaSql = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-    await db.query(schemaSql.slice(schemaSql.indexOf('CREATE TABLE IF NOT EXISTS preview_operations')));
+    // This fixture needs only its own table. Later migrations may reference
+    // production tables deliberately absent from this isolated schema.
+    const previewSchema = schemaSql.match(/CREATE TABLE IF NOT EXISTS preview_operations \([\s\S]*?\n\);/);
+    assert.ok(previewSchema, 'preview_operations must exist in the schema');
+    await db.query(previewSchema[0]);
     const make = (checks = async () => {}) => {
       const guard = createGuard({ retryMs: 5 });
       return createLifecycle({ poolFor: () => db, lock: guard.withResourceUse,
@@ -66,6 +70,95 @@ test('preview lifecycle across independent owners', { skip: !url }, async t => {
       assert.equal((await oldRun).code, 'PREVIEW_SUPERSEDED');
       assert.deepEqual(await next, { image: 'new' });
       assert.equal((await db.query('SELECT value FROM artifacts')).rows[0].value, 'new');
+    });
+
+    await t.test('conflict repair cancels a live run and waits for its consumers', async () => {
+      const session = await reset(12);
+      const entered = deferred(); const aborted = deferred(); const stopped = deferred();
+      const first = make(); const cancelledJobs = [];
+      const repair = make(async (_config, _sessionId, runId) => { cancelledJobs.push(runId); });
+      const oldRun = first.run(config, session, 'old', 'capture', async op => {
+        op.track(new Promise(resolve => op.signal.addEventListener('abort', async () => {
+          aborted.resolve(); await stopped.promise; resolve();
+        }, { once: true })));
+        entered.resolve(op);
+        await aborted.promise;
+        throw op.signal.reason;
+      }).catch(err => err);
+      const oldOperation = await entered.promise;
+      let repairReady = false;
+      const cancellation = repair.supersede(config, session.id, 'old')
+        .then(result => { repairReady = true; return result; });
+      await aborted.promise;
+      assert.equal(repairReady, false, 'repair must wait for the old consumer');
+      await assert.rejects(repair.run(config, session, 'old', 'capture', async () => assert.fail()),
+        { code: 'PREVIEW_SUPERSEDED' });
+      await assert.rejects(repair.run(config, session, 'old', 'capture', async () => assert.fail(),
+        { force: true }), { code: 'PREVIEW_SUPERSEDED' });
+      stopped.resolve();
+      assert.equal((await oldRun).code, 'PREVIEW_SUPERSEDED');
+      assert.equal((await cancellation).runId, oldOperation.runId);
+      assert.deepEqual(cancelledJobs, [oldOperation.runId]);
+      assert.equal((await db.query('SELECT state FROM preview_operations WHERE session_id = 12')).rows[0].state,
+        'superseded');
+
+      await db.query("UPDATE chat_sessions SET checks_commit_sha = 'new' WHERE id = 12");
+      assert.equal(await repair.run(config, session, 'new', 'capture', async () => 'new result'), 'new result');
+    });
+
+    await t.test('restart cancellation stops orphan Jobs without touching a successor', async () => {
+      const session = await reset(13);
+      const oldRunId = '11111111-1111-4111-8111-111111111111';
+      await db.query(`INSERT INTO preview_operations
+        (session_id, desired_revision, run_id, revision, phase, state)
+        VALUES (13, 'old', $1, 'old', 'capture', 'running')`, [oldRunId]);
+      const cancelledJobs = [];
+      const repair = make(async (_config, _sessionId, runId) => { cancelledJobs.push(runId); });
+      assert.equal((await repair.supersede(config, session.id, 'old')).runId, oldRunId);
+      assert.deepEqual(cancelledJobs, [oldRunId]);
+      assert.equal((await db.query('SELECT state FROM preview_operations WHERE session_id = 13')).rows[0].state,
+        'superseded');
+      await assert.rejects(repair.run(config, session, 'old', 'capture', async () => assert.fail()),
+        { code: 'PREVIEW_SUPERSEDED' });
+      await db.query("UPDATE chat_sessions SET checks_commit_sha = 'new' WHERE id = 13");
+      assert.equal(await repair.run(config, session, 'new', 'capture', async () => 'new result'), 'new result');
+      assert.equal(await repair.settleAdopted(config, { sessionId: 13, runId: oldRunId },
+        { error: repair.cancelled() }), false);
+      assert.equal((await db.query('SELECT state FROM preview_operations WHERE session_id = 13')).rows[0].state,
+        'completed');
+    });
+
+    await t.test('cancellation fences a queued revision before its owner starts', async () => {
+      const session = await reset(14);
+      const repair = make();
+      const result = await repair.supersede(config, session.id, 'old');
+      assert.equal(result.runId, null);
+      await assert.rejects(repair.run(config, session, 'old', 'build', async () => assert.fail()),
+        { code: 'PREVIEW_SUPERSEDED' });
+      await db.query("UPDATE chat_sessions SET checks_commit_sha = 'new' WHERE id = 14");
+      assert.equal(await repair.run(config, session, 'new', 'build', async () => 'new result'), 'new result');
+    });
+
+    await t.test('cancellation during startup prevents the old owner from starting', async () => {
+      const session = await reset(15);
+      const cleaning = deferred(); const allowCleanup = deferred();
+      const owner = make(async () => { cleaning.resolve(); await allowCleanup.promise; });
+      const repair = make();
+      let started = false;
+      const run = owner.run(config, session, 'old', 'capture', async () => { started = true; })
+        .catch(err => err);
+      await cleaning.promise;
+      const cancellation = repair.supersede(config, session.id, 'old');
+      // The cancellation row is written before the repair waits for the lock.
+      for (;;) {
+        const { rows } = await db.query('SELECT state FROM preview_operations WHERE session_id = 15');
+        if (rows[0]?.state === 'superseded') break;
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      allowCleanup.resolve();
+      assert.equal((await run).code, 'PREVIEW_SUPERSEDED');
+      await cancellation;
+      assert.equal(started, false);
     });
 
     await t.test('same-revision duplicate joins completion across owners', async () => {

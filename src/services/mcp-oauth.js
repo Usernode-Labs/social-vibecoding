@@ -17,6 +17,10 @@ const {
   SUPPORTED_SCOPES,
   TOKEN_PREFIX,
   REFRESH_PREFIX,
+  DELEGATED_TOKEN_PREFIX,
+  DELEGATION_KINDS,
+  DELEGATED_CLIENT_IDS,
+  DELEGATION_MAX_TTL_SECONDS,
   AUTH_CODE_TTL_SECONDS,
   ACCESS_TTL_SECONDS,
   REFRESH_TTL_SECONDS,
@@ -34,6 +38,7 @@ function makeOpaqueSecret(prefix) {
 }
 
 function makeAccessToken() { return makeOpaqueSecret(TOKEN_PREFIX); }
+function makeDelegatedAccessToken() { return makeOpaqueSecret(DELEGATED_TOKEN_PREFIX); }
 function makeRefreshToken() { return makeOpaqueSecret(REFRESH_PREFIX); }
 function makeAuthorizationCode() { return makeOpaqueSecret('svmca_'); }
 function makeClientId() { return `svmc_${crypto.randomBytes(16).toString('base64url')}`; }
@@ -347,6 +352,161 @@ async function rotateRefreshToken(pool, { refreshToken, clientId }) {
   });
 }
 
+// ── Delegated grants (#2779) ───────────────────────────────────────────
+//
+// The platform's own agents reach the connector's tools on the user's behalf:
+// the Mayor of an agent session, and the coding agent inside a change's
+// worker. Nothing about that goes through consent — the user is already
+// signed in to the platform that runs those agents — so a delegated grant is
+// minted here, in-process, and is narrower than a consent in every direction
+// that matters:
+//
+//   * an ACCESS row only. There is no refresh token to present, so a leaked
+//     token dies at its expiry, which is at most one turn away
+//     (DELEGATION_MAX_TTL_SECONDS);
+//   * a synthetic client id that CLIENT_ID_RE refuses, so loadClient never
+//     returns a client for it and the consent, token and registration
+//     endpoints cannot act on it;
+//   * a `kind` chosen here, never by a caller, which decides the tools
+//     (services/mcp-audiences.js) and the routes (services/cli-api-policy.js)
+//     the token reaches;
+//   * a row in mcp_delegations that the bearer entry point joins on every
+//     request, so revoking it — or closing the change it names — ends the
+//     token without anything else having to run.
+//
+// A worker grant can read only; that is enforced here rather than trusted to
+// the caller, because the worker runs the repository's own code with a shell.
+function normalizeDelegation({ userId, kind, agentSessionId = null, changeId = null, appId = null, scopes, ttlSeconds }) {
+  const positive = (value) => value == null || (Number.isSafeInteger(value) && value > 0);
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error('issueDelegatedAccess: userId is required');
+  if (!DELEGATION_KINDS.includes(kind)) throw new Error(`issueDelegatedAccess: unknown kind ${kind}`);
+  if (!positive(agentSessionId) || !positive(changeId) || !positive(appId)) {
+    throw new Error('issueDelegatedAccess: ids must be positive integers');
+  }
+  if (kind === 'worker_read' && (changeId == null || appId == null)) {
+    throw new Error('issueDelegatedAccess: a worker grant is bound to one change and its app');
+  }
+  const normalized = normalizeScopes(scopes == null ? [READ_SCOPE] : scopes);
+  if (!normalized || !normalized.includes(READ_SCOPE)) {
+    throw new Error('issueDelegatedAccess: scopes must include the read scope');
+  }
+  if (kind === 'worker_read' && normalized.includes(WRITE_SCOPE)) {
+    throw new Error('issueDelegatedAccess: a worker grant is read-only');
+  }
+  const max = DELEGATION_MAX_TTL_SECONDS[kind];
+  const ttl = Number.isFinite(ttlSeconds) ? Math.floor(ttlSeconds) : max;
+  return {
+    userId, kind, agentSessionId, changeId, appId,
+    scopes: normalized,
+    ttlSeconds: Math.max(30, Math.min(max, ttl)),
+  };
+}
+
+async function issueDelegatedAccess(pool, options) {
+  const grant = normalizeDelegation(options || {});
+  const accessToken = makeDelegatedAccessToken();
+  const grantId = makeGrantId();
+  const clientId = DELEGATED_CLIENT_IDS[grant.kind];
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO mcp_delegations
+         (grant_id, user_id, kind, agent_session_id, change_id, app_id, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6,
+               clock_timestamp(), clock_timestamp() + ($7 || ' seconds')::interval)
+       RETURNING expires_at`,
+      [
+        grantId, grant.userId, grant.kind, grant.agentSessionId, grant.changeId,
+        grant.appId, String(grant.ttlSeconds),
+      ]
+    );
+    const expiresAt = rows[0].expires_at;
+    const { rows: tokenRows } = await client.query(
+      `INSERT INTO mcp_tokens
+         (token_hash, token_hint, kind, user_id, client_id, grant_id, scopes,
+          rotated_from, created_at, expires_at)
+       VALUES ($1, $2, 'access', $3, $4, $5, $6::text[], NULL, clock_timestamp(), $7)
+       RETURNING id`,
+      [
+        hashSecret(accessToken), tokenHint(accessToken), grant.userId, clientId,
+        grantId, grant.scopes, expiresAt,
+      ]
+    );
+    await insertAudit(client, {
+      eventType: 'token_issued',
+      occurredAt: new Date(),
+      userId: grant.userId,
+      actorUserId: grant.userId,
+      accessTokenId: tokenRows[0].id,
+      clientId,
+      scopes: grant.scopes,
+      metadata: { grant: 'delegated', kind: grant.kind },
+    });
+    return {
+      accessToken,
+      grantId,
+      accessTokenId: tokenRows[0].id,
+      kind: grant.kind,
+      scopes: grant.scopes,
+      expiresAt: new Date(expiresAt).toISOString(),
+    };
+  });
+}
+
+// Revoke one delegated grant: the delegation row and every token minted
+// under it, in one transaction, audited. Idempotent — revoking a grant that
+// is already gone answers false and writes nothing. The turn that issued a
+// grant calls this from its `finally`; the liveness join is what covers a
+// caller that never gets there.
+async function revokeDelegation(pool, { grantId, reason = 'turn_finished' }) {
+  if (typeof grantId !== 'string' || !GRANT_ID_RE.test(grantId)) return false;
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query(
+      `UPDATE mcp_delegations SET revoked_at = clock_timestamp()
+        WHERE grant_id = $1 AND revoked_at IS NULL
+        RETURNING user_id, kind`,
+      [grantId]
+    );
+    if (!rows.length) return false;
+    await revokeGrant(client, grantId);
+    await insertAudit(client, {
+      eventType: 'token_revoked',
+      occurredAt: new Date(),
+      userId: rows[0].user_id,
+      actorUserId: rows[0].user_id,
+      clientId: DELEGATED_CLIENT_IDS[rows[0].kind],
+      scopes: [],
+      metadata: { grant: 'delegated', kind: rows[0].kind, reason: String(reason).slice(0, 64) },
+    });
+    return true;
+  });
+}
+
+// The grants the platform's own agents are handed turn by turn accumulate —
+// one or two rows a turn — and are useless the moment they end. Remove the
+// ones that ended more than `graceDays` ago, with their token rows, a bounded
+// batch at a time. The audit trail keeps its own rows; it names the token by
+// id only.
+async function pruneDelegations(pool, { graceDays = 7, limit = 1000 } = {}) {
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query(
+      `DELETE FROM mcp_delegations
+        WHERE grant_id IN (
+          SELECT grant_id FROM mcp_delegations
+           WHERE COALESCE(revoked_at, expires_at) < clock_timestamp() - ($1 || ' days')::interval
+           ORDER BY expires_at
+           LIMIT $2)
+        RETURNING grant_id`,
+      [String(graceDays), limit]
+    );
+    if (!rows.length) return 0;
+    await client.query(
+      'DELETE FROM mcp_tokens WHERE grant_id = ANY($1::text[])',
+      [rows.map((row) => row.grant_id)]
+    );
+    return rows.length;
+  });
+}
+
 // ── Request-shape helpers ──────────────────────────────────────────────
 //
 // These live here rather than in routes/mcp-remote.js so they carry no
@@ -387,6 +547,11 @@ function isStagingReadableConnectorPath(method, pathname) {
 // comma-joined credentials, other schemes and whitespace ambiguity are all
 // refused rather than normalised — a credential we had to guess at is one
 // we should not accept.
+//
+// Two shapes are connector credentials: a consented client's `svmcp_…` and a
+// delegated grant's `svmcd_…` (#2779). `delegated` reports which, so the
+// staging gate can let the one through without touching the other; the
+// token is honoured only if authenticateConnector agrees with the shape.
 function readBearerFromRawHeaders(rawHeaders) {
   const values = [];
   const headers = Array.isArray(rawHeaders) ? rawHeaders : [];
@@ -397,11 +562,31 @@ function readBearerFromRawHeaders(rawHeaders) {
   }
   if (values.length === 0) return { error: 'missing_token' };
   if (values.length !== 1) return { error: 'invalid_token' };
-  const match = /^Bearer (svmcp_[A-Za-z0-9_-]{43})$/.exec(values[0]);
-  if (!match || !isCanonicalSecret(match[1], TOKEN_PREFIX)) {
+  const match = /^Bearer (svmc[pd]_[A-Za-z0-9_-]{43})$/.exec(values[0]);
+  if (!match) return { error: 'invalid_token' };
+  const delegated = match[1].startsWith(DELEGATED_TOKEN_PREFIX);
+  if (!isCanonicalSecret(match[1], delegated ? DELEGATED_TOKEN_PREFIX : TOKEN_PREFIX)) {
     return { error: 'invalid_token' };
   }
-  return { token: match[1] };
+  return { token: match[1], delegated };
+}
+
+// Does this request carry exactly one well-formed DELEGATED bearer? The
+// staging and enablement gates ask this before anything reads a body or looks
+// a credential up: a delegated grant is minted in-process by the deployment
+// it is presented to, so it is the one connector credential that has to work
+// where the consent surface is switched off.
+function hasDelegatedBearer(rawHeaders) {
+  const bearer = readBearerFromRawHeaders(rawHeaders);
+  return !bearer.error && bearer.delegated === true;
+}
+
+// The request the staging and enablement gates let through for a delegated
+// grant: POST /mcp carrying one well-formed `svmcd_…` bearer. Nothing else on
+// the connector surface — metadata, registration, consent, token, revocation,
+// the Settings list — is ever reachable that way.
+function isDelegatedMcpRequest(method, pathname, rawHeaders) {
+  return method === 'POST' && pathname === MCP_PATH && hasDelegatedBearer(rawHeaders);
 }
 
 module.exports = {
@@ -411,11 +596,14 @@ module.exports = {
   isConnectorSurfacePath,
   isStagingReadableConnectorPath,
   readBearerFromRawHeaders,
+  hasDelegatedBearer,
+  isDelegatedMcpRequest,
   CLIENT_ID_RE,
   GRANT_ID_RE,
   CODE_CHALLENGE_RE,
   CODE_VERIFIER_RE,
   makeAccessToken,
+  makeDelegatedAccessToken,
   makeRefreshToken,
   makeAuthorizationCode,
   makeClientId,
@@ -436,4 +624,8 @@ module.exports = {
   issueTokenPair,
   revokeGrant,
   rotateRefreshToken,
+  normalizeDelegation,
+  issueDelegatedAccess,
+  revokeDelegation,
+  pruneDelegations,
 };

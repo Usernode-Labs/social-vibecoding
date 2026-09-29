@@ -388,6 +388,7 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
     profile: 'production',
     forwardEnv: false,
     hookSha256: 'a'.repeat(64),
+    driftHookSha256: 'c'.repeat(64),
   });
   assert.match(document, /command = "\/usr\/bin\/node"/);
   assert.match(document, /"mcp"/);
@@ -426,6 +427,7 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
     profile: 'lab',
     forwardEnv: true,
     hookSha256: 'b'.repeat(64),
+    driftHookSha256: 'c'.repeat(64),
   });
   assert.match(
     forwarded,
@@ -443,6 +445,7 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
     profile: 'production',
     forwardEnv: false,
     hookSha256: 'not-a-digest',
+    driftHookSha256: 'c'.repeat(64),
   }), /SHA-256/);
 });
 

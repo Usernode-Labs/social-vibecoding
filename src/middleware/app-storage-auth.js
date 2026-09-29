@@ -101,6 +101,10 @@ function appStorageAuth(pool, config) {
       return res.status(403).json({ ok: false, code: 'bad_user_token' });
     }
 
+    try {
+      const live = await pool.query('SELECT id FROM users WHERE id = $1', [claims.id]);
+      if (!live.rows.length) return res.status(401).json({ ok: false, code: 'bad_user_token' });
+    } catch { return res.status(503).json({ ok: false, code: 'lookup_failed' }); }
     req.appStorage = { appId: app.id, appSlug: app.slug, userId: claims.id };
     next();
   };

@@ -54,6 +54,9 @@ die() {
 : "${EVIDENCE_HEAD_ORIGIN:=}"
 : "${EVIDENCE_MEMBER_TOKEN:=}"
 : "${EVIDENCE_ADMIN_TOKEN:=}"
+: "${EVIDENCE_FULL_ADMIN_TOKEN:=}"
+: "${EVIDENCE_COMPLETION_REMINDER:=0}"
+: "${SYSTEM_PROMPT_FILE:=}"
 # Scout must NEVER receive push authority (review #4): WORKER_JWT is
 # required for build (to push) but must be empty for scout.
 if [ "$MODE" = "build" ] && [ -z "$WORKER_JWT" ]; then
@@ -66,6 +69,10 @@ export WORKER_JWT
 if [ "$MODE" = "evidence" ]; then
   [ -n "$EVIDENCE_JWT" ] || die "EVIDENCE_JWT required for evidence mode"
   [ -n "$EVIDENCE_RUN_ID" ] || die "EVIDENCE_RUN_ID required for evidence mode"
+  [ "$EVIDENCE_COMPLETION_REMINDER" = "0" ] || [ "$EVIDENCE_COMPLETION_REMINDER" = "1" ] \
+    || die "EVIDENCE_COMPLETION_REMINDER must be 0 or 1"
+  [ -n "$SYSTEM_PROMPT_FILE" ] && [ -s "$SYSTEM_PROMPT_FILE" ] \
+    || die "system prompt file required for evidence mode"
 fi
 
 if [ "$MODE" = "evidence" ]; then
@@ -90,6 +97,14 @@ if [ "$MODE" != "evidence" ]; then
   fi
 fi
 
+# The same throwaway Postgres preparation that Claude build turns receive.
+# Without it the supplied INLOOP_DATABASE_URL points at no server, and the
+# agent burns its turn trying to repair a test environment it did not break.
+if [ "$MODE" = "build" ]; then
+  sh "$(dirname "$0")/start-inloop-db.sh" \
+    || echo "__USERNODE_WARN__ in-loop postgres setup failed"
+fi
+
 # Codex home lives INSIDE the persistent Claude volume so session/rollout
 # state survives worker eviction. Export it so Codex reads the direct
 # OpenRouter config and persistent rollout dir.
@@ -98,18 +113,31 @@ mkdir -p "$CODEX_HOME"
 
 EVIDENCE_PROXY_PID=""
 EVIDENCE_TMP=""
+EVIDENCE_DIAGNOSTIC_TAIL_PID=""
 cleanup_evidence() {
   if [ -n "$EVIDENCE_PROXY_PID" ]; then kill "$EVIDENCE_PROXY_PID" 2>/dev/null || true; fi
+  if [ -n "$EVIDENCE_DIAGNOSTIC_TAIL_PID" ]; then
+    sleep 0.3
+    kill "$EVIDENCE_DIAGNOSTIC_TAIL_PID" 2>/dev/null || true
+  fi
   if [ -n "$EVIDENCE_TMP" ]; then rm -rf "$EVIDENCE_TMP" 2>/dev/null || true; fi
 }
-if [ "$MODE" = "evidence" ]; then
+if [ "$MODE" = "evidence" ] && [ "$EVIDENCE_COMPLETION_REMINDER" != "1" ]; then
+  command -v mcp-server-playwright >/dev/null 2>&1 \
+    || die "the evidence browser MCP executable is missing"
   echo "__USERNODE_PHASE__ evidence_proxy"
   EVIDENCE_TMP=$(mktemp -d "/tmp/usernode-evidence-browser-${EVIDENCE_RUN_ID}.XXXXXX") \
     || die "could not create evidence browser state"
   chmod 700 "$EVIDENCE_TMP"
   export EVIDENCE_BROWSER_STATE_DIR="$EVIDENCE_TMP/state"
+  export EVIDENCE_HOSTED_ORIGINS_FILE="$EVIDENCE_BROWSER_STATE_DIR/hosted-origins.json"
+  export EVIDENCE_BROWSER_DIAGNOSTIC_FILE="$EVIDENCE_TMP/browser-diagnostics.log"
+  : > "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE"
+  tail -n +1 -s 0.2 -f "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE" &
+  EVIDENCE_DIAGNOSTIC_TAIL_PID=$!
   export EVIDENCE_PROXY_PORT=17891
   export EVIDENCE_PROXY_SERVER="http://127.0.0.1:$EVIDENCE_PROXY_PORT"
+  export EVIDENCE_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
   export EVIDENCE_PROXY_READY="$EVIDENCE_TMP/proxy.ready"
   export EVIDENCE_ALLOWED_ORIGINS="[\"$EVIDENCE_BASE_ORIGIN\",\"$EVIDENCE_HEAD_ORIGIN\"]"
   node /usr/local/bin/evidence-origin-proxy.js &
@@ -121,7 +149,9 @@ if [ "$MODE" = "evidence" ]; then
   echo "__USERNODE_PHASE__ evidence_browser_bootstrap"
   node /usr/local/bin/evidence-browser-bootstrap.js \
     || die "evidence browser authentication failed"
-  unset EVIDENCE_MEMBER_TOKEN EVIDENCE_ADMIN_TOKEN
+fi
+if [ "$MODE" = "evidence" ]; then
+  unset EVIDENCE_MEMBER_TOKEN EVIDENCE_ADMIN_TOKEN EVIDENCE_FULL_ADMIN_TOKEN
 fi
 
 # TOML-safe escaping (quotes/backslashes/newlines) so attacker-controlled
@@ -185,6 +215,7 @@ if ! {
   printf 'sandbox_mode = "%s"\n' "$SANDBOX_MODE"
   if [ "$MODE" = "evidence" ]; then
     printf 'web_search = "disabled"\n'
+    printf 'developer_instructions = "%s"\n' "$(toml_escape "$(cat "$SYSTEM_PROMPT_FILE")")"
   fi
   cat <<'TOML'
 approval_policy = "never"
@@ -206,7 +237,15 @@ TOML
   cat <<'TOML'
 
 [shell_environment_policy]
-exclude = ["OPENROUTER_API_KEY"]
+TOML
+  # #2779: the read-only Homeroom grant stays out of commands the model
+  # launches, like the provider key. Only its MCP bridge receives it.
+  if [ -n "${HOMEROOM_MCP_TOKEN:-}" ]; then
+    printf 'exclude = ["OPENROUTER_API_KEY", "HOMEROOM_MCP_TOKEN"]\n'
+  else
+    printf 'exclude = ["OPENROUTER_API_KEY"]\n'
+  fi
+  cat <<'TOML'
 
 [agents]
 enabled = false
@@ -235,9 +274,9 @@ TOML
     cat <<'TOML'
 
 [mcp_servers.playwright]
-command = "npx"
+command = "/usr/local/bin/mcp-server-playwright"
 TOML
-    printf 'args = ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--config", "%s"]\n' "$ESCAPED_BROWSER_CONFIG"
+    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "%s"]\n' "$ESCAPED_BROWSER_CONFIG"
     cat <<'TOML'
 startup_timeout_sec = 30
 tool_timeout_sec = 60
@@ -251,38 +290,82 @@ startup_timeout_sec = 15
 tool_timeout_sec = 30
 TOML
   elif [ "$MODE" = "evidence" ]; then
-    ESCAPED_BASE_ORIGIN=$(toml_escape "$EVIDENCE_BASE_ORIGIN")
-    ESCAPED_HEAD_ORIGIN=$(toml_escape "$EVIDENCE_HEAD_ORIGIN")
-    ESCAPED_PROXY=$(toml_escape "$EVIDENCE_PROXY_SERVER")
-    ESCAPED_MEMBER_STATE=$(toml_escape "$EVIDENCE_BROWSER_STATE_DIR/member.json")
-    ESCAPED_ADMIN_STATE=$(toml_escape "$EVIDENCE_BROWSER_STATE_DIR/read_only_admin.json")
-    cat <<'TOML'
+    if [ "$EVIDENCE_COMPLETION_REMINDER" = "1" ]; then
+      cat <<'TOML'
 
 [mcp_servers.evidence]
 command = "node"
 args = ["/usr/local/bin/evidence-mcp.js"]
 env_vars = ["EVIDENCE_JWT", "EVIDENCE_RUN_ID", "PLATFORM_URL"]
-enabled_tools = ["evidence_get_context", "evidence_reset_side", "evidence_run_plan"]
+enabled_tools = ["evidence_run_plan", "evidence_report_blocker"]
+startup_timeout_sec = 15
+tool_timeout_sec = 720
+TOML
+    else
+    BROWSER_ALLOWED_ORIGINS=$(node /usr/local/bin/evidence-hosted-origins.js \
+      "$EVIDENCE_BASE_ORIGIN" "$EVIDENCE_HEAD_ORIGIN" "$EVIDENCE_HOSTED_ORIGINS_FILE") \
+      || die "could not load evidence hosted-app catalog"
+    ESCAPED_BROWSER_ALLOWED_ORIGINS=$(toml_escape "$BROWSER_ALLOWED_ORIGINS")
+    ESCAPED_PROXY=$(toml_escape "$EVIDENCE_PROXY_SERVER")
+    ESCAPED_MEMBER_STATE=$(toml_escape "$EVIDENCE_BROWSER_STATE_DIR/member.json")
+    ESCAPED_ADMIN_STATE=$(toml_escape "$EVIDENCE_BROWSER_STATE_DIR/read_only_admin.json")
+    ESCAPED_FULL_ADMIN_STATE=$(toml_escape "$EVIDENCE_BROWSER_STATE_DIR/full_admin.json")
+    cat <<'TOML'
+
+[mcp_servers.evidence]
+command = "node"
+args = ["/usr/local/bin/evidence-mcp.js"]
+env_vars = ["EVIDENCE_JWT", "EVIDENCE_RUN_ID", "PLATFORM_URL", "EVIDENCE_PROXY_SERVER", "EVIDENCE_PROXY_CONTROL_TOKEN", "EVIDENCE_HOSTED_ORIGINS_FILE"]
+enabled_tools = ["evidence_get_context", "evidence_set_request_failure", "evidence_run_plan", "evidence_report_blocker"]
 startup_timeout_sec = 15
 tool_timeout_sec = 720
 
 [mcp_servers.browser_member]
-command = "playwright-mcp"
+command = "node"
 TOML
-    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_MEMBER_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
+    printf 'args = ["/usr/local/bin/evidence-browser-observer.js", "member", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--caps", "vision", "--storage-state", "%s", "--allowed-origins", "%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_MEMBER_STATE" "$ESCAPED_BROWSER_ALLOWED_ORIGINS" "$ESCAPED_PROXY"
     cat <<'TOML'
-enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
+env_vars = ["EVIDENCE_ALLOWED_ORIGINS", "EVIDENCE_BROWSER_DIAGNOSTIC_FILE", "EVIDENCE_NAVIGATION_HINTS"]
+enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_mouse_move_xy", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
 startup_timeout_sec = 30
 tool_timeout_sec = 60
 
 [mcp_servers.browser_admin]
-command = "playwright-mcp"
+command = "node"
 TOML
-    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--storage-state", "%s", "--allowed-origins", "%s;%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_ADMIN_STATE" "$ESCAPED_BASE_ORIGIN" "$ESCAPED_HEAD_ORIGIN" "$ESCAPED_PROXY"
+    printf 'args = ["/usr/local/bin/evidence-browser-observer.js", "admin", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--caps", "vision", "--storage-state", "%s", "--allowed-origins", "%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_ADMIN_STATE" "$ESCAPED_BROWSER_ALLOWED_ORIGINS" "$ESCAPED_PROXY"
     cat <<'TOML'
-enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
+env_vars = ["EVIDENCE_ALLOWED_ORIGINS", "EVIDENCE_BROWSER_DIAGNOSTIC_FILE", "EVIDENCE_NAVIGATION_HINTS"]
+enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_mouse_move_xy", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
 startup_timeout_sec = 30
 tool_timeout_sec = 60
+
+[mcp_servers.browser_full_admin]
+command = "node"
+TOML
+    printf 'args = ["/usr/local/bin/evidence-browser-observer.js", "full_admin", "--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--caps", "vision", "--storage-state", "%s", "--allowed-origins", "%s", "--block-service-workers", "--image-responses", "allow", "--proxy-server", "%s", "--timeout-action", "10000", "--timeout-navigation", "30000"]\n' "$ESCAPED_FULL_ADMIN_STATE" "$ESCAPED_BROWSER_ALLOWED_ORIGINS" "$ESCAPED_PROXY"
+    cat <<'TOML'
+env_vars = ["EVIDENCE_ALLOWED_ORIGINS", "EVIDENCE_BROWSER_DIAGNOSTIC_FILE", "EVIDENCE_NAVIGATION_HINTS"]
+enabled_tools = ["browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot", "browser_click", "browser_type", "browser_fill_form", "browser_press_key", "browser_select_option", "browser_hover", "browser_mouse_move_xy", "browser_drag", "browser_resize", "browser_wait_for", "browser_console_messages", "browser_network_requests", "browser_tabs", "browser_close"]
+startup_timeout_sec = 30
+tool_timeout_sec = 60
+TOML
+    fi
+  fi
+  # #2779: the coding agent's read-only Homeroom tools, for a build or scout
+  # turn the platform issued a grant to. The bridge receives the grant from
+  # this process's environment through env_vars; the config names only the
+  # variable, never its value.
+  if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && { [ "$MODE" = "build" ] || [ "$MODE" = "scout" ]; }; then
+    cat <<'TOML'
+
+[mcp_servers.homeroom]
+command = "node"
+args = ["/usr/local/bin/homeroom-read-mcp.js"]
+env_vars = ["HOMEROOM_MCP_TOKEN", "PLATFORM_URL"]
+enabled_tools = ["get_platform_conventions", "get_app", "list_requests", "get_request", "get_proposal", "get_change"]
+startup_timeout_sec = 15
+tool_timeout_sec = 30
 TOML
   fi
 } > "$CONFIG_TMP"; then
@@ -296,6 +379,10 @@ fi
 if grep -Fq -- "$OPENROUTER_API_KEY" "$CONFIG_TMP"; then
   rm -f "$CONFIG_TMP"
   die "refusing Codex config containing the OpenRouter key"
+fi
+if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && grep -Fq -- "$HOMEROOM_MCP_TOKEN" "$CONFIG_TMP"; then
+  rm -f "$CONFIG_TMP"
+  die "refusing Codex config containing the Homeroom grant"
 fi
 chmod 600 "$CONFIG_TMP" || { rm -f "$CONFIG_TMP"; die "could not secure Codex config"; }
 mv -f "$CONFIG_TMP" "$CODEX_HOME/config.toml" \
@@ -326,9 +413,17 @@ TMP_STATUS=$(mktemp /home/node/.usernode/turn-codex-status-XXXX 2>/dev/null || m
 # before it reaches either tee's temporary copy or the host's durable turn
 # journal. awk's index/substr path is literal (not regex based), so keys that
 # contain replacement or regex metacharacters are handled safely.
+#
+# mawk (the image's awk) reads a pipe until its input buffer is full before
+# it processes a line, and that buffer grows to the longest line it has read.
+# Without -W interactive, one large command output holds the journal back by
+# that many bytes for the rest of the turn, so live progress stops until
+# enough later output arrives to fill it again.
+if command -v mawk >/dev/null 2>&1; then REDACT_AWK="mawk -W interactive"; else REDACT_AWK=awk; fi
 redact_codex_stream() {
-  awk '
-    BEGIN { secret = ENVIRON["OPENROUTER_API_KEY"] }
+  # shellcheck disable=SC2086
+  $REDACT_AWK '
+    BEGIN { secret = ENVIRON["OPENROUTER_API_KEY"]; grant = ENVIRON["HOMEROOM_MCP_TOKEN"] }
     {
       # Codex emits a structured JSON retry event immediately after this
       # internal Rust warning. Drop the duplicate implementation detail so
@@ -338,6 +433,12 @@ redact_codex_stream() {
       if (secret != "") {
         while ((at = index($0, secret)) > 0) {
           $0 = substr($0, 1, at - 1) "****" substr($0, at + length(secret))
+        }
+      }
+      # #2779: the read-only Homeroom grant, scrubbed the same literal way.
+      if (grant != "") {
+        while ((at = index($0, grant)) > 0) {
+          $0 = substr($0, 1, at - 1) "****" substr($0, at + length(grant))
         }
       }
       print

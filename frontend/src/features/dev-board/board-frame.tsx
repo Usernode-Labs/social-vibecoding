@@ -75,7 +75,6 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from './view-mode-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
 import { skeletonKanbanHtml, skeletonListHtml } from './card/skeleton';
-import { lockedNoticeStore, lockedNoticeText, type LockedNoticeState } from './locked-notice-store';
 import { mainPauseStore, mainPauseText, type MainPauseState } from './main-pause-store';
 import { releaseStallStore, releaseStallText, type ReleaseStallState } from './release-stall-store';
 
@@ -309,7 +308,6 @@ export function DevBoardFrame({
   cardCls,
   cardHoverCls,
 }: DevBoardFrameProps) {
-  const { locked, inviteOnly } = useStoreState<LockedNoticeState>(lockedNoticeStore);
   const mainPaused = useStoreState<MainPauseState>(mainPauseStore).paused;
   const releaseStalled = useStoreState<ReleaseStallState>(releaseStallStore).stalled;
   // The toolbar's home depends on the surface — see the DevActionsRow render
@@ -368,34 +366,15 @@ export function DevBoardFrame({
         />
       )}
 
-      {/* The card list: locked notice, general-chat card, session rows, the
+      {/* The card list: general-chat card, session rows, the
           intermixed feed, and the Completed section. */}
       <div
         id="dev-forum-scroll"
         className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll"
       >
         {/*
-            The locked-app banner. It used to be one of the leaves above — a
-            host the module toggled `hidden` on and wrote `innerHTML` into —
-            which meant TWO owners of one node's class attribute, tolerated only
-            because React rendered that class as a constant. It is a field on
-            the view-mode store now, so the node has one writer and the banner
-            has one spelling.
-        */}
-        <div id="dev-locked-notice" className={locked ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
-          {locked ? (
-            // #1896: who can build here, not a warning. The old amber "locked"
-            // line read as "you cannot build on this app", which was never
-            // true — the lock only adds an admin's approval to the vote.
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 py-2.5 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-              {lockedNoticeText(inviteOnly)}
-            </div>
-          ) : null}
-        </div>
-        {/*
-            The merges-paused banner (services/main-watch.js). Same
-            arrangement as the locked notice: one store field, one writer,
-            one spelling. Absent — not hidden — while merges are not paused,
+            The merges-paused banner (services/main-watch.js). One store
+            field, one writer, one spelling. Absent — not hidden — while merges are not paused,
             so a board that is fine carries no extra node.
         */}
         <div id="dev-main-pause-notice" className={mainPaused ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>

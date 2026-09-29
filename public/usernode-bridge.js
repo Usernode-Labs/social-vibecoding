@@ -6274,6 +6274,79 @@
   })();
   /* __USERNODE_SAFE_AREA_END__ */
 
+  // =====================================================================
+  //  Public API: platform theme (usernode.theme) — additive within v1
+  // =====================================================================
+  //
+  // The viewer's resolved platform theme, "light" or "dark" (issue #3257).
+  //
+  // An app in the platform frame cannot see the viewer's Light/Dark choice
+  // on its own: `prefers-color-scheme` inside a cross-origin frame follows
+  // the OS, not the shell around it, so a viewer who picked Dark on a
+  // light-mode OS saw every app light. The shell forwards the RESOLVED
+  // theme (never "system") two ways, and this block turns both into:
+  //
+  //   1. `usernode.theme` — "light" | "dark", or null standalone or before
+  //      the shell has said. Seeded synchronously from `?un-theme=` on
+  //      the frame URL, so a bootstrap that runs after this <script> can
+  //      read it before first paint.
+  //   2. A `usernode:theme-changed` CustomEvent on window, `detail`
+  //      `{ theme }`, whenever it changes (the shell pushes one on every
+  //      theme change; nothing reloads the app).
+  //
+  // It reports only. The app decides what dark means for it, so nothing
+  // here writes a class, an attribute or a style.
+  /* __USERNODE_THEME_BEGIN__ */
+  (function () {
+    function normalize(value) {
+      return value === "dark" || value === "light" ? value : null;
+    }
+
+    var seeded = null;
+    try {
+      seeded = normalize(new URLSearchParams(window.location.search).get("un-theme"));
+    } catch (_) {}
+    window.usernode.theme = seeded;
+
+    // Standalone: no shell, and prefers-color-scheme is the right signal.
+    if (window === window.parent) return;
+
+    function apply(value) {
+      var next = normalize(value && value.theme);
+      if (!next || next === window.usernode.theme) return;
+      window.usernode.theme = next;
+      try {
+        window.dispatchEvent(new CustomEvent("usernode:theme-changed", {
+          detail: { theme: next },
+        }));
+      } catch (_) {}
+    }
+
+    var _getId = "theme-" + String(Date.now()) + "-" +
+      Math.random().toString(16).slice(2);
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || !data.__usernode_theme) return;
+      if (data.__usernode_theme === "changed") {
+        apply(data.value);
+        return;
+      }
+      if (data.__usernode_theme === "response" && data.id === _getId) {
+        apply(data.value);
+      }
+    });
+
+    // Ask once at load: the URL value is only as fresh as the frame's last
+    // navigation, and a `changed` posted before this listener existed
+    // must not be missed.
+    try {
+      window.parent.postMessage({ __usernode_theme: "get", id: _getId }, "*");
+    } catch (_) {}
+  })();
+  /* __USERNODE_THEME_END__ */
+
   // #1581: iOS paints the embedding iframe's background behind a rubber-band
   // scroll, not the child document's html background. Publish the document's
   // solid ground so the host can paint that surface too. This is automatic:
@@ -6365,6 +6438,63 @@
     } catch (_) {}
   })();
   /* __USERNODE_BACKGROUND_END__ */
+
+  // #2902: the shell keeps the last few apps loaded in hidden frames so that
+  // coming back to one shows it exactly as it was left. A hidden app must not
+  // keep playing into the room, so on `hidden` this pauses every <audio> and
+  // <video> that is playing and, on `visible`, resumes exactly those — the
+  // ones the viewer had playing, not ones they had paused themselves. Anything
+  // else an app wants to stop (Web Audio, animation loops, polling) hangs off
+  // the `usernode:visibility-changed` event, whose `detail` is `{ hidden }`.
+  /* __USERNODE_VISIBILITY_BEGIN__ */
+  (function () {
+    if (window === window.parent) return;
+    var hidden = false;
+    var paused = [];
+
+    function pauseMedia() {
+      var media = document.querySelectorAll("audio, video");
+      for (var i = 0; i < media.length; i++) {
+        var m = media[i];
+        try {
+          if (!m.paused && !m.ended) {
+            m.pause();
+            paused.push(m);
+          }
+        } catch (_) {}
+      }
+    }
+
+    function resumeMedia() {
+      var list = paused;
+      paused = [];
+      for (var i = 0; i < list.length; i++) {
+        try {
+          if (!list[i].isConnected) continue;
+          var played = list[i].play();
+          if (played && typeof played.catch === "function") played.catch(function () {});
+        } catch (_) {}
+      }
+    }
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data) return;
+      var state = data.__usernode_visibility;
+      if (state !== "hidden" && state !== "visible") return;
+      var next = state === "hidden";
+      if (next === hidden) return;
+      hidden = next;
+      if (hidden) pauseMedia(); else resumeMedia();
+      try {
+        window.dispatchEvent(new CustomEvent("usernode:visibility-changed", {
+          detail: { hidden: hidden },
+        }));
+      } catch (_) {}
+    });
+  })();
+  /* __USERNODE_VISIBILITY_END__ */
 
   // Rendering invariants (issue #360) — additive within v1.
   //

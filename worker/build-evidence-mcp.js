@@ -25,16 +25,20 @@ const viewport = z.object({
 const story = z.object({
   id: z.string().min(1).max(96),
   claim: z.string().min(1).max(1000),
-  persona: z.enum(['member', 'read_only_admin']),
+  persona: z.enum(['member', 'read_only_admin', 'full_admin'])
+    .describe('Use full_admin only for Homeroom controls that are hidden from read-only administrators; that identity exists only inside disposable evidence environments.'),
   viewports: z.array(viewport).min(1).max(2),
   intent: z.object({
-    startPath: z.string().min(1).max(512),
+    startPath: z.string().min(1).max(512)
+      .describe('Use a concrete relative route from an observed screen or declared check, including query and hash. Use / only when the change is visible on the home screen.'),
     steps: z.array(z.string().min(1).max(200)).min(1).max(40),
     checkpoint: z.string().min(1).max(500),
     focus: z.string().min(1).max(200),
     baseState: z.enum(['present', 'not_present']).optional()
       .describe('Use not_present only for a genuinely new screen/control; base replay must still assert and capture its stable parent or explicit absence page.'),
     animation: z.enum(['none', 'steps', 'motion']),
+    controlledFailurePath: z.string().min(6).max(512).optional()
+      .describe('Only for an error state: exact same-origin /api/ GET path to block on both revisions. Set the FIRST intent.steps entry exactly to "Controlled test: deliberately block the declared API GET on both revisions." so reviewers see the condition. Replay requires a real matching request on both sides.'),
   }).strict(),
 }).strict();
 const intentSchema = {
@@ -67,10 +71,10 @@ async function record(intent) {
 
 const server = new McpServer(
   { name: 'usernode-visual-intent', version: '1.0.0' },
-  { instructions: 'After implementing a change, declare its reviewer-facing visual evidence intent. This records claims only; Homeroom later explores base/head and deterministically replays the UI flow.' }
+  { instructions: 'After implementing a change, declare its reviewer-facing visual evidence intent only for a visible state you reached in the running local app with representative test data. Report a missing fixture or inaccessible state instead of inventing a claim. This records claims only; Homeroom later explores base/head and deterministically replays the UI flow.' }
 );
 server.registerTool('record_visual_evidence_intent', {
-  description: 'Declare 1-3 concrete UI claims and flows while implementation context is fresh, or impact=none with a specific rationale for a truly non-visual change. Call once after implementation and before finishing the build turn.',
+  description: 'Declare 1-3 concrete UI claims and flows that you reached in the running local app with representative test data, or impact=none with a specific rationale for a truly non-visual change. A visible state needing a server fault or background job requires a repeatable staging fixture; report a blocker rather than submitting a guessed flow. Call once after implementation and before finishing the build turn.',
   inputSchema: intentSchema,
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, async (intent) => {

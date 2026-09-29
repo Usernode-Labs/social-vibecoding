@@ -1,0 +1,578 @@
+'use strict';
+
+/**
+ * Invite links: /invite/<token>, a way into a community that anyone holding
+ * the link can use (schema.sql, "Communities, stage 6: invite links").
+ *
+ *   createInvite  any member makes one for a project they are in. It lasts
+ *                 DEFAULT_DAYS and works for DEFAULT_USES people unless they
+ *                 choose otherwise, within the LIMITS.
+ *   listInvites   the viewer's own live links (every live link, for someone
+ *                 who manages the project).
+ *   revokeInvite  its maker, a project admin or a platform admin turns it
+ *                 off. People it queued who were not let in yet are cancelled
+ *                 with it; people who already joined stay.
+ *   preview       what a link shows before anyone signs in: the project's
+ *                 name and icon, who invited you, how many are in it. A dead
+ *                 link shows none of that, only why it is dead.
+ *   redeem        following a link. Somebody with platform access joins on
+ *                 the spot. Somebody without it (a new account, or one still
+ *                 on the waitlist) is QUEUED: the community waits, and the
+ *                 trigger in schema.sql applies it the moment they are let in,
+ *                 however that happens.
+ *
+ * WHAT A LINK GRANTS is what its maker could grant: on a project where
+ * building is by invitation it is the collaborator invite, accepted; anywhere
+ * else it is membership. schema.sql's apply_community_invite() is the one
+ * implementation, used both here and by that trigger.
+ *
+ * THE INVITE TREE is built and OFF (INVITE_TREE_ENABLED). When on, a link
+ * can also let somebody past the waitlist, spending one of its maker's
+ * lifetime skips: TREE_BUDGETS by generation (10 for people we let in, then
+ * 5, then 2, then none), unlimited for admins, whose invitees start at 10.
+ * Skips used is a count of users.admitted_by, read under a lock on the
+ * maker's row so two people following at once cannot spend a skip that is
+ * not there. With it off, everybody new is queued.
+ */
+
+const crypto = require('crypto');
+const log = require('./logger');
+const events = require('./events');
+const appAccess = require('./app-access');
+const appAdmins = require('./app-admins');
+const communities = require('./communities');
+
+const DEFAULT_DAYS = 7;
+const DEFAULT_USES = 25;
+const LIMITS = Object.freeze({ minDays: 1, maxDays: 30, minUses: 1, maxUses: 100 });
+// Live links one person may hold for one project at a time. Links are cheap
+// to make; a cap keeps a single account from minting an unbounded supply.
+const MAX_LIVE_PER_MAKER = 10;
+
+// 16 random bytes, base64url: 22 characters. Anything else is not a token
+// and never reaches the database.
+const TOKEN_RE = /^[A-Za-z0-9_-]{22}$/;
+
+function treeEnabled() {
+  return process.env.INVITE_TREE_ENABLED === 'true';
+}
+
+// Lifetime skips by generation: index 0 is people we let in.
+function treeBudgets() {
+  const raw = String(process.env.INVITE_TREE_BUDGETS || '10,5,2');
+  const parsed = raw.split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => Number.isFinite(n) && n >= 0);
+  return parsed.length ? parsed : [10, 5, 2];
+}
+
+/** Skips a person of `generation` gets over their lifetime. */
+function budgetFor(generation, { isAdmin = false } = {}) {
+  if (isAdmin) return Infinity;
+  if (generation == null || generation < 0) return 0;
+  const budgets = treeBudgets();
+  return generation < budgets.length ? budgets[generation] : 0;
+}
+
+function newToken() {
+  return crypto.randomBytes(16).toString('base64url');
+}
+
+function isToken(value) {
+  return typeof value === 'string' && TOKEN_RE.test(value);
+}
+
+function invitePath(token) {
+  return `/invite/${token}`;
+}
+
+/** A whole number within [min, max], or `fallback` when none was given. */
+function clampInt(value, fallback, min, max) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < min || n > max) return null;
+  return n;
+}
+
+/**
+ * Why a link cannot be used, or null when it can. A link whose maker can no
+ * longer grant what it grants (removed from the group, left the community,
+ * account gone) reads as turned off: it died with their standing
+ * (schema.sql, community_invite_maker_holds).
+ */
+function deadReason(invite, now = new Date()) {
+  if (!invite) return 'unknown';
+  if (invite.revoked_at || invite.maker_holds === false) return 'revoked';
+  if (new Date(invite.expires_at) <= now) return 'expired';
+  if (invite.uses >= invite.max_uses) return 'used_up';
+  return null;
+}
+
+// What a link grants on this project: 'collaborator' where building is by
+// invitation, 'member' anywhere else. Mirrors apply_community_invite().
+function grantFor(app) {
+  return app.collab_visibility === 'private' && !app.self_hosted ? 'collaborator' : 'member';
+}
+
+/**
+ * May `user` make a link for `app` (a row carrying ACCESS_COLUMNS and
+ * community_id)? They must be able to grant what the link grants: a
+ * collaborator where building is by invitation, a member elsewhere. Admins
+ * may always.
+ */
+async function canCreate(pool, app, user) {
+  if (!app || !user || app.community_id == null) return false;
+  if (user.isAdmin) return true;
+  if (grantFor(app) === 'collaborator') return appAccess.isCollaborator(pool, app.id, user.id);
+  return communities.isMember(pool, app.id, user.id);
+}
+
+/** May `user` turn off `invite` (a row carrying created_by) on `app`? */
+async function canRevoke(pool, app, invite, user) {
+  if (!user || !invite) return false;
+  if (user.canAdminWrite) return true;
+  if (invite.created_by != null && invite.created_by === user.id) return true;
+  return appAdmins.canManageApp(pool, app, user);
+}
+
+function serializeLink(row, viewerId) {
+  return {
+    id: row.id,
+    token: row.token,
+    path: invitePath(row.token),
+    maxUses: row.max_uses,
+    uses: row.uses,
+    expiresAt: row.expires_at instanceof Date ? row.expires_at.toISOString() : row.expires_at,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    createdBy: row.created_by_username || null,
+    mine: row.created_by != null && row.created_by === viewerId,
+  };
+}
+
+/**
+ * Make a link. `app` carries ACCESS_COLUMNS, community_id and name. Returns
+ * `{ ok: true, link }` or `{ ok: false, status, error }`.
+ */
+async function createInvite(pool, { app, user, days, maxUses }) {
+  if (!(await canCreate(pool, app, user))) {
+    return { ok: false, status: 403, error: 'Only people in this project can invite others to it.' };
+  }
+  const d = clampInt(days, DEFAULT_DAYS, LIMITS.minDays, LIMITS.maxDays);
+  const u = clampInt(maxUses, DEFAULT_USES, LIMITS.minUses, LIMITS.maxUses);
+  if (d === null) {
+    return { ok: false, status: 400, error: `A link lasts between ${LIMITS.minDays} and ${LIMITS.maxDays} days.` };
+  }
+  if (u === null) {
+    return { ok: false, status: 400, error: `A link works for between ${LIMITS.minUses} and ${LIMITS.maxUses} people.` };
+  }
+  const { rows: live } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM community_invites
+      WHERE app_id = $1 AND created_by = $2 AND revoked_at IS NULL
+        AND expires_at > NOW() AND uses < max_uses`,
+    [app.id, user.id]
+  );
+  if ((live[0]?.n || 0) >= MAX_LIVE_PER_MAKER) {
+    return { ok: false, status: 429, error: `You already have ${MAX_LIVE_PER_MAKER} live links for this project. Turn one off first.` };
+  }
+  const token = newToken();
+  const { rows } = await pool.query(
+    `INSERT INTO community_invites (token, community_id, app_id, created_by, max_uses, expires_at)
+     VALUES ($1, $2, $3, $4, $5, NOW() + ($6 || ' days')::interval)
+     RETURNING id, token, created_by, max_uses, uses, expires_at, created_at`,
+    [token, app.community_id, app.id, user.id, u, String(d)]
+  );
+  events.record(pool, {
+    type: events.EVENT_TYPES.INVITE_LINK_CREATED,
+    userId: user.id,
+    appId: app.id,
+    metadata: { inviteId: rows[0].id, days: d, maxUses: u },
+  });
+  return { ok: true, link: serializeLink({ ...rows[0], created_by_username: user.username }, user.id) };
+}
+
+/**
+ * The live links for `app` the viewer may see: their own, or every live
+ * link when they manage the project. Newest first.
+ */
+async function listInvites(pool, { app, user }) {
+  const manages = !!user && (user.canAdminWrite || await appAdmins.canManageApp(pool, app, user));
+  const { rows } = await pool.query(
+    `SELECT i.id, i.token, i.created_by, i.max_uses, i.uses, i.expires_at, i.created_at,
+            u.username AS created_by_username
+       FROM community_invites i
+       LEFT JOIN users u ON u.id = i.created_by
+      WHERE i.app_id = $1
+        AND i.revoked_at IS NULL AND i.expires_at > NOW() AND i.uses < i.max_uses
+        AND ($3::boolean OR i.created_by = $2)
+      ORDER BY i.created_at DESC, i.id DESC
+      LIMIT 50`,
+    [app.id, user?.id || null, manages]
+  );
+  return { links: rows.map((r) => serializeLink(r, user?.id)), manages };
+}
+
+/**
+ * Turn a link off. Returns `{ ok: true, cancelled }` (how many people it had
+ * queued who will now not join) or `{ ok: false, status, error }`. A link the
+ * caller may not see answers 404, like any private thing here.
+ */
+async function revokeInvite(pool, { inviteId, user }) {
+  const id = parseInt(inviteId, 10);
+  if (!Number.isFinite(id)) return { ok: false, status: 404, error: 'Invite link not found' };
+  const { rows } = await pool.query(
+    `SELECT i.id, i.created_by, i.revoked_at, a.id AS app_id, a.slug, a.created_by AS app_created_by
+       FROM community_invites i JOIN apps a ON a.id = i.app_id
+      WHERE i.id = $1`,
+    [id]
+  );
+  const row = rows[0];
+  const app = row ? { id: row.app_id, slug: row.slug, created_by: row.app_created_by } : null;
+  if (!row || !(await canRevoke(pool, app, row, user))) {
+    return { ok: false, status: 404, error: 'Invite link not found' };
+  }
+  await pool.query(
+    'UPDATE community_invites SET revoked_at = COALESCE(revoked_at, NOW()) WHERE id = $1',
+    [id]
+  );
+  const { rows: cancelled } = await pool.query(
+    `UPDATE community_invite_redemptions
+        SET status = 'cancelled'
+      WHERE invite_id = $1 AND status = 'queued' AND applied_at IS NULL
+      RETURNING id`,
+    [id]
+  );
+  events.record(pool, {
+    type: events.EVENT_TYPES.INVITE_LINK_REVOKED,
+    userId: user.id,
+    appId: row.app_id,
+    metadata: { inviteId: id, cancelled: cancelled.length },
+  });
+  return { ok: true, cancelled: cancelled.length };
+}
+
+// The link and its project, as preview and redeem read them. `lock` takes
+// the row lock redeem needs; the caller holds a transaction.
+async function loadInvite(db, token, { lock = false } = {}) {
+  if (!isToken(token)) return null;
+  const { rows } = await db.query(
+    `SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses,
+            i.expires_at, i.revoked_at,
+            a.slug, a.name, a.icon_emoji, a.icon_image_id, a.created_by AS app_created_by,
+            a.self_hosted, a.collab_visibility, a.view_visibility, a.community_id AS app_community_id,
+            u.username AS inviter,
+            community_invite_maker_holds(i.id) AS maker_holds
+       FROM community_invites i
+       JOIN apps a ON a.id = i.app_id
+       LEFT JOIN users u ON u.id = i.created_by
+      WHERE i.token = $1
+      ${lock ? 'FOR UPDATE OF i' : ''}`,
+    [token]
+  );
+  return rows[0] || null;
+}
+
+async function memberCount(db, communityId) {
+  if (communityId == null) return 0;
+  const { rows } = await db.query(
+    'SELECT COUNT(*)::int AS n FROM community_members WHERE community_id = $1',
+    [communityId]
+  );
+  return rows[0]?.n || 0;
+}
+
+/**
+ * What a link shows before anyone signs in. A live link discloses the
+ * project's name and icon, who invited you and how many are in it — what the
+ * invite itself offers to share — and never the project's address: that
+ * comes after joining. A dead or unknown link discloses nothing but why.
+ */
+async function preview(pool, token) {
+  const invite = await loadInvite(pool, token);
+  const reason = deadReason(invite);
+  if (reason) return { live: false, reason };
+  const count = await memberCount(pool, invite.community_id);
+  return {
+    live: true,
+    reason: null,
+    project: {
+      name: invite.name || invite.slug,
+      iconEmoji: invite.icon_emoji || null,
+      iconUrl: invite.icon_image_id ? `/app-icons/${invite.icon_image_id}` : null,
+    },
+    inviter: invite.inviter || null,
+    memberCount: count,
+    expiresAt: invite.expires_at instanceof Date ? invite.expires_at.toISOString() : invite.expires_at,
+  };
+}
+
+// Whether `userId` already has what the link grants, so following it again
+// changes nothing and spends no use.
+async function alreadyHasGrant(db, invite, userId) {
+  const app = { id: invite.app_id, collab_visibility: invite.collab_visibility, self_hosted: invite.self_hosted };
+  if (grantFor(app) === 'collaborator') return appAccess.isCollaborator(db, invite.app_id, userId);
+  return communities.isMember(db, invite.app_id, userId);
+}
+
+/**
+ * The viewer's standing on a link, for the signed-in invite screen: the
+ * preview, plus `mine` — 'joined' when they are in the project (however they
+ * got there), 'queued' or 'cancelled' for a redemption still waiting or
+ * called off, null when they have not followed it — and the project's slug
+ * once they are in it.
+ */
+async function standing(pool, token, user) {
+  const base = await preview(pool, token);
+  const invite = await loadInvite(pool, token);
+  if (!invite || !user) return { ...base, mine: null, slug: null };
+  const { rows } = await pool.query(
+    'SELECT status FROM community_invite_redemptions WHERE invite_id = $1 AND user_id = $2',
+    [invite.id, user.id]
+  );
+  const inIt = await alreadyHasGrant(pool, invite, user.id);
+  const mine = inIt ? 'joined' : (rows[0]?.status || null);
+  return { ...base, mine, slug: inIt ? invite.slug : null };
+}
+
+/**
+ * Follow a link as `user` ({ id, isAdmin, hasPlatformAccess }). One
+ * transaction, the link's row locked for its use count.
+ *
+ * Returns `{ ok: true, status, slug, name, skippedWaitlist }`:
+ *   status 'joined'  in the project now (slug set);
+ *          'member'  was already in it; nothing spent (slug set);
+ *          'queued'  no platform access yet: joins when let in (no slug);
+ * or `{ ok: false, status: 404|410, reason }` for an unknown or dead link.
+ */
+async function redeem(pool, { token, user }) {
+  if (!user || !user.id) return { ok: false, status: 401, reason: 'signed_out' };
+  if (!isToken(token)) return { ok: false, status: 404, reason: 'unknown' };
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const invite = await loadInvite(client, token, { lock: true });
+    if (!invite) {
+      await client.query('ROLLBACK');
+      return { ok: false, status: 404, reason: 'unknown' };
+    }
+    const name = invite.name || invite.slug;
+
+    if (await alreadyHasGrant(client, invite, user.id)) {
+      await client.query('COMMIT');
+      return { ok: true, status: 'member', slug: invite.slug, name, skippedWaitlist: false };
+    }
+    const { rows: prior } = await client.query(
+      'SELECT id, status FROM community_invite_redemptions WHERE invite_id = $1 AND user_id = $2',
+      [invite.id, user.id]
+    );
+    if (prior[0] && prior[0].status === 'queued') {
+      await client.query('COMMIT');
+      return { ok: true, status: 'queued', slug: null, name, skippedWaitlist: false };
+    }
+    const reason = deadReason(invite);
+    if (reason) {
+      await client.query('ROLLBACK');
+      return { ok: false, status: 410, reason };
+    }
+
+    // A fresh row, or a cancelled one re-armed by a live link: either way it
+    // spends one use of THIS link.
+    const { rows: redemption } = await client.query(
+      `INSERT INTO community_invite_redemptions (invite_id, user_id, status)
+       VALUES ($1, $2, 'queued')
+       ON CONFLICT (invite_id, user_id) DO UPDATE
+         SET status = 'queued', applied_at = NULL, created_at = NOW()
+       RETURNING id`,
+      [invite.id, user.id]
+    );
+    await client.query('UPDATE community_invites SET uses = uses + 1 WHERE id = $1', [invite.id]);
+
+    const hasAccess = !!(user.hasPlatformAccess || user.isAdmin);
+    let skippedWaitlist = false;
+    if (hasAccess) {
+      await client.query('SELECT apply_community_invite($1)', [redemption[0].id]);
+    } else if (treeEnabled() && invite.created_by != null) {
+      skippedWaitlist = await admitThroughTree(client, { inviterId: invite.created_by, userId: user.id });
+      if (skippedWaitlist) {
+        await client.query(
+          'UPDATE community_invite_redemptions SET skipped_waitlist = TRUE WHERE id = $1',
+          [redemption[0].id]
+        );
+      }
+    }
+    const { rows: after } = await client.query(
+      'SELECT status FROM community_invite_redemptions WHERE id = $1',
+      [redemption[0].id]
+    );
+    await client.query('COMMIT');
+
+    const status = after[0]?.status === 'joined' ? 'joined' : 'queued';
+    if (status === 'joined') appAccess.invalidateVisibility(invite.app_id, invite.slug);
+    events.record(pool, {
+      type: events.EVENT_TYPES.INVITE_LINK_REDEEMED,
+      userId: user.id,
+      appId: invite.app_id,
+      metadata: { inviteId: invite.id, status, skippedWaitlist },
+    });
+    return { ok: true, status, slug: status === 'joined' ? invite.slug : null, name, skippedWaitlist };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * THE INVITE TREE (off unless INVITE_TREE_ENABLED): let `userId` past the
+ * waitlist on one of `inviterId`'s skips, inside the caller's transaction.
+ * Locks the inviter's row, counts what they have spent, and when a skip is
+ * left, records who let them in, their generation (one below the inviter's;
+ * an admin's invitees start at 0, the top) and grants access — which fires
+ * the trigger that applies the redemptions this person has queued, this one
+ * included. Returns whether it let them in.
+ */
+async function admitThroughTree(client, { inviterId, userId }) {
+  const { rows } = await client.query(
+    `SELECT id, is_admin, has_platform_access,
+            COALESCE(invite_generation, CASE WHEN has_platform_access THEN 0 END) AS generation
+       FROM users WHERE id = $1
+       FOR UPDATE`,
+    [inviterId]
+  );
+  const inviter = rows[0];
+  if (!inviter || !(inviter.has_platform_access || inviter.is_admin)) return false;
+  const budget = budgetFor(inviter.generation, { isAdmin: !!inviter.is_admin });
+  if (budget !== Infinity) {
+    const { rows: used } = await client.query(
+      'SELECT COUNT(*)::int AS n FROM users WHERE admitted_by = $1',
+      [inviterId]
+    );
+    if ((used[0]?.n || 0) >= budget) return false;
+  }
+  const generation = inviter.is_admin ? 0 : (inviter.generation ?? 0) + 1;
+  const { rows: admitted } = await client.query(
+    `UPDATE users
+        SET has_platform_access = TRUE,
+            platform_access_granted_at = COALESCE(platform_access_granted_at, NOW()),
+            admitted_by = $2,
+            invite_generation = $3
+      WHERE id = $1 AND has_platform_access = FALSE
+      RETURNING id`,
+    [userId, inviterId, generation]
+  );
+  return admitted.length > 0;
+}
+
+/**
+ * Skips `user` has left to spend, for the invite sheet. Null while the tree
+ * is off, so nothing on screen mentions it.
+ */
+async function skipsLeft(pool, user) {
+  if (!treeEnabled() || !user) return null;
+  const { rows } = await pool.query(
+    `SELECT is_admin,
+            COALESCE(invite_generation, CASE WHEN has_platform_access THEN 0 END) AS generation,
+            (SELECT COUNT(*)::int FROM users x WHERE x.admitted_by = u.id) AS used
+       FROM users u WHERE u.id = $1`,
+    [user.id]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const budget = budgetFor(row.generation, { isAdmin: !!row.is_admin });
+  return budget === Infinity ? null : Math.max(0, budget - row.used);
+}
+
+/** The communities a person without access yet is queued to join. */
+async function queuedFor(pool, userId) {
+  if (!userId) return [];
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ON (a.id) a.name, a.slug, u.username AS inviter
+       FROM community_invite_redemptions x
+       JOIN community_invites i ON i.id = x.invite_id
+       JOIN apps a ON a.id = i.app_id
+       LEFT JOIN users u ON u.id = i.created_by
+      WHERE x.user_id = $1 AND x.status = 'queued' AND x.applied_at IS NULL
+        AND i.revoked_at IS NULL
+      ORDER BY a.id, x.created_at ASC`,
+    [userId]
+  );
+  return rows.map((r) => ({ name: r.name || r.slug, inviter: r.inviter || null }));
+}
+
+// ── Carrying a link through sign-in ────────────────────────────────────
+//
+// /invite/<token> (routes/community-invites.js) leaves the token in an
+// HttpOnly cookie, so the account a visitor signs up for or signs in to
+// follows the link server-side, whatever the browser did in between —
+// a new account cannot call the API from the waiting room, and the page it
+// signs up on is not the page the link opened.
+const INVITE_COOKIE = 'hr_invite';
+const INVITE_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function setInviteCookie(req, res, token) {
+  res.cookie(INVITE_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
+    maxAge: INVITE_COOKIE_MAX_AGE_MS,
+    path: '/',
+  });
+}
+
+function clearInviteCookie(res) {
+  res.clearCookie(INVITE_COOKIE, { path: '/' });
+}
+
+/**
+ * Follow the link a signing-in visitor carried, if any, as account `userId`,
+ * and clear it. Never throws: signing in must not fail because a link did.
+ * Returns `{ name, status, slug }` for the response to mention, or null.
+ */
+async function redeemCarried(pool, req, res, userId) {
+  const token = req.cookies?.[INVITE_COOKIE];
+  if (!token) return null;
+  clearInviteCookie(res);
+  if (!isToken(token) || !userId) return null;
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, is_admin, has_platform_access FROM users WHERE id = $1',
+      [userId]
+    );
+    if (!rows[0]) return null;
+    const user = { id: rows[0].id, isAdmin: !!rows[0].is_admin, hasPlatformAccess: !!rows[0].has_platform_access };
+    const result = await redeem(pool, { token, user });
+    if (!result.ok) return null;
+    return { name: result.name, status: result.status, slug: result.slug };
+  } catch (err) {
+    log.warn('invites', 'Following a carried invite link failed', { userId, err: err.message });
+    return null;
+  }
+}
+
+module.exports = {
+  DEFAULT_DAYS,
+  DEFAULT_USES,
+  LIMITS,
+  MAX_LIVE_PER_MAKER,
+  TOKEN_RE,
+  INVITE_COOKIE,
+  treeEnabled,
+  treeBudgets,
+  budgetFor,
+  isToken,
+  invitePath,
+  deadReason,
+  grantFor,
+  canCreate,
+  canRevoke,
+  createInvite,
+  listInvites,
+  revokeInvite,
+  preview,
+  standing,
+  redeem,
+  admitThroughTree,
+  skipsLeft,
+  queuedFor,
+  setInviteCookie,
+  clearInviteCookie,
+  redeemCarried,
+};

@@ -21,6 +21,21 @@
 // Callers must therefore set `overflow-y: auto`, or the overflow is clipped
 // and unreachable.
 //
+// ── Why it collapses only when the text lost something ─────────────────
+//
+// The collapse is two layouts per keystroke: `height: auto` invalidates the
+// box, the `scrollHeight` read lays it out collapsed, and the height written
+// back lays it out again. On a phone, in a long conversation, that was most
+// of what a keystroke cost. It is only NEEDED when the content may have got
+// shorter, because that is the one case the uncollapsed box cannot report.
+// So the collapse runs on the first measure and whenever the new value is
+// not the old one with text inserted into it (a deletion, a replacement, a
+// clear after send). While text is only being inserted, the content can only
+// grow, and ONE read is enough: `scrollHeight` beyond `clientHeight` means it
+// outgrew the box, and the height is written only when it differs from the
+// one last written. A box dragged taller by hand (`resize: vertical`) also
+// keeps its height while text is being typed into it.
+//
 // ── Why a layout effect ────────────────────────────────────────────────
 //
 // The height is written before the browser paints, so a restored draft or a
@@ -32,6 +47,49 @@
 import { useIsomorphicLayoutEffect } from './legacy-dom';
 
 import type { RefObject } from 'react';
+
+/**
+ * Whether `next` is `previous` with text inserted at one place (typing,
+ * pasting without a selection): the only edits after which the content
+ * cannot have got shorter.
+ */
+export function onlyInserted(previous: string, next: string): boolean {
+  if (next.length < previous.length) return false;
+  if (next.length === previous.length) return next === previous;
+  let head = 0;
+  while (head < previous.length && previous.charCodeAt(head) === next.charCodeAt(head)) head += 1;
+  return next.endsWith(previous.slice(head));
+}
+
+/** What was last measured and written, per element. */
+const measured = new WeakMap<HTMLTextAreaElement, { value: string; height: number }>();
+
+/**
+ * Size `el` to `value`, which it already holds. Exported for the tests, which
+ * drive it against a fake element that counts its layouts.
+ */
+export function fitToContent(el: HTMLTextAreaElement, value: string): void {
+  const last = measured.get(el);
+  if (!last || !onlyInserted(last.value, value)) {
+    // Two writes, in this order, for the reason in the header: without the
+    // collapse, scrollHeight is measured against the box the element already
+    // has and can only ratchet upwards.
+    el.style.height = 'auto';
+    const height = el.scrollHeight;
+    el.style.height = `${height}px`;
+    measured.set(el, { value, height });
+    return;
+  }
+  // Only inserted: one read. The box is written only once the content has
+  // outgrown it, and never with the height it already has.
+  const height = el.scrollHeight;
+  if (height > el.clientHeight && height !== last.height) {
+    el.style.height = `${height}px`;
+    measured.set(el, { value, height });
+  } else {
+    measured.set(el, { value, height: last.height });
+  }
+}
 
 /**
  * Keep `ref`'s textarea sized to its content, re-measuring whenever `value`
@@ -49,10 +107,6 @@ export function useAutoGrow(
   useIsomorphicLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    // Two writes, in this order, for the reason in the header: without the
-    // collapse, scrollHeight is measured against the box the element already
-    // has and can only ratchet upwards.
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
+    fitToContent(el, value);
   }, [ref, value]);
 }

@@ -13,7 +13,7 @@ const deployFailure = require('./deploy-failure');
 const { getPool } = require('../db/pool');
 const { pushAppStatusUpdate } = require('./ws');
 const { createApp, finalizeDeploy, reportPhase, endPhases } = require('./app-creator');
-const { getConnectorScaffoldFiles } = require('./template');
+const { getConnectorScaffoldFiles, getCanonicalRepoFile } = require('./template');
 
 // Rewrite (or create) the top-level `name` in the forked working tree's
 // dapp.json to the forker's chosen name. dapp.json's `name` is the
@@ -60,6 +60,19 @@ function writeConnectorScaffold(dir) {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.writeFileSync(dest, file.content);
   }
+}
+
+// Name the fork's OWN repository as its canonical one
+// (.claude/homeroom-canonical-repo, read by the scaffold's freshness check).
+// Unlike the scaffold above this always overwrites: the tree was copied from
+// the source app, so the file it carries names the parent, and a fork's
+// agents must be compared against the fork.
+function writeCanonicalRepoPointer(dir, repoUrl) {
+  const file = getCanonicalRepoFile(repoUrl);
+  if (!file) return;
+  const dest = path.join(dir, file.path);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(dest, file.content);
 }
 
 // Resolve the source row recorded in a fork's reference-only lineage. New
@@ -176,6 +189,8 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   });
   const repoUrl = repo.html_url;
   const pushUrl = `https://github.com/${botUsername}/${forkSlug}.git`;
+  // Only now is the fork's own URL known; still before the commit below.
+  writeCanonicalRepoPointer(tempDir, repoUrl);
 
   // One git process per step, with the fork's tree as cwd — no shell in
   // between. The runtime image has no bash (node:22-alpine plus git and

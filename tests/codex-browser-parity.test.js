@@ -10,10 +10,10 @@ test('Codex build turns receive the same pinned Playwright MCP surface as Claude
   const claude = fs.readFileSync(path.join(__dirname, '..', 'worker/run-cc.sh'), 'utf8');
   const bootstrap = fs.readFileSync(path.join(__dirname, '..', 'worker/worker-run.sh'), 'utf8');
   assert.match(codex, /\[mcp_servers\.playwright\]/);
-  assert.match(codex, /@playwright\/mcp/);
+  assert.match(codex, /^command = "\/usr\/local\/bin\/mcp-server-playwright"$/m);
   assert.match(codex, /if \[ "\$MODE" = "build" \]/);
   assert.match(claude, /--strict-mcp-config/);
-  assert.match(bootstrap, /PLAYWRIGHT|playwright/i);
+  assert.match(bootstrap, /"command": "\/usr\/local\/bin\/mcp-server-playwright"/);
   assert.doesNotMatch(codex, /if \[ "\$MODE" = "scout" \][\s\S]{0,300}\[mcp_servers\.playwright\]/);
 });
 

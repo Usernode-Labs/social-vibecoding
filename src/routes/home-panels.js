@@ -371,12 +371,21 @@ async function buildChallengesPanel(pool, user, opts) {
   const gateFilter = locked ? totalSql(gate) : null;
   const scopeFilter = [expanded ? null : openScope, gateFilter].filter(Boolean).join(' AND ') || 'TRUE';
   const allTotalSql = gateFilter ? `COUNT(*) FILTER (WHERE ${gateFilter})::int` : 'COUNT(*)::int';
+  // `all_done` is `done` over that same EXPANDED set: how many of the
+  // season's challenges the viewer has finished, closed ones included. It is
+  // the season progress Home draws (QA 2026-09-24 Q17), because it is the
+  // rule the profile already counts by (routes/profile.js
+  // readChallengeTotals: every enabled challenge on the season's public
+  // events), so "4 of 15 done" reads the same on both. `done` keeps its
+  // open-only meaning for everything else that reads it.
+  const allDoneSql = `COUNT(*) FILTER (WHERE ${gateFilter ? `${gateFilter} AND ` : ''}(${totalSql(doneExpr)}))::int`;
   const hiddenCountSql = gateFilter
     ? `,\n            COUNT(*) FILTER (WHERE ${openScope} AND NOT (${gateFilter}))::int AS hidden_count`
     : '';
   const { rows: totalRows } = await pool.query(
     `SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total,
             ${allTotalSql} AS all_total,
+            ${allDoneSql} AS all_done,
             COUNT(*) FILTER (
               WHERE ${scopeFilter} AND (${totalSql(doneExpr)})
             )::int AS done,
@@ -425,6 +434,8 @@ async function buildChallengesPanel(pool, user, opts) {
     // from a short list with finished challenges behind it (#1824).
     all_total: totalRows[0]?.all_total ?? totalRows[0]?.total ?? challenges.length,
     done: totalRows[0]?.done ?? 0,
+    // Done over `all_total`'s set (see allDoneSql): the season progress.
+    all_done: totalRows[0]?.all_done ?? totalRows[0]?.done ?? 0,
     points_remaining: pointsRemaining,
     // `hidden_count` is additive and rides only while the gate is closed.
     ...(onboarding ? {
@@ -608,6 +619,7 @@ function demoChallengesPanel(opts) {
       total: 2,
       all_total: 2,
       done: 0,
+      all_done: 0,
       points_remaining: null,
       challenges: few,
       expanded,
@@ -630,6 +642,9 @@ function demoChallengesPanel(opts) {
     // this route keeps the toggle the `few` route no longer draws.
     all_total: 7,
     done: expanded ? 3 : 2,
+    // The season's progress counts the finished ones either way (QA
+    // 2026-09-24 Q17), so it does not jump when the block expands.
+    all_done: 3,
     points_remaining: null,
     challenges: all,
     expanded,

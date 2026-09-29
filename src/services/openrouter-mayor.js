@@ -457,7 +457,10 @@ function createClient({
 // `{ error }` when it cannot, in which case the route keeps the direct path.
 // Reads the same credential the coding turn will use, so the Mayor and the
 // agent are always paid for by the same key.
-async function resolveForSession({ pool, config = {}, session, userId, fetchImpl }) {
+// `sessionKey` names the conversation to OpenRouter when it is not a change:
+// an agent session passes `homeroom-agent-<id>` (#2779). A change keeps the
+// `homeroom-session-<id>` it has always sent.
+async function resolveForSession({ pool, config = {}, session, userId, fetchImpl, sessionKey = null }) {
   if (!config.openrouterSessionMayorEnabled) return { error: 'disabled' };
   if (!config.codexOpenrouterEnabled) return { error: 'backend_disabled' };
   const model = bareModelId(session?.agent_model || config.openrouterDefaultCodexModel);
@@ -489,7 +492,7 @@ async function resolveForSession({ pool, config = {}, session, userId, fetchImpl
     origin: config.openrouterOrigin,
     model,
     catalogModel,
-    sessionId: session?.id != null ? `homeroom-session-${session.id}` : null,
+    sessionId: sessionKey || (session?.id != null ? `homeroom-session-${session.id}` : null),
     billingPath: usesIncludedKey ? 'platform' : 'openrouter_byok',
     fetchImpl,
   });

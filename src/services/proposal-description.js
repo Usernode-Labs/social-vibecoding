@@ -25,8 +25,20 @@ const DESCRIPTION_MAX = 4000;
 // How much of a turn's raw message the fallback keeps when no block was given.
 const FALLBACK_MAX = 1500;
 
-const OPEN_RE = /^[ \t]*={2,}[ \t]*DESCRIPTION[ \t]*={2,}[ \t]*$/gm;
-const CLOSE_RE = /^[ \t]*={2,}[ \t]*END DESCRIPTION[ \t]*={2,}[ \t]*$/gm;
+// The markers as testing-notes matches its own: the exact upper-case label,
+// on a line that starts with `=` or markdown emphasis. A model sometimes
+// writes "**DESCRIPTION**" for the marker; unmatched, the whole reply
+// ("The change is committed. Here is the summary. **DESCRIPTION** …")
+// became the description the group voted on (#2779 follow-up).
+const OPEN_RE = markerRe('DESCRIPTION');
+const CLOSE_RE = markerRe('END DESCRIPTION');
+
+function markerRe(label) {
+  return new RegExp(
+    `^[ \\t]*(?=\\*\\*|__|=)(?:\\*\\*|__)?[ \\t]*(?:={2,}[ \\t]*)?${label}(?:[ \\t]*={2,})?[ \\t]*(?:\\*\\*|__)?[ \\t]*:?[ \\t]*$`,
+    'gm',
+  );
+}
 
 function clip(text, max) {
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;

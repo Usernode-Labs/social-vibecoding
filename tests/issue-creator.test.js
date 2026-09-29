@@ -24,6 +24,11 @@ test('parses the "usernode user (name)" form', () => {
   );
 });
 
+test('parses the "Homeroom user (name)" / "Homeroom admin (name)" forms (#3132)', () => {
+  assert.equal(creatorFromSourceLine('**Source:** Homeroom user (banditiaeja)\n\nbody'), 'banditiaeja');
+  assert.equal(creatorFromSourceLine('**Source:** Homeroom admin (evan)\n\nbody'), 'evan');
+});
+
 test('parses usernames containing spaces and dots', () => {
   assert.equal(
     creatorFromSourceLine('**Source:** usernode user (iqiyi.)\n\nbody'),

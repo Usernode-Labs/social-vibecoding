@@ -123,12 +123,11 @@ test('creator can withdraw their own open governance proposal', async () => {
     assert.equal(audit.withdrawnBy, 'maker', 'withdrawnBy stamped');
     assert.ok(audit.withdrawnAt, 'withdrawnAt stamped');
 
-    // Group-chat line posted, and dual-posted into the governance thread.
-    assert.equal(spies.systemMessages.length, 2, 'chat line + governance dual-post');
+    // Said in the governance thread only; a channel carries no activity.
+    assert.equal(spies.systemMessages.length, 1, 'the governance thread line');
     assert.match(spies.systemMessages[0][2], /withdrew their proposal/);
     assert.match(spies.systemMessages[0][2], /Set secret API_KEY/);
-    const threaded = spies.systemMessages[1];
-    assert.deepEqual(threaded[5], { type: 'governance', ref: 31 }, 'dual-posted to gov thread');
+    assert.deepEqual(spies.systemMessages[0][5], { type: 'governance', ref: 31 }, 'in the gov thread');
 
     // Clients told to drop the card.
     assert.equal(spies.issueUpdates.length, 1);

@@ -1085,3 +1085,20 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
     && /home-panel-expand/.test(t.expectSelector)),
     'and a truncated list still declares the toggle it keeps');
 });
+
+// QA 2026-09-24 Q17: Home's season progress counts every challenge in the
+// season, finished ones included (the profile's rule), so the totals
+// statement also counts `done` over the EXPANDED set. Not a new round trip:
+// one more aggregate on the statement that already counts `all_total`.
+test('QA 2026-09-24 Q17: the totals statement counts all_done over the whole season', async () => {
+  const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
+  const { body } = await get(app, '/api/home-panels');
+  const totals = calls.find((c) => c.sql.includes('AS all_total'));
+  const end = totals.sql.indexOf('AS all_done');
+  assert.ok(end > 0, 'the totals statement carries all_done');
+  const allDone = totals.sql.slice(totals.sql.lastIndexOf('COUNT(*) FILTER', end), end);
+  assert.doesNotMatch(allDone, /c\.completed = FALSE/, 'not narrowed to the open challenges');
+  assert.equal(calls.filter((c) => c.sql.includes('AS all_total')).length, 1, 'one statement, as before');
+  // A totals row without the column (this stub's) falls back to `done`.
+  assert.equal(body.panels[0].all_done, body.panels[0].done);
+});

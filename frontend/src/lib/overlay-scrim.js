@@ -21,11 +21,30 @@ function flush() {
 // Compound clip paths with an inner hole paint as a solid dim in Android's
 // WebView on the tested Pixel. Paint only the outside instead: four bounded
 // strips and four small corner gradients, never a viewport-sized shadow/mask.
+//
+// THE STRIPS MEET ON DEVICE PIXELS (QA 2026-09-24 Q25). A dialog's box lands
+// on fractional pixels (Group members ended at 683.75), and two strips meeting
+// there each covered part of the same pixel row: the row's two partial
+// coverages composite to LESS than one full dim, so a 1px light line ran the
+// whole width of the window at the dialog's edge, at 1x and 2x alike. The
+// hole's four edges are now snapped OUTWARD to the device grid (floor above
+// and left, ceil below and right), so the strips tile exactly and the hole is
+// never smaller than the surface. The corner boxes run from each ellipse's
+// centre out to those snapped edges; past the ellipse they paint the dim, so
+// the sub-pixel between the surface's own edge and the snapped one is dimmed
+// in a corner as it is along a side (where the opaque surface covers it).
 export function scrimBackground(rect, radii, width, height, pixelRatio = 1) {
   const layers = [];
   const clamp = (n, end) => Math.max(0, Math.min(n, end));
-  const top = clamp(rect.top, height), bottom = clamp(rect.bottom, height);
-  const left = clamp(rect.left, width), right = clamp(rect.right, width);
+  const dpr = pixelRatio > 0 ? pixelRatio : 1;
+  // A hair of tolerance, so an edge already on the grid is not pushed a
+  // whole device pixel by float noise.
+  const down = (n) => Math.floor(n * dpr + 1e-3) / dpr;
+  const up = (n) => Math.ceil(n * dpr - 1e-3) / dpr;
+  const holeTop = down(rect.top), holeBottom = up(rect.bottom);
+  const holeLeft = down(rect.left), holeRight = up(rect.right);
+  const top = clamp(holeTop, height), bottom = clamp(holeBottom, height);
+  const left = clamp(holeLeft, width), right = clamp(holeRight, width);
   const color = 'var(--pane-scrim)';
   const place = (image, x, y, w, h) => {
     if (w > 0 && h > 0) layers.push(`${image} ${x}px ${y}px / ${w}px ${h}px no-repeat`);
@@ -36,16 +55,18 @@ export function scrimBackground(rect, radii, width, height, pixelRatio = 1) {
   place(fill, 0, top, left, bottom - top);
   place(fill, right, top, width - right, bottom - top);
   const [tl, tr, br, bl] = radii;
+  // [radii, box x, box y, box w, box h, the ellipse centre's corner of the box]
   const corners = [
-    [tl, rect.left, rect.top, 'right bottom'],
-    [tr, rect.right - tr[0], rect.top, 'left bottom'],
-    [br, rect.right - br[0], rect.bottom - br[1], 'left top'],
-    [bl, rect.left, rect.bottom - bl[1], 'right top'],
+    [tl, holeLeft, holeTop, rect.left + tl[0] - holeLeft, rect.top + tl[1] - holeTop, 'right bottom'],
+    [tr, rect.right - tr[0], holeTop, holeRight - (rect.right - tr[0]), rect.top + tr[1] - holeTop, 'left bottom'],
+    [br, rect.right - br[0], rect.bottom - br[1], holeRight - (rect.right - br[0]), holeBottom - (rect.bottom - br[1]), 'left top'],
+    [bl, holeLeft, rect.bottom - bl[1], rect.left + bl[0] - holeLeft, holeBottom - (rect.bottom - bl[1]), 'right top'],
   ];
-  for (const [[rx, ry], x, y, center] of corners) {
-    if (x >= width || y >= height || x + rx <= 0 || y + ry <= 0) continue;
-    const edge = 0.5 / pixelRatio;
-    place(`radial-gradient(ellipse ${rx}px ${ry}px at ${center}, transparent calc(100% - ${edge}px), ${color} 100%)`, x, y, rx, ry);
+  for (const [[rx, ry], x, y, w, h, center] of corners) {
+    if (!(rx > 0 && ry > 0)) continue;
+    if (x >= width || y >= height || x + w <= 0 || y + h <= 0) continue;
+    const edge = 0.5 / dpr;
+    place(`radial-gradient(ellipse ${rx}px ${ry}px at ${center}, transparent calc(100% - ${edge}px), ${color} 100%)`, x, y, w, h);
   }
   return layers.join(', ') || 'none';
 }
@@ -83,8 +104,55 @@ function paintBox(paint) {
   return { left: 0, top: 0, width: innerWidth, height: layoutViewportHeight() };
 }
 
+// AN OPAQUE SURFACE NEEDS NO HOLE. The cutout exists for one reason: a
+// frosted surface samples whatever is painted behind it, so a dim under it
+// would be frosted into the glass. A surface that draws no backdrop filter
+// (every platform's kit surface since the glass came off, app.css "No
+// glass, on any platform") is opaque, and
+// nothing behind it shows. For those the paint layer is pure cost: a
+// MutationObserver on the kit's inline style re-read the surface's computed
+// style and rects and rewrote a many-layer gradient on a viewport-and-a-half
+// layer on every spring frame, 23-30 rewrites per sheet open or close. So the
+// paint layer stays hidden, nothing is observed, and the kit's own backdrop
+// carries the dim: the kit already drives its opacity with the surface (1:1
+// with a sheet's or panel's position, the same fade as a dialog's card), and
+// `.platform-backdrop-dim` in app.css gives it the scrim's colour and reach.
+//
+// Only the kit's backdrops (`.un-backdrop`) take this path: a React rail's
+// backdrop has presentation rules of its own (the app menu's is undimmed at
+// `sm`+), and it is frosted wherever it is not adopted into a kit sheet. And
+// not a surface opened OVER another kit surface: the backdrop sits one layer
+// below the surfaces (native.css z-index 9990 vs 9991+), so it could not dim
+// the one underneath the way the paint layer, stacked at the new surface's
+// own level, does. That case keeps the paint layer as it was.
+export const BACKDROP_DIM_CLASS = 'platform-backdrop-dim';
+const KIT_SURFACES = ['un-sheet', 'un-panel', 'un-modal', 'un-action-sheet', 'un-alert'];
+
+export function drawsBackdropFilter(style) {
+  const on = (value) => !!value && value !== 'none';
+  return on(style.backdropFilter) || on(style.webkitBackdropFilter);
+}
+
+function overKitSurface(backdrop) {
+  for (let el = backdrop.previousElementSibling; el; el = el.previousElementSibling) {
+    if (KIT_SURFACES.some(name => el.classList?.contains(name))) return true;
+  }
+  return false;
+}
+
+export function dimsWithBackdrop(surface, backdrop) {
+  return !!backdrop.classList?.contains('un-backdrop')
+    && !overKitSurface(backdrop)
+    && !drawsBackdropFilter(getComputedStyle(surface));
+}
+
 export function attachOverlayScrim(surface, backdrop, paint) {
   if (!surface || !backdrop || !paint) return () => {};
+  if (dimsWithBackdrop(surface, backdrop)) {
+    backdrop.classList.add(BACKDROP_DIM_CLASS);
+    paint.style.visibility = 'hidden';
+    return () => { backdrop.classList.remove(BACKDROP_DIM_CLASS); };
+  }
   let disposed = false;
   let last = {};
   let visible = false;

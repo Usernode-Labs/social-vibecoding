@@ -50,6 +50,7 @@ const INITIAL_GRID = {
   resultsHeading: null,
   emptyQuery: null,
   notice: null,
+  create: null,
 };
 
 /** Mirrors INITIAL_CHROME in frontend/src/features/home/chrome-store.ts. */
@@ -82,7 +83,6 @@ const INITIAL_PANELS = {
   painted: false,
   discover: null,
   challenges: null,
-  create: null,
 };
 
 /**
@@ -91,7 +91,7 @@ const INITIAL_PANELS = {
  * A THIRD store rather than a field on either of the others, because it is a
  * different module's paint: `HomePanels.render()` is called from
  * `Home.render()` but also on its own (an expand toggle, an optimistic hide),
- * and the three blocks have nothing to do with the launcher canvas.
+ * and the blocks have nothing to do with the launcher canvas.
  */
 function installPanelsStore(sandbox) {
   vm.runInContext(

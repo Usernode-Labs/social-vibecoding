@@ -217,11 +217,27 @@ test('every scaffolded app repo ships .claude/settings.json', () => {
   const parsed = JSON.parse(settings);
   assert.deepEqual(parsed, {
     permissions: { allow: [...constants.READ_ONLY_ALLOW_RULES] },
+    hooks: {
+      SessionStart: [{
+        hooks: [{
+          type: 'command',
+          command: 'sh "$CLAUDE_PROJECT_DIR/.claude/hooks/homeroom-freshness.sh"',
+          timeout: 10,
+        }],
+      }],
+    },
   });
-  // Only permissions.allow — a scaffolded repo grants capability and
-  // nothing more; it does not set a permission mode or add hooks.
-  assert.deepEqual(Object.keys(parsed), ['permissions']);
+  // Read-only connector grants, plus exactly ONE hook: the checkout
+  // freshness check. That hook is a deliberate exception, agreed with the
+  // platform owner, to the older "grants capability and nothing more" rule:
+  // it only reads git state and prints (tests/app-scaffold-freshness.test.js
+  // holds the script to that), and the trust dialog lists it for review like
+  // the rules. Still no permission mode, and no other hook or event.
+  assert.deepEqual(Object.keys(parsed), ['permissions', 'hooks']);
   assert.deepEqual(Object.keys(parsed.permissions), ['allow']);
+  assert.deepEqual(Object.keys(parsed.hooks), ['SessionStart']);
+  assert.equal(parsed.hooks.SessionStart.length, 1);
+  assert.equal(parsed.hooks.SessionStart[0].hooks.length, 1);
   assert.ok(settings.endsWith('\n'), 'settings.json ends with a newline');
 });
 
@@ -288,6 +304,7 @@ test('the connector scaffold has ONE source, which the full template spreads', (
   const scaffoldFiles = template.getConnectorScaffoldFiles();
   assert.deepEqual(scaffoldFiles.map((f) => f.path), [
     '.claude/settings.json',
+    '.claude/hooks/homeroom-freshness.sh',
     '.claude/README.md',
   ]);
 
@@ -421,8 +438,13 @@ test('the copied block is byte-for-byte the shipped allowlist, in BOTH places', 
   const match = CONNECTORS_TSX.match(/const PERSONAL_ALLOW_RULES = `([\s\S]*?)`;/);
   assert.ok(match, 'the panel defines the block as one literal');
   assert.equal(match[1], expected);
-  // Same content as the scaffolded file, modulo its trailing newline.
-  assert.equal(`${match[1]}\n`, scaffold().get('.claude/settings.json'));
+  // The same grants as the scaffolded file. Only the grants: the scaffold
+  // also carries its freshness hook, which runs a script from the repo's own
+  // .claude/hooks/ and so has no meaning in a personal settings file.
+  assert.deepEqual(
+    JSON.parse(match[1]).permissions,
+    JSON.parse(scaffold().get('.claude/settings.json')).permissions
+  );
 
   // The two files take identical content and differ only in reach, so the
   // second block interpolates the SAME constant. A copy-pasted second literal

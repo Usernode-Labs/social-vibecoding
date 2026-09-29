@@ -52,19 +52,33 @@ import { openReport } from '../dialogs/report';
  * it the next time anything else about the message changed.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { ChatMessageRow, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
-import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
+import {
+  BookmarkIcon, BookmarkSolidIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
+  PencilSquareIcon, ReplyArrowIcon, ThreadIcon, UserIcon,
+} from '@/components/ui/icons';
 
+import { confirmAction } from '../../lib/confirm';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
+import { ImageViewer, openInViewer } from '../image-viewer/image-viewer';
 import { EventRow } from './proposal-event';
 import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { setUserBlocked } from '../messages/store';
+import { MessageActionBar, MessageMenu, placementFor, type MenuItem } from '../message-actions/action-bar';
+import { MessageActionSheet, useLongPress } from '../message-actions/action-sheet';
+import { absoluteLink, copyToClipboard, toast } from '../message-actions/clipboard';
+import { EmojiPicker } from '../message-actions/emoji-picker';
+import { rememberReaction, useRecentReactions } from '../message-actions/recents';
+import { ThreadActivityCard } from '../message-actions/thread-activity';
+import { ThreadSummaryChip } from '../message-actions/thread-summary';
+import { useDismiss } from '../message-actions/use-dismiss';
 import {
   transcriptStore,
   type Attachment,
@@ -163,6 +177,9 @@ function AttachmentImage({ att }: { att: Attachment }) {
   // chip rather than a broken-image icon. The module used to rewrite the
   // anchor in place; this is the same anchor, drawn the other way.
   const [broken, setBroken] = useState(false);
+  // #3286: a plain tap opens the picture in the app's own viewer, which has
+  // a way out; the link is still the file for a new tab on purpose.
+  const [viewing, setViewing] = useState(false);
   if (broken) {
     return (
       <a href={att.url} target="_blank" rel="noopener" className="dc-msg-att-chip">
@@ -171,23 +188,39 @@ function AttachmentImage({ att }: { att: Attachment }) {
     );
   }
   return (
-    <a href={att.url} target="_blank" rel="noopener" title={`${att.name}: open full size`}>
-      <img
-        className="dc-msg-att-img"
-        src={att.url}
-        alt={att.name}
-        loading="lazy"
-        onError={() => setBroken(true)}
-      />
-    </a>
+    <>
+      <a
+        href={att.url}
+        target="_blank"
+        rel="noopener"
+        title={`${att.name}: open full size`}
+        data-image-open=""
+        onClick={(event) => openInViewer(event, () => setViewing(true))}
+      >
+        <img
+          className="dc-msg-att-img"
+          src={att.url}
+          alt={att.name}
+          loading="lazy"
+          onError={() => setBroken(true)}
+        />
+      </a>
+      {viewing ? <ImageViewer src={att.url} alt={att.name} onClose={() => setViewing(false)} /> : null}
+    </>
   );
 }
 
 function AttachmentChip({ att }: { att: Attachment }) {
   const size = <span className="dc-attach-size">{att.size}</span>;
   const download = (
-    <a className="gc-att-action" href={att.url} download={att.name} title={`Download ${att.name}`}>
-      ↓
+    <a
+      className="gc-att-action"
+      href={att.url}
+      download={att.name}
+      title={`Download ${att.name}`}
+      aria-label={`Download ${att.name}`}
+    >
+      <span aria-hidden="true">↓</span>
     </a>
   );
   if (att.kind === 'markdown') {
@@ -310,17 +343,9 @@ export function Reactions({ msg }: { msg: TranscriptMessage }) {
  * every message in the group chat quietly lost all three. Found by seeding a
  * chat and counting the buttons, not by a test.
  */
-function RowActions({ msg, onReportMessage }: {
-  msg: TranscriptMessage;
-  onReportMessage?: () => void;
-}) {
-  if (!(msg.showEdit || msg.showBookmark || msg.showReact || (msg.senderId && !msg.mine && msg.kind === 'message'))) return null;
+function RowActions({ msg }: { msg: TranscriptMessage }) {
+  if (!(msg.showEdit || msg.showBookmark || msg.showReact)) return null;
   const saved = msg.bookmarked;
-  async function blockSender() {
-    if (!msg.senderId || !window.confirm(`Block @${msg.username}? Their messages in Messages and app discussions will be hidden.`)) return;
-    try { await setUserBlocked(msg.senderId, true); }
-    catch (error) { window.alert(error instanceof Error ? error.message : 'Couldn’t block this person.'); }
-  }
   return (
     <>
       {msg.showEdit ? (
@@ -346,16 +371,6 @@ function RowActions({ msg, onReportMessage }: {
         <button type="button" className="gc-react-add" title="React" aria-label="Add reaction" tabIndex={-1}>
           {'\u{1F642}'}
         </button>
-      ) : null}
-      {msg.kind === 'message' && !msg.mine && msg.senderId ? (
-        <>
-          {onReportMessage ? <button type="button" className="text-[11px] text-zinc-600 hover:underline dark:text-zinc-300"
-            onClick={onReportMessage} aria-label="Report message">Report message</button> : null}
-          <button type="button" className="text-[11px] text-red-600 hover:underline" onClick={() => { void blockSender(); }}
-            title={`Block @${msg.username}`} aria-label={`Block @${msg.username}`}>
-            Block
-          </button>
-        </>
       ) : null}
     </>
   );
@@ -391,7 +406,7 @@ export function foldRepeats(messages: TranscriptMessage[]): TranscriptMessage[] 
  * The topic threads' form; the general chat draws its two proposal events as
  * ./proposal-event.tsx's row instead, and nothing else of this kind.
  */
-export function SystemRow({ msg }: { msg: TranscriptMessage }) {
+export const SystemRow = memo(function SystemRow({ msg }: { msg: TranscriptMessage }) {
   return (
     <div
       className={`gc-msg-system ${msg.kind === 'vote' ? 'gc-msg-vote' : ''}${msg.voteRowClass ? ` ${msg.voteRowClass}` : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
@@ -430,7 +445,7 @@ export function SystemRow({ msg }: { msg: TranscriptMessage }) {
       <Reactions msg={msg} />
     </div>
   );
-}
+});
 
 /**
  * A shared spec, as a card in the transcript.
@@ -452,7 +467,7 @@ export function SystemRow({ msg }: { msg: TranscriptMessage }) {
  * `GroupChat.openSharedSpec` returns a promise and this brackets it. The
  * address bookkeeping, the fetch and every failure wording stay in the module.
  */
-export function SpecShareRow({ msg }: { msg: TranscriptMessage }) {
+export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: TranscriptMessage }) {
   const [loading, setLoading] = useState(false);
   const spec = msg.specShare;
   if (!spec) return null;
@@ -514,7 +529,7 @@ export function SpecShareRow({ msg }: { msg: TranscriptMessage }) {
       <RowActions msg={msg} />
     </div>
   );
-}
+});
 
 /** Memoised on the string, for the reason `Body` gives. */
 function SpecSnippet({ html }: { html: string }) {
@@ -533,11 +548,166 @@ function SpecSnippet({ html }: { html: string }) {
  * (`groupsWithPrevious`): no avatar and no header, the time in the gutter.
  * `gc-msg-self` stays on the viewer's own rows, which the reaction bar and a
  * thread's tint key off.
+ *
+ * ── The controls are the shared bar (#2387) ───────────────────────────
+ *
+ * ../message-actions/action-bar.tsx, the same bar a Messages conversation's
+ * rows carry: the three recent reactions, the picker, Reply, Save and ⋯. Its
+ * acts are the module's own — `sendReact`, `toggleBookmark`, `_startEdit`,
+ * `replyToMessage`, `deleteMessage`, `markUnread`, `openReplyThread` on
+ * `GroupChat` — called directly rather than through the container's
+ * delegated listener, whose classes (`.gc-msg-save`, `.gc-react-add`,
+ * `.gc-msg-edit`) this row no longer draws. A long press on a phone opens
+ * the same acts as a sheet; the module's own long-press stands down for a
+ * `.gc-msg` row (see `_attachQuoteHandlers`).
  */
-export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; grouped?: boolean }) {
+function MessageActions({ msg, surface, onReportMessage, onReportUser }: {
+  msg: TranscriptMessage;
+  /** Which transcript the row is in: a reply thread offers no thread of its own. */
+  surface: 'main' | 'thread';
+  onReportMessage: () => void;
+  onReportUser: () => void;
+}) {
+  const [picker, setPicker] = useState<'above' | 'below' | null>(null);
+  const [menu, setMenu] = useState<'above' | 'below' | null>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const pickerButton = useRef<HTMLButtonElement>(null);
+  const recents = useRecentReactions();
+  useDismiss(!!(picker || menu), [bar], () => { setPicker(null); setMenu(null); });
+  const chat = controller();
+  const items = messageMenuItems(msg, surface, onReportMessage, onReportUser);
+  const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
+  const pick = (emoji: string) => {
+    rememberReaction(emoji);
+    setPicker(null);
+    if (!reacted(emoji) && msg.id) chat?.sendReact?.(msg.id, emoji);
+  };
+  return (
+    <span ref={bar} className="gc-msg-bar-host">
+      <MessageActionBar
+        className="gc-msg-actions"
+        moreClassName="gc-msg-more-action"
+        recents={recents}
+        reacted={reacted}
+        onReact={msg.showReact && msg.id ? (emoji) => chat?.sendReact?.(msg.id, emoji) : undefined}
+        pickerOpen={!!picker}
+        pickerButtonRef={pickerButton}
+        onTogglePicker={msg.showReact ? () => { setMenu(null); setPicker((open) => (open ? null : placementFor(pickerButton.current, 430))); } : undefined}
+        onReply={!chat?._readOnly?.() && msg.id ? () => chat?.replyToMessage?.(msg.id, surface) : undefined}
+        saved={msg.bookmarked}
+        onToggleSave={msg.showBookmark && msg.id ? () => chat?.toggleBookmark?.(msg.id) : undefined}
+        moreOpen={!!menu}
+        moreButtonRef={moreButton}
+        onToggleMore={items.length ? () => { setPicker(null); setMenu((open) => (open ? null : placementFor(moreButton.current, items.length * 38 + 24))); } : undefined}
+      >
+        {picker ? <EmojiPicker placement={picker} onPick={pick} onClose={() => setPicker(null)} /> : null}
+        {menu ? <MessageMenu items={items} placement={menu} onClose={() => { setMenu(null); moreButton.current?.focus({ preventScroll: true }); }} /> : null}
+      </MessageActionBar>
+    </span>
+  );
+}
+
+/**
+ * The ⋯ menu of an app chat row — the same acts, in the same order, as a
+ * Messages conversation's (#2387). What differs is only where each one goes:
+ * the module, over the app's own socket and routes.
+ */
+export function messageMenuItems(
+  msg: TranscriptMessage,
+  surface: 'main' | 'thread',
+  onReportMessage: () => void,
+  onReportUser: () => void,
+): MenuItem[] {
+  const chat = controller();
+  const id = msg.id;
+  if (!id) return [];
+  const items: MenuItem[] = [];
+  if (surface === 'main' && msg.canThread) {
+    items.push({ key: 'thread', label: msg.thread ? 'View thread' : 'Reply in thread', icon: ThreadIcon, onSelect: () => chat?.openReplyThread?.(id) });
+  }
+  if (msg.showEdit) items.push({ key: 'edit', label: 'Edit message', icon: PencilSquareIcon, onSelect: () => chat?._startEdit?.(id) });
+  if (msg.text) items.push({ key: 'copy', label: 'Copy text', icon: CopyIcon, onSelect: () => { void copyToClipboard(msg.text || '', 'Message text copied'); } });
+  const link = chat?.messageAddress?.(id);
+  if (link) items.push({ key: 'link', label: 'Copy link to message', icon: LinkIcon, onSelect: () => { void copyToClipboard(absoluteLink(link), 'Link copied'); } });
+  if (!msg.mine && surface === 'main') {
+    items.push({
+      key: 'unread', label: 'Mark unread', icon: EnvelopeIcon,
+      onSelect: () => { Promise.resolve(chat?.markUnread?.(id)).then(() => toast('Marked unread')).catch(() => toast('Couldn’t mark this unread.')); },
+    });
+  }
+  if (msg.mine && msg.kind === 'message') {
+    items.push({
+      key: 'delete', label: 'Delete message', icon: DraftTrashIcon, danger: true, separated: true,
+      // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
+      onSelect: () => {
+        void confirmAction({
+          title: 'Delete this message?',
+          message: 'Everyone will see “Message deleted” in its place. This can’t be undone.',
+          confirmLabel: 'Delete',
+          danger: true,
+        }).then((ok) => {
+          if (!ok) return;
+          Promise.resolve(chat?.deleteMessage?.(id)).catch(() => toast('Couldn’t delete this message.'));
+        });
+      },
+    });
+  } else if (!msg.mine && msg.senderId && msg.kind === 'message') {
+    items.push({ key: 'report', label: 'Report message', icon: FlagIcon, separated: true, onSelect: onReportMessage });
+    items.push({ key: 'report-user', label: `Report @${msg.username}`, icon: UserIcon, onSelect: onReportUser });
+    items.push({
+      key: 'block', label: `Block @${msg.username}`, icon: NoSymbolIcon, danger: true,
+      onSelect: () => {
+        const senderId = msg.senderId;
+        if (!senderId) return;
+        void confirmAction({
+          title: `Block @${msg.username}?`,
+          message: 'Their messages in Messages and app discussions will be hidden.',
+          confirmLabel: 'Block',
+          danger: true,
+        }).then((ok) => {
+          if (!ok) return;
+          setUserBlocked(senderId, true).catch((error) => window.alert(error instanceof Error ? error.message : 'Couldn’t block this person.'));
+        });
+      },
+    });
+  }
+  return items;
+}
+
+/**
+ * memo()'d, as Messages' row is (#3104): an appended message, a reaction or
+ * an edit changes one row's object and leaves every other row's alone
+ * (./mount.ts keeps them), so only that row renders. Everything the row
+ * draws must therefore arrive as a prop. `threadOpen` is one: it was read
+ * from the controller here, and a memo()'d row would have kept the answer
+ * from its last render.
+ */
+export const MessageRow = memo(function MessageRow({ msg, grouped = false, surface = 'main', threadOpen = false }: {
+  msg: TranscriptMessage;
+  grouped?: boolean;
+  /** #2387: `thread` inside a reply thread, where the row offers no thread of its own. */
+  surface?: 'main' | 'thread';
+  /** #2387: this row's reply thread is the one open beside the channel, which lights its chip. */
+  threadOpen?: boolean;
+}) {
+  const [sheet, setSheet] = useState(false);
+  const recents = useRecentReactions();
+  const chat = controller();
+  const live = !msg.deleted && !!msg.id;
+  const longPress = useLongPress(() => setSheet(true), { disabled: !live });
+  const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, label: `Message from @${msg.username}`, userId: msg.senderId });
+  const reportUser = () => openReport({ targetType: 'user', target: msg.username, label: `@${msg.username}`, userId: msg.senderId });
+  const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
+  const items = live ? messageMenuItems(msg, surface, reportMessage, reportUser) : [];
+  const sheetItems: MenuItem[] = live ? [
+    ...(!chat?._readOnly?.() ? [{ key: 'reply', label: 'Reply', icon: ReplyArrowIcon, onSelect: () => chat?.replyToMessage?.(msg.id, surface) }] : []),
+    ...(msg.showBookmark ? [{ key: 'save', label: msg.bookmarked ? 'Unsave' : 'Save', icon: msg.bookmarked ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => chat?.toggleBookmark?.(msg.id) }] : []),
+    ...items,
+  ] : [];
   return (
     <ChatMessageRow
-      className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
+      className={`gc-msg ${msg.mine ? 'gc-msg-self' : ''}${msg.flash ? ' gc-msg-flash' : ''}${msg.deleted ? ' gc-msg-deleted' : ''}`}
       grouped={grouped}
       gutter={grouped ? <span className="gc-msg-gutter-time" title={msg.timeTitle}>{timeOfDay(msg.at) || msg.time}</span> : undefined}
       data-msg-id={msg.id ?? ''}
@@ -545,6 +715,7 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
       // #2236: only when set, so an ordinary row's attribute set is exactly
       // what it was.
       {...(msg.postedVia ? { 'data-posted-via': msg.postedVia } : {})}
+      {...longPress}
       avatar={(
         <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
           {msg.username.charAt(0).toUpperCase()}
@@ -560,23 +731,71 @@ export function MessageRow({ msg, grouped = false }: { msg: TranscriptMessage; g
       timestamp={(
         <>
           <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
-          {msg.editedTitle ? (
+          {msg.editedTitle && !msg.deleted ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
           ) : null}
         </>
       )}
-      actions={<RowActions msg={msg} onReportMessage={msg.id ? () => openReport({ targetType: 'app_message', target: msg.id!, label: `Message from @${msg.username}`, userId: msg.senderId! }) : undefined} />}
+      actions={live ? <MessageActions msg={msg} surface={surface} onReportMessage={reportMessage}
+        onReportUser={reportUser} /> : undefined}
     >
-      {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
-      <Body html={msg.bodyHtml} />
-      <Attachments items={msg.attachments} />
-      {grouped && msg.editedTitle ? (
-        <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
+      {msg.deleted ? <p className="gc-msg-deleted-text">Message deleted</p> : (
+        <>
+          {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
+          <Body html={msg.bodyHtml} />
+          <Attachments items={msg.attachments} />
+          {/*
+              #3288: a message that carries a proposal (the Homeroom bot's
+              "built this" post, now an ordinary message from its user) hangs
+              the same vote card a vote row does. The same controller host as
+              SystemRow's: an empty span, never looked inside, filled by
+              GroupChat.refreshVoteControls from the two data-* attributes.
+          */}
+          {msg.voteRef ? (
+            <span
+              className="gc-vote-inline gc-vote-inline-block"
+              data-vote-controls=""
+              data-session-id={msg.voteRef.sessionId}
+              data-pr-number={msg.voteRef.prNumber}
+            />
+          ) : null}
+          {grouped && msg.editedTitle ? (
+            <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
+          ) : null}
+          <Reactions msg={msg} />
+        </>
+      )}
+      {msg.thread && surface === 'main' && msg.id ? (
+        <ThreadSummaryChip
+          replyCount={msg.thread.replyCount}
+          lastReplyAt={msg.thread.lastReplyAt}
+          active={threadOpen}
+          avatars={msg.thread.participants.slice(0, 3).map((name) => (
+            <Avatar key={name} shape="square" size="sm" color={swatchFor(name)} aria-hidden="true">{name.charAt(0).toUpperCase()}</Avatar>
+          ))}
+          lastReply={msg.thread.lastReply ? {
+            face: <ReplyFace name={msg.thread.lastReply.name} />,
+            name: msg.thread.lastReply.name,
+            text: msg.thread.lastReply.text,
+          } : null}
+          onOpen={() => chat?.openReplyThread?.(msg.id)}
+        />
       ) : null}
-      <Reactions msg={msg} />
+      {live ? (
+        <MessageActionSheet
+          open={sheet}
+          onClose={() => setSheet(false)}
+          recents={recents}
+          reacted={reacted}
+          onReact={msg.showReact ? (emoji) => chat?.sendReact?.(msg.id, emoji) : undefined}
+          onPick={msg.showReact ? (emoji) => { rememberReaction(emoji); if (!reacted(emoji)) chat?.sendReact?.(msg.id, emoji); } : undefined}
+          items={sheetItems}
+          preview={{ who: msg.username, text: msg.text || '' }}
+        />
+      ) : null}
     </ChatMessageRow>
   );
-}
+});
 
 /**
  * `source` names which transcript this host shows — `main` for the general
@@ -622,8 +841,27 @@ export function Transcript({ source = 'main' }: { source?: string }) {
  * proposal event is that event's message row; the thread draws every row
  * flat, and the line itself where the general chat draws an event.
  */
+/**
+ * The thread-head copy of a message (`thread: null`), one per message
+ * OBJECT: a copy built during render is a new object every time, and the
+ * memo()'d row it is handed would render every time with it.
+ */
+const threadHeads = new WeakMap<TranscriptMessage, TranscriptMessage>();
+function threadHead(msg: TranscriptMessage): TranscriptMessage {
+  let head = threadHeads.get(msg);
+  if (!head) {
+    head = { ...msg, thread: null };
+    threadHeads.set(msg, head);
+  }
+  return head;
+}
+
 function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, chat = false, previous: TranscriptMessage | null = null) {
   const key = msg.id != null ? `m${msg.id}` : fallbackKey;
+  // #2387: the message a reply thread hangs off, drawn at the thread's head —
+  // a row of its own (never grouped with the first reply), with its thread
+  // chip left off since the thread is what is open.
+  if (msg.threadRoot) return <MessageRow key={key} msg={threadHead(msg)} surface="thread" />;
   if (msg.kind === 'spec_share') return <SpecShareRow key={key} msg={msg} />;
   // `chat` is a change page's own Discussion, drawn in the general chat's
   // language: every notice as a message (its rows arrive with an event from
@@ -631,15 +869,51 @@ function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, ch
   // every surface, grouped under the previous one when it continues it.
   if (msg.kind === 'message') {
     const grouped = !!previous && previous.kind === 'message' && !previous.event && !msg.event
+      && !previous.threadRoot && !msg.deleted && !previous.deleted
       && !!msg.at && !!previous.at
       && groupsWithPrevious(
         { author: previous.username, at: previous.at },
         { author: msg.username, at: msg.at, reply: !!msg.quote },
       );
-    return <MessageRow key={key} msg={msg} grouped={grouped} />;
+    // Whether this row's reply thread is the open one: read here, on every
+    // render of the rows, and handed down, because the row itself is memo()'d.
+    const threadOpen = main && !!msg.thread && msg.id != null && !!controller()?.isReplyThreadOpen?.(msg.id);
+    return <MessageRow key={key} msg={msg} grouped={grouped} surface={main ? 'main' : 'thread'} threadOpen={threadOpen} />;
   }
   if ((main || chat) && msg.event) return <EventRow key={key} msg={msg} />;
   return <SystemRow key={key} msg={msg} />;
+}
+
+/** A reply's face on a thread card: the chat's letter swatch at 22px. */
+function ReplyFace({ name }: { name: string }) {
+  return (
+    <span className="msgx-thread-face">
+      <Avatar shape="square" size="sm" color={swatchFor(name)} aria-hidden="true">{name.charAt(0).toUpperCase()}</Avatar>
+    </span>
+  );
+}
+
+/** A run of one reply thread's replies in the general chat (#2387 follow-up). */
+function ThreadActivityRun({ run }: { run: TranscriptMessage[] }) {
+  const first = run[0];
+  const last = run[run.length - 1];
+  const replyOf = first.replyOf as NonNullable<TranscriptMessage['replyOf']>;
+  const time = first.time === last.time ? last.time : `${first.time} – ${last.time}`;
+  return (
+    <ThreadActivityCard
+      rootText={replyOf.rootText}
+      rootDeleted={replyOf.rootDeleted}
+      time={time}
+      timeTitle={last.timeTitle}
+      replies={run.map((m, index) => ({
+        key: m.id ?? `r${index}`,
+        face: <ReplyFace name={m.username} />,
+        name: m.username,
+        text: m.text || '',
+      }))}
+      onOpen={() => controller()?.openReplyThread?.(replyOf.rootId)}
+    />
+  );
 }
 
 /**
@@ -653,6 +927,7 @@ export function drawnInGeneralChat(m: TranscriptMessage): boolean {
   return m.kind === 'message' || m.kind === 'spec_share' || !!m.event;
 }
 
+/** A card in the general chat: a proposal event, which is never a person's message. */
 /**
  * The rows of one transcript, given its view: the lead, the rows, and for the
  * general chat the two things that make a quiet app's Discussion readable.
@@ -674,17 +949,56 @@ export function drawnInGeneralChat(m: TranscriptMessage): boolean {
  * without the store, which is how tests/group-chat-proposal-events.test.js
  * checks it.
  */
-export function TranscriptRows({ view, source }: { view: TranscriptView; source: string }) {
+export function TranscriptRows({ view, source }: {
+  view: TranscriptView;
+  source: string;
+}) {
   const main = source === 'main';
   // A change page's Discussion (`lead.language === 'chat'`) keeps every row,
   // as a thread does, and draws each in the general chat's language — and
   // ends with the quiet card when nobody has commented, as the general chat
   // does when nobody has posted.
   const chat = !main && view.lead.language === 'chat';
-  const rows = foldRepeats(view.messages).filter((m) => !main || drawnInGeneralChat(m));
+  // Folded once per message list: a fold is a new object, and one rebuilt on
+  // every render would redraw its memo()'d row every time.
+  const folded = useMemo(() => foldRepeats(view.messages), [view.messages]);
+  const rows = folded.filter((m) => !main || drawnInGeneralChat(m));
   const quiet = (main || chat) && view.lead.quiet && !view.messages.some((m) => m.kind === 'message')
     ? view.lead.quiet
     : null;
+  const drawn: ReactNode[] = [];
+  // The row the next one groups under; a thread-activity card resets it, so
+  // the message after a card always carries its own name.
+  let previous: TranscriptMessage | null = null;
+  for (let i = 0; i < rows.length; i += 1) {
+    // #2387 follow-up: in the general chat a reply-thread reply is drawn
+    // where it landed — one card for a run of replies to one thread with
+    // nothing else said between them. A deleted reply leaves the run.
+    const replyOf = main ? rows[i].replyOf : null;
+    if (replyOf) {
+      const run = [rows[i]];
+      while (i + 1 < rows.length && rows[i + 1].replyOf?.rootId === replyOf.rootId) {
+        run.push(rows[i + 1]);
+        i += 1;
+      }
+      const live = run.filter((m) => !m.deleted);
+      if (live.length) drawn.push(<ThreadActivityRun key={`thread-activity-${live[0].id ?? i}`} run={live} />);
+      previous = null;
+      continue;
+    }
+    drawn.push(renderRow(rows[i], `i${i}`, main, chat, previous));
+    previous = rows[i];
+    // #2387: under a reply thread's first message, how many replies follow —
+    // the line Slack draws between a thread's head and its replies.
+    if (rows[i].threadRoot) {
+      const replies = rows.length - i - 1;
+      drawn.push(
+        <div key="reply-count" className="gc-reply-count">
+          <span>{replies ? `${replies} ${replies === 1 ? 'reply' : 'replies'}` : 'No replies yet'}</span>
+        </div>,
+      );
+    }
+  }
   return (
     <>
       {view.lead.earlier ? (
@@ -708,7 +1022,24 @@ export function TranscriptRows({ view, source }: { view: TranscriptView; source:
       {view.lead.placeholder && !rows.length ? (
         <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">{view.lead.placeholder}</div>
       ) : null}
-      {rows.map((msg, i) => renderRow(msg, `i${i}`, main, chat, i > 0 ? rows[i - 1] : null))}
+      {/* #2992: the history request failed. The module keeps the failure on
+          its own state and republishes; "Try again" re-enters the same load
+          the channel or thread opened with, and a success clears the line. */}
+      {view.lead.error ? (
+        <div role="alert" className="gc-history-error flex items-center gap-2 px-2 py-2 text-xs text-zinc-500 dark:text-zinc-400">
+          <span>{view.lead.error}</span>
+          <Button
+            type="button"
+            variant="neutral"
+            size="xsText"
+            ink="neutral"
+            onClick={() => (main ? controller()?.loadHistory?.() : controller()?.loadThreadHistoryForOpen?.())}
+          >
+            Try again
+          </Button>
+        </div>
+      ) : null}
+      {drawn}
       {quiet ? <QuietCard {...quiet} /> : null}
     </>
   );

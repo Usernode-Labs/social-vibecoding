@@ -1,6 +1,6 @@
 /**
- * `#gc-mention-menu` and `#gc-ref-menu` — the composer's two autocomplete
- * listboxes, as the only React writers below those hosts.
+ * `#gc-mention-menu`, `#gc-ref-menu` and `#gc-emoji-menu` — the composer's
+ * autocomplete listboxes, as the only React writers below those hosts.
  *
  * ── The host is the module's, the children are React's ────────────────
  *
@@ -26,7 +26,8 @@
  * close the menu before the click landed — and it is bound ONCE by
  * `_ensureMenu`, on an element that outlives every render. Moving it into the
  * rows would rebind it on each keystroke for no gain, so the rows keep the
- * `data-username` / `data-kind` + `data-number` attributes that handler reads.
+ * `data-username` / `data-kind` + `data-number` / `data-emoji` attributes that
+ * handler reads.
  */
 
 import { useEffect, useRef } from 'react';
@@ -35,6 +36,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import {
   autocompleteStore,
   type AutocompleteSlot,
+  type EmojiSlot,
   type MentionOption,
   type RefOption,
 } from './autocomplete-store';
@@ -106,10 +108,50 @@ export function RefMenuView({ items, active }: AutocompleteSlot<RefOption>) {
   );
 }
 
+/**
+ * `:th` — "Emoji matching :th" over up to eight `👍 :thumbsup:` rows.
+ *
+ * Unlike the other two, this host is not itself the listbox: the heading is
+ * not an option, so it sits above a listbox of its own. Closed is empty, the
+ * same as theirs.
+ */
+export function EmojiMenuView({ items, active, query }: EmojiSlot) {
+  const activeRef = useActiveScroll(active);
+  if (!items.length) return null;
+  return (
+    <>
+      <div className="gc-emoji-menu-heading">
+        Emoji matching <span className="gc-emoji-menu-query">{`:${query}`}</span>
+      </div>
+      <div role="listbox" aria-label="Emoji">
+        {items.map((item, i) => (
+          <div
+            key={item.emoji}
+            ref={i === active ? activeRef : undefined}
+            className={`gc-mention-option gc-emoji-option${i === active ? ' gc-mention-option-active' : ''}`}
+            role="option"
+            aria-selected={i === active}
+            data-emoji={item.emoji}
+            data-shortcode={item.shortcode}
+            data-index={i}
+          >
+            <span className="gc-emoji-option-glyph" aria-hidden="true">{item.emoji}</span>
+            <span className="gc-emoji-option-code">{`:${item.shortcode}:`}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 export function MentionMenu() {
   return <MentionMenuView {...useStoreState(autocompleteStore).mention} />;
 }
 
 export function RefMenu() {
   return <RefMenuView {...useStoreState(autocompleteStore).ref} />;
+}
+
+export function EmojiMenu() {
+  return <EmojiMenuView {...useStoreState(autocompleteStore).emoji} />;
 }

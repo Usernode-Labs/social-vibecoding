@@ -83,16 +83,24 @@ function loadSheetController(kitSurface) {
   const store = makeStoreStub({ open: false, adopted: false });
   const log = [];
   const sandbox = makeSandbox(['test-sheet']);
+  // lib/back-stack.ts, as a recorder: each claim, and how it was handed back.
+  const back = { claims: [], releases: [] };
   runModules(sandbox, [['sheet-controller.js', SHEET_CONTROLLER]], {
     imports: {
       './kit-surface': typeof kitSurface === 'function'
         ? kitSurface(store, log)
         : kitSurface,
+      './back-stack': {
+        pushDismissible: (close) => {
+          back.claims.push(close);
+          return (options) => back.releases.push(options || {});
+        },
+      },
     },
     tail: 'window.__make = createSheetController;',
   });
   const controller = sandbox.__make({ elementId: 'test-sheet', store });
-  return { controller, store, log };
+  return { controller, store, log, back };
 }
 
 test('touch: adopted is published with open, and the present sees open first', () => {
@@ -128,6 +136,59 @@ test('desktop: adopted never rises, so the overlay fades with the CSS slide', ()
   controller.close();
   assert.equal(store.state.open, false);
   assert.equal(store.state.adopted, false);
+});
+
+// ── the back button closes a sheet (QA 2026-09-24 Q16) ──────────────────
+//
+// Back walked the history UNDER an open sheet: the bell's sheet stayed up
+// while Discover turned into Home behind it, and the Homeroom menu closed and
+// took the page with it. A sheet claims the next press through the same
+// lib/back-stack.ts the dialogs use, for as long as it is open.
+
+for (const [label, kit] of [['touch', touchKitSurface], ['desktop', DESKTOP]]) {
+  test(`${label}: an open sheet claims Back, and Back closes it`, () => {
+    const { controller, store, back } = loadSheetController(kit);
+    controller.open();
+    assert.equal(back.claims.length, 1, 'one claim per presentation');
+    controller.open();
+    assert.equal(back.claims.length, 1, 'not a second one for the sheet already up');
+
+    // The press itself: back-stack pops the claim and runs it.
+    assert.equal(back.claims[0](), true, 'the press is consumed');
+    assert.equal(store.state.open, false, 'and the sheet is closed by it');
+    assert.equal(back.releases.length, 0,
+      'a press already spent the record, so nothing is handed back');
+  });
+
+  test(`${label}: closing another way hands the claim back as a navigating release`, () => {
+    // Most closes here are the first half of a navigation written in the same
+    // task (a row, a link), so the record must not be spent under it.
+    const { controller, back } = loadSheetController(kit);
+    controller.open();
+    controller.close();
+    assert.deepEqual(back.releases.map((o) => o.navigating), [true]);
+    controller.open();
+    controller.dismissForNav();
+    assert.deepEqual(back.releases.map((o) => o.navigating), [true, true]);
+    assert.equal(back.claims.length, 2, 'and the next open claims again');
+  });
+}
+
+test('touch: a swipe the kit reports hands the claim back too', () => {
+  const log = [];
+  let onDismiss = null;
+  const kit = () => ({
+    adoptKitSurface: (opts) => {
+      onDismiss = opts.onDismiss;
+      log.push('present');
+      return { kind: opts.kind, contentEl: opts.contentEl, restore() {}, dismiss() { opts.onDismiss(); } };
+    },
+  });
+  const { controller, store, back } = loadSheetController(kit);
+  controller.open();
+  onDismiss();
+  assert.equal(store.state.open, false);
+  assert.equal(back.releases.length, 1, 'the swipe did not leave a claim behind');
 });
 
 // ── the Improve panel had its own copy of the chassis, and retired ──────

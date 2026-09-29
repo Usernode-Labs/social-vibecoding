@@ -218,11 +218,12 @@ test('apply: a passing vote publishes the proposed record under the ids the card
     assert.deepEqual(audit.proposed, PROPOSED, 'original payload preserved');
     assert.ok(at(/UPDATE issues SET status = 'closed'/) < at(/COMMIT/), 'closed before commit');
 
-    // Announced in group chat and in the proposal's own thread; every open
-    // client is told the app changed so its caches patch themselves.
-    assert.equal(spies.systemMessages.length, 2);
+    // Announced in the proposal's own thread (a channel carries no
+    // activity); every open client is told the app changed so its caches
+    // patch themselves.
+    assert.equal(spies.systemMessages.length, 1);
     assert.match(spies.systemMessages[0][2], /Featured illustration changed by group vote \(2\/2\)/);
-    assert.deepEqual(spies.systemMessages[1][5], { type: 'governance', ref: 71 });
+    assert.deepEqual(spies.systemMessages[0][5], { type: 'governance', ref: 71 });
     assert.deepEqual(spies.appUpdates, [{ action: 'illustration_changed', appId: 9, slug: 'cool-app', illustration: PROPOSED }]);
     assert.deepEqual(spies.issueUpdates, [{ action: 'closed', appSlug: 'cool-app', appId: 9, issueId: 71 }]);
   } finally { restore(); }

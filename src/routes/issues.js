@@ -17,6 +17,7 @@ const { weekStartUtc, countWeeklyBountiesUsed, WEEKLY_BOUNTY_LIMIT } = require('
 const { placeBounty } = require('../services/bounties');
 const { claimIssueForUser } = require('../services/issue-claims');
 const appAccess = require('../services/app-access');
+const communities = require('../services/communities');
 const appAdmins = require('../services/app-admins');
 const topicAttrs = require('../services/topic-attributes');
 // #2086: the featured-illustration governance kind. Its proposals are
@@ -50,15 +51,17 @@ function parseOwnerRepo(repoUrl) {
 // (written by routes/feedback.js): "usernode user (name)" for regular
 // users, "usernode admin (name)" for admins (#140; older issues used a
 // bare "usernode admin" with no name). Returns the creator's display name
-// or null when no Source line can be parsed.
+// or null when no Source line can be parsed. #3132: new issues say
+// "Homeroom user (name)" / "Homeroom admin (name)"; the older "usernode"
+// spelling is still accepted for issues filed before the rename.
 function creatorFromSourceLine(body) {
   if (typeof body !== 'string') return null;
   const m = body.match(/\*\*Source:\*\*\s*([^\n]+)/);
   if (!m) return null;
   const source = m[1].trim();
-  const named = source.match(/^usernode (?:user|admin) \(([^)]+)\)/);
+  const named = source.match(/^(?:usernode|Homeroom) (?:user|admin) \(([^)]+)\)/);
   if (named) return named[1];
-  if (/^usernode admin\b/.test(source)) return 'admin';
+  if (/^(?:usernode|Homeroom) admin\b/.test(source)) return 'admin';
   return null;
 }
 
@@ -954,7 +957,7 @@ function issueRoutes(config) {
   // Create an issue / proposal — kinds per VALID_KINDS above (general is
   // the default). Rate-limited per kind: close_issue proposals draw from
   // their own bucket, everything else from issue-create.
-  router.post('/api/apps/:slug/issues', issueKindLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/issues', issueKindLimiter, communities.requireAppMembership(pool), async (req, res) => {
     let { title, description, kind = 'general', payload = {} } = req.body || {};
 
     if (!VALID_KINDS.includes(kind)) {
@@ -1239,7 +1242,6 @@ function issueRoutes(config) {
         chatPrefix = `${req.user.username} created issue: "${title}"`;
       }
       const createdMsg = `${chatPrefix}${githubIssueNumber ? ` (#${githubIssueNumber})` : ''}`;
-      await sendSystemMessage(pool, app.id, createdMsg, 'system');
 
       // #1374: a new issue notified nobody before this. Fanned out to the
       // app's stakeholders and gated on the `new_issues` category, which
@@ -1264,7 +1266,7 @@ function issueRoutes(config) {
       } catch (err) {
         log.error('issues', 'Issue-opened notification threw', { appId: app.id, err: err.message });
       }
-      // Dual-post the creation into the topic's own thread so the
+      // Post the creation into the topic's own thread so the
       // discussion opens with its origin in context: governance proposals
       // (secret_change / rename / close_issue) thread on the local issue
       // id; general issues thread on the GitHub twin number (no twin → no
@@ -1311,7 +1313,7 @@ function issueRoutes(config) {
   // normaliser, the same 280-character cap, required on a No and optional on
   // a Yes. Lazily required, matching the direction this module already uses
   // for './votes' (see the demo close rows in the by-id handler above).
-  router.post('/api/issues/:id/vote', governanceVoteLimiter, async (req, res) => {
+  router.post('/api/issues/:id/vote', governanceVoteLimiter, communities.requireIssueMembership(pool), async (req, res) => {
     const { vote } = req.body;
     if (!['up', 'down'].includes(vote)) {
       return res.status(400).json({ error: 'Vote must be "up" or "down"' });
@@ -2816,11 +2818,9 @@ function issueRoutes(config) {
       );
       if (!rows.length) return res.status(404).json({ error: 'Proposal not open' });
 
-      // Announce the withdrawal in group chat, and dual-post into the
-      // proposal's governance thread (mirrors the create path).
+      // Say the withdrawal in the proposal's governance thread (mirrors the
+      // create path).
       const withdrewMsg = `${req.user.username} withdrew their proposal: "${issue.title}"`;
-      await sendSystemMessage(pool, issue.app_id, withdrewMsg, 'system')
-        .catch((err) => log.warn('issues', 'Withdraw chat message failed', { err: err.message }));
       await sendSystemMessage(pool, issue.app_id, withdrewMsg, 'system',
         null, { type: 'governance', ref: issue.id }).catch(() => {});
 
@@ -2943,9 +2943,7 @@ async function maybeApplyRenameProposal(pool, issue) {
 
     // Side effects (chat + GitHub + WS) are best-effort and live outside the txn.
     const renamedMsg = `App renamed from "${oldName}" to "${newName}" by group vote (${upCount}/${required})`;
-    await sendSystemMessage(pool, app.id, renamedMsg, 'system')
-      .catch((err) => log.warn('issues', 'Rename chat message failed', { err: err.message }));
-    // Dual-post the outcome into the governance proposal's thread.
+    // The outcome, in the governance proposal's thread.
     await sendSystemMessage(pool, app.id, renamedMsg, 'system',
       null, { type: 'governance', ref: locked.id }).catch(() => {});
 
@@ -3094,8 +3092,6 @@ async function maybeApplyFeaturedIllustrationProposal(pool, issue, options = {})
     const msg = illustration
       ? `Featured illustration changed ${appliedHow}`
       : `Featured illustration removed ${appliedHow}`;
-    await sendSystemMessage(pool, app.id, msg, 'system')
-      .catch((err) => log.warn('issues', 'Illustration chat message failed', { err: err.message }));
     await sendSystemMessage(pool, app.id, msg, 'system',
       null, { type: 'governance', ref: locked.id }).catch(() => {});
 
@@ -3231,7 +3227,6 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       });
       const refusedMsg = `Proposal for "${key}" was closed without applying: that variable is `
         + 'now set by the deploy from a GitHub secret and cannot be written here.';
-      await sendSystemMessage(pool, issue.app_id, refusedMsg, 'system').catch(() => {});
       await sendSystemMessage(pool, issue.app_id, refusedMsg, 'system',
         null, { type: 'governance', ref: locked.id }).catch(() => {});
       return { applied: false, refused: true, upCount, majority, active };
@@ -3313,9 +3308,7 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
     const secretMsg = selfHosted
       ? `Platform variable "${key}" ${verb} ${appliedHow}; takes effect on the platform's next deploy.`
       : `Secret "${key}" ${verb} ${appliedHow}; redeploying…`;
-    await sendSystemMessage(pool, issue.app_id, secretMsg, 'system')
-      .catch((err) => log.warn('issues', 'Secret-change chat msg failed', { err: err.message }));
-    // Dual-post the outcome into the governance proposal's thread.
+    // The outcome, in the governance proposal's thread.
     await sendSystemMessage(pool, issue.app_id, secretMsg, 'system',
       null, { type: 'governance', ref: locked.id }).catch(() => {});
 
@@ -3453,8 +3446,6 @@ async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, 
       const msg = cause?.kind === 'pr-merge'
         ? `Close proposal for issue #${n} resolved automatically: PR #${cause.prNumber} closed the issue`
         : `Close proposal for issue #${n} resolved automatically: the issue was closed on GitHub`;
-      await sendSystemMessage(pool, row.app_id, msg, 'system')
-        .catch((err) => log.warn('issues', 'Superseded chat message failed', { err: err.message }));
       await sendSystemMessage(pool, row.app_id, msg, 'system',
         null, { type: 'governance', ref: row.id }).catch(() => {});
       // Same event the withdraw path emits — open clients drop the card and
@@ -3641,10 +3632,8 @@ async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
     ? `by admin override (${options.forceBy?.username || 'admin'})`
     : `by group vote (${upCount}/${required})`;
   const closedMsg = `Issue #${issueNumber} closed ${appliedHow}`;
-  await sendSystemMessage(pool, issue.app_id, closedMsg, 'system')
-    .catch((err) => log.warn('issues', 'Close-issue chat msg failed', { err: err.message }));
-  // Dual-post the outcome into the proposal's governance thread AND the
-  // target issue's thread (mirrors the create path's dual-post).
+  // The outcome, in the proposal's governance thread AND the target
+  // issue's thread (mirrors the create path).
   await sendSystemMessage(pool, issue.app_id, closedMsg, 'system',
     null, { type: 'governance', ref: locked.id }).catch(() => {});
   await sendSystemMessage(pool, issue.app_id, closedMsg, 'system',
@@ -3806,8 +3795,6 @@ async function maybeApplyMaintenanceCampaignProposal(config, pool, issue, option
     : `by group vote (${upCount}/${required})`;
   const startedMsg = `Maintenance campaign "${issue.payload?.title || issue.title}" approved ${appliedHow}. `
     + 'The platform is now opening one PR per app. Progress is on the campaign dashboard.';
-  await sendSystemMessage(pool, issue.app_id, startedMsg, 'system')
-    .catch((err) => log.warn('issues', 'Campaign chat msg failed', { err: err.message }));
   await sendSystemMessage(pool, issue.app_id, startedMsg, 'system',
     null, { type: 'governance', ref: issue.id }).catch(() => {});
 

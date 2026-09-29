@@ -119,7 +119,7 @@ test('invitation serialization cannot hydrate private conversation content', () 
   assert.match(serviceSource, /const members = accepted && includeMembers/);
   assert.match(serviceSource, /const latest = accepted && row\.latest_message_id/);
   assert.match(serviceSource, /const peer = accepted && row\.peer_id/);
-  assert.match(serviceSource, /listMessages[\s\S]*loadMembership\(pool, conversationId, user\.id\)/);
+  assert.match(serviceSource, /listMessages[\s\S]*loadMembership\(pool, conversationId, user\.id, \{ allowDeletedPeer: true \}\)/);
   assert.doesNotMatch(serviceSource, /allowInvited:\s*true[\s\S]{0,200}listMessages/);
 });
 
@@ -133,7 +133,11 @@ test('direct consent, retry, and block rules are explicit in canonical service',
   assert.match(serviceSource,
     /SELECT 1 FROM conversation_messages WHERE conversation_id = \$1 LIMIT 1/,
     'the requester gets exactly one pre-acceptance opening message');
-  assert.match(serviceSource, /if \(existingMessages\.rows\.length\) return null/);
+  // QA 2026-09-24 Q2: a second pre-acceptance message is refused with its
+  // own answer (409 awaiting_acceptance at the route), not the null that the
+  // route turned into a 404 "Conversation not found" and the client into a
+  // Retry that could never succeed.
+  assert.match(serviceSource, /if \(existingMessages\.rows\.length\) return \{ error: 'awaiting_acceptance' \}/);
   assert.match(serviceSource, /toggleReaction[\s\S]*blockedEitherWay/);
   assert.match(serviceSource, /editMessage[\s\S]*blockedEitherWay/);
   const interactionHelper = serviceSource.match(
@@ -234,9 +238,9 @@ test('block revocation closes every private direct-message read channel', () => 
   assert.match(serviceSource, /DELETE FROM notifications n[\s\S]*conversation_direct_pairs p/);
 });
 
-test('archived conversations are absent from REST, notifications, and mobile push', () => {
-  assert.match(serviceSource, /WHERE c\.id = \$1 AND c\.status = 'active'/);
-  assert.match(serviceSource, /WHERE me\.user_id = \$1 AND c\.status = 'active'/);
+test('only deletion archives are readable; archives stay absent from notifications and mobile push', () => {
+  assert.match(serviceSource, /WHERE c\.id = \$1 AND \(c\.status = 'active' OR \(c\.status = 'archived' AND c\.deleted_peer\)\)/);
+  assert.match(serviceSource, /WHERE me\.user_id = \$1 AND \(c\.status = 'active' OR \(c\.status = 'archived' AND c\.deleted_peer\)\)/);
   assert.match(notificationsSource, /notification_conversation\.status = 'active'/);
   assert.match(pushWorkerSource, /row\.conversation_status !== 'active'/);
   assert.match(serviceSource,

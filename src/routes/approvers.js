@@ -167,9 +167,6 @@ function approverRoutes(config) {
         }
       }
 
-      await wsSvc.sendSystemMessage(pool, appId,
-        `${req.user.username} became an approver`, 'system'
-      ).catch((err) => log.warn('approvers', 'join chat msg failed', { err: err.message }));
 
       events.record(pool, {
         type: events.EVENT_TYPES.APPROVER_JOINED,

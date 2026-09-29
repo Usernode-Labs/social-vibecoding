@@ -92,9 +92,10 @@ test('every #app-content mount point declares its surface', () => {
   const platformCalls = APP_VIEW.match(/_setSurface\('platform'\)/g) || [];
   // app: beginLaunch, showLaunchCoverShot, the source-less settled-launch,
   // app-tone (#1945) and offline screenshots, renderAppTab's adopt
-  // early-exit, and its iframe path.
-  assert.equal(appCalls.length, 7,
-    `expected 7 app-surface call sites, found ${appCalls.length}`);
+  // early-exit, its iframe path, and _resumeAppFrame (#2902) — a kept app
+  // brought back is an app frame on screen again.
+  assert.equal(appCalls.length, 8,
+    `expected 8 app-surface call sites, found ${appCalls.length}`);
   // platform: renderAppTab's status, offline and unsafe-origin branches, plus
   // renderDevView.
   assert.equal(platformCalls.length, 4,
@@ -107,7 +108,7 @@ test('the keep/adopt early-exit still asserts the app surface', () => {
   // (since #1085 chunk H) any render that lands back on the same app at the
   // same url, e.g. coming back from the Dev tab. It must still set the flag, or
   // a kept frame could carry over the surface of the screen it just left.
-  const anchor = 'if (adopts || frame.keeps(';
+  const anchor = 'if (adopts || resumed || frame.keeps(';
   const keep = APP_VIEW.slice(
     APP_VIEW.indexOf(anchor),
     APP_VIEW.indexOf('AppView._teardownLaunch();', APP_VIEW.indexOf(anchor))

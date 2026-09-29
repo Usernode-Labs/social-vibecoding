@@ -1,15 +1,18 @@
-// Leaderboard screen — the Kudos leaderboard, the Topochain standings and
-// the season's challenges merged behind one entry point with a three-tab
-// strip. (Filename kept from when the screen was titled "Standings"; the
-// screen and its drawer row read "Leaderboard" now.)
+// Leaderboard screen — the Kudos leaderboard, the Topochain standings, the
+// season's challenges and the past seasons, behind one entry point with a
+// four-tab strip: Challenges, Kudos, Standings, History (the navigation
+// prototype's Challenges page). The screen has no heading of its own any
+// more: the platform bar names the TAB (Leaderboard._syncTitle).
 //
 // The contract that's easy to break later:
 //   - the screen opens on CHALLENGES, the strip's first tab (#2374): the
 //     bare #leaderboard hash, the pane the shell ships visible and the
 //     module's starting section must all agree on that;
-//   - the Topochain standings, which the tab strip labels simply
-//     "Leaderboard", are addressed by name — #leaderboard/topochain — and
-//     the home widget's fill links there explicitly;
+//   - the Topochain standings, which the tab strip labels "Standings", are
+//     addressed by name — #leaderboard/topochain — and the home widget's
+//     fill links there explicitly;
+//   - History is #leaderboard/seasons (NOT #leaderboard/history, which is
+//     the Kudos pane's "My history" and keeps meaning that);
 //   - the kudos board is still all there, one tab over, named "Kudos";
 //   - every existing #leaderboard/<sub> deep link (prs / users / history /
 //     users/<name>) still resolves to a Kudos sub-tab;
@@ -79,22 +82,85 @@ function tabsConstant(name) {
 
 // ─── Shell ───────────────────────────────────────────────────────────────
 
-test('the Leaderboard screen hosts a tab strip, an event bar and all three panes', () => {
+test('the Leaderboard screen hosts a tab strip, an event bar and all four panes', () => {
   const start = html.indexOf('<main id="leaderboard-screen"');
   const end = html.indexOf('</main>', start);
   assert.ok(start > -1, '#leaderboard-screen exists');
   const screen = html.slice(start, end);
-  assert.ok(screen.includes('>Leaderboard<'), 'the screen is titled Leaderboard');
+  // Bug f of the navigation audit: the screen said its name twice — the bar
+  // and an <h2>Leaderboard</h2> — and neither named the tab showing. The
+  // platform names a screen ONCE, in the bar, and the bar follows the tab now.
+  assert.ok(!screen.includes('>Leaderboard<'), 'no second, in-page title');
+  assert.doesNotMatch(screen.slice(0, screen.indexOf('id="standings-tabs"')), /<h2/,
+    'nothing heads the strip: it is the first thing under the bar');
   assert.ok(screen.includes('id="standings-tabs"'), 'it carries the section tab strip');
   assert.ok(screen.includes('id="leaderboard-event-bar"'), 'it carries the shared event bar');
   assert.ok(screen.includes('id="leaderboard-root"'), 'it hosts the Kudos pane');
   assert.ok(screen.includes('id="topochain-leaderboard-root"'), 'it hosts the Topochain pane');
   assert.ok(screen.includes('id="challenges-root"'), 'it hosts the Challenges pane');
+  assert.match(screen, /<div id="leaderboard-history-root" class="hidden w-full"><\/div>/,
+    'and the History pane, shipped empty and hidden like the other non-default panes');
   // Wide enough for the Topochain table; the Kudos lists keep their
-  // narrower reading column.
+  // narrower reading column, centered on its own (#2921) rather than
+  // left-pinned inside the wider frame.
   assert.match(screen, /max-w-5xl/, 'the shell is the wider column');
-  assert.match(screen, /id="leaderboard-root" class="hidden max-w-3xl"/,
-    'the Kudos pane keeps its reading width (and now ships hidden — see below)');
+  assert.match(screen, /id="leaderboard-root" class="hidden max-w-\[40rem\] mx-auto"/,
+    'the Kudos pane keeps a narrower reading width, centered (and ships hidden — see below)');
+});
+
+test('Kudos sits in Me\'s column, and the strip clears the bar as Me does (#2832 follow-up)', () => {
+  const classOf = (re) => {
+    const m = html.match(re);
+    assert.ok(m, `${re} renders`);
+    return m[1].split(/\s+/);
+  };
+  const rem = (cls) => {
+    // Tailwind's named widths in rem, and one arbitrary `[Nrem]` value.
+    const named = { 'max-w-2xl': 42, 'max-w-3xl': 48, 'max-w-5xl': 64 };
+    if (cls in named) return named[cls];
+    const m = cls.match(/^max-w-\[(\d+(?:\.\d+)?)rem\]$/);
+    return m ? Number(m[1]) : null;
+  };
+  const pad = { 'px-4': 1 };
+
+  // Me: the reference column (#2832) — Workshop's max-w-2xl box, its own px-4.
+  const me = classOf(/id="profile-root" class="([^"]*)"/);
+  const meWidth = rem(me.find((c) => c.startsWith('max-w-')));
+  assert.equal(meWidth, 42, 'Me is still the max-w-2xl column');
+  assert.ok(me.includes('px-4') && me.includes('pt-5'), 'with its own px-4 gutter and pt-5 top gap');
+  const meContent = meWidth - 2 * pad['px-4'];
+
+  // The Leaderboard frame supplies the gutter OUTSIDE the Kudos root, so the
+  // Kudos root's width must equal Me's CONTENT width for the rows to span
+  // exactly the x-range Me's cards do — the 96px jump was max-w-3xl here.
+  const start = html.indexOf('<main id="leaderboard-screen"');
+  const screen = html.slice(start, html.indexOf('</main>', start));
+  const frame = classOf(/<main id="leaderboard-screen"[^>]*><div class="([^"]*)"/);
+  assert.ok(frame.includes('px-4'), 'the frame carries the 16px gutter');
+  assert.ok(frame.includes('pt-5') && !frame.includes('p-4'),
+    'and pt-5, clearing the bar\'s 8px notch plus 12px as Me and Workshop do — not p-4');
+  const kudos = (screen.match(/id="leaderboard-root" class="([^"]*)"/) || [])[1].split(/\s+/);
+  assert.ok(kudos.includes('mx-auto'), 'the Kudos column is centered, as Me\'s is');
+  assert.ok(!kudos.includes('max-w-3xl'), 'not the 96px-wider column it used to be');
+  assert.ok(!kudos.some((c) => /^p[xytblr]?-\d/.test(c)), 'and adds no gutter of its own (the frame\'s is the gutter)');
+  assert.equal(rem(kudos.find((c) => c.startsWith('max-w-'))), meContent,
+    'the Kudos rows are exactly as wide as Me\'s cards');
+});
+
+test('the strip lines up with the pane under it, and the column holds still across tabs', () => {
+  const src = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/index.tsx'), 'utf8');
+  // Kudos narrows to Me's column; the strip above it follows, so the first tab
+  // starts where the first row does instead of at the wide frame's edge.
+  assert.match(src, /const KUDOS_COLUMN = 'max-w-\[40rem\] mx-auto';/);
+  assert.match(src, /section === 'kudos' \? KUDOS_COLUMN : undefined/,
+    'the strip wrapper takes the Kudos column only while Kudos shows');
+  assert.match(src, /id="leaderboard-root" className=\{`hidden \$\{KUDOS_COLUMN\}`\}/,
+    'from the same constant as the Kudos root, so the two cannot drift');
+  // Kudos and Standings scroll, Challenges and History do not: without a
+  // reserved gutter a classic scrollbar re-centers the column on the long tabs.
+  const main = (html.match(/<main id="leaderboard-screen" class="([^"]*)"/) || [])[1] || '';
+  assert.ok(main.split(/\s+/).includes('[scrollbar-gutter:stable]'),
+    'the scroller reserves its scrollbar gutter on every tab');
 });
 
 test('the retired screens are gone from the shell', () => {
@@ -136,7 +202,7 @@ test('Leaderboard.section defaults to Challenges (#2374)', () => {
 // and keys are asserted where they now live. `_renderSectionTabs` is still the
 // entry point and is checked to have become a publish rather than a write, so
 // the two halves can't drift back into both rendering.
-test('the tab strip reads Challenges, Kudos, Leaderboard (#1917)', () => {
+test('the tab strip reads Challenges, Kudos, Standings, History (#1917, the prototype)', () => {
   const list = island.slice(island.indexOf('const SECTION_TABS = ['), island.indexOf('];', island.indexOf('const SECTION_TABS = [')));
   assert.ok(list.length > 0, 'SECTION_TABS located in the island');
   const labels = [...list.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
@@ -144,8 +210,16 @@ test('the tab strip reads Challenges, Kudos, Leaderboard (#1917)', () => {
   assert.deepEqual(labels, [
     ['challenges', 'Challenges'],
     ['kudos', 'Kudos'],
-    ['topochain', 'Leaderboard'],
-  ], 'what you can do first, the ranking last; the standings tab is still called Leaderboard');
+    ['topochain', 'Standings'],
+    ['seasons', 'History'],
+  ], 'what you can do first, then the ranking, then the rankings that are over; '
+    + 'the prototype\'s words, Standings and History');
+  // Four labels have to fit a 390px column: the triggers tighten below `sm`.
+  // QA 2026-09-24 Q21: px-2 (was px-2.5), so the four fit a 390px column.
+  assert.match(island, /const STRIP_TAB = 'inline-flex items-center justify-center h-8 px-2 sm:px-4 /,
+    'a phone-width trigger padding, restored from sm up');
+  // And where they still do not fit, the strip says it scrolls.
+  assert.match(island, /<TabsList id="standings-tabs" ref=\{stripRef\} className=\{STRIP_LIST\} style=\{stripFade\}>/);
   // The KEYS are the platform's vocabulary for these tabs (hash aliases in
   // app.js, dapp.json checks) and must survive both the relabelling and the
   // move: they are the attribute dapp.json selects on.
@@ -202,7 +276,9 @@ test('the Kudos sub-tabs are the same segmented control as the strip above (#244
   const strip = out.slice(out.lastIndexOf('<div', out.indexOf('data-lb-sub="prs"')),
     out.indexOf('</div>', out.indexOf('data-lb-sub="history"')));
 
-  assert.ok(strip.startsWith(`<div class="${tabsConstant('SECTION_TABS_LIST_BASE')}">`),
+  // QA 2026-09-24 Q21: the track gains the section strip's sideways scroll
+  // (for a 320px phone) after the primitive's margin-free spelling.
+  assert.ok(strip.startsWith(`<div class="${tabsConstant('SECTION_TABS_LIST_BASE')} max-w-full overflow-x-auto `),
     'the sub-tabs sit on the primitive\'s track — the margin-free spelling, '
     + 'because the strip shares an items-center row with the window pills');
 
@@ -211,7 +287,13 @@ test('the Kudos sub-tabs are the same segmented control as the strip above (#244
     assert.ok(m, `the ${key} sub-tab is located`);
     return m[0];
   };
-  const base = tabsConstant('SECTION_TAB_BASE');
+  // QA 2026-09-24 Q21: SECTION_TAB_BASE's face with the phone padding the
+  // section strip uses (px-3 below sm) and a label that never wraps. Every
+  // other token of the primitive's geometry is still there.
+  const base = 'inline-flex items-center justify-center h-8 px-3 sm:px-4 rounded-full text-sm font-semibold transition-colors whitespace-nowrap shrink-0';
+  for (const token of tabsConstant('SECTION_TAB_BASE').split(' ').filter((t) => t !== 'px-4')) {
+    assert.ok(base.split(' ').includes(token), `the sub-tab keeps the strip's ${token}`);
+  }
   assert.ok(button('prs').includes(`${base} ${tabsConstant('SECTION_TAB_ACTIVE')}`),
     'the selected sub-tab is the language\'s inversion');
   for (const key of ['users', 'history']) {
@@ -231,7 +313,8 @@ test('the Kudos sub-tabs are the same segmented control as the strip above (#244
   assert.match(button('prs'), /aria-current="page"/);
   assert.match(button('users'), /aria-current="false"/);
   // The window pills in the same row are NOT tabs and keep their own shape.
-  assert.match(out, /data-lb-win="all" class="px-3 py-1 text-xs font-medium rounded-full bg-violet-600 text-white"/,
+  // (QA 2026-09-24 Q21: plus `whitespace-nowrap`, so "All-time" stays one line.)
+  assert.match(out, /data-lb-win="all" class="px-3 py-1 text-xs font-medium rounded-full whitespace-nowrap bg-violet-600 text-white"/,
     'the window pills are untouched — a separate control, not a second tab strip');
 });
 
@@ -265,8 +348,8 @@ test('_setSection validates its input and syncs the hash', () => {
   assert.ok(fn.length > 0, '_setSection located');
   assert.match(fn, /if \(!Leaderboard\.SECTIONS\.includes\(section\)\) return;/,
     'garbage sections are a no-op, mirroring _setSub');
-  assert.match(lbJs, /SECTIONS: \['topochain', 'kudos', 'challenges'\],/,
-    'all three sections are declared in one place, in tab order');
+  assert.match(lbJs, /SECTIONS: \['topochain', 'kudos', 'challenges', 'seasons'\],/,
+    'all four sections are declared in one place');
   assert.match(lbJs, /EVENT_SECTIONS: \['topochain', 'challenges'\],/,
     'the two event-scoped sections are declared in one place');
   assert.match(fn, /Leaderboard\._syncHash\(\);/, 'the hash follows the tab');
@@ -568,7 +651,8 @@ test('the challenges grid summarises and groups the completed set', () => {
   // ITERATION 03 moved the tally into the shared season progress
   // ("3/9 done in Season 2" over one segment per challenge) rather than
   // "3 of 9 challenges completed". This pin moved with it, deliberately.
-  assert.match(chJs, /caption: name \? `done in \$\{name\}` : 'done'/, 'and states the tally in words');
+  // QA 2026-09-24 Q17: an event's tally says it is an event's.
+  assert.match(chJs, /caption: name \? `done in this event · \$\{name\}` : 'done'/, 'and states the tally in words');
   assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length\)/,
     'which is what the summary line carries');
   assert.match(chTsx, /<SeasonProgress id="tc-se-challenge-summary"/,
@@ -898,4 +982,63 @@ test('a signed-out reader gets the cross-link without a tally that is not theirs
   // paragraph must survive a null tally.
   assert.match(standingsTsx, /id="tc-lb-challenge-link"/);
   assert.match(standingsTsx, /id="tc-lb-to-challenges"/);
+});
+
+// #2991: the History filter chips said which one was on by fill colour only.
+// aria-pressed carries the same state to assistive tech, and type="button"
+// keeps a chip from ever submitting an enclosing form.
+test('the Kudos History filter chips expose their on-state as aria-pressed (#2991)', () => {
+  const state = {
+    mounted: true,
+    chrome: null,
+    body: {
+      kind: 'history',
+      chips: [
+        { key: 'given', label: 'Given', on: true },
+        { key: 'received', label: 'Received', on: false },
+      ],
+      list: { kind: 'empty', message: 'Nothing yet.' },
+      more: null,
+    },
+  };
+  const mod = loadTsx('frontend/src/features/leaderboard/kudos-pane.tsx', {
+    stubs: {
+      './kudos-pane-store.js': {
+        kudosPaneStore: { get: () => state, subscribe: () => () => {} },
+      },
+    },
+  });
+  const out = renderToHtml(createElement(mod.KudosPane, {}));
+  const chip = (key) => {
+    const m = out.match(new RegExp(`<button[^>]*data-lb-hfilter="${key}"[^>]*>`));
+    assert.ok(m, `the ${key} chip renders`);
+    return m[0];
+  };
+  assert.match(chip('given'), /aria-pressed="true"/);
+  assert.match(chip('received'), /aria-pressed="false"/);
+  for (const key of ['given', 'received']) assert.match(chip(key), /type="button"/);
+  // The colour treatment is unchanged: the attribute is added, not swapped in.
+  assert.match(chip('given'), /bg-violet-600 text-white/);
+});
+
+// QA 2026-09-24 Q21: the section strip scrolls sideways on a narrow phone
+// with its scrollbar hidden, so the edge that has more beyond it fades. The
+// first render carries no style (the prerender's markup), and a strip that
+// fits never gets a mask.
+test('QA 2026-09-24 Q21: the scrolling strips fade the edge that has more', () => {
+  const { scrollFadeStyle, SCROLL_FADE_PX } = loadTsx('frontend/src/lib/use-scroll-fade.ts');
+  assert.equal(scrollFadeStyle({ start: false, end: false }), undefined, 'fits: no mask at all');
+  const end = scrollFadeStyle({ start: false, end: true });
+  assert.equal(end.maskImage, `linear-gradient(to right, #000 0, #000 calc(100% - ${SCROLL_FADE_PX}px), transparent 100%)`);
+  assert.equal(end.WebkitMaskImage, end.maskImage);
+  assert.equal(scrollFadeStyle({ start: true, end: false }).maskImage,
+    `linear-gradient(to right, transparent 0, #000 ${SCROLL_FADE_PX}px, #000 100%)`);
+  assert.match(scrollFadeStyle({ start: true, end: true }).maskImage, /^linear-gradient\(to right, transparent 0, #000 20px, #000 calc\(100% - 20px\), transparent 100%\)$/);
+  const hook = fs.readFileSync(path.join(__dirname, '../frontend/src/lib/use-scroll-fade.ts'), 'utf8');
+  assert.match(hook, /useState<Edges>\(\{ start: false, end: false \}\)/, 'nothing measured before mount');
+  assert.doesNotMatch(hook, /\.scrollIntoView\(/, 'the strip scrolls itself, never the page');
+  const pane = fs.readFileSync(path.join(__dirname, '../frontend/src/features/leaderboard/kudos-pane.tsx'), 'utf8');
+  assert.match(pane, /<TabsList ref=\{subRef\} className=\{SUB_TABS_LIST\} style=\{subFade\}>/, 'the Kudos sub-strip fades too');
+  assert.match(pane, /const TAB_ROW = 'flex flex-col items-start gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3';/,
+    'below sm the sub-tabs and the window pills stack');
 });

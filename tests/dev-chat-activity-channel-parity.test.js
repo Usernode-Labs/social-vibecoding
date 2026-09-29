@@ -32,7 +32,8 @@ const path = require('node:path');
 const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
 const DEV_CHAT = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
 const APP = read('public', 'js', 'app.js');
-const SESSIONS = read('src', 'routes', 'sessions.js');
+// #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
+const SESSIONS = `${read('src', 'services', 'mayor', 'turn.js')}\n${read('src', 'routes', 'sessions.js')}`;
 
 // Slice from `startMarker` to `endMarker` (both must exist and be ordered).
 function slice(src, startMarker, endMarker, what) {

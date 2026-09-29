@@ -21,6 +21,11 @@
  *    flip its label in place exactly as it does inside the home card's
  *    popover.
  *
+ * SHARE leads that card (the prototype's About sheet lists "More": Share,
+ * Add to home screen, Fork this app). It is not one of Home.menuItemsFor's
+ * items, so it is its own row: a flag on the descriptor (`canShare`, the same
+ * gate the mark menu's "Share app" uses) and Browse.shareDetailApp behind it.
+ *
  * INITIAL RENDER: `detail === null` until the detail level is entered, and
  * that renders nothing — the empty, hidden #browse-detail the hand-written
  * shell shipped and the SSG prerender has to reproduce.
@@ -48,6 +53,8 @@ type ContributorsView = {
   count: number | null;
   rows: ContributorRowView[];
   toggle: string | null;
+  /** The fold is open (Browse._contribExpanded); drives aria-expanded. */
+  expanded?: boolean;
   note: string | null;
 };
 
@@ -75,6 +82,8 @@ export type DetailView =
     openLabel: string;
     isAdded: boolean;
     favLabel: string;
+    /** The app has a public link to share (Browse.shareUrlFor). */
+    canShare?: boolean;
     actions: ActionView[];
     contributors: ContributorsView;
   };
@@ -152,7 +161,7 @@ function Contributors({ view }: { view: ContributorsView }): ReactNode {
         // `:not(:last-child)`, so the LAST contributor must be the last child
         // of something that the toggle below is not inside — otherwise the
         // fold button would take the row rule and the list would end on one.
-        <div>
+        <div id="browse-contrib-list">
           {view.rows.map((row) => <ContributorRow key={row.who} row={row} />)}
         </div>
       ) : null}
@@ -160,6 +169,10 @@ function Contributors({ view }: { view: ContributorsView }): ReactNode {
         <button
           type="button"
           id="browse-contrib-toggle"
+          // The fold's state for assistive tech, as Discover's list's own
+          // "Show more" says it (./browse-list.tsx), #2991.
+          aria-expanded={!!view.expanded}
+          aria-controls="browse-contrib-list"
           className="w-full px-4 py-3.5 text-sm font-medium text-violet-700 dark:text-violet-400 text-left transition-colors hover:bg-zinc-500/5 border-t border-zinc-200 dark:border-zinc-800"
           onClick={() => controller()?.toggleContributors()}
         >{view.toggle}</button>
@@ -279,8 +292,22 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
         >{view.favLabel}</button>
       </div>
 
-      {view.actions.length ? (
+      {view.actions.length || view.canShare ? (
         <GroupedList className={CARD_SPACING}>
+          {view.canShare ? (
+            <ListRow
+              as="button"
+              id="browse-detail-share"
+              inset="text"
+              className="browse-detail-share transition-colors hover:bg-zinc-500/5"
+              // The action rows' own weight and ink (see them just below):
+              // Share is one more entry in the same list, not a headline.
+              titleClassName="font-normal text-zinc-700 dark:text-zinc-200"
+              tooltip="Share a link to this app"
+              title="Share"
+              onClick={() => controller()?.shareDetailApp(view.app)}
+            />
+          ) : null}
           {view.actions.map((a) => (
             <ListRow
               key={a.index}

@@ -247,6 +247,7 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     app: { id: 7, slug: 'demo' }, environment: 'production',
     imageRef: 'ghcr.io/example/social-apps/demo@sha256:deadbeef',
     env: { DATABASE_URL: 'postgres://redacted', PORT: '3000' },
+    command: ['node', '/app/evidence-hosted-app-fixture.js'],
     labels: { 'usernode.env.fp': '0123456789abcdef', 'app.kubernetes.io/managed-by': 'cannot-override-owner' },
   });
   // The app's own four resources — everything except the shared backend.
@@ -266,6 +267,8 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
   assert.deepEqual(deployment.spec.selector.matchLabels, { 'social.usernode.io/runtime-name': result.runtimeName });
   assert.equal((await kubernetes.inspectApplication(config(), result.runtimeName)).labels['usernode.env.fp'], '0123456789abcdef');
   assert.equal(deployment.spec.template.spec.containers[0].image, 'ghcr.io/example/social-apps/demo@sha256:deadbeef');
+  assert.deepEqual(deployment.spec.template.spec.containers[0].command,
+    ['node', '/app/evidence-hosted-app-fixture.js']);
   assert.equal(deployment.spec.template.spec.serviceAccountName, 'social-generated-app');
   assert.equal(
     deployment.spec.template.metadata.annotations['social.usernode.io/env-checksum'],
@@ -479,13 +482,48 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
   assert.equal(deployment.spec.template.spec.volumes[0].persistentVolumeClaim.claimName, result.pvcName);
 });
 
+test('temporary evidence worker uses pod storage without allocating a PVC', async () => {
+  const written = [];
+  const record = (kind) => async ({ body }) => { written.push({ kind, body }); return body; };
+  kubernetes._setClientsForTest({
+    core: {
+      createNamespacedPersistentVolumeClaim: record('PersistentVolumeClaim'),
+      readNamespacedSecret: async () => { throw notFound(); },
+      createNamespacedSecret: record('Secret'),
+      listNamespacedPod: async () => ({ items: [{
+        metadata: { name: 'worker-pod', annotations: { 'social.usernode.io/env-checksum': kubernetes._envChecksumForTest({}) } },
+        spec: { containers: [{ name: 'worker', image: config().kubernetes.workerImage }] },
+        status: { phase: 'Running', conditions: [{ type: 'Ready', status: 'True' }],
+          containerStatuses: [{ name: 'worker', ready: true, state: { running: {} } }] },
+      }] }),
+      readNamespacedPodLog: async () => '__USERNODE_PHASE__ warm-ready',
+    },
+    apps: {
+      readNamespacedDeployment: async ({ name }) => {
+        if (written.some((item) => item.kind === 'Deployment')) {
+          return { metadata: { name, generation: 1 }, status: { observedGeneration: 1,
+            replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+        }
+        throw notFound();
+      },
+      createNamespacedDeployment: record('Deployment'),
+    },
+  });
+  const result = await kubernetes.ensureWorker(config(), { sessionId: 43, env: {}, temporary: true });
+  assert.deepEqual(written.map((item) => item.kind), ['Secret', 'Deployment']);
+  assert.equal(result.pvcName, null);
+  const deployment = written.find((item) => item.kind === 'Deployment').body;
+  assert.deepEqual(deployment.spec.template.spec.volumes, [{ name: 'state', emptyDir: {} }]);
+  assert.equal(deployment.metadata.labels['social.usernode.io/storage-mode'], 'temporary');
+});
+
 test('worker contract and immutable image are read from the live Kubernetes Deployment', async () => {
   kubernetes._setClientsForTest({
     apps: {
       async readNamespacedDeployment() {
         return {
           metadata: { labels: { 'social.usernode.io/worker-contract': 'v6' } },
-          spec: { template: { spec: { containers: [
+          spec: { template: { spec: { volumes: [{ name: 'state', persistentVolumeClaim: { claimName: 'sv-worker-s42-state' } }], containers: [
             { name: 'sidecar', image: 'example/sidecar@sha256:dead' },
             { name: 'worker', image: config().kubernetes.workerImage },
           ] } } },
@@ -496,6 +534,7 @@ test('worker contract and immutable image are read from the live Kubernetes Depl
   assert.deepEqual(await kubernetes.getWorkerRuntimeMetadata(config(), 'sv-worker-s42'), {
     contractVersion: 'v6',
     imageRef: config().kubernetes.workerImage,
+    storageMode: 'persistent',
   });
   assert.equal(await kubernetes.getWorkerContractVersion(config(), 'sv-worker-s42'), 'v6');
 });

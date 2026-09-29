@@ -35,47 +35,55 @@ const render = (patch) => {
 };
 
 test('About never opens empty', () => {
-  // Every other line in it is conditional — a repository the app may not
-  // have, a share the platform may not allow yet, a version it may never have
-  // deployed, a home screen the device may not have — and all four are absent
-  // at once often enough that a pane without an unconditional line would
-  // regularly open blank. A row that sometimes leads nowhere is the one thing
-  // a menu row must not be.
-  const bare = render({ name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
+  // Every other line in it is conditional — a description the manifest may
+  // not have, a repository, a share the platform may not allow yet, a version
+  // it may never have deployed, a home screen the device may not have — and
+  // all of them are absent at once often enough that a pane without an
+  // unconditional line would regularly open blank. A row that sometimes leads
+  // nowhere is the one thing a menu row must not be. The address stands in
+  // the tagline's place when there is no tagline.
+  const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
   assert.match(bare, /id="app-about-identity"/);
   assert.match(bare, />Notes</, 'the app is named');
   assert.match(bare, /\/app\/notes-ab12/, 'and addressed');
 });
 
 test('each fact appears only when there is one', () => {
-  const bare = render({ name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
+  const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
   assert.doesNotMatch(bare, /improve-row-github/, 'no repository, no row');
   assert.doesNotMatch(bare, /improve-row-share/, 'no share, no row');
-  assert.doesNotMatch(bare, /app-about-version/, 'no version, no line');
+  assert.doesNotMatch(bare, /app-about-version/, 'no version, no pill');
 
   const full = render({
-    name: 'Notes', slug: 'notes-ab12',
+    target: 'app', name: 'Notes', slug: 'notes-ab12',
     repoUrl: 'https://github.com/example/notes', canShare: true, version: '14',
   });
   assert.match(full, /id="improve-row-github"[\s\S]{0,200}href="https:\/\/github\.com\/example\/notes"/);
   assert.match(full, /target="_blank"/, 'the repository opens away from the shell');
   assert.match(full, /id="improve-row-share"/);
-  assert.match(full, /id="app-about-version"[\s\S]*?version 14\./,
-    'the version is a LINE, not a row: there is nowhere for it to go');
-  assert.ok(full.indexOf('improve-row-github') < full.indexOf('improve-row-share'),
-    'the repository leads, sharing follows — the order the Improve footer had');
+  // The design draws the version as a PILL beside the builders' avatars —
+  // "v41 · 2h ago" — and it is still not a row: there is nowhere for it to
+  // go. The platform names a version by its commit, so the pill does too.
+  assert.match(full, /id="app-about-pills"[\s\S]*?id="app-about-version"[^>]*>14</,
+    'the version is a pill in the identity block, not a row');
+  // The design's MORE order: Share, Add to home screen, then the source
+  // (View on GitHub is its "Source code"), then Fork.
+  assert.ok(full.indexOf('improve-row-share') < full.indexOf('improve-row-github'),
+    'sharing leads, the repository follows — the design\'s order');
 });
 
 test('two panes of ONE sheet, not two sheets', () => {
   // The kit cannot present a sheet while it is still dismissing another —
   // the ordering the wallet row already worked around — and About is where
   // the menu GOES rather than something that opens over it.
-  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} \/> : \(/,
+  // The invite pane is a third, on the same terms (./invite-pane.tsx).
+  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} \/> : view === 'invite' \? \(\s*<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>\s*\) : \(/,
     'the pane replaces the rows inside the same scroller');
   assert.match(SHEET, /id="app-about-back"/, 'and the label row becomes the way back');
   // The label row's own text is the pane switch's other half: the menu names
-  // the app, About's back arrow names it again beside a chevron.
-  assert.match(SHEET, /\{view === 'about' \? \(/, 'one row, two states');
+  // the app, a second pane's back arrow (About's, Invite's) names it again
+  // beside a chevron.
+  assert.match(SHEET, /\{view !== 'menu' \? \(/, 'one row, two states');
   // What used to be tested here — that Create New and the app strip belonged
   // to the MENU pane rather than to About — is gone with both of them
   // (#2718 review). About was never the reason: a rail of other apps at the
@@ -169,10 +177,10 @@ test('a platform screen is named by the bar, and says it once', () => {
   assert.ok(!messages.includes('messages-list-title'),
     'Messages\' own title row went with it — a search took the space');
   // What each screen DOES say is the thing the bar cannot. Messages: which
-  // of three kinds of message. The Workshop said which workshop with a scope
-  // chip until #2759 — but that screen IS the list of your apps, so the chip
-  // repeated the page; what it says under the bar now is the legend's totals.
-  assert.ok(!/<WorkshopScope /.test(workshop), 'the all-apps screen wears no scope chip (#2759)');
+  // of three kinds of message. The Workshop says which workshop with a scope
+  // chip: #2759 took it off while the screen was only the list of your apps,
+  // and #3051 brought it back as "All apps" over the two tabs it scopes.
+  assert.match(workshop, /<AllAppsScope\n/, 'the all-apps screen says All apps (#3051)');
   assert.match(workshop, /id="workshop-total-working"/);
   assert.match(messages, /<InboxFilters /);
 });

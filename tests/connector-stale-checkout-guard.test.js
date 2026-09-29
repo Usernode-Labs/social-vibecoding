@@ -141,7 +141,7 @@ test('prepare_work takes the checkout in, and reports it back', () => {
   assert.match(block, /remoteUrl: z\.string\(\)\.optional\(\)/);
   assert.match(block, /checkout: z\.object\(\{/, 'the verdict rides in the output');
   assert.match(block, /\}\)\.nullable\(\)/, 'and is nullable, because not asked is not fine');
-  assert.match(block, /async \(\{ slug, requestNumber, brief, restart, proposalId, headSha, remoteUrl \}\)/);
+  assert.match(block, /async \(\{ slug, requestNumber, requestNumbers, brief, restart, proposalId, headSha, remoteUrl \}\)/);
 });
 
 test('the check is advisory: it never withholds the work order', () => {

@@ -16,43 +16,68 @@ Make sure the agent has loaded the other repository's own guidance; if it
 cannot refresh repository context in place, start a fresh task rooted there
 before editing it.
 
-## Shared task workflows
+## Check that this checkout is current before you read or write code
 
-This repository keeps conditional procedures as portable Agent Skills instead
-of loading them for every task. The canonical copies live in
-`.agents/skills/`; `.claude/skills/` links to that directory for Claude
-Code discovery. OpenCode discovers `.agents/skills/` directly, so it does not
-need a duplicate skill tree; its project plugin entry point under
-`.opencode/plugins/` links back to the canonical adapter in `.agents/hooks/`.
-Use the matching skill whenever its description fits:
+- **The code in front of you may not be the code that runs.** Sessions are
+  often started on a user's fork, and a fork's `main` can sit hundreds of
+  merged pull requests behind `Usernode-Labs/social-vibecoding` main.
+  `git fetch origin` cannot tell you: it compares the fork with itself. This
+  applies before you *read* code to answer a question about how the platform
+  behaves now, not only before an edit. An answer read from a stale checkout
+  describes a version that may no longer exist.
+- **Check against the canonical repository, not against `origin`:**
 
-- `usernode-api` — inspect or change Homeroom app/platform state.
-- `usernode-proposal` — run a locally authored native proposal through
-  staging, checks, and optional promotion from an agent on the user's own
-  machine. This skill does not apply inside a Homeroom hosted dev-chat worker:
-  that worker commits on its assigned branch, records visual evidence intent
-  with its supplied tool, and leaves push, PR, and staging to the harness.
-- `react-shell-migration` — convert a legacy-owned shell region to React.
-- `mobile-push-testing` — verify push delivery through a real phone.
+  ```sh
+  git fetch https://github.com/Usernode-Labs/social-vibecoding main
+  git merge-base --is-ancestor FETCH_HEAD HEAD && echo current || echo behind
+  ```
 
-`CLAUDE.md` imports this file for the always-on repository rules below.
-Claude Code, Codex, and OpenCode load the full workflow bodies only when a task
-selects a skill.
+  `behind` means HEAD does not contain the canonical main. To answer a
+  question, read the canonical code instead: `git show FETCH_HEAD:<path>` or
+  `git grep <pattern> FETCH_HEAD`. To change code, follow the next section:
+  the base commit comes from the work order or `proposal_start`, never from
+  merging `FETCH_HEAD` yourself. With the Homeroom connector,
+  `get_checkout_status` answers the same question.
+- **A session-start check runs this for you.**
+  `.agents/hooks/upstream-drift.js` runs when a Claude Code session starts
+  (`.claude/settings.json`), on the first prompt of a Codex session once its
+  project config has been generated, and in OpenCode through
+  `.opencode/plugins/`. When HEAD is behind, it puts a notice in your
+  context; act on it. It is advisory: offline, or in a Homeroom hosted worker
+  (which sets `SOCIAL_VIBECODING_DRIFT_CHECK=off` because the harness fixes
+  its base), it stays silent. Silence is therefore not proof the checkout is current: when
+  the answer depends on current behavior and you have not seen a verdict,
+  run the two commands above.
+- **A fork gets the check only once it contains it.** A fork cut before the
+  check existed has neither the hook nor this section. Syncing that fork's
+  `main` with the canonical one once fixes it for every later session.
 
 ## Know your base commit and create its work branch before you write code
 
 - **This checkout can be a fork whose `main` is far behind the platform
-  repository, and nothing in it says so.** A session dispatched onto a
-  ready-made branch inherits whatever commit that branch was cut from. Once
+  repository, and nothing in it says so** (the section above shows how to
+  check). A session dispatched onto a ready-made branch inherits whatever
+  commit that branch was cut from. Once
   that was ~190 merged pull requests behind the commit the request itself
   described: the files it named had moved, `src/services/mcp-charter.js` did
   not exist yet, and the drift surfaced only because the request happened to
   quote a SHA. **Do not assume the branch you were handed is based
   correctly**, and do not reach for the fork's default branch as the base —
   that is the thing most likely to be stale.
-- **Establish the base commit before the first edit.** It comes from the work
-  order (`prepare_work`), from the guided hand-off's `Base commit:` line, or —
-  with neither to hand — from asking. Inspect the current checkout with
+- **Choose the proposal workflow before resolving the base.** For a native
+  locally authored proposal, follow `usernode-proposal`: resolve the app and
+  exact base through the authenticated Homeroom API, then use `proposal_start`
+  and the platform-managed commit upload. This path needs no personal GitHub
+  link and no `prepare_work`. That tool prepares an external fork contribution
+  and requires GitHub identity for that different workflow; do not call it
+  merely to discover a native proposal's base.
+- **Establish the base commit before the first edit.** Use an already supplied
+  work order or guided hand-off's `Base commit:` when present. For a new native
+  proposal, use the exact canonical revision resolved through Homeroom as
+  described in `usernode-proposal`; a verified API result is sufficient and
+  does not require another user confirmation. Ask only when no trustworthy
+  exact revision can be resolved or the user has requested an ambiguous base.
+  Inspect the current checkout with
   `git status --short --branch`, `git rev-parse HEAD`, and
   `git rev-parse --abbrev-ref HEAD`; compare all forty characters of `HEAD`.
   This is the check step 2 of the `usernode-proposal` skill already makes,
@@ -80,6 +105,29 @@ selects a skill.
   diffed against decides what the group is voting on; a wrong base is caught
   only at submission, after the expensive work is already done.
 
+## Shared task workflows
+
+This repository keeps conditional procedures as portable Agent Skills instead
+of loading them for every task. The canonical copies live in
+`.agents/skills/`; `.claude/skills/` links to that directory for Claude
+Code discovery. OpenCode discovers `.agents/skills/` directly, so it does not
+need a duplicate skill tree; its project plugin entry points under
+`.opencode/plugins/` link back to the canonical adapters in `.agents/hooks/`.
+Use the matching skill whenever its description fits:
+
+- `usernode-api` — inspect or change Homeroom app/platform state.
+- `usernode-proposal` — run a locally authored native proposal through
+  staging, checks, and optional promotion from an agent on the user's own
+  machine. This skill does not apply inside a Homeroom hosted dev-chat worker:
+  that worker commits on its assigned branch, records visual evidence intent
+  with its supplied tool, and leaves push, PR, and staging to the harness.
+- `react-shell-migration` — convert a legacy-owned shell region to React.
+- `mobile-push-testing` — verify push delivery through a real phone.
+
+`CLAUDE.md` imports this file for the always-on repository rules below.
+Claude Code, Codex, and OpenCode load the full workflow bodies only when a task
+selects a skill.
+
 ## Run the suites that pin what you changed; leave the whole suite to Homeroom
 
 - **The platform runs everything on every submission.** `npm run lint:sql`,
@@ -98,7 +146,10 @@ selects a skill.
   `--list` prints the mapping and the command without running; `--files a,b`
   names the changed files yourself. A changed file no suite names is printed
   as such: for a screen, that is the test that does not exist yet; for shared
-  code, it is the cue below.
+  code, it is the cue below. It also runs, on every change, the few fast
+  whole-tree guards that name no file (icons, inks, em dashes, the Global
+  Chat route inventory, …). A guard opts in with a
+  `// test:changed: always (…)` line; mark a new one only if it is fast.
 - **Run `npm test` only when shared code moved and the mapping cannot see
   who depends on it** — a `public/js/**` module other modules reach through
   a global (the mapping runs the suites that name the module, not those of
@@ -115,6 +166,19 @@ selects a skill.
 This section applies to an external agent authoring a PR from a local
 checkout. A Homeroom hosted dev-chat worker records semantic intent through
 its supplied tool and lets the platform create and replay the evidence plan.
+
+`impact: none` applies only when no user-visible state changes. Changed text,
+counts, loading, error, and status states need a `ui` claim even if the code
+reuses existing markup and styles. If a required fixture or failure state is
+missing, report that blocker instead of declaring `none` to skip evidence.
+For an error state caused by a failed API request, the author may declare
+`intent.controlledFailurePath` as one exact same-origin `GET /api/...` path.
+The replay must enable that failure before the triggering action on both
+revisions; it fails if the request never occurs. The reviewer sees a clear
+controlled-test label when the first `intent.steps` entry is exactly
+`Controlled test: deliberately block the declared API GET on both revisions.`
+The intent validator requires this label. Do not use this for a normal
+success-state claim.
 
 Before opening a PR for a platform UI change with `visualEvidence` impact
 `ui` or `motion`, write the semantic intent and replay plan locally, then run
@@ -141,6 +205,90 @@ running local Homeroom stack. Other apps need their own local runtime and
 representative fixture before the same gate can be claimed. See
 `docs/proposal-visuals/pre-pr-local-plan-verification.md` for setup and the
 remaining live-proposal boundary.
+
+## Communities own projects — name them the way the screen does
+
+- **Internally the container is a `community`; on screen it is named by its
+  audience.** Every app belongs to exactly one community (`apps.community_id`,
+  the "Communities" block at the end of `src/db/schema.sql`,
+  `src/services/communities.js`), and a community is what people join.
+  People see it by its audience — **Just you** (`solo`), **Group**
+  (`invited`) or **Community** (`open`) — and what it owns are **projects**.
+  Use "project" in user-facing copy where the app is the thing being built;
+  keep "app" where it is the thing being used (the App tab, Discover).
+- **Communities is the fourth tab, beside you; Messages is in the middle.**
+  It lists every community you are in
+  (Communities, Groups, Just you) at `#communities` (`#workshop` still routes
+  there; the tab's key and ids keep `workshop`). A project's page opens on
+  its **hub** (a hero with who is here and a 14-day trend, then its channel,
+  Needs you, and Since your last visit) beside its **Workshop** (what you are
+  working on, All items). The Communities screen's Needs you is one feed of
+  every decision owed across your projects (`GET /api/workshop/needs-feed`). A
+  project's channel lives on its hub, not in Messages, and #general is the
+  Homeroom community's channel; Messages is people and agents. **A channel
+  is what people said:** Homeroom writes no activity (a proposal put up for a
+  vote, a merge, a check verdict, a setting changed) into a project's channel
+  or #general. `ws.sendSystemMessage` writes nothing without a thread, so a
+  new platform line names the proposal's, request's or decision's own thread
+  (`{ type: 'session' | 'issue' | 'governance', ref }`) or is not written.
+  App-wide state is shown where it lives: merges paused and a stalled release
+  are banners on the project page, and settings changed lately and the
+  Friday card are the Workshop tab's notices panel (`services/app-notices.js`,
+  read from `events` — record a new kind there, not a chat line).
+  `migrate.clearAutomatedChannelLines` clears the lines written before. A
+  door to a project's hub (a link that says so) calls
+  `AppView._landOnHub(slug)` first, so it opens on the hub rather than the
+  tab the page was last left on. Back and Forward are not doors: the page
+  reopens on the tab last shown, read fresh when it mounts.
+- **Audience is derived, never stored.** `communities.audienceSql` reads it
+  off the app's `view_visibility` and its member/invite count. A second
+  stored copy is one the visibility reconcile would have to remember. So a
+  project GROWS by the same two levers: Invite makes Just you a Group, and
+  the hero's "Open it up" / "Make it a group" opens the visibility PR
+  (`POST /api/apps/:slug/visibility-pr`), which applies once it merges.
+- **Communities and apps are one-to-one today.** A community with a single
+  project is drawn as that project — its name, icon and page — and nothing
+  should render a separate "community" layer for it. The table is bare on
+  purpose; a name and an audience move onto it when a community can own
+  more than one project.
+- **A project is created FOR someone.** The create dialog asks who it is for
+  first (Just me, A group, A community) and `POST /api/apps` takes
+  `audience`, a group's `invitees` and the approval rule as dapp.json's own
+  `governance` block (`src/services/create-options.js`). The rule is written
+  into the new repository's dapp.json by the template, so it is votable later
+  like any other line there; an import's own dapp.json decides instead. Every
+  project uses an app slot whatever its audience: each one is a real
+  container and database.
+- **Membership gates taking part, not reading.** Starting a change,
+  proposing, filing a request, voting (on proposals and requests) and posting
+  in an app's chat answer 403 `join_required` to a non-member
+  (`communities.requireAppMembership` / `requireSessionMembership` /
+  `requireIssueMembership`, and `chatNeedsJoin` on the WebSocket, which
+  answers with a `join_required` frame). Mount the matching gate on any new
+  write route of that kind; the client's fetch wrapper
+  (`frontend/src/lib/join-required.ts`) turns the 403 into a Join prompt and
+  a retry, so no caller handles it by hand. A Mayor or connector tool keeps
+  the code (`mcp-tools.platformError` answers `join_required` with the app),
+  and the Mayor's refused card offers Join itself. The collab guard in
+  `app-access.js` still decides who may be there at all; admins pass.
+  Collaborators, Home pins and platform access join by trigger — write those
+  rows, not `community_members`, unless the action is literally Join or
+  Leave. The vote threshold counts active MEMBERS
+  (`services/active-users.js`, concept #3).
+- **An invite link grants what its maker could grant.** `/invite/<token>`
+  (`services/community-invites.js`, the "Communities, stage 6" block of
+  `schema.sql`) is made by any member from the logo menu's "Invite to
+  community" pane: 7 days and 25 people unless they choose otherwise, and
+  revocable. On a project where building is by invitation it is the
+  collaborator invite, accepted; anywhere else it is membership. One SQL
+  function, `apply_community_invite()`, applies it, both on the spot and from
+  the trigger that runs when an account is let in, so a person without
+  platform access is QUEUED and joins on release, however that happens. The
+  page carries the token in an HttpOnly cookie, so signing up or in from it
+  follows the link server-side (`redeemCarried` in `routes/auth.js`). The
+  invite tree (`users.admitted_by`, `invite_generation`; skips of 10, 5, 2)
+  is built and OFF behind `INVITE_TREE_ENABLED`; `grantPlatformAccess` is
+  "let in by us", generation 0.
 
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 
@@ -267,6 +415,47 @@ in code (prose in comments is fine). It also holds the console to its own
 registry: a section may not hand-write a class string a recipe of five or more
 utilities already covers — interpolate the key, or the copy stops tracking the
 recipe the first time it changes.
+
+### Type and colour on the platform shell — one scale, one accent
+
+The shell's screens read as one product because a few choices are made once.
+Make new UI from them rather than choosing again; the primitives already
+carry most of them.
+
+- **Rows are 15 over 13.** `ListRow`'s title is 15px at weight 650, its
+  subtitle 13px muted. Messages' `.messages-row-name` / `-preview` use the
+  same pair. A 17px bold row title makes every row a heading.
+- **A label over a card is small caps; a title inside a card is a
+  sentence.** `SectionHeader` is 12px bold uppercase, tracked `0.06em`, muted
+  (Messages' `.messages-section-head` matches it). It is the only uppercase
+  text in the shell. A heading inside a card (`.dev-ws-head-title`) stays
+  sentence case. A page has at most one large heading, such as the project
+  hero's name.
+- **Cards are the plane colour, 20px, one hairline.** `GroupedList` draws
+  them: `--dc-sheet-solid` (tone `plane`) or white, `rounded-[20px]`, and an
+  inset `--app-sheet-line` hairline. A list drawn outside the primitive (for
+  example `.messages-section-card`) spells the same three values.
+- **One accent, with three jobs kept apart.**
+  - `violet-*` (the blue: `tailwind.config.js` overrides it) and `--accent`
+    mark an action, or a number that asks for the viewer ("3 to vote").
+  - `--lit-ink` / `--lit-tint` / `--lit-line` mark where you are: the lit
+    tab on the phone bar, the rail row, and the Workshop strip's marker.
+  - `--brand-*` periwinkle is the header's own ink (the app chip, the bell,
+    the back disc) and nothing else.
+
+  A state that is already done gets no fill. "Joined" is grey with a check;
+  a filled green pill made the settled thing the loudest thing on screen.
+- **Say it in words, and let zero say nothing.** A count on a row is a
+  phrase ("2 in progress · 3 to vote"), not a glyph and a bare number that
+  need a legend. A zero is hidden (`hidden`, kept in the DOM when a declared
+  check selects on it). Show a status dot only when something is wrong,
+  never a green dot on every running app.
+- **At most one pill on a list row.** Use `AppPills limit={1}`. Pass the
+  heading's own words to a row's label so the row does not repeat them.
+
+Tests pin the literals where they live (`tests/section-heading-primitives`,
+`tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is
+a change to the rule. Make it here as well.
 
 ### The console is React — add a section the same way
 

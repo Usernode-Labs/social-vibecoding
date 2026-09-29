@@ -33,12 +33,33 @@ a plan that changes the intent. The plan schema and examples are in
    executable plan for the specific user-visible claim. Choose `animation:
    none` for a static state, `steps` for meaningful user interactions, and
    `motion` only when movement is the claim.
+   For an error state that requires a failed API request, declare the exact
+   `GET /api/...` path in `intent.controlledFailurePath`. Put
+   `Controlled test: deliberately block the declared API GET on both revisions.`
+   as the first `intent.steps` entry; validation requires the reviewer label.
+   Put matching `requestFailure` actions with `enabled: true` before the triggering
+   interaction in both `replay.before` and `replay.after`; disable it after
+   the interaction if the flow needs a recovery step. The toggle sequence
+   must match on both sides. A successful capture requires the browser to
+   actually make that blocked request on each side, and the reviewer flow is
+   labeled as a controlled test.
 3. Run the command. It checks out the two exact commits, builds both Docker
    images, snapshots the *local* database, and restores that same snapshot
-   separately for base and head. It mints the normal local capture identities
-   and runs the production browser replay/encoder twice, restoring the
-   snapshot between passes. A failed locator, action, assertion, media check,
+   separately for base and head before each story and viewport. It mints the
+   normal local capture identities and runs the production browser
+   replay/encoder twice, restoring the snapshot between cases and passes. A
+   failed locator, action, assertion, media check,
    or reproducibility check exits nonzero and writes a failure JSON file.
+   For the platform app, both the local verifier and hosted replay also apply
+   the same member conversation fixture to each disposable database after its
+   exact-revision image boots, but only when that revision supplied the source
+   staging conversation. This allows a member story to open a real Messages
+   row and load its transcript. They also create a non-loginable full-admin
+   identity only in those disposable databases and disable the server-wide app
+   cap only in those evidence runtimes, so write-only admin controls and app
+   creation flows can be exercised without changing production or ordinary
+   staging. None of these fixtures changes the running app's database or a
+   production account.
 4. On success, inspect the PNGs and any WebM in
    `.local-visual-evidence/pre-pr-<run-id>/`. Confirm that the captures show
    the claim; replay success alone only proves the steps ran reproducibly and
@@ -63,10 +84,16 @@ PR imports; updates to an existing proposal still use the separate
 `submit_visual_evidence_plan` action for their new head.
 
 The command reads Git objects and the local development database. It does not
-read production data, call a model, create a PR, or submit a proposal. It does
-not invent fixture users or app content. The local fixture may lack a state
-needed for the claim; in that case, the author must create representative
-*local* test state or report that the evidence cannot yet be verified.
+read production data, call a model, create a PR, or submit a proposal. Its
+platform-only member conversation is copied from a staging fixture that the
+exact revision seeds into each disposable database; it does not copy private
+production conversations. Other required states may still be absent. In that
+case, the author must create representative *local* test state or report that
+the evidence cannot yet be verified. Declared `dapp.json` checks use the
+read-only administrator identity, so a route that those checks can open is
+not proof that a member can open it. Use the `full_admin` persona only when
+the claim requires a Homeroom control that the read-only administrator is
+deliberately forbidden to use.
 
 ## Scope
 

@@ -407,10 +407,13 @@ test('the join mail carries the CODE, the confirm link AND the survey link', asy
   // #1540: the sentence is shorter and the HTML half is a button, but the
   // text part must still carry the URL for a reader who cannot see HTML.
   assert.match(msg.text, /confirm in one tap/i);
-  // Andrea's copy for the optional questions, and the rolling-groups
-  // promise that replaced the placeholder "[September 9]" date — no wave
-  // has been committed to, and a date that slips is worse than none.
-  assert.match(msg.text, /increase your chances of getting into an earlier group/i);
+  // The rolling-groups promise that replaced the placeholder "[September 9]"
+  // date — no wave has been committed to, and a date that slips is worse
+  // than none. #2908 dropped the closing "increase your chances" paragraph
+  // and its survey link, so neither may come back.
+  assert.doesNotMatch(msg.text, /increase your chances of getting into an earlier group/i);
+  assert.ok(!msg.text.includes(seen[0].url) && !msg.html.includes('#more/'),
+    'the survey link is no longer in the mail');
   assert.match(msg.text, /rolling basis/i);
   assert.doesNotMatch(msg.text, /September/i);
   assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
@@ -559,6 +562,7 @@ test('every kind renders subject, text and html with no leaked undefined', () =>
       provider: 'gmail', from: 'Homeroom <no-reply@x.invalid>',
       sentAt: '2026-01-01T00:00:00.000Z', reference: 'abcd1234',
     },
+    project_invite: { inviter: 'ada', project: 'Book club', url: 'https://x.invalid/waitlist' },
   };
   for (const kind of templates.KINDS) {
     const m = templates.buildMessage(kind, payloads[kind]);
@@ -1030,4 +1034,16 @@ test('admin_test has its own per-recipient throttle rule', () => {
     recipientHistory: [{ status: 'sent', created_at: new Date(now - 5000) }],
   });
   assert.equal(decision.allowed, false);
+});
+
+test('a project invite names who sent it and where, and links only to the waitlist', () => {
+  const m = templates.buildMessage('project_invite', { inviter: 'ada', project: 'Book club', url: 'https://onhomeroom.test/waitlist' });
+  assert.equal(m.subject, '@ada invited you to Book club on Homeroom');
+  assert.match(m.text, /@ada invited you to Book club, a group on Homeroom/);
+  assert.match(m.text, /Join the waitlist with this email address\. Once you are in, the invite will be waiting for you\./);
+  assert.match(m.text, /https:\/\/onhomeroom\.test\/waitlist/, 'the link is in the text part too');
+  assert.match(m.html, /Join the waitlist<\/a>/);
+  const bare = templates.buildMessage('project_invite', {});
+  assert.equal(bare.subject, 'Someone invited you to a project on Homeroom', 'renders with nothing to go on');
+  assert.doesNotMatch(bare.html, /<a /, 'and no button without a link');
 });

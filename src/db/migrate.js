@@ -60,6 +60,9 @@ async function migrate(config) {
   // Must run BEFORE every staging fixture — a dozen of them own rows via a
   // hard-coded created_by = 900001. See seedStagingDemoUser.
   await seedStagingDemoUser(pool);
+  await seedStagingAdminDetailsUser(pool);
+  await seedStagingSupportUser(pool);
+  await seedStagingDuplicateUser(pool);
   await seedSelfApp(pool, config);
   finishPhase('coreSeedMs');
   await seedStagingNotifications(pool, config);
@@ -82,6 +85,7 @@ async function migrate(config) {
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
+  await seedStagingAgentSession(pool, config);
   await seedStagingSavedDrafts(pool, config);
   await seedStagingDraftDelete(pool, config);
   await seedStagingVenueLine(pool, config);
@@ -101,6 +105,8 @@ async function migrate(config) {
   await seedStagingCcCohortRuns(pool, config);
   await seedStagingPlatformIssueDrafts(pool, config);
   await seedStagingDemoAppCard(pool);
+  // Must run AFTER seedStagingDemoAppCard — it focuses the demo app row.
+  await seedStagingAgentOpenAppSession(pool, config);
   await seedStagingLandingDirectory(pool);
   await seedStagingFailedApp(pool, config);
   await seedStagingForkLineage(pool, config);
@@ -183,6 +189,8 @@ async function migrate(config) {
   await backfillProposalIssuerAssignments(pool);
   await backfillUsernameChoiceForEmailHandles(pool);
   await migrateWaitlistCountryCodes(pool);
+  // After backfillVotesRequired, which reads the merge announcements.
+  await clearAutomatedChannelLines(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
@@ -589,6 +597,90 @@ async function migrateWaitlistCountryCodes(pool) {
     }
   } catch (err) {
     log.warn('db', 'waitlist country-code migration skipped', { err: err.message });
+  }
+}
+
+// ── Channels are what people said ─────────────────────────────────────
+//
+// Homeroom used to write its activity into a project's channel — a proposal
+// put up for a vote, a merge, a check verdict, a setting changed, main going
+// red — and, for its own project, into #general. It writes none now
+// (services/ws.js sendSystemMessage), and this clears the lines it wrote
+// before, so every channel holds only what people said:
+//
+//   - an app's channel (`chat_messages`, main stream) loses its platform
+//     rows: no sender, `system` / `vote` / `conflict`. Nobody can reply to
+//     one (app-chat.findThreadRoot takes a person's message only), and a
+//     proposal's, request's or decision's own thread keeps its copy where
+//     one was posted: only the main stream is touched.
+//   - a channel conversation (#general) loses Homeroom's rows: no sender,
+//     `system`. One that somebody answered in a thread is deleted the way a
+//     person's message with replies is — it keeps its place and loses its
+//     words — so the replies keep their root; the rest are removed.
+//
+// A reader whose #general cursor sat on a removed line is moved back to the
+// last line that stays (conversation_members' cursor would otherwise be set
+// NULL by its foreign key, and a NULL cursor reads the whole room as
+// unread). Nothing between the two can count as unread: every row between
+// them is one of the removed lines. An app channel's cursor is a plain id
+// compared with `>`, so it needs no move.
+//
+// Every boot, and a no-op once clean: it also sweeps up a line an older
+// instance wrote while a deploy was rolling. The app table is found through
+// its (user_id, app_id) index; the channel conversations are few. Best-effort:
+// a failure never aborts boot, and the channel half is one transaction.
+async function clearAutomatedChannelLines(pool) {
+  let client = null;
+  try {
+    const app = await pool.query(
+      `DELETE FROM chat_messages
+        WHERE user_id IS NULL AND thread_type IS NULL
+          AND msg_type IN ('system', 'vote', 'conflict')`
+    );
+    client = await pool.connect();
+    await client.query('BEGIN');
+    // Homeroom's main-stream lines in a channel, and whether anybody replied.
+    const { rows: lines } = await client.query(
+      `SELECT m.id, m.conversation_id,
+              EXISTS (SELECT 1 FROM conversation_messages r WHERE r.thread_root_id = m.id) AS answered
+         FROM conversation_messages m
+         JOIN conversations c ON c.id = m.conversation_id AND c.kind = 'channel'
+        WHERE m.sender_id IS NULL AND m.msg_type = 'system'
+          AND m.thread_root_id IS NULL AND m.deleted_at IS NULL
+        FOR UPDATE OF m`
+    );
+    const removed = lines.filter((l) => !l.answered).map((l) => l.id);
+    const kept = lines.filter((l) => l.answered).map((l) => l.id);
+    if (removed.length) {
+      await client.query(
+        `UPDATE conversation_members cm
+            SET last_read_message_id = (
+              SELECT MAX(p.id) FROM conversation_messages p
+               WHERE p.conversation_id = cm.conversation_id
+                 AND p.id < cm.last_read_message_id
+                 AND p.id <> ALL($1::int[]))
+          WHERE cm.last_read_message_id = ANY($1::int[])`,
+        [removed]
+      );
+      await client.query('DELETE FROM conversation_messages WHERE id = ANY($1::int[])', [removed]);
+    }
+    if (kept.length) {
+      await client.query(
+        `UPDATE conversation_messages SET content = '', deleted_at = NOW() WHERE id = ANY($1::int[])`,
+        [kept]
+      );
+    }
+    await client.query('COMMIT');
+    if (app.rowCount || removed.length || kept.length) {
+      log.info('db', 'Cleared Homeroom activity lines from channels', {
+        appChannels: app.rowCount, general: removed.length, keptForReplies: kept.length,
+      });
+    }
+  } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    log.warn('db', 'Clearing activity lines from channels skipped', { err: err.message });
+  } finally {
+    if (client) client.release();
   }
 }
 
@@ -1129,6 +1221,219 @@ async function seedStagingDemoUser(pool) {
     log.info('db', 'Staging demo user seeded', { id: 900001 });
   } catch (err) {
     log.warn('db', 'Staging demo user seeding failed', { message: err.message });
+  }
+}
+
+// One fully populated account for the admin Users details view
+// (#admin/users/900301): programme identifiers, a location, a pending app
+// slot request, a weekly cap override, a linked wallet and one GitHub proof,
+// so every card of the view has something to show. It deliberately has no
+// company OpenRouter key, events, onchain accounts or leaderboard standing,
+// so those cards render their empty states. Same rules as the demo user
+// above: fixed id, cannot log in, idempotent, a no-op outside staging.
+async function seedStagingAdminDetailsUser(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, is_admin, can_create_apps,
+                          email, telegram, display_name, country, city,
+                          app_quota, app_quota_requested_at, weekly_limit_cents, usernode_pubkey)
+       VALUES (900301, 'staging-demo-admin-details', 'staging-demo-not-a-login', FALSE, FALSE,
+               'staging-demo-admin-details@example.invalid', 'staging_demo_details',
+               'Staging demo details user', 'FR', 'Staging demo city',
+               2, NOW(), 500, 'ut1stagingdemodetails0000000001')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO user_social_identities (user_id, provider, provider_subject, handle)
+       SELECT 900301, 'github', '900301900301', 'staging-demo-details'
+        WHERE EXISTS (SELECT 1 FROM users WHERE id = 900301 AND username = 'staging-demo-admin-details')
+       ON CONFLICT DO NOTHING`
+    );
+    log.info('db', 'Staging admin details user seeded', { id: 900301 });
+  } catch (err) {
+    log.warn('db', 'Staging admin details user seeding failed', { message: err.message });
+  }
+}
+
+// Support screen (#admin/support/900302): one fake participant with enough
+// history that every Support card has something to show. Points in a running
+// and an ended event from several sources (automatic scoring, admin, a
+// support adjustment), one leaderboard snapshot older than the ledger so the
+// "differs from the ledger" hint renders, an enrollment, an onchain account,
+// kudos both ways, a username change, and one support action.
+//
+// Every row belongs to fake 9003xx identities, never the viewer, and nothing
+// here is a signal the Support routes decide anything from. Fixed ids and
+// ON CONFLICT DO NOTHING keep it idempotent; strictly a no-op outside staging.
+async function seedStagingSupportUser(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, is_admin, can_create_apps,
+                          email, telegram, display_name, usernode_pubkey)
+       VALUES (900302, 'staging-demo-support', 'staging-demo-not-a-login', FALSE, FALSE,
+               'staging-demo-support@example.invalid', 'staging_demo_support',
+               'Staging demo support user', 'ut1stagingdemosupport00000000001')
+       ON CONFLICT DO NOTHING`
+    );
+    const owned = await pool.query(
+      `SELECT 1 FROM users WHERE id = 900302 AND username = 'staging-demo-support'`
+    );
+    if (!owned.rowCount) return;
+    await pool.query(
+      `INSERT INTO username_history (id, user_id, username, changed_at)
+       VALUES (900302, 900302, 'staging-demo-support-old', NOW() - INTERVAL '40 days')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO seasons (id, name, starts_at, ends_at, created_at, updated_at)
+       VALUES (900302, 'Staging demo season', NOW() - INTERVAL '60 days', NOW() + INTERVAL '30 days', NOW(), NOW())
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO season_events (id, name, starts_at, ends_at, scoring_formula, season_id, created_at, updated_at)
+       VALUES (900302, 'Staging demo running event', NOW() - INTERVAL '10 days', NOW() + INTERVAL '20 days', '{}'::jsonb, 900302, NOW(), NOW()),
+              (900303, 'Staging demo ended event', NOW() - INTERVAL '60 days', NOW() - INTERVAL '30 days', '{}'::jsonb, 900302, NOW(), NOW())
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO challenge_templates (id, category, goal, task, reward, created_at, updated_at)
+       VALUES (900302, 'staging', 'Staging demo: try 3 apps', 'Open three apps.', '200 points', NOW(), NOW())
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO challenges (id, season_event_id, challenge_template_id, goal, display_order, created_at, updated_at)
+       VALUES (900302, 900302, 900302, 'Staging demo: try 3 apps', 0, NOW(), NOW()),
+              (900303, 900303, 900302, 'Staging demo: invite a friend', 0, NOW(), NOW())
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO user_enrollments (id, user_id, season_id, season_event_id, registered_at, created_at)
+       VALUES (900302, 900302, 900302, NULL, NOW() - INTERVAL '50 days', NOW())
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO onchain_accounts (id, amount, identity_uid, address, public_key, secret_key, tier,
+                                     registration_code, season_id, season_event_id, user_id, is_used, used_at, created_at)
+       VALUES (900302, 0, 'staging-demo-support', 'ut1stagingdemosupportaccount0000001', 'staging-demo-public-key',
+               'staging-not-a-secret', 'standard', 'staging-demo-support-code', 900302, 900302, 900302,
+               TRUE, NOW() - INTERVAL '9 days', NOW())
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO support_actions (id, actor_user_id, target_user_id, action, reason, payload, created_at)
+       VALUES (900302, 900001, 900302, 'points_adjustment',
+               'Staging demo: missed points for a scanner outage',
+               '{"points": 50, "season_event_id": 900302, "challenge_id": 900302, "ticket": "STAGING-1", "activity_id": 900305}'::jsonb,
+               NOW() - INTERVAL '2 days')
+       ON CONFLICT DO NOTHING`
+    );
+    const activities = [
+      [900302, 900302, 900302, 'challenge_completed', 200, 'challenge_scorer', null, '8 days'],
+      [900303, 900302, 900302, 'challenge_completed', 100, 'scanner', null, '6 days'],
+      [900304, 900302, 900302, 'manual', 25, 'admin_ui', null, '5 days'],
+      [900305, 900302, 900302, 'support_adjustment', 50, 'support_adjustment',
+        { support_action_id: 900302, reason: 'Staging demo: missed points for a scanner outage', ticket: 'STAGING-1' }, '2 days'],
+      [900306, 900302, 900302, 'challenge_completed', 75, 'challenge_scorer', null, '1 day'],
+      [900307, 900303, 900303, 'challenge_completed', 300, 'challenge_scorer', null, '45 days'],
+      [900308, 900303, 900303, 'manual', -20, 'admin_ui', null, '40 days'],
+      [900309, 900303, 900303, 'import', 40, 'import', null, '35 days'],
+    ];
+    for (const [id, eventId, challengeId, type, points, source, metadata, ago] of activities) {
+      await pool.query(
+        `INSERT INTO user_activities (id, user_id, season_event_id, challenge_id, activity_type, points,
+                                      description, metadata, activity_at, source, created_at, updated_at)
+         VALUES ($1, 900302, $2, $3, $4, $5, 'Staging demo activity', $6::jsonb,
+                 NOW() - $7::interval, $8, NOW(), NOW())
+         ON CONFLICT DO NOTHING`,
+        [id, eventId, challengeId, type, points, metadata ? JSON.stringify(metadata) : null, ago, source]
+      );
+    }
+    // The running event's snapshot predates the last two entries, so the
+    // leaderboard (325) trails the ledger (450) until the next refresh.
+    await pool.query(
+      `INSERT INTO leaderboard_snapshots (id, season_event_id, user_id, rank, total_points, snapshot_at, season_id, created_at)
+       VALUES (900302, 900302, 900302, 4, 325, NOW() - INTERVAL '3 days', 900302, NOW()),
+              (900303, 900303, 900302, 2, 320, NOW() - INTERVAL '30 days', 900302, NOW())
+       ON CONFLICT DO NOTHING`
+    );
+    const app = await pool.query(
+      `SELECT id FROM apps WHERE view_visibility = 'public' ORDER BY id LIMIT 1`
+    );
+    const appId = app.rows[0]?.id || null;
+    if (appId) {
+      await pool.query(
+        `INSERT INTO chat_sessions (id, app_id, user_id, pr_number, pr_title, status)
+         VALUES (900302, $1, 900302, 900302, 'Staging demo: support user proposal', 'archived'),
+                (900303, $1, 900301, 900303, 'Staging demo: another proposal', 'archived')
+         ON CONFLICT DO NOTHING`,
+        [appId]
+      );
+      await pool.query(
+        `INSERT INTO pr_kudos (session_id, giver_user_id, week_start, created_at)
+         SELECT s.sid, s.giver, date_trunc('week', NOW())::date, NOW() - INTERVAL '1 day'
+           FROM (VALUES (900302, 900301), (900303, 900302)) AS s(sid, giver)
+          WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = s.sid)
+            AND EXISTS (SELECT 1 FROM users WHERE id = s.giver)
+         ON CONFLICT (session_id, giver_user_id) DO NOTHING`
+      );
+    }
+    const hasEvents = await pool.query(
+      `SELECT 1 FROM events WHERE user_id = 900302 AND metadata->>'staging_demo' = 'support' LIMIT 1`
+    );
+    if (!hasEvents.rowCount) {
+      const rows = [
+        ['app_created', '12 days'], ['chat_message_sent', '4 days'], ['dapp_active_day', '3 days'],
+        ['pr_opened', '7 days'], ['pr_vote_cast', '2 days'], ['dev_session_started', '7 days'],
+      ];
+      for (const [type, ago] of rows) {
+        await pool.query(
+          `INSERT INTO events (user_id, app_id, event_type, metadata, created_at)
+           VALUES (900302, $1, $2, '{"staging_demo": "support"}'::jsonb, NOW() - $3::interval)`,
+          [appId, type, ago]
+        );
+      }
+    }
+    log.info('db', 'Staging support user seeded', { id: 900302 });
+  } catch (err) {
+    log.warn('db', 'Staging support user seeding failed', { message: err.message });
+  }
+}
+
+// "Deduplicate user" (#admin/users/900301 -> Deduplicate user): a second,
+// fake account for the same fake person as 900301, so a full admin testing a
+// preview has an obvious pair to merge. A little activity so the side-by-side
+// counts and "rows that will move" are not all zero. Fixed id, ON CONFLICT /
+// existence guards, strictly a no-op outside staging. Nothing reads it.
+async function seedStagingDuplicateUser(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, is_admin, can_create_apps, email, display_name)
+       VALUES (900310, 'staging-demo-admin-details-dup', 'staging-demo-not-a-login', FALSE, FALSE,
+               'staging-demo-admin-details-dup@example.invalid', 'Staging demo details user')
+       ON CONFLICT DO NOTHING`
+    );
+    const owned = await pool.query(
+      `SELECT 1 FROM users WHERE id = 900310 AND username = 'staging-demo-admin-details-dup'`
+    );
+    if (!owned.rowCount) return;
+    const hasEvents = await pool.query(
+      `SELECT 1 FROM events WHERE user_id = 900310 AND metadata->>'staging_demo' = 'duplicate' LIMIT 1`
+    );
+    if (!hasEvents.rowCount) {
+      for (const [type, ago] of [['app_created', '20 days'], ['chat_message_sent', '6 days'], ['dapp_active_day', '2 days']]) {
+        await pool.query(
+          `INSERT INTO events (user_id, event_type, metadata, created_at)
+           VALUES (900310, $1, '{"staging_demo": "duplicate"}'::jsonb, NOW() - $2::interval)`,
+          [type, ago]
+        );
+      }
+    }
+    log.info('db', 'Staging duplicate user seeded', { id: 900310 });
+  } catch (err) {
+    log.warn('db', 'Staging duplicate user seeding failed', { message: err.message });
   }
 }
 
@@ -2813,6 +3118,285 @@ async function seedStagingStartScreenSession(pool, config) {
     sessionId: STAGING_START_SCREEN_SESSION_ID,
     inserted: rowCount,
   });
+}
+
+// #2779: an agent session for the declared checks to open.
+//
+// A conversation with the Mayor, owned by the check viewer, focused on the
+// platform app, with one change started from it and one confirmation card
+// still waiting: the four things the conversation screen draws that a
+// staging clone has none of (agent_sessions, agent_session_actions and
+// chat_sessions are all staging:private). Checks load it at #agent/990801,
+// #agent/990801/changes and #messages/agent/990801.
+//
+// The change also carries what a coding agent leaves in the conversation:
+// a scout run on Codex, the spec it drafted (two saved versions, so the spec
+// viewer has one to switch to) and a build run with its summary. They are the
+// rows the platform writes for a real run, content and metadata alike, so
+// the screen folds them exactly as it folds a real one.
+//
+// The card can never run: its sealed input is a placeholder that fails the
+// fingerprint check, so a Confirm pressed on staging reports that it could
+// not go through. Its expiry is pushed forward on every boot so the card
+// stays pending for as long as the preview lives. The transcript rows are
+// written once. The viewer's agent-sessions flag is NOT turned on, so every
+// classic flow the other checks load is unchanged.
+//
+// Idempotent on the ids; strict no-op in production.
+const STAGING_AGENT_SESSION_ID = 990801;
+const STAGING_AGENT_CHANGE_ID = 990802;
+const STAGING_AGENT_CARD_ID = '99080100-0000-4000-8000-000000000001';
+// In the two halves every scout spec is written in (routes/sessions.js), so
+// the viewer shows its User-facing and Technical tabs.
+const STAGING_AGENT_SPEC = [
+  '# Dark mode for the dev board',
+  '',
+  'A toggle in the dev board header switches the board between light and dark.',
+  '',
+  '## User-facing changes',
+  '- A sun and moon toggle sits beside the view switcher at the top of the dev board.',
+  '- Tapping it switches the board between light and dark, and the board remembers your choice.',
+  '',
+  '## Technical implementation',
+  '- Add the toggle beside the view switcher.',
+  '- Keep the choice per viewer.',
+  '- Reuse the platform theme tokens; no new colours.',
+].join('\n');
+
+// The rows a scout run and a build run write on the change, in order.
+function stagingAgentRunRows() {
+  const codex = { agentBackend: 'codex_openrouter', agentModel: 'z-ai/glm-5.3-flash' };
+  return [
+    ['system', 'Scouting the repo for context (z-ai/glm-5.3-flash)...', codex],
+    ['system', 'Scout reading the codebase...', codex],
+    ['system', 'Claude Code progress', { progressLog: ['Reading the dev board header', 'Reading the theme tokens', 'Drafting the spec'], ...codex }],
+    ['system', `Scout drafted a ${STAGING_AGENT_SPEC.split('\n').length}-line spec from the codebase.`, {
+      specPreview: STAGING_AGENT_SPEC.slice(0, 200), specLines: STAGING_AGENT_SPEC.split('\n').length,
+      scoutOutput: STAGING_AGENT_SPEC, specVersion: 2, durationMs: 81000, ...codex,
+    }],
+    ['system', 'Starting OpenRouter (z-ai/glm-5.3-flash)...', codex],
+    ['system', 'OpenRouter is running...', codex],
+    ['system', 'Claude Code progress', { progressLog: ['Editing the dev board header', 'Adding the theme toggle', 'Running the tests'], ...codex }],
+    ['system', 'OpenRouter finished', {
+      ccOutput: 'Added a dark mode toggle to the dev board header:\n- it switches the board between light and dark\n- the choice is kept per viewer',
+      ccOutcome: 'success', durationMs: 242000, ...codex,
+    }],
+  ];
+}
+
+async function seedStagingAgentRuns(pool) {
+  await pool.query(
+    `INSERT INTO chat_session_specs (session_id, version, content, built_at)
+     VALUES ($1, 1, $2, NOW() - INTERVAL '4 minutes'), ($1, 2, $3, NOW() - INTERVAL '3 minutes')
+     ON CONFLICT (session_id, version) DO UPDATE SET content = EXCLUDED.content`,
+    [STAGING_AGENT_CHANGE_ID, '# Dark mode for the dev board\n\nFirst draft: a toggle in the header.', STAGING_AGENT_SPEC]
+  );
+  await pool.query('UPDATE chat_sessions SET spec_md = $2 WHERE id = $1', [STAGING_AGENT_CHANGE_ID, STAGING_AGENT_SPEC]);
+  const { rows } = await pool.query(
+    `SELECT 1 FROM chat_session_messages WHERE session_id = $1 AND metadata ? 'specVersion' LIMIT 1`,
+    [STAGING_AGENT_CHANGE_ID]
+  );
+  if (rows.length) return;
+  const runRows = stagingAgentRunRows();
+  for (const [index, [role, content, metadata]] of runRows.entries()) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - make_interval(secs => $6))`,
+      [STAGING_AGENT_CHANGE_ID, STAGING_AGENT_SESSION_ID, role, content, JSON.stringify(metadata),
+        230 - index * 5]
+    );
+  }
+}
+
+async function seedStagingAgentSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const { rows: appRows } = await pool.query('SELECT id, name FROM apps WHERE slug = $1', [config.selfAppSlug]);
+  const app = appRows[0];
+  if (!app) {
+    log.warn('db', 'Staging agent-session fixture skipped: self-app row missing', { slug: config.selfAppSlug });
+    return;
+  }
+  const owner = await getStagingCheckViewer(pool, 'Staging agent-session fixture');
+  if (!owner) return;
+
+  await pool.query(
+    `INSERT INTO agent_sessions (id, user_id, title, title_source, status, focus_app_id, focus_context,
+                                 last_activity_at, created_at)
+     VALUES ($1, $2, '[staging fixture] Dark mode for the dev board', 'manual', 'open', $3,
+             '{"entry":"improve"}'::jsonb, NOW() - INTERVAL '3 minutes', NOW() - INTERVAL '5 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, status = 'open', archived_at = NULL,
+                                    focus_app_id = EXCLUDED.focus_app_id`,
+    [STAGING_AGENT_SESSION_ID, owner.id, app.id]
+  );
+  await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, session_title, status, agent_session_id, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/agent-session', '[staging fixture] Dark mode toggle', 'active', $4,
+             NOW() - INTERVAL '4 minutes', NOW() - INTERVAL '3 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, agent_session_id = EXCLUDED.agent_session_id`,
+    [STAGING_AGENT_CHANGE_ID, app.id, owner.id, STAGING_AGENT_SESSION_ID]
+  );
+  await pool.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1', [STAGING_AGENT_SESSION_ID, STAGING_AGENT_CHANGE_ID]);
+  // #3180: its checks were skipped, with the reason a real skip records, so
+  // the staging card and the changes drawer say "Checks skipped" and why.
+  // Put back on every boot, as the card's expiry is.
+  await pool.query(
+    `UPDATE chat_sessions SET check_state = 'skipped', check_error_detail = $2, test_results = '[]'::jsonb
+      WHERE id = $1`,
+    [STAGING_AGENT_CHANGE_ID, 'branch has no commits beyond main, so there is nothing to test']
+  );
+
+  const card = {
+    id: STAGING_AGENT_CARD_ID,
+    toolName: 'promote_change',
+    title: 'Put the change up for the group vote',
+    input: { changeId: STAGING_AGENT_CHANGE_ID },
+    expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+  };
+  await pool.query(
+    `INSERT INTO agent_session_actions (id, agent_session_id, user_id, tool_name, sealed_input, input_hash,
+                                        status, expires_at, created_at)
+     VALUES ($1, $2, $3, 'promote_change', '{"version":1,"ciphertext":"staging-fixture"}'::jsonb, $4,
+             'pending', NOW() + INTERVAL '30 days', NOW() - INTERVAL '1 minute')
+     ON CONFLICT (id) DO UPDATE SET status = 'pending', result = NULL, decided_at = NULL,
+                                    expires_at = EXCLUDED.expires_at, created_at = EXCLUDED.created_at`,
+    [STAGING_AGENT_CARD_ID, STAGING_AGENT_SESSION_ID, owner.id, '0'.repeat(64)]
+  );
+
+  const { rows: existing } = await pool.query(
+    'SELECT 1 FROM chat_session_messages WHERE agent_session_id = $1 LIMIT 1',
+    [STAGING_AGENT_SESSION_ID]
+  );
+  if (!existing.length) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+       VALUES (NULL, $1, 'user', 'Add a dark mode toggle to the dev board.', '{}'::jsonb, NOW() - INTERVAL '5 minutes'),
+              (NULL, $1, 'system', $2, '{"agentSessionEvent":"change_started"}'::jsonb, NOW() - INTERVAL '4 minutes')`,
+      [STAGING_AGENT_SESSION_ID, `Started a change on ${app.name || 'Homeroom'}: Dark mode toggle`]
+    );
+    await seedStagingAgentRuns(pool);
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+       VALUES ($2, $1, 'assistant', 'The change is built. When the preview looks right, confirm the card and I will put it up for the vote.',
+               $3::jsonb, NOW() - INTERVAL '3 minutes')`,
+      [STAGING_AGENT_SESSION_ID, STAGING_AGENT_CHANGE_ID, JSON.stringify({ confirmations: [card] })]
+    );
+  } else {
+    // A preview seeded before the runs were: add them (after the rows it has).
+    await seedStagingAgentRuns(pool);
+    // Keep the card's shown expiry in step with the row's.
+    await pool.query(
+      `UPDATE chat_session_messages SET metadata = $2::jsonb
+        WHERE agent_session_id = $1 AND role = 'assistant' AND metadata ? 'confirmations'`,
+      [STAGING_AGENT_SESSION_ID, JSON.stringify({ confirmations: [card] })]
+    );
+  }
+  await seedStagingAgentBuilds(pool);
+  await seedStagingAgentComposer(pool, owner.id);
+  log.info('db', 'Staging agent-session fixture seeded', {
+    owner: owner.username, agentSessionId: STAGING_AGENT_SESSION_ID, changeId: STAGING_AGENT_CHANGE_ID,
+  });
+}
+
+// #2779 follow-up ("Open app"): a SECOND agent-session fixture, this one
+// focused on an ordinary app rather than the platform's own. The first
+// fixture (990801) is focused on the self-app, where the new button hides —
+// so a check that proves the button renders needs a conversation the button
+// targets. The rows are tiny: one user message the title comes from, no
+// change (the button opens the app itself, not a change on it). Same rules
+// as its sibling: owned by the check viewer, idempotent on the id, and a
+// strict no-op outside staging.
+const STAGING_AGENT_OPEN_APP_SESSION_ID = 990803;
+const STAGING_OPEN_APP_SLUG = 'staging-demo-app';
+
+async function seedStagingAgentOpenAppSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const { rows: appRows } = await pool.query(
+    'SELECT id, name FROM apps WHERE slug = $1',
+    [STAGING_OPEN_APP_SLUG]
+  );
+  const app = appRows[0];
+  if (!app) {
+    log.warn('db', 'Staging agent-session open-app fixture skipped: demo app row missing',
+      { slug: STAGING_OPEN_APP_SLUG });
+    return;
+  }
+  const owner = await getStagingCheckViewer(pool, 'Staging agent-session open-app fixture');
+  if (!owner) return;
+
+  await pool.query(
+    `INSERT INTO agent_sessions (id, user_id, title, title_source, status, focus_app_id, focus_context,
+                                 last_activity_at, created_at)
+     VALUES ($1, $2, $3, 'auto', 'open', $4, '{"entry":"improve"}'::jsonb,
+             NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '12 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, status = 'open', archived_at = NULL,
+                                    focus_app_id = EXCLUDED.focus_app_id`,
+    [STAGING_AGENT_OPEN_APP_SESSION_ID, owner.id, '[staging fixture] Notes: welcome thread', app.id]
+  );
+  const { rows: existing } = await pool.query(
+    'SELECT 1 FROM chat_session_messages WHERE agent_session_id = $1 LIMIT 1',
+    [STAGING_AGENT_OPEN_APP_SESSION_ID]
+  );
+  if (!existing.length) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+       VALUES (NULL, $1, 'user', 'Staging demo: open the app beside this chat.', '{}'::jsonb, NOW() - INTERVAL '12 minutes'),
+              (NULL, $1, 'assistant', 'Staging demo reply: the "Open app" button in the bar opens the app this conversation is about, with the chat docked beside it.', '{}'::jsonb, NOW() - INTERVAL '11 minutes')`,
+      [STAGING_AGENT_OPEN_APP_SESSION_ID]
+    );
+  }
+  log.info('db', 'Staging agent-session open-app fixture seeded', {
+    owner: owner.username, agentSessionId: STAGING_AGENT_OPEN_APP_SESSION_ID,
+  });
+}
+
+// The change's staging builds, as cards (#2779 follow-up): one that failed,
+// then one that deployed, written as a real build writes them, so the
+// conversation shows a superseded card and a live one. The address is a
+// fixture's (.invalid never resolves): Open preview asks the platform for
+// this change's preview, which says it is not running. Added once, and to a
+// preview seeded before this.
+const STAGING_AGENT_PREVIEW_URL = 'https://staging-fixture-preview.invalid';
+
+async function seedStagingAgentBuilds(pool) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM chat_session_messages
+      WHERE session_id = $1 AND (metadata ? 'stagingUrl' OR metadata ? 'stagingFailed')
+      LIMIT 1`,
+    [STAGING_AGENT_CHANGE_ID]
+  );
+  if (rows.length) return;
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
+     VALUES ($1, $2, 'system', 'Staging build failed', $3::jsonb, NOW() - INTERVAL '170 seconds'),
+            ($1, $2, 'system', 'Staging deployed!', $4::jsonb, NOW() - INTERVAL '165 seconds')`,
+    [
+      STAGING_AGENT_CHANGE_ID,
+      STAGING_AGENT_SESSION_ID,
+      JSON.stringify({ stagingFailed: true, changesReady: true, error: 'npm ci exited with code 1 (staging fixture)', prNumber: null }),
+      JSON.stringify({ stagingUrl: STAGING_AGENT_PREVIEW_URL, prNumber: null }),
+    ]
+  );
+}
+
+// What the composer and the Mayor's replies show (#2779 follow-up): one saved
+// draft, so the list above the message box has a row (sending it would start
+// a real turn, so a check only reads it), and what the Mayor's reply cost, so
+// its "reply $0.012" label has a figure. Both idempotent.
+const STAGING_AGENT_DRAFT_ID = 'dstagingfixture1';
+
+async function seedStagingAgentComposer(pool, ownerId) {
+  await pool.query(
+    `INSERT INTO agent_session_drafts (agent_session_id, user_id, draft_id, content, saved_at)
+     VALUES ($1, $2, $3, $4, NOW() - INTERVAL '2 minutes')
+     ON CONFLICT (agent_session_id, draft_id) DO UPDATE SET user_id = EXCLUDED.user_id`,
+    [STAGING_AGENT_SESSION_ID, ownerId, STAGING_AGENT_DRAFT_ID, 'Also keep the choice when I switch devices.']
+  );
+  await pool.query(
+    `UPDATE chat_session_messages SET cost_cents = 1.2
+      WHERE agent_session_id = $1 AND role = 'assistant' AND COALESCE(cost_cents, 0) = 0`,
+    [STAGING_AGENT_SESSION_ID]
+  );
 }
 
 // #1350: a session with NO BRANCH at all.
@@ -5574,26 +6158,24 @@ async function seedStagingReadonlyDevTab(pool) {
   }
 }
 
-// A QUIET app for the general chat's proposal events and quiet card
-// (features/group-chat/proposal-event.tsx, quiet-card.tsx): an app whose
-// Discussion holds nothing but the platform's own notices and not one message
-// from a person. The general chat draws only two of those notices — a
-// proposal put up for a vote and a proposal merged — so the rows below are
-// two settled submissions with their merges, two notices of other kinds that
-// the chat must NOT draw, and one submission whose vote is still open. The
-// declared checks read the open one as a message from its proposer with a
-// box that links to the proposal, a merge as a message from the app, and the
-// quiet card after them. The platform app's own staging transcript cannot
-// serve here: its fixtures seed dozens of human rows, which is exactly what
-// makes the card go away.
+// A QUIET app for the channel's quiet card and a proposal's own story
+// (features/group-chat/quiet-card.tsx, proposal-event.tsx): an app whose
+// channel holds not one message from a person and, since Homeroom writes no
+// activity into a channel (services/ws.js sendSystemMessage), nothing else
+// either. So its channel is the quiet card alone, and its one open proposal
+// keeps the line that put it up for a vote in the proposal's own thread,
+// where the change page's Discussion draws it as a message from whoever
+// proposed it. The platform app's own staging transcript cannot serve here:
+// its fixtures seed dozens of human rows, which is exactly what makes the
+// card go away.
 //
-// The open submission carries the metadata tag the live promote path writes,
-// so `GroupChat._eventHref` links it and `_votePhase` resolves it out of
-// /promoted; the two settled ones carry none, the shape of a row that
-// predates the tag, so their PR numbers come out of the wording alone.
-// Read-only viewers see the same rows. Ids in the free 90011x range;
-// idempotent via explicit ids + ON CONFLICT DO NOTHING; a no-op outside
-// staging.
+// The line carries the metadata tag the live promote path writes, so the
+// Discussion resolves its vote out of /promoted. Its id, 900118, is new: the
+// channel lines this fixture used to seed (900111-900117) are removed by
+// clearAutomatedChannelLines, and reusing one of their ids would leave the
+// thread copy behind their ON CONFLICT on the boot that removes them.
+// Read-only viewers see the same rows. Idempotent via explicit ids + ON
+// CONFLICT DO NOTHING; a no-op outside staging.
 async function seedStagingQuietDiscussion(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
@@ -5622,33 +6204,15 @@ async function seedStagingQuietDiscussion(pool) {
                NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours')
        ON CONFLICT DO NOTHING`
     );
-    // The general stream (thread_type NULL), oldest first, worded like the
-    // platform's own lines (routes/votes.js) with "Staging demo" in each so
-    // nobody mistakes one for history.
+    // The open proposal's own thread, worded like the platform's promote
+    // line (routes/votes.js) with "Staging demo" in its title.
     await pool.query(
-      `INSERT INTO chat_messages (id, app_id, user_id, content, msg_type, metadata, created_at)
+      `INSERT INTO chat_messages (id, app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
        VALUES
-         (900111, 900110, NULL,
-          'staging-demo-quiet-builder promoted PR #900107: Staging demo: the first change for voting',
-          'vote', '{}', NOW() - INTERVAL '3 hours'),
-         (900112, 900110, NULL,
-          'Staging demo: the first change is live (PR #900107). Thanks to everyone who voted (1/1 votes)',
-          'system', '{}', NOW() - INTERVAL '2 hours 40 minutes'),
-         (900113, 900110, NULL,
-          'staging-demo-quiet-builder promoted PR #900108: Staging demo: the second change for voting',
-          'vote', '{}', NOW() - INTERVAL '2 hours'),
-         (900114, 900110, NULL,
-          'Staging demo: issue #900110 closed by group vote (1/1)',
-          'system', '{}', NOW() - INTERVAL '1 hour 50 minutes'),
-         (900115, 900110, NULL,
-          'Staging demo: the second change is live (PR #900108). Thanks to everyone who voted (1/1 votes)',
-          'system', '{}', NOW() - INTERVAL '1 hour 40 minutes'),
-         (900116, 900110, NULL,
-          'Staging demo: PR #900109: an earlier change reached the vote threshold but is still running its tests. Merge is blocked until checks pass.',
-          'system', '{}', NOW() - INTERVAL '1 hour 10 minutes'),
-         (900117, 900110, NULL,
+         (900118, 900110, NULL,
           'staging-demo-quiet-builder promoted PR #900110: Staging demo: a proposal that is still up for a vote for voting',
-          'vote', '{"vote": {"sessionId": 900110, "prNumber": 900110}}', NOW() - INTERVAL '30 minutes')
+          'vote', '{"vote": {"sessionId": 900110, "prNumber": 900110}}', 'session', 900110,
+          NOW() - INTERVAL '30 minutes')
        ON CONFLICT DO NOTHING`
     );
     log.info('db', 'Staging quiet-discussion fixtures seeded');
@@ -7039,9 +7603,15 @@ async function seedStagingCapReached(pool, config) {
 async function seedStagingAppCapApps(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
-  // How close to the cap to fill. One below MAX_APPS so a tester can
-  // create exactly one app to hit the wall, without pre-tripping it.
-  const target = Math.max(0, (config.maxApps || 30) - 1);
+  // How close to the cap to fill. One below the cap so a tester can
+  // create exactly one app to hit the wall, without pre-tripping it. The
+  // cap is the one the create route enforces (services/app-limit.js): a
+  // preview clones production's platform_settings, so an app limit an
+  // admin set there applies here too, and filling to MAX_APPS instead would
+  // leave the wall out of reach.
+  const cap = (await require('../services/app-limit').effective(pool, config))
+    || config.maxApps || 30;
+  const target = Math.max(0, cap - 1);
   if (target <= 0) {
     log.info('db', 'Staging app-cap fixtures skipped (cap disabled or <= 1)');
     return;
@@ -12835,6 +13405,7 @@ module.exports = {
   migrate, seedStagingTopochain, seedStagingProfileCustomization,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
+  clearAutomatedChannelLines,
   backfillProposalIssuerAssignments,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,

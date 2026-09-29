@@ -37,6 +37,13 @@ let poolCalls = [];
 poolMod.getPool = () => ({
   async query(sql, params) {
     poolCalls.push({ sql, params });
+    // The spec an agent session's hand-off carries (#3078): the stub plays
+    // the WHERE clause, so a row is found only for the caller's own change
+    // on this app, which is the ownership the route must ask the database for.
+    if (/spec_md/.test(sql)) {
+      const [id, userId, appId] = params;
+      return { rows: stub.specRows.filter((r) => r.id === id && r.user_id === userId && r.app_id === appId) };
+    }
     // The hand-off target's row (#1071), read when the caller named one.
     if (/FROM chat_sessions/.test(sql)) {
       if (stub.targetThrows) throw new Error('database is on fire');
@@ -76,6 +83,7 @@ function resetStubs() {
     submitArgs: null,
     target: null,
     targetThrows: false,
+    specRows: [],
     // The discard route's service call: the id it closed, or null for
     // "not open any more".
     discard: 4242,
@@ -258,6 +266,32 @@ test('a linked account with no work order reports the fork and stops there', asy
   assert.equal(j.task, null);
   assert.equal(j.branch, null);
   assert.equal(j.connectors.count, 2, 'the advisory connector count comes from the pool');
+});
+
+test('an agent session\'s hand-off carries its OWN change\'s spec, and nobody else\'s (#3078)', async () => {
+  const plain = (await (await status('?sessionId=501&proposalId=501&targetKind=session')).json()).instructions;
+  assert.match(plain, /IF THE USER HAS NOT ALREADY TOLD YOU WHAT TO BUILD, ASK THEM\./, 'no specFrom: the text as it always was');
+  assert.equal(poolCalls.filter((c) => /spec_md/.test(c.sql)).length, 0, 'and no spec is read');
+
+  stub.specRows = [
+    { id: 501, user_id: 42, app_id: 7, spec_md: '# Dark mode\nA toggle in Settings.', title: 'Dark mode' },
+    { id: 502, user_id: 99, app_id: 7, spec_md: 'Somebody else\'s plan.', title: 'Theirs' },
+    { id: 503, user_id: 42, app_id: 8, spec_md: 'Another app\'s plan.', title: 'Elsewhere' },
+    { id: 504, user_id: 42, app_id: 7, spec_md: '   ', title: 'Empty' },
+  ];
+  const own = (await (await status('?sessionId=501&proposalId=501&targetKind=session&specFrom=501')).json()).instructions;
+  assert.match(own, /THE USER HAS ALREADY TOLD YOU WHAT TO BUILD/);
+  assert.match(own, /<untrusted-content>\nChange: Dark mode\n\n# Dark mode\nA toggle in Settings\.\n<\/untrusted-content>/);
+  assert.match(own, /proposalId 501, and that spec as `brief`/);
+  const read = poolCalls.find((c) => /spec_md/.test(c.sql));
+  assert.match(read.sql, /WHERE id = \$1 AND user_id = \$2 AND app_id = \$3/, 'ownership is the query\'s, not the caller\'s');
+  assert.deepEqual(read.params, [501, 42, 7]);
+
+  for (const id of [502, 503, 504, 'abc', '0x1f5']) {
+    const text = (await (await status(`?specFrom=${id}`)).json()).instructions;
+    assert.equal(text, (await (await status()).json()).instructions, `specFrom=${id}: nothing carried`);
+    assert.doesNotMatch(text, /Somebody else|Another app/);
+  }
 });
 
 test('an unreadable fork is "unknown", and a name conflict keeps its suffix', async () => {

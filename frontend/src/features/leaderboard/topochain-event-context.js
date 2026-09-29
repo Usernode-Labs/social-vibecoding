@@ -269,20 +269,37 @@ const TopochainEventContext = {
 
   // The picker's entries. `selected` and the `sel.value = …` that followed it
   // are one field now — a controlled `<select>` cannot disagree with itself.
+  //
+  // Each entry carries its `seasonId`, and the store carries the CURRENT
+  // season's (issue #3049): the Challenges tab offers only the current
+  // season's events and leaves the past seasons to the History tab, so the
+  // bar has to know which is which. "Current" is the season of the event
+  // pickDefault opens on — the same rule the server's default and the
+  // #2495 history verdict measure against — not the calendar.
   _renderOptions() {
     const events = TopochainEventContext._events;
     if (!events.length) {
-      eventBarStore.set({ options: [], placeholder: 'No events', selectedId: null });
+      eventBarStore.set({ options: [], placeholder: 'No events', selectedId: null, currentSeasonId: null });
       return;
     }
     eventBarStore.set({
       options: events.map((ev) => ({
         id: ev.id,
         label: `${ev.name}${TopochainEventContext._tagFor(ev)}`,
+        seasonId: Number.isInteger(ev.season_id) ? ev.season_id : null,
       })),
       placeholder: null,
       selectedId: TopochainEventContext.eventId,
+      currentSeasonId: TopochainEventContext._currentSeasonId(events),
     });
+  },
+
+  // The season the screen opens on: pickDefault's event's season, or null
+  // when that is unknown (no default, or an older server without
+  // `season_id`) — in which case the Challenges tab filters nothing.
+  _currentSeasonId(events) {
+    const pick = window.TopochainEvents ? TopochainEvents.pickDefault(events) : null;
+    return pick && Number.isInteger(pick.season_id) ? pick.season_id : null;
   },
 
   // A season-type event is labelled by WHAT IT IS, not by its window: its

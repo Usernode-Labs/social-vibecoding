@@ -24,9 +24,7 @@ const REQUIRED_SCOPE_TEXT = REQUIRED_SCOPES.join(' ');
 // profile (LOCAL_ORIGIN, below) is unaffected either way, and credentials
 // stay bound to whichever origin they were issued for, so the new default
 // needs its own sign-in rather than inheriting the old host's session.
-// The default is what it is because the previous host only redirects here,
-// and the CLI refuses redirects by design — so leaving it unset used to
-// fail rather than follow the hop.
+// Use the canonical host directly; the CLI refuses redirects by design.
 const PRODUCTION_ORIGIN = process.env.USERNODE_DOMAIN
   ? `https://${process.env.USERNODE_DOMAIN}`
   : 'https://app.onhomeroom.com';

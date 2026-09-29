@@ -9,8 +9,13 @@
 // #2444 (UI-consistency audit #2383): that alignment was three hand-copied
 // anchors, which is how the waitlist's drifted in the first place. The markup
 // is now ONE component — frontend/src/features/auth/back-button.tsx — and this
-// file pins that: the disc is defined once, every auth screen renders it, and
-// the waitlist's only difference is the positioning it needs.
+// file pins that: the disc is defined once and every auth screen renders it.
+//
+// QA 2026-09-24 Q8: the positioning is shared now too. Sign-in and register
+// pinned the disc to the VIEWPORT, so on a phone browser the fixed "Get the
+// app" strip (z-45, above the z-40 auth screens) covered it even though the
+// screens themselves move down to clear the strip. The waitlist's `absolute`
+// moves with its screen, so it is the only positioning left.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -32,32 +37,34 @@ function backControl(src, file) {
   return m[0];
 }
 
-/** The shared disc's class string for a given positioning. */
-function sharedClasses(kind) {
-  const m = BACK.match(
-    new RegExp(`AUTH_BACK_${kind}_CLASS = \`(${kind.toLowerCase()} \\$\\{AUTH_BACK_BASE\\})\``),
-  );
-  assert.ok(m, `expected AUTH_BACK_${kind}_CLASS to prepend "${kind.toLowerCase()}"`);
-  const base = BACK.match(/const AUTH_BACK_BASE =\s*\n?\s*'([^']*)'/);
-  assert.ok(base, 'expected AUTH_BACK_BASE as one complete literal');
-  return [kind.toLowerCase(), ...base[1].split(/\s+/)];
+/** The shared disc's class string: one complete literal, `absolute` first. */
+function sharedClasses() {
+  const m = BACK.match(/export const AUTH_BACK_CLASS =\s*\n?\s*'([^']*)'/);
+  assert.ok(m, 'expected AUTH_BACK_CLASS as one complete literal');
+  return m[1].split(/\s+/);
 }
 
-test('the waitlist Back control scrolls with the page instead of staying pinned', () => {
-  const control = backControl(WAITLIST, 'waitlist.tsx');
-  assert.match(control, /position="absolute"/, `expected absolute, got ${control}`);
-  assert.doesNotMatch(control, /position="fixed"/, 'no longer position: fixed');
+test('every Back control scrolls with its screen instead of staying pinned', () => {
   // `absolute` resolves against the screen root, which is its own positioned
-  // scroller (fixed inset-0 in the bounded shell, relative in document flow).
-  assert.match(WAITLIST, /id="auth-waitlist-screen"\s+className="hidden fixed inset-0[^"]*overflow-y-auto/);
+  // scroller (fixed inset-0 in the bounded shell, relative in document flow),
+  // so a screen moved down by the install or offline strip takes the disc
+  // with it (QA 2026-09-24 Q8).
+  const classes = sharedClasses();
+  assert.equal(classes[0], 'absolute');
+  assert.ok(!classes.includes('fixed'), 'no viewport-pinned variant');
+  assert.doesNotMatch(BACK, /AUTH_BACK_FIXED_CLASS|position === 'absolute'/, 'no second positioning');
+  for (const [file, src, id] of [
+    ['waitlist.tsx', WAITLIST, 'auth-waitlist-screen'],
+    ['register.tsx', REGISTER, 'auth-register-screen'],
+    ['login.tsx', LOGIN, 'auth-login-screen'],
+  ]) {
+    assert.doesNotMatch(backControl(src, file), /position=/, `${file} picks no positioning of its own`);
+    assert.match(src, new RegExp(`id="${id}"\\s+className="hidden fixed inset-0[^"]*overflow-y-auto`));
+  }
 });
 
-test('it is the same 44px round, opaque chevron the auth flow renders', () => {
-  // One definition, two positionings — the only thing that differs between
-  // the waitlist and the sign-in/register screens.
-  const w = sharedClasses('ABSOLUTE').filter((c) => c !== 'absolute');
-  const r = sharedClasses('FIXED').filter((c) => c !== 'fixed');
-  assert.deepEqual(w, r, 'identical styling apart from positioning');
+test('it is the same 44px round, opaque chevron on every screen', () => {
+  const w = sharedClasses();
   assert.ok(w.includes('h-11') && w.includes('w-11'), '44px');
   assert.ok(w.includes('bg-white'), 'opaque, so nothing reads through it');
   assert.match(BACK, /data-auth-back=""[\s\S]{0,400}?aria-label="Back"[\s\S]{0,200}?<ChevronLeftIcon/);

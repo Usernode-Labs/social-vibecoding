@@ -10,7 +10,11 @@
  *
  * Three sinks, each rendered by React with `dangerouslySetInnerHTML` from a
  * string the MODEL carries, because the markup is another renderer's and is
- * already sanitised where it is built:
+ * already sanitised where it is built. Each goes through ../../../lib/html's
+ * `Html`, which keeps the `{ __html }` object while the string is unchanged:
+ * this head is republished by the checks poll and by websocket events, and
+ * an inline wrapper rewrote every block's innerHTML each time, decoding the
+ * before/after tiles' images again.
  *
  * - an issue's body and a proposal's summary — `DevChat.renderMarkdown`,
  *   the same pipeline the dev chat and the group chat's transcript use.
@@ -28,6 +32,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react';
 
+import { Html } from '../../../lib/html';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
 import { ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
@@ -38,6 +43,7 @@ import type { DevCardModel } from '../card/model';
 import { swatchFor } from '../../group-chat/swatch';
 import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
+import { TopicBack } from './topic-back';
 import type {
   ChecksVerdict,
   CheckRow,
@@ -334,25 +340,32 @@ function Progress({ p }: { p: LedgerProgress }): ReactNode {
 function Roster({ r }: { r: RosterView }): ReactNode {
   if (r.phase === 'hidden') return null;
   if (r.phase === 'loading') return <span className="dev-ledger-roster">Loading votes…</span>;
-  const noNames = r.no && r.no.names && r.no.names !== '—' ? r.no.names : '';
+  // QA 2026-09-24: a side nobody has taken is left out, rather than drawn as
+  // "No (0): —". The loaders send an empty string for it; the bare dash is
+  // what they sent before, and is still read as empty.
+  const names = (side?: { names: string }) => (side && side.names && side.names !== '—' ? side.names : '');
+  const yesNames = names(r.yes);
+  const noNames = names(r.no);
   return (
     <span className="dev-ledger-roster" data-approved={r.approved ? '1' : undefined}>
       {r.approved ? (
         <>
           <span className="dev-ledger-lead dev-ledger-lead-ok">Approved</span>
-          {` by ${r.yes!.names}`}
+          {yesNames ? ` by ${yesNames}` : null}
           {noNames ? <span className="dev-ledger-needs">{` · No: ${noNames}`}</span> : null}
         </>
       ) : (
         <>
           {/* The space rides inside the lead: a bare whitespace expression
               between two text runs is the hydration mismatch
-              tests/shell-build.test.js guards against. */}
-          <span className="dev-ledger-lead dev-ledger-lead-vote">{'Waiting for votes. '}</span>
-          <span className="dev-ledger-yes">{`${r.yes!.label}:`}</span>
-          {` ${r.yes!.names} `}
-          <span className="dev-ledger-no">{`${r.no!.label}:`}</span>
-          {` ${r.no!.names}`}
+              tests/shell-build.test.js guards against. With nobody on
+              either side the lead is the whole line: the tally beside it
+              already says the count. */}
+          <span className="dev-ledger-lead dev-ledger-lead-vote">{yesNames || noNames ? 'Waiting for votes. ' : 'Waiting for votes.'}</span>
+          {yesNames ? <span className="dev-ledger-yes">{`${r.yes!.label}:`}</span> : null}
+          {yesNames ? ` ${yesNames}${noNames ? ' · ' : ''}` : null}
+          {noNames ? <span className="dev-ledger-no">{`${r.no!.label}:`}</span> : null}
+          {noNames ? ` ${noNames}` : null}
         </>
       )}
       {/* #1688: each voter's line under the names, in their own words. */}
@@ -370,11 +383,11 @@ function Roster({ r }: { r: RosterView }): ReactNode {
 function HelpLinks({ question }: { question: boolean }): ReactNode {
   return (
     <span className="dev-ledger-help voting-help-hint">
-      <button type="button" className="voting-help-link" data-voting-help="">How voting works</button>
+      <button type="button" className="voting-help-link un-touch-target" data-voting-help="">How voting works</button>
       {question ? (
         <button
           type="button"
-          className="voting-help-btn"
+          className="voting-help-btn un-touch-target"
           data-voting-help=""
           aria-label="How voting and merges work"
           title="How voting and merges work"
@@ -470,10 +483,7 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
       </summary>
       {/* DevChat.renderMarkdown's output — sanitised where it is built, and
           the same pipeline the issue body above uses. */}
-      <div
-        className="dev-issue-body dev-topic-details-body"
-        dangerouslySetInnerHTML={{ __html: b.html }}
-      />
+      <Html className="dev-issue-body dev-topic-details-body" html={b.html} />
     </details>
   );
 }
@@ -512,10 +522,19 @@ function Transcript({ t }: { t: TranscriptSection }): ReactNode {
 export function TopicHead({ conversation = false }: { conversation?: boolean }): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
-  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} conversation={conversation} />;
+  // `back`: this IS the topic page, whose one back control is the chip at the
+  // top of the pane (#2916, ./topic-back.tsx). Every kind of topic comes
+  // through here, a change page and an issue/governance thread head alike.
+  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} conversation={conversation} back />;
 }
 
 /** Refresh from the endpoint that owns this lifecycle's metadata. */
+/** A copy of `row` with the viewer's in-flight vote applied (AppView's overlay). */
+function withPendingVote(av: any, row: any) {
+  if (av && typeof av._overlayPendingVote === 'function') av._overlayPendingVote(row);
+  return row;
+}
+
 export async function readChangeDetail(item: any, owner: boolean, signal: AbortSignal) {
   const id = item.id;
   const av = (window as any).AppView;
@@ -903,7 +922,7 @@ function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
       <div className="dev-topic-visuals" data-visuals-scope="1">
         {/* AppView.visualsTilesHtml's markup — four other surfaces still
             call it, so it stays a string builder. */}
-        <div className="usn-visuals-body" dangerouslySetInnerHTML={{ __html: tiles.tilesHtml }} />
+        <Html className="usn-visuals-body" html={tiles.tilesHtml} />
       </div>
     );
   }
@@ -993,7 +1012,10 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
         <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} lead={vote} dense={false} />
       </div>
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
-      <div className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" dangerouslySetInnerHTML={{ __html: body.summaryHtml || '' }} />
+      <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
+      {body.summaryStale && body.summaryHtml
+        ? <p className="dev-topic-note" role="note">This summary may describe an earlier revision.</p>
+        : null}
       {hasIssues ? (
         <IssueAssociations
           proposalId={Number(id)}
@@ -1067,7 +1089,11 @@ function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
           {s.total != null ? <span className="dev-steps-count">{`${s.done}/${s.total}`}</span> : null}
         </div>
         <ol className="dev-steps-list border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-          {s.rows.map((r) => <StepRowView key={r.key} r={r} help={help} />)}
+          {/* Keyed by the GATE where there is one. A step's `key` names the
+              ledger row it wears, and that changes as the row gains or loses
+              detail (_topicStepsView's `useRow`), which remounted the step
+              and redrew it from nothing mid-read. */}
+          {s.rows.map((r) => <StepRowView key={r.gate || r.key} r={r} help={help} />)}
         </ol>
       </div>
     </section>
@@ -1105,7 +1131,7 @@ function DetailsSheet({ id, html }: { id: number; html: string }): ReactNode {
           </button>
         </div>
         {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
-        <div className="dev-issue-body dev-topic-details-body" dangerouslySetInnerHTML={{ __html: html }} />
+        <Html className="dev-issue-body dev-topic-details-body" html={html} />
       </div>
     </div>,
     document.body,
@@ -1124,40 +1150,81 @@ function DetailsSheet({ id, html }: { id: number; html: string }): ReactNode {
  * (DetailsSheet). The hero's Build pill LEAVES this page for the change's
  * dev session (#2605). An issue or a governance vote keeps the card and
  * `TopicBodySections`.
+ *
+ * `back` puts the topic page's "‹ Workshop" chip (./topic-back.tsx) first in
+ * `.dev-topic`, above the hero or the card (#2916). Only `TopicHead` passes
+ * it: the chip is the page's back control, not part of the card.
  */
-export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false }: {
-  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean;
+export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false, back = false }: {
+  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean; back?: boolean;
 }): ReactNode {
   const root = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState<any>(null);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
   const id = item?.id;
+  // THE PAGE RE-READS ITS ROW WHEN SOMETHING HAPPENS TO IT, not on a timer.
+  // It polled every ten seconds for as long as it was open, because the
+  // checks verdict never reached it over the socket (the server's envelope
+  // bug) — and every poll that answered redrew the page, which is where the
+  // 36 px and 129 px jumps under a reader came from. What moves it now:
+  //   - `change-detail-refresh` with this id: re-read (App._liveRefresh,
+  //     for a vote, a session change, a verdict, the before/after tiles);
+  //   - with `{ id, row }`: adopt a row the Workshop just read for this page;
+  //   - with `{ id, patch }`: merge a live patch (a checks tick), which would
+  //     otherwise be painted over by this page's older read;
+  //   - with 'all': the socket reconnected (App.resyncCurrentView);
+  //   - the page coming back into view after a read was skipped for it.
   useEffect(() => {
     if (!id || !active) return;
     const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const refresh = (event: Event) => {
-      if ((event as CustomEvent).detail === Number(id)) setRevision((n) => n + 1);
-    };
-    window.addEventListener('change-detail-refresh', refresh);
+    let skipped = false;
     async function load() {
+      // These portals can remain mounted while another screen is open, and a
+      // hidden tab reads nothing; either reads when it is seen again.
+      if (!root.current?.getClientRects().length || document.visibilityState === 'hidden') {
+        skipped = true;
+        return;
+      }
+      skipped = false;
       try {
-        // These portals can remain mounted while another screen is open.
-        if (!root.current?.getClientRects().length || document.visibilityState === 'hidden') return;
         const session = await readChangeDetail(item, owner, abort.signal);
         if (!abort.signal.aborted) { setLoaded(session); setError(''); }
       } catch (err) {
         if (!abort.signal.aborted) setError((err as Error).message);
-      } finally {
-        if (!abort.signal.aborted) timer = setTimeout(load, 10000);
       }
     }
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail === 'all') { setRevision((n) => n + 1); return; }
+      if (detail && typeof detail === 'object') {
+        if (Number(detail.id) !== Number(id)) return;
+        if (detail.row) { setLoaded(detail.row); setError(''); return; }
+        if (detail.patch) {
+          setLoaded((current: any) => (current && Number(current.id) === Number(id) ? { ...current, ...detail.patch } : current));
+        }
+        return;
+      }
+      if (Number(detail) === Number(id)) setRevision((n) => n + 1);
+    };
+    const seen = () => { if (skipped && document.visibilityState !== 'hidden') void load(); };
+    window.addEventListener('change-detail-refresh', refresh);
+    document.addEventListener('visibilitychange', seen);
+    const shown = typeof ResizeObserver === 'function' && root.current ? new ResizeObserver(seen) : null;
+    if (shown && root.current) shown.observe(root.current);
     void load();
-    return () => { abort.abort(); clearTimeout(timer); window.removeEventListener('change-detail-refresh', refresh); };
+    return () => {
+      abort.abort();
+      window.removeEventListener('change-detail-refresh', refresh);
+      document.removeEventListener('visibilitychange', seen);
+      shown?.disconnect();
+    };
   }, [id, revision, owner, active, item?.status]);
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
-  const session = item && loaded?.id === id ? { ...item, ...loaded } : item;
+  // This page's read wins over the lighter cached row, except for a vote
+  // still on its way to the server: the voter's Yes stays on the button
+  // from the click, not from whichever read lands after it.
+  const session = item && loaded?.id === id ? withPendingVote(av, { ...item, ...loaded }) : item;
   const built = session && av ? av._topicViewFor(['active', 'paused'].includes(session.status) ? 'session' : 'proposal', session) : null;
   const card = built?.card || initialCard;
   const body: TopicBody = built?.body || initialBody;
@@ -1172,6 +1239,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
   const linkedIssues = Array.isArray(session?.linked_issues) ? session.linked_issues : [];
   return (
     <div ref={root} className="dev-topic">
+      {back ? <TopicBack /> : null}
       {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
       {changePage ? (
         <>
@@ -1299,7 +1367,7 @@ function IssueBody(
           </div>
         </form>
       ) : html ? (
-        <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: html }} />
+        <Html className="dev-topic-about-body" html={html} />
       ) : editor.canEdit ? (
         <p className="dev-topic-note">No description yet.</p>
       ) : null}
@@ -1352,22 +1420,22 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
           {summaryHtml ? (
             <>
               <h5 className="dev-topic-sub">What changes for you</h5>
-              <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: summaryHtml }} />
+              <Html className="dev-topic-about-body" html={summaryHtml} />
             </>
           ) : null}
           {issueEditor ? <IssueBody key={issueEditor.issue} html={issueHtml || ''} editor={issueEditor} />
-            : issueHtml ? <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: issueHtml }} /> : null}
+            : issueHtml ? <Html className="dev-topic-about-body" html={issueHtml} /> : null}
           {tiles ? (
             <div className="dev-topic-visuals" data-visuals-scope="1">
               {/* AppView.visualsTilesHtml's markup — four other surfaces
                   still call it, so it stays a string builder. */}
-              <div className="usn-visuals-body" dangerouslySetInnerHTML={{ __html: tiles.tilesHtml }} />
+              <Html className="usn-visuals-body" html={tiles.tilesHtml} />
             </div>
           ) : null}
           {body.proposalBody ? <ProposalBody b={body.proposalBody} /> : null}
           {body.testing ? <details className="dev-topic-details">
             <summary className="dev-topic-details-summary">Testing instructions</summary>
-            {body.testing.html ? <div className="dev-issue-body dev-topic-details-body" dangerouslySetInnerHTML={{ __html: body.testing.html }} />
+            {body.testing.html ? <Html className="dev-issue-body dev-topic-details-body" html={body.testing.html} />
               : <p className="dev-topic-note">{body.testing.path ? `Testing instructions are recorded in ${body.testing.path}.` : 'No testing instructions have been added yet.'}</p>}
           </details> : null}
           {body.note ? <div className="dev-topic-note">{body.note}</div> : null}

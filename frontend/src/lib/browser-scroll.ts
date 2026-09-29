@@ -6,6 +6,29 @@
  * reading or restoring a page's position.
  */
 export const MOBILE_PAGE_QUERY = '(max-width: 767px), (hover: none) and (pointer: coarse)';
+export const INSTALLED_QUERY = '(display-mode: standalone), (display-mode: fullscreen)';
+
+/**
+ * One MediaQueryList per query per window, reused. `sync()` runs after every
+ * batch of DOM mutations anywhere in the document (a streamed reply, a list
+ * repaint) and asked `matchMedia` for two fresh lists each time, which the
+ * engine parses and evaluates anew. A list's `matches` is live, so the one
+ * made first answers every later read.
+ */
+const queryLists = new WeakMap<Window, Map<string, MediaQueryList>>();
+export function mediaQuery(win: Window, query: string): MediaQueryList {
+  let lists = queryLists.get(win);
+  if (!lists) {
+    lists = new Map();
+    queryLists.set(win, lists);
+  }
+  let list = lists.get(query);
+  if (!list) {
+    list = win.matchMedia(query);
+    lists.set(query, list);
+  }
+  return list;
+}
 
 const AUTH_PAGES = [
   'auth-login-screen', 'auth-register-screen', 'auth-waiting-screen',
@@ -39,8 +62,8 @@ export function pageScroller(doc: Document, preferred?: string | null): HTMLElem
 
 export function allowsPageScroll(win: Window, doc: Document): boolean {
   return win.self === win.top
-    && win.matchMedia(MOBILE_PAGE_QUERY).matches
-    && !win.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches
+    && mediaQuery(win, MOBILE_PAGE_QUERY).matches
+    && !mediaQuery(win, INSTALLED_QUERY).matches
     && !(win.navigator as Navigator & { standalone?: boolean }).standalone
     && !doc.documentElement.classList.contains('in-native-webview');
 }
@@ -100,7 +123,7 @@ export function panOffset(win: Window, doc: Document): number {
  */
 export function strandedPan(win: Window, doc: Document, top: number): boolean {
   if (!(top > 0) || win.self !== win.top) return false;
-  if (!win.matchMedia(MOBILE_PAGE_QUERY).matches) return false;
+  if (!mediaQuery(win, MOBILE_PAGE_QUERY).matches) return false;
   if (doc.documentElement.classList.contains('un-kb')) return false;
   const vv = win.visualViewport;
   if (vv) {
@@ -131,8 +154,10 @@ export function createBrowserScroll(doc: Document, win: Window) {
     const enabled = allowsPageScroll(win, doc);
     // Hash routes share a document. Browser history restoration otherwise
     // races the per-screen positions when Back also triggers a transition.
+    // Written only when it differs: this runs after every DOM mutation.
     if (win.history && originalRestoration) {
-      win.history.scrollRestoration = enabled ? 'manual' : originalRestoration;
+      const restoration = enabled ? 'manual' : originalRestoration;
+      if (win.history.scrollRestoration !== restoration) win.history.scrollRestoration = restoration;
     }
     const next = enabled ? pageScroller(doc, preferred()) : null;
     if (next === active) return;
@@ -191,8 +216,7 @@ if (typeof document !== 'undefined' && typeof window !== 'undefined') {
   });
   document.addEventListener('scroll', controller.onScroll, { capture: true, passive: true });
   window.addEventListener('resize', controller.sync);
-  window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)')
-    .addEventListener('change', controller.sync);
+  mediaQuery(window, INSTALLED_QUERY).addEventListener('change', controller.sync);
   // The keyboard closing is a visual-viewport resize, and it is the moment a
   // pan iOS left behind stops being justified. A frame later, so the kit's
   // own tracker has dropped `un-kb` by then. Blur covers a keyboard that

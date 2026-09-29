@@ -20,10 +20,14 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
   }
   function isCancelled(err) { return err?.code === CANCELLED; }
   function current() { return context.getStore(); }
+  // Work launched from inside a run that must outlive it (timers, follow-up
+  // pipelines): outside the context, getPool() is the base pool, not the
+  // run's guarded pool, which throws once the run settles.
+  function detach(fn) { return context.exit(fn); }
 
   // Notify before waiting for ownership: the owner must be able to terminate
   // its Jobs while the successor waits for the same cross-Pod resource lock.
-  async function request(pool, sessionId, revision) {
+  async function request(pool, sessionId, revision, force = false) {
     const result = await pool.query(`
       INSERT INTO preview_operations (session_id, desired_revision)
       SELECT id, $2::text FROM chat_sessions
@@ -32,12 +36,55 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
           AND (imported_pr_head_sha IS NULL OR imported_pr_head_sha = $2::text)
       FOR UPDATE
       ON CONFLICT (session_id) DO UPDATE SET desired_revision = EXCLUDED.desired_revision,
+        state = CASE WHEN preview_operations.desired_revision IS DISTINCT FROM EXCLUDED.desired_revision
+          OR $3::boolean THEN 'queued' ELSE preview_operations.state END,
         updated_at = NOW()
-      RETURNING desired_revision, updated_at`, [sessionId, revision]);
+      WHERE preview_operations.desired_revision IS DISTINCT FROM EXCLUDED.desired_revision
+        OR preview_operations.state <> 'superseded'
+      RETURNING desired_revision, updated_at`, [sessionId, revision, force]);
     if (!result.rows.length) throw cancelled();
     const owner = active.get(Number(sessionId));
     if (owner && owner.revision !== revision) owner.abort();
     return result.rows[0].updated_at;
+  }
+
+  // Fence the pre-repair revision before the branch moves. The row update
+  // wakes an owner on another Pod through operation.check; a local owner gets
+  // the abort immediately. The resource lock then confirms that its consumers
+  // have stopped. A later run may replace the row while we wait, so only the
+  // recorded run's Jobs may be removed here.
+  async function supersede(config, sessionId, fallbackRevision) {
+    if (!enabled(config)) return { superseded: false };
+    const pool = poolFor(config);
+    const id = Number(sessionId);
+    const { rows: before } = await pool.query(
+      'SELECT desired_revision FROM preview_operations WHERE session_id = $1', [id]);
+    const revision = fallbackRevision || before[0]?.desired_revision;
+    if (!revision) return { superseded: false };
+    if (before[0] && before[0].desired_revision !== revision) {
+      throw new Error('Preview revision changed during cancellation');
+    }
+    const { rows } = await pool.query(`
+      INSERT INTO preview_operations (session_id, desired_revision, state, finished_at)
+      SELECT id, $2::text, 'superseded', NOW() FROM chat_sessions WHERE id = $1
+      ON CONFLICT (session_id) DO UPDATE SET state = 'superseded',
+        finished_at = NOW(), updated_at = NOW()
+      WHERE preview_operations.desired_revision = EXCLUDED.desired_revision
+      RETURNING run_id, desired_revision`, [id, revision]);
+    if (!rows.length) throw new Error('Preview revision changed during cancellation');
+    const runId = rows[0].run_id;
+    const owner = active.get(id);
+    if (runId && owner?.runId === runId) owner.abort();
+    await lock(config, PREVIEW_LIFECYCLE_LOCK, id, async () => {
+      const { rows: currentRows } = await pool.query(
+        'SELECT run_id, desired_revision, state FROM preview_operations WHERE session_id = $1', [id]);
+      const currentRow = currentRows[0];
+      if (runId && currentRow?.run_id === runId
+          && currentRow.desired_revision === revision && currentRow.state === 'superseded') {
+        await checks().cancelPreviewChecks(config, id, runId);
+      }
+    });
+    return { superseded: true, runId, revision };
   }
 
   async function readSession(pool, sessionId) {
@@ -103,12 +150,12 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
         || (resolveRevision && await resolveRevision(fresh));
       if (!revision) throw new Error('A coordinated preview requires an exact revision');
     }
-    const requestedAt = await request(pool, session.id, revision);
+    const requestedAt = await request(pool, session.id, revision, force);
     return lock(config, PREVIEW_LIFECYCLE_LOCK, session.id, async () => {
       const fresh = await readSession(pool, session.id);
       const { rows } = await pool.query('SELECT * FROM preview_operations WHERE session_id = $1', [session.id]);
       const previous = rows[0];
-      if (!fresh || previous?.desired_revision !== revision
+      if (!fresh || previous?.desired_revision !== revision || previous?.state === 'superseded'
           || (fresh.checks_commit_sha && fresh.checks_commit_sha !== revision)
           || (fresh.imported_pr_head_sha && fresh.imported_pr_head_sha !== revision)
           || !['active', 'paused', 'promoted', 'merging'].includes(fresh.status)) throw cancelled();
@@ -140,9 +187,11 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
           if (!state.length) { operation.abort(); throw cancelled(); }
         },
       };
-      await statePool.query(`UPDATE preview_operations SET run_id = $2, revision = $3,
+      const { rowCount: started } = await statePool.query(`UPDATE preview_operations SET run_id = $2, revision = $3,
         phase = $4, state = 'running', result = NULL, finished_at = NULL, updated_at = NOW()
-        WHERE session_id = $1 AND desired_revision = $3`, [session.id, operation.runId, revision, phase]);
+        WHERE session_id = $1 AND desired_revision = $3 AND state <> 'superseded'`,
+      [session.id, operation.runId, revision, phase]);
+      if (!started) throw cancelled();
       operation.pool = guardedPool(pool, operation);
       operation.cleanupPool = pool;
       operation.tasks = new Set();
@@ -167,7 +216,7 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
         await checks().cancelPreviewChecks(config, session.id);
         await operation.check();
         await operation.pool.query(`UPDATE preview_operations SET state = 'completed', result = $3,
-          finished_at = NOW(), updated_at = NOW() WHERE session_id = $1 AND run_id = $2`,
+          finished_at = NOW(), updated_at = NOW() WHERE session_id = $1 AND run_id = $2 AND state = 'running'`,
         [session.id, operation.runId, result == null ? null : JSON.stringify(result)]);
         return result;
       } catch (err) {
@@ -189,7 +238,7 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
           }
         }
         await statePool.query(`UPDATE preview_operations SET state = $3, finished_at = NOW(), updated_at = NOW()
-          WHERE session_id = $1 AND run_id = $2`,
+          WHERE session_id = $1 AND run_id = $2 AND state = 'running'`,
         [session.id, operation.runId, isCancelled(err) ? 'superseded' : 'error']);
         log.info('preview-lifecycle', isCancelled(err) ? 'Preview run superseded' : 'Preview run failed', {
           sessionId: session.id, runId: operation.runId, revision, phase,
@@ -197,7 +246,7 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
         throw err;
       } finally {
         clearInterval(timer);
-        active.delete(operation.sessionId);
+        if (active.get(operation.sessionId) === operation) active.delete(operation.sessionId);
       }
     });
   }
@@ -299,7 +348,7 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
     return rowCount > 0;
   }
 
-  return { enabled, run, request, current, guardedPool, cancelled, isCancelled, teardown, adopt, settleAdopted };
+  return { enabled, run, request, supersede, current, detach, guardedPool, cancelled, isCancelled, teardown, adopt, settleAdopted };
 }
 
 module.exports = { ...createLifecycle(), createLifecycle };

@@ -827,6 +827,170 @@ test('a claim on a request that is not open is refused, and says which it is', a
   }
 });
 
+// ── propose_close_request ──────────────────────────────────────────────
+//
+// The request page's "Propose to close", reached from a connector. It files a
+// governance proposal the group votes on; it never closes anything itself.
+
+test('proposing to close files a close_issue vote through the platform route', async () => {
+  const { handlers, specs, calls, restore } = connector((method, pathname) => {
+    if (method === 'POST') {
+      return { issue: { id: 701, kind: 'close_issue', payload: { issueNumber: 12, issueTitle: 'Dark mode', reason: 'x' } } };
+    }
+    return boardWith(null)();
+  }, claimScopes);
+  try {
+    const res = await handlers.get('propose_close_request')({
+      slug: 'recipe-box', number: 12, reason: '  Shipped in PR #901 (proposal 4223).  ',
+    });
+    assert.notEqual(res.isError, true);
+    const out = res.structuredContent;
+    assert.equal(out.closeProposalId, 701);
+    assert.equal(out.number, 12);
+    assert.equal(out.title, '<untrusted-content>Dark mode</untrusted-content>');
+    assert.equal(out.reasonChars, 'Shipped in PR #901 (proposal 4223).'.length);
+    assert.equal(out.inProgress, null);
+    // The proposal's own page, keyed by its id — it has no GitHub issue.
+    assert.equal(out.webPath, `${ORIGIN}/#app/recipe-box/dev/governance/701`);
+    assert.match(out.nextStep, /stays open until that vote passes/);
+    assert.match(out.nextStep, /never that it is closed/);
+    assert.doesNotMatch(out.nextStep, /work in progress/, 'nobody is on it, so there is nobody to warn about');
+
+    // The board is read first, then the SAME route the button posts to, with
+    // the kind pinned and the number in the payload — never in any field the
+    // route reads as the proposal's own GitHub twin.
+    assert.deepEqual(calls.map((c) => `${c.method} ${c.pathname}`), [
+      'GET /api/apps/recipe-box/github-issues',
+      'POST /api/apps/recipe-box/issues',
+    ]);
+    assert.deepEqual(calls[1].body, {
+      kind: 'close_issue',
+      payload: { issueNumber: 12, reason: 'Shipped in PR #901 (proposal 4223).' },
+    });
+
+    // The answer satisfies the tool's own outputSchema, as the SDK checks it.
+    const { z } = require('zod');
+    assert.equal(z.object(specs.get('propose_close_request').outputSchema).safeParse(out).success, true);
+  } finally {
+    restore();
+  }
+});
+
+test('a close proposal names whoever is already working on the request', async () => {
+  const { handlers, restore } = connector((method) => (method === 'POST'
+    ? { issue: { id: 702, payload: { issueNumber: 12, issueTitle: 'Dark mode' } } }
+    : boardWith({ count: 1, mine: false, claims: [{ username: 'maya', mine: false }] })()), claimScopes);
+  try {
+    const out = (await handlers.get('propose_close_request')({
+      slug: 'recipe-box', number: 12, reason: 'Duplicate of #9.',
+    })).structuredContent;
+    assert.deepEqual(out.inProgress.claimedBy, ['<untrusted-content>maya</untrusted-content>']);
+    assert.match(out.nextStep, /work in progress/);
+    assert.match(out.nextStep, /may object/);
+  } finally {
+    restore();
+  }
+});
+
+test('a close proposal needs a reason, and an over-long one is refused before anything is read', async () => {
+  for (const reason of ['', '   ', undefined]) {
+    const { handlers, calls, restore } = connector(boardWith(null), claimScopes);
+    try {
+      const res = await handlers.get('propose_close_request')({ slug: 'recipe-box', number: 12, reason });
+      assert.equal(res.isError, true);
+      assert.equal(res.structuredContent.code, 'invalid_request');
+      assert.match(res.structuredContent.message, /reason is required/);
+      assert.equal(calls.length, 0);
+    } finally {
+      restore();
+    }
+  }
+
+  const { handlers, calls, restore } = connector(boardWith(null), claimScopes);
+  try {
+    const res = await handlers.get('propose_close_request')({
+      slug: 'recipe-box', number: 12, reason: 'x'.repeat(tools.MAX_CLOSE_REASON_CHARS + 1),
+    });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, 'reason_too_long');
+    assert.equal(res.structuredContent.limitChars, tools.MAX_CLOSE_REASON_CHARS);
+    assert.equal(res.structuredContent.actualChars, tools.MAX_CLOSE_REASON_CHARS + 1);
+    assert.equal(calls.length, 0, 'nothing was filed, so nothing needs undoing');
+  } finally {
+    restore();
+  }
+});
+
+test('the close reason limit is the route\'s own', () => {
+  // Two copies of one number: the tool refuses with the numbers, so a limit
+  // looser than the route's would come back as the route's bare 400 instead.
+  const issuesSrc = fs.readFileSync(path.join(__dirname, '../src/routes/issues.js'), 'utf8');
+  const routeMax = Number(issuesSrc.match(/const MAX_CLOSE_REASON_LENGTH = (\d+);/)[1]);
+  assert.equal(tools.MAX_CLOSE_REASON_CHARS, routeMax);
+});
+
+test('proposing to close a request that is not open is refused, and says which it is', async () => {
+  const open = connector(boardWith(null), claimScopes);
+  try {
+    const res = await open.handlers.get('propose_close_request')({ slug: 'recipe-box', number: 99, reason: 'Done.' });
+    assert.equal(res.isError, true);
+    assert.match(res.structuredContent.message, /not open on this app/);
+    assert.equal(open.calls.length, 1, 'the board read, and nothing filed');
+  } finally {
+    open.restore();
+  }
+
+  const degraded = connector(() => ({ issues: [], note: 'rate limited' }), claimScopes);
+  try {
+    const res = await degraded.handlers.get('propose_close_request')({ slug: 'recipe-box', number: 12, reason: 'Done.' });
+    assert.equal(res.isError, true);
+    assert.match(res.structuredContent.message, /may exist/);
+    assert.equal(degraded.calls.length, 1);
+  } finally {
+    degraded.restore();
+  }
+
+  // The route re-checks GitHub itself; its 404 says which request and why,
+  // not the generic "app or proposal" line.
+  const raced = connector((method) => (method === 'POST'
+    ? { __http: { ok: false, status: 404, body: { error: "Issue #12 isn't an open issue on this repo." } } }
+    : boardWith(null)()), claimScopes);
+  try {
+    const res = await raced.handlers.get('propose_close_request')({ slug: 'recipe-box', number: 12, reason: 'Done.' });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, 'no_access');
+    assert.match(res.structuredContent.message, /Issue #12 isn't an open issue/);
+  } finally {
+    raced.restore();
+  }
+});
+
+test('one close proposal per request: a second comes back as already_proposed', async () => {
+  const { handlers, restore } = connector((method) => (method === 'POST'
+    ? { __http: { ok: false, status: 409, body: { error: 'A close proposal for issue #12 is already open' } } }
+    : boardWith(null)()), claimScopes);
+  try {
+    const res = await handlers.get('propose_close_request')({ slug: 'recipe-box', number: 12, reason: 'Done.' });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, 'already_proposed');
+    assert.match(res.structuredContent.message, /already open/);
+  } finally {
+    restore();
+  }
+});
+
+test('proposing to close needs the write scope, and refuses before any platform call', async () => {
+  const { handlers, calls, restore } = connector(boardWith(null), { scopes: [READ_SCOPE] });
+  try {
+    const res = await handlers.get('propose_close_request')({ slug: 'recipe-box', number: 12, reason: 'Done.' });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, 'insufficient_scope');
+    assert.equal(calls.length, 0);
+  } finally {
+    restore();
+  }
+});
+
 test('prepare_work marks the request it names, and survives a claim that fails', async () => {
   const gh = require('../src/services/github');
   const githubLink = require('../src/services/github-link');
@@ -1067,8 +1231,8 @@ test('a push that started no build says so, rather than promising a preview', as
     const res = await handlers.get('submit_work')({ proposalId: 4158, branch: 'my-fix' });
     assert.equal(res.structuredContent.previewRebuilding, false);
     assert.equal(res.structuredContent.resumeRequired, true);
-    assert.match(res.structuredContent.nextStep, /paused/,
-      'a paused session takes the commit and deliberately does not build');
+    assert.match(res.structuredContent.nextStep, /idle, so the commit landed and no preview was built/,
+      'a paused session takes the commit and deliberately does not build (said without "paused")');
     assert.doesNotMatch(res.structuredContent.nextStep, /rebuilding now/);
   } finally {
     restore(); gh.isEnabled = realGh; githubLink.isEnabled = realLink;
@@ -1543,10 +1707,23 @@ test('tools reach the platform over loopback with the caller’s own token', () 
   assert.doesNotMatch(SRC, /api\.github\.com/);
 });
 
+test('a membership refusal keeps its code and the app, not a scope error', () => {
+  const err = tools.platformError({
+    ok: false, status: 403,
+    body: { code: 'join_required', error: 'Join Tiny to take part.', app: { slug: 'tiny', name: 'Tiny', extra: 'x' } },
+  });
+  assert.equal(err.structuredContent.code, 'join_required');
+  assert.equal(err.structuredContent.message, 'Join Tiny to take part.');
+  assert.deepEqual(err.structuredContent.app, { slug: 'tiny', name: 'Tiny' });
+  // Any other 403 is still the scope error it always was.
+  assert.equal(tools.platformError({ ok: false, status: 403, body: { error: 'nope' } }).structuredContent.code, 'insufficient_scope');
+});
+
 test('platform failures pass the platform’s own wording through', () => {
   const cases = [
     [{ ok: false, status: 401, body: {} }, 'not_connected'],
     [{ ok: false, status: 403, body: { error: 'insufficient_scope' } }, 'insufficient_scope'],
+    [{ ok: false, status: 403, body: { code: 'join_required', error: 'Join Tiny to take part.', app: { slug: 'tiny', name: 'Tiny' } } }, 'join_required'],
     [{ ok: false, status: 404, body: {} }, 'no_access'],
     [{ ok: false, status: 429, body: { code: 'budget_exceeded', error: 'Daily limit reached ($20.00).' } }, 'budget_exceeded'],
     [{ ok: false, status: 429, body: { error: 'You already have 5 PRs up for vote.' } }, 'at_capacity'],
@@ -1575,6 +1752,8 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // Demo mode: the four acting tools of a creator's synthetic partner, and
     // its read — see ACTING_TOOLS and routes/demo-mode.js.
     'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote', 'get_app',
+    // #2779. A native change, read the way the change page reads it.
+    'get_change',
     // #1433. Read-only, and named `get_` so the shipped allow rules already
     // cover it — a drift check that prompts every call is one nobody runs.
     'get_checkout_status',
@@ -1586,9 +1765,22 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
     // for why that is a different category from the acting tools below.
     'notify_awaiting_input', 'notify_input_received',
-    'prepare_work', 'release_request',
+    'prepare_work',
+    // #2779. The native change lifecycle. recheck_change is on every surface;
+    // the other four are registered only for an agent session's Mayor — see
+    // the per-kind test below and services/mcp-audiences.js.
+    'promote_change',
+    // A group vote on closing a request, like the request page's "Propose to
+    // close". It files the proposal; the vote decides, and the platform
+    // closes the issue only when it passes.
+    'propose_close_request',
+    'recheck_change',
+    'release_request',
+    'start_change',
     'start_platform_build', 'submit_platform_build', 'submit_visual_evidence_plan', 'submit_work',
+    'sync_change',
     'update_proposal_issues', 'whoami',
+    'withdraw_change',
   ]);
   // Nothing that decides an app's future. The connector hands work to the
   // user's own coding agent and puts the result to a vote; it does not vote,
@@ -1753,8 +1945,10 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   // out of it would leak into the read-only globs.
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
     'create_request', 'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
-    'prepare_work', 'start_platform_build',
-    'submit_platform_build', 'submit_visual_evidence_plan', 'submit_work', 'update_proposal_issues',
+    'prepare_work', 'promote_change', 'propose_close_request', 'recheck_change', 'start_change',
+    'start_platform_build',
+    'submit_platform_build', 'submit_visual_evidence_plan', 'submit_work', 'sync_change',
+    'update_proposal_issues', 'withdraw_change',
   ]);
   for (const name of tools.ACTING_TOOLS) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
@@ -1917,11 +2111,15 @@ test('a request’s text stays wrapped all the way into the work order', () => {
   const idx = SRC.indexOf("server.registerTool('prepare_work'");
   const body = SRC.slice(idx, SRC.indexOf("server.registerTool('submit_work'"));
   assert.match(body, /parts\.push\(untrusted\(match\.title, MAX_TITLE_CHARS\)\)/);
-  assert.match(body, /parts\.push\(untrusted\(match\.body, MAX_BODY_CHARS\)\)/);
+  assert.match(body, /parts\.push\(untrusted\(match\.body, budget\.body\)\)/);
+  assert.match(body, /parts\.push\(untrusted\(discussion, budget\.discussion\)\)/);
   assert.match(body, /parts\.push\(untrusted\(brief, MAX_BODY_CHARS\)\)/);
-  // The request must actually be open on this app — a number is not a
-  // capability, so it is looked up rather than trusted.
-  assert.match(body, /list\.find\(\(i\) => i\.number === issueNumber\)/);
+  // One request keeps the budgets it always had.
+  assert.deepEqual(tools.requestTextBudget(1, 'x', 6000), { body: tools.MAX_BODY_CHARS, discussion: 2500 });
+  // Every request must actually be open on this app — a number is not a
+  // capability, so each is looked up rather than trusted.
+  assert.match(body, /const missing = requested\.filter\(\(n\) => !list\.some\(\(i\) => i\.number === n\)\)/);
+  assert.match(body, /list\.find\(\(i\) => i\.number === number\)/);
   // And both deliveries of the operating contract warn the receiving model
   // about exactly this — the truncation-proof brief and the full charter.
   assert.match(tools.SERVER_INSTRUCTIONS, /WHAT TO BUILD section/);
@@ -2057,6 +2255,22 @@ test('the checks a proposal reports name the tests that are failing', () => {
   assert.ok(shaped.failing.every((n) => n.startsWith('<untrusted-content>')));
   assert.ok(shaped.failing[0].includes('Board shows the snap toggle'));
   assert.ok(shaped.failing[1].includes('Settings saves'));
+});
+
+test('the unit suite row leads the failure reasons and keeps its whole file list', () => {
+  // It is appended after the browser checks, and its reason is the one
+  // place the agent learns which test files failed (change 4868).
+  const reason = `tests/a.test.js (8): t1; t2… | tests/b.test.js (1): t9 | # fail 9 ${'.'.repeat(1200)}`;
+  const shaped = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [
+      ...Array.from({ length: 12 }, (_, i) => ({ name: `browser ${i}`, status: 'fail', failureReason: 'x'.repeat(900) })),
+      { index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail', failureReason: reason },
+    ],
+  });
+  assert.equal(shaped.failures.length, 10);
+  assert.equal(shaped.failures[0].reason, `<untrusted-content>${reason}</untrusted-content>`);
+  assert.ok(shaped.failures[1].reason.includes('… [truncated]'), 'other rows keep their clip');
 });
 
 test('checks degrade to a knowable nothing rather than a guess', () => {

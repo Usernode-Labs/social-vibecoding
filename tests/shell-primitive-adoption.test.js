@@ -1,3 +1,4 @@
+// test:changed: always (every feature file, for hand-written buttons and fields; scripts/test-changed.js)
 // The shadcn primitives are the only way to spell the shell's primary button
 // and its field box.
 //
@@ -84,10 +85,11 @@ const FIELD_BOXES = [
 
 /** See the header. Every entry is a considered exception. */
 const ALLOWED_BUTTON_FILES = new Set([
-  // #dev-plus-btn and the view-toggle segment fill. The "+" moved into its
-  // own row component when the Workshop gained a copy of the toolbar; the
-  // exception moved with it.
-  'dev-board/actions-row.tsx',
+  // `dev-board/actions-row.tsx` WAS HERE, for #dev-plus-btn's violet fill.
+  // The "+" closes the Workshop's view-tab strip now and is drawn on the
+  // strip's own metrics and ink (app.css `.dev-ws-plus-btn`) — a bare glyph,
+  // not a primary button — so the file has no fill left to excuse and the
+  // entry went with it rather than staying as a standing exemption.
   // The Kudos pane's two segmented toggles — the All-time / This week window
   // pills and the Kudos / Votes history chips — whose ACTIVE state is the
   // violet fill. Same shape as board-frame's view toggle, and the same

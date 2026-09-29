@@ -14,6 +14,7 @@ const http = require('node:http');
 const { execFileSync, spawnSync, spawn } = require('child_process');
 const { classifyResumeJsonl } = require('../worker/classify-codex-resume');
 const {
+  AUTO_COMPACT_TOKEN_LIMIT,
   DEFAULT_BASE_INSTRUCTIONS,
   NEUTRAL_IDENTITY_INSTRUCTION,
   buildCatalogFromEnvironment,
@@ -143,6 +144,8 @@ test('runner: fresh and resumed GLM invocations put catalog limits into actual H
     assert.equal(result.code, 0, result.stdout + result.stderr);
     assert.match(result.stdout, /agent_thread_id=mock-glm-thread/);
     assert.match(result.stdout, /"type":"usernode.openrouter.request"/);
+    assert.match(result.stdout, /__USERNODE_CODING_PROVIDER__ \{"kind":"provider_request_start"/);
+    assert.match(result.stdout, /__USERNODE_CODING_PROVIDER__ \{"kind":"provider_request_end"/);
     assert.doesNotMatch(result.stdout + result.stderr, /sk-or-v1-test/);
     const config = fs.readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8');
     assert.ok(config.includes(env.OPENROUTER_API_BASE), 'the persistent config keeps the upstream URL');
@@ -152,6 +155,91 @@ test('runner: fresh and resumed GLM invocations put catalog limits into actual H
   assert.ok(requests.every(r => r.body.model === 'z-ai/glm-5.3-flash'));
   assert.ok(requests.every(r => r.url === '/api/v1/responses'));
   assert.ok(requests.every(r => r.key === 'Bearer sk-or-v1-test'));
+});
+
+test('runner: evidence completion resumes with terminal tools only and forces a decision', async t => {
+  let providerBody;
+  const provider = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    providerBody = JSON.parse(Buffer.concat(chunks).toString());
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end(`data: ${JSON.stringify({
+      type: 'response.output_item.done',
+      item: { type: 'function_call', namespace: 'mcp__evidence', name: 'evidence_run_plan' },
+    })}\n\n`);
+  });
+  await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { provider.closeAllConnections(); provider.close(resolve); }));
+  const fakeCodex = `#!/usr/bin/env node
+(async () => {
+  for await (const chunk of process.stdin) { /* consume the prompt */ }
+  const fs = require('node:fs');
+  const config = fs.readFileSync(process.env.CODEX_HOME + '/config.toml', 'utf8');
+  if (!config.includes('enabled_tools = ["evidence_run_plan", "evidence_report_blocker"]')) throw new Error('terminal tools missing');
+  if (config.includes('[mcp_servers.browser_member]')) throw new Error('browser tools remained enabled');
+  const override = process.argv.find(a => a.startsWith('model_providers.usernode_openrouter.base_url='));
+  const base = JSON.parse(override.slice(override.indexOf('=') + 1));
+  const response = await fetch(base + '/responses', {
+    method: 'POST', headers: { authorization: 'Bearer ' + process.env.OPENROUTER_API_KEY },
+    body: JSON.stringify({ model: process.env.AGENT_MODEL, stream: true, input: [], tools: [
+      { type: 'function', name: 'exec_command', parameters: { type: 'object' } },
+      { type: 'namespace', name: 'mcp__evidence', tools: [
+        { type: 'function', name: 'evidence_report_blocker', parameters: { type: 'object' } },
+        { type: 'function', name: 'evidence_run_plan', parameters: { type: 'object' } },
+      ] },
+      { type: 'web_search' },
+    ], tool_choice: 'auto', parallel_tool_calls: true }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  await response.text();
+  console.log(JSON.stringify({ type: 'thread.started', thread_id: 'evidence-thread' }));
+  console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 12, output_tokens: 3 } }));
+})().catch(err => { console.error(err.message); process.exitCode = 1; });
+`;
+  const { dir, env } = makeEnv(fakeCodex);
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const systemPrompt = path.join(dir, 'system-prompt.txt');
+  fs.writeFileSync(systemPrompt, 'Evidence system prompt');
+  Object.assign(env, {
+    MODE: 'evidence',
+    SYSTEM_PROMPT_FILE: systemPrompt,
+    EVIDENCE_JWT: 'test-evidence-jwt',
+    EVIDENCE_RUN_ID: '1'.repeat(32),
+    EVIDENCE_BASE_ORIGIN: 'http://base.example.invalid',
+    EVIDENCE_HEAD_ORIGIN: 'http://head.example.invalid',
+    EVIDENCE_MEMBER_TOKEN: 'member-token',
+    EVIDENCE_ADMIN_TOKEN: 'admin-token',
+    EVIDENCE_FULL_ADMIN_TOKEN: 'full-admin-token',
+    EVIDENCE_COMPLETION_REMINDER: '1',
+    AGENT_THREAD_ID: 'evidence-thread',
+    OPENROUTER_API_BASE: `http://127.0.0.1:${provider.address().port}/api/v1`,
+    AGENT_MODEL: 'z-ai/glm-5.3-flash',
+  });
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn('sh', [RUNNER], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', data => { stdout += data; });
+    child.stderr.on('data', data => { stderr += data; });
+    child.once('error', reject);
+    child.once('close', code => resolve({ code, stdout, stderr }));
+    t.after(() => { if (child.exitCode == null) child.kill(); });
+  });
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.equal(providerBody.tool_choice, 'required');
+  assert.equal(providerBody.parallel_tool_calls, false);
+  assert.deepEqual(providerBody.tools.map(tool => [tool.type, tool.name]), [
+    ['namespace', 'mcp__evidence'],
+  ]);
+  assert.deepEqual(providerBody.tools[0].tools.map(tool => tool.name).sort(), [
+    'evidence_report_blocker', 'evidence_run_plan',
+  ]);
+  assert.match(result.stdout, /__USERNODE_EVIDENCE_PROVIDER__ \{"kind":"provider_tool_config"/);
+  assert.match(result.stdout, /"terminalToolWireFormat":"namespace"/);
+  assert.match(result.stdout, /"toolSurfaceFiltered":true/);
+  assert.doesNotMatch(result.stdout, /__USERNODE_PHASE__ evidence_(?:proxy|browser_bootstrap)/);
+  assert.doesNotMatch(result.stdout + result.stderr, /member-token|admin-token|full-admin-token/);
 });
 
 test('request wrapper forwards Stop to Codex and releases its listener', async t => {
@@ -438,8 +526,8 @@ exit 1
     'request_max_retries = 3',
     '',
     '[mcp_servers.playwright]',
-    'command = "npx"',
-    'args = ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--config", "/home/node/.usernode-playwright.json"]',
+    'command = "/usr/local/bin/mcp-server-playwright"',
+    'args = ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "/home/node/.usernode-playwright.json"]',
     'startup_timeout_sec = 30',
     'tool_timeout_sec = 60',
     '',
@@ -465,6 +553,8 @@ exit 1
   assert.equal(catalog.models[0].slug, 'z-ai/glm-5.3-flash');
   assert.equal(catalog.models[0].display_name, 'GLM 5.3 Flash');
   assert.equal(catalog.models[0].context_window, 1_048_576);
+  assert.equal(catalog.models[0].auto_compact_token_limit, AUTO_COMPACT_TOKEN_LIMIT,
+    'the installed metadata turns auto-compaction on');
   assert.equal(catalog.models[0].default_reasoning_level, 'medium');
   // #2120: the installed metadata names the selected model in the neutral
   // identity sentence and keeps every instruction after it.
@@ -612,6 +702,43 @@ exit 0
     'model-launched commands do not inherit the provider credential');
 });
 
+test('runner: the redacted stream stays live after a very long line', {
+  skip: spawnSync('sh', ['-c', 'command -v mawk'], { encoding: 'utf8' }).status !== 0
+    && 'mawk (the worker image awk) is not installed',
+}, async t => {
+  // Session 4868: a 165,640-byte esbuild output line grew mawk's input buffer,
+  // and the journal then advanced only in ~166 KB bursts, minutes apart.
+  const fakeCodex = `#!/bin/sh
+while IFS= read -r _line; do :; done
+echo '{"type":"thread.started","thread_id":"stream-123"}'
+printf '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"'
+head -c 200000 /dev/zero | tr '\\0' x
+echo '"}}'
+echo '{"type":"item.started","item":{"id":"after-long-line"}}'
+while [ ! -f "$RELEASE_FILE" ]; do sleep 0.05; done
+exit 0
+`;
+  const { dir, env } = makeEnv(fakeCodex);
+  // Run under mawk as the image does, whatever this host's default awk is.
+  const mawk = spawnSync('sh', ['-c', 'command -v mawk'], { encoding: 'utf8' }).stdout.trim();
+  fs.symlinkSync(mawk, path.join(dir, 'bin', 'awk'));
+  env.RELEASE_FILE = path.join(dir, 'release');
+  const child = spawn('sh', [RUNNER], { env });
+  t.after(() => { fs.writeFileSync(env.RELEASE_FILE, ''); child.kill(); });
+  let out = '';
+  const closed = new Promise(resolve => child.once('close', resolve));
+  const streamed = await new Promise(resolve => {
+    const timer = setTimeout(() => resolve(false), 10_000);
+    child.stdout.on('data', chunk => {
+      out += chunk;
+      if (out.includes('after-long-line')) { clearTimeout(timer); resolve(true); }
+    });
+  });
+  fs.writeFileSync(env.RELEASE_FILE, '');
+  assert.equal(await closed, 0);
+  assert.ok(streamed, 'the line after the long one reached the journal while Codex was still running');
+});
+
 test('Claude runner: scout succeeds without WORKER_JWT, while build still requires it', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-runner-'));
   const bin = path.join(dir, 'bin');
@@ -688,6 +815,33 @@ test('model catalog bounds the reply ceiling instead of inheriting the context w
     buildCodexModelCatalog({ ...base, contextWindow: 9_000 }).models[0].max_output_tokens,
     9_000,
   );
+});
+
+test('a long-window model compacts at 200k tokens instead of 90% of its window', () => {
+  // Codex 0.146.0 compacts once the whole active context reaches
+  // min(auto_compact_token_limit, 90% of the context window). With null that
+  // was ~1.18M tokens for GLM 5.3 Flash, which no change's thread reaches.
+  const codexThreshold = (model) => Math.min(
+    model.auto_compact_token_limit ?? Infinity,
+    Math.floor((model.context_window * 9) / 10),
+  );
+  assert.equal(AUTO_COMPACT_TOKEN_LIMIT, 200_000);
+  const glm = buildCodexModelCatalog({
+    modelId: 'z-ai/glm-5.3-flash',
+    displayName: 'Z.AI: GLM 5.3 Flash',
+    contextWindow: 1_310_720,
+    baseInstructions: 'Test coding instructions',
+  }).models[0];
+  assert.equal(glm.auto_compact_token_limit, 200_000);
+  assert.equal(codexThreshold(glm), 200_000, 'not 1,179,648');
+
+  // A window whose 90% is already lower keeps its own threshold.
+  for (const [contextWindow, threshold] of [[128_000, 115_200], [200_000, 180_000], [64_000, 57_600]]) {
+    const model = buildCodexModelCatalog({
+      modelId: 'vendor/model', contextWindow, baseInstructions: 'Test coding instructions',
+    }).models[0];
+    assert.equal(codexThreshold(model), threshold, `${contextWindow}-token window`);
+  }
 });
 
 test('the reply ceiling is taken from the environment the host already sets', () => {

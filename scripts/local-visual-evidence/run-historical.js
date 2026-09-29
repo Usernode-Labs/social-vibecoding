@@ -209,11 +209,13 @@ async function main(pr) {
       const failed = started.find((result) => result.status === 'rejected');
       if (failed) throw failed.reason;
     };
-    await startPair();
-    const first = await replay.runPass(config, pr, input(1), { onEvent });
-    await stop();
-    await startPair();
-    const second = await replay.runPass(config, pr, input(2), { onEvent });
+    const prepareCase = async () => {
+      await stop();
+      await startPair();
+      return { origins };
+    };
+    const first = await replay.runPassCases(config, pr, input(1), { prepareCase, onEvent });
+    const second = await replay.runPassCases(config, pr, input(2), { prepareCase, onEvent });
     const verdict = replay.comparePasses(first, second, { plan, provenance, runId });
     if (!verdict.passed) {
       if (verdict.code === 'non_reproducible') {

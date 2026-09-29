@@ -160,7 +160,13 @@ issue, a build — and the platform merges none of it without a group vote:
 | `prepare_work` | Claims the request on the app's board; mints a work order |
 | `start_platform_build` | Spends the user's daily Homeroom credits |
 | `submit_platform_build` | Puts that build to a group vote |
+| `recheck_change` | Re-runs a proposal's checks on the commit it already has; no code or vote moves |
 | `demo_mode`, `demo_propose`, `demo_promote`, `demo_vote`, `demo_reset` | Demo mode — the exception, below |
+
+Four more acting tools, `start_change`, `promote_change`, `sync_change` and
+`withdraw_change`, exist only for the Mayor of an agent session inside Homeroom
+(#2779). An external client never sees them. The Mayor runs each one only after
+the user confirms it on a card.
 
 The vote is the confirmation, and it is a better one than a prompt clicked
 through mid-loop by the one person already driving the agent. A per-call prompt

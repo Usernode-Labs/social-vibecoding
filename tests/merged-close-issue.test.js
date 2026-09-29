@@ -61,7 +61,7 @@ function makeCloseRow(over) {
       issueNumber: 12,
       issueTitle: 'Broken thing',
       reason: 'Obsolete since the rework.',
-      appliedAt: '2026-01-15T00:00:00.000Z',
+      appliedAt: over?.created_at || new Date(Date.UTC(2026, 0, 98, 12)).toISOString(),
       appliedBy: 'group-vote',
       upCount: 2,
       required: 2,
@@ -205,10 +205,10 @@ test('close-issue query selects ONLY applied proposals (appliedAt marker)', asyn
   assert.ok(closeCall, 'close-issue rows query issued');
   assert.match(closeCall.sql, /i\.status = 'closed'/, 'closed rows only');
   assert.match(closeCall.sql, /i\.payload \? 'appliedAt'/, 'applied marker required — withdrawn/superseded rows excluded');
-  assert.match(closeCall.sql, /ORDER BY i\.created_at DESC, i\.id DESC/, 'same tiebreak ordering as PRs');
+  assert.match(closeCall.sql, /ORDER BY COALESCE\(\(i\.payload->>'appliedAt'\)::timestamptz, i\.created_at\) DESC, i\.id DESC/, 'same tiebreak ordering as PRs');
 });
 
-test('rows interleave by created_at DESC with row_type discriminators', async () => {
+test('rows interleave by completion time DESC with row_type discriminators', async () => {
   // PRs on Jan 100/99/98(midnight); close row at Jan 98 12:00 → slots
   // between the Jan 99 and Jan 98 PRs.
   const prRows = makePrRows(3);
@@ -231,13 +231,40 @@ test('rows interleave by created_at DESC with row_type discriminators', async ()
   assert.equal(close.deployment_state, undefined, 'issue-closure cards are not deployment records');
 });
 
-test('on a created_at tie, PR rows rank before close-issue rows', async () => {
+test('on a completion time tie, PR rows rank before close-issue rows', async () => {
   const ts = new Date(Date.UTC(2026, 0, 50)).toISOString();
   const prRows = [{ id: 5, pr_number: 9, status: 'merged', created_at: ts }];
   const closeRows = [makeCloseRow({ id: 900, created_at: ts })];
   const { routes } = loadVotes({ prRows, closeRows });
   const payload = await callMerged(routes, {});
   assert.deepEqual(payload.merged.map((r) => r.row_type), ['pr', 'close_issue']);
+});
+
+test('old work completed recently interleaves by merge and application time', async () => {
+  const { routes } = loadVotes({
+    prRows: [
+      { id: 1, created_at: '2026-01-01T00:00:00Z', merged_at: '2026-09-23T18:00:00Z' },
+      { id: 3, created_at: '2026-09-23T09:00:00Z', merged_at: '2026-09-23T10:00:00Z' },
+    ],
+    closeRows: [makeCloseRow({ id: 2, created_at: '2026-02-01T00:00:00Z',
+      payload: { appliedAt: '2026-09-23T17:00:00Z' } })],
+  });
+  const payload = await callMerged(routes, {});
+  assert.deepEqual(payload.merged.map(r => r.id), [1, 2, 3]);
+  assert.equal(payload.merged[1].completed_at, '2026-09-23T17:00:00Z');
+});
+
+test('equal completion times use row type then descending id, independent of creation', async () => {
+  const completed = '2026-09-23T18:00:00Z';
+  const { routes } = loadVotes({
+    prRows: [
+      { id: 5, created_at: '2026-01-01T00:00:00Z', merged_at: completed },
+      { id: 4, created_at: '2026-09-22T00:00:00Z', merged_at: completed },
+    ],
+    closeRows: [makeCloseRow({ id: 900, payload: { appliedAt: completed } })],
+  });
+  const payload = await callMerged(routes, {});
+  assert.deepEqual(payload.merged.map(r => r.id), [5, 4, 900]);
 });
 
 test('total sums merged PRs and applied close-issue proposals', async () => {
@@ -269,11 +296,11 @@ test('cursor without before_type defaults to pr: PR keeps the tuple predicate, c
   const { routes, captured } = loadVotes({ prRows: [], closeRows: [] });
   await callMerged(routes, { before: '2026-01-30T00:00:00.000Z', before_id: '900' });
   const prCall = findCall(captured, /cs\.status = 'merged'/);
-  assert.match(prCall.sql, /\(cs\.created_at, cs\.id\) < \(\$3, \$4\)/, 'historical PR tuple predicate');
+  assert.match(prCall.sql, /\(COALESCE\(cs\.merged_at, cs\.created_at\), cs\.id\) < \(\$3, \$4\)/, 'historical PR tuple predicate');
   assert.match(prCall.sql, /LIMIT \$5/);
   const closeCall = findCall(captured, /i\.kind = 'close_issue'/);
-  assert.match(closeCall.sql, /i\.created_at <= \$2/, 'close rows at the PR-cursor timestamp sort after it');
-  assert.ok(!/\(i\.created_at, i\.id\)/.test(closeCall.sql), 'no close tuple predicate at a PR cursor');
+  assert.match(closeCall.sql, /COALESCE\(\(i\.payload->>'appliedAt'\)::timestamptz, i\.created_at\) <= \$2/, 'close rows at the PR-cursor timestamp sort after it');
+  assert.ok(!/\(COALESCE\(\(i\.payload->>'appliedAt'\)::timestamptz, i\.created_at\), i\.id\)/.test(closeCall.sql), 'no close tuple predicate at a PR cursor');
   assert.equal(closeCall.params[1], new Date('2026-01-30T00:00:00.000Z').toISOString());
 });
 
@@ -283,10 +310,10 @@ test('before_type=close_issue flips the predicates: PR pages strictly older, clo
     before: '2026-01-30T00:00:00.000Z', before_id: '77', before_type: 'close_issue',
   });
   const prCall = findCall(captured, /cs\.status = 'merged'/);
-  assert.match(prCall.sql, /cs\.created_at < \$3/, 'PRs at the close-cursor timestamp already paged out');
-  assert.ok(!/\(cs\.created_at, cs\.id\) </.test(prCall.sql), 'no PR tuple predicate at a close cursor');
+  assert.match(prCall.sql, /COALESCE\(cs\.merged_at, cs\.created_at\) < \$3/, 'PRs at the close-cursor timestamp already paged out');
+  assert.ok(!/\(COALESCE\(cs\.merged_at, cs\.created_at\), cs\.id\) </.test(prCall.sql), 'no PR tuple predicate at a close cursor');
   const closeCall = findCall(captured, /i\.kind = 'close_issue'/);
-  assert.match(closeCall.sql, /\(i\.created_at, i\.id\) < \(\$2, \$3\)/, 'close tuple predicate');
+  assert.match(closeCall.sql, /\(COALESCE\(\(i\.payload->>'appliedAt'\)::timestamptz, i\.created_at\), i\.id\) < \(\$2, \$3\)/, 'close tuple predicate');
   assert.equal(closeCall.params[2], 77, 'before_id bound for the close source');
 });
 
@@ -295,10 +322,10 @@ test('no cursor → neither source carries a keyset predicate', async () => {
   const payload = await callMerged(routes, {});
   assert.equal(payload.hasMore, false);
   const prCall = findCall(captured, /cs\.status = 'merged'/);
-  assert.ok(!/\(cs\.created_at, cs\.id\) </.test(prCall.sql));
-  assert.ok(!/cs\.created_at < \$3/.test(prCall.sql));
+  assert.ok(!/\(COALESCE\(cs\.merged_at, cs\.created_at\), cs\.id\) </.test(prCall.sql));
+  assert.ok(!/COALESCE\(cs\.merged_at, cs\.created_at\) < \$3/.test(prCall.sql));
   const closeCall = findCall(captured, /i\.kind = 'close_issue'/);
-  assert.ok(!/i\.created_at <=/.test(closeCall.sql));
+  assert.ok(!/COALESCE\(\(i\.payload->>'appliedAt'\)::timestamptz, i\.created_at\) <=/.test(closeCall.sql));
 });
 
 test("close rows carry the closed issue's own priority/assignee/category tally", async () => {

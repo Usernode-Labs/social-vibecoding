@@ -19,7 +19,10 @@
 //   4. THE DISCUSSIONS READ FAILS QUIETLY. Conversations are this screen's
 //      reason to exist; a second request must not be able to blank it.
 //   5. MEMBERSHIP, NOT VISIBILITY. A public app you have never joined is
-//      something to go and read, not something in your messages.
+//      something to go and read, not something in your messages. (#2967
+//      widens this to "an app you have taken part in", in a second "more"
+//      section — still never an app you have not touched, and never one you
+//      cannot open.)
 //
 // #2783 sections the list the way Discord does: the CHATS (people and
 // agents) on the one clock, then the CHANNELS — #general, then one per app
@@ -42,7 +45,7 @@ const inbox = loadTsx('frontend/src/features/messages/inbox.ts');
 
 const at = (iso) => iso;
 
-test('one clock orders the chats, and the channels follow as their own section', () => {
+test('one clock orders the chats, and the channels are not listed here: they live on their hubs', () => {
   const merged = inbox.buildInbox({
     conversations: [
       { id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') },
@@ -55,11 +58,11 @@ test('one clock orders the chats, and the channels follow as their own section',
     agents: [{ id: 'a1', updatedAt: at('2026-01-01T00:00:00Z') }],
     filter: 'all',
   });
-  // A channel with newer activity does not jump over a DM: it is a room you
-  // visit, not a conversation waiting on you. #general leads the channels,
-  // then the apps newest first, and one nobody has spoken in sits last.
-  assert.deepEqual(merged.map((e) => e.key), ['person:1', 'agent:a1', 'channel:9', 'app:notes', 'app:quiet']);
-  assert.deepEqual(merged.map((e) => e.section), ['chats', 'chats', 'channels', 'channels', 'channels']);
+  // Messages is people and agents. #general is the Homeroom community's
+  // channel and each app's channel is its own community's, drawn on the
+  // hub (features/dev-board/workshop/hub-cards.tsx), so neither is a row.
+  assert.deepEqual(merged.map((e) => e.key), ['person:1', 'agent:a1']);
+  assert.deepEqual(merged.map((e) => e.section), ['chats', 'chats']);
 });
 
 test('a row with no timestamp sorts last, not first', () => {
@@ -86,29 +89,28 @@ test('an agent chat falls back to when it was created', () => {
 });
 
 test('each filter admits exactly its own kind, and All admits every one', () => {
-  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[0]), ['all', 'people', 'channels', 'agents']);
-  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[1]), ['All', 'People', 'Channels', 'Agents'],
-    '"Apps" is "Channels" now (#2783)');
-  for (const kind of ['person', 'channel', 'app', 'agent']) {
+  // The Channels filter went with the channels (they live on their hubs).
+  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[0]), ['all', 'people', 'agents']);
+  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[1]), ['All', 'People', 'Agents']);
+  for (const kind of ['person', 'agent']) {
     assert.equal(inbox.admits('all', kind), true, `all admits ${kind}`);
   }
   assert.equal(inbox.admits('people', 'person'), true);
   assert.equal(inbox.admits('people', 'app'), false);
   assert.equal(inbox.admits('people', 'channel'), false, '#general is not a person');
-  assert.equal(inbox.admits('channels', 'app'), true);
-  assert.equal(inbox.admits('channels', 'channel'), true);
-  assert.equal(inbox.admits('channels', 'person'), false);
   assert.equal(inbox.admits('agents', 'agent'), true);
   assert.equal(inbox.admits('agents', 'person'), false);
-  const channelsOnly = inbox.buildInbox({
+  const people = inbox.buildInbox({
     conversations: [{ id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') }, { id: 9, kind: 'channel', lastActivityAt: null }],
-    discussions: [{ slug: 'notes', lastAt: null }], agents: [], filter: 'channels',
+    discussions: [{ slug: 'notes', lastAt: null }], agents: [], filter: 'people',
   });
-  assert.deepEqual(channelsOnly.map((e) => e.key), ['channel:9', 'app:notes']);
+  assert.deepEqual(people.map((e) => e.key), ['person:1'], 'a channel is no one\'s person row');
 });
 
 test('agent chats are read, not copied', () => {
-  assert.match(SCREEN, /useGlobalChatState\(\)/,
+  // Through a selector, the two fields it draws, so a turn streaming in the
+  // chat does not redraw the list.
+  assert.match(SCREEN, /useGlobalChatSelector\(\(s\) => s\.threads\)/,
     'the screen reads the chat’s own store');
   // The word appears once in this store, in a comment about typing indicators
   // hopping between threads, so the check is on the STATE rather than on the
@@ -182,27 +184,52 @@ test('Agent chat picks one of the viewer\'s apps and opens a new dev session the
   assert.match(body, /navigateToApp\(slug, 'dev', ref, 'sessions'\)/, 'straight to /dev/sessions/new');
 });
 
-test('the endpoint is members-only, newest first, one row per app', () => {
-  assert.match(ROUTE, /JOIN app_collaborators me[\s\S]{0,80}me\.user_id = \$1 AND me\.status = 'member'/,
-    'membership, not visibility');
+test('the endpoint lists yours then more, one row per app, never an app the viewer cannot open', () => {
+  // #2967 widened #2783's members-only scope into two sections: "yours" is
+  // Home's `isYours` (member and not hidden from Your apps, or favorited),
+  // "more" is every other app the viewer took part in. Pinned by clause
+  // here; tests/app-chat-postgres.test.js runs the SQL against the real
+  // schema.
+  assert.match(ROUTE, /FROM app_collaborators me\s+WHERE me\.user_id = \$1 AND me\.status = 'member'/,
+    'membership is one way in');
+  assert.match(ROUTE, /LEFT JOIN app_favorites fav ON fav\.app_id = a\.id AND fav\.user_id = \$1/,
+    'a favorite (or a hidden-from-Your-apps opt-out) is read per viewer');
+  assert.match(ROUTE, /WHEN \(member\.app_id IS NOT NULL AND NOT COALESCE\(fav\.hidden, FALSE\)\)\s+OR \(fav\.app_id IS NOT NULL AND NOT fav\.hidden\)\s+THEN 'yours'/,
+    'yours = Home.isYours: a visible membership, or a favorite');
+  for (const [source, why] of [
+    [/FROM chat_messages posted\s+WHERE posted\.user_id = \$1/, 'posted in its chat'],
+    [/FROM message_reactions reaction/, 'reacted in its chat'],
+    [/FROM pr_votes vote/, 'voted on a proposal'],
+    [/FROM issue_votes vote/, 'voted on a governance question'],
+    [/FROM chat_sessions proposed[\s\S]{0,120}is_headless = FALSE/, 'proposed a change (not an auto session)'],
+    [/FROM issues filed\s+WHERE filed\.created_by = \$1/, 'filed a request'],
+  ]) assert.match(ROUTE, source, `activity: ${why}`);
+  // Visibility is the app routes' view rule, whatever put the app in scope.
+  assert.match(ROUTE, /\(\$2::boolean OR a\.view_visibility = 'public' OR member\.app_id IS NOT NULL\)/,
+    'an app gone view-private drops out for a non-member, favorite or no favorite');
   assert.match(ROUTE, /NOT a\.self_hosted OR \$2::boolean/,
     'and the platform’s own app keeps its admin gate');
   assert.match(ROUTE, /SELECT DISTINCT ON \(m\.app_id\)/, 'one row per app');
   assert.match(ROUTE, /ORDER BY m\.app_id, m\.created_at DESC, m\.id DESC/,
     'the id tiebreak matters: created_at defaults to NOW() and two messages '
     + 'in one transaction share it');
-  assert.match(ROUTE, /WHERE m\.thread_type IS NULL/, 'the general thread, not a card’s');
-  // #2783: EVERY app the viewer is in is a channel, including one nobody has
+  assert.match(ROUTE, /WHERE m\.thread_type IS NULL\s+AND m\.deleted_at IS NULL/,
+    'the general thread, not a card’s or a reply thread’s, and never a deleted message');
+  // #2783: EVERY app in scope is a channel, including one nobody has
   // spoken in — so the latest message is joined optionally, and those sort
   // after the ones with activity.
   assert.match(ROUTE, /LEFT JOIN latest ON latest\.app_id = mine\.id/);
-  assert.match(ROUTE, /ORDER BY latest\.created_at DESC NULLS LAST/, 'newest first, silent last');
-  // No unread count, and its absence is honest: chat_messages has no
-  // per-viewer read cursor, so a number here would be invented. Comments
-  // stripped first — the file SAYS why there is none, and a prose match for
-  // the thing being forbidden fails on the note explaining it.
-  const code = ROUTE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  assert.doesNotMatch(code, /unread/i);
+  assert.match(ROUTE, /ORDER BY \(mine\.section = 'yours'\) DESC,\s+latest\.created_at DESC NULLS LAST, LOWER\(mine\.name\), mine\.slug/,
+    'yours before more; newest first inside each, silent last');
+  // #2387 gives chat_messages a per-viewer read cursor (app_chat_reads), so
+  // the count this test used to forbid is now a real one — and it is
+  // computed from that cursor, not invented.
+  assert.match(ROUTE, /JOIN app_chat_reads rc ON rc\.app_id = m\.app_id AND rc\.user_id = \$1/);
+  assert.match(ROUTE, /m\.id > rc\.last_read_message_id/);
+  assert.match(ROUTE, /m\.user_id IS NOT NULL AND m\.user_id <> \$1/,
+    'from other people: your own lines and authorless system lines are not unread');
+  assert.match(ROUTE, /appChat\.ensureReadCursors\(pool, req\.user\.id, missing\)/,
+    'an app seen for the first time starts at zero');
 });
 
 test('the route is registered after the workshop one', () => {
@@ -213,10 +240,11 @@ test('the route is registered after the workshop one', () => {
 
 test('the filter row ships in the prerendered document, with the plus at its end', () => {
   for (const id of ['messages-filters', 'messages-filter-all', 'messages-filter-people',
-    'messages-filter-channels', 'messages-filter-agents', 'messages-new']) {
+    'messages-filter-agents', 'messages-new']) {
     assert.ok(HTML.includes(`id="${id}"`), `#${id} is in the shipped shell`);
   }
-  for (const id of ['messages-filter-apps', 'messages-compose', 'messages-new-agent']) {
+  // The Channels filter left with the channels, which live on their hubs.
+  for (const id of ['messages-filter-apps', 'messages-filter-channels', 'messages-compose', 'messages-new-agent']) {
     assert.ok(!HTML.includes(`id="${id}"`), `#${id} is retired`);
   }
   assert.match(HTML, /id="messages-filter-agents"[^<]*>Agents<\/button><\/div><button[^>]*id="messages-new"/,
@@ -233,8 +261,17 @@ test('one row shape per kind; the channels are headed rather than pilled', () =>
   assert.doesNotMatch(SCREEN, /<KindPill kind="app" \/>/, 'a section heading says it once');
   assert.match(SCREEN, /<KindPill kind="agent" \/>/, 'an agent among the people still says so');
   assert.match(SCREEN, /chats: 'Chats',\s*channels: 'Channels',/);
-  assert.match(SCREEN, /snap\.filter === 'all' && \(i === 0 \|\| shown\[i - 1\]\.section !== entry\.section\)/,
-    'a heading over each section, under All only');
+  // ONE LIST, unheaded: the channels moved to their hubs, which leaves the
+  // chats alone, and a lone "Chats" heading would label nothing.
+  assert.match(SCREEN, /sectionRuns\(shown, false\)/, 'no heading over the one list');
+  assert.match(SCREEN, /<div key=\{`card-\$\{run\.section\}`\} className="messages-section-card" data-inbox-card=\{run\.section\}>/,
+    'and each section\'s rows in a card of their own, so the last row of a section drops its separator');
+  const e = (section, more) => ({ section, more });
+  assert.deepEqual(inbox.sectionRuns([e('chats'), e('chats'), e('channels'), e('channels', true)], true)
+    .map((r) => [r.section, r.head, r.entries.length]),
+  [['chats', true, 2], ['channels', true, 2]], 'one card per section, each headed under All; the folded channels stay in theirs');
+  assert.deepEqual(inbox.sectionRuns([e('channels')], false).map((r) => [r.section, r.head]), [['channels', false]],
+    'under a filter: one card, no heading');
   const conversationRow = SCREEN.slice(SCREEN.indexOf('function ConversationRow'), SCREEN.indexOf('function KindPill'));
   assert.doesNotMatch(conversationRow, /KindPill/,
     'a person gets none: they are the majority, and a pill on every row says nothing');
@@ -243,7 +280,7 @@ test('one row shape per kind; the channels are headed rather than pilled', () =>
 // ── The agent half has to ask for itself (#2718 review) ────────────────
 
 test('the inbox initialises the global-chat bootstrap it reads', () => {
-  // `useGlobalChatState()` reads a store nothing on this screen was filling:
+  // `useGlobalChatSelector` reads a store nothing on this screen was filling:
   // the only caller of initializeGlobalChat outside Settings was the Improve
   // panel's own New chat button. So an inbox opened without ever having
   // opened Improve saw `bootstrap: null` — which reads as "the feature is
@@ -253,7 +290,7 @@ test('the inbox initialises the global-chat bootstrap it reads', () => {
   // list of these chats was the only surface that offered the delete, so the
   // delete came to this one rather than going away (#2718 review).
   const imports = SCREEN.slice(0, SCREEN.indexOf("} from '../global-chat/store';"));
-  for (const name of ['initializeGlobalChat', 'removeGlobalChatThread', 'useGlobalChatState']) {
+  for (const name of ['initializeGlobalChat', 'removeGlobalChatThread', 'useGlobalChatSelector']) {
     assert.match(imports.slice(imports.lastIndexOf('import {')), new RegExp(`\\b${name},`));
   }
   const screen = SCREEN.slice(SCREEN.indexOf('export function MessagesScreen'));
@@ -292,7 +329,7 @@ test('changes are read from the Improve store, drawn by SessionRow, and not gate
   assert.match(SCREEN, /<SessionRow\b/, 'drawn by the same row the bell’s Messages tab uses for agents');
   const list = SCREEN.slice(SCREEN.indexOf('function ConversationList'));
   const body = list.slice(0, list.indexOf('\n}\n'));
-  assert.match(body, /const sessions: SessionRowView\[\] = mounted\s*\?/,
+  assert.match(body, /const sessions = useMemo<SessionRowView\[\]>\(\(\) => \(mounted\s*\?/,
     'after mount only, so the first client render matches the prerender');
   assert.doesNotMatch(body.slice(body.indexOf('const sessions'), body.indexOf('const inbox')), /agentsOn/,
     'a change is not the experimental global chat');
@@ -361,6 +398,25 @@ test('an app\'s channel handle is its name folded, unique within the viewer\'s l
   ]);
   assert.deepEqual(list.map((d) => d.channel), ['recipe-box', 'recipe-cd34', 'general-99'],
     'a second "Recipe Box" and an app named General fall back to their slugs');
+  // #2967: the handles stay unique across BOTH sections — a `#name` in a
+  // message resolves against the whole list, not one half of it.
+  const sectioned = overview.channelHandles([
+    overview.toDiscussion({ slug: 'notes-a1', name: 'Notes', section: 'yours' }),
+    overview.toDiscussion({ slug: 'notes-b2', name: 'Notes', section: 'more' }),
+  ]);
+  assert.deepEqual(sectioned.map((d) => [d.section, d.channel]), [['yours', 'notes'], ['more', 'notes-b2']]);
+});
+
+test('a discussion row carries its section and unread count (#2967, #2387)', () => {
+  const row = overview.toDiscussion({
+    slug: 'recipe-ab12', name: 'Recipe Box', section: 'more', unread_count: '4',
+    last_message: 'hi', last_at: '2026-01-02T00:00:00Z', last_by: 'ada',
+  });
+  assert.equal(row.section, 'more');
+  assert.equal(row.unreadCount, 4, 'COUNT(*) arrives as a number; a string one is coerced');
+  const bare = overview.toDiscussion({ slug: 'x', name: 'X' });
+  assert.equal(bare.section, 'yours', 'anything but "more" is yours');
+  assert.equal(bare.unreadCount, 0);
 });
 
 test('an app channel opened in Messages mounts its chat after React commits, so its composer is wired', () => {
@@ -369,6 +425,87 @@ test('an app channel opened in Messages mounts its chat after React commits, so 
   // effect, the portal could not flush and nothing typed there ever sent.
   const thread = SCREEN.slice(SCREEN.indexOf('function AppDiscussionThread'));
   const body = thread.slice(0, thread.indexOf('\n}\n'));
-  assert.match(body, /const timer = window\.setTimeout\(\(\) => \{\s*if \(live\) view\?\.renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly \}\);\s*\}, 0\);/);
+  assert.match(body, /const timer = window\.setTimeout\(\(\) => \{\s*if \(live\) view\?\.renderGroupChatTab\?\.\(\{ host: el, slug, name, readOnly, archived \}\);\s*\}, 0\);/);
   assert.match(body, /live = false;\s*window\.clearTimeout\(timer\);/);
+});
+
+// ── Bug h: the discussion pane's header tile is the app's own ────────────
+//
+// The pane header built its tile from `{ name }` alone, so `iconViewFor`
+// could only ever fall through to the name's first letter: a "W" over the
+// Whiteboard channel whose inbox row, one column to the left, wears the
+// palette emoji. The header now draws the ROW's icon fields, and the app
+// record the pane fetches when there is no row.
+
+test('bug h: the discussion header draws the tile the inbox row draws', () => {
+  const thread = SCREEN.slice(SCREEN.indexOf('function AppDiscussionThread'));
+  const body = thread.slice(0, thread.indexOf('\n}\n'));
+  // The row, once, feeding both the #handle and the artwork.
+  assert.match(body, /const row = snap\.discussions\.find\(\(item\) => item\.slug === slug\) \|\| null;/);
+  assert.match(body, /const handle = row\?\.channel \|\| null;/);
+  // The row's own two fields first — the same pair AppChannelRow hands the
+  // tile — and the fetched app record when there is no row.
+  assert.match(body, /icon_url: row \? row\.iconUrl : \(ready \? context\.iconUrl : null\),/);
+  assert.match(body, /icon_emoji: row \? row\.iconEmoji : \(ready \? context\.iconEmoji : null\),/);
+  const header = body.slice(body.indexOf('<header className="messages-thread-header">'));
+  assert.match(header, /data-icon=\{appIconKind\(iconRecord as never\)\}/);
+  assert.match(header, /<AppIconContent app=\{iconRecord as never\} \/>/);
+  assert.doesNotMatch(header, /\{ name \} as never/, 'never the name alone again');
+  // ...which is what the row itself does, so the two tiles are one recipe.
+  const rowFn = SCREEN.slice(SCREEN.indexOf('function AppChannelRow'));
+  assert.match(rowFn.slice(0, rowFn.indexOf('\n}\n')),
+    /icon_url: discussion\.iconUrl,\s*icon_emoji: discussion\.iconEmoji,/);
+});
+
+test('bug h: the discussion context carries the app artwork, for a header with no inbox row', async () => {
+  // EXECUTED against the store, with `fetch` stubbed: a discussion opened by
+  // address for an app the viewer has no channel row for (a non-member
+  // following a link), whose record has an emoji, and one with an uploaded
+  // icon — which `/api/apps/:slug` sends as the raw row's `icon_image_id`,
+  // so the store spells the platform's own `/app-icons/<id>` address, as
+  // src/routes/messages-overview.js does for the row.
+  const { navStore } = loadTsx('frontend/src/features/nav/nav-store.js');
+  const api = {
+    MessagesApiError: class MessagesApiError extends Error {},
+    strictId: (value) => (Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : null),
+    listConversations: async () => [],
+  };
+  const store = loadTsx('frontend/src/features/messages/store.ts', {
+    stubs: { './api': api, '../nav/nav-store.js': { navStore } },
+  });
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const APPS = {
+    'karaoke-77aa': { slug: 'karaoke-77aa', name: 'Karaoke Night', icon_emoji: '🎤', icon_image_id: null, can_collaborate: false },
+    'garden-12ab': { slug: 'garden-12ab', name: 'Pixel Garden', icon_emoji: null, icon_image_id: 31, can_collaborate: true },
+  };
+  const saved = { window: globalThis.window, fetch: globalThis.fetch };
+  globalThis.window = { location: { search: '', hash: '' }, App: { user: { id: 7 } } };
+  globalThis.fetch = async (url) => {
+    const m = /^\/api\/apps\/([^/?]+)$/.exec(url);
+    if (m && APPS[m[1]]) return { ok: true, json: async () => ({ app: APPS[m[1]] }) };
+    if (String(url).startsWith('/api/messages/app-discussions')) return { ok: true, json: async () => ({ discussions: [] }) };
+    return { ok: false, json: async () => null };
+  };
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  // The snapshot, read the way the pane reads it.
+  const context = () => {
+    let out = null;
+    renderToHtml(createElement(() => { out = store.useMessagesSnapshot().discussionContext; return null; }));
+    return out;
+  };
+  try {
+    store.route(null, 'karaoke-77aa');
+    await settle(); await settle(); await settle();
+    assert.deepEqual({ ...context() }, {
+      slug: 'karaoke-77aa', name: 'Karaoke Night', archived: false, readOnly: true, iconUrl: null, iconEmoji: '🎤',
+    });
+    store.route(null, 'garden-12ab');
+    await settle(); await settle(); await settle();
+    assert.deepEqual({ ...context() }, {
+      slug: 'garden-12ab', name: 'Pixel Garden', archived: false, readOnly: false, iconUrl: '/app-icons/31', iconEmoji: null,
+    });
+  } finally {
+    globalThis.window = saved.window;
+    globalThis.fetch = saved.fetch;
+  }
 });

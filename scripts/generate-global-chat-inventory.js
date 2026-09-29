@@ -32,6 +32,14 @@ const METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
 // not carry. A Symbol key survives the object spread in buildInventory() and
 // is skipped by JSON.stringify, so this stays internal to the generator.
 //
+// `line` is where the router call sits. It orders the routes (declaration
+// order) and finds shadowed registrations below, and it is deliberately NOT
+// written out: every edit above a route moved it, so the committed file went
+// stale on nearly every change to a routes file, and on the merge of two
+// changes that had each regenerated it correctly. 26 of the 40 commits that
+// last touched the file changed nothing but line numbers and totals. Without
+// it the file changes only when the route surface does.
+//
 // `pathCount` is how many paths one router call registered: >1 means an array
 // of paths, which is how a shared boundary middleware is written.
 // `shadowsLaterRoute` means the same method and path is registered again
@@ -40,12 +48,16 @@ const METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
 // the --check run every time an unrelated edit shifted the file (#2502 added
 // one require and moved the auth.js boundary from line 168 to 169).
 const REGISTRATION = Symbol('registration');
+// The route counts this script reports, kept off the committed file for the
+// same reason as `line` (see buildInventory()).
+const COUNTS = Symbol('counts');
 
 const FILE_EXEMPTIONS = new Map([
   ['src/routes/anthropic-proxy.js', 'provider proxy used by development agents, not a Classic control'],
   ['src/routes/app-llm-proxy.js', 'child-app provider proxy, not a Classic control'],
   ['src/routes/app-platform-api.js', 'child-app platform API authenticated by app grants'],
   ['src/routes/app-storage.js', 'child-app storage transport authenticated by app grants'],
+  ['src/routes/agent-sessions.js', 'the agent-session Mayor\'s own conversation (#2779); one assistant does not drive another'],
   ['src/routes/cli-agent.js', 'local coding-agent protocol, represented by CLI Settings and development capabilities'],
   ['src/routes/internal.js', 'platform-to-worker/internal service protocol'],
   ['src/routes/public-api.js', 'anonymous public integration and waitlist surface'],
@@ -78,6 +90,10 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     matches: (route) => route.source === 'server.js'
       && ['/admin', '/admin-features', '/dashboard', '/debug', '/gallery', '*'].includes(route.path),
     reason: 'legacy or catch-all document route represented by in-app navigation capabilities',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/community-invites.js' && route.path === '/invite/:token',
+    reason: 'invite-link document: the shell with a link preview, represented by the invite-link capabilities',
   },
   {
     matches: (route) => route.path === '/api/iframe-token',
@@ -145,6 +161,11 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'proposal-owner troubleshooting export for local replay, not a Classic user control',
   },
   {
+    matches: (route) => route.source === 'src/routes/visual-evidence.js'
+      && route.path === '/api/apps/:slug/proposals/:sessionId/evidence/diagnostics/:artifactId',
+    reason: 'private binary comparison image represented by proposal evidence diagnostics',
+  },
+  {
     matches: (route) => route.source === 'src/routes/waitlist-connect.js',
     reason: 'signed-out waitlist OAuth protocol outside the authenticated Global Chat surface',
   },
@@ -175,7 +196,7 @@ const DOMAIN_RULES = [
   [/^\/api\/v4\/mobile(?:\/|$)/, 'native'],
   [/^\/challenges-api(?:\/|$)/, 'leaderboards'],
   [/^\/api\/(?:me\/)?global-chat/, 'settings'],
-  [/^\/api\/(?:auth|me\/(?:profile|public-profile|avatar|password|email|locale|social-identities|blocks)|profiles|users)/, 'profile'],
+  [/^\/api\/(?:auth|me\/(?:profile|public-profile|avatar|password|email|locale|social-identities|blocks|summary)|profiles|users|friends)/, 'profile'],
   [/^\/api\/(?:notifications|me\/(?:notification|mobile-push)|apps\/[^/]+\/notification)/, 'notifications'],
   [/^\/api\/(?:conversations|apps\/[^/]+\/messages)/, 'messages'],
   [/^\/api\/(?:sessions|me\/active-sessions|apps\/[^/]+\/(?:sessions|promoted|merged|shared-sessions|dev-flow)|budget)/, 'development'],
@@ -363,11 +384,10 @@ function discoverRoutes() {
           for (const route of discovered) {
             routes.push({
               source: relative(file),
-              line,
               method: method.toUpperCase(),
               path: route.path,
               expression: route.expression,
-              [REGISTRATION]: { pathCount: discovered.length, shadowsLaterRoute: false },
+              [REGISTRATION]: { line, pathCount: discovered.length, shadowsLaterRoute: false },
             });
           }
         }
@@ -389,12 +409,13 @@ function markShadowedRegistrations(routes) {
     if (!route.path) continue;
     const key = `${route.source}\0${route.method}\0${route.path}`;
     const seen = lastLine.get(key);
-    if (seen === undefined || route.line > seen) lastLine.set(key, route.line);
+    const { line } = route[REGISTRATION];
+    if (seen === undefined || line > seen) lastLine.set(key, line);
   }
   for (const route of routes) {
     if (!route.path) continue;
     const key = `${route.source}\0${route.method}\0${route.path}`;
-    route[REGISTRATION].shadowsLaterRoute = route.line < lastLine.get(key);
+    route[REGISTRATION].shadowsLaterRoute = route[REGISTRATION].line < lastLine.get(key);
   }
 }
 
@@ -453,6 +474,7 @@ function classicPathFor(domain, routePath) {
     return conversation ? '#messages/:' + conversation[1] : '#messages';
   }
   if (domain === 'leaderboards') return '#leaderboard/challenges';
+  if (value === '/api/auth/account' || value === '/api/auth/account-deletion') return '#settings/delete-account';
   if (domain === 'profile') return '#profile';
   if (domain === 'development') {
     const session = value.match(/\/sessions\/:(id|sessionId)(?:\/|$)/);
@@ -479,6 +501,11 @@ function classicPathFor(domain, routePath) {
 
 function transportFor(route) {
   const routePath = route.path || '';
+  // Self-deletion requires a browser session and private reauthentication in
+  // Settings. Discovery may open that form, never collect a password in chat.
+  if (routePath === '/api/auth/account' || routePath === '/api/auth/account-deletion') {
+    return 'client_action';
+  }
   if (/^\/api\/v4\/mobile\//.test(routePath)) return 'native_client';
   if (/\/(?:attachments?|chat-attachments)\/[^/]+\/view$/.test(routePath)
       || /\/report-snapshots\/:id\/html$/.test(routePath)
@@ -497,7 +524,11 @@ function mappedClassification(route, clientRefs, matches, reason = null) {
   const domain = domainFor(route);
   const risk = route.method === 'GET'
     ? 'read'
-    : (/delete|remove|revoke|reset|close|archive|override/.test(route.path || '')
+    : ((route.method === 'DELETE' && route.path === '/api/auth/account')
+      || /delete|remove|revoke|reset|close|archive|override/.test(route.path || '')
+      // Admin "Deduplicate user": anonymises one account and moves all of
+      // its rows onto another, irreversibly.
+      || (route.method === 'POST' && route.path === '/api/admin/users/:id/merge')
       ? 'destructive'
       : 'external_write');
   return {
@@ -581,7 +612,7 @@ function buildInventory() {
     ...classifyRoute(route, clientRefs),
   })).sort((a, b) => (
     a.source.localeCompare(b.source)
-    || a.line - b.line
+    || a[REGISTRATION].line - b[REGISTRATION].line
     || a.method.localeCompare(b.method)
   ));
   const matchedReferences = new Set(routes.flatMap((route) => (
@@ -622,16 +653,12 @@ function buildInventory() {
     // readiness marker, not a cohort flag: Classic still starts every launch
     // and remains the immediate escape hatch.
     parityReady: true,
-    summary: {
-      totalRoutes: routes.length,
-      mappedRoutes: counts.mapped,
-      exemptRoutes: counts.exempt,
-      reviewRequiredRoutes: counts.review_required,
-      clientApiReferences: clientRefs.size,
-      unmatchedClientApiReferences: unmatchedClientReferences.length,
-      settingsSections: settings.length,
-      navigationSurfaces: NAVIGATION_SURFACES.length,
-    },
+    // No totals are written. Every count is the length of a list below, and
+    // two changes that each add a route made the same edit to a committed
+    // total, which a merge applied once: main went stale though both changes
+    // had regenerated correctly (#3127 and #3133). The totals ride on the
+    // Symbol key JSON.stringify skips, for this script's own report.
+    [COUNTS]: { mapped: counts.mapped, reviewRequired: counts.review_required },
     navigation: NAVIGATION_SURFACES.map((item) => ({ ...item, mobileSupported: true })),
     settings,
     routes,
@@ -656,8 +683,8 @@ if (process.argv.includes('--check')) {
     console.error('Global Chat Classic inventory is stale. Run npm run global-chat:inventory.');
     process.exit(1);
   }
-  console.log(`Global Chat inventory current: ${inventory.summary.mappedRoutes} mapped, ${inventory.summary.reviewRequiredRoutes} need review.`);
+  console.log(`Global Chat inventory current: ${inventory[COUNTS].mapped} mapped, ${inventory[COUNTS].reviewRequired} need review.`);
 } else {
   fs.writeFileSync(OUTPUT, output);
-  console.log(`Wrote ${path.relative(ROOT, OUTPUT)}: ${inventory.summary.mappedRoutes} mapped, ${inventory.summary.reviewRequiredRoutes} need review.`);
+  console.log(`Wrote ${path.relative(ROOT, OUTPUT)}: ${inventory[COUNTS].mapped} mapped, ${inventory[COUNTS].reviewRequired} need review.`);
 }

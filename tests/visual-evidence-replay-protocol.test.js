@@ -98,6 +98,58 @@ test('Kubernetes streams action and failure events into the live diagnostics cal
   assert.equal(observed[0].actionId, 'open-settings');
 });
 
+test('each story and viewport runs after a fresh paired fixture reset', async () => {
+  const plan = require('./fixtures/visual-evidence').plan();
+  plan.stories[0].viewports.push({ name: 'mobile', width: 390, height: 844 });
+  const planHash = require('../src/services/visual-evidence-plan').planHash(plan);
+  const runId = 'a'.repeat(32);
+  let settingEnabled = true;
+  let resets = 0;
+  const selected = [];
+  const result = await replay.runPassCases({}, 42,
+    { runId, pass: 1, plan, publishArtifacts: false }, {
+      prepareCase: async (item) => {
+        settingEnabled = false;
+        resets += 1;
+        selected.push(`${item.storyId}/${item.viewport}`);
+        return { origins: { base: 'http://base:3000', head: 'http://head:3000' } };
+      },
+      runCase: async (_config, _sessionId, input) => {
+        assert.equal(settingEnabled, false, 'the preceding viewport must not change this fixture');
+        assert.equal(input.plan.stories[0].viewports.length, 2, 'each job carries the full hashed plan');
+        settingEnabled = true;
+        return {
+          result: { passed: true, runId, pass: 1, planHash,
+            provenance: { fixtureFingerprint: 'same-pair' },
+            stories: [{ id: input.selection.storyId, viewport: input.selection.viewport }] },
+          artifacts: [], events: [],
+        };
+      },
+    });
+  assert.equal(resets, 2);
+  assert.deepEqual(selected, ['invite-suggestions/desktop', 'invite-suggestions/mobile']);
+  assert.deepEqual(result.result.stories.map((item) => item.viewport), ['desktop', 'mobile']);
+  assert.equal(result.result.planHash, planHash);
+});
+
+test('an isolated case cannot return another viewport or fixture identity', async () => {
+  const plan = require('./fixtures/visual-evidence').plan();
+  const runId = 'a'.repeat(32);
+  const planHash = require('../src/services/visual-evidence-plan').planHash(plan);
+  await assert.rejects(replay.runPassCases({}, 42, {
+    runId, pass: 1, plan, publishArtifacts: false,
+    provenance: { fixtureFingerprint: 'expected' },
+  }, {
+    prepareCase: async () => ({ origins: { base: 'http://base:3000', head: 'http://head:3000' } }),
+    runCase: async () => ({
+      result: { passed: true, runId, pass: 1, planHash,
+        provenance: { fixtureFingerprint: 'changed' },
+        stories: [{ id: 'invite-suggestions', viewport: 'desktop' }] },
+      artifacts: [],
+    }),
+  }), { code: 'isolated_replay_mismatch' });
+});
+
 test('a browser job launcher error keeps its original code with bounded runtime context', async (t) => {
   const saved = kubernetes.runEvidenceJob;
   const launchError = Object.assign(new Error('Job timed out at http://internal/?token=secret.jwt'), {
@@ -160,7 +212,9 @@ test('runner-normalized optional provenance matches the exact submitted fixture'
   const normalized = runner.validateInput({
     runId: 'a'.repeat(32), pass: 1,
     origins: { base: 'http://base:3000', head: 'http://head:3000' },
-    authTokens: { member: 'fixture-member', read_only_admin: 'fixture-admin' },
+    authTokens: {
+      member: 'fixture-member', read_only_admin: 'fixture-admin', full_admin: 'fixture-full-admin',
+    },
     provenance: submitted,
     plan: require('./fixtures/visual-evidence').plan(),
   }).provenance;
@@ -193,10 +247,43 @@ test('a passing replay must cover every declared story, viewport, and requested 
   const first = { result: { passed: true, planHash, runId: 'a'.repeat(32), pass: 1, stories }, artifacts: [] };
   const second = { result: { passed: true, planHash, runId: 'a'.repeat(32), pass: 2, stories }, artifacts };
   assert.equal(replay.comparePasses(first, second, { plan }).passed, true);
+  const diagnosticImages = artifacts.filter((item) => item.media === 'png');
+  assert.equal(replay.comparePasses({ ...first, artifacts: diagnosticImages }, second, { plan }).passed, true);
+  assert.equal(replay.comparePasses({ ...first, artifacts }, second, { plan }).code,
+    'incomplete_replay_coverage', 'pass one cannot claim an animation as a diagnostic image');
   assert.equal(replay.comparePasses(first, { ...second, artifacts: artifacts.slice(1) }, { plan }).code,
     'incomplete_replay_coverage');
   assert.equal(replay.comparePasses({ ...first, artifacts: [artifacts[0]] }, second, { plan }).code,
     'incomplete_replay_coverage');
+});
+
+test('mismatched comparison stores only four private images behind the current run fence', async () => {
+  const data = Buffer.from('diagnostic image');
+  const digest = crypto.createHash('sha256').update(data).digest('hex');
+  const items = (pass) => ['focus', 'context'].map((variant) => ({
+    pass, storyId: 'dialog', viewport: 'desktop', side: 'head', variant,
+    media: 'png', width: 100, height: 80, sha256: digest, data,
+  }));
+  const writes = [];
+  let current = true;
+  const pool = { query: async (sql, values) => {
+    if (String(sql).includes('FROM visual_evidence_runs')) return { rowCount: current ? 1 : 0 };
+    writes.push({ sql: String(sql), values });
+    return { rowCount: 1 };
+  } };
+  const args = {
+    headSha: 'b'.repeat(40), planHash: 'c'.repeat(64), attempt: 1,
+    comparison: { storyId: 'dialog', viewport: 'desktop', side: 'head' },
+  };
+  assert.equal(await replay.storeDiagnosticArtifacts(pool, 'a'.repeat(32), items(1), items(2), args), 4);
+  assert.equal(writes.filter((item) => item.sql.includes('INSERT INTO visual_evidence_diagnostic_artifacts')).length, 4);
+  assert.deepEqual(writes.filter((item) => item.sql.includes('INSERT INTO visual_evidence_diagnostic_artifacts'))
+    .map((item) => item.values[3]), [1, 1, 2, 2]);
+  current = false;
+  await assert.rejects(replay.storeDiagnosticArtifacts(pool, 'a'.repeat(32), items(1), items(2), args),
+    { code: 'stale_evidence_operation' });
+  await assert.rejects(replay.storeDiagnosticArtifacts(pool, 'a'.repeat(32), [], items(2), args),
+    { code: 'missing_diagnostic_artifact' });
 });
 
 test('Kubernetes exposes a separate evidence command rather than changing legacy capture', () => {

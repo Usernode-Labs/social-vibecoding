@@ -54,7 +54,10 @@ stubModule('../src/services/ws', { pushAppStatusUpdate() {} });
 stubModule('../src/services/app-creator', {
   createApp: async () => {}, finalizeDeploy: async () => {}, reportPhase() {}, endPhases() {},
 });
-stubModule('../src/services/template', { getConnectorScaffoldFiles: () => [] });
+stubModule('../src/services/template', {
+  getConnectorScaffoldFiles: () => [],
+  getCanonicalRepoFile: () => null,
+});
 delete require.cache[require.resolve('../src/services/app-forker')];
 const forker = require('../src/services/app-forker');
 

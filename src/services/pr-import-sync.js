@@ -34,6 +34,7 @@
 // Purely additive to the native proposal/vote/merge path.
 
 const log = require('./logger');
+const summaryFreshness = require('./summary-freshness');
 const github = require('./github');
 const githubMock = require('./github-mock');
 const { usesMockGithubForImports } = require('../config');
@@ -129,7 +130,11 @@ async function syncImportedProposal({ config, pool, session }) {
     const freshBody = typeof pr.body === 'string' ? pr.body : null;
     if (freshBody !== (session.pr_body == null ? null : session.pr_body)) {
       try {
-        await pool.query('UPDATE chat_sessions SET pr_body = $1 WHERE id = $2', [freshBody, session.id]);
+        await pool.query(
+          `UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`,
+          [freshBody, session.id]
+        );
+        session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
         session.pr_body = freshBody;
       } catch (err) {
         log.warn('pr-import-sync', 'description mirror refresh failed (non-fatal)', {
@@ -268,6 +273,7 @@ async function applyHeadChange({
   const { rows: claimed } = await pool.query(
     `UPDATE chat_sessions
         SET imported_pr_head_sha = $1,
+            ${summaryFreshness.INVALIDATE_SQL},
             stale_notified_at = NULL,
             approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 1 ELSE 0 END,
             checks_commit_sha = CASE WHEN $4::boolean THEN $1 ELSE checks_commit_sha END
@@ -293,6 +299,7 @@ async function applyHeadChange({
   }
   const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.imported_pr_head_sha = newHead;
+  session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
   session.approval_epoch = epoch;
   if (checksCarry) session.checks_commit_sha = newHead;
   if (session.visual_evidence_state || session.visual_evidence_detail) {
@@ -568,11 +575,13 @@ async function rerunChecksForNewHead({
   // clone against the new head — record a gate-passing 'skipped' verdict
   // instead of building staging, so the head-change flow stays clickable.
   if (usesMockGithubForImports()) {
-    await visuals.storeChecksSkipped(pool, session.id, newHead,
+    const stored = await visuals.storeChecksSkipped(pool, session.id, newHead,
       'mock GitHub preview: automated checks not run')
       .catch((err) => log.warn('pr-import-sync', 'mock storeChecksSkipped failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
+    // The pending tick above reached every open page; so must the verdict.
+    if (stored) visuals.notifyChecks(session.id, { state: 'skipped', results: [] }, newHead, null);
     return;
   }
 
@@ -607,7 +616,7 @@ async function rerunChecksForNewHead({
     await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
   } catch (_) { /* edge verification is best-effort */ }
 
-  await visuals.captureForSession(config, session, app, newHead || null, result, { send: () => {}, trigger })
+  await visuals.captureForSession(config, session, app, newHead || null, result, { send: null, trigger })
     .catch((err) => log.warn('pr-import-sync', 'checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
@@ -736,11 +745,12 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // verdict — the imported proposal shows a neutral (mergeable) check so
     // the whole preview flow (import → vote → merge) is exercisable.
     if (usesMockGithubForImports()) {
-      await visuals.storeChecksSkipped(pool, session.id, headSha || null,
+      const stored = await visuals.storeChecksSkipped(pool, session.id, headSha || null,
         'mock GitHub preview: automated checks not run')
         .catch((err) => log.warn('pr-import-sync', 'import mock storeChecksSkipped failed (non-fatal)', {
           sessionId: session.id, err: err.message,
         }));
+      if (stored) visuals.notifyChecks(session.id, { state: 'skipped', results: [] }, headSha || null, null);
       noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
       return;
     }

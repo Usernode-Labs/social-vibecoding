@@ -22,6 +22,8 @@ const execFileAsync = promisify(execFile);
 let planContract;
 try { planContract = require('../src/services/visual-evidence-plan'); }
 catch (_) { planContract = require('./visual-evidence-plan'); }
+const sessionBootstrap = require('../worker/session-bootstrap');
+const hostedApps = require('../worker/evidence-hosted-origins');
 
 const ARTIFACT_PREFIX = '__USERNODE_EVIDENCE_ARTIFACT__ ';
 const EVENT_PREFIX = '__USERNODE_EVIDENCE__ ';
@@ -35,6 +37,11 @@ const STEPS_TARGET_BYTES = 1_500_000;
 const STEPS_MAX_BYTES = 4_000_000;
 const MOTION_TARGET_BYTES = 2_000_000;
 const MOTION_MAX_BYTES = 6_000_000;
+const INITIAL_NAVIGATION_RETRY_DELAY_MS = 500;
+const RETRYABLE_INITIAL_NAVIGATION = /\bnet::ERR_(NETWORK_CHANGED|CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_REFUSED|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE)\b/i;
+const CHECKPOINT_SETTLE_MS = 12_000;
+const CHECKPOINT_MAX_SAMPLES = 6;
+const CHECKPOINT_SCREENSHOT_MS = 6_000;
 
 const CHROMIUM_ARGS = Object.freeze([
   '--disable-dev-shm-usage',
@@ -121,6 +128,18 @@ function validateInput(raw) {
   const plan = planContract.parseReplayPlan(raw.plan);
   const pass = Number(raw.pass);
   if (![1, 2].includes(pass)) throw new ReplayFailure('invalid_pass', 'Replay pass must be 1 or 2.');
+  let selection = null;
+  if (raw.selection != null) {
+    if (!raw.selection || typeof raw.selection !== 'object'
+        || Object.keys(raw.selection).sort().join(',') !== 'storyId,viewport') {
+      throw new ReplayFailure('invalid_selection', 'Replay selection must name one declared story and viewport.');
+    }
+    const story = plan.stories.find((item) => item.id === raw.selection.storyId);
+    if (!story?.viewports.some((item) => item.name === raw.selection.viewport)) {
+      throw new ReplayFailure('invalid_selection', 'Replay selection must name one declared story and viewport.');
+    }
+    selection = { storyId: raw.selection.storyId, viewport: raw.selection.viewport };
+  }
   const baseOrigin = parseOrigin(raw.origins?.base, 'Base');
   const headOrigin = parseOrigin(raw.origins?.head, 'Head');
   if (baseOrigin === headOrigin) throw new ReplayFailure('identical_origins', 'Base and head origins must be distinct.');
@@ -133,7 +152,7 @@ function validateInput(raw) {
   if (!provenance.fixtureFingerprint || typeof provenance.fixtureFingerprint !== 'string') {
     throw new ReplayFailure('invalid_provenance', 'A paired fixture fingerprint is required.');
   }
-  const authTokens = Object.fromEntries(['member', 'read_only_admin'].map((persona) => {
+  const authTokens = Object.fromEntries(['member', 'read_only_admin', 'full_admin'].map((persona) => {
     const token = raw.authTokens?.[persona];
     if (typeof token !== 'string' || token.length === 0 || token.length > 8192
         || !/^[A-Za-z0-9._~-]+$/.test(token)) {
@@ -145,8 +164,10 @@ function validateInput(raw) {
     runId: raw.runId,
     pass,
     publishArtifacts: raw.publishArtifacts === true && pass === 2,
+    diagnosticArtifacts: raw.diagnosticArtifacts === true && pass === 1,
     plan,
     planHash: planContract.planHash(plan),
+    selection,
     origins: { base: baseOrigin, head: headOrigin },
     cookies: raw.cookies && typeof raw.cookies === 'object' ? raw.cookies : {},
     authTokens,
@@ -311,6 +332,30 @@ async function waitForAnyVisible(page, spec, description, timeoutMs) {
   }
 }
 
+// A hidden wait succeeds only once no matching element is visible. Filter
+// before selecting the first match so a hidden duplicate cannot conceal a
+// still-visible one. An absent match is also hidden, matching assertions.
+async function waitForNotVisible(page, spec, description, timeoutMs) {
+  const visible = locatorFor(page, spec, { includeHidden: true }).filter({ visible: true });
+  try {
+    await visible.first().waitFor({ state: 'hidden', timeout: timeoutMs });
+  } catch (error) {
+    if (await visible.count().catch(() => null) === 0) return;
+    const snapshot = await locatorSnapshot(page, spec, { includeCandidates: true });
+    if (!Number.isInteger(snapshot.attachedCount)
+        && !Number.isInteger(snapshot.matchedCount)) throw error;
+    throw new ReplayFailure(
+      'locator_still_visible',
+      `${description} remained visible after ${timeoutMs} ms.`,
+      { ...snapshot, waitState: 'hidden', timeoutMs }
+    );
+  }
+}
+
+async function waitForVisibleText(page, text, description, timeoutMs) {
+  return waitForAnyVisible(page, { by: 'text', value: text, exact: false }, description, timeoutMs);
+}
+
 function joinedUrl(origin, relativePath) {
   const url = new URL(relativePath, `${origin}/`);
   if (url.origin !== origin) throw new ReplayFailure('cross_origin_navigation', 'The replay plan attempted to leave its evidence origin.');
@@ -321,6 +366,133 @@ function authorizedUrl(origin, relativePath, token) {
   const url = new URL(joinedUrl(origin, relativePath));
   if (token) url.searchParams.set('token', token);
   return url.toString();
+}
+
+function replayNavigationToken(authToken, bootstrap) {
+  // The bootstrap request has already exchanged this token for a session
+  // cookie. Match the planner's ordinary browser navigation once that cookie
+  // exists; ?token= also changes first-run UI such as the Home tour.
+  return bootstrap.sessionCookieInstalled || bootstrap.cookieAlreadyPresent ? '' : authToken;
+}
+
+// A freshly reset internal service can change its network endpoint between
+// session bootstrap and Chromium's first document request. Retry only that
+// pre-document transport failure, never an app response, action, or assertion.
+// The same plan still has to pass both independent clean replays.
+async function navigateStart(page, url, onRetry = () => {}, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      return await page.goto(url, { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
+    } catch (error) {
+      const code = RETRYABLE_INITIAL_NAVIGATION.exec(String(error?.message || ''))?.[1]?.toLowerCase();
+      if (!code || attempt === 2) throw error;
+      onRetry({ attempt: attempt + 1, code });
+      await wait(INITIAL_NAVIGATION_RETRY_DELAY_MS);
+    }
+  }
+}
+
+function recoveredInitialDocumentFailure(request, page, startUrl, retryCodes) {
+  if (!retryCodes?.size || !request?.isNavigationRequest?.()
+      || request.resourceType?.() !== 'document') return false;
+  try {
+    if (request.frame() !== page.mainFrame()) return false;
+    const requested = new URL(request.url());
+    const start = new URL(startUrl);
+    // URL fragments are local to the browser and never identify an HTTP
+    // request. Match the exact origin, path and query (including the fixture
+    // token) so an unrelated API or document failure cannot be suppressed.
+    if (requested.origin !== start.origin || requested.pathname !== start.pathname
+        || requested.search !== start.search) return false;
+    const code = RETRYABLE_INITIAL_NAVIGATION.exec(String(request.failure()?.errorText || ''))?.[1]?.toLowerCase();
+    return !!code && retryCodes.has(code);
+  } catch { return false; }
+}
+
+function discardRecoveredInitialNavigationFailures(
+  diagnostics, failures, page, startUrl, retryCodes, navigationStatus
+) {
+  if (navigationStatus < 200 || navigationStatus >= 400 || !retryCodes?.size) return 0;
+  const recovered = new Set(failures
+    .filter(({ request }) => recoveredInitialDocumentFailure(request, page, startUrl, retryCodes))
+    .map(({ failure }) => failure));
+  diagnostics.failedRequests = diagnostics.failedRequests.filter((failure) => !recovered.has(failure));
+  return recovered.size;
+}
+
+function requestIdentity(url, method) {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    return `${String(method || 'GET').toUpperCase()} ${parsed.toString()}`;
+  } catch { return null; }
+}
+
+// Chromium keeps requestfailed and console records after an app successfully
+// retries the same request. Suppress only an ERR_NETWORK_CHANGED entry with a
+// later 2xx/3xx response for the exact method and URL. Any unrecovered
+// request, other network error, unrelated console error, or page exception
+// still fails the replay. The two clean passes and UI assertions are unchanged.
+function discardRecoveredNetworkChanges(diagnostics, failures, successes, consoleEvents) {
+  const recovered = new Set();
+  const unrecoveredKeys = new Set();
+  const recordedFailures = new Set(diagnostics.failedRequests);
+  for (const failure of failures) {
+    if (!recordedFailures.has(failure.entry)) continue;
+    const key = requestIdentity(failure.url, failure.method);
+    const laterSuccess = key && successes.get(key) > failure.order;
+    if (key && /\bnet::ERR_NETWORK_CHANGED\b/i.test(failure.error) && laterSuccess) {
+      recovered.add(failure.entry);
+    } else if (key) {
+      unrecoveredKeys.add(key);
+    }
+  }
+  diagnostics.failedRequests = diagnostics.failedRequests.filter((entry) => !recovered.has(entry));
+  const recoveredKeys = new Set(failures.filter((failure) => recovered.has(failure.entry))
+    .map((failure) => requestIdentity(failure.url, failure.method)));
+  const recoveredConsole = new Set(consoleEvents.filter((event) => {
+    const key = requestIdentity(event.url, event.method);
+    return key && recoveredKeys.has(key) && !unrecoveredKeys.has(key)
+      && /\bnet::ERR_NETWORK_CHANGED\b/i.test(event.message);
+  }).map((event) => event.entry));
+  diagnostics.consoleErrors = diagnostics.consoleErrors.filter((entry) => !recoveredConsole.has(entry));
+  return { requests: recovered.size, consoleErrors: recoveredConsole.size };
+}
+
+function pageRouteIdentity(value) {
+  try {
+    const url = new URL(value);
+    return `${url.pathname}${url.hash}`;
+  } catch { return null; }
+}
+
+// A GET/HEAD fetch or XHR cancelled while the page navigates away belongs to
+// the old screen. React cleanup can abort its fetch before the browser updates
+// the route, so compare both the route at failure and the asserted checkpoint.
+// Keep aborts on the checkpoint route, documents, assets, mutations, and every
+// other network failure visible. UI assertions have already completed.
+function discardCancelledReads(diagnostics, failures, consoleEvents, checkpointRoute = null) {
+  const cancelled = new Set(failures.filter((failure) =>
+    diagnostics.failedRequests.includes(failure.entry)
+      && /\bnet::ERR_ABORTED\b/i.test(failure.error)
+      && ['GET', 'HEAD'].includes(String(failure.method || '').toUpperCase())
+      && ['fetch', 'xhr'].includes(failure.resourceType)
+      && failure.startRoute && failure.endRoute
+      && (failure.startRoute !== failure.endRoute
+        || (checkpointRoute && failure.startRoute !== checkpointRoute))
+  ).map((failure) => failure.entry));
+  diagnostics.failedRequests = diagnostics.failedRequests.filter((entry) => !cancelled.has(entry));
+  const cancelledKeys = new Set(failures.filter((failure) => cancelled.has(failure.entry))
+    .map((failure) => requestIdentity(failure.url, failure.method)));
+  const remainingKeys = new Set(failures.filter((failure) => diagnostics.failedRequests.includes(failure.entry))
+    .map((failure) => requestIdentity(failure.url, failure.method)));
+  const matchingConsole = new Set(consoleEvents.filter((event) => {
+    const key = requestIdentity(event.url, event.method);
+    return key && cancelledKeys.has(key) && !remainingKeys.has(key)
+      && /\bnet::ERR_ABORTED\b/i.test(event.message);
+  }).map((event) => event.entry));
+  diagnostics.consoleErrors = diagnostics.consoleErrors.filter((entry) => !matchingConsole.has(entry));
+  return { requests: cancelled.size, consoleErrors: matchingConsole.size };
 }
 
 function publicRelativePath(value) {
@@ -351,6 +523,26 @@ function diagnosticLocation(value, origin) {
         .map((key) => safeDiagnosticText(key, 80)),
     };
   } catch { return { sameOrigin: false }; }
+}
+
+function diagnosticOriginKind(value, origin, hostedOrigins) {
+  try {
+    const source = new URL(value).origin;
+    if (source === origin) return 'platform';
+    if (hostedOrigins.has(source)) return 'hosted_app';
+    return 'other_origin';
+  } catch { return 'unknown'; }
+}
+
+function pageErrorOriginKind(error, origin, hostedOrigins) {
+  // Playwright pageerror has no frame property. Chromium's first stack frame
+  // normally names the throwing script. Retain only this fixed origin class,
+  // never the URL, query, code, or stack itself.
+  for (const line of String(error?.stack || '').split('\n').slice(1, 8)) {
+    const source = line.match(/https?:\/\/[^\s)]+/)?.[0];
+    if (source) return diagnosticOriginKind(source, origin, hostedOrigins);
+  }
+  return 'unknown';
 }
 
 async function failurePageState(page, context, origin, navigation = null) {
@@ -411,6 +603,7 @@ async function failurePageState(page, context, origin, navigation = null) {
 
 function failureBrowserDiagnostics(diagnostics) {
   return {
+    expectedSandboxWarnings: diagnostics.expectedSandboxWarnings || 0,
     consoleErrorCount: diagnostics.consoleErrors.length,
     pageErrorCount: diagnostics.pageErrors.length,
     failedRequestCount: diagnostics.failedRequests.length,
@@ -427,6 +620,15 @@ function failureBrowserDiagnostics(diagnostics) {
     blockedRequests: diagnostics.blockedRequests.slice(0, 5),
     httpErrors: diagnostics.httpErrors.slice(0, 10),
   };
+}
+
+function expectedPendingFrameWarning(message, source) {
+  // The platform intentionally keeps its pending app iframe at about:blank
+  // with sandbox="" until a vetted app URL is ready. Chromium reports this
+  // exact blocked-script warning from the shell bundle; it is the security
+  // boundary working, not an app exception. Keep counting it for diagnostics.
+  return source?.sameOrigin === true && source.pathname === '/shell/assets/shell.js'
+    && message === "Blocked script execution in 'about:blank' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.";
 }
 
 function expectedFinalPath(startPath, pageUrl, origin, side = 'page', { allowDeclaredHome = false } = {}) {
@@ -448,6 +650,67 @@ async function settlePage(page, { motion = false } = {}) {
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   }).catch(() => {});
   if (!motion) await page.waitForTimeout(150);
+}
+
+async function captureStableCheckpoint(page, network, { motion = false } = {}) {
+  if (motion) {
+    await settlePage(page, { motion: true });
+    return { png: await page.screenshot({ type: 'png' }), stability: { mode: 'motion', sampleCount: 1 } };
+  }
+  // A locator can become visible before the rest of an asynchronous screen
+  // has finished loading. Wait for its current reads, then require the actual
+  // pixels to agree across three separated samples. This keeps static
+  // evidence from freezing a partially painted route or modal backdrop.
+  const networkStartedAt = Date.now();
+  let networkQuiet = true;
+  try { await network.quiet(3_000, 350); }
+  catch (error) {
+    // Polling may keep the network busy while the page is visually settled.
+    // The pixel samples below are the actual checkpoint readiness test.
+    if (error?.code !== 'network_not_quiet') throw error;
+    networkQuiet = false;
+  }
+  const networkWaitMs = Date.now() - networkStartedAt;
+  // Three samples are required for two agreeing pairs. The old three-second
+  // wall deadline could expire after just two slow Chromium screenshots, so
+  // a perfectly static page had no possible way to pass. Bound each capture
+  // and the number of samples while allowing the required third sample.
+  const startedAt = Date.now();
+  const deadline = startedAt + CHECKPOINT_SETTLE_MS;
+  let previous = null;
+  let stablePairs = 0;
+  const samples = [];
+  while (samples.length < 3 || (Date.now() < deadline && samples.length < CHECKPOINT_MAX_SAMPLES)) {
+    const settleStartedAt = Date.now();
+    await settlePage(page);
+    const settleMs = Date.now() - settleStartedAt;
+    const screenshotStartedAt = Date.now();
+    let png;
+    try { png = await page.screenshot({ type: 'png', timeout: CHECKPOINT_SCREENSHOT_MS }); }
+    catch {
+      throw new ReplayFailure('checkpoint_capture_failed',
+        'The browser could not capture the static checkpoint.',
+        { sampleCount: samples.length, samples, networkQuiet, networkWaitMs,
+          captureWaitMs: Date.now() - startedAt });
+    }
+    const screenshotMs = Date.now() - screenshotStartedAt;
+    const hashStartedAt = Date.now();
+    const hash = perceptualHash(png);
+    const hashMs = Date.now() - hashStartedAt;
+    const distance = previous == null ? null : hammingHex(previous, hash);
+    samples.push({ settleMs, screenshotMs, hashMs, distance });
+    stablePairs = distance != null && distance <= 2 ? stablePairs + 1 : 0;
+    if (stablePairs >= 2) return { png, stability: {
+      mode: 'static', sampleCount: samples.length, samples,
+      networkQuiet, networkWaitMs, captureWaitMs: Date.now() - startedAt,
+    } };
+    previous = hash;
+    await page.waitForTimeout(250);
+  }
+  throw new ReplayFailure('unstable_checkpoint',
+    'The static screen kept changing at its checkpoint; wait for a real settled state before capturing.',
+    { sampleCount: samples.length, samples, networkQuiet, networkWaitMs,
+      captureWaitMs: Date.now() - startedAt });
 }
 
 function networkTracker(page) {
@@ -473,9 +736,16 @@ function networkTracker(page) {
   };
 }
 
-async function executeAction(page, action, origin, network, authToken = '') {
+async function executeAction(page, action, origin, network, authToken = '', controlledFailure = null,
+  hostedAppState = null) {
   const startedAt = Date.now();
   switch (action.type) {
+    case 'requestFailure':
+      if (!controlledFailure || controlledFailure.path !== action.path) {
+        throw new ReplayFailure('invalid_controlled_failure', 'Request failure does not match the accepted intent.');
+      }
+      controlledFailure.enabled = action.enabled;
+      break;
     case 'navigate':
       await page.goto(authorizedUrl(origin, action.path, authToken), { waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS });
       break;
@@ -506,6 +776,22 @@ async function executeAction(page, action, origin, network, authToken = '') {
       await (await resolveOne(page, action.from, `${action.id}.from`))
         .dragTo(await resolveOne(page, action.to, `${action.id}.to`), { timeout: planContract.MAX_WAIT_MS });
       break;
+    case 'hoverViewport': {
+      const viewport = page.viewportSize();
+      if (!viewport || viewport.width <= 0 || viewport.height <= 0) {
+        throw new ReplayFailure('viewport_unavailable', `${action.id} viewport is unavailable.`);
+      }
+      await page.mouse.move(
+        Math.min(viewport.width - 1, Math.round(viewport.width * action.xRatio)),
+        Math.min(viewport.height - 1, Math.round(viewport.height * action.yRatio)));
+      break;
+    }
+    case 'hoverPoint': {
+      const box = await (await resolveOne(page, action.surface, action.id)).boundingBox();
+      if (!box || box.width <= 0 || box.height <= 0) throw new ReplayFailure('surface_not_visible', `${action.id} surface is not visible.`);
+      await page.mouse.move(box.x + box.width * action.xRatio, box.y + box.height * action.yRatio);
+      break;
+    }
     case 'clickPoint': {
       const box = await (await resolveOne(page, action.surface, action.id)).boundingBox();
       if (!box || box.width <= 0 || box.height <= 0) throw new ReplayFailure('surface_not_visible', `${action.id} surface is not visible.`);
@@ -524,12 +810,28 @@ async function executeAction(page, action, origin, network, authToken = '') {
     case 'scrollIntoView':
       await (await resolveOne(page, action.target, action.id)).scrollIntoViewIfNeeded({ timeout: planContract.MAX_WAIT_MS });
       break;
+    case 'waitForHostedApp': {
+      const deadline = Date.now() + action.timeoutMs;
+      while (!hostedAppState?.loaded.has(action.slug) && Date.now() < deadline) {
+        await page.waitForTimeout(50);
+      }
+      if (!hostedAppState?.loaded.has(action.slug)) {
+        throw new ReplayFailure('hosted_app_not_loaded',
+          `The ${action.slug} app document did not load successfully in the managed app frame.`,
+          { appSlug: action.slug, loadedAppSlugs: [...(hostedAppState?.loaded.keys() || [])].slice(0, 10),
+            trustedAppSlugs: [...(hostedAppState?.catalog?.values() || [])].slice(0, 20) });
+      }
+      break;
+    }
     case 'scrollBy':
       await page.evaluate(({ x, y }) => window.scrollBy({ left: x, top: y, behavior: 'instant' }), { x: action.x, y: action.y });
       break;
     case 'waitFor':
-      if (action.target) await waitForAnyVisible(page, action.target, action.id, action.timeoutMs);
-      else if (action.text) await page.getByText(action.text, { exact: true }).first().waitFor({ state: 'visible', timeout: action.timeoutMs });
+      if (action.target) {
+        if (action.state === 'hidden') await waitForNotVisible(page, action.target, action.id, action.timeoutMs);
+        else await waitForAnyVisible(page, action.target, action.id, action.timeoutMs);
+      }
+      else if (action.text) await waitForVisibleText(page, action.text, action.id, action.timeoutMs);
       else if (action.path) await page.waitForURL((url) => url.origin === origin && publicRelativePath(url) === action.path, { timeout: action.timeoutMs });
       else await network.quiet(action.timeoutMs);
       break;
@@ -554,7 +856,10 @@ async function evaluateAssertion(page, assertion, origin) {
   let actual = null;
   switch (assertion.type) {
     case 'visible': passed = count === 1 && await first.isVisible(); break;
-    case 'hidden': passed = count === 0 || (count === 1 && !await first.isVisible()); break;
+    case 'hidden':
+      if (count === 1) actual = await first.isVisible();
+      passed = count === 0 || (count === 1 && actual === false);
+      break;
     case 'attached': passed = count === 1; break;
     case 'detached': passed = count === 0; break;
     case 'text':
@@ -715,22 +1020,78 @@ async function encodeWebm(frames, { fps, targetBytes, maxBytes }) {
   } finally { await fsp.rm(dir, { recursive: true, force: true }); }
 }
 
-async function installOriginFence(context, allowedOrigins, diagnostics) {
+const { trustedHostedAppOrigins, loadTrustedHostedAppOrigins } = hostedApps;
+
+async function installOriginFence(context, allowedOrigins, diagnostics, controlledFailure = null,
+  { loadHostedOrigins = null, hostedOrigins = new Set() } = {}) {
+  const admittedFrames = new WeakSet();
+  let trustedOrigins = null;
+  const insideAdmittedFrame = (frame) => {
+    for (let current = frame; current; current = current.parentFrame?.()) {
+      if (admittedFrames.has(current)) return true;
+    }
+    return false;
+  };
   await context.route('**/*', async (route) => {
     const request = route.request();
     const url = request.url();
     if (/^(?:data|blob|about):/.test(url)) return route.continue();
     let origin;
     try { origin = new URL(url).origin; } catch { origin = null; }
-    if (origin && allowedOrigins.has(origin)) return route.continue();
+    if (origin && allowedOrigins.has(origin)) {
+      if (controlledFailure?.enabled && request.method() === 'GET'
+          && new URL(url).pathname + new URL(url).search === controlledFailure.path) {
+        controlledFailure.requests.add(request);
+        controlledFailure.hits += 1;
+        controlledFailure.urls.add(url);
+        return route.abort('failed');
+      }
+      return route.continue();
+    }
+    // A child app is a different origin. Admit its actual document only when
+    // the platform's own app catalog says it is a deployed, public app AND
+    // the request comes from the managed app iframe. Subresources remain
+    // restricted to that frame; arbitrary cross-origin requests stay fenced.
+    let frame = null;
+    try { frame = request.frame(); } catch { /* service worker or pre-frame request */ }
+    if (origin && hostedOrigins.has(origin) && insideAdmittedFrame(frame)) return route.continue();
+    if (origin && loadHostedOrigins && request.resourceType() === 'document' && frame?.parentFrame?.()) {
+      let managedFrame = false;
+      try { managedFrame = await frame.frameElement().then((element) => element.getAttribute('id')) === 'app-iframe'; }
+      catch { /* an unmounted frame is never trusted */ }
+      if (managedFrame) {
+        if (!trustedOrigins) trustedOrigins = Promise.resolve().then(loadHostedOrigins);
+        const catalog = await trustedOrigins;
+        if (catalog.has(origin)) {
+          admittedFrames.add(frame);
+          hostedOrigins.add(origin);
+          return route.continue();
+        }
+      }
+    }
     if (diagnostics.blockedRequests.length < MAX_CONSOLE_ITEMS) {
       diagnostics.blockedRequests.push({
         origin: safeDiagnosticText(origin || 'invalid', 120),
         resourceType: safeDiagnosticText(request.resourceType(), 40),
+        ...(frame?.parentFrame?.() ? { embedded: true } : {}),
       });
     }
     return route.abort('blockedbyclient');
   });
+}
+
+function discardExpectedControlledFailureConsole(diagnostics, consoleEvents, controlledFailure) {
+  if (!controlledFailure?.hits) return 0;
+  let discarded = 0;
+  for (const { entry, url, message } of consoleEvents) {
+    if (!controlledFailure.urls.has(url)
+        || !/^Failed to load resource: net::ERR_(?:FAILED|BLOCKED_BY_CLIENT)$/i.test(message.trim())) continue;
+    const index = diagnostics.consoleErrors.indexOf(entry);
+    if (index < 0) continue;
+    diagnostics.consoleErrors.splice(index, 1);
+    discarded += 1;
+  }
+  return discarded;
 }
 
 async function addCookies(context, origin, values) {
@@ -748,70 +1109,13 @@ async function addCookies(context, origin, values) {
   if (cookies.length) await context.addCookies(cookies);
 }
 
-function sessionCookieValue(headers) {
-  for (const header of headers || []) {
-    if (String(header?.name || '').toLowerCase() !== 'set-cookie') continue;
-    const first = String(header.value || '').split(';', 1)[0];
-    const separator = first.indexOf('=');
-    if (separator < 0 || first.slice(0, separator).trim() !== 'session') continue;
-    const value = first.slice(separator + 1).trim();
-    // RFC 6265 cookie-octet, bounded before the value ever reaches
-    // Playwright. Never include the rejected value in an error.
-    if (!value || value.length > 4096
-        || !/^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/.test(value)) {
-      throw new ReplayFailure('invalid_session_cookie', 'The evidence origin returned an invalid session cookie.');
-    }
-    return value;
-  }
-  return null;
-}
+const sessionCookieValue = sessionBootstrap.sessionCookieValue;
 
 async function bootstrapInternalSession(context, origin, startPath, authToken, diagnostic = null) {
-  if (diagnostic) diagnostic.attempted = origin.startsWith('http:');
-  if (!origin.startsWith('http:')) return false;
-  const existing = await context.cookies(origin);
-  if (existing.some((cookie) => cookie.name === 'session')) {
-    if (diagnostic) diagnostic.cookieAlreadyPresent = true;
-    return false;
-  }
-
-  let response;
-  try {
-    // The request cannot follow a redirect to another origin. Its only job
-    // is to let a staging self-app exchange the short-lived, app-scoped JWT
-    // for a local session row before page JavaScript starts cookie-only API
-    // calls. Ordinary apps that do not set a session cookie remain on the
-    // x-usernode-token path below.
-    response = await context.request.get(authorizedUrl(origin, startPath, authToken), {
-      headers: { 'x-usernode-token': authToken },
-      failOnStatusCode: false,
-      maxRedirects: 0,
-      timeout: planContract.MAX_WAIT_MS,
-    });
-    if (diagnostic) diagnostic.responseStatus = response.status();
-    const value = sessionCookieValue(await Promise.resolve(response.headersArray()));
-    if (!value) return false;
-    try {
-      // The app deliberately emitted Secure because it runs in production
-      // mode. Evidence reaches the same private service directly over HTTP,
-      // so install the already-authenticated clone-local session with the
-      // transport bit adjusted only for this isolated browser context.
-      await context.addCookies([{
-        name: 'session', value, url: origin, httpOnly: true,
-        secure: false, sameSite: 'Lax',
-      }]);
-    } catch (_) {
-      throw new ReplayFailure('session_bootstrap_failed', 'The evidence browser could not install its private session cookie.');
-    }
-    const installed = await context.cookies(origin);
-    if (!installed.some((cookie) => cookie.name === 'session')) {
-      throw new ReplayFailure('session_bootstrap_failed', 'The evidence browser did not retain its private session cookie.');
-    }
-    if (diagnostic) diagnostic.sessionCookieInstalled = true;
-    return true;
-  } finally {
-    await response?.dispose?.().catch(() => {});
-  }
+  return sessionBootstrap.bootstrapInternalSession(
+    context, origin, authorizedUrl(origin, startPath, authToken), authToken,
+    diagnostic, planContract.MAX_WAIT_MS
+  );
 }
 
 async function startMotionCapture(page) {
@@ -838,12 +1142,32 @@ async function startMotionCapture(page) {
   };
 }
 
+// Playwright context init scripts run in every document, including every
+// cross-origin child frame. The deterministic still-capture stylesheet is a
+// platform concern: injecting it into a hosted app both changes somebody
+// else's UI and violates apps that use a nonce-only style policy. Keep the
+// script serializable for addInitScript while accepting an explicit environment
+// in tests so the origin boundary is pinned without a browser fixture.
+function installCaptureStyle(platformOrigin, environment) {
+  var pageLocation = environment ? environment.location : location;
+  var pageDocument = environment ? environment.document : document;
+  if (pageLocation.origin !== platformOrigin) return false;
+  var style = pageDocument.createElement('style');
+  style.dataset.usernodeEvidence = '1';
+  style.textContent = '*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important;transition-delay:0s!important;scroll-behavior:auto!important;caret-color:transparent!important}';
+  var attach = function () { pageDocument.documentElement?.appendChild(style); };
+  if (pageDocument.documentElement) attach();
+  else pageDocument.addEventListener('DOMContentLoaded', attach, { once: true });
+  return true;
+}
+
 function screenshotFingerprint(result) {
   return crypto.createHash('sha256').update(JSON.stringify({
     path: result.path,
     assertions: result.assertions.map((item) => ({ type: item.type, passed: item.passed, actual: item.actual })),
     focus: Object.fromEntries(Object.entries(result.focusRect).map(([key, value]) => [key, Math.round(value)])),
     stages: result.stages.map((stage) => stage.stage),
+    hostedAppsLoaded: result.hostedAppsLoaded,
   })).digest('hex');
 }
 
@@ -856,8 +1180,15 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   const recordInteraction = animation === 'steps';
   const diagnostics = {
     consoleErrors: [], pageErrors: [], failedRequests: [], blockedRequests: [], httpErrors: [],
+    expectedSandboxWarnings: 0,
   };
+  const controlledFailure = story.intent.controlledFailurePath
+    ? { path: story.intent.controlledFailurePath, enabled: false, hits: 0,
+      requests: new WeakSet(), urls: new Set() }
+    : null;
   const bootstrap = { attempted: false, cookieAlreadyPresent: false, sessionCookieInstalled: false, responseStatus: null };
+  const hostedOrigins = new Set();
+  const hostedAppState = { catalog: new Map(), loaded: new Map() };
   const eventBase = {
     runId: input.runId, pass: input.pass, storyId: story.id,
     viewport: viewport.name, side,
@@ -876,22 +1207,24 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       colorScheme: input.browser.colorScheme,
       reducedMotion: motion ? 'no-preference' : 'reduce',
       serviceWorkers: 'block',
-      // Evidence environments are deliberately reachable only over their
-      // private in-cluster HTTP origins. A production-mode self-app answers
-      // the initial token-bearing request with a Secure session cookie, which
-      // Chromium must reject on HTTP. Forward the same app-scoped credential
-      // through the standard app request header as well, so later API requests
-      // stay authenticated even when that cookie cannot be stored. The origin
-      // fence installed below prevents this context from sending any request
-      // outside the one evidence side.
-      extraHTTPHeaders: { 'x-usernode-token': authToken },
+      // The bootstrap below installs the clone-local session cookie on the
+      // platform origin. Never put its app-scoped token in context-wide
+      // headers: an embedded app or redirect would receive that header too.
     });
     // A side may never fetch from or navigate to its counterpart. Keeping the
     // origins in one input is an orchestration convenience, not a permission
     // for base and head to observe each other.
     const allowedOrigins = new Set([origin]);
     setupPhase = 'install_origin_fence';
-    await installOriginFence(context, allowedOrigins, diagnostics);
+    await installOriginFence(context, allowedOrigins, diagnostics, controlledFailure, {
+      hostedOrigins,
+      loadHostedOrigins: async () => {
+        hostedAppState.catalog = await loadTrustedHostedAppOrigins(
+          context, origin, null, input.runId
+        );
+        return hostedAppState.catalog;
+      },
+    });
     setupPhase = 'install_cookies';
     await addCookies(context, origin, input.cookies[side]);
     setupPhase = 'bootstrap_session';
@@ -899,13 +1232,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     emitEvent({ type: 'session_bootstrap', ...eventBase, ...bootstrap });
     setupPhase = 'install_capture_style';
     if (!motion) {
-      await context.addInitScript(() => {
-        const style = document.createElement('style');
-        style.dataset.usernodeEvidence = '1';
-        style.textContent = '*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important;transition-delay:0s!important;scroll-behavior:auto!important;caret-color:transparent!important}';
-        const attach = () => document.documentElement?.appendChild(style);
-        if (document.documentElement) attach(); else document.addEventListener('DOMContentLoaded', attach, { once: true });
-      });
+      await context.addInitScript(installCaptureStyle, origin);
     }
     setupPhase = 'new_page';
     page = await context.newPage();
@@ -920,34 +1247,115 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     });
   }
   const network = networkTracker(page);
+  const navigationToken = replayNavigationToken(authToken, bootstrap);
+  const startUrl = authorizedUrl(origin, sidePlan.startPath, navigationToken);
+  const initialNavigationFailures = [];
+  const initialNavigationRetries = new Set();
+  let initialNavigationPending = true;
+  const networkFailures = [];
+  const requestStartPages = new WeakMap();
+  const successfulRequests = new Map();
+  const consoleEvents = [];
+  let networkOrder = 0;
+  let recoveredNetworkChanges = 0;
+  let cancelledReads = 0;
+  let expectedFailureConsoleCount = 0;
+  const assertCleanBrowser = () => {
+    if (controlledFailure && controlledFailure.hits === 0) {
+      throw new ReplayFailure('controlled_failure_unused',
+        'The declared API request was never made while the controlled failure was enabled.');
+    }
+    expectedFailureConsoleCount += discardExpectedControlledFailureConsole(
+      diagnostics, consoleEvents, controlledFailure
+    );
+    recoveredNetworkChanges += discardRecoveredNetworkChanges(
+      diagnostics, networkFailures, successfulRequests, consoleEvents
+    ).requests;
+    cancelledReads += discardCancelledReads(
+      diagnostics, networkFailures, consoleEvents, pageRouteIdentity(page.url())
+    ).requests;
+    if (diagnostics.consoleErrors.length || diagnostics.pageErrors.length
+        || diagnostics.failedRequests.length || diagnostics.blockedRequests.length) {
+      throw new ReplayFailure('browser_diagnostics',
+        `${side} emitted browser errors, request failures, or attempted cross-origin traffic.`,
+        diagnostics);
+    }
+  };
   page.on('console', (message) => {
     if (message.type() === 'error' && diagnostics.consoleErrors.length < MAX_CONSOLE_ITEMS) {
-      diagnostics.consoleErrors.push({
+      const source = diagnosticLocation(message.location()?.url || '', origin);
+      if (expectedPendingFrameWarning(message.text(), source)) {
+        diagnostics.expectedSandboxWarnings += 1;
+        return;
+      }
+      const entry = {
         message: safeDiagnosticText(message.text()),
-        source: diagnosticLocation(message.location()?.url || '', origin),
-      });
+        source,
+        sourceKind: diagnosticOriginKind(message.location()?.url || '', origin, hostedOrigins),
+      };
+      diagnostics.consoleErrors.push(entry);
+      consoleEvents.push({ entry, url: message.location()?.url || '', method: 'GET', message: message.text() });
     }
+  });
+  page.on('request', (request) => {
+    requestStartPages.set(request, page.url());
   });
   page.on('pageerror', (error) => {
     if (diagnostics.pageErrors.length < MAX_CONSOLE_ITEMS) {
-      diagnostics.pageErrors.push({ message: safeDiagnosticText(error.message) });
+      diagnostics.pageErrors.push({
+        message: safeDiagnosticText(error.message),
+        sourceKind: pageErrorOriginKind(error, origin, hostedOrigins),
+      });
     }
   });
   page.on('requestfailed', (request) => {
-    let sameOrigin = false;
-    try { sameOrigin = new URL(request.url()).origin === origin; } catch {}
-    if (sameOrigin && diagnostics.failedRequests.length < MAX_CONSOLE_ITEMS) {
-      diagnostics.failedRequests.push({
+    if (controlledFailure?.requests.has(request)) return;
+    let inspectedOrigin = false;
+    try {
+      const requestOrigin = new URL(request.url()).origin;
+      inspectedOrigin = requestOrigin === origin || hostedOrigins.has(requestOrigin);
+    } catch {}
+    if (inspectedOrigin && diagnostics.failedRequests.length < MAX_CONSOLE_ITEMS) {
+      const failure = {
         location: diagnosticLocation(request.url(), origin),
         error: safeDiagnosticText(request.failure()?.errorText || '', 120),
+      };
+      if (/\bnet::ERR_ABORTED\b/i.test(failure.error)) {
+        failure.fromPage = diagnosticLocation(requestStartPages.get(request) || '', origin);
+        failure.atPage = diagnosticLocation(page.url(), origin);
+      }
+      diagnostics.failedRequests.push(failure);
+      if (initialNavigationPending) initialNavigationFailures.push({ request, failure });
+      networkFailures.push({
+        entry: failure, url: request.url(), method: request.method(),
+        resourceType: request.resourceType(),
+        startRoute: pageRouteIdentity(requestStartPages.get(request)),
+        endRoute: pageRouteIdentity(page.url()),
+        error: request.failure()?.errorText || '', order: ++networkOrder,
       });
     }
   });
   page.on('response', (response) => {
     const status = response.status();
+    let responseOrigin = null;
+    try { responseOrigin = new URL(response.url()).origin; } catch {}
+    if (status >= 200 && status < 300 && hostedOrigins.has(responseOrigin)
+        && response.request().resourceType() === 'document') {
+      const slug = hostedAppState.catalog.get(responseOrigin);
+      if (slug) hostedAppState.loaded.set(slug, responseOrigin);
+    }
+    if (status >= 200 && status < 400) {
+      const key = requestIdentity(response.url(), response.request().method());
+      if (key) successfulRequests.set(key, ++networkOrder);
+    }
     if (status < 400 || diagnostics.httpErrors.length >= MAX_CONSOLE_ITEMS) return;
     const location = diagnosticLocation(response.url(), origin);
-    if (location.sameOrigin) diagnostics.httpErrors.push({ status, location });
+    let hostedOrigin = null;
+    try { hostedOrigin = new URL(response.url()).origin; } catch {}
+    if (location.sameOrigin || hostedOrigins.has(hostedOrigin)) {
+      diagnostics.httpErrors.push({ status, location,
+        ...(location.sameOrigin ? {} : { hostedOrigin: safeDiagnosticText(hostedOrigin, 120) }) });
+    }
   });
 
   const stages = [];
@@ -957,16 +1365,23 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
   let failureStage = { phase: 'navigate_start' };
   try {
     emitEvent({ type: 'navigation_started', ...eventBase });
-    const response = await page.goto(authorizedUrl(origin, sidePlan.startPath, authToken), {
-      waitUntil: 'domcontentloaded', timeout: planContract.MAX_WAIT_MS,
+    const response = await navigateStart(page, startUrl, ({ attempt, code }) => {
+      initialNavigationRetries.add(code);
+      emitEvent({ type: 'navigation_retry', ...eventBase, attempt, code });
     });
+    initialNavigationPending = false;
     navigation = {
       status: typeof response?.status === 'function' ? response.status() : null,
     };
+    const recoveredRequestCount = discardRecoveredInitialNavigationFailures(
+      diagnostics, initialNavigationFailures, page, startUrl,
+      initialNavigationRetries, navigation.status
+    );
     await settlePage(page, { motion });
     emitEvent({
       type: 'navigation_completed', ...eventBase,
       status: navigation.status,
+      recoveredRequestCount,
       location: diagnosticLocation(page.url(), origin),
     });
     failureStage = { phase: 'capture_start' };
@@ -984,7 +1399,8 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
         actionId: action.id, actionStage: action.stage, actionType: action.type,
       });
       if (Date.now() >= sideDeadline) throw new ReplayFailure('side_timeout', `${side} exceeded its ${planContract.MAX_SIDE_MS} ms budget.`);
-      const durationMs = await executeAction(page, action, origin, network, authToken);
+      const durationMs = await executeAction(page, action, origin, network, navigationToken,
+        controlledFailure, hostedAppState);
       await settlePage(page, { motion });
       actionResults.push({ id: action.id, stage: action.stage, type: action.type, durationMs, passed: true });
       emitEvent({
@@ -1023,23 +1439,21 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     if (!focusRect || focusRect.width < 8 || focusRect.height < 8) {
       throw new ReplayFailure('focus_too_small', `${story.id} ${side} focus is too small to review.`);
     }
-    await settlePage(page, { motion });
+    // A browser error is already decisive. Surface it before spending time on
+    // screenshots so it cannot be hidden by a later checkpoint timeout.
+    failureStage = { phase: 'browser_diagnostics' };
+    assertCleanBrowser();
     failureStage = { phase: 'capture_checkpoint' };
-    const contextPng = await page.screenshot({ type: 'png' });
+    const { png: contextPng, stability } = await captureStableCheckpoint(page, network, { motion });
+    emitEvent({ type: 'checkpoint_stability', ...eventBase, ...stability });
     stages.push({ stage: '__checkpoint__', image: contextPng });
 
     failureStage = { phase: 'browser_diagnostics' };
-    if (diagnostics.consoleErrors.length || diagnostics.pageErrors.length
-        || diagnostics.failedRequests.length || diagnostics.blockedRequests.length) {
-      throw new ReplayFailure(
-        'browser_diagnostics',
-        `${side} emitted browser errors, request failures, or attempted cross-origin traffic.`,
-        diagnostics
-      );
-    }
+    assertCleanBrowser();
     const result = {
       side, storyId: story.id, viewport: viewport.name, path: finalPath,
       actionResults, assertions, focusRect, contextPng, stages,
+      hostedAppsLoaded: [...hostedAppState.loaded.keys()].sort(),
       motionFrames: motionCapture
         ? [{ at: 0, data: stages[0].image }, ...motionCapture.frames,
           { at: motionCapture.durationMs, data: contextPng }]
@@ -1060,6 +1474,11 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       recordedFrameCount: result.recordedFrameCount,
       location: diagnosticLocation(page.url(), origin),
       httpErrorCount: diagnostics.httpErrors.length,
+      recoveredNetworkChanges,
+      cancelledReads,
+      controlledFailureHits: controlledFailure?.hits || 0,
+      expectedFailureConsoleCount,
+      expectedSandboxWarnings: diagnostics.expectedSandboxWarnings,
     });
     return result;
   } catch (error) {
@@ -1079,6 +1498,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       storyId: story.id, viewport: viewport.name, side, ...failureStage,
       pageState,
       bootstrap,
+      hostedAppSlugs: [...hostedAppState.loaded.keys()].slice(0, 10),
       targetStates,
       browserDiagnostics: failureBrowserDiagnostics(diagnostics),
     });
@@ -1180,6 +1600,8 @@ async function runReplay(browser, input) {
   try {
     for (const story of input.plan.stories) {
       for (const viewport of story.viewports) {
+        if (input.selection && (input.selection.storyId !== story.id
+            || input.selection.viewport !== viewport.name)) continue;
         emitEvent({ type: 'viewport_started', runId: input.runId, pass: input.pass, storyId: story.id, viewport: viewport.name });
         let phase = 'base';
         try {
@@ -1199,14 +1621,14 @@ async function runReplay(browser, input) {
             head: { fingerprint: head.fingerprint, contextHash: head.contextHash, focusHash: headFocusHash, path: head.path, actionResults: head.actionResults, assertions: head.assertions, focusRect: head.focusRect, cropRect: crops.head },
           };
           stories.push(storyResult);
-          if (input.publishArtifacts) {
+          if (input.publishArtifacts || input.diagnosticArtifacts) {
             artifacts.push(
               { storyId: story.id, viewport: viewport.name, side: 'base', variant: 'focus', media: 'png', contentType: 'image/png', width: Math.round(crops.base.width * input.browser.deviceScaleFactor), height: Math.round(crops.base.height * input.browser.deviceScaleFactor), focusRect: crops.base, data: baseFocus },
               { storyId: story.id, viewport: viewport.name, side: 'head', variant: 'focus', media: 'png', contentType: 'image/png', width: Math.round(crops.head.width * input.browser.deviceScaleFactor), height: Math.round(crops.head.height * input.browser.deviceScaleFactor), focusRect: crops.head, data: headFocus },
               { storyId: story.id, viewport: viewport.name, side: 'base', variant: 'context', media: 'png', contentType: 'image/png', width: viewport.width * input.browser.deviceScaleFactor, height: viewport.height * input.browser.deviceScaleFactor, focusRect: base.focusRect, data: base.contextPng },
               { storyId: story.id, viewport: viewport.name, side: 'head', variant: 'context', media: 'png', contentType: 'image/png', width: viewport.width * input.browser.deviceScaleFactor, height: viewport.height * input.browser.deviceScaleFactor, focusRect: head.focusRect, data: head.contextPng },
             );
-            if (story.replay.checkpoint.animation !== 'none') {
+            if (input.publishArtifacts && story.replay.checkpoint.animation !== 'none') {
               phase = 'encode_animation';
               emitEvent({
                 type: 'animation_started', runId: input.runId, pass: input.pass,
@@ -1262,7 +1684,11 @@ async function main({ chromium: injectedChromium, rawInput = null } = {}) {
   const browser = await chromium.launch({
     executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
     headless: true,
-    args: CHROMIUM_ARGS,
+    args: [
+      ...CHROMIUM_ARGS,
+      ...(process.env.USERNODE_EVIDENCE_LOCAL_HOST_ALIAS === 'host.docker.internal'
+        ? ['--host-resolver-rules=MAP localhost host.docker.internal'] : []),
+    ],
   });
   emitEvent({ type: 'browser_launch_completed', runId: input.runId, pass: input.pass });
   try {
@@ -1301,7 +1727,21 @@ module.exports = {
   locatorSnapshot,
   resolveOne,
   waitForAnyVisible,
+  waitForNotVisible,
+  waitForVisibleText,
   authorizedUrl,
+  replayNavigationToken,
+  navigateStart,
+  discardRecoveredInitialNavigationFailures,
+  discardRecoveredNetworkChanges,
+  discardCancelledReads,
+  discardExpectedControlledFailureConsole,
+  trustedHostedAppOrigins,
+  loadTrustedHostedAppOrigins,
+  installOriginFence,
+  expectedPendingFrameWarning,
+  pageErrorOriginKind,
+  executeAction,
   publicRelativePath,
   redactedUrl,
   sessionCookieValue,
@@ -1312,6 +1752,8 @@ module.exports = {
   centeredRect,
   normalizeCropPair,
   hammingHex,
+  captureStableCheckpoint,
+  installCaptureStyle,
   screenshotFingerprint,
   runReplay,
   contextualFailure,

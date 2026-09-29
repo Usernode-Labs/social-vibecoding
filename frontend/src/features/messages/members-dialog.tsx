@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { confirmAction } from '../../lib/confirm';
 import { useDialog } from '../dialogs/use-dialog';
 import * as api from './api';
 import { inviteMembers, leave, removeMember, useMessagesSnapshot } from './store';
@@ -47,7 +48,9 @@ export function ConversationMembersDialog() {
   }
 
   async function remove(user: ConversationUser) {
-    if (!window.confirm(`Remove @${user.username} from this group?`)) return;
+    // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
+    const ok = await confirmAction({ title: `Remove @${user.username} from this group?`, confirmLabel: 'Remove', danger: true });
+    if (!ok) return;
     setBusy(true); setError('');
     try { await removeMember(user.id); }
     catch (err) { setError(err instanceof Error ? err.message : 'Couldn’t remove this member.'); }
@@ -56,8 +59,14 @@ export function ConversationMembersDialog() {
 
   async function leaveCurrent() {
     const transfer = active?.myRole === 'owner' && (active.memberCount || 0) > 1
-      ? ' Ownership will transfer to the oldest remaining member.' : '';
-    if (!window.confirm(`Leave ${active?.title || 'this conversation'}?${transfer}`)) return;
+      ? 'Ownership will transfer to the oldest remaining member.' : '';
+    const ok = await confirmAction({
+      title: `Leave ${active?.title || 'this conversation'}?`,
+      message: transfer || undefined,
+      confirmLabel: 'Leave',
+      danger: true,
+    });
+    if (!ok) return;
     setBusy(true); setError('');
     try { await leave(); dialog.close(); }
     catch (err) { setError(err instanceof Error ? err.message : 'Couldn’t leave this conversation.'); }

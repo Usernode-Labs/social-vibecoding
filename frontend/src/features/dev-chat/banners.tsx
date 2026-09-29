@@ -4,13 +4,14 @@
  * host generates no box.
  */
 
-import { useCallback, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
   CheckLongIcon,
   ClockIcon,
   PlusThinIcon,
+  SparklesIcon,
   SpinnerArcIcon,
   UserCircleIcon,
   WarningTriangleIcon,
@@ -19,6 +20,7 @@ import {
 import { useStoreState } from '../../lib/use-store-state';
 import {
   bannersStore,
+  type AgentSessionBannerView,
   type CreditsBannerView,
   type NewChangeBannerView,
   type SyncBannerView,
@@ -156,6 +158,12 @@ const TEXT_CLASS = {
   red: 'text-red-800 dark:text-red-200 flex-1 min-w-[14rem]',
 } as const;
 
+/** The phone's "Details" toggle, in the banner's own ink. See CreditsBanner. */
+const TOGGLE_CLASS = {
+  amber: 'dc-credits-banner-toggle text-amber-900 dark:text-amber-200',
+  red: 'dc-credits-banner-toggle text-red-800 dark:text-red-200',
+} as const;
+
 function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
   // `CreditOptions.wire` binds one delegated click per element and guards
   // itself with `__creditOptionsWired`, so a ref that runs on every mount is
@@ -176,19 +184,45 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
     });
   }, [b.blockedVenue]);
 
+  // QA 2026-09-24 Q27: ON A PHONE THE BANNER IS ONE LINE UNTIL ASKED. The
+  // whole strip (the lead, when credits come back, the ways to keep going and
+  // both buttons) took about 130px under the session header, which at
+  // 360x740 left roughly 70px of conversation, and its "Check API key"
+  // doubled the one on the out-of-credits card in the transcript right
+  // below it. Below 640px (app.css) it shows the lead and a Details toggle;
+  // the rest is still rendered, so the declared checks' hooks stay, and is
+  // shown on request. Desktop is unchanged: the toggle never shows there.
+  const [open, setOpen] = useState(false);
+  const moreId = `${b.id}-more`;
   const Icon = b.icon ? CREDITS_ICON[b.icon] : null;
   return (
-    <div id={b.id} className={b.tone === 'red' ? SHELL.creditsRed : SHELL.creditsAmber} ref={wireRef}>
+    <div
+      id={b.id}
+      className={b.tone === 'red' ? SHELL.creditsRed : SHELL.creditsAmber}
+      ref={wireRef}
+      {...(open ? { 'data-credits-open': '1' } : null)}
+    >
       {Icon ? <Icon className={ICON_CLASS[b.tone]} /> : null}
       <span className={TEXT_CLASS[b.tone]}>
         <span className="font-semibold" {...(b.leadTagged ? { 'data-credits-low-lead': '1' } : null)}>{b.lead}</span>
-        {b.reset === null ? b.tail : (
-          <>
-            <span data-credits-reset="1">{` ${b.reset}`}</span>
-            {b.tail}
-          </>
-        )}
+        <span id={moreId} className="dc-credits-banner-more">
+          {b.reset === null ? b.tail : (
+            <>
+              <span data-credits-reset="1">{` ${b.reset}`}</span>
+              {b.tail}
+            </>
+          )}
+        </span>
       </span>
+      <button
+        type="button"
+        className={TOGGLE_CLASS[b.tone]}
+        aria-expanded={open}
+        aria-controls={moreId}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? 'Hide' : 'Details'}
+      </button>
       {/* Another module's markup, and a declared check selects into it — so it
           arrives whole, through a host that generates no box so the actions
           block stays the banner's own flex child. */}
@@ -197,10 +231,30 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
   );
 }
 
+// #2779: the owner of a change started from an agent session revises it in
+// that conversation. An anchor: it is a hash navigation.
+function AgentSessionBanner({ b }: { b: AgentSessionBannerView }): ReactNode {
+  return (
+    <div id="dc-agent-session-banner" className={SHELL.violet}>
+      <SparklesIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
+      <span className="text-violet-800 dark:text-violet-200 flex-1">
+        This change belongs to one of your agent sessions. Continue there to revise it.
+      </span>
+      <a
+        href={b.href}
+        className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0 rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-500"
+      >
+        Continue
+      </a>
+    </div>
+  );
+}
+
 export function DevChatBanners(): ReactNode {
   const s = useStoreState(bannersStore);
   return (
     <>
+      {s.agentSession ? <AgentSessionBanner b={s.agentSession} /> : null}
       {s.sync ? <SyncBanner b={s.sync} /> : null}
       {s.newChange ? <NewChangeBanner b={s.newChange} /> : null}
       {s.credits ? <CreditsBanner b={s.credits} /> : null}

@@ -21,7 +21,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
-const { computeStandings } = require('../../../services/topochain/standings');
+const { computeOwnStanding } = require('../../../services/topochain/standings');
 const { adminWriteGate } = require('./auth');
 const managedOpenRouter = require('../../../services/openrouter-managed-keys');
 const { toIntId, toBool } = require('./util');
@@ -675,19 +675,13 @@ function usersAdminRoutes(config) {
       // `global_leaderboard` (SPEC 2334): the source's season-less row,
       // or null. There's no global_leaderboard TABLE in this schema
       // (Global Constraints — all-time standings are always derived), so
-      // this reuses the same shared §4.10 aggregate every other all-time
-      // view is built on (services/topochain/standings.js).
-      //
-      // PERF NOTE (code-review finding, not fixed here): `computeStandings`
-      // ranks EVERY user across every public event, then this line reads
-      // off just one row — a real per-request cost on a large user base.
-      // A `userId`-scoped variant belongs on the shared service itself
-      // (services/topochain/standings.js, Task 5's file) so every caller
-      // benefits, not a one-off filtered copy of the query duplicated
-      // here; left as a follow-up rather than reshaping a prior task's
-      // shared service inside this one.
-      const standings = await computeStandings(pool, { seasonId: null });
-      const own = standings.find((s) => s.user_id === id) || null;
+      // this reads the same shared §4.10 aggregate every other all-time
+      // view is built on (services/topochain/standings.js), scoped to one
+      // user: computeOwnStanding ranks in SQL and returns only this row,
+      // rather than materialising every participant to `.find()` one.
+      // The admin Support section (routes/admin-support.js) reads the
+      // same function, so the two screens can never disagree on rank.
+      const { own } = await computeOwnStanding(pool, { seasonId: null, userId: id });
       const globalLeaderboard = own ? {
         rank: own.rank,
         total_points: own.total_points,
@@ -867,62 +861,18 @@ function usersAdminRoutes(config) {
     }
   });
 
-  // ── DELETE /api/v4/admin/users/:id (SPEC 2329) ───────────────────────
-  //
-  // GUARD (code-review finding, not in SPEC's own D2 text — SPEC's source
-  // `participants` table had no login/admin concept at all): this deletes
-  // a row in the SHARED platform `users` table (Global Constraints #7),
-  // not a standalone "topochain participant" — an unguarded delete here
-  // could remove a genuine platform admin account, or the caller's own.
-  // Mirrors src/routes/admin.js's own `DELETE /api/admin/users/:id`
-  // guards verbatim (self-delete blocked; the last FULL admin protected —
-  // a view-only admin never counts toward that invariant). No shared
-  // advisory lock with that other endpoint's `ADMIN_MUTATION_LOCK` (not
-  // exported, and cross-file lock coordination is out of scope here) —
-  // the count-then-delete still runs inside one transaction, which closes
-  // the common case; only a genuinely concurrent delete from BOTH admin
-  // surfaces at once could still race past it.
+  // The same transaction and last-admin lock as the platform account API.
   router.delete('/api/v4/admin/users/:id', adminWriteGate, async (req, res) => {
-    const id = toIntId(req.params.id);
-    if (!id) return fail(res, 404, 'User not found.');
-
-    if (id === req.user.id) {
-      return fail(res, 400, 'Cannot delete yourself.');
-    }
-
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      try {
-        const { rows: existing } = await client.query(
-          'SELECT id, is_admin, admin_readonly FROM users WHERE id = $1', [id]
-        );
-        if (!existing.length) {
-          await client.query('ROLLBACK');
-          return fail(res, 404, 'User not found.');
-        }
-        if (existing[0].is_admin && !existing[0].admin_readonly) {
-          const { rows: countRows } = await client.query(
-            'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE'
-          );
-          if (countRows[0].n <= 1) {
-            await client.query('ROLLBACK');
-            return fail(res, 400, "Can't delete the last full admin.");
-          }
-        }
-
-        await client.query('DELETE FROM users WHERE id = $1', [id]);
-        await client.query('COMMIT');
-        return ok(res, {}, { message: 'User deleted successfully.' });
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-      }
+      const result = await require('../../../services/account-deletion').deleteAccount(pool, {
+        userId: toIntId(req.params.id), actorId: req.user.id, mode: 'admin', confirmation: req.body?.confirmation,
+      });
+      void require('../../../services/account-deletion-cleanup').sweep(pool, config).catch(() => {});
+      return ok(res, result, { message: 'Account deleted. External cleanup may still be pending.' });
     } catch (err) {
-      log.error('topochain-admin', 'DELETE /admin/users/:id failed', { message: err.message });
-      return fail(res, 500, 'Internal server error.');
-    } finally {
-      client.release();
+      if (err instanceof require('../../../services/account-deletion').AccountDeletionError) return fail(res, err.status, err.message);
+      log.error('topochain-admin', 'Account deletion failed', { code: err.code || 'internal_error' });
+      return fail(res, 500, 'Account deletion could not be completed.');
     }
   });
 

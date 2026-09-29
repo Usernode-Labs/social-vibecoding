@@ -60,6 +60,7 @@ const state = {
     { id: APP_B_ID, slug: 'game-corner', llm_proxy_token: APP_B_TOKEN },
   ],
   users: [],
+  callerExists: true,
   lastSearchParams: null,
 };
 
@@ -92,6 +93,7 @@ function unescapeLike(s) {
 const pool = {
   async query(sql, params) {
     const s = String(sql);
+    if (/SELECT id FROM users WHERE id = \$1/.test(s)) return { rows: state.callerExists ? [{ id: params[0] }] : [] };
     if (/FROM apps WHERE llm_proxy_token/.test(s)) {
       const app = state.apps.find((a) => a.llm_proxy_token === params[0]);
       return { rows: app ? [app] : [] };
@@ -226,6 +228,17 @@ test('garbage user token is rejected', async () => {
   const { status, body } = await lookup({ userToken: 'not.a.jwt', qs: '?username=alice' });
   assert.equal(status, 401);
   assert.equal(body.code, 'bad_user_token');
+});
+
+test('a deleted account cannot reuse its signed identity on either directory authentication path', async () => {
+  state.callerExists = false;
+  try {
+    for (const token of [APP_A_TOKEN, null]) {
+      const result = await lookup({ token, qs: '?username=alice' });
+      assert.equal(result.status, 401);
+      assert.equal(result.body.code, 'bad_user_token');
+    }
+  } finally { state.callerExists = true; }
 });
 
 test('expired user token is rejected', async () => {

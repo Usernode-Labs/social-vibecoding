@@ -183,3 +183,30 @@ test('--list prints the mapping and the command and runs nothing', () => {
   assert.match(out, /^Running \d+ of \d+ suites:\n  node --require \.\/tests\/lib\/test-net\.js --test --test-force-exit --test-timeout=180000 .*tests\/test-changed\.test\.js/m);
   assert.doesNotMatch(out, /^# tests/m, 'listing runs no suite');
 });
+
+// ── The guards no change names ─────────────────────────────────────────
+
+test('a suite marked "test:changed: always" runs on every change; the marker must start its line', () => {
+  const texts = new Map([
+    ['tests/icons.test.js', '// test:changed: always (every feature file)\n\'use strict\';'],
+    ['tests/github.test.js', "const github = require('../src/services/github');"],
+    ['tests/quoted.test.js', "const note = 'see // test:changed: always';"],
+  ]);
+  assert.deepEqual(tc.alwaysSuites(texts), ['tests/icons.test.js']);
+
+  // The real ones: every whole-tree guard that failed a proposal late.
+  const marked = tc.alwaysSuites(new Map(fs.readdirSync(path.join(root, 'tests'))
+    .filter((f) => f.endsWith('.test.js'))
+    .map((f) => [`tests/${f}`, fs.readFileSync(path.join(root, 'tests', f), 'utf8')])));
+  for (const suite of ['shell-icon-set', 'global-chat-inventory', 'theme-ink-guards', 'no-em-dash-in-copy', 'admin-ui-registry']) {
+    assert.ok(marked.includes(`tests/${suite}.test.js`), `${suite} is marked`);
+  }
+  assert.ok(marked.length <= 12, 'a short list of fast guards, not a second npm test');
+
+  // Listed apart from the mapping, and run even when no suite names the change.
+  const ghost = ['docs', `nobody-reads-${Date.now()}.md`].join('/');
+  const out = execFileSync(process.execPath, ['scripts/test-changed.js', '--list', '--files', ghost], { cwd: root, encoding: 'utf8' });
+  assert.match(out, new RegExp(`^  \\+ ${marked.length} tree-wide guard suites, run on every change:$`, 'm'));
+  assert.match(out, /^    tests\/shell-icon-set\.test\.js$/m);
+  assert.match(out, new RegExp(`^Running ${marked.length} of \\d+ suites:`, 'm'), 'an unnamed change still runs the guards');
+});

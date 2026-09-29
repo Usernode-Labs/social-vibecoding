@@ -203,6 +203,37 @@ test('anyActive reflects busy, stopping and generating auto-runs', () => {
   assert.equal(S.anyActive(), false);
 });
 
+test('anyActiveFor counts one member\'s own work, whichever writer said so', () => {
+  const { S } = load();
+  // Another member's shared build, pushed app-wide: not ours.
+  S.applyEvent({ sessionId: 30, userId: 8, busy: true, status: 'active' });
+  assert.equal(S.anyActive(), true, 'the board still sees it');
+  assert.equal(S.anyActiveFor(7), false, 'the mark does not');
+
+  // Our own, pushed to us.
+  S.applyEvent({ sessionId: 31, userId: 7, busy: true, status: 'active' });
+  assert.equal(S.anyActiveFor(7), true);
+  assert.equal(S.anyActiveFor('7'), true, 'the viewer id may arrive as a string');
+
+  // A later event without an owner keeps the one already known.
+  S.applyEvent({ sessionId: 31, busy: true, phase: 'cc', status: 'active' });
+  assert.equal(S.entries.get(31).userId, 7);
+
+  // The reconcile names owners too, and its idle override keeps them.
+  S.reconcile({ sessions: [{ id: 32, userId: 7, busy: true, status: 'active' }] });
+  assert.equal(S.entries.get(32).userId, 7);
+  assert.equal(S.entries.get(31).busy, false, 'absent from the snapshot: idle now');
+  assert.equal(S.entries.get(31).userId, 7);
+  assert.equal(S.anyActiveFor(7), true, 'session 32 is still ours and busy');
+  S.reconcile({ sessions: [] });
+  assert.equal(S.anyActiveFor(7), false);
+
+  // A list row seeds its owner from user_id.
+  S.seed([{ id: 33, user_id: 7, busy: true, status: 'active' }], Date.now() + 1000);
+  assert.equal(S.anyActiveFor(7), true);
+  assert.equal(S.anyActiveFor(null), false, 'no viewer, nothing is theirs');
+});
+
 test('sync reconciles from the endpoint and is single-flight', async () => {
   let calls = 0;
   let resolveFetch;
