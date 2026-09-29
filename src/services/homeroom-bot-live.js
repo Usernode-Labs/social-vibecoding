@@ -886,6 +886,24 @@ function buildPrompt({ seed, buildNote, spec = null }) {
  * { ok, specMd, version, costUsd, error, stopped }; never throws. A spec
  * that fails is not a failed build: the build goes ahead from the plan.
  */
+/**
+ * A spec turn's final message, as the build will use it: unwrapped, started
+ * at its title, and checked for the one way out and for a wire failure.
+ * { ok, specMd } or { ok: false, error, blocked? }. Shared with the restart
+ * recovery of a spec turn (#3401), which reads the same message back from
+ * the turn's journal.
+ */
+function readSpec(text) {
+  const specMd = specFromTitle(stripSpecWrapperFence(String(text || '').trim()));
+  if (!specMd) return { ok: false, error: 'the spec turn returned nothing' };
+  const blocked = specBlocked(specMd);
+  if (blocked) return { ok: false, blocked, error: `blocked: ${blocked}` };
+  // A run that died on the wire can report the failure as its final message,
+  // which would otherwise be stored as the spec.
+  if (agentApiFailure(specMd)) return { ok: false, error: 'the spec turn ended on an API error' };
+  return { ok: true, specMd };
+}
+
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
   specBudgetMs = SPEC_TURN_MAX_MS,
@@ -940,13 +958,9 @@ async function draftSpec({
   if (stopped) return { ok: false, stopped: true, costUsd, error: `the spec ran past its time limit${progress.suffix()}` };
   if (!routed) return { ok: false, costUsd, error: 'the spec turn did not run' };
   if (routed.error) return { ok: false, costUsd, error: `the spec turn failed (${routed.error})` };
-  const specMd = specFromTitle(stripSpecWrapperFence(String(routed.result?.lastResultText || '').trim()));
-  if (!specMd) return { ok: false, costUsd, error: 'the spec turn returned nothing' };
-  const blocked = specBlocked(specMd);
-  if (blocked) return { ok: false, blocked, costUsd, error: `blocked: ${blocked}` };
-  // A run that died on the wire can report the failure as its final message,
-  // which would otherwise be stored as the spec.
-  if (agentApiFailure(specMd)) return { ok: false, costUsd, error: 'the spec turn ended on an API error' };
+  const read = readSpec(routed.result?.lastResultText);
+  if (!read.ok) return { ...read, costUsd };
+  const { specMd } = read;
   let version = null;
   try {
     // The same three effects a person's scout has: spec_md, a numbered
@@ -965,6 +979,7 @@ async function draftSpec({
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
+  onSession = null, presetSpec = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -994,6 +1009,16 @@ async function buildAndPropose({
     session.app_self_hosted = app.self_hosted;
   } catch (err) {
     return { ok: false, error: `could not open a session: ${err.message}` };
+  }
+  // The caller's durable link to this session, written before any turn runs:
+  // a restart mid-turn leaves the worker running, and restart recovery finds
+  // the run it belongs to through this (#3401).
+  if (onSession) {
+    try {
+      await onSession(session);
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not link the build session to its run', { sessionId: session.id, err: err.message });
+    }
   }
 
   // What the spec turn wrote, carried on every outcome below so a run that
@@ -1047,9 +1072,13 @@ async function buildAndPropose({
     return fail(`the worker would not start: ${err.message}`);
   }
 
-  spec = await draftSpec({
-    pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps, specBudgetMs,
-  });
+  // A spec already written, by a spec turn a restart interrupted and
+  // recovery finished (#3401), is built from as it is, not written again.
+  spec = presetSpec
+    ? { ok: true, specMd: String(presetSpec), version: null, costUsd: null, preset: true }
+    : await draftSpec({
+      pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps, specBudgetMs,
+    });
   if (spec.blocked) {
     // Impossible as written: nothing is built, and the caller says why.
     log.info('homeroom-bot', 'The spec found the request impossible; not building', {
@@ -1058,7 +1087,7 @@ async function buildAndPropose({
     return { ...(await fail(spec.error)), blocked: spec.blocked, costUsd: spec.costUsd };
   }
   if (spec.ok) {
-    if (onSpec) {
+    if (onSpec && !spec.preset) {
       // Posted, not waited on: the build starts whatever happens to the post.
       try {
         await onSpec({ sessionId: session.id, version: spec.version, specMd: spec.specMd });
@@ -1222,5 +1251,6 @@ module.exports = {
   shareSpecVersion,
   postSpecOnProposal,
   SPEC_TURN_MAX_MS,
+  readSpec,
   MAX_SPEC_COMMENT_CHARS,
 };

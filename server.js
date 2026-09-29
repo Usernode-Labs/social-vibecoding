@@ -2601,6 +2601,46 @@ async function abandonOrphanShotsTurn({
   if (!containerRunning) await worker.destroyWorker(containerName);
 }
 
+function homeroomBotRecovery() {
+  return require('./src/services/homeroom-bot');
+}
+
+/**
+ * #3401: a worker of the Homeroom bot's that outlived a restart. With a
+ * turn in flight, the journal is followed to its end as any recovered turn
+ * is, and resumeDetachedTurnInner hands the result to the bot instead of
+ * the dev-chat tail; the build holds its lane slot meanwhile. With nothing
+ * to follow (the worker is gone, or idle between the spec and the build),
+ * the bot puts its run back in the queue unspent.
+ */
+async function adoptBotOrphan({
+  config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
+}) {
+  const bot = homeroomBotRecovery();
+  const activeTurn = session.active_turn || null;
+  if (containerState === 'running' && activeTurn && activeTurn.journal) {
+    log.info('server', 'Adopting a Homeroom bot turn for the bot to finish', {
+      sessionId, containerName, mode: activeTurn.mode,
+    });
+    worker.adoptWarmWorker(sessionId, containerName);
+    await bot.holdSlotDuringRecovery(pool, sessionId, resumeDetachedTurn({
+      config, pool, staging, broadcastGlobal, session, sessionId, containerName, activeTurn,
+    }));
+    return;
+  }
+  if (activeTurn) {
+    const cleanupArgs = turnCleanupArgs(activeTurn);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(sessionId, cleanupArgs),
+      cleanupArgs,
+    );
+  }
+  await worker.destroyWorker(containerName).catch(() => {});
+  await bot.abandonRecoveredTurn({
+    pool, session, why: containerState === 'running' ? 'no turn was in flight' : 'the worker is gone',
+  });
+}
+
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
   const { name: containerName, sessionId } = orphan;
   let containerState = orphan.state;
@@ -2614,7 +2654,8 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // wrap-up gets the same system prompt a live turn would (the
     // self-hosted block changes what the Mayor is allowed to say).
     `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
-            a.self_hosted AS app_self_hosted, u.username
+            a.self_hosted AS app_self_hosted, u.username,
+            u.is_synthetic AS user_is_synthetic
      FROM chat_sessions cs
      JOIN apps a ON cs.app_id = a.id
      JOIN users u ON cs.user_id = u.id
@@ -2687,6 +2728,16 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     if (!['running', 'not_found'].includes(containerState)) {
       throw retryRuntimeRecovery('Kubernetes worker is not ready for recovery');
     }
+  }
+
+  // #3401: the Homeroom bot's own turns are the bot's to finish. A shadow
+  // build must leave no PR, staging, wrap-up or notification, which is what
+  // the dev-chat tail below would give it.
+  if (homeroomBotRecovery().isRecoveredBotSession(session)) {
+    await adoptBotOrphan({
+      config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
+    });
+    return;
   }
 
   if (session.active_turn?.mode === 'shots') {
@@ -4011,6 +4062,24 @@ async function resumeDetachedTurnInner({
     emit('done', {});
   };
 
+  // #3401: a bot turn keeps the bot's own clock across the restart. The
+  // live path stopped it at its budget; recovery would otherwise follow it
+  // for as long as the agent cares to run.
+  const botTurn = homeroomBotRecovery().isRecoveredBotSession(session);
+  let botTimedOut = false;
+  let botClock = null;
+  if (botTurn) {
+    const deadline = await homeroomBotRecovery()
+      .recoveryDeadline(pool, config, session, activeTurn).catch(() => null);
+    if (deadline != null) {
+      botClock = setTimeout(() => {
+        botTimedOut = true;
+        Promise.resolve(worker.stopTurn(sessionId)).catch(() => {});
+      }, Math.max(0, deadline - Date.now()));
+      if (typeof botClock.unref === 'function') botClock.unref();
+    }
+  }
+
   let result;
   try {
     result = await worker.resumeTurnFromJournal(sessionId, {
@@ -4039,6 +4108,7 @@ async function resumeDetachedTurnInner({
       onProgress: onRecoveredProgress,
     });
   } catch (err) {
+    if (botClock) clearTimeout(botClock);
     // #1378: the stop machinery kills the agent process and appends an exit
     // marker, so a stopped turn usually resolves rather than throwing — but
     // when it does throw, the user still asked for this to end. Close it as
@@ -4090,6 +4160,19 @@ async function resumeDetachedTurnInner({
         throw ledgerErr;
       }
     }
+    // #3401: the bot's run goes back in the queue unspent; no breadcrumb
+    // or stalled notification, which nobody reads on the bot's session.
+    if (botTurn) {
+      const botCleanup = turnCleanupArgs(activeTurn);
+      recoveryRetry.requireDurableTurnCleanup(
+        await worker.finishTurn(sessionId, botCleanup),
+        botCleanup,
+      );
+      await homeroomBotRecovery().abandonRecoveredTurn({
+        pool, session, why: `the journal replay failed: ${err.message}`,
+      });
+      return;
+    }
     // Terminal marker: the card must not stay frozen on the last line
     // the journal managed to deliver before the resume died. When the
     // replay produced no lines at all, append to the persisted row
@@ -4130,6 +4213,7 @@ async function resumeDetachedTurnInner({
     );
     return;
   }
+  if (botClock) clearTimeout(botClock);
   flushProgress();
 
   // #1378: the tail is done and the user had asked for this turn to stop.
@@ -4219,6 +4303,24 @@ async function resumeDetachedTurnInner({
       sessionId, err: err.message,
     });
     throw err;
+  }
+
+  // #3401: the journal is followed and the attempt settled; the rest is the
+  // dev-chat tail (a PR, staging, a wrap-up, a notification), which a bot
+  // turn must not get. The bot records the result on its run, then the
+  // turn record is cleared. Recording first: a failed clear is retried by
+  // the retained-recovery timer, and the bot's writes are guarded so the
+  // repeat records nothing twice.
+  if (botTurn) {
+    await homeroomBotRecovery().finishRecoveredTurn({
+      pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut,
+    });
+    const botCleanup = turnCleanupArgs(recoveryActiveTurn);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(sessionId, botCleanup),
+      botCleanup,
+    );
+    return;
   }
 
   // Terminal marker for the progress card: pessimistic default so a
