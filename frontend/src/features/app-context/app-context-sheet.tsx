@@ -121,6 +121,7 @@ import {
   ChatIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  FlagIcon,
   InfoCircleIcon,
   LinkIcon,
   PlusWideIcon,
@@ -134,6 +135,7 @@ import { AboutPane } from './about-pane';
 import { InvitePane } from './invite-pane';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
+import { openReport } from '../dialogs/report';
 import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
@@ -281,7 +283,7 @@ export function AppsSwitcherSheet(): ReactNode {
   // and what About prints — and adds no fetch: the Improve panel was reading
   // exactly these for the rows that moved here.
   const {
-    slug, name, showTerminal, target, restricted,
+    slug, name, showTerminal, target, restricted, canReport,
   } = useStoreState(improveStore);
   const agentSessions = useAgentSessions();
   // Votes this viewer owes on the app in context — the badge on the
@@ -742,6 +744,19 @@ export function AppsSwitcherSheet(): ReactNode {
           >
             <RowBody icon={<InfoCircleIcon />} label={`About ${appLabel}`} />
           </button>
+          {slug && canReport ? (
+            <button
+              id="improve-row-report"
+              type="button"
+              className={`${ROW} w-full text-left`}
+              onClick={async () => {
+                await AppContext.close();
+                openReport({ targetType: 'app', target: slug, label: appLabel });
+              }}
+            >
+              <RowBody icon={<FlagIcon />} label="Report app" />
+            </button>
+          ) : null}
           {/*
               CONTINUE (#2779 follow-up), BELOW the app's own rows: Go to
               workshop, the discussion and About are this app's section, and

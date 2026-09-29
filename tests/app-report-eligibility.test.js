@@ -24,7 +24,7 @@ test('opening apps carries API eligibility through the controller into the rende
   ui.Improve._prefetched = true;
   global.window = {Improve:ui.Improve,App:{platformUpdateState:'idle'},AppView:{readOnly:true}};
   t.after(() => {global.window=previousWindow;ui.improveStore.set(initial);ui.Improve._prefetched=prefetched;});
-  const render = () => renderToHtml(createElement(ui.ImproveQuickActions));
+  const render = () => renderToHtml(createElement(ui.AppsSwitcherSheet));
   const open = (row, user) => {
     window.AppView.appData = {...row,...accessFlags(row,user,false)};
     ui.ImproveStatus.setAppOpen(true);
@@ -62,7 +62,7 @@ test('an unavailable app cannot leave the report menu targeting Homeroom or a pr
       window.AppView.appData = appData;
       ui.ImproveStatus.setAppOpen(true);
       assert.equal(ui.improveStore.get().slug, null, 'unconfirmed or mismatched metadata clears the old target');
-      assert.doesNotMatch(renderToHtml(createElement(ui.ImproveQuickActions)), /improve-row-report/);
+      assert.doesNotMatch(renderToHtml(createElement(ui.AppsSwitcherSheet)), /improve-row-report/);
     }
   }
   assert.equal(homePublications, 0, 'an app failure must not republish Homeroom');
@@ -70,7 +70,7 @@ test('an unavailable app cannot leave the report menu targeting Homeroom or a pr
   window.AppView.appData = {...app, ...accessFlags(app,{id:4},false)};
   ui.ImproveStatus.setAppOpen(true);
   assert.equal(ui.improveStore.get().slug, app.slug, 'a successful app load publishes its own target');
-  assert.match(renderToHtml(createElement(ui.ImproveQuickActions)), /improve-row-report/);
+  assert.match(renderToHtml(createElement(ui.AppsSwitcherSheet)), /improve-row-report/);
   window.App.currentApp = null;
   ui.ImproveStatus.setAppOpen(false);
   assert.equal(homePublications, 1, 'leaving the app still restores the platform context');
