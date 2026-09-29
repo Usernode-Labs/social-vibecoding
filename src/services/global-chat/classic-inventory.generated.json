@@ -1406,6 +1406,61 @@
     },
     {
       "source": "src/routes/admin.js",
+      "method": "POST",
+      "path": "/api/admin/homeroom-bot/mention-optouts/remove",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.homeroom.bot.mention.optouts.remove.2931b0a5",
+      "domain": "admin",
+      "risk": "destructive",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "POST",
+      "path": "/api/admin/homeroom-bot/retriage-questions",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.homeroom.bot.retriage.questions.817fb70f",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx",
+        "frontend/src/features/admin/admin-homeroom-bot.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "POST",
+      "path": "/api/admin/homeroom-bot/shadow-builds/backfill",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.homeroom.bot.shadow.builds.backfill.f46a011a",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin",
+      "clientReferences": [
+        "frontend/src/features/admin/admin-homeroom-bot.tsx"
+      ]
+    },
+    {
+      "source": "src/routes/admin.js",
       "method": "GET",
       "path": "/api/admin/storage",
       "expression": null,
@@ -2389,6 +2444,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -2439,6 +2495,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -2702,6 +2759,7 @@
         "frontend/src/features/dialogs/app-allowance-store.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -3543,6 +3601,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -3567,6 +3626,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -3592,6 +3652,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -3617,6 +3678,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -3642,6 +3704,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -3667,6 +3730,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -3692,6 +3756,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -3718,6 +3783,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -3743,6 +3809,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -3768,6 +3835,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -3811,6 +3879,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -3933,6 +4002,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -4656,6 +4726,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -4698,6 +4769,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -5547,6 +5619,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/messages/api.ts",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -5776,6 +5849,7 @@
         "frontend/src/features/global-chat/development-settings-editor.tsx",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -5804,6 +5878,7 @@
         "frontend/src/features/global-chat/development-settings-editor.tsx",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -7407,6 +7482,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/leaderboard/kudos.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -7432,6 +7508,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
         "frontend/src/features/leaderboard/leaderboard.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -7510,6 +7587,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -7536,6 +7614,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -7722,6 +7801,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8095,6 +8175,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8120,6 +8201,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8145,6 +8227,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8220,6 +8303,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8245,6 +8329,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8362,6 +8447,7 @@
         "frontend/src/features/auth/communities-first-run.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8387,6 +8473,7 @@
         "frontend/src/features/auth/communities-first-run.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8412,6 +8499,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/home/tour/tour-done.ts",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8437,6 +8525,7 @@
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/home/getting-started.tsx",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8561,6 +8650,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8602,6 +8692,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
@@ -8627,6 +8718,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8688,6 +8780,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
@@ -8713,6 +8806,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
@@ -8755,6 +8849,32 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
+        "frontend/src/features/profile/profile.js",
+        "frontend/src/features/settings/sections/email.tsx",
+        "frontend/src/features/settings/settings.js",
+        "public/js/app-view.js",
+        "public/js/session-state.js"
+      ]
+    },
+    {
+      "source": "src/routes/profile.js",
+      "method": "GET",
+      "path": "/api/me/proposal-history",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.me.proposal.history.84d4f0a6",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps",
+      "clientReferences": [
+        "frontend/src/features/header/ai-credit.js",
+        "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -8787,6 +8907,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
@@ -8812,6 +8933,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
@@ -9338,6 +9460,7 @@
         "frontend/src/features/dev-chat/dev-chat.js",
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -9362,6 +9485,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -10209,6 +10333,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -10233,6 +10358,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -10402,6 +10528,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -13075,6 +13202,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -13118,6 +13246,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -13143,6 +13272,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",
@@ -13428,6 +13558,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/email.tsx",
         "frontend/src/features/settings/settings.js",

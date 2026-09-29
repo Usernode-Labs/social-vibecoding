@@ -791,7 +791,10 @@ const AppView = {
     // is single-flight, so on the eager-launch path this call just joins
     // the mint the launch already started.
     const tokenReady = AppView.refreshToken(slug);
-    const res = await fetch(`/api/apps/${slug}`);
+    // `manifest=summary`: the one manifest field anything here reads is the
+    // description (the About sheet's tagline); the declared tests and platform
+    // env are the server's, and the platform's own run to ~280 KB.
+    const res = await fetch(`/api/apps/${slug}?manifest=summary`);
     // A newer app open (or close) owns every app-scoped field now. The
     // router also guards its own tail, but AppView.open writes shared state
     // before that tail resumes, so the ownership check belongs here too.
@@ -861,7 +864,16 @@ const AppView = {
     // likely to make anyway. Fire-and-forget on purpose — nothing awaits it
     // and nothing renders from it; _loadDevFeed's own call either joins this
     // one in flight or finds the caches already filled.
-    AppView.prefetchDevData(slug);
+    //
+    // AFTER the app, when the app is what is opening. The warm-up is nine
+    // reads the viewer is not looking at, and the app is loading into its
+    // frame over the same connection at the same moment; on a phone link the
+    // board's reads were queued ahead of the app's own. So on the App tab it
+    // starts when the frame has loaded (or after DEV_PREFETCH_CAP_MS, if it
+    // never says so), and on a dev surface — where the board IS the screen —
+    // it starts at once, as before.
+    if (needsToken) AppView._prefetchDevDataAfterFrame(slug);
+    else AppView.prefetchDevData(slug);
 
     // The app iframe cannot be built without this token, so an open heading
     // for the App tab waits for it here — that is what this await has always
@@ -2315,6 +2327,8 @@ const AppView = {
       // #970: the app's document is up — hand it this frame's insets.
       AppView.scheduleSafeAreaBroadcast();
       reveal();
+      // The app is in: the dev caches' warm-up may have the connection now.
+      if (iframeId === 'app-iframe' && AppView._afterAppFrameLoad) AppView._afterAppFrameLoad();
     };
     iframe.onerror = () => {
       if (!iframe.getAttribute('src')) return;
@@ -3057,7 +3071,7 @@ const AppView = {
       if (window.DevChat) DevChat.reset();
       let app = null;
       try {
-        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}`);
+        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}?manifest=summary`);
         if (res.ok) app = ((await res.json()) || {}).app || null;
       } catch (_) { app = null; }
       if (!live()) return 'stale';
@@ -6307,8 +6321,8 @@ const AppView = {
   async loadVoteState(slug) {
     try {
       const [promotedRes, mergedRes] = await Promise.all([
-        fetch(`/api/apps/${slug}/promoted`),
-        fetch(`/api/apps/${slug}/merged`),
+        fetch(`/api/apps/${slug}/promoted?results=failing`),
+        fetch(`/api/apps/${slug}/merged?results=failing`),
       ]);
       const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
       const merged = mergedRes.ok ? (await mergedRes.json()).merged : [];
@@ -6551,6 +6565,16 @@ const AppView = {
     return new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
   },
 
+  // `?<query>`, with the staging demo flag after it when this page has one.
+  // The Workshop's lists ask for `results=failing` — the LIST form of each
+  // row's check results: the checks that did not pass, and a count of those
+  // that did (src/services/list-test-results.js). One spelling for every
+  // reader, so the service worker keeps one copy of each list rather than
+  // one per caller. An item's own page still reads its full results.
+  _withDemo(query) {
+    return `?${query}${AppView._demoQS() ? '&demo=1' : ''}`;
+  },
+
   // Session caches for the Dev board's In progress area:
   //   _mySessions        — the viewer's active/paused sessions on THIS app
   //                        (pinned at the top of In progress), most recent
@@ -6575,17 +6599,18 @@ const AppView = {
     let archived = [];
     // #1038: stamped BEFORE the requests go out — see SessionState.seed.
     const issuedAt = Date.now();
-    const demoQs = AppView._demoQS();
-    const activeQs = demoQs ? `${demoQs}&include_imported=1` : '?include_imported=1';
+    const activeQs = AppView._withDemo('results=failing&include_imported=1');
     try {
       const [activeRes, sharedRes, allRes] = await Promise.all([
         // ?demo=1 forwarded so the staging mock own-session row (pinned
         // block caption + Make visible button) renders in demo previews.
         fetch(`/api/me/active-sessions${activeQs}`).catch(() => null),
-        fetch(`/api/apps/${encodeURIComponent(slug)}/shared-sessions${AppView._demoQS()}`).catch(() => null),
+        fetch(`/api/apps/${encodeURIComponent(slug)}/shared-sessions${AppView._withDemo('results=failing')}`).catch(() => null),
         // ?demo=1 forwarded here too so the staging mock archived row
         // (the "Show archived" toggle demo anchor) renders in previews.
-        fetch(`/api/apps/${encodeURIComponent(slug)}/sessions${AppView._demoQS()}`).catch(() => null),
+        // `status=archived`: only those rows are kept below, and the whole
+        // list is every change this viewer ever made on the app.
+        fetch(`/api/apps/${encodeURIComponent(slug)}/sessions${AppView._withDemo('status=archived')}`).catch(() => null),
       ]);
       if (activeRes && activeRes.ok) {
         const data = await activeRes.json().catch(() => ({}));
@@ -6694,7 +6719,7 @@ const AppView = {
   },
   async _fetchMergedPage(slug, cursor = null, limit = null) {
     const qs = AppView._demoQS();
-    const params = [];
+    const params = ['results=failing'];
     if (cursor) params.push(`before=${encodeURIComponent(cursor.created_at)}`,
       `before_completed_at=${encodeURIComponent(AppView._completedAt(cursor))}`,
       `before_id=${encodeURIComponent(cursor.id)}`, `before_type=${encodeURIComponent(cursor.row_type || 'pr')}`);
@@ -6743,6 +6768,24 @@ const AppView = {
    * time the viewer asks for one. Silent about failure: nothing is on screen
    * to report it to, and the real load repeats the request.
    */
+  // The App tab's warm-up of the dev caches, held until the app's own frame
+  // has loaded (watchSurfaceLoad calls _afterAppFrameLoad) or the cap passes,
+  // whichever is first. A dev surface opened meanwhile starts its own load,
+  // which this later call then finds done or joins.
+  DEV_PREFETCH_CAP_MS: 5000,
+  _afterAppFrameLoad: null,
+  _prefetchDevDataAfterFrame(slug) {
+    let started = false;
+    const start = () => {
+      if (started) return;
+      started = true;
+      if (AppView._afterAppFrameLoad === start) AppView._afterAppFrameLoad = null;
+      AppView.prefetchDevData(slug);
+    };
+    AppView._afterAppFrameLoad = start;
+    setTimeout(start, AppView.DEV_PREFETCH_CAP_MS);
+  },
+
   prefetchDevData(slug) {
     if (!slug || AppView.appData?.slug !== slug) return;
     // Already loaded for this app — the caches are warm and re-fetching here
@@ -6860,8 +6903,11 @@ const AppView = {
         // (stagingMockGovernance — rename / secret / close-issue cards)
         // actually reach the board. Server-side the append is gated on
         // IS_STAGING, so this is a no-op in production.
-        want('issues') ? fetch(`/api/apps/${slug}/issues${AppView._demoQS()}`) : KEEP,
-        want('promoted') ? fetch(`/api/apps/${slug}/promoted${AppView._demoQS()}`) : KEEP,
+        // `kinds=governance`: only the rows the board draws (the filter over
+        // `_govProposals` below). The rest are request twins, which it
+        // fetched only to discard — on the platform app, all 325 open rows.
+        want('issues') ? fetch(`/api/apps/${slug}/issues${AppView._withDemo('kinds=governance')}`) : KEEP,
+        want('promoted') ? fetch(`/api/apps/${slug}/promoted${AppView._withDemo('results=failing')}`) : KEEP,
         // Forward ?demo=1 to /merged too so the kanban "Done" column (and
         // the list's Completed block) populate in a staging ?demo=1 preview.
         // Server-side the demo append is gated on IS_STAGING, so this is a
@@ -12469,7 +12515,9 @@ const AppView = {
       return row;
     };
     const fromVerdict = (v) => {
-      const total = v.failures.length + v.passes.length;
+      // passCount, not passes.length: a Workshop list row counts its passes
+      // rather than listing them (see _checksVerdictView).
+      const total = v.failures.length + v.passCount;
       const nFail = v.failures.length;
       const checks = (n) => `${n} check${n === 1 ? '' : 's'}`;
       // Who has to act on a red run: the author, named — or "You", when
@@ -12495,7 +12543,7 @@ const AppView = {
         // the checks" is what the sentence already says.
         foot: [v.advisoryNote, v.baseNote].filter(Boolean).map((n) => [n]),
         notes: { advisory: v.advisoryNote, checked: null, base: v.baseNote },
-        fails: v.failures, passes: v.passes,
+        fails: v.failures, passes: v.passes, passCount: v.passCount,
         actions: v.action ? [v.action] : [],
       };
       if (v.baseNote) row.attrs = { 'data-checks-base': 'superseded' };
@@ -13751,7 +13799,14 @@ const AppView = {
     const state = pr.check_state;
     if (state !== 'passing' && state !== 'failing') return null;
     const results = Array.isArray(pr.test_results) ? pr.test_results : [];
-    if (!results.length) return null; // 'passing' with no detail — the green badge is enough.
+    // A Workshop list row carries only the checks that did not pass, and
+    // counts the rest in `test_results_omitted` (src/services/list-test-results.js);
+    // the item's own row, read as the page opens, carries all of them. Count
+    // the omitted passes only while no passing row is present, so a full row
+    // merged over a list row is never counted twice.
+    const hasPassRow = results.some((r) => r && r.status === 'pass');
+    const omittedPasses = hasPassRow ? 0 : Math.max(0, Number(pr.test_results_omitted) || 0);
+    if (!results.length && !omittedPasses) return null; // 'passing' with no detail — the green badge is enough.
 
     const row = (r, i) => ({
       key: `${(r && r.name) || 'test'}:${i}`,
@@ -13796,7 +13851,8 @@ const AppView = {
     const total = (rows) => rows.reduce((n, r) => n + weight(r), 0);
     const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
     const advisoryChecks = total(advisoryRows);
-    const summaryBits = [plural(total(results), 'check', 'checks'), `${passRows.length} passed`];
+    const passCount = passRows.length + omittedPasses;
+    const summaryBits = [plural(total(results) + omittedPasses, 'check', 'checks'), `${passCount} passed`];
     if (blockingRows.length) summaryBits.push(plural(total(blockingRows), 'blocking failure', 'blocking failures'));
     if (advisoryChecks) summaryBits.push(plural(advisoryChecks, 'advisory failure', 'advisory failures'));
 
@@ -13811,8 +13867,11 @@ const AppView = {
       summary: summaryBits.join(' · '),
       failures: blockingRows.concat(advisoryRows).map(row),
       passes: passRows.map(row),
+      // How many passed, which is more than `passes` holds while the list is
+      // a Workshop row's (the names arrive with the item's own row).
+      passCount,
       // Under this many, folding costs a click and saves nothing.
-      foldPasses: passRows.length > AppView.PASS_FOLD_AT,
+      foldPasses: passCount > AppView.PASS_FOLD_AT,
       advisoryNote: (!failing && advisoryRows.length)
         ? 'Advisory checks have never been observed passing on this app, so they report without blocking. Fix one and its first pass makes it a permanent guard rail.'
         : null,

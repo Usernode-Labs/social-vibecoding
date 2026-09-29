@@ -271,9 +271,12 @@ export function moreRowsView(data) {
     challenges.push(`${Number(summary.challenges.done || 0)} of ${Number(summary.challenges.total)} done`);
   }
   const kudos = summary ? Number(summary.kudos) || 0 : null;
+  const proposalsTotal = summary ? Number(summary.proposalsTotal) || 0 : null;
   return {
     challenges: challenges.length ? challenges.join(' · ') : null,
     kudos: kudos == null ? null : `${kudos.toLocaleString()} received`,
+    proposals: proposalsTotal == null ? null
+      : `${proposalsTotal.toLocaleString()} ${proposalsTotal === 1 ? 'proposal' : 'proposals'}`,
     feedback: feedbackLine(d.feedback),
   };
 }
@@ -400,6 +403,47 @@ export function contributionsView(summary, username, now = Date.now()) {
         };
       }),
   };
+}
+
+/** Fixed bucket order and labels for "Your proposals" (#5310) — see
+ *  proposalsView below. */
+const PROPOSALS_SECTIONS = [
+  { key: 'openForVote', label: 'Open for a vote' },
+  { key: 'inProgress', label: 'In progress' },
+  { key: 'merged', label: 'Merged' },
+  { key: 'closed', label: 'Closed' },
+];
+
+/**
+ * "Your proposals": every proposal the viewer has started, grouped into up
+ * to four sections in a fixed order, from GET /api/me/proposal-history. A bucket
+ * with no rows is left out of the result entirely, the way an empty
+ * Workshop section is never rendered. `loaded: false` is a read that has
+ * not answered yet, distinct from a real "you have started nothing".
+ */
+export function proposalsView(data, now = Date.now()) {
+  const buckets = data && data.proposals && typeof data.proposals === 'object'
+    ? data.proposals : null;
+  if (!buckets) return { loaded: false, sections: [], empty: true };
+  const sections = PROPOSALS_SECTIONS.map(({ key, label }) => {
+    const rows = (Array.isArray(buckets[key]) ? buckets[key] : [])
+      .filter((row) => row && row.appSlug && Number(row.sessionId) > 0)
+      .map((row) => {
+        const meta = [row.appName || row.appSlug];
+        const when = mergedAgo(row.at, now);
+        if (when) meta.push(when);
+        const slug = encodeURIComponent(row.appSlug);
+        const id = Number(row.sessionId);
+        return {
+          key: String(row.sessionId),
+          href: key === 'inProgress' ? `#app/${slug}/dev/sessions/${id}` : `#app/${slug}/dev/proposals/${id}`,
+          title: row.title || 'Proposal',
+          meta: meta.join(' · '),
+        };
+      });
+    return { key, label, rows };
+  }).filter((section) => section.rows.length > 0);
+  return { loaded: true, sections, empty: sections.length === 0 };
 }
 
 /** The opt-in public profile's owner controls (#582). */

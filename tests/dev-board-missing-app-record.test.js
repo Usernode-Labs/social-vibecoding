@@ -96,7 +96,7 @@ function makeHarness(recordAnswers) {
     },
     fetch: async (url) => {
       const u = String(url);
-      if (u === '/api/apps/board-app') {
+      if (u.split('?')[0] === '/api/apps/board-app') {
         appRequests.push(u);
         const answer = answers.length ? answers.shift() : false;
         if (answer === 'throw') throw new TypeError('Failed to fetch');

@@ -269,7 +269,7 @@ test('served: the platform row, from the route an app\'s page uses, handed to Ho
     assert.equal(t.slug, 'usernode-2d5619');
     assert.equal(t.restricted, undefined);
     assert.equal(env.PT.row().slug, 'usernode-2d5619', 'the row is kept for About');
-    assert.deepEqual(env.calls, ['/api/platform/about', '/api/apps/usernode-2d5619']);
+    assert.deepEqual(env.calls, ['/api/platform/about', '/api/apps/usernode-2d5619?manifest=summary']);
     assert.equal(env.published.length, 1, 'Home publishes it, through its own gates');
   } finally { env.restore(); }
 });
@@ -305,7 +305,7 @@ test('without the about read, GET /api/version names the slug and the row answer
   try {
     const t = await env.PT.resolve();
     assert.equal(t.restricted, true, 'a 404 from the row is "not served"');
-    assert.deepEqual(env.calls, ['/api/platform/about', '/api/version', '/api/apps/usernode-2d5619']);
+    assert.deepEqual(env.calls, ['/api/platform/about', '/api/version', '/api/apps/usernode-2d5619?manifest=summary']);
   } finally { env.restore(); }
 });
 

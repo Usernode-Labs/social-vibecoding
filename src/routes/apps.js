@@ -770,6 +770,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         const contributorCount = contributorCounts.get(a.id) || 0;
         return {
           ...appAccess.stripAppSecrets(a),
+          // The launcher's copy of the manifest: everything but the declared
+          // tests and platform env, which no client reads and which were most
+          // of this payload (see summarizeManifestSnapshot). GET
+          // /api/apps/:slug still answers the whole snapshot.
+          manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
           contributor_count: contributorCount,
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
@@ -1347,8 +1352,23 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const contributorCount = contributorCounts.get(appRow.id) || 0;
       const appPayload = {
         ...appAccess.stripAppSecrets(appRow),
+        // `?manifest=summary`: the shell's own reads of an app (the Improve
+        // target, AppView) use only the snapshot's description, and the
+        // platform's snapshot alone is ~280 KB. Without the flag the whole
+        // snapshot is answered, as it always was.
+        ...(req.query.manifest === 'summary'
+          ? { manifest_snapshot: appAccess.summarizeManifestSnapshot(appRow.manifest_snapshot) }
+          : {}),
         demo_partner: demoPartner,
         contributor_count: contributorCount,
+        // Server-built icon URL so the client never assembles ids into
+        // paths (and staging demo rows can inject arbitrary sources) —
+        // same computation as the /api/apps list. Without it the header
+        // tile (features/header/header-title.tsx via improve-status.js)
+        // only ever sees the raw `icon_image_id` column, never a usable
+        // URL, so it falls back to the letter/emoji even when the app has
+        // a real icon image (#3348).
+        icon_url: appRow.icon_image_id ? `/app-icons/${appRow.icon_image_id}` : null,
         directory: discoveryCuration.describe(appRow),
         last_failure: undefined,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')

@@ -3995,10 +3995,10 @@
       "expectText": "Verdict"
     },
     {
-      "name": "Homeroom bot dashboard says it posts nothing in shadow mode (#2684)",
+      "name": "Homeroom bot dashboard says it posts nothing in shadow mode (#2684), beside its shadow build lane and who asked not to be tagged (#3347)",
       "path": "/#admin/homeroom-bot",
-      "expectSelector": "#admin-homeroom-bot-intro",
-      "expectText": "It posts nothing, claims nothing and builds nothing"
+      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-build-lane):has(#admin-homeroom-bot-optouts) #admin-homeroom-bot-intro",
+      "expectText": "It posts nothing and claims nothing, and builds nothing unless shadow builds are on below"
     },
     {
       "name": "Model costs says what one change is and that it counts the coding agent (#2592)",

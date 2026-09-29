@@ -699,7 +699,7 @@ test('#2154: a running event that beats the first detail response clears the spi
     if (String(url).includes('/api/iframe-token')) {
       return { ok: true, json: async () => ({ token: 'tok-1' }) };
     }
-    if (String(url) === `/api/apps/${SLUG}`) return detail;
+    if (String(url).split('?')[0] === `/api/apps/${SLUG}`) return detail;
     return { ok: true, json: async () => ({ status: 'ready' }) };
   };
 

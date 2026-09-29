@@ -31,7 +31,8 @@ test('parseVerdict reads the LAST fenced JSON block and normalizes its fields', 
     'Actually, on reflection:',
     '```json',
     '{ "verdict": "Question", "determined": false, "missing_fact": "Which screen shows the pins.",',
-    '  "question": "Which screen do the pins drift on?", "default": "The route map", "build_note": "ignored" }',
+    '  "question": "Which screen do the pins drift on?", "default": "The route map", "build_note": "ignored",',
+    '  "blocker": "user_facing", "why_default_fails": "The two maps draw pins in different code." }',
     '```',
   ].join('\n');
   const v = bot.parseVerdict(text);
@@ -41,7 +42,7 @@ test('parseVerdict reads the LAST fenced JSON block and normalizes its fields', 
   assert.equal(v.question, 'Which screen do the pins drift on?');
   assert.equal(v.questionDefault, 'The route map');
   assert.equal(v.buildNote, null, 'a build note only rides a ready verdict');
-  assert.equal(v.reason, null);
+  assert.equal(v.reason, 'user_facing: The two maps draw pins in different code.', 'which blocker, and why');
 });
 
 test('parseVerdict: "none" clears missing_fact, ready keeps its note, person keeps its reason', () => {
@@ -117,6 +118,7 @@ test('settings default to off and clamp their numbers', () => {
   assert.deepEqual(s, {
     mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [], liveApps: [],
     turnSeconds: 20 * 60, turnInputTokens: 10_000_000,
+    shadowBuilds: false, buildConcurrency: 2, shadowBuildPlatform: false,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },
@@ -1199,25 +1201,23 @@ test('the triage prompt ends with the JSON contract parseVerdict reads', () => {
   assert.match(prompt, /never an `empty`/);
 });
 
-test('the triage prompt asks about what is not in the repository instead of searching for it', () => {
+test('the triage prompt decides what is not in the repository instead of searching for it', () => {
   // rss-reader #24, 2026-09-25: "a dark colour closer to the platform's
   // background". The model hunted the app's repository for the platform's
   // colour: 183 reads, over 50 of the same lines of index.html, 15 fresh
-  // starts, no words and no verdict, until the 20-minute wall clock.
+  // starts, no words and no verdict, until the 20-minute wall clock. The
+  // first fix sent it to ASK instead; since the question bar it DECIDES:
+  // the closest value in the app, stated as an assumption in the spec.
   const prompt = read('src/prompts/homeroom-bot-triage.md');
-  assert.match(prompt, /It depends on something that neither this repository nor the platform conventions answer: a value of the Homeroom platform the conventions do not state/,
-    'what the platform leaves unstated, other services and taste are reasons to ask');
+  assert.match(prompt, /A value of the Homeroom platform the conventions do not state \(such as the exact colours of its own screens\) is not in anything you can read, so do not search for it: use the closest value you found in the app and say so\./);
   assert.match(prompt, /"darker", "nicer", "like the platform"/);
-  assert.match(prompt, /Nothing you can read answers these, so do not search for them\. Ask\./);
-  assert.match(prompt, /If one or two targeted searches for the obvious names do not find it, it is not in the repository: ask instead of searching further\./,
+  assert.match(prompt, /is built with the closest dark colour the app already has, listed as an assumption, not asked about/);
+  assert.match(prompt, /If one or two targeted searches for the obvious names do not find it, it is not in the repository: stop searching and decide\./,
     '"the repository can answer it" has a limit');
   assert.match(prompt, /Do not read a file or line range you have already read/);
   assert.match(prompt, /List or search the whole repository at most once/);
-  assert.match(prompt, /still unsure after about ten reads, you have your answer: it is a `question`/);
+  assert.match(prompt, /still unsure after about ten reads, stop reading and decide now/);
   assert.match(prompt, /a turn that ends without the JSON block below has decided nothing/);
-  // The counter-rules still stand, so it does not over-ask what the code says.
-  assert.match(prompt, /Never ask something the repository or the platform conventions can answer/);
-  assert.match(prompt, /Never ask when a sensible default exists/);
 });
 
 test('the triage prompt sends platform questions to the conventions tool, not to the repository', () => {

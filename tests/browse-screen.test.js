@@ -142,7 +142,7 @@ function makeBrowse(opts = {}) {
           const items = opts.contributors || [];
           return { slug: 'x', total: opts.contribTotal ?? items.length, contributors: items };
         }
-        if (/^\/api\/apps\/[^/?]+$/.test(url)) return { app: opts.coldApp || null };
+        if (/^\/api\/apps\/[^/?]+(?:\?manifest=summary)?$/.test(url)) return { app: opts.coldApp || null };
         return { apps: opts.apps || [] };
       };
       return { ok, status: ok ? 200 : 500, json };
@@ -976,8 +976,9 @@ test('syncFrom adopts an externally-fetched payload and repaints', () => {
 });
 
 test('Home.load hands its fresh payload to an open browse screen', () => {
+  // load() is the single-flight gate; the load itself is _loadOnce().
   const load = HOME_SRC.slice(
-    HOME_SRC.indexOf('async load() {'),
+    HOME_SRC.indexOf('async _loadOnce() {'),
     HOME_SRC.indexOf('// ===== Rendering')
   );
   assert.ok(load.length > 200, 'located Home.load');
@@ -1313,7 +1314,7 @@ test('a cold deep link falls back to GET /api/apps/:slug', async () => {
   assert.equal(state.detail.state, 'loading');
   await flush();
   await flush();
-  assert.ok(fetchCalls.some((c) => c.url === '/api/apps/cold-app'),
+  assert.ok(fetchCalls.some((c) => c.url === '/api/apps/cold-app?manifest=summary'),
     'fetched the single app');
 });
 

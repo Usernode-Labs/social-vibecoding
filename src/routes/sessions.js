@@ -170,6 +170,7 @@ const { listDrafts } = require('./chat-drafts');
 // shared by GET /transcript and POST /fork (see services/transcript-share.js).
 const transcriptShare = require('../services/transcript-share');
 const appAccess = require('../services/app-access');
+const listTestResults = require('../services/list-test-results');
 const communities = require('../services/communities');
 const userAgentFiles = require('../services/user-agent-files');
 const debugAccess = require('../services/debug-access');
@@ -2376,8 +2377,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         if (row.source !== 'imported') delete row.test_results;
         if (summary.total) row.failing_checks = summary;
       }
+      // `?results=failing` (services/list-test-results.js): the imported rows
+      // above keep their raw results by contract; the shell's list form trims
+      // those to the failures too.
       res.json({
-        sessions, totals, externalTasks, caps: effectiveSessionCaps(config, req.user),
+        sessions: listTestResults.forListing(req, sessions),
+        totals, externalTasks, caps: effectiveSessionCaps(config, req.user),
       });
     } catch (err) {
       log.error('sessions', 'Failed to list active sessions', { message: err.message });
@@ -2576,8 +2581,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                   AS can_preview
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
+           AND ($3::text IS NULL OR status = $3)
          ORDER BY created_at DESC`,
-        [appRows[0].id, req.user.id]
+        // `?status=archived`: the Workshop reads this list only for its
+        // "Show archived" rows, and a prolific author's whole history is
+        // over a thousand merged rows it discarded on arrival (700 KB on
+        // production). Only that one status is accepted; without it the
+        // whole list is answered, as it always was.
+        [appRows[0].id, req.user.id, req.query.status === 'archived' ? 'archived' : null]
       );
 
       // `warm` = a worker container currently exists for the session. The
@@ -2723,7 +2734,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         sessions.push(...stagingMockSharedSessions());
       }
 
-      res.json({ sessions });
+      // `?results=failing`: the shell's list form (services/list-test-results.js).
+      res.json({ sessions: listTestResults.forListing(req, sessions) });
     } catch (err) {
       log.error('sessions', 'Failed to list shared sessions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

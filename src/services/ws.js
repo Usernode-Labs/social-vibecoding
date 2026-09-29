@@ -1377,16 +1377,22 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
  * author's user_id, and the same `chat` payload handleMessage broadcasts,
  * through broadcastFromSender so a viewer who blocked the account does not
  * receive it. Thread posts only, like sendSystemMessage.
+ *
+ * `msgType` may also be 'spec_share': the bot's spec, drawn as the same spec
+ * card a person's "Share to group" posts (metadata.specShare), with the
+ * card's summary line as its content. Nothing else.
  */
-async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null } = {}) {
+const BOT_MESSAGE_TYPES = new Set(['message', 'spec_share']);
+async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null, msgType = 'message' } = {}) {
   if (!thread || !user || !Number.isInteger(Number(user.id))) return null;
   const text = String(content || '').trim().slice(0, MAX_CHAT_LEN);
   if (!text) return null;
+  const kind = BOT_MESSAGE_TYPES.has(msgType) ? msgType : 'message';
   const { rows } = await pool.query(
     `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
-     VALUES ($1, $2, $3, 'message', $4, $5, $6)
+     VALUES ($1, $2, $3, $7, $4, $5, $6)
      RETURNING id, created_at`,
-    [appId, Number(user.id), text, JSON.stringify(metadata || {}), thread.type, thread.ref]
+    [appId, Number(user.id), text, JSON.stringify(metadata || {}), thread.type, thread.ref, kind]
   );
   await broadcastFromSender(pool, appId, {
     type: 'chat',
@@ -1394,7 +1400,7 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
     userId: Number(user.id),
     username: user.username,
     content: text,
-    msgType: 'message',
+    msgType: kind,
     ...(metadata ? { metadata } : {}),
     thread,
     createdAt: rows[0].created_at,

@@ -9246,6 +9246,33 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_created
 ALTER TABLE homeroom_bot_runs
   ADD COLUMN IF NOT EXISTS proposal_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 
+-- Shadow builds: a ready verdict on an app outside the live list, built on a
+-- branch nobody is shown, so what the bot would have proposed can be
+-- spot-checked (see "The build lane" in services/homeroom-bot.js).
+-- build_ok is NULL on a run that was not built; the branch stays on the
+-- app's repository after the session is archived.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_ok BOOLEAN;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_branch TEXT;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_sha TEXT;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_commits INTEGER;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_error TEXT;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_cost_usd NUMERIC(18,8);
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_at TIMESTAMPTZ;
+-- The build lane's queue is the runs themselves: queued (build_queued_at
+-- set, build_at NULL), building (build_at set, build_ok NULL), then built
+-- or failed. build_attempts counts claims, so a build a restart interrupted
+-- is retried once and then recorded failed.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_queued_at TIMESTAMPTZ;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_attempts INTEGER NOT NULL DEFAULT 0;
+-- The spec the bot wrote just before building (live or shadow): the same
+-- text is the build session's spec doc; kept here for the dashboard and the
+-- export, since a shadow build's session is archived and nobody opens it.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_spec_md TEXT;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_build_queue
+  ON homeroom_bot_runs(app_id, build_queued_at)
+  WHERE build_queued_at IS NOT NULL AND build_ok IS NULL;
+
 -- Everything the bot posted on an issue: one row per post, both surfaces
 -- (the GitHub comment and the Homeroom thread message) on the same row.
 -- The partial unique index is what makes "looking at this" a once-per-issue
@@ -9265,6 +9292,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_homeroom_bot_posts_looking
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_posts_issue
   ON homeroom_bot_posts(app_id, issue_number, created_at DESC);
 
+-- Who asked the Homeroom bot to stop tagging them on an issue. The bot's
+-- posts @-mention whoever filed the issue and the people who took part in
+-- its discussion; a person here is left out of that issue's mentions from
+-- then on. Recorded from the triage or follow-up turn that read the ask.
+CREATE TABLE IF NOT EXISTS homeroom_bot_mention_optouts (
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number  INTEGER NOT NULL,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  run_id        INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, issue_number, user_id)
+);
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
 -- (still refused by the settings route). Acting for real is per app
@@ -9276,7 +9316,10 @@ INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_concurrency', '1'),
   ('homeroom_bot_batch_size', '10'),
   ('homeroom_bot_paused_apps', '[]'),
-  ('homeroom_bot_live_apps', '[]')
+  ('homeroom_bot_live_apps', '[]'),
+  ('homeroom_bot_shadow_builds', 'off'),
+  ('homeroom_bot_build_concurrency', '2'),
+  ('homeroom_bot_shadow_build_platform', 'off')
 ON CONFLICT (key) DO NOTHING;
 
 -- #2721. Private, durable moderation records; target IDs intentionally have

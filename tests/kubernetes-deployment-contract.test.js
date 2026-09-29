@@ -172,9 +172,30 @@ test('Kubernetes workflow resolves all three images before publishing a release'
   assert.match(workflow, /REUSE_CURRENT_PLATFORM: 'true'/);
   assert.match(workflow, /name: image-digest-scheduled-bases/);
   assert.match(workflow, /CLAUDE_CODE_VERSION: \$\{\{ steps\.claude\.outputs\.version \}\}/);
-  assert.match(workflow, /build-args: \$\{\{ steps\.claude\.outputs\.build_arg \}\}/);
+  assert.match(workflow, /build-args: \|\n\s+GIT_SHA=\$\{\{ github\.sha \}\}\n\s+\$\{\{ steps\.claude\.outputs\.build_arg \}\}/,
+    'the shell build needs the same exact revision as the runtime, while retaining the worker version');
   assert.match(workerDockerfile, /ARG CLAUDE_CODE_VERSION=latest/);
   assert.match(workerDockerfile, /@anthropic-ai\/claude-code@\$\{CLAUDE_CODE_VERSION\}/);
+});
+
+test('every Kubernetes chart release validates its immutable platform image with the runtime revision', () => {
+  const workflow = read('.github/workflows/build-kubernetes-images.yml');
+  const release = workflow.slice(workflow.indexOf('\n  release:\n'));
+  const start = release.indexOf('- name: Validate platform shell release');
+  const end = release.indexOf('- name: Prepare and validate release chart');
+  assert.ok(start > release.indexOf('- name: Download image digests'));
+  assert.ok(start > release.indexOf('- uses: docker/login-action@v4'));
+  assert.ok(end > start, 'validation gates chart publication');
+  const validation = release.slice(start, end);
+  assert.doesNotMatch(validation, /\bif:|continue-on-error:/,
+    'scheduled image reuse must pass the same blocking check as a source release');
+  assert.match(validation, /image-digests\/platform\.txt/);
+  assert.match(validation, /social-vibecoding-platform@\$digest/);
+  assert.match(validation, /--env NODE_ENV=production --env GIT_SHA="\$GITHUB_SHA"/);
+  assert.match(validation, /--entrypoint node "\$image"/);
+  assert.match(validation, /--network none --read-only/);
+  assert.match(validation, /require\('\.\/src\/services\/shell-release'\)/);
+  assert.match(validation, /loadShellRelease\('\/app\/public'\)/);
 });
 
 test('Kubernetes workflow retains queued releases and only publishes the current branch tip', () => {

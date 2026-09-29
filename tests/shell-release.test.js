@@ -30,6 +30,21 @@ test('generated releases validate build/runtime identity and reject incomplete h
   assert.throws(() => loadShellRelease(path.join(release.root, 'public'), { NODE_ENV: 'production' }), /Inconsistent/);
 });
 
+test('a dev-stamped image cannot deploy with a production revision; rebuilding with that revision fixes it', t => {
+  const release = fixture(t, 'a');
+  const publicDir = path.join(release.root, 'public');
+  const document = release.read('/index.html').toString();
+  const runtime = { NODE_ENV: 'production', GIT_SHA: release.revision };
+  // Reproduce the Kubernetes workflow omitting the Docker GIT_SHA build arg.
+  release.put('/index.html', document.replace(`content="${release.revision}"`, 'content="dev"'));
+  buildShellRelease(release.root, { revision: 'dev' });
+  assert.throws(() => loadShellRelease(publicDir, runtime), /Inconsistent shell release artifacts/);
+
+  release.put('/index.html', document);
+  buildShellRelease(release.root, { revision: release.revision });
+  assert.equal(loadShellRelease(publicDir, runtime).revision, release.revision);
+});
+
 test('warm upgrade reuses unchanged bytes, leaves lazy chunks lazy, and preserves sign-in', async t => {
   const a = fixture(t, 'a');
   const b = fixture(t, 'b');
