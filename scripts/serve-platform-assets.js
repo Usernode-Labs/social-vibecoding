@@ -151,4 +151,4 @@ function start() {
 
 if (require.main === module) start();
 
-module.exports = { PREFIXES, isAssetPath, resolveAsset, ROOT, server, start };
+module.exports = { PREFIXES, TYPES, isAssetPath, resolveAsset, ROOT, server, start };

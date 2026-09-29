@@ -24,6 +24,7 @@ try { planContract = require('../src/services/visual-evidence-plan'); }
 catch (_) { planContract = require('./visual-evidence-plan'); }
 const sessionBootstrap = require('../worker/session-bootstrap');
 const hostedApps = require('../worker/evidence-hosted-origins');
+const platformAssets = require('../scripts/serve-platform-assets');
 
 const ARTIFACT_PREFIX = '__USERNODE_EVIDENCE_ARTIFACT__ ';
 const EVENT_PREFIX = '__USERNODE_EVIDENCE__ ';
@@ -42,6 +43,13 @@ const RETRYABLE_INITIAL_NAVIGATION = /\bnet::ERR_(NETWORK_CHANGED|CONNECTION_RES
 const CHECKPOINT_SETTLE_MS = 12_000;
 const CHECKPOINT_MAX_SAMPLES = 6;
 const CHECKPOINT_SCREENSHOT_MS = 6_000;
+
+// A legacy app still on the third-party Tailwind CDN renders unstyled in
+// staging and production only if that host is actually unreachable; the
+// fence must not be the reason it looks broken here. GET-only: this origin
+// is admitted for the CDN script and nothing that would let it act as a
+// general egress hole.
+const LEGACY_TAILWIND_CDN_ORIGIN = 'https://cdn.tailwindcss.com';
 
 const CHROMIUM_ARGS = Object.freeze([
   '--disable-dev-shm-usage',
@@ -1035,6 +1043,27 @@ async function encodeWebm(frames, { fps, targetBytes, maxBytes }) {
 
 const { trustedHostedAppOrigins, loadTrustedHostedAppOrigins } = hostedApps;
 
+// Evidence deployments are `internalOnly: true` (see application-runtime.js's
+// `deploy()`): they have no Caddy/Ingress edge in front of them, so nothing
+// intercepts `/usernode-bridge/`, `/usernode-native/` or `/usernode-tailwind/`
+// on their way to the app container the way production and staging do. Left
+// alone, those requests fall through to the app's own SPA catch-all and come
+// back as HTML, so the app renders unstyled and native-kit assertions fail on
+// a difference the app's own code never introduced. Serve the same bytes the
+// real edge would, straight from this checkout's `public/`, for any request
+// to a side's own admitted origin.
+async function fulfillPlatformAsset(route, pathname) {
+  const file = platformAssets.resolveAsset(pathname);
+  if (!file) return route.fulfill({ status: 404, contentType: 'text/plain; charset=utf-8', body: 'Not Found' });
+  try {
+    const body = await fsp.readFile(file);
+    const type = platformAssets.TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream';
+    return route.fulfill({ status: 200, contentType: type, body });
+  } catch {
+    return route.fulfill({ status: 404, contentType: 'text/plain; charset=utf-8', body: 'Not Found' });
+  }
+}
+
 async function installOriginFence(context, allowedOrigins, diagnostics, controlledFailure = null,
   { loadHostedOrigins = null, hostedOrigins = new Set() } = {}) {
   const admittedFrames = new WeakSet();
@@ -1050,10 +1079,15 @@ async function installOriginFence(context, allowedOrigins, diagnostics, controll
     const url = request.url();
     if (/^(?:data|blob|about):/.test(url)) return route.continue();
     let origin;
-    try { origin = new URL(url).origin; } catch { origin = null; }
+    let pathname;
+    let search;
+    try { ({ origin, pathname, search } = new URL(url)); } catch { origin = null; }
     if (origin && allowedOrigins.has(origin)) {
+      if (request.method() === 'GET' && platformAssets.isAssetPath(pathname)) {
+        return fulfillPlatformAsset(route, pathname);
+      }
       if (controlledFailure?.enabled && request.method() === 'GET'
-          && new URL(url).pathname + new URL(url).search === controlledFailure.path) {
+          && pathname + search === controlledFailure.path) {
         controlledFailure.requests.add(request);
         controlledFailure.hits += 1;
         controlledFailure.urls.add(url);
@@ -1061,6 +1095,11 @@ async function installOriginFence(context, allowedOrigins, diagnostics, controll
       }
       return route.continue();
     }
+    // A legacy app on the third-party Tailwind CDN reaches it from every
+    // environment, including production; the fence should not be the one
+    // place it can't. Read-only and origin-scoped, so it grants nothing
+    // beyond fetching that one script.
+    if (origin === LEGACY_TAILWIND_CDN_ORIGIN && request.method() === 'GET') return route.continue();
     // A child app is a different origin. Admit its actual document only when
     // the platform's own app catalog says it is a deployed, public app AND
     // the request comes from the managed app iframe. Subresources remain
