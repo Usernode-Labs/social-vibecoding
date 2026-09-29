@@ -4645,7 +4645,9 @@ function voteRoutes(config) {
       }
 
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
-      res.json({ proposal });
+      // `?results=failing`: the proposal page's own read, which lists passing
+      // checks only when their fold is opened (services/list-test-results.js).
+      res.json({ proposal: listTestResults.forItem(req, proposal) });
     } catch (err) {
       log.error('votes', 'Failed to get proposal by id', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

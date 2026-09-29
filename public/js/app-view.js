@@ -6297,12 +6297,17 @@ const AppView = {
   // The change page's own read (topic-head.tsx's readChangeDetail): a
   // proposal's public row, or an in-flight session's details. Null on any
   // failure, and the page keeps what it had.
-  async _readTopicRow(id, review) {
+  //
+  // `full`: every check result, passing ones included. Without it the row
+  // names only the checks that did not pass (`?results=failing`) — on the
+  // platform app a proposal's row is 265 KB, 255 KB of it passing checks —
+  // and the fold that lists them reads the rest (_loadCheckNames).
+  async _readTopicRow(id, review, { full = false } = {}) {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return null;
     const url = review ? `/api/apps/${slug}/proposals/${id}` : `/api/sessions/${id}/details`;
     try {
-      const res = await fetch(`${url}${AppView._demoQS()}`);
+      const res = await fetch(`${url}${full ? AppView._demoQS() : AppView._withDemo('results=failing')}`);
       if (!res.ok) return null;
       const data = await res.json();
       const row = (review ? data.proposal : data.session) || null;
@@ -6312,6 +6317,37 @@ const AppView = {
     } catch {
       return null;
     }
+  },
+
+  // The passing checks' names, read when a verdict's fold is opened, by
+  // session id and kept for the run they came from — a new run's short row
+  // counts its own passes and the fold reads again.
+  _checkNames: new Map(),
+  _checkNamesLoading: new Map(),
+  _checksRunKey(pr) {
+    return `${(pr && pr.checks_commit_sha) || ''}|${(pr && pr.checks_checked_at) || ''}`;
+  },
+  _checkNamesFor(pr) {
+    const held = pr && pr.id != null ? AppView._checkNames.get(Number(pr.id)) : null;
+    return held && held.run === AppView._checksRunKey(pr) ? held.results : null;
+  },
+  // Read one row in full and hand its results to every copy of it on the
+  // page. Resolves true once the names are there, false when the read failed.
+  _loadCheckNames(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isFinite(id)) return Promise.resolve(false);
+    if (AppView._checkNamesLoading.has(id)) return AppView._checkNamesLoading.get(id);
+    const open = AppView._findTopicItem && AppView._findTopicItem();
+    const held = (open && Number(open.id) === id ? open : null) || AppView._topicRowFor(id);
+    const review = !!held && ['promoted', 'merging', 'merged'].includes(held.status);
+    const run = AppView._readTopicRow(id, review, { full: true }).then((row) => {
+      if (!row || !Array.isArray(row.test_results)) return false;
+      AppView._checkNames.set(id, { run: AppView._checksRunKey(row), results: row.test_results });
+      AppView.patchTopicProposal(id, { test_results: row.test_results });
+      return true;
+    }).finally(() => { AppView._checkNamesLoading.delete(id); });
+    AppView._checkNamesLoading.set(id, run);
+    return run;
   },
 
   // Fetch the vote snapshot (promoted + merged) that powers the inline
@@ -12543,7 +12579,7 @@ const AppView = {
         // the checks" is what the sentence already says.
         foot: [v.advisoryNote, v.baseNote].filter(Boolean).map((n) => [n]),
         notes: { advisory: v.advisoryNote, checked: null, base: v.baseNote },
-        fails: v.failures, passes: v.passes, passCount: v.passCount,
+        fails: v.failures, passes: v.passes, passCount: v.passCount, passesFor: v.passesFor,
         actions: v.action ? [v.action] : [],
       };
       if (v.baseNote) row.attrs = { 'data-checks-base': 'superseded' };
@@ -13798,13 +13834,19 @@ const AppView = {
     if (!pr) return null;
     const state = pr.check_state;
     if (state !== 'passing' && state !== 'failing') return null;
-    const results = Array.isArray(pr.test_results) ? pr.test_results : [];
-    // A Workshop list row carries only the checks that did not pass, and
-    // counts the rest in `test_results_omitted` (src/services/list-test-results.js);
-    // the item's own row, read as the page opens, carries all of them. Count
-    // the omitted passes only while no passing row is present, so a full row
-    // merged over a list row is never counted twice.
-    const hasPassRow = results.some((r) => r && r.status === 'pass');
+    let results = Array.isArray(pr.test_results) ? pr.test_results : [];
+    // A list row, and the item's own row as the page reads it, carry only the
+    // checks that did not pass and count the rest in `test_results_omitted`
+    // (src/services/list-test-results.js). The names arrive when the fold is
+    // opened (_loadCheckNames) and are kept for that run, so a later refresh
+    // in the short form does not take them away again. Count the omitted
+    // passes only while no passing row is present, so a full row merged over
+    // a short one is never counted twice.
+    let hasPassRow = results.some((r) => r && r.status === 'pass');
+    if (!hasPassRow && Number(pr.test_results_omitted) > 0) {
+      const named = AppView._checkNamesFor(pr);
+      if (named) { results = named; hasPassRow = true; }
+    }
     const omittedPasses = hasPassRow ? 0 : Math.max(0, Number(pr.test_results_omitted) || 0);
     if (!results.length && !omittedPasses) return null; // 'passing' with no detail — the green badge is enough.
 
@@ -13867,9 +13909,11 @@ const AppView = {
       summary: summaryBits.join(' · '),
       failures: blockingRows.concat(advisoryRows).map(row),
       passes: passRows.map(row),
-      // How many passed, which is more than `passes` holds while the list is
-      // a Workshop row's (the names arrive with the item's own row).
+      // How many passed, which is more than `passes` holds while the row
+      // counts its passes rather than naming them.
       passCount,
+      // Whose names the fold reads when it opens, while they are only counted.
+      passesFor: omittedPasses > 0 && pr.id != null ? Number(pr.id) : null,
       // Under this many, folding costs a click and saves nothing.
       foldPasses: passCount > AppView.PASS_FOLD_AT,
       advisoryNote: (!failing && advisoryRows.length)

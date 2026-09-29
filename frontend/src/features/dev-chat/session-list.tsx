@@ -177,10 +177,35 @@ function EmptyPitch(): ReactNode {
   );
 }
 
-export function SessionListView({ rows }: SessionListState): ReactNode {
+/**
+ * The list's last row when it left finished sessions out: one quiet line,
+ * the same weight as a row's own actions, that reads the whole history.
+ */
+function OlderRow({ older }: { older: number }): ReactNode {
+  const [pending, setPending] = useState(false);
+  return (
+    <button
+      type="button"
+      className="dc-session-older w-full px-3 py-2 text-left text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+      disabled={pending}
+      onClick={async () => {
+        if (pending) return;
+        setPending(true);
+        await call('showOlderSessions', []);
+        setPending(false);
+      }}
+    >
+      {pending ? 'Loading…' : `Show ${older.toLocaleString()} older ${older === 1 ? 'session' : 'sessions'}`}
+    </button>
+  );
+}
+
+export function SessionListView({ rows, older = 0 }: SessionListState): ReactNode {
   if (!rows) return null;
-  if (!rows.length) return <EmptyPitch />;
-  return <>{rows.map((row) => <Row key={row.id} row={row} />)}</>;
+  if (!rows.length && !older) return <EmptyPitch />;
+  const listed = rows.map((row) => <Row key={row.id} row={row} />);
+  if (!older) return <>{listed}</>;
+  return <>{listed}<OlderRow older={older} /></>;
 }
 
 export function SessionList(): ReactNode {

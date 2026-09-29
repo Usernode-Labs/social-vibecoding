@@ -247,6 +247,16 @@ const HEADLESS_WRAPUP_EFFECT_KEYS = Object.freeze({
   spend: 'headless_wrapup_spend',
 });
 
+// A session that will not change again, for the session list's `?recent=N`.
+const FINISHED_SESSION_STATUSES = new Set(['merged', 'archived']);
+// `?recent=N` as a count of finished rows to keep: 1..200, or null to list
+// them all.
+function recentFinishedLimit(raw) {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.min(n, 200);
+}
+
 // Content-free caller context for services/llm.js. This object is consumed
 // locally by the telemetry wrapper and is never spread into a provider
 // request body.
@@ -2591,18 +2601,38 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         [appRows[0].id, req.user.id, req.query.status === 'archived' ? 'archived' : null]
       );
 
+      // `?recent=N`: every session still under way, and only the N newest
+      // finished (merged or archived) ones, with a count of the rest. The dev
+      // chat's own list asks for it: a prolific author's history on the
+      // platform app is over a thousand finished rows (1,015 merged and 97
+      // archived, 693 KB on production), re-read on every open of a change
+      // and every session event while it is on screen. "Show older" reads
+      // the whole list again. Without the parameter it is answered whole.
+      const recent = req.query.status === 'archived' ? null : recentFinishedLimit(req.query.recent);
+      let listed = rows;
+      let olderFinished = 0;
+      if (recent) {
+        let finished = 0;
+        listed = rows.filter((s) => {
+          if (!FINISHED_SESSION_STATUSES.has(s.status)) return true;
+          finished += 1;
+          return finished <= recent;
+        });
+        olderFinished = rows.length - listed.length;
+      }
+
       // `warm` = a worker container currently exists for the session. The
       // session list uses it to decide whether a promoted row still has a
       // worker to free (and the create-session cap counts the same thing).
       const warmIds = new Set(worker.warmRegistrySnapshot().map((w) => w.sessionId));
-      for (const s of rows) s.warm = warmIds.has(s.id);
+      for (const s of listed) s.warm = warmIds.has(s.id);
 
       // Staging-only demo row (?demo=1): a mock archived session so the
       // "Show archived" toggle — the anchor the visible-sessions group
       // renders beneath — is present for any demo viewer. Same read-only
       // 99xxxx convention as the other mocks (Unarchive 404s server-side).
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
-        rows.push({
+        listed.push({
           id: 990104, branch_name: 'mock/archived-session', pr_number: null,
           pr_url: null, pr_title: null,
           session_title: '[Mock] Archived session',
@@ -2613,7 +2643,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         });
       }
 
-      res.json({ sessions: rows });
+      res.json({ sessions: listed, ...(recent ? { older_finished: olderFinished } : {}) });
     } catch (err) {
       log.error('sessions', 'Failed to list sessions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3556,7 +3586,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             .getForSession(pool, detail, detail.app_slug)
           : null;
       }
-      res.set('Cache-Control', 'no-store').json({ session: detail });
+      // `?results=failing`: the change page's own read, which lists passing
+      // checks only when their fold is opened (services/list-test-results.js).
+      res.set('Cache-Control', 'no-store').json({ session: listTestResults.forItem(req, detail) });
     } catch (err) {
       log.error('sessions', 'Failed to read check results', { message: err.message });
       res.status(500).json({ error: 'Could not load check results' });

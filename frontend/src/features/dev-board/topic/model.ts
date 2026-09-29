@@ -120,11 +120,16 @@ export interface ChecksVerdict {
   failures: CheckRow[];
   passes: CheckRow[];
   /**
-   * How many passed. More than `passes.length` while the row is a Workshop
-   * list row, which counts its passes rather than listing them; the names
-   * arrive with the item's own row.
+   * How many passed. More than `passes.length` while the row counts its
+   * passes rather than listing them (a Workshop list row, or the item's own
+   * row until its fold is opened).
    */
   passCount: number;
+  /**
+   * The session whose passing checks are counted but not yet named: opening
+   * the fold reads them (AppView._loadCheckNames). Null once they are listed.
+   */
+  passesFor?: number | null;
   /** Passes fold behind a `<details>` above this many. */
   foldPasses: boolean;
   advisoryNote: string | null;
@@ -242,6 +247,8 @@ export interface LedgerRow {
   passes?: CheckRow[] | null;
   /** How many passed: `passes` can be shorter (ChecksVerdict.passCount). */
   passCount?: number | null;
+  /** ChecksVerdict.passesFor: whose passing checks the fold still has to read. */
+  passesFor?: number | null;
   /** The votes row's roster. */
   roster?: RosterView | null;
   /** The checks row's live progress while the run is pending. */

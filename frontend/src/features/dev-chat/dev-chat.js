@@ -79,6 +79,10 @@ function loadStoredModel() {
 
 const DevChat = {
   sessions: [],
+  // How many finished sessions the list left out (loadSessions), and the app
+  // whose whole history the reader asked for with "Show older".
+  sessionsOlder: 0,
+  _sessionsAllFor: null,
   currentSession: null,
   messages: [],
   isStreaming: false,
@@ -2227,6 +2231,8 @@ const DevChat = {
       DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
     }
     DevChat.sessions = [];
+    DevChat.sessionsOlder = 0;
+    DevChat._sessionsAllFor = null;
     DevChat.currentSession = null;
     DevChat._publishPreview();
     DevChat.messages = [];
@@ -4154,13 +4160,32 @@ const DevChat = {
     });
   },
 
+  // Every session still under way, and the SESSIONS_RECENT newest finished
+  // ones: a prolific author's history is over a thousand merged and archived
+  // rows (693 KB on production), and this list is re-read on every open of a
+  // change and every session event while one is on screen. "Show older"
+  // (showOlderSessions) reads the whole history for this app from then on.
+  SESSIONS_RECENT: 20,
   async loadSessions(appSlug) {
+    const all = DevChat._sessionsAllFor === appSlug;
     try {
-      const res = await fetch(`/api/apps/${appSlug}/sessions`);
+      const res = await fetch(all
+        ? `/api/apps/${appSlug}/sessions`
+        : `/api/apps/${appSlug}/sessions?recent=${DevChat.SESSIONS_RECENT}`);
       if (!res.ok) return;
-      const { sessions } = await res.json();
+      const { sessions, older_finished: older } = await res.json();
       DevChat.sessions = sessions;
+      DevChat.sessionsOlder = all ? 0 : Math.max(0, Number(older) || 0);
     } catch {}
+  },
+
+  async showOlderSessions() {
+    const slug = typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug;
+    if (!slug) return null;
+    DevChat._sessionsAllFor = slug;
+    await DevChat.loadSessions(slug);
+    DevChat.renderSessionList();
+    return null;
   },
 
   // ── Cross-app active sessions ─────────────────────────────
@@ -9539,6 +9564,7 @@ const DevChat = {
     if (!react) return;
     react.publishSessionList({
       rows: DevChat.sessions.map((s) => DevChat._sessionRow(s)),
+      older: DevChat.sessionsOlder || 0,
     });
   },
 
