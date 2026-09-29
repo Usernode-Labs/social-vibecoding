@@ -2,6 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
+const { loadShellRelease } = require('./src/services/shell-release');
+const shellRelease = loadShellRelease(path.join(__dirname, 'public'));
+// The baked artifact is authoritative even when a runtime omits build args.
+// loadShellRelease rejects an explicitly different runtime revision.
+if (shellRelease && shellRelease.revision !== 'dev') process.env.GIT_SHA = shellRelease.revision;
 const { load: loadConfig, runsClusterMaintenance } = require('./src/config');
 const { migrate } = require('./src/db/migrate');
 const {
@@ -868,6 +873,16 @@ app.use('/usernode-bridge', (_req, res, next) => {
 // Same files as the handler below serves at their plain paths; see
 // src/services/static-cache.js.
 app.use(buildScopedAssetHandler(path.join(__dirname, 'public')));
+app.get('/sw.js', (_req, res, next) => {
+  if (!shellRelease) return next();
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  res.type('application/javascript').sendFile(path.join(__dirname, 'public', 'shell', 'worker.js'));
+});
+app.get('/shell/release.json', (_req, res, next) => {
+  if (!shellRelease) return next();
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  res.json(shellRelease);
+});
 
 // Serve the shell's static assets, but force HTML/JS/CSS to revalidate on
 // every load (see src/services/static-cache.js). Without this, mobile

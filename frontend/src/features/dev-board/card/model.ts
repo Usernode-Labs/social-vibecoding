@@ -669,6 +669,8 @@ export interface KanbanColView {
   title: string;
   count: number;
   hint?: string | null;
+  /** In review only; sorting never filters cards or changes other columns. */
+  reviewSort?: 'newest' | 'priority';
   /** A visible app-level fact under the heading (the Done deployment boundary). */
   status?: {
     text: string;

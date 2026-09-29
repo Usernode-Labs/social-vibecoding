@@ -3194,7 +3194,7 @@
         const age = this._openRouterCatalogAgeText(this._openRouterCatalogRefreshedAt);
         meta.textContent = visibleModels.length
           ? `${visibleModels.length} of ${this._openRouterCatalogTotal || this._openRouterModels.length} models${age ? ` · ${age}` : ''}`
-          : `No key-visible models match. Refresh, then check this key's OpenRouter account policies${age ? ` · ${age}` : ''}`;
+          : `No models match. Clear the search or show all models${age ? ` · ${age}` : ''}`;
       }
       this._syncOpenRouterModelDetails();
     },

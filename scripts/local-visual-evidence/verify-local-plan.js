@@ -100,7 +100,7 @@ async function checkoutRevision(runId, side, sha) {
 async function buildImage(sha, checkout) {
   // Repeated plan edits should not create an unbounded set of local tags.
   const tag = `usernode-evidence-local:${sha.slice(0, 16)}`;
-  await docker(['build', '-q', '-t', tag, checkout], 600_000);
+  await docker(['build', '-q', '--build-arg', `GIT_SHA=${sha}`, '-t', tag, checkout], 600_000);
   const digest = await docker(['image', 'inspect', '--format', '{{.Id}}', tag]);
   return { tag, digest };
 }

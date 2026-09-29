@@ -379,6 +379,22 @@
     {
       "source": "server.js",
       "method": "GET",
+      "path": "/sw.js",
+      "expression": null,
+      "status": "exempt",
+      "reason": "generated service-worker and asset manifest delivery, not an interactive control"
+    },
+    {
+      "source": "server.js",
+      "method": "GET",
+      "path": "/shell/release.json",
+      "expression": null,
+      "status": "exempt",
+      "reason": "generated service-worker and asset manifest delivery, not an interactive control"
+    },
+    {
+      "source": "server.js",
+      "method": "GET",
       "path": "/admin",
       "expression": null,
       "status": "exempt",

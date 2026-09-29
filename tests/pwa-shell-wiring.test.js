@@ -295,7 +295,7 @@ test('the React bundle registers the service worker at root scope', () => {
     path.join(__dirname, '..', 'frontend', 'src', 'lib', 'service-worker.ts'), 'utf8',
   );
   assert.match(mod, /serviceWorker/);
-  assert.match(mod, /register\('\/sw\.js'\)/);
+  assert.match(mod, /register\('\/sw\.js', \{ updateViaCache: 'none' \}\)/);
 
   const entry = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'main.tsx'), 'utf8',
@@ -408,7 +408,7 @@ function withNavigator(value, fn) {
 /** A container whose register() resolves, recording what it was asked. */
 function workingContainer(calls) {
   return {
-    register: (scope) => { calls.push(['register', scope]); return Promise.resolve({}); },
+    register: (scope, options) => { calls.push(['register', scope, options]); return Promise.resolve({}); },
     addEventListener: (type) => { calls.push(['addEventListener', type]); },
   };
 }
@@ -468,8 +468,9 @@ test('registerServiceWorker still registers at root scope when it can', () => {
   withNavigator({ value: { serviceWorker: workingContainer(calls) } }, () => {
     mod.registerServiceWorker();
   });
-  assert.deepStrictEqual(calls, [['addEventListener', 'message'], ['register', '/sw.js']],
-    'the api-updated listener is attached, then the worker registers at root scope');
+  assert.deepStrictEqual(calls, [['addEventListener', 'message'], ['addEventListener', 'controllerchange'],
+    ['register', '/sw.js', { updateViaCache: 'none' }]],
+    'API and build ownership listeners are attached before the fresh root worker registers');
 });
 
 

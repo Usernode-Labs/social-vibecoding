@@ -8,6 +8,17 @@ const { PNG } = require('pngjs');
 const replay = require('../evidence/replay-runner');
 const { plan } = require('./fixtures/visual-evidence');
 
+test('browser evidence rejects a cached shell from a different revision', async () => {
+  const expected = 'a'.repeat(40);
+  const page = actual => ({ evaluate: async () => actual });
+  assert.equal(await replay.verifyDocumentRevision(page(expected), expected), expected);
+  await assert.rejects(replay.verifyDocumentRevision(page('b'.repeat(40)), expected), {
+    code: 'document_revision_mismatch',
+  });
+  assert.equal(await replay.verifyDocumentRevision(page(null), expected), null, 'ordinary apps have no shell marker');
+  assert.equal(await replay.verifyDocumentRevision(page('dev'), expected), null, 'historical unstamped bases remain testable');
+});
+
 function input(overrides = {}) {
   return {
     runId: 'a'.repeat(32),
@@ -735,7 +746,7 @@ test('a failed browser action identifies its plan action and stage', async () =>
       });
       return { status: () => 200 };
     },
-    evaluate: async () => ({
+    evaluate: async fn => String(fn).includes('platform-build') ? null : ({
       readyState: 'complete', bodyChildCount: 5,
       visibleLandmarkIds: ['members-screen'], visibleIds: ['members-screen', 'browse-all-apps'],
       visibleControlIds: ['browse-all-apps'],

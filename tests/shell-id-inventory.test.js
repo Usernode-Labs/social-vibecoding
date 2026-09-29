@@ -466,9 +466,9 @@ const ADDED_IDS = {
   'members-load-error': '#2304: dialog-level feedback when Members & approvals is opened before its app row has loaded, replacing the misleading visibility-specific status target.',
   'staging-retry-btn': '#1993: retry preview sign-in after token acquisition fails; initially hidden.',
   // ── OpenRouter catalog controls ──────────────────────────────────
-  'settings-openrouter-model-search': 'Filters the key-visible OpenRouter catalog by model name, id or provider without another network request.',
+  'settings-openrouter-model-search': 'Filters the OpenRouter catalog by model name, id or provider without another network request.',
   'settings-openrouter-favorites-only': 'Limits the settings picker to the viewer\'s saved OpenRouter model favorites.',
-  'settings-openrouter-refresh-models': 'Forces a fresh key-visible catalog from OpenRouter and reports when it was refreshed.',
+  'settings-openrouter-refresh-models': 'Asks OpenRouter for a fresh catalog (at most once a minute) and reports when it was refreshed.',
   'settings-openrouter-star-model': 'Adds or removes the selected OpenRouter model from the viewer\'s persistent favorites.',
   'settings-openrouter-catalog-meta': 'Shows the visible and total model counts plus catalog freshness beside the picker.',
   // ── #1538: check my status ────────────────────────────────────────

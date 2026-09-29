@@ -1131,7 +1131,7 @@ test('what the top window owns stands down in the panel\'s document', () => {
   assert.match(snap, /export function clearShellSnapshot\(\): void \{\s*if \(!isBrowser\(\) \|\| inSidePanel\(\)\) return;/);
   assert.match(read('frontend/src/lib/shell-snapshot-apply.ts'), /if \(isEmbeddedPanel\(\)\) return;/);
   // The service worker (registered by the top window).
-  assert.match(read('frontend/src/lib/service-worker.ts'), /if \(isEmbeddedPanel\(\)\) return;\s*container\.register\('\/sw\.js'\)/);
+  assert.match(read('frontend/src/lib/service-worker.ts'), /if \(isEmbeddedPanel\(\)\) return;\s*container\.register\('\/sw\.js', \{ updateViaCache: 'none' \}\)/);
   // A frame's history entries are the top's: no dismiss records.
   assert.match(read('frontend/src/lib/back-stack.ts'), /if \(typeof window !== 'undefined' && !isEmbeddedPanel\(\)\) \{\s*shared = createBackStack\(window\);/);
   // The first-run gates and the tour (the top window presents them, once).

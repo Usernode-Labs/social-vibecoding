@@ -1,31 +1,36 @@
 'use strict';
 
 // Backend-aware agent model catalog (plan.md §7). For codex_openrouter we
-// surface the complete user-filtered OpenRouter catalog (only models the
-// user's key/policy can use) with advisory compatibility metadata. A model
-// being unverified or missing Codex-friendly capabilities must never hide it
-// from its owner: OpenRouter is the availability authority for BYOK models.
-// For claude_code the legacy allowlist in services/models.js remains
+// surface the complete OpenRouter catalog with advisory compatibility
+// metadata. A model being unverified or missing Codex-friendly capabilities
+// must never hide it: every model OpenRouter lists stays selectable. For
+// claude_code the legacy allowlist in services/models.js remains
 // authoritative.
 //
-// Per-user cache keyed on (user_id, credential_revision) — never shared
-// across users (each key's filtered catalog differs). Short TTL.
+// ONE catalog for the whole platform, like the Anthropic list: OpenRouter's
+// public GET /models, kept in memory and in openrouter_model_catalog, and
+// refreshed in the background once it is REFRESH_MS old. A model menu is
+// answered from it at once; nothing on the request path waits on OpenRouter
+// except the very first read of a platform that has never stored one. It
+// used to be each key's own filtered list (GET /models/user), read while the
+// menu waited and kept for a minute per pod. A model a personal key's
+// account policy excludes is now listed, and OpenRouter refuses it when the
+// turn starts.
 
 const log = require('./logger');
 const openrouterClient = require('./openrouter-client');
 
-const CACHE_TTL_MS = 60_000;
-const cache = new Map();
+// How old the shared catalog may be before a read refreshes it (in the
+// background: the read still answers with what is held).
+const REFRESH_MS = 15 * 60_000;
+// A Refresh button waits for OpenRouter at most this often.
+const FORCED_REFRESH_MIN_MS = 60_000;
 
 // OpenRouter's own pricing sort uses the average prompt/completion price.
 // These fixed bands make that same score easier to scan without pretending
 // to predict a whole Codex turn (whose token use varies substantially).
 const LOW_COST_MAX_PER_MILLION = 2;
 const MEDIUM_COST_MAX_PER_MILLION = 10;
-
-function cacheKey(userId, credentialRevision) {
-  return `${userId}:${credentialRevision}`;
-}
 
 function supportedParameterList(m) {
   const params = m?.supported_parameters || m?.parameters || [];
@@ -217,71 +222,140 @@ function defaultCompatibility(m) {
   return meetsStaticMinimums(m) ? { status: 'experimental', note: null } : { status: 'blocked', note: 'Model does not meet Codex requirements (tools / context).' };
 }
 
-async function listOpenRouterModels({ pool, userId, credentialRevision, apiKey, config, forceRefresh }) {
-  if (!apiKey) {
-    return {
-      backend: 'codex_openrouter', credentialRevision, recommendedModelId: null, models: [],
-    };
-  }
+// The shared catalog: OpenRouter's raw list (`raw`), when it was fetched,
+// and the sanitized list built from it (`built`, on first use). `loading` is
+// the one request to OpenRouter in flight, so a burst of menus asks once.
+let shared = null;
+let loading = null;
 
-  const key = cacheKey(userId, credentialRevision);
-  if (!forceRefresh) {
-    const hit = cache.get(key);
-    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
-  }
-
-  let raw;
+async function readStoredCatalog(pool) {
   try {
-    raw = await openrouterClient.fetchUserModels(apiKey, { baseUrl: config.openrouterApiBase, origin: config.openrouterOrigin });
+    const { rows } = await pool.query(
+      'SELECT models, fetched_at FROM openrouter_model_catalog WHERE id = TRUE'
+    );
+    const row = rows && rows[0];
+    const fetchedAt = row ? new Date(row.fetched_at).getTime() : NaN;
+    if (!row || !Array.isArray(row.models) || !row.models.length || !Number.isFinite(fetchedAt)) return null;
+    return { raw: row.models, fetchedAt, built: null };
   } catch (err) {
-    log.warn('agent-models', 'OpenRouter catalog fetch failed', { userId, err: err.message });
-    throw err;
+    log.warn('agent-models', 'stored OpenRouter catalog read failed', { err: err.message });
+    return null;
   }
+}
 
-  const overlay = await loadCompatibilityOverlay(pool, 'codex_openrouter');
-  const recommendedIds = Array.isArray(config.openrouterRecommendedModels)
-    ? config.openrouterRecommendedModels
-    : [];
-  const recommendedSet = new Set(recommendedIds);
-  const models = raw
+async function fetchCatalog(pool, config) {
+  const data = await openrouterClient.fetchModels({ baseUrl: config.openrouterApiBase, origin: config.openrouterOrigin });
+  // Descriptions are long prose nothing here reads.
+  const raw = data
     .filter((m) => m && typeof m.id === 'string' && m.id.trim())
-    .map((m) => {
-      const compat = overlay.get(m.id) || defaultCompatibility(m);
-      return sanitizeModel(m, compat, { recommended: recommendedSet.has(m.id) });
-    })
-    .sort(compareByCost);
+    .map(({ description: _description, ...m }) => m);
+  // An empty answer is OpenRouter having a bad moment, not a catalog.
+  if (!raw.length) throw new Error('OpenRouter returned an empty model catalog.');
+  const next = { raw, fetchedAt: Date.now(), built: null };
+  try {
+    await pool.query(
+      `INSERT INTO openrouter_model_catalog (id, models, fetched_at)
+       VALUES (TRUE, $1::jsonb, to_timestamp($2::double precision / 1000))
+       ON CONFLICT (id) DO UPDATE SET models = EXCLUDED.models, fetched_at = EXCLUDED.fetched_at
+        WHERE openrouter_model_catalog.fetched_at < EXCLUDED.fetched_at`,
+      [JSON.stringify(raw), next.fetchedAt]
+    );
+  } catch (err) {
+    log.warn('agent-models', 'storing the OpenRouter catalog failed', { err: err.message });
+  }
+  return next;
+}
 
-  // Preserve a known-good first-run choice while leaving the visible list
-  // sorted strictly by price. The UI uses this only when the user has not
-  // already selected a model.
-  // Prefer the operator-configured default when the user's key can actually
-  // access it. This does not filter or lock the catalog: every OpenRouter
-  // model remains visible/selectable, and a missing GLM release safely falls
-  // back to the existing compatibility/cost ordering.
+// Ask OpenRouter again, once however many readers want it. What is held
+// stays in use until the new list is in.
+function refreshCatalog(pool, config) {
+  if (!loading) {
+    loading = fetchCatalog(pool, config)
+      .then((next) => { shared = next; return next; })
+      .finally(() => { loading = null; });
+  }
+  return loading;
+}
+
+async function buildCatalog(pool, config, held) {
+  const overlay = await loadCompatibilityOverlay(pool, 'codex_openrouter');
+  const recommendedSet = new Set(Array.isArray(config.openrouterRecommendedModels) ? config.openrouterRecommendedModels : []);
+  const models = held.raw
+    .map((m) => sanitizeModel(m, overlay.get(m.id) || defaultCompatibility(m), { recommended: recommendedSet.has(m.id) }))
+    .sort(compareByCost);
+  // Prefer the operator-configured default. This does not filter or lock the
+  // catalog: every OpenRouter model remains visible/selectable, and a
+  // missing GLM release safely falls back to the compatibility/cost order.
+  // The UI uses this only when the user has not already selected a model.
   const configuredDefault = String(config.openrouterDefaultCodexModel || '');
   const recommended = models.find((m) => m.id === configuredDefault)
     || models.find((m) => m.compatibility === 'verified')
     || models.find((m) => m.meetsCodexMinimums)
     || models[0]
     || null;
-
-  const value = {
-    backend: 'codex_openrouter',
-    credentialRevision,
-    refreshedAt: new Date().toISOString(),
+  return {
+    refreshedAt: new Date(held.fetchedAt).toISOString(),
     recommendedModelId: recommended?.id || null,
     models,
   };
-  cache.set(key, { value, at: Date.now() });
-  return value;
 }
 
+// The catalog's own reads and writes go through the app's pool, never the
+// caller's: callers hand in a transaction client (routes/sessions.js), and a
+// background refresh outlives the request it started in. A test's config
+// names no database, and its fake pool serves instead.
+function storage(pool, config) {
+  return config && config.databaseUrl ? require('../db/pool').getPool(config) : pool;
+}
 
+async function sharedCatalog({ pool, config, forceRefresh = false }) {
+  const db = storage(pool, config);
+  if (!shared) {
+    const stored = await readStoredCatalog(db);
+    if (!shared && stored) shared = stored;
+  }
+  // Nothing stored anywhere yet: this one read waits for OpenRouter.
+  if (!shared) await refreshCatalog(db, config);
+  const age = Date.now() - shared.fetchedAt;
+  const kept = (err) => {
+    log.warn('agent-models', 'OpenRouter catalog refresh failed; keeping the held catalog', { err: err.message });
+  };
+  if (forceRefresh && age > FORCED_REFRESH_MIN_MS) {
+    await refreshCatalog(db, config).catch(kept);
+  } else if (age > REFRESH_MS) {
+    refreshCatalog(db, config).catch(kept);
+  }
+  const held = shared;
+  if (!held.built) {
+    held.built = buildCatalog(db, config, held).catch((err) => {
+      held.built = null;
+      throw err;
+    });
+  }
+  return held.built;
+}
+
+// The OpenRouter models a user with a key can pick from: the shared
+// catalog. Without a key there is nothing to run them on, so none.
+async function listOpenRouterModels({ pool, credentialRevision, apiKey, config, forceRefresh }) {
+  if (!apiKey) {
+    return {
+      backend: 'codex_openrouter', credentialRevision, recommendedModelId: null, models: [],
+    };
+  }
+  const built = await sharedCatalog({ pool, config, forceRefresh });
+  return {
+    backend: 'codex_openrouter',
+    credentialRevision,
+    refreshedAt: built.refreshedAt,
+    recommendedModelId: built.recommendedModelId,
+    models: built.models,
+  };
+}
 
 // Resolve the sanitized pricing for a single model id (Commit 4, plan 6.4).
-// Uses the (cached) user-filtered catalog so the snapshot matches what the
-// user's key can actually use; returns null when the model is not in the
-// catalog or the catalog fetch fails (cost then becomes 'unavailable').
+// Uses the shared catalog; returns null when the model is not in the
+// catalog or the catalog cannot be read (cost then becomes 'unavailable').
 async function resolveModelPricing({ pool, userId, credentialRevision, apiKey, modelId, config }) {
   try {
     const catalog = await listOpenRouterModels({
@@ -298,10 +372,11 @@ async function resolveModelPricing({ pool, userId, credentialRevision, apiKey, m
   }
 }
 
-function invalidateUser(userId) {
-  for (const k of cache.keys()) if (k.startsWith(`${userId}:`)) cache.delete(k);
+// Forget the held catalog, so the next read starts from the stored copy.
+function invalidateAll() {
+  shared = null;
+  loading = null;
 }
-function invalidateAll() { cache.clear(); }
 
 module.exports = {
   meetsStaticMinimums,
@@ -320,6 +395,5 @@ module.exports = {
   loadCompatibilityOverlay,
   listOpenRouterModels,
   resolveModelPricing,
-  invalidateUser,
   invalidateAll,
 };

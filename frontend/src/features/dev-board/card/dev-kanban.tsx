@@ -39,6 +39,8 @@
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
+import { ArrowUpIcon } from '@/components/ui/icons';
 import { SECTION_TAB_ACTIVE, SECTION_TAB_INACTIVE } from '@/components/ui/tabs';
 
 import { useNarrowViewport } from '../../../lib/use-narrow';
@@ -115,6 +117,10 @@ function Column(
   // not in the view model.
   const [openKey, setOpenKey] = useState<string | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const hasReviewSort = col.key === 'inreview' && !!col.reviewSort;
+  const sortLabel = col.reviewSort === 'priority' ? 'Vote priority' : 'Newest';
+  const nextSort = col.reviewSort === 'priority' ? 'newest' : 'priority';
+  const nextSortLabel = nextSort === 'priority' ? 'Vote priority' : 'Newest';
   const statusTone = col.status?.tone === 'blocked'
     ? 'text-red-700 dark:text-red-300'
     : col.status?.tone === 'progress'
@@ -205,13 +211,36 @@ function Column(
       className={`dev-kanban-col${active ? ' dev-kanban-col-active' : ''}`}
     >
       <div
-        className="dev-kanban-col-head text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400 mb-2 px-0.5"
+        // Mobile tabs already show the column name and count. Keep only
+        // the sorting action visible there; other column headers stay hidden.
+        className={`${hasReviewSort ? '' : 'dev-kanban-col-head '}mb-2 px-0.5`}
         title={col.hint || undefined}
       >
-        {`${col.title} `}
-        {loading
-          ? <span className="text-zinc-500 dark:text-zinc-500 font-mono">{'· '}<CountSkeleton /></span>
-          : <span className="text-zinc-500 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>}
+        <div className="flex min-h-[44px] items-center justify-between gap-2">
+          <span className={`${hasReviewSort ? 'hidden sm:inline ' : ''}text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400 whitespace-nowrap`}>
+            {`${col.title} `}
+            {loading
+              ? <span className="text-zinc-500 dark:text-zinc-500 font-mono">{'· '}<CountSkeleton /></span>
+              : <span className="text-zinc-500 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>}
+          </span>
+          {hasReviewSort ? (
+            <Button
+              type="button"
+              variant="unstyled"
+              size="none"
+              ink="muted"
+              aria-label={`Sort In review: ${sortLabel}. Switch to ${nextSortLabel}.`}
+              title={`${col.reviewSort === 'priority'
+                ? 'Unvoted first, then fewest qualifying votes still needed. Within each vote group, already-qualified proposals follow those still short. Newest breaks ties.'
+                : 'Most recently submitted for review first.'} Click to switch to ${nextSortLabel}.`}
+              className="ml-auto inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs font-medium whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+              onClick={() => callAppView('_setReviewSort', nextSort)}
+            >
+              <ArrowUpIcon aria-hidden="true" className="h-3.5 w-3.5 rotate-180" />
+              {sortLabel}
+            </Button>
+          ) : null}
+        </div>
       </div>
       {!loading && col.status ? (
         <div

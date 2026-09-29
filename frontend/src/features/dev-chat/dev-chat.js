@@ -1489,6 +1489,15 @@ const DevChat = {
       return data;
     }
 
+    // The key and the catalog are asked together: the catalog is the
+    // platform's own, answered at once, so the dialog waits on neither twice.
+    const refresh = forceRefresh ? '&refresh=1' : '';
+    const catalogRead = data.codexAvailable
+      ? fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      }).then(async (res) => ({ res, body: await res.json().catch(() => ({})) }), (err) => ({ err }))
+      : null;
     try {
       const credentialRes = await fetch('/api/me/credentials/openrouter', {
         credentials: 'same-origin',
@@ -1504,19 +1513,15 @@ const DevChat = {
     if (!data.codexAvailable || !data.credentialConfigured) return data;
 
     try {
-      const refresh = forceRefresh ? '&refresh=1' : '';
-      const modelsRes = await fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
-        credentials: 'same-origin',
-        cache: 'no-store',
-      });
-      const catalog = await modelsRes.json().catch(() => ({}));
+      const { res: modelsRes, body: catalog, err } = await catalogRead;
+      if (err) throw err;
       if (!modelsRes.ok) throw new Error(catalog.error || 'Could not load OpenRouter models.');
       data.catalogLoaded = true;
       data.models = Array.isArray(catalog.models) ? catalog.models : [];
       data.recommendedModelId = catalog.recommendedModelId || null;
       data.refreshedAt = catalog.refreshedAt || null;
       data.totalModels = Number.isInteger(catalog.totalModels) ? catalog.totalModels : data.models.length;
-      if (!data.models.length) data.catalogError = 'No OpenRouter models are available under this key.';
+      if (!data.models.length) data.catalogError = 'No OpenRouter models are available right now. Try Refresh.';
     } catch (err) {
       data.catalogError = err.message || 'Could not load OpenRouter models.';
     }
@@ -1648,7 +1653,7 @@ const DevChat = {
       const age = this._openRouterCatalogAgeText(data.refreshedAt);
       catalogMeta.textContent = visibleModels.length
         ? `${visibleModels.length} of ${data.totalModels || data.models.length} models${age ? ` · ${age}` : ''}`
-        : `No key-visible models match. Refresh, then check this key's OpenRouter account policies${age ? ` · ${age}` : ''}`;
+        : `No models match. Clear the search or show all models${age ? ` · ${age}` : ''}`;
       if (!visibleModels.length) {
         starModelButton.disabled = true;
         starModelButton.textContent = '☆';
@@ -1695,13 +1700,13 @@ const DevChat = {
         return;
       }
       if (!data.models.length) {
-        status.textContent = data.catalogError || 'No OpenRouter models are available under this key.';
+        status.textContent = data.catalogError || 'No OpenRouter models are available right now. Try Refresh.';
         applyButton.disabled = true;
         return;
       }
       const model = data.models.find((item) => item.id === selectedModel) || null;
       if (!model) {
-        status.textContent = "No key-visible models match. Refresh, then check this key's OpenRouter account policies.";
+        status.textContent = 'No models match. Clear the search or show all models.';
         applyButton.disabled = true;
         starModelButton.disabled = true;
         starModelButton.textContent = '☆';

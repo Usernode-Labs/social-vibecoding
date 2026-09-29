@@ -32,16 +32,15 @@
 // tests/pwa-offline-cache.test.js load this file in Node (module.exports
 // branch at the bottom) and pin their behaviour without a browser.
 
-// v6: the shell has no cross-origin assets left (Tailwind is compiled into
-// /css/tailwind.css and marked/DOMPurify/qrcodejs are vendored under
-// /vendor/), so the CDN cache and its stale-while-revalidate strategy are
-// gone. The activate handler prunes any `usernode-*` cache not listed in
-// ALL_CACHES, which retires the old usernode-cdn-v5 entries automatically.
+// Hosted releases use a generated worker and per-asset content hashes.
+// scripts/build-shell-release.js appends this strategy implementation to the
+// generated manifest and release-cache helper. A UI-only change automatically
+// changes the worker bytes and stages a complete shell without a manual bump.
+// The legacy strategy remains for unbuilt development and existing v36 caches.
+// API caching is independent from either shell strategy.
 //
-// The React + shadcn chassis swap added one local asset to the shell —
-// /shell/assets/shell.js — and SHELL_ASSETS below precaches it like any
-// other. It needed no version bump of its own: a byte change to this file
-// re-runs install(), which re-runs the precache with the current list.
+// Legacy development/cache-format identity only. Hosted /sw.js is generated
+// from the final asset manifest: UI changes never require editing this value.
 //
 // v8: a deployed document loads its scripts and stylesheets from build-scoped
 // URLs (/b/<sha>/…, see parseBuildScopedPath). The precache now stores those
@@ -296,7 +295,13 @@
 // so the page's build comparison cannot refresh that cached React bundle.
 // v38 (app blocking): refresh the bundled dialog history fix so dismissing
 // the report receipt keeps the viewer on Home after blocking the open app.
-const SW_VERSION = 'v38';
+//
+// v39 (#3331): replace the In review sorting pill with the compact header
+// button. This change landed on a separate branch that also numbered its own
+// bump v37, for the pre-compact-sorting shell cache; merged here as v39, past
+// both v37 and v38 above, per the v24/v25 precedent — the version advances so
+// neither branch's retirement is silently dropped by the other's.
+const SW_VERSION = 'v39';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
@@ -1053,6 +1058,12 @@ if (typeof module !== 'undefined' && module.exports) {
   };
 } else {
   const ORIGIN = self.location.origin;
+  const releaseCache = self.__USERNODE_SHELL_RELEASE__
+    ? createShellReleaseCache({
+      manifest: self.__USERNODE_SHELL_RELEASE__, storage: caches,
+      fetcher: fetch, worker: self, cryptoApi: self.crypto, origin: ORIGIN,
+      canReplaceDocument: shouldReplaceShellDocument,
+    }) : null;
 
   // ── Per-page-load shell consistency ─────────────────────────────────
   // The shell's assets are deliberately UNHASHED, so index.html does not
@@ -1219,6 +1230,10 @@ if (typeof module !== 'undefined' && module.exports) {
   }
 
   async function networkFirstShell(event) {
+    if (releaseCache) {
+      const response = await releaseCache.respond(event);
+      if (response) return response;
+    }
     const cache = await caches.open(SHELL_CACHE);
     const fetchAndCache = () => fetch(event.request).then((res) => {
       // Clone synchronously, before the page can start reading the body.
@@ -1321,6 +1336,7 @@ if (typeof module !== 'undefined' && module.exports) {
   }
 
   async function networkFirstNavigate(event) {
+    if (releaseCache) return releaseCache.navigate(event);
     const cache = await caches.open(SHELL_CACHE);
 
     // The cached document MUST be refreshed from here. install() precaches
@@ -1611,6 +1627,11 @@ if (typeof module !== 'undefined' && module.exports) {
 
   self.addEventListener('install', (event) => {
     event.waitUntil((async () => {
+      if (releaseCache) {
+        await releaseCache.install();
+        await self.skipWaiting();
+        return;
+      }
       const shell = await caches.open(SHELL_CACHE);
       // Per-asset, best-effort: one 404 must not brick the whole install.
       // Every asset the shell needs is same-origin now, so a completed
@@ -1655,6 +1676,12 @@ if (typeof module !== 'undefined' && module.exports) {
     event.waitUntil((async () => {
       const names = await caches.keys();
       await migrateLegacyApiCaches(names);
+      if (releaseCache) {
+        await releaseCache.activate();
+        await pruneStaleApiEntries();
+        await self.clients.claim();
+        return;
+      }
       // Drop caches from older SW versions.
       await Promise.all(names
         .filter((n) => n.startsWith('usernode-') && !ALL_CACHES.includes(n))
@@ -1697,6 +1724,7 @@ if (typeof module !== 'undefined' && module.exports) {
   // — the rollout-crossed case precacheShell names, which the page retries
   // rather than settles.
   async function prefetchShellAssets(expectedBuild) {
+    if (releaseCache) return releaseCache.prefetch(expectedBuild);
     if (!/^[0-9a-f]{7,40}$/.test(String(expectedBuild || ''))) {
       return { ok: false, mismatch: false };
     }
@@ -1722,6 +1750,10 @@ if (typeof module !== 'undefined' && module.exports) {
 
   self.addEventListener('message', (event) => {
     const type = event.data && event.data.type;
+    if (type === 'shell-client-build' && releaseCache && event.source?.id) {
+      event.waitUntil(releaseCache.noteClient(event.source.id, event.data.build)
+        .then(() => releaseCache.cleanup()).catch(() => {}));
+    }
     if (type === 'clear-api-cache') {
       event.waitUntil((async () => {
         await clearApiCaches();

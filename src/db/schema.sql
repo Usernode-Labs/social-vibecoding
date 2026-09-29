@@ -7238,6 +7238,17 @@ INSERT INTO agent_model_compatibility (backend, model_id, status, note, checked_
 VALUES ('codex_openrouter', 'openai/gpt-5.3-codex', 'verified', 'Default verified Codex model', NOW())
 ON CONFLICT (backend, model_id) DO NOTHING;
 
+-- The OpenRouter model catalog, one copy for the whole platform
+-- (services/agent-models.js): OpenRouter's public GET /models, refreshed in
+-- the background. Kept here so every pod, a fresh deploy included, answers a
+-- model menu from it at once instead of asking OpenRouter while it waits.
+-- One row; `models` is OpenRouter's own list, less the descriptions.
+CREATE TABLE IF NOT EXISTS openrouter_model_catalog (
+  id         BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+  models     JSONB NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL
+);
+
 -- AI-generated progress report cache (Reporting tab). One row per app —
 -- the summary is shared by every viewer, which is why its input is built
 -- exclusively from data every app member can see (no private sessions).
