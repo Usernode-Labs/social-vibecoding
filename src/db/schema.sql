@@ -10551,3 +10551,72 @@ CREATE TABLE IF NOT EXISTS platform_limit_alerts (
   measured_at TIMESTAMPTZ,
   notified_at TIMESTAMPTZ
 );
+
+-- ── Welcome messages ───────────────────────────────────────────────────
+--
+-- Somebody let in gets a group conversation with the people an admin
+-- chose (#admin/welcome-dm, services/welcome-dm.js), opened by a message
+-- from the first of them. This is the queue between the moment and the
+-- message: the trigger below writes one row per person on the
+-- has_platform_access false → true edge — every path that lets someone in
+-- passes through it, like join_platform_community above — and the leader's
+-- sweep turns each row into the group and the message.
+--
+-- The row is written only while the switch is on. Switching it on later
+-- does not reach back to everyone let in while it was off, and the primary
+-- key means a person revoked and let in again is welcomed once.
+--
+-- status: 'pending' until the sweep has sent the message; 'sent'; 'skipped'
+-- when there was nobody to send it or the person left first (detail says
+-- which); 'failed' after MAX_ATTEMPTS. conversation_id is recorded as soon
+-- as the group exists, so a retry posts into it rather than opening another.
+--
+-- staging:private: who joined and the conversation they were put in.
+CREATE TABLE IF NOT EXISTS welcome_dm_queue (
+  user_id         INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  status          VARCHAR(16) NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'sent', 'skipped', 'failed')),
+  enqueued_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  detail          TEXT,
+  processed_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_welcome_dm_queue_pending
+  ON welcome_dm_queue (enqueued_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_welcome_dm_queue_recent
+  ON welcome_dm_queue (enqueued_at DESC);
+COMMENT ON TABLE welcome_dm_queue IS 'staging:private';
+
+CREATE OR REPLACE FUNCTION enqueue_welcome_dm() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.has_platform_access THEN
+    RETURN NULL;
+  END IF;
+  IF NEW.is_synthetic THEN
+    RETURN NULL;
+  END IF;
+  IF COALESCE((SELECT value FROM platform_settings WHERE key = 'welcome_dm_enabled'), 'off') <> 'on' THEN
+    RETURN NULL;
+  END IF;
+  INSERT INTO welcome_dm_queue (user_id) VALUES (NEW.id)
+  ON CONFLICT (user_id) DO NOTHING;
+  RETURN NULL;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'users_enqueue_welcome_dm'
+       AND tgrelid = 'users'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER users_enqueue_welcome_dm
+      AFTER INSERT OR UPDATE OF has_platform_access ON users
+      FOR EACH ROW WHEN (NEW.has_platform_access)
+      EXECUTE FUNCTION enqueue_welcome_dm();
+  END IF;
+END $$;

@@ -141,6 +141,8 @@ test('the console island imports every admin module, console first', () => {
     // Support: one user's account, points, events, kudos and history.
     'admin-support',
     'admin-topochain', 'admin-users',
+    // Welcome messages: the group and first message somebody let in gets.
+    'admin-welcome-dm',
   ], 'every section module is imported by the island');
 });
 
