@@ -4,11 +4,12 @@
 // #2377: derive the auditable Classic surface Global Chat must cover.
 //
 // This does not claim parity by counting routes. It records every Express
-// route, every API path referenced by the web/mobile shell, every Settings
-// section, and the non-HTTP navigation surfaces. Routes used by Classic get a
-// stable proposed capability id; routes with no detected Classic reference
-// stay `review_required` until a person maps or exempts them. The generated
-// file is deterministic and `--check` makes source drift fail CI.
+// route, every Settings section, and the non-HTTP navigation surfaces, and it
+// checks every API path referenced by the web/mobile shell against those
+// routes. Platform API routes get a stable proposed capability id; anything
+// else stays `review_required` until a person maps or exempts it, and a client
+// call that matches no route fails the check until it is fixed or exempted.
+// The generated file is deterministic and `--check` makes source drift fail CI.
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -51,6 +52,10 @@ const REGISTRATION = Symbol('registration');
 // The route counts this script reports, kept off the committed file for the
 // same reason as `line` (see buildInventory()).
 const COUNTS = Symbol('counts');
+// Client calls that reach a reviewed exemption rather than a route, with the
+// files that make them. Checked on every run, never written (see
+// buildInventory()).
+const REVIEWED_REFERENCES = Symbol('reviewed client references');
 
 const FILE_EXEMPTIONS = new Map([
   ['src/routes/anthropic-proxy.js', 'provider proxy used by development agents, not a Classic control'],
@@ -525,7 +530,7 @@ function transportFor(route) {
   return 'server_loopback';
 }
 
-function mappedClassification(route, clientRefs, matches, reason = null) {
+function mappedClassification(route) {
   const domain = domainFor(route);
   const risk = route.method === 'GET'
     ? 'read'
@@ -538,7 +543,6 @@ function mappedClassification(route, clientRefs, matches, reason = null) {
       : 'external_write');
   return {
     status: 'mapped',
-    ...(reason ? { reviewReason: reason } : {}),
     capabilityId: capabilityId(route, domain),
     domain,
     risk,
@@ -547,11 +551,15 @@ function mappedClassification(route, clientRefs, matches, reason = null) {
     transport: transportFor(route),
     mobileSupported: true,
     classicPath: classicPathFor(domain, route.path),
-    clientReferences: matches.flatMap((match) => [...clientRefs.get(match)]).sort(),
   };
 }
 
-function classifyRoute(route, clientRefs) {
+// A route's classification reads the route and nothing else. It used to map a
+// route that some client file called before trying the rule below, and to
+// list those files on it, but for all 773 routes the rule reached the same
+// result, and the list was the committed file's one input from outside the
+// route files (see buildInventory()).
+function classifyRoute(route) {
   const fileReason = FILE_EXEMPTIONS.get(route.source);
   if (fileReason) return { status: 'exempt', reason: fileReason };
   if (route.source === 'src/routes/global-chat.js') {
@@ -565,29 +573,19 @@ function classifyRoute(route, clientRefs) {
       if (pattern.test(route.path)) return { status: 'exempt', reason };
     }
   }
-  const matches = route.path
-    ? [...clientRefs.keys()].filter((clientPath) => samePattern(route.path, clientPath))
-    : [];
-  if (matches.length) return mappedClassification(route, clientRefs, matches);
-
   // After the explicit protocol exclusions above, every resolved API route
-  // is an authenticated platform operation worth exposing through discovery.
-  // This also catches server-backed controls whose client path is assembled
-  // too dynamically for a static string scan. Authorization stays in the
-  // original route; this inventory merely gives it an auditable capability.
+  // is an authenticated platform operation worth exposing through discovery,
+  // whether or not a static scan can find the client code that calls it.
+  // Authorization stays in the original route; this inventory merely gives it
+  // an auditable capability.
   if (/^\/(?:api|challenges-api)\//.test(route.path || '')
       || /^\/app\/:slug\/(?:install|manifest\.webmanifest)$/.test(route.path || '')) {
-    return mappedClassification(
-      route,
-      clientRefs,
-      [],
-      'Reviewed platform operation with no exact static client reference.',
-    );
+    return mappedClassification(route);
   }
   return {
     status: 'review_required',
     reason: route.path
-      ? 'No statically detected Classic client reference; map or add a reviewed exemption.'
+      ? 'Not a platform API route; map it or add a reviewed exemption.'
       : 'Dynamic route path requires manual resolution and review.',
   };
 }
@@ -610,11 +608,15 @@ function discoverSettings() {
   }));
 }
 
-function buildInventory() {
-  const clientRefs = discoverClientReferences();
-  const routes = discoverRoutes().map((route) => ({
+// The scans are parameters so a test can scan the tree once and build from it
+// more than once; the script itself always scans.
+function buildInventory({
+  declaredRoutes = discoverRoutes(),
+  clientRefs = discoverClientReferences(),
+} = {}) {
+  const routes = declaredRoutes.map((route) => ({
     ...route,
-    ...classifyRoute(route, clientRefs),
+    ...classifyRoute(route),
   })).sort((a, b) => (
     a.source.localeCompare(b.source)
     || a[REGISTRATION].line - b[REGISTRATION].line
@@ -664,10 +666,19 @@ function buildInventory() {
     // had regenerated correctly (#3127 and #3133). The totals ride on the
     // Symbol key JSON.stringify skips, for this script's own report.
     [COUNTS]: { mapped: counts.mapped, reviewRequired: counts.review_required },
+    // Which client files call which route is checked on every run and never
+    // written. It was the one input spanning the frontend and the routes: a
+    // change adding a client call and a change adding a route each
+    // regenerated correctly, merged cleanly, and left main stale on the one
+    // pairing neither had seen (#3346 and #2976, fixed by #3354). A call
+    // written as `/api/me/<name>${query}` counted as a caller of every
+    // /api/me route, so one new screen touched fifty of them. Nothing at
+    // runtime read the lists. Only a call that matches no route is written,
+    // below, and then the check fails until it is fixed or exempted.
+    [REVIEWED_REFERENCES]: reviewedClientReferences.sort((a, b) => a.path.localeCompare(b.path)),
     navigation: NAVIGATION_SURFACES.map((item) => ({ ...item, mobileSupported: true })),
     settings,
     routes,
-    reviewedClientReferences: reviewedClientReferences.sort((a, b) => a.path.localeCompare(b.path)),
     unmatchedClientReferences,
     ignoredClientSources: [...CLIENT_SOURCE_EXEMPTIONS.entries()].map(([source, reason]) => ({
       source,
@@ -680,16 +691,51 @@ function serialize(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-const inventory = buildInventory();
-const output = serialize(inventory);
-if (process.argv.includes('--check')) {
-  const existing = fs.existsSync(OUTPUT) ? fs.readFileSync(OUTPUT, 'utf8') : '';
-  if (existing !== output) {
-    console.error('Global Chat Classic inventory is stale. Run npm run global-chat:inventory.');
-    process.exit(1);
-  }
-  console.log(`Global Chat inventory current: ${inventory[COUNTS].mapped} mapped, ${inventory[COUNTS].reviewRequired} need review.`);
-} else {
-  fs.writeFileSync(OUTPUT, output);
-  console.log(`Wrote ${path.relative(ROOT, OUTPUT)}: ${inventory[COUNTS].mapped} mapped, ${inventory[COUNTS].reviewRequired} need review.`);
+// What a person has to decide before the inventory counts as reviewed, one
+// line each. Regenerating does not clear any of these, so --check names them
+// rather than calling the file stale.
+function reviewFindings(inventory) {
+  return [
+    ...inventory.routes.filter((route) => route.status === 'review_required').map((route) => (
+      `  ${route.method} ${route.path || route.expression} in ${route.source}: ${route.reason}`
+    )),
+    ...inventory.unmatchedClientReferences.map(({ path: apiPath, sources }) => (
+      `  ${apiPath}, called from ${sources.join(', ')}, matches no route. `
+      + 'Correct the call, add the route, or add a reviewed CLIENT_REFERENCE_EXEMPTIONS entry.'
+    )),
+  ];
 }
+
+function main() {
+  const inventory = buildInventory();
+  const output = serialize(inventory);
+  const findings = reviewFindings(inventory);
+  if (process.argv.includes('--check')) {
+    if (findings.length) {
+      console.error(`Global Chat Classic inventory needs review:\n${findings.join('\n')}`);
+      process.exit(1);
+    }
+    const existing = fs.existsSync(OUTPUT) ? fs.readFileSync(OUTPUT, 'utf8') : '';
+    if (existing !== output) {
+      console.error('Global Chat Classic inventory is stale. Run npm run global-chat:inventory.');
+      process.exit(1);
+    }
+    console.log(`Global Chat inventory current: ${inventory[COUNTS].mapped} mapped, ${inventory[COUNTS].reviewRequired} need review.`);
+  } else {
+    fs.writeFileSync(OUTPUT, output);
+    console.log(`Wrote ${path.relative(ROOT, OUTPUT)}: ${inventory[COUNTS].mapped} mapped, ${inventory[COUNTS].reviewRequired} need review.`);
+    if (findings.length) console.error(`Needs review before --check passes:\n${findings.join('\n')}`);
+  }
+}
+
+if (require.main === module) main();
+
+module.exports = {
+  OUTPUT,
+  REVIEWED_REFERENCES,
+  buildInventory,
+  discoverClientReferences,
+  discoverRoutes,
+  reviewFindings,
+  serialize,
+};
