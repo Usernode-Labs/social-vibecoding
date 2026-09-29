@@ -67,6 +67,12 @@ test('the section is registered everywhere a console section has to be', () => {
   const inventory = JSON.parse(read('src/services/global-chat/classic-inventory.generated.json'));
   const routes = JSON.stringify(inventory);
   assert.ok(routes.includes('"path":"/api/admin/welcome-dm"'), 'the Global Chat inventory lists the routes');
+  const dapp = JSON.parse(read('dapp.json'));
+  const declared = dapp.tests.filter((t) => t.path === '/#admin/welcome-dm');
+  assert.equal(declared.length, 1, 'one declared check covers the section');
+  assert.match(declared[0].expectSelector, /#admin-welcome-dm-members/);
+  assert.match(declared[0].expectSelector, /#admin-welcome-dm-recent/);
+  assert.equal(declared[0].expectText, 'When someone is let in to the platform');
 });
 
 function loadSection() {
