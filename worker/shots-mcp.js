@@ -140,21 +140,37 @@ server.registerTool('get_brief', {
 });
 
 server.registerTool('save_shot', {
-  description: 'Save one screenshot for a declared change. First call browser_take_screenshot with a filename (the visible screen, or one element with kind "element"), then pass that filename here with the change id, the screen name, and side "before" or "after". Every screen of a change needs a before and an after screen shot. Saving the same change, screen, side and kind again replaces it.',
+  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot. Saving the same change, screen, side and kind again replaces it. The answer says which saved and why any did not.',
   inputSchema: {
-    change: z.string().min(1).max(96),
-    screen: z.string().min(1).max(32),
-    side: z.enum(['before', 'after']),
-    kind: z.enum(['screen', 'element']).optional(),
-    file: z.string().min(1).max(512),
+    shots: z.array(z.object({
+      change: z.string().min(1).max(96),
+      screen: z.string().min(1).max(32),
+      side: z.enum(['before', 'after']),
+      kind: z.enum(['screen', 'element']).optional(),
+      file: z.string().min(1).max(512),
+    })).min(1).max(24),
   },
   annotations,
-}, async ({ change, screen, side, kind = 'screen', file }) => {
-  try {
-    const image = savedScreenshot(file);
-    const query = new URLSearchParams({ change, screen, side, kind });
-    return resultContent((await request(`/shot?${query}`, { method: 'POST', binary: image })).result);
-  } catch (error) { return toolError(error); }
+}, async ({ shots }) => {
+  // One upload per file, in order: a model round trip is what costs time,
+  // not these requests. A refused file does not stop the others.
+  const results = [];
+  for (const { change, screen, side, kind = 'screen', file } of shots) {
+    try {
+      const image = savedScreenshot(file);
+      const query = new URLSearchParams({ change, screen, side, kind });
+      const result = (await request(`/shot?${query}`, { method: 'POST', binary: image })).result;
+      results.push({ change, screen, side, kind, file, saved: true, result });
+    } catch (error) {
+      results.push({
+        change, screen, side, kind, file, saved: false,
+        error: { code: error.code || 'save_failed', message: String(error.message || error).slice(0, 500) },
+      });
+    }
+  }
+  const saved = results.filter((entry) => entry.saved).length;
+  const content = resultContent({ saved, refused: results.length - saved, results });
+  return saved ? content : { ...content, isError: true };
 });
 
 server.registerTool('save_clip', {

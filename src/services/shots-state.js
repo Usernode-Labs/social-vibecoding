@@ -58,6 +58,12 @@ const RENAMED_CODES = Object.freeze({
   evidence: 'shots',
 });
 
+// A rollout interrupts runs through no fault of the proposal. The recovery
+// sweep (services/shots-gc.js retryInterrupted) starts the same head again
+// under this trigger, at most this many times per head.
+const INTERRUPTED_RETRY_TRIGGER = 'interrupted-retry';
+const MAX_INTERRUPTED_RETRIES = 2;
+
 function currentCode(code) {
   if (typeof code !== 'string' || !code.includes('evidence')) return code;
   return RENAMED_CODES[code] || code.replace(/visual_evidence/g, 'shots').replace(/evidence/g, 'shots');
@@ -360,6 +366,16 @@ function runSummary(row, artifactSummary = []) {
     // Any finished run on the current head can be taken again; an explicit
     // no-visible-change declaration or a stop has nothing to retry.
     repairAvailable: row.state === 'failed' && currentCode(row.failure_code) !== 'visible_changes_conflict',
+    // Interrupted by a restart, with an automatic retry still to come. Only
+    // a query that counted the retries (`interrupted_retries`) can say so;
+    // anything else reads false. Whether the proposal is still open is the
+    // view's to add.
+    // The code as stored, not read through currentCode: the sweep matches it
+    // exactly, so a run interrupted under the old name is not retried.
+    automaticRetryPending: row.state === 'failed'
+      && row.failure_code === 'shots_run_interrupted'
+      && row.interrupted_retries != null
+      && Number(row.interrupted_retries) < MAX_INTERRUPTED_RETRIES,
     planHash: row.plan_hash || null,
     // One result per declared change: ready (with the shots agent's note
     // on what its shots leave out, if any), or skipped with the reason
@@ -801,7 +817,11 @@ async function getForSession(pool, sessionId, { headSha = null } = {}) {
                 'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
               ) ORDER BY a.story_id, a.viewport, a.side, a.variant)
                 FROM shot_artifacts a WHERE a.run_id = r.id
-            ), '[]'::jsonb) AS artifact_summary
+            ), '[]'::jsonb) AS artifact_summary,
+            -- Its automatic retries, so the view can say one is coming.
+            (SELECT COUNT(*) FROM shot_runs retry
+              WHERE retry.session_id = r.session_id AND retry.head_sha = r.head_sha
+                AND retry.trigger = 'interrupted-retry')::int AS interrupted_retries
        FROM shot_runs r
       WHERE r.session_id = $1 ${headClause}
         AND r.state NOT IN ('stale','cancelled')
@@ -915,6 +935,8 @@ async function storeArtifacts(pool, runId, artifacts, { headSha, planHash } = {}
 module.exports = {
   storeArtifacts,
   currentCode,
+  INTERRUPTED_RETRY_TRIGGER,
+  MAX_INTERRUPTED_RETRIES,
   STATES,
   TRANSITIONS,
   TERMINAL_STATES,

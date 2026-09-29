@@ -121,6 +121,7 @@ function fromSnapshot(session, currentHead) {
       ? 'A newer revision of this proposal replaced these shots.'
       : (typeof detail.failureReason === 'string' ? detail.failureReason.slice(0, 2000) : null),
     notStartedReason: notStartedReason(session, mismatched),
+    automaticRetryPending: false,
     repairAvailable: detail.repairAvailable === true,
     planHash: typeof detail.planHash === 'string' ? detail.planHash : null,
     shotResults: [],
@@ -151,7 +152,13 @@ function serialize(run, session, slug, currentHead) {
       ? (run.failureReason || null)
       : 'A newer revision of this proposal replaced these shots.',
     notStartedReason: notStartedReason(session, !matchesCurrent),
-    repairAvailable: matchesCurrent && run.repairAvailable === true,
+    // A restart interrupted this run and the recovery sweep starts it again
+    // by itself, so the card says it is trying again instead of asking a
+    // person to. A merged or archived proposal gets no automatic retry.
+    automaticRetryPending: matchesCurrent && run.automaticRetryPending === true
+      && !['merged', 'archived'].includes(session?.status),
+    repairAvailable: matchesCurrent && run.repairAvailable === true
+      && !(run.automaticRetryPending === true && !['merged', 'archived'].includes(session?.status)),
     planHash: run.planHash || null,
     shotResults: matchesCurrent && run.state === 'verified' ? cleanShotResults(run.shotResults) : [],
     progress: matchesCurrent && PUBLIC_STATES.has(run.state) ? (run.progress || null) : null,
@@ -190,7 +197,11 @@ async function getForSessions(pool, sessions, slug) {
                   'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
                 ) ORDER BY a.story_id, a.viewport, a.side, a.variant)
                   FROM shot_artifacts a WHERE a.run_id = r.id
-              ), '[]'::jsonb) AS artifact_summary
+              ), '[]'::jsonb) AS artifact_summary,
+              -- Its automatic retries, so the view can say one is coming.
+              (SELECT COUNT(*) FROM shot_runs retry
+                WHERE retry.session_id = r.session_id AND retry.head_sha = r.head_sha
+                  AND retry.trigger = 'interrupted-retry')::int AS interrupted_retries
          FROM shot_runs r WHERE r.id = ANY($1::varchar[])`,
       [runIds]
     );

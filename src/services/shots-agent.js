@@ -53,26 +53,33 @@ For each declared change and each of its screen sizes (viewports):
    browser_hover on the element to scroll it into view.
 4. Call browser_take_screenshot with a filename such as
    "<change>-<screen>-after.png" and look at it: it should show what the
-   checkpoint describes. Then call save_shot with that change id, screen
-   name, side "after", and the same filename.
+   checkpoint describes.
 5. Shoot the changed element on its own as well: call
    browser_take_screenshot with its element and ref from a snapshot and a
-   filename, then save_shot with kind "element". The element shot leads the
-   change on the proposal, so take one whenever intent.focus or
-   hints.focusTarget names something you can find. Pick the smallest element
-   that holds the whole change, including anything drawn over its edges such
-   as a badge on a corner; for a change only a few pixels across, pick the
-   bar or card around it.
-6. Do the same on the before address with side "before". When
+   filename. The element shot leads the change on the proposal, so take one
+   whenever intent.focus or hints.focusTarget names something you can find.
+   Pick the smallest element that holds the whole change, including anything
+   drawn over its edges such as a badge on a corner; for a change only a few
+   pixels across, pick the bar or card around it.
+6. Save both in one save_shot call: list each file with the change id, the
+   screen name, side "after", and kind "screen" or "element". When the same
+   screen also shows another declared change at this size, list the
+   screenshot again for that change in the same call instead of shooting it
+   twice.
+7. Do the same on the before address with side "before". When
    intent.baseState is "not_present", shoot the same place where the new
    thing appears on the after side, do not look for a different screen, and
    leave out the element shot on that side.
-7. If the change's intent.animation is "motion", a still cannot show it, so
+8. If the change's intent.animation is "motion", a still cannot show it, so
    also record a clip of each side: call browser_close, browser_resize to the
    same screen size again, open the start path, do only the steps that
    trigger the motion, wait for it to finish, call browser_close again, then
    call save_clip with the change, screen and side. Each browser_close ends
    one recording; keep clips short.
+
+Every tool call costs time, so make calls that do not depend on each other
+in the same turn (for example the screen and element screenshots of one
+state), and save everything for a state together.
 
 If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides

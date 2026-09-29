@@ -4876,7 +4876,11 @@ const AppView = {
     // inert <template> the old toggle copied from is gone: closed simply
     // renders no tiles, which is what stopped the looping <video>s anyway.
     let visuals = null;
-    if (kind === 'proposal' || (kind === 'session' && item.source === 'imported')) {
+    // A change that is not up for a vote yet has its shots too: they are
+    // taken once its preview is up, before anyone promotes it, and a draft
+    // is exactly where the author wants to look at them. Legacy route
+    // captures still show only on a proposal or an imported pull request.
+    if (kind === 'proposal' || (kind === 'session' && (item.source === 'imported' || item.shots))) {
       // Once a proposal has entered shots v2, its state is authoritative.
       // In particular, pending/failed shots must never be visually
       // replaced by an older route capture that happens to exist.
@@ -8561,9 +8565,11 @@ const AppView = {
         ago: AppView._workshopAgo(item && (item.promoted_at || item.created_at)),
         number: item && (item.pr_number || item.id) != null ? Number(item.pr_number || item.id) : null,
         body: null,
+        // A change not yet up for a vote shows its before & after shots
+        // too, and never a legacy capture.
         visuals: kind === 'proposal'
           ? AppView._workshopVisuals(item && item.visuals, item && item.shots)
-          : null,
+          : (kind === 'session' && item && item.shots ? AppView._workshopVisuals(null, item.shots) : null),
       };
       return kind ? AppView._attachRowConversation(row, kind, item) : row;
     };
@@ -17432,15 +17438,21 @@ const AppView = {
       // neutral in-flight tone was the thing reading as "any moment now"
       // on proposals nothing was ever going to pick up.
       const notStarted = AppView._shotsNotStarted(shots);
+      // Interrupted by a restart, and started again automatically: under
+      // way, not a failure to act on.
+      const retrying = shots.state === 'failed' && shots.automaticRetryPending === true;
       const running = !notStarted
-        && ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(shots.state);
+        && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(shots.state) || retrying);
       const enforced = AppView.appData?.shotsEnforced === true;
       out.push({
         key: 'shots',
-        label: running ? 'Taking before & after shots'
-          : notStarted ? 'Before & after not started'
-            : shots.state === 'failed' ? 'Couldn\u2019t take the shots' : 'Before & after needed',
-        detail: (notStarted ? AppView._shotsNotStartedReason(shots) : shots.failureReason)
+        label: retrying ? 'Trying the shots again'
+          : running ? 'Taking before & after shots'
+            : notStarted ? 'Before & after not started'
+              : shots.state === 'failed' ? 'Couldn\u2019t take the shots' : 'Before & after needed',
+        detail: (retrying
+          ? 'Homeroom restarted while taking these shots, so it starts them again on its own in a moment.'
+          : notStarted ? AppView._shotsNotStartedReason(shots) : shots.failureReason)
           || (enforced
             ? 'Voting and merging wait for before & after shots of the current proposal commit.'
             : 'This proposal has no before & after shots for its current commit yet.'),
@@ -18046,9 +18058,13 @@ const AppView = {
       // Runs from before shots; a current run never enters this state.
       replaying: taking,
       reviewing: ['Saving the shots', 'The shots are being saved to the proposal.'],
+      // A restart interrupted the run and the recovery sweep starts it
+      // again by itself, so it is not a failure to act on yet.
       failed: e.failureCode === 'shots_stopped'
         ? ['Shots stopped', e.failureReason || 'Stopped before it finished. No shots were taken for this commit.']
-        : ['Couldn\u2019t take the shots', e.failureReason || 'The shots agent could not take the before & after shots.'],
+        : e.automaticRetryPending === true
+          ? ['Trying the shots again', 'Homeroom restarted while taking these shots, so it starts them again on its own in a moment.']
+          : ['Couldn\u2019t take the shots', e.failureReason || 'The shots agent could not take the before & after shots.'],
       stale: ['Shots are out of date', e.failureReason || 'A newer revision of this proposal replaced these shots.'],
       cancelled: ['Shots cancelled', e.failureReason || 'A newer run replaced this one before it finished.'],
       not_required: ['No before & after needed', e.rationale || 'The author says nothing visible changes.'],
@@ -18073,11 +18089,13 @@ const AppView = {
     // it neither spins nor promises shots are being taken. It reads as its
     // own state, with whatever reason the server recorded.
     const notStarted = AppView._shotsNotStarted(shots);
+    const retrying = state === 'failed' && shots.automaticRetryPending === true;
     const running = !notStarted
       && ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(state);
     return {
       state,
       verified: state === 'verified',
+      retrying,
       notStarted,
       label: state === 'verified' ? 'Shots ready' : copy[0],
       // A reason the server recorded is quoted as written; only a run that
@@ -18123,7 +18141,7 @@ const AppView = {
     const stateCopy = AppView._shotsStateCopy(shots);
     const badge = state === 'verified'
       ? '<span class="dev-badge bg-violet-500/10 text-violet-700 dark:text-violet-400">Shots ready</span>'
-      : `<span class="dev-badge ${state === 'failed' && shots.failureCode !== 'shots_stopped' ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Shots pending'])[0])}</span>`;
+      : `<span class="dev-badge ${state === 'failed' && shots.failureCode !== 'shots_stopped' && shots.automaticRetryPending !== true ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Shots pending'])[0])}</span>`;
     const provenance = `<span>before <code>${esc(shortSha(shots.baseSha))}</code></span><span aria-hidden="true">→</span><span>after <code>${esc(shortSha(shots.headSha))}</code></span>`;
 
     if (state !== 'verified') {
@@ -18133,7 +18151,9 @@ const AppView = {
       // never started. The rerun route already accepts a 'planned' run (it
       // reruns the same head), and a stuck run is precisely the case where
       // a reader needs a way to kick it.
-      const retryable = (state === 'failed'
+      // Not while an automatic retry is coming: two ways to start the same
+      // run again, one of them already under way, is one too many.
+      const retryable = (state === 'failed' && shots.automaticRetryPending !== true
           && (shots.repairAvailable === true || shots.failureCode === 'shots_stopped'))
         || AppView._shotsNotStarted(shots);
       const retry = retryable && Number.isInteger(sessionId) && sessionId > 0

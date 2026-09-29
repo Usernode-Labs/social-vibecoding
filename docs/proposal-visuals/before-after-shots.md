@@ -111,7 +111,11 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
 ## A run, end to end
 
 1. **Queued.** A run is created for the proposal's exact submitted commit
-   (`planned`) when the declaration requires shots.
+   (`planned`) when the declaration requires shots. It starts as soon as that
+   commit's staging preview is up, beside the checks, when nothing holds the
+   session (no turn open, the worker free); otherwise it starts once the
+   checks settle. It never waits on the checks' verdict, and a proposal does
+   not have to be up for a vote.
 2. **Building before and after** (`provisioning`). Homeroom builds isolated
    copies of the exact base and head revisions. It resets both to the same
    fixture data and signs in each persona's browser.
@@ -122,7 +126,7 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    | Tool | What it does |
    | --- | --- |
    | `get_brief` | The declared changes, before/after addresses, which browser to use for whom, changed files and progress so far |
-   | `save_shot` | Publishes a PNG the browser saved with `browser_take_screenshot` for a change, screen and side |
+   | `save_shot` | Publishes PNGs the browser saved with `browser_take_screenshot`, several per call, each for a change, screen, side and kind; one screenshot can be listed for several changes |
    | `save_clip` | Publishes the clip that the change's browser recorded most recently |
    | `note_change` | Records what a change's shots leave out of its claim, shown beside them |
    | `skip_change` | Records why a change cannot be shown and withdraws anything saved for it (saving again takes the skip back); without a change id, it skips every change that is not ready |
@@ -158,9 +162,12 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
 `plan_hash` holds the manifest hash, which names exactly the files
 published.
 
-A run that a platform restart interrupted is retried automatically, up to twice per commit. A
-person can take the shots again, stop a running set, or (as an app manager)
-waive them.
+A run that a platform restart interrupted is retried automatically, up to
+twice per commit: a sweep every 30 seconds starts the same commit again once
+the run has been marked interrupted for 30 seconds. Until then the card says
+"Trying the shots again" rather than asking anyone to retry, and the view
+carries `automaticRetryPending: true`. A person can take the shots again,
+stop a running set, or (as an app manager) waive them.
 
 ## What the platform checks, and what it does not
 
@@ -210,6 +217,8 @@ The proposal's card leads with each declared change:
 - While running, the card shows its state ("Building before and after",
   "Taking the shots", "Saving the shots") and a Stop action. A failed run
   offers "Take the shots again".
+- A change that is not up for a vote yet shows its shots the same way, on
+  its page and in the Workshop feed, as soon as they are ready.
 
 The public view model and the connector's `get_proposal` carry `shotResults`
 (`[{ id, status: "ready" | "skipped", reason, note }]`) beside `claims` and
@@ -268,6 +277,11 @@ and reason, and a bounded trace:
 - `trace.agentDispatches` and `trace.agentActivity` give the backend and
   model, fallback, tool counts, and pending browser and provider calls. See
   `shots-agent-diagnostics.md` for reading a timeout;
+- `trace.agentActivity.firstAtMs` gives, from the run's start, when the
+  agent was dispatched and when its startup first reached each step (worker
+  ready, provider ready, first output, first tool, first browser call). The
+  event list keeps only the last 128 events, so this is where startup time
+  is read;
 - `trace.agentFinalResponse(s)` holds the agent's own last words (private
   to this route).
 

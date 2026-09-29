@@ -131,17 +131,21 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
     /browser_member for\s+member, browser_admin for read_only_admin, browser_full_admin for full_admin/);
   assert.match(prompt, /Call browser_resize with that width and height/);
   assert.match(prompt, /browser_take_screenshot with a filename/);
-  assert.match(prompt, /save_shot with that change id, screen\s+name, side "after"/);
+  assert.match(prompt, /Save both in one save_shot call: list each file with the change id, the\s+screen name, side "after"/);
+  // Fewer round trips: each tool call is a model turn, which is what the
+  // first production run spent its time on.
+  assert.match(prompt, /list the\s+screenshot again for that change in the same call instead of shooting it\s+twice/);
+  assert.match(prompt, /make calls that do not depend on each other\s+in the same turn/);
   assert.match(prompt, /on the before address with side "before"/);
-  assert.match(prompt, /kind "element"/);
+  assert.match(prompt, /kind "screen" or "element"/);
   // What the dry run on real proposals showed the agent getting wrong.
   assert.match(prompt, /call browser_wait_for with text you expect/, 'waits for the finished state');
   assert.match(prompt, /fullPage screenshot shows no more than the screen does; call\s+browser_hover/,
     'the shell scrolls inside its panes, so hover scrolls the element into view');
   assert.match(prompt, /look at it: it should show what the\s+checkpoint describes/);
-  assert.match(prompt, /element shot leads the\s+change on the proposal, so take one whenever intent\.focus/);
+  assert.match(prompt, /element shot leads the\s+change on the proposal, so take one\s+whenever intent\.focus/);
   assert.match(prompt, /leave out the element shot on that side/);
-  assert.match(prompt, /including anything drawn over its edges/, "a corner badge overflows its button");
+  assert.match(prompt, /including anything\s+drawn over its edges/, "a corner badge overflows its button");
   assert.match(prompt, /pick the\s+bar or card around it/);
   assert.match(prompt, /create it\s+the same way on both addresses before you shoot either/);
   assert.match(prompt, /call\s+note_change with the change id and what they leave out/);

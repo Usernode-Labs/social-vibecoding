@@ -1891,6 +1891,24 @@ function scheduleShots(config, callerPool, sessionId, commitHash, trigger = 'pre
   });
 }
 
+// Only when nothing holds the session. A shots run first waits, for at most
+// two minutes, for the proposal's agent to be free, and a turn whose tail
+// started this capture is still wrapping up; that session keeps the start
+// after its checks, when the turn is long over.
+function startShotsIfIdle(config, pool, sessionId, commitHash) {
+  if (!/^[0-9a-f]{40}$/.test(String(commitHash || ''))) return Promise.resolve();
+  return Promise.resolve().then(async () => {
+    const { rows } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [sessionId]);
+    if (!rows[0] || rows[0].active_turn) return;
+    if (await require('./worker').isInFlight(sessionId)) return;
+    scheduleShots(config, pool, sessionId, commitHash, 'preview-ready');
+  }).catch((err) => {
+    log.warn('visuals', 'Could not start before & after shots beside the checks', {
+      sessionId: Number(sessionId), headSha: commitHash, err: err.message,
+    });
+  });
+}
+
 async function captureForSession(config, session, app, commitHash, stagingResult, opts = {}) {
   const lifecycle = require('./preview-lifecycle');
   if (lifecycle.enabled(config) && !lifecycle.current()) {
@@ -1981,6 +1999,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   }
   _inFlight.set(key, { operation, commitHash: commitHash || null });
   const pool = getPool(config);
+
+  // The preview for this commit is live (the lifecycle wrapper above checked
+  // it), so the before & after shots can start now, beside the checks,
+  // instead of after the whole suite. They build their own before and after
+  // copies from the exact revisions, reuse this preview's image for the after
+  // side, and never read the checks. The hand-off in the finally block stays
+  // as the fallback; starting the same head twice is a no-op.
+  startShotsIfIdle(config, pool, session.id, commitHash);
 
   // ── Skip a provably redundant run (#1144) ──
   //
@@ -3698,6 +3724,7 @@ module.exports = {
   sessionEventEnvelope,
   captureForSession,
   scheduleShots,
+  startShotsIfIdle,
   // The settlement half of a run and the in-flight seat, for the harvester
   // (services/check-harvest.js) settling a run whose launcher died.
   settleCaptureRun,

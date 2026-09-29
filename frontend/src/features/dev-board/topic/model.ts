@@ -456,6 +456,12 @@ export interface TopicBody {
      * spin, and it keeps the panel so its reason and retry control show.
      */
     notStarted: boolean;
+    /**
+     * A restart interrupted the run and the recovery sweep starts it again
+     * by itself (`automaticRetryPending` in the shots view): shown as under
+     * way, not as a failure.
+     */
+    retrying?: boolean;
     label: string;
     sentence: string;
     claims: string[];

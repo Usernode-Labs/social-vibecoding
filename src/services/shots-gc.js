@@ -214,8 +214,7 @@ async function recoverUnstarted(config, pool, { limit = 10, minAgeMs = 60_000, s
 // a person clicking Retry can clear. `rerunSameHead` keeps the interrupted
 // row as the audit record and the planned -> provisioning claim in
 // scheduleForSession still guarantees one live runner.
-const INTERRUPTED_RETRY_TRIGGER = 'interrupted-retry';
-const MAX_INTERRUPTED_RETRIES = 2;
+const { INTERRUPTED_RETRY_TRIGGER, MAX_INTERRUPTED_RETRIES } = state;
 
 async function retryInterrupted(config, pool, {
   limit = 10, minAgeMs = 30_000, maxRetries = MAX_INTERRUPTED_RETRIES,

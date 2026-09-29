@@ -1079,16 +1079,28 @@ async function becomeLeader() {
     .then(({ scheduled }) => {
       if (scheduled) log.info('shots', 'Recovered unstarted before & after shots claims', { scheduled });
     })
-    .catch((err) => log.warn('shots', 'Unstarted shots recovery failed', { err: err.message }))
-    // A rollout interrupts runs through no fault of the proposal; start the
-    // same head again (bounded) rather than waiting for someone to click Retry.
-    .then(() => shotsGc.retryInterrupted(config, getPool(config)))
-    .then((result) => {
-      if (result?.scheduled) log.info('shots', 'Retried interrupted before & after shots runs', result);
-    })
-    .catch((err) => log.warn('shots', 'Interrupted shots retry failed', { err: err.message }));
+    .catch((err) => log.warn('shots', 'Unstarted shots recovery failed', { err: err.message }));
   runUnstartedShots();
   setInterval(runUnstartedShots, 2 * 60 * 1000).unref?.();
+  // A rollout interrupts runs through no fault of the proposal; start the
+  // same head again (bounded) rather than waiting for someone to click Retry.
+  // Its own, shorter timer: the run is marked interrupted as the old process
+  // exits, the sweep waits 30 seconds past that, and a card that says "trying
+  // again" should not then sit for up to two more minutes. The query is one
+  // indexed read that usually finds nothing.
+  let shotsRetryRunning = false;
+  const retryInterruptedShots = () => {
+    if (shotsRetryRunning) return;
+    shotsRetryRunning = true;
+    shotsGc.retryInterrupted(config, getPool(config))
+      .then((result) => {
+        if (result?.scheduled) log.info('shots', 'Retried interrupted before & after shots runs', result);
+      })
+      .catch((err) => log.warn('shots', 'Interrupted shots retry failed', { err: err.message }))
+      .finally(() => { shotsRetryRunning = false; });
+  };
+  retryInterruptedShots();
+  setInterval(retryInterruptedShots, 30 * 1000).unref?.();
 
   // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
   // password every boot) and refresh its deny-listed grants so tables
@@ -5833,7 +5845,7 @@ async function cleanup() {
     const marking = Promise.allSettled(interruptedShots.map((runId) =>
       require('./src/services/shots-state').transitionRun(shutdownPool, runId, 'failed', {
         failureCode: 'shots_run_interrupted',
-        failureReason: 'The platform restarted while these before/after shots were being taken. You can take them again.',
+        failureReason: 'Homeroom restarted while these before & after shots were being taken. You can take them again.',
       })
     ));
     const result = await Promise.race([

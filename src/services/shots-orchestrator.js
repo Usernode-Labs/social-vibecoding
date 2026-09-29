@@ -610,11 +610,23 @@ const AGENT_DIAGNOSTIC_TOOLS = new Set([
   'browser_close', 'other',
 ]);
 
+// When the agent's startup reached each step, first time only, from the run's
+// start. The event list keeps the last MAX_AGENT_EVENTS, so on a long run the
+// startup (worker, provider, sign-ins, the first tool) would otherwise be gone
+// from the trace by the time anyone reads it.
+const AGENT_STARTUP_KINDS = new Set([
+  'worker_prepare_start', 'worker_prepare_end', 'auth_bootstrap', 'provider_init',
+  'provider_dispatched', 'first_stream', 'first_output', 'tool_start', 'browser_call_start',
+]);
+
 function recordAgentDiagnostic(metrics, raw) {
   const kind = String(raw?.kind || '');
   if (!AGENT_DIAGNOSTIC_KINDS.has(kind)) return;
   const activity = metrics.agentActivity;
   const event = { atMs: Math.max(0, Date.now() - metrics.startedAtMs), kind };
+  if (AGENT_STARTUP_KINDS.has(kind) && activity.firstAtMs[kind] == null) {
+    activity.firstAtMs[kind] = event.atMs;
+  }
   if (raw.backend === 'claude_code' || raw.backend === 'codex_openrouter') {
     event.backend = raw.backend;
   }
@@ -738,7 +750,7 @@ function newRunMetrics() {
     agentAttempts: 0,
     agentDispatches: [],
     agentFinalResponses: [],
-    agentActivity: { events: [], counts: {}, toolCounts: {}, pending: new Map(),
+    agentActivity: { events: [], counts: {}, toolCounts: {}, firstAtMs: {}, pending: new Map(),
       browserCallCounts: {}, browserPending: new Map(), documentPending: new Map(),
       providerPending: new Map(), budgetMs: null },
     agentFinalResponse: null,
@@ -775,6 +787,7 @@ function agentActivitySummary(metrics) {
     counts: { ...metrics.agentActivity.counts },
     toolCounts: { ...metrics.agentActivity.toolCounts },
     browserCallCounts: { ...metrics.agentActivity.browserCallCounts },
+    firstAtMs: { ...metrics.agentActivity.firstAtMs },
     events: metrics.agentActivity.events.slice(-MAX_AGENT_EVENTS),
     pendingTools: [...metrics.agentActivity.pending.values()].slice(-8),
     pendingBrowserCalls: [...metrics.agentActivity.browserPending.values()].slice(-8),
@@ -1003,6 +1016,9 @@ async function executeRun(config, options, injected = {}) {
       };
       metrics.agentDispatches.push(dispatchTrace);
       const dispatchStartedAt = Date.now();
+      if (metrics.agentActivity.firstAtMs.dispatch == null) {
+        metrics.agentActivity.firstAtMs.dispatch = Math.max(0, dispatchStartedAt - metrics.startedAtMs);
+      }
       try {
         // Provisioning is platform work; the agent's budget starts here and
         // is shared by the first dispatch and any backend fallback.
@@ -1418,6 +1434,7 @@ module.exports = {
   sameProvenance,
   waitForSessionIdle,
   newRunMetrics,
+  recordAgentDiagnostic,
   addTiming,
   addAgentUsage,
   traceSummary,
