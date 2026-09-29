@@ -375,8 +375,9 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
   fs.writeFileSync(path.join(bridge.shotsDir, 'admin', 'invite-desktop-after.png'), image);
   const shot = { change: 'invite-suggestions', screen: 'desktop', side: 'after' };
 
-  const saved = await bridge.call('save_shot', { ...shot, file: 'invite-desktop-after.png' });
+  const saved = await bridge.call('save_shot', { shots: [{ ...shot, file: 'invite-desktop-after.png' }] });
   assert.equal(saved.isError, false);
+  assert.equal(saved.value.saved, 1);
   assert.equal(bridge.calls.length, 1);
   const [sent] = bridge.calls;
   assert.equal(sent.method, 'POST');
@@ -387,9 +388,9 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
 
   // The path the browser reported is reduced to its name inside the shots
   // directories; it cannot lead anywhere else.
-  assert.equal((await bridge.call('save_shot', {
+  assert.equal((await bridge.call('save_shot', { shots: [{
     ...shot, kind: 'element', file: '../../state/invite-desktop-after.png',
-  })).isError, false);
+  }] })).isError, false);
   assert.equal(bridge.calls[1].query.kind, 'element');
   assert.ok(Buffer.from(bridge.calls[1].body).equals(image));
 
@@ -407,11 +408,24 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
     ['outside.png', 'shot_file_not_found'],
     ['never-taken.png', 'shot_file_not_found'],
   ]) {
-    const refused = await bridge.call('save_shot', { ...shot, file });
+    const refused = await bridge.call('save_shot', { shots: [{ ...shot, file }] });
     assert.equal(refused.isError, true, `${file} must be refused`);
-    assert.equal(refused.value.code, code, file);
+    assert.equal(refused.value.results[0].error.code, code, file);
   }
   assert.equal(bridge.calls.length, 2, 'a refused file never reaches the platform');
+
+  // Several files in one call, and one screenshot for two changes: each is
+  // its own upload, and a refused one does not stop the rest.
+  const batch = await bridge.call('save_shot', { shots: [
+    { ...shot, file: 'invite-desktop-after.png' },
+    { ...shot, change: 'saved-toast', file: 'invite-desktop-after.png' },
+    { ...shot, kind: 'element', file: 'never-taken.png' },
+  ] });
+  assert.equal(batch.isError, false, 'something saved, so the call is not an error');
+  assert.equal(batch.value.saved, 2);
+  assert.equal(batch.value.refused, 1);
+  assert.equal(batch.value.results[2].error.code, 'shot_file_not_found');
+  assert.deepEqual(bridge.calls.slice(2).map((sent) => sent.query.change), ['invite-suggestions', 'saved-toast']);
 });
 
 test('save_clip publishes the newest recording and retires every older one', async (t) => {

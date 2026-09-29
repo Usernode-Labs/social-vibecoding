@@ -1473,3 +1473,21 @@ test('Stop does nothing once the shots settled or were superseded', async () => 
     assert.deepEqual(settled.calls.stops, []);
   }
 });
+
+test('the trace keeps when the agent\'s startup reached each step, whatever the event window drops', () => {
+  const metrics = orchestrator.newRunMetrics();
+  metrics.startedAtMs = Date.now() - 5000;
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'worker_prepare_start' });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief' });
+  const first = metrics.agentActivity.firstAtMs.tool_start;
+  assert.ok(first >= 5000, 'measured from the run\'s start');
+  metrics.startedAtMs -= 60_000;
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'save_shot' });
+  assert.equal(metrics.agentActivity.firstAtMs.tool_start, first, 'the first time only');
+  // A long run pushes the startup out of the event window; the milestones stay.
+  for (let i = 0; i < 400; i += 1) orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_end', tool: 'save_shot' });
+  const summary = orchestrator.traceSummary(metrics).agentActivity;
+  assert.ok(!summary.events.some((event) => event.kind === 'worker_prepare_start'));
+  assert.deepEqual(Object.keys(summary.firstAtMs).sort(), ['tool_start', 'worker_prepare_start']);
+  assert.ok(!('tool_end' in summary.firstAtMs), 'only the startup steps are kept');
+});

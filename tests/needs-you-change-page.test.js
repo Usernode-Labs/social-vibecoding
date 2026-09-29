@@ -258,6 +258,14 @@ test('the picture: verified shots keeps its card, a run under way is one line wi
   const failed = render(av, { ...PR, shots: { state: 'failed', failureReason: 'The dialog never opened.', claims: [claim], artifacts: [] } }).html;
   assert.match(failed, /<div class="dev-topic-shots" data-shots-state="failed"><span class="dev-badge bg-red-500\/10 text-red-700 dark:text-red-400">Couldn\u2019t take the shots<\/span>/);
   assert.match(failed, /<span class="dev-topic-shots-text">Couldn\u2019t take the shots\. The dialog never opened\.<\/span>/);
+  // Interrupted by a restart, with an automatic retry coming: one line with
+  // the spinner, like a run under way, and no red strip asking for anything.
+  const retrying = render(av, { ...PR, shots: {
+    state: 'failed', failureCode: 'shots_run_interrupted', automaticRetryPending: true,
+    failureReason: 'Homeroom restarted.', claims: [claim], artifacts: [],
+  } }).html;
+  assert.match(retrying, /<p class="dev-topic-hero-shots" data-shots-state="failed"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Trying the shots again<\/span><\/p>/);
+  assert.ok(!retrying.includes('dev-topic-shots-text'), 'no failure strip');
   const verified = render(av, { ...PR, shots: { state: 'verified', claims: [claim], artifacts: [], baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) } }).html;
   assert.match(verified, /<div class="dev-topic-visuals" data-visuals-scope="1"><div class="usn-visuals-body">/);
   assert.ok(!verified.includes('dev-topic-hero-shots'));
@@ -423,6 +431,14 @@ test('the card tag follows the same split, and only the moving one spins', () =>
   assert.equal(failed.label, 'Couldn\u2019t take the shots');
   assert.equal(failed.running, false);
   assert.equal(failed.detail, 'The dialog never opened.');
+  // Interrupted by a restart, with an automatic retry coming: under way.
+  const retrying = reasons({
+    state: 'failed', updatedAt: ago(10 * 1000), required: true, failureCode: 'shots_run_interrupted',
+    automaticRetryPending: true, failureReason: 'Homeroom restarted. You can take them again.',
+  });
+  assert.equal(retrying.label, 'Trying the shots again');
+  assert.equal(retrying.running, true);
+  assert.match(retrying.detail, /starts them again on its own in a moment/);
   const exploring = reasons({ state: 'exploring', updatedAt: ago(IDLE * 2), required: true });
   assert.equal(exploring.label, 'Taking before & after shots');
   assert.equal(exploring.running, true);

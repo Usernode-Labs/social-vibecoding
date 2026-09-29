@@ -262,3 +262,39 @@ test('mismatched media is refused: no PNG animation, no WebM shot, no paired sti
     slug: 'demo-app', sessionId: 42, verified: false,
   }), [], 'an unverified run serves no clip');
 });
+
+test('an interrupted run with an automatic retry to come says so, and is not offered for a manual retry', () => {
+  const state = require('../src/services/shots-state');
+  const row = {
+    id: 'f'.repeat(32), session_id: 42, state: 'failed', base_sha: BASE, head_sha: HEAD,
+    failure_code: 'shots_run_interrupted', failure_reason: 'Homeroom restarted.', intent: null,
+    interrupted_retries: 0,
+  };
+  const open = view.serialize(state.runSummary(row, []), session({ status: 'paused' }), 'demo', HEAD);
+  assert.equal(open.automaticRetryPending, true);
+  assert.equal(open.repairAvailable, false, 'the sweep starts it; a second way to start it is not offered');
+
+  const spent = view.serialize(state.runSummary({ ...row, interrupted_retries: state.MAX_INTERRUPTED_RETRIES }, []),
+    session({ status: 'paused' }), 'demo', HEAD);
+  assert.equal(spent.automaticRetryPending, false, 'once the retries are used up it is a failure again');
+  assert.equal(spent.repairAvailable, true);
+
+  const merged = view.serialize(state.runSummary(row, []), session({ status: 'merged' }), 'demo', HEAD);
+  assert.equal(merged.automaticRetryPending, false, 'a merged proposal gets no automatic retry');
+
+  const superseded = view.serialize(state.runSummary(row, []), session({ status: 'paused' }), 'demo', OTHER);
+  assert.equal(superseded.automaticRetryPending, false, 'nor does a commit the proposal has moved past');
+
+  // The sweep matches the stored code exactly, so neither may a run
+  // interrupted under the name from before the rename.
+  assert.equal(state.runSummary({ ...row, failure_code: 'evidence_run_interrupted' }, []).automaticRetryPending, false);
+  // A loader that did not count the retries cannot promise one.
+  assert.equal(state.runSummary({ ...row, interrupted_retries: undefined }, []).automaticRetryPending, false);
+  // Both loaders count them, under the trigger the sweep writes.
+  assert.equal(state.INTERRUPTED_RETRY_TRIGGER, 'interrupted-retry');
+  for (const file of ['../src/services/shots-state.js', '../src/services/shots-view.js']) {
+    assert.match(require('node:fs').readFileSync(require('node:path').join(__dirname, file), 'utf8'),
+      /retry\.trigger = 'interrupted-retry'\)::int AS interrupted_retries/, file);
+  }
+  assert.equal(view.fromSnapshot(session(), HEAD).automaticRetryPending, false);
+});

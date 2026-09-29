@@ -956,11 +956,13 @@ function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
     );
   }
   if (!ev || ev.verified) return null;
-  if (!notStarted && SHOTS_BUILDING.has(ev.state)) {
+  // An interrupted run the recovery sweep is about to start again reads as
+  // under way too: the next thing that happens needs nobody.
+  if (!notStarted && (SHOTS_BUILDING.has(ev.state) || ev.retrying)) {
     return (
       <p className="dev-topic-hero-shots" data-shots-state={ev.state}>
         <span className="dc-status-spinner-arc" aria-hidden="true"></span>
-        <span>Taking before & after shots</span>
+        <span>{ev.retrying ? 'Trying the shots again' : 'Taking before & after shots'}</span>
       </p>
     );
   }

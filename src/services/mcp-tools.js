@@ -1428,6 +1428,9 @@ function registerTools(server, ctx) {
     failureCode: z.string().nullable(),
     failureReason: z.string().nullable(),
     repairAvailable: z.boolean(),
+    // A restart interrupted the run and Homeroom starts it again by itself:
+    // wait for it rather than taking the shots again.
+    automaticRetryPending: z.boolean().optional(),
     planHash: z.string().nullable(),
     verifiedReason: z.string().nullable(),
     // One result per declared change: its shots are ready (with the shots

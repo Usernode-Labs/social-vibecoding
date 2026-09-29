@@ -296,6 +296,50 @@ test('running shots offer Stop, and a stopped or failed set offers to take them 
   assert.doesNotMatch(conflict, /Take the shots again/, 'a retry that would repeat the failure is not offered');
 });
 
+test('an interrupted run the platform is starting again reads as under way, not as a failure', () => {
+  const retrying = AppView.shotsHtml(shots({
+    state: 'failed', artifacts: [], failureCode: 'shots_run_interrupted', repairAvailable: false,
+    automaticRetryPending: true,
+    failureReason: 'Homeroom restarted while these before & after shots were being taken. You can take them again.',
+  }), { sessionId: 42 });
+  assert.match(retrying, /Trying the shots again/);
+  assert.match(retrying, /starts them again on its own in a moment/);
+  assert.doesNotMatch(retrying, /Couldn’t take the shots|You can take them again/);
+  assert.doesNotMatch(retrying, /bg-red-500\/10/, 'nothing has failed that needs anyone');
+  assert.doesNotMatch(retrying, /Take the shots again/, 'the retry is already coming');
+
+  const view = AppView._shotsView(shots({
+    state: 'failed', artifacts: [], failureCode: 'shots_run_interrupted', automaticRetryPending: true,
+  }));
+  assert.equal(view.retrying, true);
+  assert.equal(view.label, 'Trying the shots again');
+
+  // Once the retries are used up, the stored reason and the manual retry are back.
+  const spent = AppView.shotsHtml(shots({
+    state: 'failed', artifacts: [], failureCode: 'shots_run_interrupted', repairAvailable: true,
+    automaticRetryPending: false,
+    failureReason: 'Homeroom restarted while these before & after shots were being taken. You can take them again.',
+  }), { sessionId: 42 });
+  assert.match(spent, /Couldn’t take the shots/);
+  assert.match(spent, />Take the shots again</);
+});
+
+test('a change not yet up for a vote shows its shots on its page and in the feed', () => {
+  // The shots are taken once the preview is up, before anyone promotes the
+  // change, so a draft is where the author first looks at them.
+  const draft = { id: 42, source: 'cli_handoff', status: 'paused', shots: shots(), visuals: null };
+  const view = AppView._detailActionsView('session', draft);
+  assert.ok(view && view.visuals, 'the page carries the before & after');
+  assert.match(view.visuals.tilesHtml, /data-shots="1"/);
+  assert.match(view.visuals.tilesHtml, /\/api\/apps\/demo\/proposals\/42\/shots\//);
+  // Without shots, a session still shows no legacy route capture.
+  const legacyOnly = AppView._detailActionsView('session', { ...draft, shots: null, visuals: legacyPaired() });
+  assert.ok(!legacyOnly || !legacyOnly.visuals, 'legacy captures stay on proposals and imported pull requests');
+  const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/js/app-view.js'), 'utf8');
+  assert.match(source, /\(kind === 'session' && item && item\.shots \? AppView\._workshopVisuals\(null, item\.shots\) : null\)/,
+    'the feed picture follows the same rule, from the shots alone');
+});
+
 test('no state of the card says "Visual change preview"', () => {
   const states = ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing', 'verified',
     'failed', 'stale', 'cancelled', 'not_required', 'overridden'];
