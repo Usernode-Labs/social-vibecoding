@@ -233,7 +233,8 @@ shot when it is big enough to read (at least 120×40 px on both sides).
 - **Skipped.** The change, a "Skipped" badge and the reason.
 - While running, the card shows its state ("Building before and after",
   "Taking the shots", "Saving the shots") and a Stop action. A failed run
-  offers "Take the shots again".
+  offers "Take the shots again", and so does a ready one (after better steps
+  or hints, or to outline a run from before outlines were worked out).
 - A change that is not up for a vote yet shows its shots the same way, on
   its page and in the Workshop feed, as soon as they are ready.
 
