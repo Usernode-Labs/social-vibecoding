@@ -270,6 +270,15 @@ const MANIFEST_FILENAME = 'dapp.json';
 // the 2x margin by ~238s, so neither the deadline nor RUN_TIMEOUT_MS moves.
 // The step buys 29 slots over the 811 declared here.
 //
+// 840 → 850 (welcome messages): main stood at 820 exactly, the 20-slot
+// floor; the new Admin → Welcome messages section declares one check on its
+// own route (#admin/welcome-dm), which no existing check shares, so there
+// was nothing to fold it into. Same arithmetic: 850 checks at ~3.9s over the
+// pool of 16 is ~207s of ideal work, and the unchanged 650s
+// TESTS_DEADLINE_MS still clears the 2x margin by ~236s, so neither the
+// deadline nor RUN_TIMEOUT_MS moves. The step buys 29 slots over the 821
+// declared here.
+//
 // THE RULE AT THE FLOOR, stated once because three guards enforce it and on
 // #4868 they gave opposite advice. Fold first: a check that can share a
 // route with an existing one joins that check's expectSelector with :has()
@@ -281,7 +290,7 @@ const MANIFEST_FILENAME = 'dapp.json';
 // feature is not held behind a second vote because main already sat at the
 // floor. Never delete a check to make room. tests/lib/check-cap.js puts
 // the same words in the failing guards' messages.
-const MAX_DECLARED_TESTS = 840;
+const MAX_DECLARED_TESTS = 850;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

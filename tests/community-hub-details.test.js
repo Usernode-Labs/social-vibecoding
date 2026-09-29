@@ -37,7 +37,7 @@ const community = (over = {}) => ({
   is_member: true,
   is_creator: false,
   audience: 'open',
-  audience_label: 'Community',
+  audience_label: 'Public community',
   members: [{ id: 1, username: 'ada' }, { id: 2, username: 'lin' }],
   channel: null,
   activity: { active_week: 4, shipped_month: 3 },
@@ -153,17 +153,17 @@ test('a person who has not joined sees "Recently" over the same rows', () => {
   assert.doesNotMatch(LANDER, /outsider \? null/);
 });
 
-test('the hero offers Open it up or Make it a group, as a proposal, to whoever may open one', () => {
+test('the hero offers Open it up or Make it private, as a proposal, to whoever may open one', () => {
   const { audienceChangeLine } = loadTsx(CARD);
-  assert.equal(audienceChangeLine('Make this app public'), 'Opening it up to a community is up for a vote');
-  assert.equal(audienceChangeLine('Make this app private (collaborators only)'), 'Making it a group is up for a vote');
+  assert.equal(audienceChangeLine('Make this app public'), 'Making it a public community is up for a vote');
+  assert.equal(audienceChangeLine('Make this app private (collaborators only)'), 'Making it a private community is up for a vote');
   assert.equal(audienceChangeLine('Make this app invite-only build, public to view'), 'A change to who it is for is up for a vote');
   assert.equal(audienceChangeLine(null), 'A change to who it is for is up for a vote');
 
   const change = CARD_SRC.slice(CARD_SRC.indexOf('function AudienceChange('), CARD_SRC.indexOf('export function CommunityCard('));
   assert.match(change, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/visibility-pr`/);
   assert.match(change, /\? \{ collabVisibility: 'private', viewVisibility: 'private' \}\s*: \{ collabVisibility: 'public', viewVisibility: 'public' \}/,
-    'a Community is public to use and to build; a Group is private to both, as the create dialog maps them');
+    'a public community is public to use and to build; a private community is private to both, as the create dialog maps them');
   assert.match(change, /if \(!res\.ok && res\.status !== 409\)/, 'one already up is not an error: the hero shows it');
   assert.match(change, /Members vote on this first, and it applies once it merges\./, 'it says it is a proposal, not a switch');
   assert.match(CARD_SRC, /\{data\.can_manage && !data\.audience_change \? \(\s*<AudienceChange /);

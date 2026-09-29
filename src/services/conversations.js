@@ -988,6 +988,42 @@ async function createGroup(pool, user, title, memberIds) {
   return { ...result, conversation: await getConversation(pool, user, result.conversationId) };
 }
 
+// A group whose people are all in it from the start: nobody is asked to
+// accept. Only the platform opens one (services/welcome-dm.js, which greets
+// somebody just let in); a person putting others in a room without asking
+// is what createGroup's invitations are for. Runs on the caller's
+// transaction, so the caller can record the group in the same commit.
+async function createAdmittedGroup(db, ownerId, title, memberIds) {
+  const safeTitle = normalizeTitle(title);
+  const ids = strictIds(memberIds);
+  if (!safeTitle || !ids || !ids.includes(ownerId)) return null;
+  const others = ids.filter((id) => id !== ownerId);
+  if (!others.length) return null;
+  await lockPairsFor(db, ownerId, others);
+  if (!(await ensureEligibleInvitees(db, ownerId, others))) return null;
+  const created = await db.query(
+    `INSERT INTO conversations (kind, title, created_by)
+     VALUES ('group', $1, $2) RETURNING id`,
+    [safeTitle, ownerId]
+  );
+  const conversationId = created.rows[0].id;
+  await db.query(
+    `INSERT INTO conversation_members
+       (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+     VALUES ($1, $2, 'owner', 'member', $2, NOW(), NOW())`,
+    [conversationId, ownerId]
+  );
+  for (const memberId of others) {
+    await db.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+       VALUES ($1, $2, 'member', 'member', $3, NOW(), NOW())`,
+      [conversationId, memberId, ownerId]
+    );
+  }
+  return { conversationId, memberIds: [ownerId, ...others] };
+}
+
 async function updateTitle(pool, user, conversationId, title) {
   const safeTitle = normalizeTitle(title);
   if (!safeTitle) return null;
@@ -1913,6 +1949,7 @@ module.exports = {
   getMessage,
   createDirect,
   createGroup,
+  createAdmittedGroup,
   updateTitle,
   respond,
   addMembers,

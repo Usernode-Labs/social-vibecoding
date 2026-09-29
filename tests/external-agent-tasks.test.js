@@ -35,8 +35,8 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const svc = require('../src/services/external-agent-tasks');
-const evidenceContract = require('../src/services/visual-evidence-plan');
-const evidenceFixture = require('./fixtures/visual-evidence');
+const shotsContract = require('../src/services/visible-changes');
+const shotsFixture = require('./fixtures/shots');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '../src/services/external-agent-tasks.js'), 'utf8'
@@ -909,19 +909,17 @@ test('submit_work opens the cross-fork PR when the mirror is unavailable, and st
       return { number: 88, html_url: 'https://github.com/usernode-bot/recipe-box/pull/88', head: { repo: { owner: { login: 'SomeUser' } } } };
     },
   });
-  const visualEvidence = evidenceContract.parseIntent(evidenceFixture.intent());
-  const visualEvidencePlan = {
-    baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40),
-    planHash: evidenceContract.planHash(evidenceFixture.plan()),
-    plan: evidenceContract.parseReplayPlan(evidenceFixture.plan()),
-  };
+  const visibleChanges = shotsContract.parseIntent(shotsFixture.intent());
+  // A caller still sending the retired author plan. Nothing reads it now:
+  // the shots agent takes the shots, so only the declaration travels.
+  const visualEvidencePlan = { baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), plan: {} };
 
   const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, calls, () => svc.submitWork(
     { pool: submitPool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
     {
       user: { id: 3 }, clientName: 'Claude', taskId: 31, title: 'Dark mode',
       body: 'Adds a toggle.',
-      visualEvidence, visualEvidencePlan,
+      visibleChanges, visualEvidencePlan,
       importProposal: async (slug, prNumber, extra) => {
         imports.push({ slug, prNumber, extra });
         return { ok: true, status: 200, body: { sessionId: 55 } };
@@ -942,8 +940,9 @@ test('submit_work opens the cross-fork PR when the mirror is unavailable, and st
   // caller's token — this service never inserts a chat_sessions row itself.
   assert.equal(imports[0].slug, 'recipe-box');
   assert.equal(imports[0].prNumber, 88);
-  assert.deepEqual(imports[0].extra.visualEvidence, visualEvidence);
-  assert.deepEqual(imports[0].extra.visualEvidencePlan, visualEvidencePlan);
+  assert.deepEqual(imports[0].extra.visibleChanges, visibleChanges);
+  assert.equal('visualEvidencePlan' in imports[0].extra, false, 'an author plan is never forwarded');
+  assert.doesNotMatch(SRC, /visualEvidencePlan/);
   assert.doesNotMatch(SRC, /INSERT INTO chat_sessions/);
 
   // The only thing stamped afterwards is the badge column, scoped to the
@@ -1168,7 +1167,7 @@ test('the service never opens a proposal itself', () => {
   // The linked-issue set travels WITH the import (#1217) for the same reason
   // the testing metadata does — the route is what creates the session row —
   // but the row is still the route's to write, not this service's.
-  assert.match(SRC, /await importProposal\(slug, pr\.number, \{[\s\S]*linkedIssues: linkedIssuesFor\(task\),[\s\S]*visualEvidence/);
+  assert.match(SRC, /await importProposal\(slug, pr\.number, \{[\s\S]*linkedIssues: linkedIssuesFor\(task\),[\s\S]*shots/);
 });
 
 // ── #1217: a proposal built from a request is linked to it ─────────────
@@ -2914,6 +2913,41 @@ test('the work order scopes the local test run to the files the change touched',
   assert.ok(block.indexOf('npm run test:changed') < block.indexOf('fatal: not a valid object name'));
 });
 
+// Both closing trees tell the agent how to declare its visible changes for
+// before/after shots. The replay-era instructions (a typed plan, a local
+// replay, a separate plan tool) are gone, and a stale copy would send an
+// agent looking for a tool that no longer exists.
+test('the work order explains declared changes for before/after shots, and nothing of replay', () => {
+  const create = fullOrder();
+  const update = fullOrder({ targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' } });
+  for (const [label, order] of [['create', create], ['update', update]]) {
+    assert.match(order, /`visibleChanges` for this (exact )?revision: the changes a\s+(person will )?/,
+      `${label}: names the field and what it is for`);
+    assert.match(order, /before\/after shots/, `${label}: in the new words`);
+    assert.match(order, /declare_visible_changes/, `${label}: the helper, when present`);
+    assert.match(order, /helper is not exposed[\s\S]*documented version-1 object directly/,
+      `${label}: and the direct shape when it is not`);
+    assert.match(order, /blocker/, `${label}: a state that cannot be reached is reported, not declared none`);
+    assert.match(order, /one to three(\s+)declared(\s+)changes/, `${label}: declared changes`);
+    assert.match(order, /intent\.controlledFailurePath/, `${label}: the controlled failure stays`);
+    assert.match(order, /"Controlled test: deliberately block the declared API GET on\s+both revisions\."/);
+    for (const gone of [/visualEvidencePlan/, /submit_visual_evidence_plan/, /replay/i,
+      /executable flow/, /submission\.json/, /evidence/i]) {
+      assert.doesNotMatch(order, gone, `${label}: no ${gone}`);
+    }
+  }
+  // The create path spells out each field of a declared change, including
+  // the motion clip and the optional hints.
+  assert.match(create, /\(motion gets a short before\/after clip\)/);
+  assert.match(create, /Optional hints help\s+the shots agent go straight there/);
+  assert.match(create, /setup \(data to create first\)/);
+  assert.match(create, /expectText \(words visible once it shows\)/);
+  assert.match(create, /focusTarget \(a locator\)/);
+  assert.match(create, /Never include secrets or personal data/);
+  // The update path says the shots are fresh for every new revision.
+  assert.match(update, /shots agent takes fresh\s+before\/after shots of every new revision/);
+});
+
 // ── Caller-supplied branch and fork name ───────────────────────────────
 
 test('a caller-supplied branch is validated, then used in place of the suggestion', async () => {
@@ -3074,9 +3108,9 @@ test('a transient import failure keeps the mirrored head and open PR for a free 
           ok: false,
           status: 500,
           body: {
-            error: 'PR import failed while recording visualEvidence.',
-            stage: 'visual_evidence_intent',
-            field: 'visualEvidence',
+            error: 'PR import failed while recording the visible changes.',
+            stage: 'visible_changes',
+            field: 'visibleChanges',
             retryable: true,
           },
         }),
@@ -3088,8 +3122,8 @@ test('a transient import failure keeps the mirrored head and open PR for a free 
   assert.equal(result.retryable, true);
   assert.equal(result.recovery, 'retry_existing_pr');
   assert.equal(result.prNumber, 99);
-  assert.equal(result.stage, 'visual_evidence_intent');
-  assert.equal(result.field, 'visualEvidence');
+  assert.equal(result.stage, 'visible_changes');
+  assert.equal(result.field, 'visibleChanges');
   assert.equal(cleaned, false, 'the PR head is the recovery handle, not litter');
   assert.match(result.message, /PR #99 remains open/);
   assert.match(result.message, /slug "recipe-box" and prNumber 99/);

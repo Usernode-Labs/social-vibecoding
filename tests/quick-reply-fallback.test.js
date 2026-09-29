@@ -379,7 +379,7 @@ test('every model-backed call site goes through the ladder', () => {
     [/const resolveLiveWrapUpPills = \(\) => resolvePills\(wrapUpOutcome/, 'phase-2 wrap-up'],
     [/phase: 'recovered-wrapup'/, 'restart-recovered wrap-up'],
     [/phase: 'clone-followup'/, 'auto-session clone follow-up'],
-    [/phase: 'fork-followup'/, 'shared-chat fork follow-up'],
+    // The shared-chat fork follow-up went with the fork itself (#2779).
   ];
   for (const [re, label] of sites) {
     assert.match(SESSIONS_SRC, re, `${label} must resolve pills through resolveTurnPills`);

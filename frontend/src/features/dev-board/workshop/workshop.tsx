@@ -136,9 +136,10 @@ const SINCE_STEP = 3;
  * from the Workshop — and the tab it belongs to stays lit while it is up,
  * with a way back above it. Their `?ws=` deep links still land on them.
  *
- * The hub's label says what kind of hub it is — Community hub, Group hub,
- * or plain Hub for a project that is just yours — once the community record
- * has said; plain Hub until then.
+ * The hub's label says what kind of hub it is — Community hub for a public
+ * or a private community, plain Hub for a project that is just yours — once
+ * the community record has said; plain Hub until then. Public or private is
+ * the hero chip's to say: "Private community hub" does not fit the tab.
  */
 const TABS: { key: TabKey; label: string; Icon: typeof NewspaperIcon }[] = [
   { key: 'status', label: 'Hub', Icon: UserGroupIcon },
@@ -147,8 +148,7 @@ const TABS: { key: TabKey; label: string; Icon: typeof NewspaperIcon }[] = [
 
 /** The hub tab's label for a community's audience. */
 export function hubLabel(audience: string | null | undefined): string {
-  if (audience === 'open') return 'Community hub';
-  if (audience === 'invited') return 'Group hub';
+  if (audience === 'open' || audience === 'invited') return 'Community hub';
   return 'Hub';
 }
 
@@ -1177,8 +1177,8 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-function visualSrc(id: string, protectedEvidence = false): string {
-  return protectedEvidence ? id : `/visuals/${id}`;
+function visualSrc(id: string, protectedShots = false): string {
+  return protectedShots ? id : `/visuals/${id}`;
 }
 
 /**
@@ -1190,10 +1190,10 @@ function visualSrc(id: string, protectedEvidence = false): string {
  * sized, they are identical, or the change covers most of the page (a theme,
  * a redesign), where a crop would frame nothing.
  */
-async function diffPair(before: string | null, after: string | null, protectedEvidence = false): Promise<Geo> {
+async function diffPair(before: string | null, after: string | null, protectedShots = false): Promise<Geo> {
   const [a, b] = await Promise.all([
-    before ? loadImage(visualSrc(before, protectedEvidence)) : Promise.resolve(null),
-    after ? loadImage(visualSrc(after, protectedEvidence)) : Promise.resolve(null),
+    before ? loadImage(visualSrc(before, protectedShots)) : Promise.resolve(null),
+    after ? loadImage(visualSrc(after, protectedShots)) : Promise.resolve(null),
   ]);
   const main = b || a;
   if (!main) throw new Error('no still');
@@ -1326,7 +1326,7 @@ function BeforeAfter({ v, near, onFull }: {
         data-path={v.path}
         data-viewport={v.mobile ? 'mobile' : undefined}
         data-side={side}
-        data-evidence={v.protected ? 'true' : undefined}
+        data-shots={v.protected ? 'true' : undefined}
         data-before-url={v.protected ? (v.before || undefined) : undefined}
         data-head-url={v.protected ? (v.after || undefined) : undefined}
         data-claim={v.protected ? (v.claim || v.path) : undefined}
@@ -2085,7 +2085,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   };
   // Stable, so the memo()'d items it is handed to skip a render of the feed.
   const openFull = useCallback((el: HTMLElement) => callAppView(
-    el.dataset.evidence === 'true' ? 'openEvidenceComparison' : 'openVisualComparison',
+    el.dataset.shots === 'true' ? 'openShotsComparison' : 'openVisualComparison',
     el,
   ), []);
   const menuKey = row ? row.card.rail.menuKey : undefined;

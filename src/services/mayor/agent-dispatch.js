@@ -34,11 +34,11 @@ const RESUMABLE_STATUSES = new Set(['paused']);
 // The same three types a classic turn keeps off the global WebSocket.
 const SSE_ONLY = new Set(['token', 'usage', 'error']);
 const CHANGE_ONLY = new Set(['done', 'stopped']);
-// A visual-evidence run holds the change's worker for its two to four
+// A shots run holds the change's worker for its two to four
 // minutes without being a turn, so a dispatch waits it out, this long at most.
-const EVIDENCE_WAIT_MS = 6 * 60_000;
+const SHOTS_WAIT_MS = 6 * 60_000;
 const BUSY_TEXT = 'busy: the coding agent is already working on this change. Wait for it to finish.';
-const EVIDENCE_BUSY_TEXT = 'busy_visual_evidence: the platform\'s visual-evidence agent is still recording '
+const SHOTS_BUSY_TEXT = 'busy_shots: the platform\'s shots agent is still recording '
   + 'before/after screenshots on this change and holds its worker. It is not the coding agent and is not working '
   + 'on this request. Nothing was built, and nothing will retry it automatically: tell the user so, and to send '
   + 'the request again in a few minutes.';
@@ -100,28 +100,28 @@ function defaults(deps = {}) {
     callPlatform: deps.callPlatform || require('../mcp-tools').callPlatform,
     loopbackBaseUrl: deps.loopbackBaseUrl || require('./mcp-shim').loopbackBaseUrl,
     attachments: deps.attachments || require('../attachments'),
-    evidenceRunFor: deps.evidenceRunFor
-      || ((id) => require('../visual-evidence-orchestrator').inFlightRunFor(id)),
-    evidenceWaitMs: deps.evidenceWaitMs ?? EVIDENCE_WAIT_MS,
+    shotsRunFor: deps.shotsRunFor
+      || ((id) => require('../shots-orchestrator').inFlightRunFor(id)),
+    shotsWaitMs: deps.shotsWaitMs ?? SHOTS_WAIT_MS,
   };
 }
 
-// 'idle' once a visual-evidence run that was the only thing holding the
+// 'idle' once a shots run that was the only thing holding the
 // change has ended; 'timeout' when it outlasts the wait; 'busy' when a turn
 // or an operation holds the change, before or after.
-async function waitOutEvidenceRun(d, changeId, sendAgent) {
+async function waitOutShotsRun(d, changeId, sendAgent) {
   const heldByTurn = () => d.activeWorkers.hasSessionOperation(changeId) || d.activeWorkers.activeWorkers.has(changeId);
   if (heldByTurn()) return 'busy';
-  const run = d.evidenceRunFor(changeId);
+  const run = d.shotsRunFor(changeId);
   if (!run) return 'busy';
   sendAgent('status', {
-    text: 'Visual evidence is being recorded on this change. The coding agent starts when it finishes.',
+    text: 'Before & after shots is being recorded on this change. The coding agent starts when it finishes.',
     changeId,
   });
   let timer = null;
   const finished = await Promise.race([
     run.then(() => true),
-    new Promise((resolve) => { timer = setTimeout(() => resolve(false), d.evidenceWaitMs); }),
+    new Promise((resolve) => { timer = setTimeout(() => resolve(false), d.shotsWaitMs); }),
   ]);
   clearTimeout(timer);
   if (!finished) return 'timeout';
@@ -159,9 +159,9 @@ function canDispatch(change, deps = {}) {
   if (!/github\.com\/[^/]+\/[^/]+/.test(change.repo_url || '')) return false;
   const id = Number(change.id);
   if (!d.activeWorkers.isSessionBusy(id)) return true;
-  // Held only by a visual-evidence run: the dispatch waits it out.
+  // Held only by a shots run: the dispatch waits it out.
   return !d.activeWorkers.hasSessionOperation(id) && !d.activeWorkers.activeWorkers.has(id)
-    && !!d.evidenceRunFor(id);
+    && !!d.shotsRunFor(id);
 }
 
 // Reopen a parked change through POST /api/sessions/:id/resume, as the user,
@@ -269,13 +269,13 @@ async function runDispatch({
   }
   const changeId = Number(change.id);
   if (d.activeWorkers.isSessionBusy(changeId)) {
-    const waited = await waitOutEvidenceRun(d, changeId, sendAgent);
-    if (waited === 'timeout') return refusal(EVIDENCE_BUSY_TEXT);
+    const waited = await waitOutShotsRun(d, changeId, sendAgent);
+    if (waited === 'timeout') return refusal(SHOTS_BUSY_TEXT);
     if (waited !== 'idle') return refusal(BUSY_TEXT);
     change = await loadActiveChange(pool, { agentSessionId, userId: user.id });
     if (!change || Number(change.id) !== changeId
         || (!LIVE_STATUSES.has(change.status) && !RESUMABLE_STATUSES.has(change.status))) {
-      return refusal('change_closed: the active change moved on while visual evidence was being recorded; nothing was built.');
+      return refusal('change_closed: the active change moved on while before & after shots was being recorded; nothing was built.');
     }
   }
   if (RESUMABLE_STATUSES.has(change.status)) {

@@ -751,7 +751,8 @@ test('an action’s outcome is folded back into the strip', async () => {
   const fetched = [];
   sandbox.fetch = async (url, init) => {
     fetched.push(`${(init && init.method) || 'GET'} ${url}`);
-    if (url === '/api/apps/recipe-box/sessions') {
+    // The list's own read: under-way sessions and the recent finished ones.
+    if (url === '/api/apps/recipe-box/sessions?recent=20') {
       return { ok: true, json: async () => ({ sessions: [{ ...OWNED, status: 'archived', warm: false }] }) };
     }
     return { ok: true, json: async () => ({}) };

@@ -38,7 +38,7 @@ const community = (over = {}) => ({
   is_member: true,
   is_creator: false,
   audience: 'open',
-  audience_label: 'Community',
+  audience_label: 'Public community',
   members: [{ id: 1, username: 'ada' }, { id: 2, username: 'lin' }],
   channel: {
     last_message: 'See you Sunday',
@@ -74,7 +74,7 @@ test('the bar reads Home, Discover, Messages, Communities, you — Messages in t
 test('a project page is its hub and its Workshop; Needs you and All items are pages under them', () => {
   const { hubLabel, litTab } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.equal(hubLabel('open'), 'Community hub');
-  assert.equal(hubLabel('invited'), 'Group hub');
+  assert.equal(hubLabel('invited'), 'Community hub');
   assert.equal(hubLabel('solo'), 'Hub');
   assert.equal(hubLabel(undefined), 'Hub', 'plain Hub until the community record has said');
   assert.deepEqual(['status', 'needs', 'workshop', 'all'].map(litTab), ['status', 'status', 'workshop', 'workshop'],

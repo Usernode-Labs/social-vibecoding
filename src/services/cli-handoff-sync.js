@@ -70,9 +70,9 @@ async function adoptActive({ config, pool, session, headSha, deps }) {
   }
 
   const fresh = rows[0];
-  if (session.visual_evidence_state || session.visual_evidence_detail) {
-    await require('./visual-evidence-state').markStaleForHead(pool, session.id, headSha)
-      .catch((err) => log.warn('cli-handoff-sync', 'could not invalidate prior-head visual evidence', {
+  if (session.shots_state || session.shots_detail) {
+    await require('./shots-state').markStaleForHead(pool, session.id, headSha)
+      .catch((err) => log.warn('cli-handoff-sync', 'could not invalidate prior-head before & after shots', {
         sessionId: session.id, headSha, err: err.message,
       }));
   }

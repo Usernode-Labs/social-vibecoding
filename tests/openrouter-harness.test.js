@@ -271,11 +271,11 @@ test('a Claude-harness OpenRouter turn gets the OpenRouter capability set and no
     mode: 'build', agentBackend: 'codex_openrouter', agentHarness: 'claude',
     workerPushJwt: 'push-only', issuesReadJwt: 'issues',
   }), /openrouterApiKey required/);
-  for (const mode of ['sync', 'evidence']) {
+  for (const mode of ['sync', 'shots']) {
     assert.throws(() => worker.buildTurnSecretEnv({
       mode, agentBackend: 'codex_openrouter', agentHarness: 'claude',
-      issuesReadJwt: 'issues', openrouterApiKey: 'sk-or-user', evidenceJwt: 'e',
-      evidenceMemberToken: 'm', evidenceAdminToken: 'a', evidenceFullAdminToken: 'f',
+      issuesReadJwt: 'issues', openrouterApiKey: 'sk-or-user', shotsJwt: 'e',
+      shotsMemberToken: 'm', shotsAdminToken: 'a', shotsFullAdminToken: 'f',
     }), /not supported/, mode);
   }
 });

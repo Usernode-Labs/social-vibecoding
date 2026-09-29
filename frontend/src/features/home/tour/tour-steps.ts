@@ -117,7 +117,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // for a section that has not rendered its box yet.
     id: 'apps',
     title: 'Your apps',
-    body: 'Shortcuts to the apps you use. A small mark says where each one lives: people for a group, a lock for one that is just yours. The last tile starts a new project.',
+    body: 'Shortcuts to the apps you use. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.',
     targets: ['#home-apps-section', '#app-list'],
   },
   {

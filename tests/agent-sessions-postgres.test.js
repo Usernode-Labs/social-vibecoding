@@ -80,11 +80,11 @@ async function connect(t, { beforeMigration = null } = {}) {
       staging_url TEXT, check_state VARCHAR(32), test_results JSONB NOT NULL DEFAULT '[]',
       -- Why a skipped run was skipped (activeChange.checkSkipReason, #3180).
       check_error_detail TEXT,
-      visual_evidence_state VARCHAR(24), visual_evidence_run_id VARCHAR(32),
+      shots_state VARCHAR(24), shots_run_id VARCHAR(32),
       -- A change's own durable turn (a build restart recovery can adopt).
       active_turn JSONB);
     -- The active change's running preview (activeChange.previewCapture).
-    CREATE TABLE visual_evidence_runs (
+    CREATE TABLE shot_runs (
       id VARCHAR(32) PRIMARY KEY,
       session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
       started_at TIMESTAMPTZ);

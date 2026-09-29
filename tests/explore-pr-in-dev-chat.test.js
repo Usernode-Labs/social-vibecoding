@@ -1,22 +1,20 @@
 // #827: "Ask AI" (a private read-only advisor panel) was replaced by
-// "✨ Explore in dev chat" — the same card pill now opens the viewer's real
-// dev chat with an editable message about the PR pre-filled in the composer
-// and NEVER sent.
+// "✨ Explore in dev chat" — the card pill opens a conversation with an
+// editable message about the PR pre-filled in the composer and NEVER sent.
+// #2779: that conversation is an unsent agent session focused on the
+// proposal; classic dev chats are no longer created (or reused) for it.
 //
 // These tests pin the contract:
 //   - the seed text is byte-exact (an unedited send must keep the Mayor in
 //     explain-only mode — the closing "don't change any code" line is
 //     load-bearing),
-//   - an UNUSED chat is reused before a new one is created (sessions cost a
-//     branch + one of only 3 slots),
-//   - the seed reaches the composer via the per-session draft, written
-//     BEFORE navigation (_restoreDraft fills the box on render),
-//   - a composer that already holds text is appended to, never clobbered,
-//   - DevChat.sendMessage is never called on any path.
+//   - the seed rides to the agent session as the hint's `message`, with the
+//     app and the proposal as its focus,
+//   - no classic session is created, drafted into or navigated to.
 //
 // app-view.js is a plain browser script (`const AppView = {…}`); we load it
-// into a vm context, stub the globals it reaches, and spy on the DevChat /
-// App collaborators — same harness as create-proposal-prefill.test.js.
+// into a vm context, stub the globals it reaches, and spy on the agent
+// session controller — same harness as create-proposal-prefill.test.js.
 //
 // Run with: node --test tests/explore-pr-in-dev-chat.test.js
 
@@ -32,31 +30,8 @@ const SRC = fs.readFileSync(
   'utf8'
 );
 
-// Fake #dc-input textarea the fallback/focus path can poke at.
-function makeInput() {
-  return {
-    value: '',
-    style: {},
-    scrollHeight: 40,
-    focused: false,
-    selection: null,
-    focus() { this.focused = true; },
-    setSelectionRange(a, b) { this.selection = [a, b]; },
-  };
-}
-
 function makeHarness(options = {}) {
-  const {
-    input = null,
-    coarsePointer = false,
-    drafts = {},
-  } = options;
-  // `undefined` is an intentional createSession result: it means the user
-  // cancelled the coding-agent chooser. Do not let a destructuring default
-  // turn that case into a successful fake creation.
-  const createReturns = Object.prototype.hasOwnProperty.call(options, 'createReturns')
-    ? options.createReturns
-    : { id: 77 };
+  const { coarsePointer = false, drafts = {} } = options;
   const calls = {
     createSession: [],
     setDraft: [],
@@ -65,6 +40,7 @@ function makeHarness(options = {}) {
     toast: [],
     refreshCaches: 0,
     order: [],
+    started: [],
   };
   const sandbox = {
     console,
@@ -73,7 +49,7 @@ function makeHarness(options = {}) {
     ConfirmModal: { show: async () => true },
     PlatformUI: { toast: (m) => { calls.toast.push(m); } },
     document: {
-      getElementById: (id) => (id === 'dc-input' ? input : null),
+      getElementById: () => null,
       querySelector: () => null,
       querySelectorAll: () => ({ forEach: () => {} }),
       addEventListener: () => {},
@@ -82,6 +58,7 @@ function makeHarness(options = {}) {
     },
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     alert: () => {},
+    UsernodeReact: { agentSession: { start: (hint) => { calls.started.push(hint); } } },
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener: () => {},
     localStorage: { getItem: () => null, setItem: () => {} },
@@ -95,7 +72,7 @@ function makeHarness(options = {}) {
     DevChat: {
       createSession: async (...args) => {
         calls.createSession.push(args);
-        return createReturns;
+        return { id: 77 };
       },
       _drafts: { ...drafts },
       _getDraft(sessionId) { return this._drafts[sessionId] || ''; },
@@ -148,9 +125,8 @@ const EXPECTED_SEED =
   + 'Linked issues: #822.\n\n'
   + TAIL;
 
-// An unused chat: no PR pushed, no title, not mid-turn, and NO MESSAGES.
-// last_activity_at === created_at is what /api/me/active-sessions reports for
-// an empty session (it is GREATEST(created_at, MAX(message.created_at))).
+// An unused classic chat: no PR pushed, no title, not mid-turn, and no
+// messages. Explore reused one like it before #2779; it must not now.
 const T0 = '2026-07-28T10:00:00.000Z';
 const CLEAN = {
   id: 5, pr_number: null, session_title: null, status: 'active', busy: false,
@@ -197,200 +173,28 @@ test('seed: non-integer linked_issues entries are dropped', () => {
   assert.match(seed, /^.*Linked issues: #822, #91\.$/m);
 });
 
-// ── Session choice ─────────────────────────────────────────────────────────
+// ── Where it opens (#2779) ─────────────────────────────────────────────────
 
-test('_isUnusedChat: emptiness comes from the timestamps, not the title', () => {
-  const { AppView } = makeHarness();
-  assert.equal(AppView._isUnusedChat(CLEAN), true);
-  assert.equal(AppView._isUnusedChat({ ...CLEAN, pr_number: 7 }), false, 'pushed work');
-  assert.equal(AppView._isUnusedChat({ ...CLEAN, session_title: 'x' }), false, 'titled');
-  assert.equal(AppView._isUnusedChat({ ...CLEAN, busy: true }), false, 'first turn mid-run');
-  assert.equal(
-    AppView._isUnusedChat({ ...CLEAN, last_activity_at: '2026-07-28T10:00:01.000Z' }),
-    false, 'has messages — even one second of activity disqualifies it'
-  );
-  // A row with no timestamps at all can't be proven empty, so don't reuse it.
-  assert.equal(AppView._isUnusedChat({ id: 5 }), false, 'unknown → not reusable');
-  assert.equal(AppView._isUnusedChat(null), false);
-});
-
-test('reuses an UNUSED chat instead of creating one', async () => {
+test('opens an unsent agent session on the proposal, carrying the seed', () => {
   const { AppView, calls } = makeHarness();
   AppView._proposals = [PR];
   AppView._mySessions = [CLEAN];
 
-  await AppView.exploreProposalInDevChat(7);
+  AppView.exploreProposalInDevChat(7);
 
-  assert.equal(calls.refreshCaches, 1, 'session state re-grounded before choosing');
-  assert.equal(calls.createSession.length, 0, 'no throwaway session created');
-  assert.deepEqual(calls.setDraft, [[5, EXPECTED_SEED]], 'draft keyed to the reused chat');
-  assert.deepEqual(calls.switchTab, [['dev', 5, 'sessions']], 'navigates to that chat');
-  assert.equal(calls.sendMessage.length, 0, 'sendMessage is NEVER called');
-});
-
-test('draft is stashed BEFORE navigating so _restoreDraft finds it', async () => {
-  const { AppView, calls } = makeHarness();
-  AppView._proposals = [PR];
-  AppView._mySessions = [CLEAN];
-
-  await AppView.exploreProposalInDevChat(7);
-
-  assert.deepEqual(calls.order, ['setDraft', 'switchTab']);
-});
-
-test('a chat with a pushed PR, a title, or a live turn is not reused', async () => {
-  for (const dirty of [
-    { ...CLEAN, pr_number: 41 },
-    { ...CLEAN, session_title: 'Fix the header' },
-    { ...CLEAN, busy: true },
-    // Messages exist but titling never ran (no LLM key on this deployment) —
-    // the emptiness check catches what a NULL session_title waves through.
-    { ...CLEAN, last_activity_at: '2026-07-28T11:30:00.000Z' },
-  ]) {
-    const { AppView, calls } = makeHarness();
-    AppView._proposals = [PR];
-    AppView._mySessions = [dirty];
-
-    await AppView.exploreProposalInDevChat(7);
-
-    assert.deepEqual(calls.createSession, [['test-app']],
-      'a fresh chat is created with no issue number (created_from_issue_number stays NULL)');
-    assert.deepEqual(calls.setDraft, [[77, EXPECTED_SEED]], 'draft lands on the new chat');
-    assert.deepEqual(calls.switchTab, [['dev', 77, 'sessions']]);
-    assert.equal(calls.sendMessage.length, 0);
-  }
-});
-
-test('picks the most recent unused chat when several exist', async () => {
-  const { AppView, calls } = makeHarness();
-  AppView._proposals = [PR];
-  // _mySessions arrives newest-activity-first from _refreshSessionCaches.
-  AppView._mySessions = [
-    { ...CLEAN, id: 9, pr_number: 41 },
-    { ...CLEAN, id: 6, status: 'paused' },
-    { ...CLEAN, id: 3 },
-  ];
-
-  await AppView.exploreProposalInDevChat(7);
-
-  assert.deepEqual(calls.setDraft, [[6, EXPECTED_SEED]]);
-});
-
-test('cap fallback: refused creation lands the message in the newest chat + a toast', async () => {
-  const { AppView, calls } = makeHarness({ createReturns: null });
-  AppView._proposals = [PR];
-  AppView._mySessions = [
-    { ...CLEAN, id: 9, pr_number: 41, session_title: 'Live work' },
-    { ...CLEAN, id: 8, pr_number: 42, session_title: 'Older work', status: 'paused' },
-  ];
-
-  await AppView.exploreProposalInDevChat(7);
-
-  assert.deepEqual(calls.createSession, [['test-app']], 'creation was attempted first');
-  assert.deepEqual(calls.setDraft, [[9, EXPECTED_SEED]], 'newest existing chat receives it');
-  assert.deepEqual(calls.switchTab, [['dev', 9, 'sessions']]);
-  assert.equal(calls.toast.length, 1, 'the user is told where the message went');
-  assert.match(calls.toast[0], /most recent dev chat/);
-  assert.equal(calls.sendMessage.length, 0);
-});
-
-test('cancelled creation does not redirect the draft into an existing chat', async () => {
-  const { AppView, calls } = makeHarness({ createReturns: undefined });
-  AppView._proposals = [PR];
-  AppView._mySessions = [
-    { ...CLEAN, id: 9, pr_number: 41, session_title: 'Live work' },
-  ];
-
-  await AppView.exploreProposalInDevChat(7);
-
-  assert.deepEqual(calls.createSession, [['test-app']]);
-  assert.equal(calls.setDraft.length, 0, 'cancel means no session receives the draft');
-  assert.equal(calls.switchTab.length, 0, 'cancel leaves the user where they were');
-  assert.equal(calls.toast.length, 0, 'cancel needs no failure or fallback toast');
-});
-
-test('refused creation with no existing chat at all: no draft, no navigation, no throw', async () => {
-  const { AppView, calls } = makeHarness({ createReturns: null });
-  AppView._proposals = [PR];
-  AppView._mySessions = [];
-
-  await AppView.exploreProposalInDevChat(7);
-
-  assert.deepEqual(calls.createSession, [['test-app']]);
-  assert.equal(calls.setDraft.length, 0, "createSession's own toast stands");
+  assert.equal(calls.started.length, 1);
+  assert.deepEqual({ ...calls.started[0] }, {
+    slug: 'test-app', proposalId: 7, entry: 'proposal', message: EXPECTED_SEED,
+  });
+  assert.equal(calls.createSession.length, 0, 'no classic session is created');
+  assert.equal(calls.setDraft.length, 0, 'nor is an existing one drafted into, unused or not');
   assert.equal(calls.switchTab.length, 0);
-  assert.equal(calls.toast.length, 0, 'no second, confusing toast');
+  assert.equal(calls.refreshCaches, 0, 'nothing is fetched to choose a session');
+  assert.equal(calls.sendMessage.length, 0, 'nothing is ever sent');
 });
 
-// ── Draft composition ──────────────────────────────────────────────────────
-
-test('existing composer text is preserved and the seed appended below it', async () => {
-  const { AppView, calls } = makeHarness({ drafts: { 5: 'also make the header sticky' } });
-  AppView._proposals = [PR];
-  AppView._mySessions = [CLEAN];
-
-  await AppView.exploreProposalInDevChat(7);
-
-  assert.deepEqual(calls.setDraft,
-    [[5, `also make the header sticky\n\n${EXPECTED_SEED}`]]);
-});
-
-test('a double-tap does not stack the same seed twice', async () => {
-  const { AppView, calls } = makeHarness({ drafts: { 5: EXPECTED_SEED } });
-  AppView._proposals = [PR];
-  AppView._mySessions = [CLEAN];
-
-  await AppView.exploreProposalInDevChat(7);
-
-  assert.deepEqual(calls.setDraft, [[5, EXPECTED_SEED]], 'draft left byte-identical');
-});
-
-// ── Composer fallback + focus ──────────────────────────────────────────────
-
-test('fallback fills an empty composer and focuses on fine pointers', async () => {
-  const input = makeInput();
-  const { AppView } = makeHarness({ input, coarsePointer: false });
-  AppView._proposals = [PR];
-  AppView._mySessions = [CLEAN];
-
-  await AppView.exploreProposalInDevChat(7);
-
-  assert.equal(input.value, EXPECTED_SEED, 'empty box gets the seed directly');
-  assert.equal(input.focused, true);
-  assert.deepEqual(input.selection, [EXPECTED_SEED.length, EXPECTED_SEED.length],
-    'cursor parked at the end');
-});
-
-test('fallback never clobbers a box _restoreDraft already filled', async () => {
-  const input = makeInput();
-  input.value = 'already restored by _restoreDraft';
-  const { AppView } = makeHarness({ input });
-  AppView._proposals = [PR];
-  AppView._mySessions = [CLEAN];
-
-  await AppView.exploreProposalInDevChat(7);
-
-  assert.equal(input.value, 'already restored by _restoreDraft');
-  assert.equal(input.focused, true);
-});
-
-test('no focus on coarse-pointer (touch) devices — #568', async () => {
-  const input = makeInput();
-  const { AppView } = makeHarness({ input, coarsePointer: true });
-  AppView._proposals = [PR];
-  AppView._mySessions = [CLEAN];
-
-  await AppView.exploreProposalInDevChat(7);
-
-  assert.equal(input.value, EXPECTED_SEED, 'box still filled');
-  assert.equal(input.focused, false, 'would pop the on-screen keyboard');
-});
-
-// ── Row resolution + button guard ──────────────────────────────────────────
-
-test('resolves a merged row from the Completed cache, skipping close-issue rows', async () => {
+test('resolves a merged row from the Completed cache, skipping close-issue rows', () => {
   const { AppView, calls } = makeHarness();
-  AppView._mySessions = [CLEAN];
   // An issues.id can collide with a session id — the close_issue row must
   // never be mistaken for the merged PR proposal.
   AppView._merged = [
@@ -398,37 +202,27 @@ test('resolves a merged row from the Completed cache, skipping close-issue rows'
     { ...PR, status: 'merged' },
   ];
 
-  await AppView.exploreProposalInDevChat(7);
+  AppView.exploreProposalInDevChat(7);
 
-  assert.equal(calls.setDraft.length, 1);
-  assert.match(calls.setDraft[0][1], /^Let's explore PR #9300 /);
-  assert.match(calls.setDraft[0][1], /This proposal is already merged\./);
+  assert.match(calls.started[0].message, /^Let's explore PR #9300 /);
+  assert.match(calls.started[0].message, /This proposal is already merged\./);
 });
 
-test('an unknown proposal id is a quiet no-op', async () => {
+test('a proposal no cache holds still opens the conversation, without a message', () => {
   const { AppView, calls } = makeHarness();
   AppView._proposals = [PR];
-  AppView._mySessions = [CLEAN];
 
-  await AppView.exploreProposalInDevChat(4242);
+  AppView.exploreProposalInDevChat(4242);
 
-  assert.equal(calls.refreshCaches, 0, 'nothing is fetched for a row we cannot resolve');
-  assert.equal(calls.setDraft.length, 0);
-  assert.equal(calls.switchTab.length, 0);
+  assert.deepEqual({ ...calls.started[0] }, { slug: 'test-app', proposalId: 4242, entry: 'proposal' });
 });
 
-test('the clicked button is disabled for the duration and re-enabled after', async () => {
-  const seen = [];
-  const btn = { get disabled() { return this._d; }, set disabled(v) { this._d = v; seen.push(v); }, _d: false };
-  const { AppView, sandbox } = makeHarness();
-  AppView._proposals = [PR];
-  AppView._mySessions = [CLEAN];
-  sandbox.App.switchTab = async () => { seen.push(`disabled-during-nav:${btn.disabled}`); };
-
-  await AppView.exploreProposalInDevChat(7, btn);
-
-  assert.deepEqual(seen, [true, 'disabled-during-nav:true', false],
-    'disabled before the async work, re-enabled in the finally');
+test('no app on screen, or no id: a quiet no-op', () => {
+  const { AppView, calls } = makeHarness();
+  AppView.exploreProposalInDevChat('nope');
+  AppView.appData = null;
+  AppView.exploreProposalInDevChat(7);
+  assert.equal(calls.started.length, 0);
 });
 
 // ── Card / topic-head rendering ────────────────────────────────────────────

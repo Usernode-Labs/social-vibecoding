@@ -243,26 +243,27 @@ test('the chat route ensures the branch before it dispatches a turn', () => {
 
 test('the headless creation paths still mint up front, and say why', () => {
   const src = read('src/routes/sessions.js');
-  // Three of them: an auto-issue run, a clone-headless run, and a fork.
-  // None has a human on the other end to send a first message, so there is
-  // nothing to defer to.
+  // Two of them: an auto-issue run and a clone-headless run (the fork was
+  // the third, retired with classic sessions in #2779). Neither has a human
+  // on the other end to send a first message, so there is nothing to defer
+  // to.
   const mints = src.match(/const branchName = [^;]+;/g) || [];
-  assert.equal(mints.length, 3, 'expected exactly the three headless mints');
+  assert.equal(mints.length, 2, 'expected exactly the two headless mints');
   const carveouts = src.match(/#1350 carve-out:/g) || [];
   assert.equal(
-    carveouts.length, 3,
+    carveouts.length, 2,
     'each retained mint must carry the comment explaining why it is not deferred'
   );
 });
 
-test('the fork paths never ask GitHub for heads/null', () => {
+test('the clone path never asks GitHub for heads/null', () => {
   // github.createBranch(owner, repo, name, fromBranch = 'main') defaults
   // only on undefined, so a NULL source branch_name would reach the API as
   // the literal string "null". Reachable now that a source session can be
   // branchless.
   const src = read('src/routes/sessions.js');
   const inherits = src.match(/createBranch\([^)]*src\.branch_name[^)]*\)/g) || [];
-  assert.equal(inherits.length, 2, 'expected the clone and fork inheritance sites');
+  assert.equal(inherits.length, 1, 'expected the clone inheritance site (the fork is retired, #2779)');
   for (const use of inherits) {
     assert.match(use, /\|\| 'main'/, `unguarded branch inheritance: ${use}`);
   }

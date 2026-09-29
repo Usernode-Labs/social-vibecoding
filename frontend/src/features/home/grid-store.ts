@@ -81,9 +81,9 @@ export interface HomeAppView {
   forkName: string | null;
   /**
    * Who the project is for (communities; services/communities.js): 'open'
-   * (a Community), 'invited' (a Group) or 'solo' (Just you). The tile draws
-   * a small mark for the last two and none for a community, which is what
-   * most of the grid is.
+   * (a Public community), 'invited' (a Private community) or 'solo' (Just
+   * you). The tile draws a small mark for the last two and none for a public
+   * community, which is what most of the grid is.
    */
   audience: 'open' | 'invited' | 'solo';
 }

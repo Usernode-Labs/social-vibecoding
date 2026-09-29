@@ -29,6 +29,7 @@ const ENTRY_LABELS = Object.freeze({
   proposal: 'a proposal',
   messages: 'Messages',
   banner: 'a change page',
+  'global-chat': 'Global Chat',
 });
 
 // Collapsed to one line, and with any envelope tag of its own removed, so a

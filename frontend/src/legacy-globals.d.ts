@@ -16,6 +16,22 @@
 export {};
 
 declare global {
+  /**
+   * An agent session's hint as a legacy caller hands it over
+   * (features/agent-session/api.ts AgentHint). `message` and `handoff` are
+   * the screen's alone: the unsent conversation's first message, and the
+   * "Build with" tab it opens on.
+   */
+  interface LegacyAgentHint {
+    slug?: string;
+    issueNumber?: number;
+    proposalId?: number;
+    entry?: string;
+    issueTitle?: string;
+    message?: string;
+    handoff?: 'claude-code' | 'codex';
+  }
+
   /** What a kit presentation returns; `el` is the shell it built. */
   interface KitHandle {
     el?: HTMLElement | null;
@@ -281,12 +297,8 @@ declare global {
       agentSession?: {
         open(id: number | 'new', options?: { host?: 'screen' | 'messages' }): Promise<void> | void;
         route(id: number | 'new', options?: { drawer?: boolean }): Promise<void> | void;
-        start(
-          hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
-        ): void;
-        prepareDraft(
-          hint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string } | null,
-        ): void;
+        start(hint?: LegacyAgentHint | null): void;
+        prepareDraft(hint?: LegacyAgentHint | null): void;
         deactivate(): void;
         isOpen(): boolean;
         currentId(): number | 'new' | null;

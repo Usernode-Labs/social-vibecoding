@@ -79,6 +79,10 @@ function loadStoredModel() {
 
 const DevChat = {
   sessions: [],
+  // How many finished sessions the list left out (loadSessions), and the app
+  // whose whole history the reader asked for with "Show older".
+  sessionsOlder: 0,
+  _sessionsAllFor: null,
   currentSession: null,
   messages: [],
   isStreaming: false,
@@ -2227,6 +2231,8 @@ const DevChat = {
       DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
     }
     DevChat.sessions = [];
+    DevChat.sessionsOlder = 0;
+    DevChat._sessionsAllFor = null;
     DevChat.currentSession = null;
     DevChat._publishPreview();
     DevChat.messages = [];
@@ -4154,13 +4160,32 @@ const DevChat = {
     });
   },
 
+  // Every session still under way, and the SESSIONS_RECENT newest finished
+  // ones: a prolific author's history is over a thousand merged and archived
+  // rows (693 KB on production), and this list is re-read on every open of a
+  // change and every session event while one is on screen. "Show older"
+  // (showOlderSessions) reads the whole history for this app from then on.
+  SESSIONS_RECENT: 20,
   async loadSessions(appSlug) {
+    const all = DevChat._sessionsAllFor === appSlug;
     try {
-      const res = await fetch(`/api/apps/${appSlug}/sessions`);
+      const res = await fetch(all
+        ? `/api/apps/${appSlug}/sessions`
+        : `/api/apps/${appSlug}/sessions?recent=${DevChat.SESSIONS_RECENT}`);
       if (!res.ok) return;
-      const { sessions } = await res.json();
+      const { sessions, older_finished: older } = await res.json();
       DevChat.sessions = sessions;
+      DevChat.sessionsOlder = all ? 0 : Math.max(0, Number(older) || 0);
     } catch {}
+  },
+
+  async showOlderSessions() {
+    const slug = typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug;
+    if (!slug) return null;
+    DevChat._sessionsAllFor = slug;
+    await DevChat.loadSessions(slug);
+    DevChat.renderSessionList();
+    return null;
   },
 
   // ── Cross-app active sessions ─────────────────────────────
@@ -7934,7 +7959,7 @@ const DevChat = {
           // #195: before/after tiles. Visuals are latest-set-per-session, so
           // only the NEWEST staging card carries them.
           let visualsHtml = '';
-          if (window.AppView && (session?.visualEvidence || session?.visuals)) {
+          if (window.AppView && (session?.shots || session?.visuals)) {
             let latest = null;
             for (let vi = DevChat.messages.length - 1; vi >= 0; vi--) {
               if (DevChat.messages[vi].stagingUrl || DevChat.messages[vi].changesReady) {
@@ -7942,8 +7967,8 @@ const DevChat = {
               }
             }
             if (latest === msg && msg.stagingUrl) {
-              visualsHtml = session.visualEvidence
-                ? AppView.visualEvidenceHtml(session.visualEvidence, { sessionId: session.id })
+              visualsHtml = session.shots
+                ? AppView.shotsHtml(session.shots, { sessionId: session.id })
                 : AppView.visualsTilesHtml(session.visuals);
             }
           }
@@ -9539,6 +9564,7 @@ const DevChat = {
     if (!react) return;
     react.publishSessionList({
       rows: DevChat.sessions.map((s) => DevChat._sessionRow(s)),
+      older: DevChat.sessionsOlder || 0,
     });
   },
 
@@ -10016,7 +10042,6 @@ const DevChat = {
       stateLabel: proposed
         ? `proposed to the group (PR #${session.pr_number})`
         : `merged (PR #${session.pr_number})`,
-      pending: !!DevChat._newChangePending,
       cardHref: slug && session.id != null
         ? `#app/${slug}/dev/proposals/${session.id}`
         : null,
@@ -10038,39 +10063,17 @@ const DevChat = {
   // Claude's memory or the spec — a new change starts clean on its own
   // branch.
   //
-  // #2241: it no longer creates the session here either. This banner and
-  // Improve's "New change" row are two doors onto the same act, so they
-  // lead to the same place — /dev/sessions/new, the unsent-change screen —
-  // and the row is created by the first send (see `startPendingSession`).
-  // The per-user cap and its refusal message move with it: they are the
-  // server's answer to the POST, and the POST is the first send now.
-  // The button's own busy state. It was `btn.disabled` + `btn.textContent`
-  // written onto the element by id — a second author on a node the banners
-  // component renders now, so it is a published flag instead. It now covers
-  // the navigation rather than a creation round trip — `switchTab` awaits
-  // the destination's own loads, so the button still has something to say.
-  _newChangePending: false,
-
-  async startNewChange() {
+  // #2779: a new change starts in an agent session, a conversation with the
+  // Mayor focused on this session's app — the same door Improve's "New
+  // change" opens. It used to lead to /dev/sessions/new, the unsent classic
+  // session; classic sessions are no longer created. Nothing is created
+  // here either: the conversation becomes a session on its first message.
+  startNewChange() {
     const slug = DevChat._sessionAppSlug(DevChat.currentSession);
     if (!slug) return;
-    // #2779: with agent sessions on, a new change starts in a conversation
-    // with the Mayor, focused on this session's app.
     const agent = window.UsernodeReact?.agentSession;
-    if (window.App?.user?.agentSessionsEnabled === true && agent) {
-      void agent.start({ slug, entry: 'banner' });
-      return;
-    }
-    DevChat._newChangePending = true;
-    DevChat._publishBanners();
-    try {
-      if (typeof App !== 'undefined' && App.switchTab) {
-        await App.switchTab('dev', DevChat.NEW_SESSION_REF, 'sessions');
-      }
-    } finally {
-      DevChat._newChangePending = false;
-      DevChat._publishBanners();
-    }
+    if (agent) void agent.start({ slug, entry: 'banner' });
+    else window.location.hash = '#agent/new';
   },
 
   // Every path that changes banner-relevant state — a behind_main update, a

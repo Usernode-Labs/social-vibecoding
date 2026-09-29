@@ -262,18 +262,18 @@ test('the template name is not a preview clone, and the freshness stamp parses',
   } finally { restore(); }
 });
 
-test('evidence clone names are bounded, side-specific, and connection-limited without joining preview reaping', () => {
+test('shots clone names are bounded, side-specific, and connection-limited without joining preview reaping', () => {
   const { dbManager, restore } = loadDbManager();
   try {
     const runId = 'a'.repeat(32);
-    const base = dbManager.evidenceDbName('x'.repeat(80), runId, 'base');
-    const head = dbManager.evidenceDbName('x'.repeat(80), runId, 'head');
+    const base = dbManager.shotsDbName('x'.repeat(80), runId, 'base');
+    const head = dbManager.shotsDbName('x'.repeat(80), runId, 'head');
     assert.notEqual(base, head);
     assert.ok(base.length <= 57, 'database plus _owner fits PostgreSQL identifier limit');
-    assert.equal(dbManager.isEvidenceCloneDb(base), true);
-    assert.equal(dbManager.isEvidenceCloneDb(head), true);
-    assert.equal(dbManager.isStagingCloneDb(base), false, 'the ordinary preview sweeper does not own evidence clones');
-    assert.throws(() => dbManager.evidenceDbName('demo', runId, 'other'), /side/);
+    assert.equal(dbManager.isShotsCloneDb(base), true);
+    assert.equal(dbManager.isShotsCloneDb(head), true);
+    assert.equal(dbManager.isStagingCloneDb(base), false, 'the ordinary preview sweeper does not own shots clones');
+    assert.throws(() => dbManager.shotsDbName('demo', runId, 'other'), /side/);
   } finally { restore(); }
 });
 
@@ -281,7 +281,7 @@ test('one immutable prepared source feeds both evidence sides before cleanup', a
   const { dbManager, calls, connections, restore } = loadDbManager({ templateComment: fresh() });
   try {
     const prepared = await dbManager.prepareStagingCloneSource('app_demo', {
-      sourceId: 'evidence-run-0123456789abcdef',
+      sourceId: 'shots-run-0123456789abcdef',
     });
     assert.equal(dbManager.isPreparedCloneSource(prepared.templateDb), true);
     assert.match(prepared.fingerprint, /^[0-9a-f]{64}$/);

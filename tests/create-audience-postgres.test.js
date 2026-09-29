@@ -92,14 +92,14 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.equal(res.data.invited, 0);
   });
 
-  await t.test('A community is open to see and build, and reads as a Community', async () => {
+  await t.test('A public community is open to see and build, and reads as a Public community', async () => {
     const res = await create({ name: 'Town square', audience: 'open' });
     assert.equal(res.status, 201, JSON.stringify(res.data));
     assert.deepEqual([res.data.app.collab_visibility, res.data.app.view_visibility], ['public', 'public']);
     assert.equal(await audienceOf(res.data.app.id), 'open');
   });
 
-  await t.test('A group sends its invites at creation, and reads as a Group straight away', async () => {
+  await t.test('A private community sends its invites at creation, and reads as a Private community straight away', async () => {
     const res = await create({ name: 'Book club', audience: 'invited', invitees: ['@ada', 'Grace', 'maker'] });
     assert.equal(res.status, 201, JSON.stringify(res.data));
     const appId = res.data.app.id;
@@ -110,7 +110,7 @@ test('creating a project for someone, against the full schema', { timeout: 18000
       [maker.id, 'member'], [ada.id, 'invited'], [grace.id, 'invited'],
     ]);
     assert.ok(rows.filter((r) => r.status === 'invited').every((r) => r.invited_by === maker.id));
-    assert.equal(await audienceOf(appId), 'invited', 'a pending invite already makes it a Group');
+    assert.equal(await audienceOf(appId), 'invited', 'a pending invite already makes it a Private community');
     const notes = await pool.query(
       `SELECT user_id FROM notifications WHERE app_id = $1 AND kind = 'collab_invite' ORDER BY user_id`, [appId]);
     assert.deepEqual(notes.rows.map((r) => r.user_id), [ada.id, grace.id],

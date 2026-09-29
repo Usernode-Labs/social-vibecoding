@@ -13,11 +13,13 @@
 // detail).
 //
 // The one reader of the passing rows is the checks verdict on an item's own
-// page (AppView._checksVerdictView), and that page always reads the item's
-// own row (GET /api/apps/:slug/proposals/:id, /api/sessions/:id/details),
-// which keeps every result. Until it lands, the verdict counts the passes it
-// was told about in `test_results_omitted`, so its summary and fold read the
-// same; only the folded list of passing names waits for the item's row.
+// page (AppView._checksVerdictView), and it lists them only inside the
+// "N passing" fold. So the item's own row (GET /api/apps/:slug/proposals/:id,
+// /api/sessions/:id/details) comes in the same form (`forItem`) — on
+// production a proposal's row was 265 KB, 255 KB of it the names of checks
+// that passed — and the verdict counts the passes in `test_results_omitted`.
+// Opening the fold reads the row once more without the flag
+// (AppView._loadCheckNames), so the names arrive when someone asks for them.
 //
 // Opt-in, by `?results=failing`, so every other reader of these endpoints —
 // the CLI, the connector, an agent reading /promoted — still gets the whole
@@ -42,8 +44,20 @@ function forListing(req, rows) {
   return rows.map(failingResultsOnly);
 }
 
+// One item's row as this request asked for it. A row with only a few passing
+// checks keeps them: the verdict lists up to this many without a fold
+// (AppView.PASS_FOLD_AT), so there is no fold to open for the names.
+const ITEM_PASSES_LISTED = 8;
+function forItem(req, row) {
+  if (!wantsFailingResults(req) || !row || !Array.isArray(row.test_results)) return row;
+  const passing = row.test_results.filter((r) => r && r.status === 'pass').length;
+  return passing > ITEM_PASSES_LISTED ? failingResultsOnly(row) : row;
+}
+
 module.exports = {
   wantsFailingResults,
   failingResultsOnly,
   forListing,
+  forItem,
+  ITEM_PASSES_LISTED,
 };

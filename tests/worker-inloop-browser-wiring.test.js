@@ -104,11 +104,11 @@ test('the sync-branch claude invocation does NOT get browser tooling', () => {
 test('scout/sync stay browser-free while evidence gets only its purpose-bound MCP config', () => {
   const cc = read('run-cc.sh');
   // The shared read-only terminal branch reports the actual lightweight mode.
-  assert.match(cc, /if \[ "\$MODE" = "scout" \] \|\| \[ "\$MODE" = "evidence" \]; then[\s\S]*mode=\$MODE/);
+  assert.match(cc, /if \[ "\$MODE" = "scout" \] \|\| \[ "\$MODE" = "shots" \]; then[\s\S]*mode=\$MODE/);
   // The flag starts empty, build may receive the general config, and evidence
   // replaces it only after creating its isolated run-scoped configuration.
   assert.match(cc, /BROWSER_MCP_FLAGS=""\s*\nif \[ "\$MODE" = "build" \]/);
-  assert.match(cc, /if \[ "\$MODE" = "evidence" \]; then[\s\S]*BROWSER_MCP_CONFIG="\$EVIDENCE_TMP\/mcp\.json"[\s\S]*BROWSER_MCP_FLAGS="--mcp-config \$BROWSER_MCP_CONFIG --strict-mcp-config"/);
+  assert.match(cc, /if \[ "\$MODE" = "shots" \]; then[\s\S]*BROWSER_MCP_CONFIG="\$SHOTS_TMP\/mcp\.json"[\s\S]*BROWSER_MCP_FLAGS="--mcp-config \$BROWSER_MCP_CONFIG --strict-mcp-config"/);
 });
 
 test('build commit + push + RESULT are emitted unconditionally, not under any browser guard', () => {

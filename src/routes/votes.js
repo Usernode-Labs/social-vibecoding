@@ -25,9 +25,9 @@ const { weekStartUtc } = require('../services/leaderboard-users');
 const { usesMockGithubForImports } = require('../config');
 const { drainGuard } = require('../services/lifecycle');
 const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
-const visualEvidencePlan = require('../services/visual-evidence-plan');
-const visualEvidenceState = require('../services/visual-evidence-state');
-const visualEvidenceView = require('../services/visual-evidence-view');
+const visibleChangesContract = require('../services/visible-changes');
+const shotsState = require('../services/shots-state');
+const shotsView = require('../services/shots-view');
 const summaryFreshness = require('../services/summary-freshness');
 const proposalDelivery = require('../services/proposal-delivery');
 const {
@@ -38,49 +38,49 @@ const {
 } = require('../services/pr-vote-revision');
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
-const VISUAL_EVIDENCE_GATE_STATES = new Set(['verified', 'not_required', 'overridden']);
+const SHOTS_GATE_STATES = new Set(['verified', 'not_required', 'overridden']);
 
-// Evidence enforcement is deliberately scoped to proposals that have entered
+// Shots enforcement is deliberately scoped to proposals that have entered
 // the v2 contract. Historical proposals with no declaration keep their old
-// voting lifecycle; a proposal whose detail says evidence is required must
-// have replay-checked captures for the exact current head. People review
-// whether those captures support the claim. The artifact route
+// voting lifecycle; a proposal whose detail says shots are required must
+// have before/after shots for the exact current head. People look at
+// whether those shots show the declared change. The artifact route
 // independently enforces the same revision fence.
-function visualEvidenceGateForSession(config, session) {
-  if (!config?.visualEvidence?.enforce) return { applies: false, allowed: true, state: null };
-  const detail = session?.visual_evidence_detail;
+function shotsGateForSession(config, session) {
+  if (!config?.shots?.enforce) return { applies: false, allowed: true, state: null };
+  const detail = session?.shots_detail;
   if (!detail || typeof detail !== 'object') return { applies: false, allowed: true, state: null };
   const required = detail.required !== false;
-  const evidenceState = session.visual_evidence_state || detail.state || 'planned';
+  const shotsState = session.shots_state || detail.state || 'planned';
   const currentHead = visualHeadForSession(session);
   const recordedHead = detail.headSha || null;
   const exactHead = !!currentHead && !!recordedHead && sameSha(currentHead, recordedHead);
-  if (!required && evidenceState === 'not_required' && exactHead) {
-    return { applies: true, allowed: true, state: evidenceState, currentHead, recordedHead };
+  if (!required && shotsState === 'not_required' && exactHead) {
+    return { applies: true, allowed: true, state: shotsState, currentHead, recordedHead };
   }
-  const allowed = exactHead && VISUAL_EVIDENCE_GATE_STATES.has(evidenceState);
+  const allowed = exactHead && SHOTS_GATE_STATES.has(shotsState);
   const reason = !exactHead
-    ? 'The visual change preview has not been captured for the proposal’s current commit.'
-    : evidenceState === 'failed'
-      ? (detail.failureReason || 'The visual change preview failed and must be retried or overridden by an app administrator.')
-      : `The visual change preview is ${String(evidenceState).replace(/_/g, ' ')}.`;
-  return { applies: true, allowed, state: evidenceState, currentHead, recordedHead, reason };
+    ? 'The before & after shots have not been taken for the proposal’s current commit.'
+    : shotsState === 'failed'
+      ? (detail.failureReason || 'The before & after shots could not be taken; take them again, or an app administrator can waive them.')
+      : `The before & after shots are ${String(shotsState).replace(/_/g, ' ')}.`;
+  return { applies: true, allowed, state: shotsState, currentHead, recordedHead, reason };
 }
 
-async function readVisualEvidenceGate(config, pool, session) {
-  if (!config?.visualEvidence?.enforce) return visualEvidenceGateForSession(config, session);
+async function readShotsGate(config, pool, session) {
+  if (!config?.shots?.enforce) return shotsGateForSession(config, session);
   const { rows } = await pool.query(
     `SELECT source, imported_pr_head_sha, reviewed_head_sha,
-            visual_evidence_state, visual_evidence_detail
+            shots_state, shots_detail
        FROM chat_sessions WHERE id = $1`,
     [session.id]
   );
-  return visualEvidenceGateForSession(config, { ...session, ...(rows[0] || {}) });
+  return shotsGateForSession(config, { ...session, ...(rows[0] || {}) });
 }
 
 // A pending verdict nothing will settle: no capture running or queued for
 // the change and no turn or operation holding it (a turn's tail runs its own
-// capture; a visual-evidence run holding the worker never settles checks).
+// capture; a shots run holding the worker never settles checks).
 // A restart between setChecksPending and the capture leaves exactly this,
 // and the promote kick is the last thing that looks before voters wait.
 function strandedPendingChecks(session, {
@@ -1597,9 +1597,9 @@ async function reconcileNativeReviewedHead({
     );
     session.reviewed_head_sha = liveHead;
     session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
-    if (session.visual_evidence_state || session.visual_evidence_detail) {
-      await visualEvidenceState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
-        log.warn('votes', 'Visual evidence invalidation after revision bind failed', {
+    if (session.shots_state || session.shots_detail) {
+      await shotsState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
+        log.warn('votes', 'Before & after shots invalidation after revision bind failed', {
           sessionId: session.id, headSha: liveHead, err: err.message,
         }));
     }
@@ -1659,9 +1659,9 @@ async function reconcileNativeReviewedHead({
   session.reviewed_head_sha = liveHead;
   session.approval_epoch = epoch;
   session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
-  if (session.visual_evidence_state || session.visual_evidence_detail) {
-    await visualEvidenceState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
-      log.warn('votes', 'Visual evidence invalidation after head move failed', {
+  if (session.shots_state || session.shots_detail) {
+    await shotsState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
+      log.warn('votes', 'Before & after shots invalidation after head move failed', {
         sessionId: session.id, oldHead, headSha: liveHead, err: err.message,
       }));
   }
@@ -1799,42 +1799,25 @@ function parseImportTesting(body) {
   return { testingMd, testingPath, testingPaths };
 }
 
-// Structured evidence intent supplied by coding agents. There is deliberately
+// Structured shots intent supplied by coding agents. There is deliberately
 // no markdown fallback: one strict parser owns the contract at every process
 // boundary, and an omitted value preserves browser imports exactly as before.
-function parseImportVisualEvidence(body) {
-  if (!body || body.visualEvidence === undefined) return undefined;
-  return visualEvidencePlan.parseIntent(body.visualEvidence);
-}
-
-function parseImportVisualEvidencePlan(body, intent, revisions) {
-  if (!body || body.visualEvidencePlan === undefined) return undefined;
-  if (!intent) {
-    throw new visualEvidencePlan.VisualEvidenceValidationError([{
-      path: ['visualEvidencePlan'], message: 'A matching visualEvidence intent is required',
-    }]);
-  }
-  return visualEvidencePlan.parseAuthorPlanSubmission(body.visualEvidencePlan, intent, revisions);
+function parseImportVisibleChanges(body) {
+  const declared = visibleChangesContract.declaredChanges(body);
+  if (declared === undefined) return undefined;
+  return visibleChangesContract.parseIntent(declared);
 }
 
 // Keep internal failures opaque, but name the import boundary a caller can
 // act on. The connector turns these fields into an `import_failed` response,
 // so an agent can retry the SAME open pull request instead of manufacturing a
-// fresh one without knowing whether parsing, persistence, or evidence failed.
+// fresh one without knowing whether parsing, persistence, or the shots failed.
 function prImportFailureBody(err) {
-  if (err?.prImportStage === 'visual_evidence_intent') {
+  if (err?.prImportStage === 'visible_changes') {
     return {
-      error: 'PR import failed while recording visualEvidence.',
-      stage: 'visual_evidence_intent',
-      field: 'visualEvidence',
-      retryable: true,
-    };
-  }
-  if (err?.prImportStage === 'visual_evidence_plan') {
-    return {
-      error: 'PR import failed while recording visualEvidencePlan.',
-      stage: 'visual_evidence_plan',
-      field: 'visualEvidencePlan',
+      error: 'PR import failed while recording the visible changes.',
+      stage: 'visible_changes',
+      field: 'visibleChanges',
       retryable: true,
     };
   }
@@ -2068,8 +2051,8 @@ function mergedRowSelect() {
            -- GitHub-maintained note (kept visible on merged rows too).
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            cs.reviewed_head_sha,
-           cs.visual_evidence_state, cs.visual_evidence_run_id,
-           cs.visual_evidence_detail, cs.visual_evidence_updated_at,
+           cs.shots_state, cs.shots_run_id,
+           cs.shots_detail, cs.shots_updated_at,
            -- #967: which external coding agent wrote it, for the "built
            -- with …" chip. Kept on merged rows for the same post-hoc read.
            cs.external_agent,
@@ -2892,7 +2875,7 @@ function voteRoutes(config) {
       }
       const headSha = pr.head?.sha || null;
       const baseRef = pr.base?.ref || 'main';
-      const baseSha = visualEvidenceState.validSha(pr.base?.sha) ? pr.base.sha : null;
+      const baseSha = shotsState.validSha(pr.base?.sha) ? pr.base.sha : null;
       let changedFiles = [];
       try {
         changedFiles = await gh.listChangedFiles(
@@ -2964,9 +2947,9 @@ function voteRoutes(config) {
       }
       const headSha = pr.head?.sha || null;
       // GitHub returns the immutable commit at the PR's base side. Persist it
-      // with the imported proposal so evidence never has to reconstruct the
+      // with the imported proposal so the shots never have to reconstruct the
       // pair later from a moving default branch.
-      const baseSha = visualEvidenceState.validSha(pr.base?.sha) ? pr.base.sha : null;
+      const baseSha = shotsState.validSha(pr.base?.sha) ? pr.base.sha : null;
       const headBranch = pr.head?.ref || null;
       if (!headBranch) {
         return res.status(409).json({ error: 'Could not determine the PR head branch.' });
@@ -2993,19 +2976,16 @@ function voteRoutes(config) {
       // Absent (the browser's import button never sends them) leaves all
       // three columns NULL, exactly as before.
       const importTesting = parseImportTesting(req.body);
-      let importVisualEvidence;
-      let importVisualEvidencePlan;
+      // A replay plan from an older agent is ignored: before/after
+      // shots are taken by the shots agent from the declared changes.
+      let importVisibleChanges;
       try {
-        importVisualEvidence = parseImportVisualEvidence(req.body);
-        importVisualEvidencePlan = parseImportVisualEvidencePlan(req.body, importVisualEvidence, { baseSha, headSha });
+        importVisibleChanges = parseImportVisibleChanges(req.body);
       } catch (err) {
         return res.status(400).json({
-          error: err.code || 'invalid_visual_evidence',
+          error: err.code || 'invalid_visible_changes',
           message: err.message,
         });
-      }
-      if (importVisualEvidencePlan && !config.visualEvidence?.collect) {
-        return res.status(503).json({ error: 'visual_evidence_disabled' });
       }
       // The request this pull request implements (#1217). A submission
       // prepared from a request knows its number — prepare_work records it,
@@ -3029,7 +3009,7 @@ function voteRoutes(config) {
       // with `promote: true`.
       const importClient = await pool.connect();
       let inserted;
-      let visualEvidenceResult = null;
+      let shotsResult = null;
       try {
         await importClient.query('BEGIN');
         ({ rows: inserted } = await importClient.query(
@@ -3076,45 +3056,21 @@ function voteRoutes(config) {
         await topicAttrs.selfAssignProposal(
           importClient, app.id, inserted[0].id, req.user
         );
-        if (config.visualEvidence?.collect && importVisualEvidence) {
+        if (config.shots?.collect && importVisibleChanges) {
           try {
-            visualEvidenceResult = await visualEvidenceState.recordIntentInTransaction(
+            shotsResult = await shotsState.recordIntentInTransaction(
               importClient,
               inserted[0].id,
-              importVisualEvidence,
-              visualEvidenceState.validSha(headSha) ? { headSha } : {}
+              importVisibleChanges,
+              shotsState.validSha(headSha) ? { headSha } : {}
             );
           } catch (err) {
             // This transaction owns `importClient`; recordIntent must neither
             // reconnect nor release it. Preserve a safe boundary marker for
             // the outer HTTP error without exposing the database exception.
             if (err && typeof err === 'object') {
-              err.prImportStage = 'visual_evidence_intent';
-              err.prImportField = 'visualEvidence';
-            }
-            throw err;
-          }
-        }
-        if (importVisualEvidencePlan) {
-          try {
-            const { run } = await visualEvidenceState.createRunInTransaction(importClient, {
-              sessionId: inserted[0].id,
-              baseSha, headSha, intent: importVisualEvidence,
-              authorPlan: importVisualEvidencePlan.plan, trigger: 'import-author-plan',
-            });
-            visualEvidenceResult = {
-              ...visualEvidenceResult,
-              state: run.state,
-              runId: run.id,
-              detail: {
-                ...visualEvidenceState.pendingDetail(importVisualEvidence, { headSha }),
-                runId: run.id, baseSha, state: run.state,
-              },
-            };
-          } catch (err) {
-            if (err && typeof err === 'object') {
-              err.prImportStage = 'visual_evidence_plan';
-              err.prImportField = 'visualEvidencePlan';
+              err.prImportStage = 'visible_changes';
+              err.prImportField = 'visibleChanges';
             }
             throw err;
           }
@@ -3127,13 +3083,6 @@ function voteRoutes(config) {
         importClient.release();
       }
       const sessionId = inserted[0].id;
-      if (importVisualEvidencePlan) {
-        log.info('votes', 'PR imported with author visual evidence plan', {
-          sessionId, prNumber, baseSha, headSha,
-          planHash: importVisualEvidencePlan.planHash,
-          runId: visualEvidenceResult.runId,
-        });
-      }
       const session = {
         id: sessionId, app_id: app.id, app_slug: app.slug, user_id: req.user.id,
         branch_name: headBranch, pr_number: prNumber, pr_title: pr.title || null,
@@ -3157,9 +3106,9 @@ function voteRoutes(config) {
         testing_md: importTesting.testingMd,
         testing_path: importTesting.testingPath,
         testing_paths: importTesting.testingPaths,
-        visual_evidence_state: visualEvidenceResult?.state || null,
-        visual_evidence_run_id: visualEvidenceResult?.runId || null,
-        visual_evidence_detail: visualEvidenceResult?.detail || null,
+        shots_state: shotsResult?.state || null,
+        shots_run_id: shotsResult?.runId || null,
+        shots_detail: shotsResult?.detail || null,
       };
 
       if (promote) {
@@ -3186,14 +3135,14 @@ function voteRoutes(config) {
       }
 
       log.info('votes', 'PR imported', { sessionId, prNumber, appId: app.id, status: initialStatus });
-      const evidenceSubmission = require('../services/proposal-update').visualEvidenceSubmissionFields(
-        visualEvidenceResult || {
+      const visibleChangesSubmission = require('../services/proposal-update').visibleChangesSubmissionFields(
+        shotsResult || {
           state: null,
           accepted: false,
-          rejected: !!importVisualEvidence,
+          rejected: !!importVisibleChanges,
           required: false,
-          nextStep: importVisualEvidence
-            ? 'visual_evidence_collection_disabled'
+          nextStep: importVisibleChanges
+            ? 'shots_collection_disabled'
             : 'none',
         }
       );
@@ -3202,7 +3151,7 @@ function voteRoutes(config) {
         sessionId,
         prNumber,
         status: initialStatus,
-        ...evidenceSubmission,
+        ...visibleChangesSubmission,
       });
 
       // Kick the SHA-pinned staging build + checks after responding.
@@ -3315,7 +3264,7 @@ function voteRoutes(config) {
       //     other one on the old code. A mechanical sync keeps it, exactly as
       //     the in-request read would have.
       //   - The merge itself never trusted this read: checkAndMerge
-      //     reconciles again, re-checks the visual-evidence gate at the exact
+      //     reconciles again, re-checks the shots gate at the exact
       //     head, and merges only the pinned sha.
       const revision = await reconcileNativeReviewedHead({
         config, pool, session, offline: true,
@@ -3324,12 +3273,12 @@ function voteRoutes(config) {
         return res.status(revision.transient ? 503 : 409).json({ error: revision.reason });
       }
 
-      const evidenceGate = await readVisualEvidenceGate(config, pool, session);
-      if (evidenceGate.applies && !evidenceGate.allowed) {
+      const shotsGate = await readShotsGate(config, pool, session);
+      if (shotsGate.applies && !shotsGate.allowed) {
         return res.status(409).json({
-          error: 'visual_evidence_required',
-          message: evidenceGate.reason,
-          visualEvidenceState: evidenceGate.state,
+          error: 'shots_required',
+          message: shotsGate.reason,
+          shotsState: shotsGate.state,
         });
       }
 
@@ -3864,8 +3813,8 @@ function voteRoutes(config) {
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
-           cs.visual_evidence_state, cs.visual_evidence_run_id,
-           cs.visual_evidence_detail, cs.visual_evidence_updated_at,
+           cs.shots_state, cs.shots_run_id,
+           cs.shots_detail, cs.shots_updated_at,
            -- #687 (PR-import): provenance so the client can render the
            -- "Imported PR" badge + GitHub-maintained note and hide the
            -- dev-side controls for externally-authored proposals.
@@ -4037,10 +3986,10 @@ function voteRoutes(config) {
         // platform, and self-healing on every panel refresh.
         row.resolving = isResolving(row.id);
       }
-      const evidenceBySession = config.visualEvidence?.present
-        ? await visualEvidenceView.getForSessions(pool, rows, req.params.slug)
+      const shotsBySession = config.shots?.present
+        ? await shotsView.getForSessions(pool, rows, req.params.slug)
         : new Map();
-      for (const row of rows) row.visualEvidence = evidenceBySession.get(Number(row.id)) || null;
+      for (const row of rows) row.shots = shotsBySession.get(Number(row.id)) || null;
 
       // Community-voted priority + assigned-person summary per proposal,
       // keyed by session id (target_type='proposal'). Same minimal shape
@@ -4155,14 +4104,14 @@ function voteRoutes(config) {
           // guess from a thirteen-state precedence table — the gate knows
           // which rung refused and now says so.
           row.integration = integrationSvc.readIntegration(row);
-          row.evidenceEnforced = !!config.visualEvidence?.enforce
-            && !!(row.visual_evidence_detail && typeof row.visual_evidence_detail === 'object');
+          row.shotsEnforced = !!config.shots?.enforce
+            && !!(row.shots_detail && typeof row.shots_detail === 'object');
           // #2061: the whole ordered list of what is still required, rather
           // than only what is currently wrong. The card's tags say the second;
           // nothing said the first, so two of the seven gates had no UI at all.
           row.mergeRequirements = requirementsSvc.readRequirements({
             ...row,
-            evidenceEnforced: row.evidenceEnforced,
+            shotsEnforced: row.shotsEnforced,
             app_main_check_state: mainCheck.state,
             app_main_check_sha: mainCheck.sha,
             app_main_check_resumed_sha: mainCheck.resumedSha,
@@ -4318,11 +4267,11 @@ function voteRoutes(config) {
         // Fetch limit+1 so an extra row signals there's another page.
         prParams
       );
-      const mergedEvidence = config.visualEvidence?.present
-        ? await visualEvidenceView.getForSessions(pool, prRows, req.params.slug)
+      const mergedShots = config.shots?.present
+        ? await shotsView.getForSessions(pool, prRows, req.params.slug)
         : new Map();
       for (const row of prRows) {
-        row.visualEvidence = mergedEvidence.get(Number(row.id)) || null;
+        row.shots = mergedShots.get(Number(row.id)) || null;
       }
 
       // Applied close-issue proposals join the Completed stream: a
@@ -4628,8 +4577,8 @@ function voteRoutes(config) {
         proposal.priority = s.priority;
         proposal.assignee = s.assignee;
         proposal.category = s.category;
-        proposal.visualEvidence = config.visualEvidence?.present
-          ? await visualEvidenceView.getForSession(pool, proposal, req.params.slug)
+        proposal.shots = config.shots?.present
+          ? await shotsView.getForSession(pool, proposal, req.params.slug)
           : null;
       }
 
@@ -4645,7 +4594,9 @@ function voteRoutes(config) {
       }
 
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
-      res.json({ proposal });
+      // `?results=failing`: the proposal page's own read, which lists passing
+      // checks only when their fold is opened (services/list-test-results.js).
+      res.json({ proposal: listTestResults.forItem(req, proposal) });
     } catch (err) {
       log.error('votes', 'Failed to get proposal by id', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -4800,16 +4751,16 @@ function voteRoutes(config) {
         return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
       }
 
-      // Force bypasses the vote/check gates, not the evidence audit. Refuse
+      // Force bypasses the vote/check gates, not the shots audit. Refuse
       // before returning `queued:true`; otherwise the UI would report a merge
       // that the background task is guaranteed not to perform. An app admin
       // can use the dedicated reasoned override endpoint, then retry.
-      const evidenceGate = await readVisualEvidenceGate(config, pool, session);
-      if (evidenceGate.applies && !evidenceGate.allowed) {
+      const shotsGate = await readShotsGate(config, pool, session);
+      if (shotsGate.applies && !shotsGate.allowed) {
         return res.status(409).json({
-          error: 'visual_evidence_required',
-          message: evidenceGate.reason,
-          visualEvidenceState: evidenceGate.state,
+          error: 'shots_required',
+          message: shotsGate.reason,
+          shotsState: shotsGate.state,
         });
       }
 
@@ -5550,17 +5501,17 @@ async function checkAndMerge(config, pool, session, options = {}) {
   }
 
   // Force merge bypasses voting/checks by design, but it does not manufacture
-  // visual evidence. An administrator who intentionally accepts missing
-  // evidence must use the audited override endpoint first.
-  if (force && config?.visualEvidence?.enforce) {
-    const evidenceGate = await readVisualEvidenceGate(config, pool, session);
-    if (evidenceGate.applies && !evidenceGate.allowed) {
+  // before & after shots. An administrator who intentionally accepts missing
+  // shots must use the audited override endpoint first.
+  if (force && config?.shots?.enforce) {
+    const shotsGate = await readShotsGate(config, pool, session);
+    if (shotsGate.applies && !shotsGate.allowed) {
       return {
         merged: false,
-        blockReason: 'visual_evidence',
-        visualEvidenceBlocked: true,
-        visualEvidenceState: evidenceGate.state,
-        error: evidenceGate.reason,
+        blockReason: 'shots',
+        shotsBlocked: true,
+        shotsState: shotsGate.state,
+        error: shotsGate.reason,
       };
     }
   }
@@ -5677,8 +5628,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
     headSha: reviewedHeadForSession(session) || null,
     approvalEpoch: Number.isFinite(parseInt(session.approval_epoch, 10))
       ? parseInt(session.approval_epoch, 10) : 0,
-    evidenceEnforced: !!config?.visualEvidence?.enforce
-      && !!session.visual_evidence_detail,
+    shotsEnforced: !!config?.shots?.enforce
+      && !!session.shots_detail,
   });
 
   if (!force) {
@@ -6035,37 +5986,37 @@ async function checkAndMerge(config, pool, session, options = {}) {
     dstep({ phase: 'gate:checks', message: `Checks gate: state = ${checkState}.`, detail: { checkState } });
     gateTrace.pass('checks', { checkState });
 
-    // #2380: when enforcement is enabled, a required UI-evidence run is an
+    // #2380: when enforcement is enabled, a required shots run is an
     // exact-head merge gate. This is not pixel-regression approval: the hard
     // replay and relevance reviewer have already done their bounded jobs.
     // `overridden` is accepted only because the override endpoint records an
     // app-admin identity and a visible reason.
-    const evidenceGate = await readVisualEvidenceGate(config, pool, session);
-    if (evidenceGate.applies && !evidenceGate.allowed) {
+    const shotsGate = await readShotsGate(config, pool, session);
+    if (shotsGate.applies && !shotsGate.allowed) {
       dstep({
-        phase: 'gate:visual_evidence', level: 'warn',
-        message: `Merge blocked: ${evidenceGate.reason}`,
-        detail: { state: evidenceGate.state, currentHead: evidenceGate.currentHead, recordedHead: evidenceGate.recordedHead },
+        phase: 'gate:shots', level: 'warn',
+        message: `Merge blocked: ${shotsGate.reason}`,
+        detail: { state: shotsGate.state, currentHead: shotsGate.currentHead, recordedHead: shotsGate.recordedHead },
       });
-      gateTrace.stop('visual_evidence', evidenceGate.state === 'failed' ? 'blocked' : 'active', {
-        state: evidenceGate.state,
-        note: evidenceGate.reason,
+      gateTrace.stop('shots', shotsGate.state === 'failed' ? 'blocked' : 'active', {
+        state: shotsGate.state,
+        note: shotsGate.reason,
       });
       gateSave();
-      dend('blocked', 'Blocked: exact-revision visual evidence is not ready.');
+      dend('blocked', 'Blocked: exact-revision before & after shots is not ready.');
       return {
         merged: false, yesCount, needed: required,
-        blockReason: 'visual_evidence', visualEvidenceBlocked: true,
-        visualEvidenceState: evidenceGate.state,
+        blockReason: 'shots', shotsBlocked: true,
+        shotsState: shotsGate.state,
       };
     }
-    if (evidenceGate.applies) {
+    if (shotsGate.applies) {
       dstep({
-        phase: 'gate:visual_evidence',
-        message: `Visual evidence gate: state = ${evidenceGate.state}.`,
-        detail: { state: evidenceGate.state, headSha: evidenceGate.currentHead },
+        phase: 'gate:shots',
+        message: `Before & after shots gate: state = ${shotsGate.state}.`,
+        detail: { state: shotsGate.state, headSha: shotsGate.currentHead },
       });
-      gateTrace.pass('visual_evidence', { state: evidenceGate.state });
+      gateTrace.pass('shots', { state: shotsGate.state });
     }
 
     // Platform-variables gate. A self-app proposal that ADDS a required
@@ -7121,11 +7072,10 @@ module.exports = {
   voteMatchesApprovalEpoch,
   // Connector-submitted testing metadata on an import, unit-tested directly.
   parseImportTesting,
-  parseImportVisualEvidence,
-  parseImportVisualEvidencePlan,
+  parseImportVisibleChanges,
   prImportFailureBody,
-  visualEvidenceGateForSession,
-  readVisualEvidenceGate,
+  shotsGateForSession,
+  readShotsGate,
   strandedPendingChecks,
   // The request an imported pull request implements (#1217), likewise.
   parseImportLinkedIssues,

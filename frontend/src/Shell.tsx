@@ -87,6 +87,7 @@ import { SidePanel } from './features/side-panel';
 import { GlobalChatScreen } from './features/global-chat';
 import { AgentSessionScreen } from './features/agent-session';
 import { WorkshopScreen } from './features/workshop';
+import { ProfileProposalsScreen } from './features/profile/my-proposals';
 import { NotificationsIsland } from './features/notifications';
 import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
@@ -191,6 +192,15 @@ export function Shell() {
           App.REACT_SCREEN_IDS).
       */}
       <Island name="WorkshopScreen"><WorkshopScreen /></Island>
+      {/*
+          "Your proposals" screen (hidden by default, #5310): every proposal
+          the viewer has started, grouped by status. A drill-in from
+          Profile's #profile-row-proposals row at #profile/proposals. Fully
+          React-owned like #workshop-screen, shipped hidden and empty; the
+          rows arrive from GET /api/me/proposal-history in the controller's
+          open(). Mounted by App.navigateToProfileProposals.
+      */}
+      <Island name="ProfileProposalsScreen"><ProfileProposalsScreen /></Island>
       {/*
           Leaderboard screen (hidden by default): the one place the group's
           shared progress lives — the Topochain standings, the Kudos

@@ -247,6 +247,16 @@ const HEADLESS_WRAPUP_EFFECT_KEYS = Object.freeze({
   spend: 'headless_wrapup_spend',
 });
 
+// A session that will not change again, for the session list's `?recent=N`.
+const FINISHED_SESSION_STATUSES = new Set(['merged', 'archived']);
+// `?recent=N` as a count of finished rows to keep: 1..200, or null to list
+// them all.
+function recentFinishedLimit(raw) {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.min(n, 200);
+}
+
 // Content-free caller context for services/llm.js. This object is consumed
 // locally by the telemetry wrapper and is never spread into a provider
 // request body.
@@ -466,6 +476,17 @@ async function scheduleRetainedInteractiveTurn({
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
 const MANUAL_SESSION_TITLE_MAX = 256;
+
+// #2779: classic dev sessions — a per-change chat created straight from the
+// browser — are phased out. New work starts in an agent session, whose
+// Mayor creates each change through POST /api/apps/:slug/sessions on a
+// delegated grant; nothing else may create one any more (not a browser, a
+// shell cached before the switch, a CLI token, nor Global Chat's loopback),
+// and forking a chat into a new classic session is retired with them.
+// Sessions that already exist keep working exactly as they did: only the
+// creation routes read this.
+const CLASSIC_SESSIONS_RETIRED = 'New work starts in an agent session now. '
+  + 'Start one from Messages or New change.';
 
 // #1038: identifies THIS platform process to the client's session-state
 // store. Live busy state is in-process memory (see services/session-state),
@@ -766,10 +787,8 @@ function stagingMockTranscript(sessionId) {
       transcript_shared_at: t(30),
       message_count: raw.length,
       is_owner: false,
-      // Forking a mock id 404s harmlessly (no such row), same posture as
-      // voting on a mock proposal — but the button must RENDER so the
-      // read-only layout is reviewable in a demo preview.
-      can_fork: true,
+      // Retired with classic sessions (#2779); see the transcript read.
+      can_fork: false,
     },
     messages: transcriptShare.sanitizeTranscript(raw),
     truncated: false,
@@ -2591,18 +2610,38 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         [appRows[0].id, req.user.id, req.query.status === 'archived' ? 'archived' : null]
       );
 
+      // `?recent=N`: every session still under way, and only the N newest
+      // finished (merged or archived) ones, with a count of the rest. The dev
+      // chat's own list asks for it: a prolific author's history on the
+      // platform app is over a thousand finished rows (1,015 merged and 97
+      // archived, 693 KB on production), re-read on every open of a change
+      // and every session event while it is on screen. "Show older" reads
+      // the whole list again. Without the parameter it is answered whole.
+      const recent = req.query.status === 'archived' ? null : recentFinishedLimit(req.query.recent);
+      let listed = rows;
+      let olderFinished = 0;
+      if (recent) {
+        let finished = 0;
+        listed = rows.filter((s) => {
+          if (!FINISHED_SESSION_STATUSES.has(s.status)) return true;
+          finished += 1;
+          return finished <= recent;
+        });
+        olderFinished = rows.length - listed.length;
+      }
+
       // `warm` = a worker container currently exists for the session. The
       // session list uses it to decide whether a promoted row still has a
       // worker to free (and the create-session cap counts the same thing).
       const warmIds = new Set(worker.warmRegistrySnapshot().map((w) => w.sessionId));
-      for (const s of rows) s.warm = warmIds.has(s.id);
+      for (const s of listed) s.warm = warmIds.has(s.id);
 
       // Staging-only demo row (?demo=1): a mock archived session so the
       // "Show archived" toggle — the anchor the visible-sessions group
       // renders beneath — is present for any demo viewer. Same read-only
       // 99xxxx convention as the other mocks (Unarchive 404s server-side).
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
-        rows.push({
+        listed.push({
           id: 990104, branch_name: 'mock/archived-session', pr_number: null,
           pr_url: null, pr_title: null,
           session_title: '[Mock] Archived session',
@@ -2613,7 +2652,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         });
       }
 
-      res.json({ sessions: rows });
+      res.json({ sessions: listed, ...(recent ? { older_finished: olderFinished } : {}) });
     } catch (err) {
       log.error('sessions', 'Failed to list sessions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -2746,6 +2785,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // minted on the first chat turn, the PR after the first commit.
   router.post('/api/apps/:slug/sessions', drainGuard, communities.requireAppMembership(pool), async (req, res) => {
     try {
+      // #2779: only an agent session's Mayor starts a change (a delegated
+      // grant that names the session); a classic session is no longer
+      // created for anyone else. See CLASSIC_SESSIONS_RETIRED.
+      const agentSessionId = req.mcpDelegation && req.mcpDelegation.kind === 'agent_mayor'
+        ? req.mcpDelegation.agentSessionId || null : null;
+      if (!agentSessionId) {
+        return res.status(403).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
+      }
+
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
 
@@ -2779,14 +2827,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
       }
 
-      // #2779: a change started by an agent session's Mayor (a delegated
-      // grant that names the session) becomes that session's active change,
+      // #2779: the new change becomes the Mayor's session's active change,
       // and the one it was working on is parked first — which also frees its
       // slot before the cap below counts it. The grant's own liveness check
       // has already refused an archived or foreign session; this re-checks
       // at the write.
-      const agentSessionId = req.mcpDelegation && req.mcpDelegation.kind === 'agent_mayor'
-        ? req.mcpDelegation.agentSessionId || null : null;
       if (agentSessionId) {
         try {
           await agentSessions.prepareChangeStart(pool, { agentSessionId, userId: req.user.id });
@@ -3215,7 +3260,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // memory volume so the agent resumes with full context. A follow-up
   // assistant message tells the new owner where things stand and how to
   // proceed (review spec / answer question / ask for PR + staging).
+  //
+  // #2779: the browser no longer clones a run into a classic dev chat (its
+  // "Start work" on a finished run opens an agent session instead). The
+  // hosted connector's submit_platform_build still takes ownership of a
+  // build this way before proposing it, so an external connector token (not
+  // a delegated grant) is the one caller left.
   router.post('/api/sessions/:id/clone-headless', drainGuard, communities.requireSessionMembership(pool), async (req, res) => {
+    if (!req.connectorClientId || req.mcpDelegation) {
+      return res.status(403).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
+    }
     try {
       const { rows: srcRows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
@@ -3519,8 +3573,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.checks_progress, cs.test_results, cs.checks_base_sha,
                 cs.checks_base_verdict, cs.checks_base_behind_by,
                 cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
-                cs.visual_evidence_state, cs.visual_evidence_run_id,
-                cs.visual_evidence_detail, cs.visual_evidence_updated_at,
+                cs.shots_state, cs.shots_run_id,
+                cs.shots_detail, cs.shots_updated_at,
                 a.slug AS app_slug
            FROM chat_sessions cs
            JOIN apps a ON a.id = cs.app_id
@@ -3551,12 +3605,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           const proposal = require('./proposal-handoff').publicSessionStatus({ ...detail, ...handoffs[0] });
           detail.proposal_state = proposal.revisionState || proposal.state;
         }
-        detail.visualEvidence = config.visualEvidence?.present
-          ? await require('../services/visual-evidence-view')
+        detail.shots = config.shots?.present
+          ? await require('../services/shots-view')
             .getForSession(pool, detail, detail.app_slug)
           : null;
       }
-      res.set('Cache-Control', 'no-store').json({ session: detail });
+      // `?results=failing`: the change page's own read, which lists passing
+      // checks only when their fold is opened (services/list-test-results.js).
+      res.set('Cache-Control', 'no-store').json({ session: listTestResults.forItem(req, detail) });
     } catch (err) {
       log.error('sessions', 'Failed to read check results', { message: err.message });
       res.status(500).json({ error: 'Could not load check results' });
@@ -3758,11 +3814,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         );
       } catch { session.visuals = null; }
       try {
-        session.visualEvidence = config.visualEvidence?.present
-          ? await require('../services/visual-evidence-view')
+        session.shots = config.shots?.present
+          ? await require('../services/shots-view')
             .getForSession(pool, session, session.app_slug)
           : null;
-      } catch { session.visualEvidence = null; }
+      } catch { session.shots = null; }
 
       // #940: the session's saved drafts ride along so opening a session
       // needs no second round trip on the hot path. Best-effort: `null`
@@ -4556,13 +4612,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           transcript_shared_at: row.transcript_shared_at,
           message_count: row.message_count,
           is_owner: isOwner,
-          // A fork spends the caller's own AI budget and needs collab
-          // access; the guard has already proven collab for writes, but a
-          // read-only viewer reaches THIS route legitimately, so the flag
-          // tells the client whether to render the button at all. Forking
-          // your own chat is meaningless (use "Start a new change").
-          can_fork: !isOwner
-            && row.shared_at != null && row.transcript_shared_at != null,
+          // "Fork this chat" is retired with classic sessions (#2779).
+          // Still reported, as false, so a shell cached before that does
+          // not draw a button whose POST now answers 410.
+          can_fork: false,
         },
         messages,
         truncated,
@@ -4574,197 +4627,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   });
 
   // POST /api/sessions/:id/fork
-  //   Fork a shared, transcript-published dev chat into the CALLER's own new
-  //   session. Collab-gated by the sessionCollabGuard (POST → 'collab'), so a
-  //   read-only viewer who can read the transcript still can't fork it.
-  //
-  //   Modelled on /clone-headless with ONE deliberate difference: the source
-  //   session's Claude Code memory volume is NOT cloned. Copying it would
-  //   hand the fork's agent everything the sanitiser withholds from the
-  //   reader (raw logs, attachment bytes) — reopening by proxy exactly what
-  //   transcript sharing closed. The fork starts with fresh CC memory;
-  //   context still reaches the model because buildMayorMessages folds the
-  //   copied history (including ccOutput summaries) into every turn.
-  //
-  //   Many people can fork the same chat independently, and the source
-  //   session is never touched — its owner sees nothing change.
-  router.post('/api/sessions/:id/fork', drainGuard, async (req, res) => {
-    try {
-      const { rows: srcRows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
-                u.username AS owner_username
-           FROM chat_sessions cs
-           JOIN apps a ON cs.app_id = a.id
-           LEFT JOIN users u ON u.id = cs.user_id
-          WHERE cs.id = $1 AND cs.is_headless = FALSE
-            AND cs.shared_at IS NOT NULL
-            AND cs.transcript_shared_at IS NOT NULL`,
-        [req.params.id]
-      );
-      if (!srcRows.length) {
-        return res.status(404).json({ error: 'This chat is not shared for reading.' });
-      }
-      const src = srcRows[0];
-      if (src.user_id === req.user.id) {
-        return res.status(400).json({
-          error: "That's your own chat. Use “Start a new change” to branch off it.",
-        });
-      }
-
-      // The fork is an ordinary dev-chat session, so the usual caps apply.
-      // Per-user cap counts only 'active' sessions (#193) and the ceiling is
-      // per-requester (full admins get a raised cap) — identical to the
-      // clone-headless block above.
-      const caps = effectiveSessionCaps(config, req.user);
-      const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE
-           AND source IS DISTINCT FROM 'imported'`,
-        [req.user.id]
-      );
-      if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
-        const { freed } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
-        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
-      }
-      const { rows: globalRows } = await pool.query(
-        `SELECT COUNT(*) as cnt FROM chat_sessions
-          WHERE status IN ('active', 'promoted')
-            AND source IS DISTINCT FROM 'imported'
-            AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)`
-      );
-      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
-        const { freed } = await sessionLifecycle.freeGlobalSlot({
-          pool, graceMs: config.sessionPressureGraceMs,
-        });
-        if (!freed) {
-          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
-        }
-      }
-
-      // Fork the branch off the source's branch so any commit it pushed
-      // carries over; fall back to main if that branch is gone.
-      //
-      // #1350 carve-out: not deferred, for the same reason as the headless
-      // clone above — the point of a fork is to start from the source's
-      // commits, and `fromBranch` is where that happens. A source that has
-      // not run a turn yet has no branch at all now, so name main
-      // explicitly rather than asking GitHub for `heads/null`.
-      const branchName = branchNames.devBranchName(req.user.username);
-      const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      if (github.isEnabled() && repoOwner && repoName) {
-        try {
-          await github.createBranch(repoOwner, repoName, branchName, src.branch_name || 'main');
-        } catch (err) {
-          log.warn('sessions', 'Branch fork off shared session failed — falling back to main', { err: err.message, from: src.branch_name });
-          try {
-            await github.createBranch(repoOwner, repoName, branchName);
-          } catch (err2) {
-            log.warn('sessions', 'GitHub branch creation failed (continuing)', { err: err2.message });
-          }
-        }
-      }
-
-      const forkTitle = src.session_title || src.pr_title || 'Forked dev chat';
-
-      const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10)
-         RETURNING *`,
-        [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path,
-         src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, forkTitle]
-      );
-      const session = rows[0];
-      await topicAttrs.selfAssignProposal(pool, src.app_id, session.id, req.user);
-
-      // Copy the conversation THROUGH THE SANITISER — the fork must never
-      // carry content the forker wasn't allowed to read. Done row-by-row in
-      // JS rather than as an INSERT…SELECT precisely so the allowlist runs;
-      // an in-SQL copy would smuggle ccLog / attachment ids across.
-      //
-      // Costs are left at their zero defaults: the forker didn't pay for the
-      // original run and the per-message figures would double-count.
-      //
-      // Every row is stamped `inheritedFrom` (the source id), which is what
-      // the dev-chat renderer keys the collapsed-by-default Claude Code
-      // disclosures and the greyed inherited-history styling off (#647). The
-      // follow-up appended below deliberately does NOT carry it — that
-      // message belongs to this session.
-      const { rows: srcMessages } = await pool.query(
-        `SELECT id, role, content, model, metadata FROM chat_session_messages
-          WHERE session_id = $1 ORDER BY id ASC`,
-        [src.id]
-      );
-      for (const raw of srcMessages) {
-        const clean = transcriptShare.sanitizeTranscriptMessage(raw);
-        if (!clean) continue;
-        await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, model, metadata)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [session.id, clean.role, clean.content, clean.model || null,
-           JSON.stringify({ ...(clean.metadata || {}), inheritedFrom: src.id })]
-        );
-      }
-      // Carry the spec version history too, so the spec viewer shows v1…vN.
-      await pool.query(
-        `INSERT INTO chat_session_specs (session_id, version, content, built_at, commit_sha, pr_number)
-         SELECT $1, version, content, built_at, commit_sha, pr_number
-         FROM chat_session_specs WHERE session_id = $2`,
-        [session.id, src.id]
-      ).catch((err) => log.warn('sessions', 'Spec history copy failed (continuing)', { err: err.message }));
-
-      // The orientation message: where the original left off, what carried
-      // over, and — load-bearing — that the AGENT's own memory did not, so
-      // the new owner restates anything important instead of assuming it.
-      //
-      // #1001: same treatment as the auto-session clone — the fork's first
-      // pills are authored from where the forked conversation actually got
-      // to, with FORK_FOLLOWUP_REPLIES as the fallback rather than the
-      // guaranteed answer.
-      const forkFollowUp = transcriptShare.buildForkFollowUpMessage(src);
-      const forkTail = srcMessages
-        .filter((r) => r && (r.role === 'user' || r.role === 'assistant'))
-        .slice(-6)
-        .map((r) => ({ role: r.role, content: r.content }));
-      const forkPills = await resolveTurnPills({
-        pool,
-        dataKey: config.dataEncryptionKey,
-        // `src` carries app_name from its JOIN; the fresh row does not.
-        session: { id: session.id, app_name: src.app_name },
-        userId: req.user.id,
-        apiKey: null,
-        model: null,
-        modelPills: null,
-        outcome: 'chat',
-        hasPr: false,
-        hasSpec: !!(src.spec_md || '').trim(),
-        staticFallback: buildForkFollowUpQuickReplies(),
-        replyText: forkFollowUp,
-        transcriptTail: forkTail,
-        state: 'this session was just forked from a shared dev chat; the new owner is picking up where it left off',
-      });
-      log.info('sessions', 'quick replies resolved', {
-        sessionId: session.id, phase: 'fork-followup',
-        source: forkPills.source, kind: forkPills.kind || null,
-      });
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'assistant', $2, $3)`,
-        [session.id, forkFollowUp, JSON.stringify(quickReplyMeta(forkPills))]
-      );
-
-      events.record(pool, {
-        type: events.EVENT_TYPES.DEV_SESSION_STARTED,
-        userId: req.user.id,
-        appId: src.app_id,
-        sessionId: session.id,
-        metadata: { forkedFromSession: src.id },
-      });
-
-      log.info('sessions', 'Forked shared dev chat', { src: src.id, sessionId: session.id, user: req.user.username });
-      res.status(201).json({ session });
-    } catch (err) {
-      log.error('sessions', 'Fork shared chat failed', { message: err.message, stack: err.stack });
-      res.status(500).json({ error: 'Internal server error' });
-    }
+  //   Forked a shared, transcript-published dev chat into a new classic
+  //   session of the caller's. Retired with classic sessions (#2779): new
+  //   work starts in an agent session, and a shell cached before the switch
+  //   is told so rather than getting a 404. The transcript read above
+  //   reports can_fork false, so no current page offers it.
+  router.post('/api/sessions/:id/fork', (req, res) => {
+    res.status(410).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
   });
 
   // POST /api/sessions/:id/pause
@@ -6744,18 +6613,6 @@ function buildHeadlessFollowUpQuickReplies(src) {
       return null;
   }
   return sanitizeQuickReplies({ replies });
-}
-
-// The fork follow-up's TEXT lives in services/transcript-share.js
-// (buildForkFollowUpMessage) so the staging fixture in db/migrate.js can seed
-// the identical copy instead of a hand-written duplicate that drifts. Only the
-// pill sanitising stays here, since sanitizeQuickReplies is route-local.
-//
-// Built on CALL, not at module load: sanitizeQuickReplies reads
-// QR_MAX_REPLIES, a `const` declared further down this file, so evaluating
-// this at load time hits its temporal dead zone and throws on require.
-function buildForkFollowUpQuickReplies() {
-  return sanitizeQuickReplies({ replies: [...transcriptShare.FORK_FOLLOWUP_REPLIES] });
 }
 
 // The unattended-mode addendum appended to the Mayor system prompt for
@@ -10982,13 +10839,13 @@ function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
   including .agents/skills/usernode-proposal, do not apply here. Do not run
   that skill, the social-vibecoding CLI, device login, or external proposal
   submission tools from this worker.
-- For a committed change, call the provided record_visual_evidence_intent MCP
+- For a committed change, call the provided declare_visible_changes MCP
   tool with concrete reviewer-facing claims and real user flows (or impact
   "none" with a specific reason for a non-visual change). If the tool fails,
   report the failure; never claim that intent was recorded when it was not.
 - Implement the change, run focused checks, commit it on the existing session
   branch, and finish the turn. The Homeroom harness handles push, pull request
-  creation, staging, checks, and scheduling the paired evidence run after
+  creation, staging, checks, and scheduling the paired shots run after
   your commit. Do not perform those lifecycle steps yourself.
 - The in-loop browser is optional. If the supplied local runtime or app auth
   cannot be brought up promptly, say the visual check was skipped and commit

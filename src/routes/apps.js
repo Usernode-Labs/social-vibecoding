@@ -1377,10 +1377,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         staging_sample: stagingSample,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
         missingSecrets,
-        // Reviewer copy needs to distinguish an advisory evidence run from
+        // Reviewer copy needs to distinguish an advisory shots run from
         // a real vote/merge gate. This is a platform rollout flag, not an app
         // secret or capability grant.
-        visualEvidenceEnforced: !!config.visualEvidence?.enforce,
+        shotsEnforced: !!config.shots?.enforce,
         // The whole-tree verdict under direct merges (services/main-watch.js):
         // is main green, and are this app's merges paused because it is not?
         mainCheck: require('../services/main-watch').describe(appRow),

@@ -71,7 +71,7 @@ import {
 
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { improveStore } from '../improve/improve-store.js';
 import { A2HS_STEPS, detectMobileOs } from '../mobile-install/detect';
 import { isNativeApp, isStandalone } from '../mobile-install/environment';
@@ -351,12 +351,16 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             className="platform-mark-tile w-16 h-16 rounded-2xl shrink-0"
           />
         ) : (
-          <div
+          <AppIconLink
+            // The Open button's destination and exit: the sheet closes first.
+            slug={isApp && open.canOpen && !running ? slug : null}
+            name={label}
+            onOpen={(s) => afterDismiss(() => window.App?.openAppTab?.(s, 'app'))}
             className="app-icon-tile w-16 h-16 shrink-0 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-2xl"
             data-icon={appIconKind(record)}
           >
             <AppIconContent app={record} />
-          </div>
+          </AppIconLink>
         )}
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="text-[1.0625rem] leading-snug font-semibold text-zinc-900 dark:text-zinc-100 break-words">

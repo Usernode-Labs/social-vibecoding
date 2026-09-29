@@ -1039,7 +1039,7 @@ test('admin_test has its own per-recipient throttle rule', () => {
 test('a project invite names who sent it and where, and links only to the waitlist', () => {
   const m = templates.buildMessage('project_invite', { inviter: 'ada', project: 'Book club', url: 'https://onhomeroom.test/waitlist' });
   assert.equal(m.subject, '@ada invited you to Book club on Homeroom');
-  assert.match(m.text, /@ada invited you to Book club, a group on Homeroom/);
+  assert.match(m.text, /@ada invited you to Book club, a private community on Homeroom/);
   assert.match(m.text, /Join the waitlist with this email address\. Once you are in, the invite will be waiting for you\./);
   assert.match(m.text, /https:\/\/onhomeroom\.test\/waitlist/, 'the link is in the text part too');
   assert.match(m.html, /Join the waitlist<\/a>/);

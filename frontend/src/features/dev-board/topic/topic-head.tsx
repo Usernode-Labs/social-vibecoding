@@ -30,7 +30,7 @@
 
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react';
+import type { FormEvent, KeyboardEvent, ReactNode, SyntheticEvent } from 'react';
 
 import { Html } from '../../../lib/html';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -189,11 +189,40 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
   );
 }
 
+/**
+ * Passing checks that are counted but not yet named (`passesFor`): opening
+ * their fold reads them (AppView._loadCheckNames), and the verdict re-renders
+ * with the names once they land. Until then the fold says so.
+ */
+function usePassNames(passesFor: number | null | undefined) {
+  const [state, setState] = useState<'idle' | 'loading' | 'failed'>('idle');
+  const onToggle = (e: SyntheticEvent<HTMLDetailsElement>) => {
+    const av = typeof window === 'undefined' ? null : (window as any).AppView;
+    if (!e.currentTarget.open || !passesFor || state === 'loading' || !av?._loadCheckNames) return;
+    setState('loading');
+    Promise.resolve(av._loadCheckNames(passesFor)).then(
+      (ok: boolean) => setState(ok ? 'idle' : 'failed'),
+      () => setState('failed'),
+    );
+  };
+  return { state, onToggle };
+}
+
+function PassNamesPending({ state }: { state: 'idle' | 'loading' | 'failed' }): ReactNode {
+  return (
+    <li className="dev-passes-pending opacity-70">
+      {state === 'failed' ? 'Could not load the passing checks. Close this and open it again to retry.' : 'Loading passing checks…'}
+    </li>
+  );
+}
+
 /** The checks verdict: its rows nest, and its passes fold away. */
 export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
-  const passList = v.passes.length ? (
+  const names = usePassNames(v.passesFor);
+  const passList = v.passes.length || v.passesFor ? (
     <ul className="mt-1 ml-1 space-y-0.5">
       {v.passes.map((r) => <CheckRowView key={r.key} r={r} />)}
+      {v.passesFor ? <PassNamesPending state={names.state} /> : null}
     </ul>
   ) : null;
   return (
@@ -206,7 +235,7 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
         </ul>
       ) : null}
       {v.foldPasses ? (
-        <details className="mt-1">
+        <details className="mt-1" onToggle={names.onToggle}>
           <summary className="cursor-pointer opacity-80">{`Show ${v.passCount ?? v.passes.length} passing checks`}</summary>
           {passList}
         </details>
@@ -412,6 +441,7 @@ function passingCount(r: LedgerRow): number {
 }
 
 function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode {
+  const names = usePassNames(r.passesFor);
   return (
     <>
       {r.text.length ? (
@@ -461,10 +491,11 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
         <span className="dev-ledger-ops">
           {(r.actions || []).map((a) => <ActionButton key={a.key} a={a} />)}
           {passingCount(r) ? (
-            <details className="dev-ledger-passes">
+            <details className="dev-ledger-passes" onToggle={names.onToggle}>
               <summary className="gc-vote-btn dev-ledger-passes-btn">{`${passingCount(r)} passing`}</summary>
               <ul className="dev-ledger-fails">
                 {(r.passes || []).map((c) => <CheckRowView key={c.key} r={c} />)}
+                {r.passesFor ? <PassNamesPending state={names.state} /> : null}
               </ul>
             </details>
           ) : null}
@@ -494,18 +525,8 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
 }
 
 function Transcript({ t }: { t: TranscriptSection }): ReactNode {
-  // "Fork this chat" is painted INSIDE the body, after its fetch, by
-  // `_transcriptActionsHtml` — so it cannot be a child's onClick. The
-  // section delegates, which is what `_renderTopicHead` bound here per
-  // paint before.
-  const onClick = (e: MouseEvent<HTMLDivElement>) => {
-    const btn = (e.target as HTMLElement).closest?.('[data-fork-chat]') as HTMLButtonElement | null;
-    if (!btn || btn.disabled) return;
-    e.preventDefault();
-    call('forkSharedChat', parseInt(btn.dataset.forkChat || '', 10), btn);
-  };
   return (
-    <div className="st-section" data-transcript-section={t.id} onClick={onClick}>
+    <div className="st-section" data-transcript-section={t.id}>
       <button
         type="button"
         className="st-section-head"
@@ -545,7 +566,10 @@ export async function readChangeDetail(item: any, owner: boolean, signal: AbortS
   const av = (window as any).AppView;
   const review = ['promoted', 'merging', 'merged'].includes(item.status) && av?.appData?.slug;
   const url = review ? `/api/apps/${av.appData.slug}/proposals/${id}` : `/api/sessions/${id}/details`;
-  const response = await fetch(`${url}${av?._demoQS?.() || ''}`, { signal });
+  // The short form: passing checks are counted, and their fold reads the
+  // names when opened (AppView._loadCheckNames, _readTopicRow).
+  const demo = av?._demoQS?.() ? '&demo=1' : '';
+  const response = await fetch(`${url}?results=failing${demo}`, { signal });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'Could not refresh this change.');
   const session = review ? payload.proposal : payload.session;
@@ -888,30 +912,30 @@ function IssueAssociations({
   );
 }
 
-/** The evidence run's state, as one strip: a failed or waived run explains itself. */
-function EvidenceStrip({ e }: { e: NonNullable<TopicBody['evidence']> }): ReactNode {
+/** The shots run's state, as one strip: a failed or waived run explains itself. */
+function ShotsStrip({ e }: { e: NonNullable<TopicBody['shots']> }): ReactNode {
   const red = e.state === 'failed' || e.state === 'stale' || e.state === 'cancelled';
   return (
-    <div className="dev-topic-evidence" data-evidence-state={e.state}>
+    <div className="dev-topic-shots" data-shots-state={e.state}>
       <span className={`dev-badge ${red ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}`}>{e.label}</span>
-      <span className="dev-topic-evidence-text">{e.sentence}</span>
+      <span className="dev-topic-shots-text">{e.sentence}</span>
     </div>
   );
 }
 
 /**
- * The evidence states that are a run still going: the picture is coming.
- * 'planned' is in this set only while it is FRESH — `evidence.notStarted`
- * (AppView._evidenceNotStarted) marks the run that has sat there past the
+ * The shots states that are a run still going: the picture is coming.
+ * 'planned' is in this set only while it is FRESH — `shots.notStarted`
+ * (AppView._shotsNotStarted) marks the run that has sat there past the
  * idle threshold, and that one is not going anywhere on its own.
  */
-const EVIDENCE_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
+const SHOTS_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 
 /**
- * The before/after: the verified evidence card (or the legacy capture
+ * The before/after: the verified shots card (or the legacy capture
  * tiles) once the run has it; until then one quiet line with the shell's
- * own spinner — no panel and no state label, because "Visual preview in
- * progress" in a box read as a verdict. A run that failed, or was waived,
+ * own spinner — no panel and no state label, because "Taking the shots"
+ * in a box read as a verdict. A run that failed, or was waived,
  * keeps its strip: that is a fact a voter weighs.
  *
  * #2601/#2558: a run that never started keeps the PANEL rather than the
@@ -920,7 +944,7 @@ const EVIDENCE_BUILDING = new Set(['planned', 'provisioning', 'exploring', 'repl
  */
 function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
   const tiles = body.actions && body.actions.visuals ? body.actions.visuals : null;
-  const ev = body.evidence || null;
+  const ev = body.shots || null;
   const notStarted = !!(ev && ev.notStarted);
   if (tiles && (!ev || ev.verified || notStarted)) {
     return (
@@ -932,15 +956,15 @@ function BeforeAfter({ body }: { body: TopicBody }): ReactNode {
     );
   }
   if (!ev || ev.verified) return null;
-  if (!notStarted && EVIDENCE_BUILDING.has(ev.state)) {
+  if (!notStarted && SHOTS_BUILDING.has(ev.state)) {
     return (
-      <p className="dev-topic-hero-evidence" data-evidence-state={ev.state}>
+      <p className="dev-topic-hero-shots" data-shots-state={ev.state}>
         <span className="dc-status-spinner-arc" aria-hidden="true"></span>
-        <span>Building before/after photos</span>
+        <span>Taking before & after shots</span>
       </p>
     );
   }
-  return <EvidenceStrip e={ev} />;
+  return <ShotsStrip e={ev} />;
 }
 
 /**
@@ -966,7 +990,7 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
   const vote = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
   const pills = vote ? all.filter((a) => a !== yesSpec && a !== noSpec) : all;
   // The tags: priority, assignee, category, and the linkage. The state
-  // chips — checks, behind main, the evidence — stay off: the steps say it.
+  // chips — checks, behind main, the shots — stay off: the steps say it.
   const badges = (card.badges || []).filter(Boolean);
   const chips = [
     ...badges.filter((b) => b.t === 'attr'),

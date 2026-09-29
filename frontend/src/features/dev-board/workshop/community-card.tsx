@@ -16,13 +16,13 @@
  *   WHAT IT IS. The app's tile and name (the header chip's, from the page's
  *   own store) and dapp.json's one-line description when it has one.
  *
- *   WHO IT IS FOR. The audience, in the words people see (Community, Group,
- *   Just you) as a chip, and for a Community or a Group WHO IS HERE: faces,
- *   the member count, and a line of this week's activity with the last
- *   fourteen days as a small bar chart (#3268; it was the hub's Members &
- *   activity card, fourth down the page). "Community", not "public":
- *   the label is the same one the Workshop tab heads its section with, so
- *   the row you tapped and the page you landed on agree about what this is.
+ *   WHO IT IS FOR. The audience, in the words people see (Public community,
+ *   Private community, Just you) as a chip, and for a public or a private
+ *   community WHO IS HERE: faces, the member count, and a line of this
+ *   week's activity with the last fourteen days as a small bar chart (#3268;
+ *   it was the hub's Members & activity card, fourth down the page). The
+ *   label is the same one the Workshop tab heads its section with, so the
+ *   row you tapped and the page you landed on agree about what this is.
  *
  *   JOIN, JOINED, INVITE. An outsider sees Join, which asks in a popup under
  *   itself (below). A member sees Joined, which is also the way out: a tap
@@ -31,8 +31,9 @@
  *   exactly whom the "+" menu offers it. This hero lists; it does not manage.
  *
  *   OPEN IT UP. Who a project is for can grow after it exists: Invite
- *   makes a Just-you project a Group, and "Open it up" makes it a
- *   Community (or "Make it a group" takes a Community back). That is the
+ *   makes a Just-you project a private community, and "Open it up" makes
+ *   it a public one (or "Make it private" takes a public community back).
+ *   That is the
  *   visibility change the settings dialog proposes, POST
  *   /api/apps/:slug/visibility-pr, offered to the same people the route
  *   lets open it (`can_manage`). It is a PROPOSAL, not a switch: dapp.json
@@ -67,7 +68,7 @@ import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronRightIcon, LockIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
-import { AppIconContent, appIconKind } from '../../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../../apps/app-card-view';
 import { swatchFor } from '../../messages/format';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 
@@ -139,7 +140,7 @@ export function approvalLine(approval: CommunityPayload['approval'] | null | und
   return `Members vote: a change merges at ${plural(required, 'yes vote', 'yes votes')} (${plural(electorate, 'active member', 'active members')}), or unopposed after a wait.`;
 }
 
-/** "Community · 12 members"; "Just you" alone, because there is one. */
+/** "Public community · 12 members"; "Just you" alone, because there is one. */
 export function audienceLine(p: Pick<CommunityPayload, 'audience' | 'audience_label' | 'member_count'>): string {
   if (p.audience === 'solo') return p.audience_label || 'Just you';
   return `${p.audience_label} · ${plural(Number(p.member_count) || 0, 'member', 'members')}`;
@@ -152,8 +153,8 @@ export function audienceLine(p: Pick<CommunityPayload, 'audience' | 'audience_la
  */
 export function audienceChangeLine(title: string | null | undefined): string {
   const t = String(title || '');
-  if (/ public$/.test(t)) return 'Opening it up to a community is up for a vote';
-  if (/private \(collaborators only\)$/.test(t)) return 'Making it a group is up for a vote';
+  if (/ public$/.test(t)) return 'Making it a public community is up for a vote';
+  if (/private \(collaborators only\)$/.test(t)) return 'Making it a private community is up for a vote';
   return 'A change to who it is for is up for a vote';
 }
 
@@ -171,9 +172,9 @@ function HeroId({ app, children }: {
 }) {
   return (
     <div className="dev-ws-hero-id">
-      <div className="app-icon-tile dev-ws-hero-tile" data-icon={appIconKind(app)} aria-hidden="true">
+      <AppIconLink slug={app.slug} name={app.name} className="app-icon-tile dev-ws-hero-tile" data-icon={appIconKind(app)}>
         <AppIconContent app={app} />
-      </div>
+      </AppIconLink>
       <div className="min-w-0">
         <h2 className="dev-ws-hero-name">{app.name}</h2>
         {children}
@@ -318,7 +319,7 @@ export function HeroActivity({ activity }: { activity: CommunityPayload['activit
 }
 
 /**
- * "Open it up" / "Make it a group": the audience change as a question under
+ * "Open it up" / "Make it private": the audience change as a question under
  * its button, the Join popup's shape. The answer opens the visibility PR;
  * the hero then re-reads and shows it as up for a vote.
  */
@@ -377,7 +378,7 @@ function AudienceChange({ slug, name, audience, onOpened }: {
     }
   };
 
-  const label = toGroup ? 'Make it a group' : 'Open it up';
+  const label = toGroup ? 'Make it private' : 'Open it up';
   return (
     <span className="dev-ws-join-anchor">
       <Button
@@ -398,10 +399,10 @@ function AudienceChange({ slug, name, audience, onOpened }: {
           ref={popRef}
           className="dev-ws-join-pop"
           role="dialog"
-          aria-label={toGroup ? `Make ${name} a group?` : `Open ${name} to a community?`}
+          aria-label={toGroup ? `Make ${name} a private community?` : `Make ${name} a public community?`}
           data-ws-audience-pop=""
         >
-          <p className="dev-ws-ask-q">{toGroup ? `Make ${name} a group?` : `Open ${name} to a community?`}</p>
+          <p className="dev-ws-ask-q">{toGroup ? `Make ${name} a private community?` : `Make ${name} a public community?`}</p>
           <p className="dev-ws-vote-sub">
             {toGroup
               ? 'Only people who are invited can see it and build it. Members vote on this first, and it applies once it merges.'
@@ -417,7 +418,7 @@ function AudienceChange({ slug, name, audience, onOpened }: {
               disabled={busy}
               onClick={() => { void propose(); }}
             >
-              {toGroup ? 'Propose making it a group' : 'Propose opening it up'}
+              {toGroup ? 'Propose making it private' : 'Propose opening it up'}
             </button>
           </div>
           <button type="button" className="dev-ws-vote-later" data-ws-audience-answer="later" onClick={() => setOpen(false)}>
@@ -543,8 +544,8 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji }: {
   const displayName = name || data.name || slug;
   const tileApp = { slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null };
 
-  // Who it is for, and who is here (#3268). A Community or a Group puts its
-  // people and its fortnight in the hero, where the page starts, instead of
+  // Who it is for, and who is here (#3268). A public or a private community
+  // puts its people and its fortnight in the hero, where the page starts, instead of
   // in a card fourth down the hub: the faces and the count lead the row the
   // actions end, and the activity line under it carries the 14-day trend.
   // Just you has nobody else to count, so its hero is as it was.

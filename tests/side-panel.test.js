@@ -1204,12 +1204,18 @@ test('the JS entry points ask the panel before they navigate', () => {
     assert.ok(upTo.indexOf('if (sidePanelTakes(target)) return;') < upTo.indexOf('window.location.hash = target'),
       `${fn} asks before it moves the address`);
   }
+  // New change is an agent session now (#2779): the agent store's own start
+  // asks the panel (sidePanelTakes) before it moves the address, hint and all.
   const IMPROVE = read('frontend/src/features/improve/improve-controller.js');
   const start = IMPROVE.slice(IMPROVE.indexOf('  startSession() {'));
   const body = start.slice(0, start.indexOf('\n  },'));
-  assert.match(body, /panel\?\.take\?\.\(`app\/\$\{encodeURIComponent\(slug\)\}\/dev\/sessions\/\$\{ref\}`,\s*\{ proposalHint: true \}\)\) return;/,
-    'New change opens the unsent change beside the app, hint and all');
-  assert.ok(body.indexOf('panel?.take?.') < body.indexOf('Improve._withApp('), 'before it navigates');
+  assert.match(body, /Improve\._startAgentSession\(\{ slug: improveStore\.get\(\)\.slug, entry: 'improve' \}\);/);
+  const AGENT = read('frontend/src/features/agent-session/store.ts');
+  const starter = AGENT.slice(AGENT.indexOf('export function startAgentSession('));
+  const startBody = starter.slice(0, starter.indexOf('\n}'));
+  assert.ok(startBody.indexOf('sidePanelTakes(') > 0
+    && startBody.indexOf('sidePanelTakes(') < startBody.indexOf('go(agentSessionAddress('),
+    'the agent session asks the panel before it navigates');
   const open = APP_JS.slice(APP_JS.indexOf('  openAppTab(slug, tab, opts) {'));
   assert.ok(open.indexOf('const inPanel = App._openAppTabInPanel(slug, tab, opts);') > 0
     && open.indexOf('App._openAppTabInPanel(') < open.indexOf('App.setChromeless(false);'),

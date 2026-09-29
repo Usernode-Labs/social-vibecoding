@@ -26,6 +26,7 @@ const appLimit = require('../services/app-limit');
 const platformLimits = require('../services/platform-limit-alerts');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
+const welcomeDm = require('../services/welcome-dm');
 const onboarding = require('../services/onboarding');
 const usernames = require('../services/usernames');
 // The CSV writer the topochain admin's two exports share: quoting plus the
@@ -992,6 +993,47 @@ function adminRoutes(config) {
       res.json(await appLimit.adminPayload(pool, config));
     } catch (err) {
       log.error('admin', 'Update app limit failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Welcome messages (#admin/welcome-dm) ──────────────────
+  //
+  // Who greets somebody just let in, in a group with them, and what the
+  // first message says (services/welcome-dm.js). Read open to view-only
+  // admins; the write is requireAdminWrite. `members` is a list of
+  // usernames in order — the first sends the message and owns the group.
+  router.get('/api/admin/welcome-dm', async (_req, res) => {
+    try {
+      res.json(await welcomeDm.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Read welcome messages failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The typeahead behind each "People in the group" row. Only accounts the
+  // PUT below would accept are suggested. Admin-only and debounced by the
+  // client, like /api/admin/support/search.
+  router.get('/api/admin/welcome-dm/people', async (req, res) => {
+    try {
+      res.json({ users: await welcomeDm.searchPeople(pool, req.query.q) });
+    } catch (err) {
+      log.error('admin', 'Welcome messages people search failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/welcome-dm', requireAdminWrite, async (req, res) => {
+    try {
+      const result = await welcomeDm.writeSettings(pool, req.body || {}, req.user.id);
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      log.info('admin', 'Welcome messages updated', {
+        by: req.user.username, patch: Object.keys(req.body || {}),
+      });
+      res.json(await welcomeDm.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Update welcome messages failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

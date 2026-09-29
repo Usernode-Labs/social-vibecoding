@@ -23,7 +23,14 @@ const live = require('../src/services/homeroom-bot-live');
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
-const settle = () => new Promise((r) => setTimeout(r, 20));
+// PostgreSQL work may outlast a fixed sleep, especially in the full suite.
+async function waitFor(check, message) {
+  const deadline = Date.now() + 5000;
+  while (!await check()) {
+    assert.ok(Date.now() < deadline, message);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
 
 function deps() {
   return {
@@ -115,7 +122,7 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
 
     const first = await bot.drainBuilds(pool, {}, deps());
     assert.equal(first.started, 2);
-    await settle();
+    await waitFor(() => gates.has('todo#1') && gates.has('notes#3'), 'both claimed builds should start');
     assert.deepEqual(builtFor.sort(), ['notes#3', 'todo#1'], 'todo#2 waits behind todo#1; the paused app waits');
     assert.equal((await row(todo1)).build_attempts, 1);
     assert.equal((await row(todo2)).build_at, null);
@@ -125,14 +132,14 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     assert.equal(full.started, 0, 'both slots are taken');
 
     gates.get('todo#1')();
-    await settle();
+    await waitFor(() => !bot._buildsInFlightForTests().includes(todo1), 'the completed build should release its slot');
     const done = await row(todo1);
     assert.equal(done.build_ok, true);
     assert.equal(done.build_branch, 'dev/b-todo-1');
 
     const next = await bot.drainBuilds(pool, {}, deps());
     assert.equal(next.started, 1, 'todo is free again');
-    await settle();
+    await waitFor(() => gates.has('todo#2'), 'the next build should start after its app is free');
     assert.ok(builtFor.includes('todo#2'));
     gates.get('notes#3')();
     gates.get('todo#2')();

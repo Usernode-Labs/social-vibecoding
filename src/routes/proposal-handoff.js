@@ -17,7 +17,7 @@ const summaryFreshness = require('../services/summary-freshness');
 const branchNames = require('../services/branch-names');
 const externalAgentHead = require('../services/external-agent-head');
 const topicAttrs = require('../services/topic-attributes');
-const visualEvidencePlan = require('../services/visual-evidence-plan');
+const visibleChangesContract = require('../services/visible-changes');
 // The connector-error → HTTP status map. It lives in routes/dev-flow.js
 // because tests/dev-flow-routes.test.js scrapes the services' emitted codes
 // against it in both directions; importing it here rather than restating it is
@@ -123,43 +123,43 @@ function parseBodySessionId(value, label) {
   return value;
 }
 
-function parseVisualEvidence(value) {
+function parseVisibleChanges(value) {
   if (value === undefined) return undefined;
   try {
-    return visualEvidencePlan.parseIntent(value);
+    return visibleChangesContract.parseIntent(value);
   } catch (err) {
     throw new ValidationError(err.message);
   }
 }
 
-function visualEvidenceResponse(applied, session = {}) {
+function shotsResponse(applied, session = {}) {
   const raw = applied || {
-    state: session.visual_evidence_state || null,
-    required: session.visual_evidence_detail?.required === true,
+    state: session.shots_state || null,
+    required: session.shots_detail?.required === true,
     accepted: false,
     rejected: false,
   };
-  if (typeof proposalUpdate.visualEvidenceSubmissionFields === 'function') {
-    return proposalUpdate.visualEvidenceSubmissionFields(raw);
+  if (typeof proposalUpdate.visibleChangesSubmissionFields === 'function') {
+    return proposalUpdate.visibleChangesSubmissionFields(raw);
   }
   return {
-    visualEvidenceState: raw.state || null,
-    visualEvidenceAccepted: raw.accepted === true,
-    visualEvidenceRejected: raw.rejected === true,
-    visualEvidenceRequired: raw.required === true,
-    visualEvidenceNextStep: raw.nextStep || 'none',
+    shotsState: raw.state || null,
+    visibleChangesAccepted: raw.accepted === true,
+    visibleChangesRejected: raw.rejected === true,
+    shotsRequired: raw.required === true,
+    shotsNextStep: raw.nextStep || 'none',
   };
 }
 
-async function applyVisualEvidenceRevision(args) {
-  if (typeof proposalUpdate.applyVisualEvidenceRevision === 'function') {
-    return proposalUpdate.applyVisualEvidenceRevision(args);
+async function applyShotsRevision(args) {
+  if (typeof proposalUpdate.applyShotsRevision === 'function') {
+    return proposalUpdate.applyShotsRevision(args);
   }
   return {
-    state: args.session?.visual_evidence_state || null,
-    required: args.session?.visual_evidence_detail?.required === true,
+    state: args.session?.shots_state || null,
+    required: args.session?.shots_detail?.required === true,
     accepted: false,
-    rejected: args.visualEvidence !== undefined,
+    rejected: args.visibleChanges !== undefined,
     changed: false,
   };
 }
@@ -267,7 +267,7 @@ function parseContextBody(body) {
 }
 
 function parseBuildBody(body) {
-  exactKeys(body, ['schemaVersion', 'headSha', 'history', 'spec', 'tests', 'visualEvidence'], 'body');
+  exactKeys(body, ['schemaVersion', 'headSha', 'history', 'spec', 'tests', 'visibleChanges', 'visualEvidence'], 'body');
   if (body.schemaVersion !== 1) throw new ValidationError('schemaVersion must be 1');
   return {
     headSha: parseSha(body.headSha, 'headSha'),
@@ -276,7 +276,7 @@ function parseBuildBody(body) {
       label: 'spec', min: 1, max: MAX_SPEC_BYTES,
     }),
     tests: parseTests(body.tests),
-    visualEvidence: parseVisualEvidence(body.visualEvidence),
+    visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)),
   };
 }
 
@@ -386,7 +386,7 @@ function requireCliMiddleware(req, res, next) {
 // anything. Everything else is the same field with the same cap, because the
 // two calls carry the same work — they differ only in where it lands.
 function parseShareInProgressBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'externalAgent', 'visualEvidence'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'externalAgent', 'visibleChanges', 'visualEvidence'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
@@ -426,7 +426,7 @@ function parseShareInProgressBody(body) {
     title,
     description,
     linkedIssues: body.linkedIssues == null ? null : body.linkedIssues,
-    visualEvidence: parseVisualEvidence(body.visualEvidence),
+    visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)),
     testing: {
       ...(body.testingPaths != null ? { testingPaths: body.testingPaths } : {}),
       ...(body.testingSteps != null ? { testingSteps: body.testingSteps } : {}),
@@ -435,7 +435,7 @@ function parseShareInProgressBody(body) {
 }
 
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'recheck', 'visualEvidence'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
@@ -490,7 +490,7 @@ function parseUpdateFromForkBody(body) {
   const testing = require('../services/testing-notes').parseSubmitted(body);
   return { branch, forkRepo, expectedHeadSha, testing, title,
     description,
-    recheck, linkedIssues, visualEvidence: parseVisualEvidence(body.visualEvidence) };
+    recheck, linkedIssues, visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)) };
 }
 
 function repoCoordinates(app) {
@@ -872,7 +872,7 @@ function proposalHandoffRoutes(config) {
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,
-          visualEvidence: input.visualEvidence,
+          visibleChanges: input.visibleChanges,
           title: input.title,
           description: input.description,
           recheck: input.recheck,
@@ -1023,7 +1023,7 @@ function proposalHandoffRoutes(config) {
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,
-          visualEvidence: input.visualEvidence,
+          visibleChanges: input.visibleChanges,
           title: input.title,
           description: input.description,
           linkedIssues: input.linkedIssues,
@@ -1572,11 +1572,11 @@ function proposalHandoffRoutes(config) {
         if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
           return res.status(404).json({ error: 'Active handoff session not found' });
         }
-        let evidenceApplied = null;
-        if (currentCheckedHead(session) === input.headSha && input.visualEvidence !== undefined) {
-          evidenceApplied = await applyVisualEvidenceRevision({
+        let shotsApplied = null;
+        if (currentCheckedHead(session) === input.headSha && input.visibleChanges !== undefined) {
+          shotsApplied = await applyShotsRevision({
             pool, config, session, headSha: input.headSha,
-            visualEvidence: input.visualEvidence,
+            visibleChanges: input.visibleChanges,
           });
         }
         if (revisionKind === 'proposal'
@@ -1585,7 +1585,7 @@ function proposalHandoffRoutes(config) {
           const status = publicSessionStatus(session);
           return res.status(status.revisionState === 'ready' ? 200 : 202).json({
             ...status,
-            ...visualEvidenceResponse(evidenceApplied, session),
+            ...shotsResponse(shotsApplied, session),
           });
         }
         const localPipelineBusy = hasInFlightHandoffPipeline(session.id);
@@ -1694,9 +1694,9 @@ function proposalHandoffRoutes(config) {
             if (!adopted.rowCount) {
               return res.status(409).json({ error: 'session_state_changed' });
             }
-            evidenceApplied = evidenceApplied || await applyVisualEvidenceRevision({
+            shotsApplied = shotsApplied || await applyShotsRevision({
               pool, config, session, headSha: input.headSha,
-              visualEvidence: input.visualEvidence,
+              visibleChanges: input.visibleChanges,
               headChanged: currentCheckedHead(session) !== input.headSha,
             });
 
@@ -1722,7 +1722,7 @@ function proposalHandoffRoutes(config) {
               revisionState: 'deploying',
               sessionId: Number(session.id),
               headSha: input.headSha,
-              ...visualEvidenceResponse(evidenceApplied, session),
+              ...shotsResponse(shotsApplied, session),
               webPath: changeHashPath(session.app_slug, session.id),
             });
           } finally {
@@ -1811,9 +1811,9 @@ function proposalHandoffRoutes(config) {
           if (!adopted.rowCount) {
             return res.status(409).json({ error: 'session_state_changed' });
           }
-          evidenceApplied = evidenceApplied || await applyVisualEvidenceRevision({
+          shotsApplied = shotsApplied || await applyShotsRevision({
             pool, config, session, headSha: input.headSha,
-            visualEvidence: input.visualEvidence,
+            visibleChanges: input.visibleChanges,
             headChanged: currentCheckedHead(session) !== input.headSha,
           });
           const pending = await visuals.setChecksPending(pool, session.id, input.headSha, 'building', 'commit-push');
@@ -1842,7 +1842,7 @@ function proposalHandoffRoutes(config) {
             status: 'deploying',
             sessionId: Number(session.id),
             headSha: input.headSha,
-            ...visualEvidenceResponse(evidenceApplied, session),
+            ...shotsResponse(shotsApplied, session),
             webPath: changeHashPath(session.app_slug, session.id),
           });
         } finally {
@@ -1978,7 +1978,7 @@ module.exports = {
   parseStartBody,
   parseContextBody,
   parseBuildBody,
-  parseVisualEvidence,
+  parseVisibleChanges,
   parseCommitUploadBody,
   parseUpdateFromForkBody,
   parseSessionId,

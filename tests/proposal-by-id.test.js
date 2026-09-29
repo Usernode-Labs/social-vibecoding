@@ -220,3 +220,26 @@ test('the canonical change lookup includes underway rows behind an owner-or-shar
   assert.match(q.sql, /cs\.shared_at/);
   assert.doesNotMatch(q.sql, /cs\.\*|cs\.spec_md|cc_session_id/);
 });
+
+test('?results=failing: the proposal page counts its passing checks; without it every result is sent', async () => {
+  // The page's own read (topic-head.tsx readChangeDetail, AppView._readTopicRow)
+  // asks for the short form, and the passing checks' fold reads the rest when
+  // opened (tests/item-page-reads.test.js). On production a proposal's row was
+  // 265 KB, 255 KB of it the names of checks that passed.
+  const results = [
+    ...Array.from({ length: 12 }, (_, i) => ({ name: `ok ${i}`, status: 'pass' })),
+    { name: 'broken', status: 'fail' },
+  ];
+  const row = { id: 4242, pr_number: 88, status: 'promoted', test_results: results };
+  const { routes } = loadVotes({ row });
+  const short = await callById(routes, { id: 4242, query: { results: 'failing' } });
+  assert.equal(short.statusCode, 200);
+  assert.deepEqual(short.payload.proposal.test_results.map((r) => r.name), ['broken']);
+  assert.equal(short.payload.proposal.test_results_omitted, 12);
+  assert.equal(short.payload.proposal.pr_number, 88, 'the rest of the row is untouched');
+
+  const { routes: again } = loadVotes({ row: { ...row, test_results: results } });
+  const whole = await callById(again, { id: 4242 });
+  assert.equal(whole.payload.proposal.test_results.length, 13);
+  assert.ok(!('test_results_omitted' in whole.payload.proposal));
+});

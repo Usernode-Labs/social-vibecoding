@@ -142,7 +142,7 @@ async function threadHarnessFor(pool, sessionId, threadId) {
 // consume a paid provider request.
 //
 // `harness` picks the CLI (#3296). The default, 'codex', is what every caller
-// that predates harnesses gets, so the Homeroom bot and visual evidence keep
+// that predates harnesses gets, so the Homeroom bot and before & after shots keep
 // running exactly as before. 'auto' asks the platform's per-model map
 // (config.openrouterModelHarnesses); the dev chat's scout and build use it.
 async function resolveCodexRuntimeContext({

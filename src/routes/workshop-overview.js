@@ -512,4 +512,5 @@ module.exports = {
   workshopOverviewRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
   NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, DEMO_NEEDS_FEED, withDemoNeedsFeed,
+  MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE,
 };
