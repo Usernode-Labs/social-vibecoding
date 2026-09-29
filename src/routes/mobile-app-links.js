@@ -23,16 +23,13 @@ const appleAssociation = {
 
 function mobileAppLinkRoutes() {
   const router = Router();
-  for (const [path, document] of [
-    ['/.well-known/assetlinks.json', assetLinks],
-    ['/.well-known/apple-app-site-association', appleAssociation],
-  ]) {
-    router.get(path, (_req, res) => {
-      res.set('Cache-Control', 'public, max-age=3600');
-      res.set('X-Content-Type-Options', 'nosniff');
-      res.json(document);
-    });
-  }
+  const serve = document => (_req, res) => {
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.json(document);
+  };
+  router.get('/.well-known/assetlinks.json', serve(assetLinks));
+  router.get('/.well-known/apple-app-site-association', serve(appleAssociation));
   return router;
 }
 

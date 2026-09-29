@@ -6086,6 +6086,22 @@
       "classicPath": "#apps"
     },
     {
+      "source": "src/routes/mobile-app-links.js",
+      "method": "GET",
+      "path": "/.well-known/assetlinks.json",
+      "expression": null,
+      "status": "exempt",
+      "reason": "protocol discovery metadata"
+    },
+    {
+      "source": "src/routes/mobile-app-links.js",
+      "method": "GET",
+      "path": "/.well-known/apple-app-site-association",
+      "expression": null,
+      "status": "exempt",
+      "reason": "protocol discovery metadata"
+    },
+    {
       "source": "src/routes/moderation.js",
       "method": "POST",
       "path": "/api/reports",
