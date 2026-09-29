@@ -215,6 +215,37 @@ test('a good spec carries no note; a failed one says why the build worked from t
   assert.equal(b.specNote, 'no spec (the spec turn ended on an API error); the build worked from the plan');
 });
 
+test('the build session is linked to its run before any turn runs, so a restart can find it (#3401)', async () => {
+  const h = harness();
+  const seen = [];
+  h.deps.worker.ensureWorker = async () => { seen.push('worker'); return 'usernode-worker-5001'; };
+  const out = await live.buildAndPropose({
+    pool: h.pool, deps: h.deps, ...ARGS, propose: false, onSession: async (session) => { seen.push(`linked:${session.id}`); },
+  });
+  assert.equal(out.ok, true);
+  assert.deepEqual(seen, ['linked:5001', 'worker'], 'linked first');
+
+  const broken = harness();
+  const b = await live.buildAndPropose({
+    pool: broken.pool, deps: broken.deps, ...ARGS, propose: false, onSession: async () => { throw new Error('db down'); },
+  });
+  assert.equal(b.ok, true, 'a failed link does not stop the build');
+});
+
+test('a spec a recovered spec turn wrote is built from as it is: no second spec turn (#3401)', async () => {
+  const h = harness();
+  const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, onSpec: h.onSpec, presetSpec: SPEC });
+  assert.deepEqual(h.calls.order, ['clear:5001', 'exec:build'], 'no spec turn, and nothing posted again');
+  assert.ok(h.calls.prompts.build.includes(`==== SPEC (written for this request just before this build; authoritative for what to build) ====\n\n${SPEC}\n\n==== END SPEC ====`));
+  assert.equal(out.specMd, SPEC, 'the run still records the spec it was built from');
+});
+
+test('readSpec reads a spec turn\'s message the way the build does', () => {
+  assert.deepEqual(live.readSpec(`Writing it now.\n${SPEC}`), { ok: true, specMd: SPEC });
+  assert.deepEqual(live.readSpec('BLOCKED: no such screen'), { ok: false, blocked: 'no such screen', error: 'blocked: no such screen' });
+  assert.deepEqual(live.readSpec('  '), { ok: false, error: 'the spec turn returned nothing' });
+});
+
 test('a shadow build writes its spec too, and posts it nowhere', async () => {
   const h = harness();
   const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS, propose: false });
@@ -457,6 +488,16 @@ test('a shadow build records a failed spec on its run, and the platform gets dou
   outcome = { ok: true, sessionId: 6003, branchName: 'dev/c', sha: 'd'.repeat(40), commits: 1, costUsd: 0.02, specMd: SPEC };
   await bot.runQueuedBuild(pool, {}, { bot: BOT, claim: { id: 902, app_id: 9, issue_number: 14, build_note: 'x' }, settings, deps });
   assert.equal(record().params[5], null, 'a build with its spec records no note');
+
+  let passed;
+  live.buildAndPropose = async (args) => { passed = args; await args.onSession({ id: 6100 }); return outcome; };
+  outcome = { ok: true, sessionId: 6100, branchName: 'dev/d', sha: 'e'.repeat(40), commits: 1, costUsd: 0.02, specMd: SPEC };
+  await bot.runQueuedBuild(pool, {}, {
+    bot: BOT, claim: { id: 903, app_id: 9, issue_number: 15, build_note: 'x', build_spec_md: SPEC }, settings, deps,
+  });
+  assert.equal(passed.presetSpec, SPEC, 'a run whose spec a recovered spec turn kept builds from it (#3401)');
+  const link = queries.find((q) => /SET build_session_id = \$2 WHERE id = \$1/.test(q.sql));
+  assert.deepEqual(link.params, [903, 6100], 'the session is linked to the run as soon as it exists');
 
   assert.deepEqual(bot.buildBudgets(apps[10], {}, 60_000), { turnBudgetMs: 120_000, specBudgetMs: 2 * live.SPEC_TURN_MAX_MS });
   assert.deepEqual(bot.buildBudgets(APP, {}, 60_000), { turnBudgetMs: 60_000, specBudgetMs: live.SPEC_TURN_MAX_MS });
