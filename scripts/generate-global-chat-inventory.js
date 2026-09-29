@@ -89,7 +89,7 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
   {
     matches: (route) => route.source === 'src/routes/sessions.js' && route.method === 'POST'
       && ['/api/sessions/:id/fork', '/api/sessions/:id/clone-headless'].includes(route.path),
-    reason: 'retired for people with classic sessions (#2779): a fork answers 410, and a clone is the hosted connector\'s alone',
+    reason: 'retired with classic dev sessions (#2779): a fork answers 410, and cloning a run is left to the hosted connector',
   },
   {
     matches: (route) => route.source === 'server.js'

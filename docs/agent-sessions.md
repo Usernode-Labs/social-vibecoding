@@ -484,9 +484,9 @@ The Mayor uses the normal per-user LLM budget instead of the monthly cap.
 **Side by side**
 
 - Messages → Agents shows agent-session rows for users with the agent-sessions flag on, and Global Chat rows for users with Global Chat on. A user with both sees both, each labelled.
-- The `agentsOn = parityReady && enabled` gate stays as the gate for Global Chat rows only. Agent-session rows get their own gate on `App.user.agentSessionsEnabled`.
+- The `agentsOn = parityReady && enabled` gate stays as the gate for Global Chat rows only. Agent-session rows get their own gate on `App.user.agentSessionsEnabled` (retired with the flag in stages 3 and 4: every viewer has them).
 - `#chat/<id>`, Global Chat's settings section and `/api/global-chat/*` do not change.
-- Global Chat's “start development” handoff keeps creating a classic session. Pointing it at agent sessions is out of v1.
+- Global Chat's “start development” handoff keeps creating a classic session. Pointing it at agent sessions is out of v1. (Done in stages 3 and 4: it opens an unsent agent session with the task.)
 
 **Existing Global Chat threads** stay where they are, for as long as Global Chat does.
 

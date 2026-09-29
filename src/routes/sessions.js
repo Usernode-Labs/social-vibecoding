@@ -6615,18 +6615,6 @@ function buildHeadlessFollowUpQuickReplies(src) {
   return sanitizeQuickReplies({ replies });
 }
 
-// The fork follow-up's TEXT lives in services/transcript-share.js
-// (buildForkFollowUpMessage) so the staging fixture in db/migrate.js can seed
-// the identical copy instead of a hand-written duplicate that drifts. Only the
-// pill sanitising stays here, since sanitizeQuickReplies is route-local.
-//
-// Built on CALL, not at module load: sanitizeQuickReplies reads
-// QR_MAX_REPLIES, a `const` declared further down this file, so evaluating
-// this at load time hits its temporal dead zone and throws on require.
-function buildForkFollowUpQuickReplies() {
-  return sanitizeQuickReplies({ replies: [...transcriptShare.FORK_FOLLOWUP_REPLIES] });
-}
-
 // The unattended-mode addendum appended to the Mayor system prompt for
 // both headless phases. Factored out so the boot-time resume path
 // (resumeHeadlessRuns) can rebuild the exact same prompt.

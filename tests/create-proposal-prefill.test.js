@@ -135,3 +135,21 @@ test('createPrForIssue: without the agent-session controller, the address still 
   assert.equal(sandbox.location.hash, '#agent/new');
   assertNoClassicSession(calls);
 });
+
+// A finished auto-solve run's "Start work" (#2779): an agent session on the
+// run's request, by the number the card passes, since the request it was
+// drawn from need not be in the board's cache.
+test('startFromAutoSession: starts on the request the card names, cached or not', () => {
+  const { AppView, calls } = makeHarness();
+  AppView._ghIssues = [];
+
+  AppView.startFromAutoSession(90, 5);
+  assert.deepEqual(calls.started, [{ slug: 'test-app', issueNumber: 5, entry: 'issue' }]);
+
+  calls.started.length = 0;
+  AppView._ghIssues = [{ ...ISSUE, headless: { sessionId: 90 } }];
+  AppView.startFromAutoSession(90);
+  assert.deepEqual(calls.started, [{ slug: 'test-app', issueNumber: 5, entry: 'issue', issueTitle: 'Fix the thing' }],
+    'an older card without the number finds it by the run');
+  assertNoClassicSession(calls);
+});

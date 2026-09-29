@@ -7344,7 +7344,7 @@
       "path": "/api/sessions/:id/clone-headless",
       "expression": null,
       "status": "exempt",
-      "reason": "retired for people with classic sessions (#2779): a fork answers 410, and a clone is the hosted connector's alone"
+      "reason": "retired with classic dev sessions (#2779): a fork answers 410, and cloning a run is left to the hosted connector"
     },
     {
       "source": "src/routes/sessions.js",
@@ -7607,7 +7607,7 @@
       "path": "/api/sessions/:id/fork",
       "expression": null,
       "status": "exempt",
-      "reason": "retired for people with classic sessions (#2779): a fork answers 410, and a clone is the hosted connector's alone"
+      "reason": "retired with classic dev sessions (#2779): a fork answers 410, and cloning a run is left to the hosted connector"
     },
     {
       "source": "src/routes/sessions.js",

@@ -6219,10 +6219,6 @@ const App = {
     window.UsernodeReact?.globalChat?.deactivate?.();
   },
 
-  // #2779: an agent session's own screen. The same pair as Global Chat's:
-  // the React store (features/agent-session) loads the conversation, and
-  // this router owns the screen swap and chrome. The store retitles the bar
-  // with the conversation's title once it has it.
   // #2779: /app/<slug>/dev/sessions/new was the classic unsent-change
   // screen (#2241). Classic sessions are no longer created, so that address
   // — a bookmark, Back, a link an older page wrote — opens an unsent agent
@@ -6230,20 +6226,36 @@ const App = {
   // history entry is REPLACED, so Back does not land on the old address and
   // bounce straight forward again. The side panel's own document keeps its
   // `agent/new`, the one form of that address its route table knows.
+  //
+  // An unsent conversation already on screen at that address would not be
+  // routed again, and the hint would wait for the next one; the controller's
+  // own start applies it in place instead (it re-routes the same address).
   openNewChangeAsAgentSession(slug) {
     const agentSession = window.UsernodeReact?.agentSession;
-    agentSession?.prepareDraft?.(slug ? { slug, entry: 'app' } : null);
+    const hint = slug ? { slug, entry: 'app' } : null;
     const next = App.embeddedPanel ? '#agent/new' : '#messages/agent/new';
+    const showingDraft = !App.embeddedPanel && !!agentSession?.isOpen?.()
+      && agentSession?.currentId?.() === 'new';
     try {
       // From the root, not beside the clean /app/<slug>/… path it came in on.
       history.replaceState(history.state, '', App._rootUrl(next));
     } catch (_) {
+      agentSession?.prepareDraft?.(hint);
       window.location.hash = next;
       return;
     }
+    if (showingDraft && typeof agentSession.start === 'function') {
+      agentSession.start(hint);
+      return;
+    }
+    agentSession?.prepareDraft?.(hint);
     App.restoreFromHash();
   },
 
+  // #2779: an agent session's own screen. The same pair as Global Chat's:
+  // the React store (features/agent-session) loads the conversation, and
+  // this router owns the screen swap and chrome. The store retitles the bar
+  // with the conversation's title once it has it.
   navigateToAgentSession(id, options = {}) {
     const agentSession = window.UsernodeReact?.agentSession;
     if (App._inAgentSession && agentSession?.isOpen?.() && agentSession?.currentId?.() === id) {

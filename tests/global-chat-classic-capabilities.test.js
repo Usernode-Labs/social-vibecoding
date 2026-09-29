@@ -312,6 +312,9 @@ test('development handoff opens an unsent agent session with the task, creating 
   assert.deepEqual([...definition.inputSchema.required].sort(), [
     'appSlug', 'issueNumber', 'task',
   ]);
+  // The confirmation card's "Open in Classic" goes to the app: the bare
+  // unsent-conversation address would drop the task and the app.
+  assert.equal(definition.classicPath({ input: { appSlug: 'demo' } }), '#app/demo/workshop');
 
   // Classic sessions are no longer created, so the capability never calls
   // the create route: the Mayor's start_change is the only caller it takes.

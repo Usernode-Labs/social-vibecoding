@@ -293,9 +293,9 @@ function developmentPreview(kind, input) {
     target: kind === 'start' ? input.appSlug : `Session ${input.sessionId}`,
     task: String(input.task || '').trim(),
     ...(input.issueNumber ? { issue: `#${input.issueNumber}` } : {}),
-    developmentAI: kind === 'start'
-      ? 'Opens an agent session with this task ready to send'
-      : 'Use the configured Development AI model and reasoning effort',
+    ...(kind === 'start'
+      ? { opens: 'An agent session, with this task ready to send' }
+      : { developmentAI: 'Use the configured Development AI model and reasoning effort' }),
   };
 }
 
@@ -387,7 +387,10 @@ function developmentStartDefinition(route) {
     risk: route.risk,
     confirmation: route.confirmation,
     confirmationPreview: (input) => developmentPreview('start', input),
-    classicPath: () => '#messages/agent/new',
+    // The confirmation card's "Open in Classic" goes to the app, as before:
+    // the bare #messages/agent/new would open a conversation without the
+    // task or the app, which only the confirmed hand-off carries.
+    classicPath: ({ input }) => `#app/${encodeURIComponent(input.appSlug)}/workshop`,
     mobileSupported: true,
     sensitiveFields: [],
     handler: async (input) => {

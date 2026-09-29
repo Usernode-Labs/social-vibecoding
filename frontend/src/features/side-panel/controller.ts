@@ -82,8 +82,13 @@ export interface PanelHint {
    * What an unsent agent session (`agent/new`, #2779) is about: the app, the
    * request or the proposal New change was pressed on. The session is
    * created with it on the first message, in the panel's own document.
+   * `message` and `handoff` are the screen's alone, like the title: the box's
+   * first message and the "Build with" tab it opens on.
    */
-  agentHint?: { slug?: string; issueNumber?: number; proposalId?: number; entry?: string; issueTitle?: string } | null;
+  agentHint?: {
+    slug?: string; issueNumber?: number; proposalId?: number; entry?: string; issueTitle?: string;
+    message?: string; handoff?: 'claude-code' | 'codex';
+  } | null;
 }
 
 interface AppLike {

@@ -16043,7 +16043,7 @@ const AppView = {
       return {
         key: 'primary', cls: 'gc-vote-btn', label: 'Start work',
         title: `An auto-solve run finished here (${outcomeNote}). Start an agent session on this request`,
-        act: { fn: 'startFromAutoSession', args: [h.sessionId] },
+        act: { fn: 'startFromAutoSession', args: [h.sessionId, n] },
       };
     }
     // #287: strictly per-viewer, and reverts to "Create proposal" once the
@@ -16052,12 +16052,12 @@ const AppView = {
     return issue.myPrSessionId
       ? {
         key: 'primary', cls: 'gc-vote-btn', label: 'Start more work',
-        title: 'Start another dev chat for this issue',
+        title: 'Start another agent session on this request',
         act: { fn: 'chooseIssueWork', args: [n] },
       }
       : {
         key: 'primary', cls: 'gc-vote-btn', label: 'Start work',
-        title: 'Start a dev chat to solve this issue',
+        title: 'Start an agent session on this request',
         act: { fn: 'chooseIssueWork', args: [n] },
       };
   },
@@ -17027,14 +17027,18 @@ const AppView = {
   // /api/sessions/:id/clone-headless). Classic sessions are no longer
   // created (#2779), so it starts an agent session on the run's request
   // instead, exactly as Start work does; the run itself stays on the request.
-  startFromAutoSession(headlessSessionId) {
-    const issue = (AppView._ghIssues || []).find((i) => i.headless && i.headless.sessionId === headlessSessionId);
-    if (issue) {
-      AppView.createPrForIssue(issue.number);
+  //
+  // The card passes the request's number, because the request it was drawn
+  // from need not be in the board's cache (the topic head's is its own).
+  startFromAutoSession(headlessSessionId, issueNumber) {
+    const number = Number.isInteger(issueNumber) && issueNumber > 0 ? issueNumber
+      : ((AppView._ghIssues || []).find((i) => i.headless && i.headless.sessionId === headlessSessionId) || {}).number;
+    if (number) {
+      AppView.createPrForIssue(number);
       return;
     }
     const slug = AppView.appData && AppView.appData.slug;
-    if (slug) AppView._startAgentSession({ slug, entry: 'issue' });
+    if (slug) AppView._startAgentSession({ slug, entry: 'app' });
   },
 
   // #172: "Go to session" — the viewer already cloned this auto session,

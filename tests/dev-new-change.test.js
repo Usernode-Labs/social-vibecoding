@@ -338,6 +338,30 @@ test('the old address opens an unsent agent session on that app, in place of its
   assert.deepEqual(routed.at(-1), ['messages', null, null, { kind: 'agent', id: 'new' }]);
 });
 
+test('an unsent conversation already on screen takes the old address\'s hint in place (#2779)', () => {
+  // The route alone would change nothing there, and the hint would wait for
+  // the next unsent conversation; the controller's own start applies it.
+  const { App, context, location, urls } = loadApp();
+  const started = [];
+  const prepared = [];
+  context.window.UsernodeReact = {
+    agentSession: {
+      isOpen: () => true,
+      currentId: () => 'new',
+      start: (hint) => { started.push(plain(hint)); },
+      prepareDraft: (hint) => { prepared.push(plain(hint)); },
+    },
+  };
+  context.window.matchMedia = () => ({ matches: true });
+  App.navigateToApp = async () => { throw new Error('the classic screen must not open'); };
+  App.navigateToMessages = () => {};
+  location.href = '/app/recipe-box/dev/sessions/new';
+  App.restoreFromHash();
+  assert.deepEqual(started, [{ slug: 'recipe-box', entry: 'app' }]);
+  assert.deepEqual(prepared, [], 'start carries the hint; nothing is left pending');
+  assert.deepEqual(plain(urls[0]), ['replace', '/#messages/agent/new']);
+});
+
 // ── 2. the entry points ───────────────────────────────────────────────
 
 test('New change on an app opens an agent session and creates nothing', () => {
