@@ -416,7 +416,7 @@ const PROPOSALS_SECTIONS = [
 
 /**
  * "Your proposals": every proposal the viewer has started, grouped into up
- * to four sections in a fixed order, from GET /api/me/proposals. A bucket
+ * to four sections in a fixed order, from GET /api/me/proposal-history. A bucket
  * with no rows is left out of the result entirely, the way an empty
  * Workshop section is never rendered. `loaded: false` is a read that has
  * not answered yet, distinct from a real "you have started nothing".

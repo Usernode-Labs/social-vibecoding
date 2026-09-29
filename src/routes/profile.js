@@ -253,7 +253,7 @@ function withDemoSummary(summary, selfApp, now = Date.now()) {
   };
 }
 
-// ── GET /api/me/proposals ──────────────────────────────────────────────
+// ── GET /api/me/proposal-history ────────────────────────────────────────
 //
 // "Your proposals" on Me: every proposal the viewer has ever started,
 // across every project, grouped by where it stands. Scoped to cs.user_id,
@@ -1070,12 +1070,12 @@ function profileRoutes(config) {
     }
   });
 
-  // ── GET /api/me/proposals ────────────────────────────────────────────
+  // ── GET /api/me/proposal-history ─────────────────────────────────────
   //
   // "Your proposals" screen: every proposal the viewer has started, in up
   // to four buckets (openForVote, inProgress, merged, closed). See
   // MY_PROPOSALS_SQL above for how each bucket is read and capped.
-  router.get('/api/me/proposals', requireUser, async (req, res) => {
+  router.get('/api/me/proposal-history', requireUser, async (req, res) => {
     try {
       const { rows } = await pool.query(MY_PROPOSALS_SQL, [req.user.id, PROPOSALS_PER_BUCKET]);
       let { proposals } = shapeProposals(rows);

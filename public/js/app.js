@@ -4035,6 +4035,7 @@ const App = {
         else if (App._inAgentSession) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
         else if (App._inWorkshop) App.navigateHome();
+        else if (App._inProfileProposals) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -4062,7 +4063,8 @@ const App = {
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings || App._inBrowse
           || App._inGlobalChat || App._inAgentSession
-          || App._inMessages || App._inWorkshop) {
+          || App._inMessages || App._inWorkshop
+          || App._inProfileProposals) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -5740,6 +5742,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inMessages) App._exitMessages();
+    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('workshop-screen');
     App._inWorkshop = true;
     // Loads into the still-hidden root: the island renders nothing remote
