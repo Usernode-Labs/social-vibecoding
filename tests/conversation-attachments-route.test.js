@@ -269,7 +269,7 @@ test('?demo=1 never bypasses the real path for /view or other conversations', as
 
 // ── Admin evidence (reported messages) ──────────────────────────────
 
-test('admin evidence routes survive a non-Latin-1 filename too', async () => {
+test('admin shots routes survive a non-Latin-1 filename too', async () => {
   const seen = [];
   poolQueryHandler = async (sql, params) => {
     seen.push({ sql, params });
@@ -306,7 +306,7 @@ test('admin evidence routes survive a non-Latin-1 filename too', async () => {
   }
 });
 
-test('admin evidence routes stay admin-only and html-only for /view', async () => {
+test('admin shots routes stay admin-only and html-only for /view', async () => {
   let queried = false;
   poolQueryHandler = async () => {
     queried = true;

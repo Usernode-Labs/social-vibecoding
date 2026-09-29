@@ -51,7 +51,7 @@ const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
 const { appErrorRoutes } = require('./src/routes/app-error');
 const { visualsRoutes } = require('./src/routes/visuals');
-const { visualEvidenceRoutes } = require('./src/routes/visual-evidence');
+const { shotsRoutes } = require('./src/routes/shots');
 const { appIconRoutes } = require('./src/routes/app-icons');
 const { issueImageRoutes } = require('./src/routes/issue-images');
 const { avatarRoutes } = require('./src/routes/avatars');
@@ -272,14 +272,12 @@ app.use((req, res, next) => {
   // report HTML, which routinely exceeds 100kb; the route mounts its own
   // 3mb parser (routes/report-snapshots.js).
   if (req.method === 'POST' && /^\/api\/apps\/[^/]+\/report-snapshots$/.test(req.path)) return next();
-  // A bounded executable evidence plan can exceed the global 100kb parser.
-  // PR import parses here; the dedicated plan route mounts its own parser.
+  // A PR import carries the description and the declared changes, which
+  // together can exceed the global 100kb parser.
   if (req.method === 'POST'
       && /^\/api\/apps\/[^/]+\/pr-import$/.test(req.path)) {
     return express.json({ limit: '512kb' })(req, res, next);
   }
-  if (req.method === 'POST'
-      && /^\/api\/apps\/[^/]+\/proposals\/[^/]+\/evidence\/plan$/.test(req.path)) return next();
   express.json()(req, res, next);
 });
 app.use(cookieParser());
@@ -589,7 +587,7 @@ app.use(sessionRoutes(config, {
   scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
 }));
 app.use(voteRoutes(config));
-app.use(visualEvidenceRoutes(config));
+app.use(shotsRoutes(config));
 // Demo mode: a creator's synthetic partner proposes, votes and resets, on a
 // demo-mode app only (routes/demo-mode.js). Mounted beside the vote routes
 // it borrows recordVote/checkAndMerge from.
@@ -1036,54 +1034,61 @@ async function becomeLeader() {
     runCliAuthCleanup();
   }, 6 * 60 * 60 * 1000).unref?.();
 
-  // Visual evidence is private, revision-scoped data. Recover runs whose
+  // Before & after shots is private, revision-scoped data. Recover runs whose
   // worker died, remove their deterministic paired runtimes/databases, and
   // enforce the shorter failed-media and bounded audit-retention windows.
-  const visualEvidenceGc = require('./src/services/visual-evidence-gc');
-  let evidenceGcRunning = false;
-  const runVisualEvidenceGc = () => {
-    if (evidenceGcRunning) return;
-    evidenceGcRunning = true;
-    visualEvidenceGc.sweep(config, getPool(config))
+  const shotsGc = require('./src/services/shots-gc');
+  let shotsGcRunning = false;
+  const runShotsGc = () => {
+    if (shotsGcRunning) return;
+    shotsGcRunning = true;
+    shotsGc.sweep(config, getPool(config))
       .then((counts) => {
         if (Object.values(counts).some((count) => count > 0)) {
-          log.info('visual-evidence', 'Retention/recovery sweep completed', counts);
+          log.info('shots', 'Retention/recovery sweep completed', counts);
         }
       })
-      .catch((err) => log.warn('visual-evidence', 'Retention/recovery sweep failed', { err: err.message }))
-      .finally(() => { evidenceGcRunning = false; });
+      .catch((err) => log.warn('shots', 'Retention/recovery sweep failed', { err: err.message }))
+      .finally(() => { shotsGcRunning = false; });
   };
-  runVisualEvidenceGc();
-  setInterval(runVisualEvidenceGc, 6 * 60 * 60 * 1000).unref?.();
-  // Evidence runs execute after their scheduling HTTP request has returned.
+  runShotsGc();
+  setInterval(runShotsGc, 6 * 60 * 60 * 1000).unref?.();
+  // Shots runs execute after their scheduling HTTP request has returned.
   // A platform rollout can terminate that process mid-build; heartbeats stop
   // then, and this short recovery poll releases the abandoned proposal slot.
   // The six-hour sweep above still owns retention and orphan-file pruning.
-  const recoverInterruptedEvidence = () => {
-    if (evidenceGcRunning) return;
-    evidenceGcRunning = true;
-    visualEvidenceGc.recoverInterrupted(config, getPool(config))
+  const recoverInterruptedShots = () => {
+    if (shotsGcRunning) return;
+    shotsGcRunning = true;
+    shotsGc.recoverInterrupted(config, getPool(config))
       .then(({ failed, cancelled, cleanupRetried }) => {
         if (failed || cancelled || cleanupRetried) {
-          log.warn('visual-evidence', 'Interrupted visual evidence runs recovered', {
+          log.warn('shots', 'Interrupted before & after shots runs recovered', {
             failed, cancelled, cleanupRetried,
           });
         }
       })
-      .catch((err) => log.warn('visual-evidence', 'Interrupted evidence recovery failed', { err: err.message }))
-      .finally(() => { evidenceGcRunning = false; });
+      .catch((err) => log.warn('shots', 'Interrupted shots recovery failed', { err: err.message }))
+      .finally(() => { shotsGcRunning = false; });
   };
-  setInterval(recoverInterruptedEvidence, 2 * 60 * 1000).unref?.();
+  setInterval(recoverInterruptedShots, 2 * 60 * 1000).unref?.();
   // Recover intent-only proposals separately from the six-hour retention
   // sweep. A missed checks hand-off should start within minutes, while the
   // durable run claim ensures this cannot duplicate a live runner.
-  const runUnstartedEvidence = () => visualEvidenceGc.recoverUnstarted(config, getPool(config))
+  const runUnstartedShots = () => shotsGc.recoverUnstarted(config, getPool(config))
     .then(({ scheduled }) => {
-      if (scheduled) log.info('visual-evidence', 'Recovered unstarted visual evidence claims', { scheduled });
+      if (scheduled) log.info('shots', 'Recovered unstarted before & after shots claims', { scheduled });
     })
-    .catch((err) => log.warn('visual-evidence', 'Unstarted evidence recovery failed', { err: err.message }));
-  runUnstartedEvidence();
-  setInterval(runUnstartedEvidence, 2 * 60 * 1000).unref?.();
+    .catch((err) => log.warn('shots', 'Unstarted shots recovery failed', { err: err.message }))
+    // A rollout interrupts runs through no fault of the proposal; start the
+    // same head again (bounded) rather than waiting for someone to click Retry.
+    .then(() => shotsGc.retryInterrupted(config, getPool(config)))
+    .then((result) => {
+      if (result?.scheduled) log.info('shots', 'Retried interrupted before & after shots runs', result);
+    })
+    .catch((err) => log.warn('shots', 'Interrupted shots retry failed', { err: err.message }));
+  runUnstartedShots();
+  setInterval(runUnstartedShots, 2 * 60 * 1000).unref?.();
 
   // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
   // password every boot) and refresh its deny-listed grants so tables
@@ -2530,22 +2535,22 @@ async function abandonCodexAttempt(pool, sessionId, turn, { label, errorDetail }
   }
 }
 
-// A visual-evidence turn cannot outlive the process that dispatched it: its
+// A shots turn cannot outlive the process that dispatched it: its
 // MCP bridge calls back to that process's pod address, and the run it
 // answers to exists only in that process's control registry. Resumed, the
 // agent retries tool calls that can no longer succeed, holding the session
 // busy and spending the user's model credit with no bound. End it instead,
-// without chat narration — evidence turns never write chat rows, and the
-// visual-evidence GC fails the run itself with a retryable reason once the
+// without chat narration — shots turns never write chat rows, and the
+// shots GC fails the run itself with a retryable reason once the
 // run goes idle.
-async function abandonOrphanEvidenceTurn({
+async function abandonOrphanShotsTurn({
   pool, sessionId, containerName, activeTurn, containerRunning, retryRuntimeRecovery,
 }) {
   // A follower promoted to leader recovers its own workers too, and one of
-  // them may be executing an evidence run this process dispatched and still
+  // them may be executing a shots run this process dispatched and still
   // bounds.
-  if (worker.getActiveTurnMode(sessionId) === 'evidence') {
-    log.info('server', 'Evidence turn is live in this process; leaving it to its run', {
+  if (worker.getActiveTurnMode(sessionId) === 'shots') {
+    log.info('server', 'Shots turn is live in this process; leaving it to its run', {
       containerName, sessionId,
     });
     return;
@@ -2558,12 +2563,12 @@ async function abandonOrphanEvidenceTurn({
     // dispatch — the user's preview retry — skip as stopped during spin-up.
     worker.clearPendingStop(sessionId);
     if (await worker.isWorkerExecuting(containerName) !== false) {
-      throw retryRuntimeRecovery('Orphaned visual-evidence turn is not confirmed stopped');
+      throw retryRuntimeRecovery('Orphaned shots turn is not confirmed stopped');
     }
   }
   await abandonCodexAttempt(pool, sessionId, activeTurn, {
-    label: 'Orphaned visual-evidence',
-    errorDetail: 'Visual-evidence turn was abandoned after the platform process that dispatched it exited.',
+    label: 'Orphaned shots',
+    errorDetail: 'Visual-shots turn was abandoned after the platform process that dispatched it exited.',
   });
   recoveryRetry.requireDurableTurnCleanup(
     containerRunning
@@ -2571,7 +2576,7 @@ async function abandonOrphanEvidenceTurn({
       : await worker.clearActiveTurn(sessionId, args),
     args,
   );
-  log.warn('server', 'Abandoned orphaned visual-evidence turn after restart', {
+  log.warn('server', 'Abandoned orphaned shots turn after restart', {
     containerName, sessionId,
     turnId: turnLifecycle.turnIdentity(activeTurn),
     backend: activeTurn.backend || null,
@@ -2667,8 +2672,8 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     }
   }
 
-  if (session.active_turn?.mode === 'evidence') {
-    await abandonOrphanEvidenceTurn({
+  if (session.active_turn?.mode === 'shots') {
+    await abandonOrphanShotsTurn({
       pool, sessionId, containerName,
       activeTurn: session.active_turn,
       containerRunning: containerState === 'running',
@@ -5649,7 +5654,7 @@ const DRAIN_TIMEOUT_MS = 5000;
 // below grace — so a
 // pool that refuses to settle can never push the exit past the SIGKILL.
 const POOL_CLOSE_TIMEOUT_MS = 1000;
-const EVIDENCE_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
+const SHOTS_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
 const BUILD_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
 
 // ── The process being replaced tells its tabs where traffic went (#2545) ─
@@ -5791,17 +5796,17 @@ async function cleanup() {
     governanceApplyTickerHandle = null;
   }
 
-  const evidenceRuns = require('./src/services/visual-evidence-orchestrator').inFlightSnapshot;
+  const shotsRuns = require('./src/services/shots-orchestrator').inFlightSnapshot;
   const startingCount = getActiveWorkerCount();
-  const startingEvidence = evidenceRuns();
+  const startingShots = shotsRuns();
   log.info('server', 'Shutdown initiated, draining handlers', {
     activeWorkers: startingCount,
-    activeEvidenceRuns: startingEvidence.slice(0, 20),
+    activeShotsRuns: startingShots.slice(0, 20),
     timeoutMs: DRAIN_TIMEOUT_MS,
   });
 
   const [drained] = await Promise.all([
-    lifecycle.waitFor(() => getActiveWorkerCount() === 0 && evidenceRuns().length === 0, {
+    lifecycle.waitFor(() => getActiveWorkerCount() === 0 && shotsRuns().length === 0, {
       timeoutMs: DRAIN_TIMEOUT_MS, intervalMs: 500,
     }),
     announced,
@@ -5810,10 +5815,10 @@ async function cleanup() {
   if (!drained) {
     log.warn('server', 'Drain timeout — exiting with in-flight work', {
       remainingWorkers: getActiveWorkerCount(),
-      remainingEvidenceRuns: evidenceRuns().slice(0, 20),
+      remainingShotsRuns: shotsRuns().slice(0, 20),
     });
-  } else if (startingCount > 0 || startingEvidence.length > 0) {
-    log.info('server', 'All handlers and visual evidence runs drained');
+  } else if (startingCount > 0 || startingShots.length > 0) {
+    log.info('server', 'All handlers and before & after shots runs drained');
   }
   await pushStop;
   await agentTurnsEnded;
@@ -5822,24 +5827,24 @@ async function cleanup() {
   // when the drain expires, record the actual shutdown now so its owner can
   // retry immediately. The recovery sweep remains the fallback for SIGKILL,
   // crashes, and a database that cannot accept this bounded write.
-  const interruptedEvidence = require('./src/services/visual-evidence-orchestrator').inFlightRunSnapshot();
-  if (interruptedEvidence.length && shutdownPool) {
+  const interruptedShots = require('./src/services/shots-orchestrator').inFlightRunSnapshot();
+  if (interruptedShots.length && shutdownPool) {
     let markTimer = null;
-    const marking = Promise.allSettled(interruptedEvidence.map((runId) =>
-      require('./src/services/visual-evidence-state').transitionRun(shutdownPool, runId, 'failed', {
-        failureCode: 'evidence_run_interrupted',
-        failureReason: 'The platform process shut down while this visual change preview was running. You can retry the preview run.',
+    const marking = Promise.allSettled(interruptedShots.map((runId) =>
+      require('./src/services/shots-state').transitionRun(shutdownPool, runId, 'failed', {
+        failureCode: 'shots_run_interrupted',
+        failureReason: 'The platform restarted while these before/after shots were being taken. You can take them again.',
       })
     ));
     const result = await Promise.race([
       marking,
       new Promise((resolve) => {
-        markTimer = setTimeout(() => resolve(null), EVIDENCE_SHUTDOWN_MARK_TIMEOUT_MS);
+        markTimer = setTimeout(() => resolve(null), SHOTS_SHUTDOWN_MARK_TIMEOUT_MS);
       }),
     ]);
     if (markTimer) clearTimeout(markTimer);
-    log.info('server', 'Marked active visual evidence runs interrupted on shutdown', {
-      attempted: interruptedEvidence.length,
+    log.info('server', 'Marked active before & after shots runs interrupted on shutdown', {
+      attempted: interruptedShots.length,
       marked: result?.filter((entry) => entry.status === 'fulfilled').length || 0,
       timedOut: result === null,
     });

@@ -55,7 +55,7 @@ const PUR_WORKER_PUSH = 'worker:push';
 const PUR_ISSUES_READ = 'worker:issues-read';
 const PUR_ANTHROPIC_PROXY = 'worker:anthropic-proxy';
 const PUR_PROD_DEBUG = 'worker:prod-debug';
-const PUR_EVIDENCE = 'worker:evidence';
+const PUR_SHOTS = 'worker:shots';
 const PUR_EDGE_GRANT = 'edge:grant';
 const PUR_EDGE_COOKIE = 'edge:cookie';
 
@@ -245,27 +245,27 @@ function signWorkerPurpose({ sessionId, purpose }) {
   });
 }
 
-function signEvidenceToken({ sessionId, runId }) {
+function signShotsToken({ sessionId, runId }) {
   if (!/^[0-9a-f]{32}$/.test(String(runId || ''))) {
-    throw new Error('platform-jwt: evidence runId required');
+    throw new Error('platform-jwt: shots runId required');
   }
   if (typeof sessionId === 'undefined' || sessionId === null) {
     throw new Error('platform-jwt: sessionId required');
   }
   return jwt.sign({
     session_id: sessionId,
-    evidence_run_id: runId,
-    scope: PUR_EVIDENCE,
-    pur: PUR_EVIDENCE,
+    shots_run_id: runId,
+    scope: PUR_SHOTS,
+    pur: PUR_SHOTS,
   }, workerSecret(), {
     algorithm: 'HS256', issuer: ISSUER, audience: AUD_WORKER, expiresIn: '20m',
   });
 }
 
-function verifyEvidenceToken(token) {
-  const claims = verifyWorkerPurpose(token, PUR_EVIDENCE);
-  if (!/^[0-9a-f]{32}$/.test(String(claims.evidence_run_id || ''))) {
-    throw new Error('invalid evidence run scope');
+function verifyShotsToken(token) {
+  const claims = verifyWorkerPurpose(token, PUR_SHOTS);
+  if (!/^[0-9a-f]{32}$/.test(String(claims.shots_run_id || ''))) {
+    throw new Error('invalid shots run scope');
   }
   return claims;
 }
@@ -527,7 +527,7 @@ module.exports = {
   PUR_ISSUES_READ,
   PUR_ANTHROPIC_PROXY,
   PUR_PROD_DEBUG,
-  PUR_EVIDENCE,
+  PUR_SHOTS,
   PUR_EDGE_GRANT,
   PUR_EDGE_COOKIE,
   IFRAME_TTL,
@@ -551,8 +551,8 @@ module.exports = {
   verifyAnthropicProxyToken,
   signProdDebugToken,
   verifyProdDebugToken,
-  signEvidenceToken,
-  verifyEvidenceToken,
+  signShotsToken,
+  verifyShotsToken,
   signEdgeGrant,
   verifyEdgeGrant,
   signEdgeCookie,

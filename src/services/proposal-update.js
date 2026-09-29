@@ -49,8 +49,8 @@
 const log = require('./logger');
 const summaryFreshness = require('./summary-freshness');
 const externalAgentHead = require('./external-agent-head');
-const visualEvidencePlan = require('./visual-evidence-plan');
-const visualEvidenceState = require('./visual-evidence-state');
+const visibleChangesContract = require('./visible-changes');
+const shotsState = require('./shots-state');
 const { PROPOSAL_UPDATE_LOCK } = require('./advisory-locks');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -339,12 +339,12 @@ async function updateProposalFromForkBranch(deps, params) {
   if (expectedHeadSha && !SHA_RE.test(expectedHeadSha)) {
     return fail('invalid_request', 'expectedHeadSha must be a 40-character commit id.');
   }
-  let visualEvidence;
-  if (params.visualEvidence !== undefined) {
+  let visibleChanges;
+  if (params.visibleChanges !== undefined) {
     try {
-      visualEvidence = visualEvidencePlan.parseIntent(params.visualEvidence);
+      visibleChanges = visibleChangesContract.parseIntent(params.visibleChanges);
     } catch (err) {
-      return fail('invalid_visual_evidence', err.message);
+      return fail('invalid_visible_changes', err.message);
     }
   }
 
@@ -414,7 +414,7 @@ async function updateProposalFromForkBranch(deps, params) {
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
         expectedLogin: link.login, expectedHeadSha, sessionId,
         testing: normalizeTesting(params.testing),
-        visualEvidence,
+        visibleChanges,
         title: normalizeProposedTitle(params.title),
         description: normalizeProposedDescription(params.description),
         // #1323. A re-run of the checks against the commit already there.
@@ -525,108 +525,108 @@ function normalizeTesting(testing) {
   return { ...parsed, dropped };
 }
 
-function storedVisualEvidenceIntent(session) {
-  const candidate = session?.visual_evidence_detail?.intent;
+function storedVisibleChanges(session) {
+  const candidate = session?.shots_detail?.intent;
   if (!candidate) return null;
   try {
-    return visualEvidencePlan.parseIntent(candidate);
+    return visibleChangesContract.parseIntent(candidate);
   } catch {
     return null;
   }
 }
 
-function visualEvidenceNextStep(state, { required = false, accepted = false, rejected = false } = {}) {
-  if (rejected) return 'retry_visual_evidence_intent';
-  if (state === 'verified') return 'review_verified_evidence';
-  if (state === 'failed') return 'rerun_or_correct_visual_evidence';
+function shotsNextStep(state, { required = false, accepted = false, rejected = false } = {}) {
+  if (rejected) return 'retry_visible_changes';
+  if (state === 'verified') return 'review_verified_shots';
+  if (state === 'failed') return 'rerun_or_correct_shots';
   if (state === 'overridden') return 'human_override_recorded';
-  if (state === 'not_required') return 'no_visual_evidence_run_required';
+  if (state === 'not_required') return 'no_shots_run_required';
   if (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(state)) {
-    return 'await_visual_evidence';
+    return 'await_shots';
   }
-  if (required) return 'provide_visual_evidence_intent';
-  if (accepted) return 'visual_evidence_intent_recorded';
+  if (required) return 'provide_visible_changes';
+  if (accepted) return 'visible_changes_recorded';
   return 'none';
 }
 
-function visualEvidenceSubmissionFields(result = {}) {
+function visibleChangesSubmissionFields(result = {}) {
   const accepted = result.accepted === true;
   const rejected = result.rejected === true;
   const required = result.required === true;
   const state = result.state || null;
   return {
-    visualEvidenceState: state,
-    visualEvidenceAccepted: accepted,
-    visualEvidenceRejected: rejected,
-    visualEvidenceRequired: required,
-    visualEvidenceNextStep: result.nextStep
-      || visualEvidenceNextStep(state, { required, accepted, rejected }),
+    shotsState: state,
+    visibleChangesAccepted: accepted,
+    visibleChangesRejected: rejected,
+    shotsRequired: required,
+    shotsNextStep: result.nextStep
+      || shotsNextStep(state, { required, accepted, rejected }),
   };
 }
 
-// Revision-scoped visual evidence metadata follows the commit through every
+// Revision-scoped before & after shots metadata follows the commit through every
 // update surface. Omission preserves the prior declaration. A head move first
 // hides old media, then re-plans the preserved (or newly supplied) intent for
 // the new SHA. This is best-effort after a Git push: metadata storage must not
 // falsely report that code which already landed did not land.
-async function applyVisualEvidenceRevision({
-  pool, config, session, headSha, visualEvidence, headChanged = false,
+async function applyShotsRevision({
+  pool, config, session, headSha, visibleChanges, headChanged = false,
 }) {
-  const submitted = visualEvidence !== undefined;
-  if (!config?.visualEvidence?.collect) {
+  const submitted = visibleChanges !== undefined;
+  if (!config?.shots?.collect) {
     return {
       accepted: false,
       rejected: submitted,
-      required: session.visual_evidence_detail?.required === true,
+      required: session.shots_detail?.required === true,
       changed: false,
-      state: session.visual_evidence_state || null,
-      nextStep: submitted ? 'visual_evidence_collection_disabled' : 'none',
+      state: session.shots_state || null,
+      nextStep: submitted ? 'shots_collection_disabled' : 'none',
     };
   }
-  const intent = submitted ? visualEvidence : storedVisualEvidenceIntent(session);
+  const intent = submitted ? visibleChanges : storedVisibleChanges(session);
   try {
-    if (headChanged && visualEvidenceState.validSha(headSha)) {
-      await visualEvidenceState.markStaleForHead(pool, Number(session.id), headSha);
+    if (headChanged && shotsState.validSha(headSha)) {
+      await shotsState.markStaleForHead(pool, Number(session.id), headSha);
     }
     if (!intent) {
-      const required = session.visual_evidence_detail?.required === true;
+      const required = session.shots_detail?.required === true;
       return {
         accepted: false, rejected: false, required, changed: false,
-        state: session.visual_evidence_state || null,
-        nextStep: required ? 'provide_visual_evidence_intent' : 'none',
+        state: session.shots_state || null,
+        nextStep: required ? 'provide_visible_changes' : 'none',
       };
     }
-    const result = await visualEvidenceState.recordIntent(
+    const result = await shotsState.recordIntent(
       pool,
       Number(session.id),
       intent,
-      visualEvidenceState.validSha(headSha) ? { headSha } : {}
+      shotsState.validSha(headSha) ? { headSha } : {}
     );
-    session.visual_evidence_state = result.state;
-    session.visual_evidence_detail = result.detail;
-    session.visual_evidence_run_id = result.runId;
+    session.shots_state = result.state;
+    session.shots_detail = result.detail;
+    session.shots_run_id = result.runId;
     return {
       accepted: submitted,
       rejected: false,
       required: result.required === true,
       changed: result.unchanged !== true,
       state: result.state,
-      nextStep: visualEvidenceNextStep(result.state, {
+      nextStep: shotsNextStep(result.state, {
         required: result.required === true,
         accepted: submitted,
       }),
     };
   } catch (err) {
-    log.error('proposal-update', 'could not store visual evidence intent', {
+    log.error('proposal-update', 'could not store before & after shots intent', {
       sessionId: Number(session.id), headSha, err: err.message,
     });
     return {
       accepted: false,
       rejected: submitted,
-      required: session.visual_evidence_detail?.required === true,
+      required: session.shots_detail?.required === true,
       changed: false,
-      state: session.visual_evidence_state || null,
-      nextStep: submitted ? 'retry_visual_evidence_intent' : 'none',
+      state: session.shots_state || null,
+      nextStep: submitted ? 'retry_visible_changes' : 'none',
     };
   }
 }
@@ -1105,8 +1105,8 @@ async function resubmitUnchanged(ctx, headSha, via) {
   const { pool, config, gh, session, sessionId, owner, repo } = ctx;
   const base = unchanged(session, headSha, via);
   const applied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
-  const evidenceApplied = await applyVisualEvidenceRevision({
-    pool, config, session, headSha, visualEvidence: ctx.visualEvidence,
+  const shotsApplied = await applyShotsRevision({
+    pool, config, session, headSha, visibleChanges: ctx.visibleChanges,
   });
   // Same-commit resubmits are also how a title correction arrives — the
   // update that should have carried it may already have landed (#1199's
@@ -1131,7 +1131,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
     testingPaths: displayPaths(applied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
     captureRerun: false,
-    ...visualEvidenceSubmissionFields(evidenceApplied),
+    ...visibleChangesSubmissionFields(shotsApplied),
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
     descriptionUpdated: descApplied.changed,
@@ -1143,7 +1143,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
   // a side effect of changing a capture route, so correcting a stale verdict
   // meant editing a route that was already right. An explicit ask reaches it
   // now, and nothing else about the path changes.
-  if (!applied.changed && !evidenceApplied.changed && !ctx.recheck) return reported;
+  if (!applied.changed && !shotsApplied.changed && !ctx.recheck) return reported;
 
   // A paused session has no container and no preview to shoot against, and
   // starting a build for one is the thing settlePausedSession exists to avoid.
@@ -1167,7 +1167,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
   try {
     const run = recovery.recheckSessionChecks({
       config, pool, session,
-      reason: evidenceApplied.changed ? 'visual-evidence-update' : 'testing-update',
+      reason: shotsApplied.changed ? 'shots-update' : 'testing-update',
     });
     if (run && typeof run.catch === 'function') {
       run.catch((err) => log.warn('proposal-update', 'testing-metadata recheck failed (non-fatal)', {
@@ -1399,9 +1399,9 @@ async function advanceAppRepoBranch(ctx) {
   // BEFORE the tails, every one of which ends in a capture that reads the
   // routes off this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
-  const evidenceApplied = await applyVisualEvidenceRevision({
+  const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: verified.headSha,
-    visualEvidence: ctx.visualEvidence, headChanged: liveHead !== verified.headSha,
+    visibleChanges: ctx.visibleChanges, headChanged: liveHead !== verified.headSha,
   });
   // And the submitted title: stored for the promote-time lazy PR creation
   // when the row has no PR yet, or a rename of the existing PR when it does.
@@ -1464,7 +1464,7 @@ async function advanceAppRepoBranch(ctx) {
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
-    ...visualEvidenceSubmissionFields(evidenceApplied),
+    ...visibleChangesSubmissionFields(shotsApplied),
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
     descriptionUpdated: descApplied.changed,
@@ -1886,9 +1886,9 @@ async function advanceForkHead(ctx) {
   // Before applyHeadChange, whose own tail re-runs the SHA-pinned checks off
   // this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
-  const evidenceApplied = await applyVisualEvidenceRevision({
+  const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: liveHead,
-    visualEvidence: ctx.visualEvidence, headChanged: oldHead !== liveHead,
+    visibleChanges: ctx.visibleChanges, headChanged: oldHead !== liveHead,
   });
   // The request linkage (#1310). On an imported row this stores the DB half
   // only — the close watcher and the Dev board read it — and applyLinkedIssues
@@ -1955,7 +1955,7 @@ async function advanceForkHead(ctx) {
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
-    ...visualEvidenceSubmissionFields(evidenceApplied),
+    ...visibleChangesSubmissionFields(shotsApplied),
     linkedIssuesUpdated: linkedApplied,
   };
 }
@@ -2045,9 +2045,9 @@ module.exports = {
   isContinuableStatus,
   withProposalLock,
   updateProposalFromForkBranch,
-  applyVisualEvidenceRevision,
-  visualEvidenceSubmissionFields,
-  visualEvidenceNextStep,
+  applyShotsRevision,
+  visibleChangesSubmissionFields,
+  shotsNextStep,
   reconcileManagedCommitUpload,
   // The request-linking half of an update (#1310), unit-tested directly.
   applyLinkedIssues,

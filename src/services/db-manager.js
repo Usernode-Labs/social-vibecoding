@@ -50,16 +50,22 @@ function stagingDbName(slug, username, commitHash) {
   return `app_${slug.replace(/[^a-z0-9_]/g, '_')}_staging_${username.replace(/[^a-z0-9_]/g, '_')}_${shortHash}`;
 }
 
-// Evidence clones deliberately do not use stagingDbName(): they are owned by
-// a short-lived evidence run rather than by the proposal preview sweeper.
+// Shots clones deliberately do not use stagingDbName(): they are owned by
+// a short-lived shots run rather than by the proposal preview sweeper.
 // Keep the database at 57 bytes so its `_owner` role also fits PostgreSQL's
 // 63-byte identifier limit.
-function evidenceDbName(slug, runId, side) {
-  if (!['base', 'head'].includes(side)) throw new Error('evidenceDbName: side must be base or head');
+function shotsDbName(slug, runId, side, tag = 'shots') {
+  if (!['base', 'head'].includes(side)) throw new Error('shotsDbName: side must be base or head');
   const cleanSlug = String(slug || '').toLowerCase().replace(/[^a-z0-9_]/g, '_') || 'app';
   const token = crypto.createHash('sha256').update(String(runId || '')).digest('hex').slice(0, 12);
-  const suffix = `_evidence_${token}_${side === 'base' ? 'b' : 'h'}`;
+  const suffix = `_${tag}_${token}_${side === 'base' ? 'b' : 'h'}`;
   return `app_${cleanSlug.slice(0, 57 - 4 - suffix.length)}${suffix}`;
+}
+
+// The name a run's database had before the rename, for a run the previous
+// release started.
+function legacyShotsDbName(slug, runId, side) {
+  return shotsDbName(slug, runId, side, 'evidence');
 }
 
 function ownerRoleName(dbName) {
@@ -277,14 +283,14 @@ function stagingConnectionLimit() {
 // The ceiling is for previews only: cloneDatabase also serves app forks,
 // whose target is a real production database and must stay uncapped.
 const STAGING_CLONE_DB_RE = /^app_[a-z0-9_]+_staging_s\d+_([0-9a-f]{6}|latest)$/;
-const EVIDENCE_CLONE_DB_RE = /^app_[a-z0-9_]+_evidence_[0-9a-f]{12}_[bh]$/;
+const SHOTS_CLONE_DB_RE = /^app_[a-z0-9_]+_(?:shots|evidence)_[0-9a-f]{12}_[bh]$/;
 
 function isStagingCloneDb(name) {
   return STAGING_CLONE_DB_RE.test(String(name || ''));
 }
 
-function isEvidenceCloneDb(name) {
-  return EVIDENCE_CLONE_DB_RE.test(String(name || ''));
+function isShotsCloneDb(name) {
+  return SHOTS_CLONE_DB_RE.test(String(name || ''));
 }
 
 /**
@@ -295,7 +301,7 @@ function isEvidenceCloneDb(name) {
  */
 async function applyStagingConnectionLimit(dbName, { execute = execInDb } = {}) {
   if (!SAFE_IDENT.test(dbName)) return null;
-  if (!isStagingCloneDb(dbName) && !isEvidenceCloneDb(dbName)) return null;
+  if (!isStagingCloneDb(dbName) && !isShotsCloneDb(dbName)) return null;
   const limit = stagingConnectionLimit();
   if (limit < 0) return null;
   try {
@@ -748,7 +754,7 @@ async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000
 }
 
 // #2380: freeze ONE redacted staging-template generation for a paired
-// base/head evidence run. Calling cloneDatabase(..., { viaTemplate: true })
+// base/head shots run. Calling cloneDatabase(..., { viaTemplate: true })
 // twice is not equivalent: the soft-age refresh can swap the shared template
 // between those calls. A prepared source is its own immutable, no-connections
 // database and therefore gives both sides byte-equivalent starting data.
@@ -791,7 +797,7 @@ async function prepareStagingCloneSource(sourceDb, { sourceId } = {}) {
         .update(`${sourceDb}\n${sharedTemplate}\n${new Date(refreshedAtMs).toISOString()}\n${preparedDb}`)
         .digest('hex');
       await execInDb(
-        `COMMENT ON DATABASE ${preparedDb} IS 'evidence-clone-source source=${sourceDb} refreshed_at=${new Date(refreshedAtMs).toISOString()} fingerprint=${fingerprint}'`
+        `COMMENT ON DATABASE ${preparedDb} IS 'shots-clone-source source=${sourceDb} refreshed_at=${new Date(refreshedAtMs).toISOString()} fingerprint=${fingerprint}'`
       );
       await execInDb(`ALTER DATABASE ${preparedDb} WITH ALLOW_CONNECTIONS false`);
       return {
@@ -812,7 +818,7 @@ async function cloneFromPreparedSource(prepared, targetDb, { onProgress = null }
   if (!isPreparedCloneSource(templateDb)) {
     throw new Error(`cloneFromPreparedSource: invalid prepared source ${JSON.stringify(templateDb)}`);
   }
-  // Paired evidence resets repeat this clone and have their own bounded
+  // Paired shots resets repeat this clone and have their own bounded
   // lifetime. A large ownership/redaction query may exceed the ordinary
   // preview's 30-second ceiling without being stuck.
   const result = await cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs: 90_000, onProgress });
@@ -1661,7 +1667,8 @@ async function setAppDatabaseWritable(dbName, writable, { execute = execInDb } =
 module.exports = {
   appDbName,
   stagingDbName,
-  evidenceDbName,
+  shotsDbName,
+  legacyShotsDbName,
   ownerRoleName,
   createDatabase,
   dropDatabase,
@@ -1670,7 +1677,7 @@ module.exports = {
   // Per-preview connection ceiling (#1771).
   stagingConnectionLimit,
   isStagingCloneDb,
-  isEvidenceCloneDb,
+  isShotsCloneDb,
   applyStagingConnectionLimit,
   DEFAULT_STAGING_DB_CONNECTION_LIMIT,
   adoptExistingDatabase,

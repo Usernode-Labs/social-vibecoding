@@ -4,7 +4,7 @@
 // over HTTP. A self-app preview runs in production mode and exchanges its
 // app-scoped JWT for a Secure session cookie, which Chromium cannot retain on
 // those HTTP origins. Install that already-issued, clone-local cookie with
-// the transport bit adjusted only inside the isolated evidence context.
+// the transport bit adjusted only inside the isolated shots context.
 class SessionBootstrapError extends Error {
   constructor(code, message) {
     super(message);
@@ -22,7 +22,7 @@ function sessionCookieValue(headers) {
     // Never include the rejected cookie or token in a diagnostic.
     if (!value || value.length > 4096
         || !/^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/.test(value)) {
-      throw new SessionBootstrapError('invalid_session_cookie', 'The evidence origin returned an invalid session cookie.');
+      throw new SessionBootstrapError('invalid_session_cookie', 'The shots origin returned an invalid session cookie.');
     }
     return value;
   }
@@ -33,7 +33,7 @@ async function bootstrapInternalSession(context, origin, authorizedUrl, authToke
   if (diagnostic) diagnostic.attempted = origin.startsWith('http:');
   if (!origin.startsWith('http:')) return false;
   if (new URL(authorizedUrl).origin !== origin) {
-    throw new SessionBootstrapError('cross_origin_navigation', 'Evidence authentication left its private origin.');
+    throw new SessionBootstrapError('cross_origin_navigation', 'Shots authentication left its private origin.');
   }
   const existing = await context.cookies(origin);
   if (existing.some((cookie) => cookie.name === 'session')) {
@@ -60,11 +60,11 @@ async function bootstrapInternalSession(context, origin, authorizedUrl, authToke
         secure: false, sameSite: 'Lax',
       }]);
     } catch (_) {
-      throw new SessionBootstrapError('session_bootstrap_failed', 'The evidence browser could not install its private session cookie.');
+      throw new SessionBootstrapError('session_bootstrap_failed', 'The shots browser could not install its private session cookie.');
     }
     const installed = await context.cookies(origin);
     if (!installed.some((cookie) => cookie.name === 'session' && cookie.value === value)) {
-      throw new SessionBootstrapError('session_bootstrap_failed', 'The evidence browser did not retain its private session cookie.');
+      throw new SessionBootstrapError('session_bootstrap_failed', 'The shots browser did not retain its private session cookie.');
     }
     if (diagnostic) diagnostic.sessionCookieInstalled = true;
     return true;

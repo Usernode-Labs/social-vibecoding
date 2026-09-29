@@ -501,48 +501,61 @@ test('a hosted Claude build cannot dispatch without authoritative system context
   } finally { restore(); }
 });
 
-test('a hosted Codex evidence turn cannot dispatch without the planning contract', async () => {
-  const { worker, calls, restore } = loadWorker();
+// Every shots turn runs on Claude Code. An OpenRouter evidence
+// turn, on either harness, is refused before a token is minted, a context
+// file is written, or the provider is touched.
+test('a shots turn on an OpenRouter backend is refused before anything is dispatched', async () => {
+  const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
   try {
-    warmSession(worker, 8304);
-    await assert.rejects(
-      () => worker.execInWorker(8304, {
-        ...DISPATCH_ARGS,
-        mode: 'evidence',
-        agentBackend: 'codex_openrouter',
-        systemPrompt: null,
-        evidenceRunId: '1'.repeat(32),
-        evidenceOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
-        evidenceAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
-      }),
-      /hosted Codex evidence requires systemPrompt/,
-    );
-    assert.equal(calls.length, 0, 'validation fails before the provider is touched');
+    for (const [sessionId, agentHarness] of [[8304, null], [8305, 'codex'], [8306, 'claude']]) {
+      warmSession(worker, sessionId);
+      await assert.rejects(
+        () => worker.execInWorker(sessionId, {
+          mode: 'shots',
+          prompt: 'open the run context',
+          systemPrompt: 'Shots agent contract.',
+          branchName: 'dev/test',
+          agentBackend: 'codex_openrouter',
+          agentHarness,
+          agentModel: 'z-ai/glm-5.3-flash',
+          agentModelMetadata: { supportsTools: true },
+          openrouterApiKey: 'sk-or-must-not-appear-in-argv',
+          shotsRunId: '1'.repeat(32),
+          shotsOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
+          shotsAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
+        }),
+        /execInWorker: shots turns run on Claude Code/,
+        String(agentHarness),
+      );
+    }
+    assert.equal(calls.length, 0, 'validation fails before either context file or the provider is touched');
   } finally { restore(); }
 });
 
-test('Codex evidence dispatch carries the planning contract file to its runner', async () => {
+test('a shots turn refuses a clip size that is not WIDTHxHEIGHT before anything is dispatched', async () => {
   const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
   try {
-    warmSession(worker, 8305);
-    await worker.execInWorker(8305, {
-      mode: 'evidence',
-      prompt: 'open the run context',
-      systemPrompt: 'Use evidence_get_context first and submit through evidence_run_plan.',
-      branchName: 'dev/test',
-      agentBackend: 'codex_openrouter',
-      agentModel: 'z-ai/glm-5.3-flash',
-      agentModelMetadata: { supportsTools: true },
-      openrouterApiKey: 'sk-or-must-not-appear-in-argv',
-      evidenceRunId: '1'.repeat(32),
-      evidenceOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
-      evidenceAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
-    });
-    const dispatch = calls.find(isDispatch);
-    assert.ok(dispatch, 'Codex evidence turn was dispatched');
-    assert.ok(dispatch.args.includes('MODE=evidence'));
-    assert.ok(dispatch.args.includes('SYSTEM_PROMPT_FILE=/home/node/.claude/turn-system-prompt.txt'));
-    assert.ok(!dispatch.args.some((arg) => String(arg).includes('sk-or-must-not-appear-in-argv')));
+    warmSession(worker, 8307);
+    for (const shotsClipSize of ['390', '390x844 --flag', '0x844', 12]) {
+      await assert.rejects(
+        () => worker.execInWorker(8307, {
+          mode: 'shots',
+          prompt: 'open the run context',
+          systemPrompt: 'Shots agent contract.',
+          branchName: 'dev/test',
+          agentBackend: 'claude_code',
+          model: 'claude-sonnet-5-5',
+          shotsRunId: '1'.repeat(32),
+          shotsOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
+          shotsAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
+          shotsRecordClips: true,
+          shotsClipSize,
+        }),
+        /execInWorker: shots clip size must be WIDTHxHEIGHT/,
+        String(shotsClipSize),
+      );
+    }
+    assert.equal(calls.length, 0);
   } finally { restore(); }
 });
 

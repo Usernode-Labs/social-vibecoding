@@ -171,14 +171,14 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'test-only mock control unavailable in normal production Classic mode',
   },
   {
-    matches: (route) => route.source === 'src/routes/visual-evidence.js'
-      && route.path === '/api/apps/:slug/proposals/:sessionId/evidence/diagnostics',
+    matches: (route) => route.source === 'src/routes/shots.js'
+      && route.path === '/api/apps/:slug/proposals/:sessionId/shots/diagnostics',
     reason: 'proposal-owner troubleshooting export for local replay, not a Classic user control',
   },
   {
-    matches: (route) => route.source === 'src/routes/visual-evidence.js'
-      && route.path === '/api/apps/:slug/proposals/:sessionId/evidence/diagnostics/:artifactId',
-    reason: 'private binary comparison image represented by proposal evidence diagnostics',
+    matches: (route) => route.source === 'src/routes/shots.js'
+      && route.path === '/api/apps/:slug/proposals/:sessionId/shots/diagnostics/:artifactId',
+    reason: 'private binary comparison image represented by proposal shots diagnostics',
   },
   {
     matches: (route) => route.source === 'src/routes/waitlist-connect.js',

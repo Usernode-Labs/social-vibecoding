@@ -7959,7 +7959,7 @@ const DevChat = {
           // #195: before/after tiles. Visuals are latest-set-per-session, so
           // only the NEWEST staging card carries them.
           let visualsHtml = '';
-          if (window.AppView && (session?.visualEvidence || session?.visuals)) {
+          if (window.AppView && (session?.shots || session?.visuals)) {
             let latest = null;
             for (let vi = DevChat.messages.length - 1; vi >= 0; vi--) {
               if (DevChat.messages[vi].stagingUrl || DevChat.messages[vi].changesReady) {
@@ -7967,8 +7967,8 @@ const DevChat = {
               }
             }
             if (latest === msg && msg.stagingUrl) {
-              visualsHtml = session.visualEvidence
-                ? AppView.visualEvidenceHtml(session.visualEvidence, { sessionId: session.id })
+              visualsHtml = session.shots
+                ? AppView.shotsHtml(session.shots, { sessionId: session.id })
                 : AppView.visualsTilesHtml(session.visuals);
             }
           }

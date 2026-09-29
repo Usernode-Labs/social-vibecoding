@@ -29,7 +29,7 @@ fail explicitly instead of receiving another revision's code.
 Required checks always include `tests/shell-release.test.js`: generated
 identity, build wiring, warm upgrades, failed downloads, mixed-build responses,
 offline access, cached authentication, old tabs, cleanup, migration, activation
-races and rollback. Visual evidence also checks a stamped document against the
+races and rollback. Before & after shots also checks a stamped document against the
 expected commit before recording its checkpoint. Historical `dev` documents
 and ordinary apps without the shell marker remain supported.
 

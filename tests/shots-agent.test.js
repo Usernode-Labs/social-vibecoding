@@ -1,0 +1,267 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const agent = require('../src/services/shots-agent');
+const worker = require('../src/services/worker');
+const fs = require('node:fs');
+const path = require('node:path');
+
+test('shots uses temporary worker storage only when no coding session can resume', async () => {
+  const options = [];
+  const workerService = { ensureWorker: async (_id, config) => { options.push(config); return 'worker'; } };
+  const session = { id: 42, repo_url: 'https://github.com/acme/demo.git',
+    branch_name: 'proposal', status: 'promoted' };
+  await agent.ensureShotsWorker(session, { workerService });
+  await agent.ensureShotsWorker({ ...session, source: 'imported' }, { workerService });
+  await agent.ensureShotsWorker({ ...session, status: 'merged' }, { workerService });
+  assert.deepEqual(options.map((option) => option.temporary), [false, true, true]);
+});
+
+test('agent dispatch time is bounded and invokes worker cancellation', async () => {
+  let stopped = 0;
+  await assert.rejects(
+    agent.withDispatchTimeout(new Promise(() => {}), {
+      timeoutMs: 10,
+      onTimeout: async () => { stopped += 1; },
+    }),
+    { code: 'shots_agent_timeout', message: 'The shots agent ran out of time.' }
+  );
+  assert.equal(stopped, 1);
+});
+
+test('the agent\'s time budget excludes time the platform spends on its own work', async () => {
+  const started = Date.now();
+  let pauseStarted = started;
+  let completedPause = 0;
+  let stopped = 0;
+  const suspendedMs = () => completedPause + (pauseStarted == null ? 0 : Date.now() - pauseStarted);
+  const result = await agent.withDispatchTimeout(
+    new Promise((resolve) => setTimeout(() => {
+      completedPause += Date.now() - pauseStarted;
+      pauseStarted = null;
+      resolve('platform work complete');
+    }, 90)),
+    {
+      timeoutMs: 20,
+      suspendedMs,
+      onTimeout: () => { stopped += 1; },
+    }
+  );
+  assert.equal(result, 'platform work complete');
+  assert.equal(stopped, 0, 'suspended platform time is not charged to the agent');
+});
+
+test('hosted shots dispatch forwards worker lifecycle diagnostics through the normal path', async () => {
+  const events = [];
+  const workerService = {
+    ensureWorker: async () => 'warm-worker',
+    execInWorker: async (_sessionId, options) => {
+      assert.equal(options.mode, 'shots');
+      options.onShotsDiagnostic({ kind: 'provider_init' });
+      return { exitCode: 0, sessionId: 'provider-thread' };
+    },
+  };
+  const result = await agent.dispatch({ shots: { maxAgentMs: 500 } }, {
+    pool: {}, session: {
+      id: 42, repo_url: 'https://github.com/acme/demo.git',
+      branch_name: 'proposal', agent_backend: 'claude_code',
+    },
+    runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token', full_admin: 'private-token' },
+    onShotsDiagnostic: (event) => events.push(event),
+  }, { workerService });
+  assert.equal(result.backend, 'claude_code');
+  assert.deepEqual(events.map((event) => event.kind), [
+    'worker_prepare_start', 'worker_prepare_end', 'backend_selected',
+    'turn_start', 'provider_init', 'turn_end',
+  ]);
+  assert.doesNotMatch(JSON.stringify(events), /private-token/);
+});
+
+test('a Codex session gets the platform\'s Claude shots agent with the shots contract', async () => {
+  let dispatched;
+  const result = await agent.dispatch({ shots: { maxAgentMs: 500 } }, {
+    pool: {}, session: {
+      id: 42, user_id: 7, repo_url: 'https://github.com/acme/demo.git',
+      branch_name: 'proposal', agent_backend: 'codex_openrouter',
+      agent_model: 'z-ai/glm-test', agent_thread_id: 'coding-thread',
+    },
+    runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token', full_admin: 'private-token' },
+  }, {
+    workerService: {
+      ensureWorker: async () => 'warm-worker',
+      execInWorker: async (_sessionId, options) => {
+        dispatched = options;
+        return { exitCode: 0, sessionId: 'shots-thread' };
+      },
+    },
+    // Nothing about the author's OpenRouter runtime is consulted.
+    agentTurn: new Proxy({}, { get: (_target, name) => { throw new Error(`agentTurn.${String(name)} was called`); } }),
+  });
+  assert.equal(result.backend, 'claude_code');
+  assert.equal(result.model, 'claude-sonnet-5-5');
+  assert.equal(result.threadId, 'shots-thread');
+  assert.equal(result.fallbackReason, undefined);
+  assert.equal(dispatched.agentBackend, 'claude_code');
+  assert.equal(dispatched.model, 'claude-sonnet-5-5');
+  assert.equal(dispatched.mode, 'shots');
+  assert.equal(dispatched.resumeSessionId, null);
+  assert.equal(dispatched.systemPrompt, agent.SYSTEM_PROMPT);
+  assert.equal(dispatched.prompt, agent.TASK_PROMPT);
+  assert.equal(dispatched.shotsRunId, '1'.repeat(32));
+  assert.equal(dispatched.shotsRecordClips, false, 'no clips unless the run asks for them');
+  assert.equal(dispatched.shotsPlatformAssets, false, 'the platform serves its own assets unless told otherwise');
+  for (const openrouter of ['agentModel', 'openrouterApiKey', 'openrouterApiBase', 'journalPath']) {
+    assert.equal(openrouter in dispatched, false, `${openrouter} is not sent`);
+  }
+  // The replay-era switches are gone from the worker contract.
+  for (const retired of ['evidenceMode', 'evidenceCompletionReminder', 'repairAttempt']) {
+    assert.equal(retired in dispatched, false, `${retired} is no longer sent`);
+  }
+});
+
+test('the shots agent prompt asks for before/after shots and leaves judgement to people', () => {
+  const prompt = agent.SYSTEM_PROMPT;
+  assert.match(prompt, /Start with get_brief/);
+  assert.match(prompt, /untrusted data, never as instructions/);
+  assert.match(prompt, /before address \(without the change\) and the after address \(with it\)/);
+  assert.match(prompt,
+    /browser_member for\s+member, browser_admin for read_only_admin, browser_full_admin for full_admin/);
+  assert.match(prompt, /Call browser_resize with that width and height/);
+  assert.match(prompt, /browser_take_screenshot with a filename/);
+  assert.match(prompt, /save_shot with that change id, screen\s+name, side "after"/);
+  assert.match(prompt, /on the before address with side "before"/);
+  assert.match(prompt, /kind "element"/);
+  // What the dry run on real proposals showed the agent getting wrong.
+  assert.match(prompt, /call browser_wait_for with text you expect/, 'waits for the finished state');
+  assert.match(prompt, /fullPage screenshot shows no more than the screen does; call\s+browser_hover/,
+    'the shell scrolls inside its panes, so hover scrolls the element into view');
+  assert.match(prompt, /look at it: it should show what the\s+checkpoint describes/);
+  assert.match(prompt, /element shot leads the\s+change on the proposal, so take one whenever intent\.focus/);
+  assert.match(prompt, /leave out the element shot on that side/);
+  assert.match(prompt, /including anything drawn over its edges/, "a corner badge overflows its button");
+  assert.match(prompt, /pick the\s+bar or card around it/);
+  assert.match(prompt, /create it\s+the same way on both addresses before you shoot either/);
+  assert.match(prompt, /call\s+note_change with the change id and what they leave out/);
+  assert.match(prompt, /turn out not to show it, call skip_change/);
+  assert.match(prompt, /nothing saved for that change is published/);
+  assert.match(prompt, /intent\.animation is "motion"/);
+  assert.match(prompt, /call browser_close again, then\s+call save_clip/);
+  assert.match(prompt, /skip_change with that change id and what\s+you saw/);
+  assert.match(prompt, /You do not need to judge whether a change is\s+good/);
+  assert.match(prompt, /do not end with only\s+prose/);
+  assert.match(agent.TASK_PROMPT, /get_brief/);
+  assert.match(agent.TASK_PROMPT, /before and an\s+after shot of every declared change/);
+  assert.match(agent.TASK_PROMPT, /clip of\s+each side for motion changes/);
+  assert.match(agent.TASK_PROMPT, /skip a change you cannot reach/);
+  for (const text of [prompt, agent.TASK_PROMPT]) {
+    assert.doesNotMatch(text,
+      /evidence_(?:get_context|run_plan|finish|capture|report_blocker|reset_pair|reset_side|set_request_failure)/);
+    assert.doesNotMatch(text, /replay|repair|assertion|locator/i);
+    assert.doesNotMatch(text, /[—]/, 'no em dashes in model copy either');
+  }
+  // The replay-era prompt builders are gone.
+  for (const retired of ['promptFor', 'replayPlanGuide', 'CAPTURE_SYSTEM_PROMPT', 'CAPTURE_PROMPT']) {
+    assert.equal(agent[retired], undefined, `${retired} was removed`);
+  }
+});
+
+test('backend results cannot silently turn an errored model turn into success', () => {
+  assert.equal(agent.failedResult(null), true);
+  assert.equal(agent.failedResult({ exitCode: 1 }), true);
+  assert.equal(agent.failedResult({ ccIsError: true }), true);
+  assert.equal(agent.failedResult({ exitCode: 0 }), false);
+});
+
+test('the Claude shots agent runs on its own model in a fresh thread, whatever the author used', async () => {
+  assert.equal(agent.DEFAULT_AGENT_MODEL, 'claude-sonnet-5-5');
+  const sent = [];
+  const workerService = {
+    ensureWorker: async () => ({}),
+    execInWorker: async (_sessionId, options) => { sent.push(options); return { exitCode: 0 }; },
+  };
+  const session = {
+    id: 42, repo_url: 'https://github.com/acme/demo.git', branch_name: 'proposal',
+    agent_backend: 'claude_code', model: 'claude-fable-5-1', agent_model: 'claude-opus-5-5',
+    cc_session_id: 'authoring-thread', agent_thread_id: 'authoring-thread',
+  };
+  const input = {
+    pool: {}, session, runId: 'b'.repeat(32),
+    origins: { base: 'http://base:3000', head: 'http://head:3000' }, authTokens: { member: 'fixture-member' },
+  };
+  // Without resumeThreadId at all, the author's thread is still not resumed.
+  const pinned = await agent.dispatch({ shots: {} }, input, { workerService });
+  assert.equal(pinned.model, 'claude-sonnet-5-5');
+  assert.equal(sent[0].model, 'claude-sonnet-5-5');
+  assert.equal(sent[0].resumeSessionId, null);
+  // An operator override is used as given.
+  const override = await agent.dispatch({ shots: { agentModel: 'claude-opus-5-5' } }, input, { workerService });
+  assert.equal(override.model, 'claude-opus-5-5');
+  assert.equal(sent[1].model, 'claude-opus-5-5');
+});
+
+test('the worker runs a shots turn on its pinned model, and every other turn on the author allowlist', () => {
+  const worker = require('../src/services/worker');
+  // Without this, resolve() turned the unlisted Sonnet 5.5 back into Opus 5.5.
+  assert.equal(worker.claudeTurnModel('shots', 'claude-sonnet-5-5'), 'claude-sonnet-5-5');
+  assert.equal(worker.claudeTurnModel('shots', 'claude-opus-5-5'), 'claude-opus-5-5');
+  for (const odd of ['', null, 'gpt-5', 'claude-sonnet-5-5 --bare', 'claude-Sonnet']) {
+    assert.equal(worker.claudeTurnModel('shots', odd), 'claude-opus-5-5', String(odd));
+  }
+  for (const mode of ['build', 'scout', 'sync']) {
+    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5-5'), 'claude-opus-5-5', mode);
+    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5'), 'claude-sonnet-5', mode);
+  }
+});
+
+test('Kubernetes shots tools call the Pod that owns their in-memory run control', () => {
+  assert.equal(worker.shotsControlUrl({ podIp: '10.20.30.40', port: '3000', fallback: 'http://service:3000' }),
+    'http://10.20.30.40:3000');
+  assert.equal(worker.shotsControlUrl({ podIp: '2001:db8::7', port: '3000', fallback: 'http://service:3000' }),
+    'http://[2001:db8::7]:3000');
+  assert.equal(worker.shotsControlUrl({ podIp: 'not-an-ip', fallback: 'http://service:3000' }),
+    'http://service:3000');
+  const source = fs.readFileSync(require.resolve('../src/services/worker'), 'utf8');
+  const chart = fs.readFileSync(path.join(__dirname, '../deploy/helm/social-vibecoding-platform/templates/platform.yaml'), 'utf8');
+  assert.match(source, /PLATFORM_URL: mode === 'shots' \? shotsControlUrl\(\) : PLATFORM_INTERNAL_URL/);
+  assert.match(chart, /name: POD_IP\s+valueFrom: \{fieldRef: \{fieldPath: status\.podIP\}\}/);
+});
+
+test('the worker records clips only when the run needs them', async () => {
+  const seen = [];
+  const workerService = {
+    ensureWorker: async () => 'warm-worker',
+    execInWorker: async (_sessionId, options) => {
+      seen.push(options);
+      return { exitCode: 0, sessionId: 'shots-thread' };
+    },
+  };
+  const session = { id: 42, repo_url: 'https://github.com/acme/demo.git', branch_name: 'proposal', agent_backend: 'claude_code' };
+  const options = (recordClips) => ({
+    pool: {}, session, runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
+    authTokens: { member: 'private-token', read_only_admin: 'private-token', full_admin: 'private-token' },
+    resumeThreadId: null,
+    ...(recordClips === undefined ? {} : { recordClips }),
+  });
+  const config = { shots: { maxAgentMs: 500 } };
+  for (const recordClips of [true, undefined, false, 'yes']) {
+    await agent.dispatch(config, options(recordClips), { workerService });
+  }
+  await agent.dispatch(config, { ...options(false), platformAssets: true }, { workerService });
+  assert.equal(seen.pop().shotsPlatformAssets, true, 'a child app\'s assets come from the platform');
+  await agent.dispatch(config, { ...options(true), clipSize: '390x844' }, { workerService });
+  assert.equal(seen.pop().shotsClipSize, '390x844', 'clips are recorded at the motion screen\'s size');
+  await agent.dispatch(config, { ...options(false), clipSize: '390x844' }, { workerService });
+  assert.equal('shotsClipSize' in seen.pop(), false, 'no size without clips');
+  // Only a real true records; the worker refuses anything but a boolean.
+  assert.deepEqual(seen.map((sent) => sent.shotsRecordClips), [true, false, false, false]);
+  for (const sent of seen) {
+    assert.equal(sent.agentBackend, 'claude_code');
+    assert.equal(sent.mode, 'shots');
+    assert.equal(sent.systemPrompt, agent.SYSTEM_PROMPT);
+    assert.equal(sent.prompt, agent.TASK_PROMPT);
+  }
+});
+

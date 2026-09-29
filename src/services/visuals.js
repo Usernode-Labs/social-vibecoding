@@ -448,8 +448,8 @@ function deriveCapturePlan(session, declaredTests, changedFiles) {
 function shouldCaptureMedia(uiAffecting, routeSource, {
   suppressLegacyMedia = false,
 } = {}) {
-  // Once a proposal declares evidence-v2 intent, route-only media is no
-  // longer review evidence. Keep running the existing browser/check suite,
+  // Once a proposal declares shots-v2 intent, route-only media is no
+  // longer what reviewers see. Keep running the existing browser/check suite,
   // but do not create or publish screenshots from its default `/` (or even
   // an explicit legacy path). The global v2 kill switch also suppresses this
   // media: an emergency stop must not make the old irrelevant screenshots
@@ -462,17 +462,17 @@ async function suppressLegacyMediaForSession(pool, config, session) {
   // Production config ties collect/execute/present to this one switch. Treat
   // disabled as "no review media" rather than falling back to route capture;
   // checks and staging still run through the legacy pipeline below.
-  if (config.visualEvidence?.enabled === false) return true;
-  if (!config.visualEvidence?.collect) return false;
-  if (session?.visual_evidence_detail && typeof session.visual_evidence_detail === 'object') return true;
+  if (config.shots?.enabled === false) return true;
+  if (!config.shots?.collect) return false;
+  if (session?.shots_detail && typeof session.shots_detail === 'object') return true;
   try {
     const { rows } = await pool.query(
-      'SELECT visual_evidence_detail FROM chat_sessions WHERE id = $1',
+      'SELECT shots_detail FROM chat_sessions WHERE id = $1',
       [session.id]
     );
-    return !!(rows[0]?.visual_evidence_detail && typeof rows[0].visual_evidence_detail === 'object');
+    return !!(rows[0]?.shots_detail && typeof rows[0].shots_detail === 'object');
   } catch (err) {
-    log.warn('visuals', 'Evidence-v2 enrollment lookup failed — suppressing legacy media', {
+    log.warn('visuals', 'Shots enrollment lookup failed — suppressing legacy media', {
       sessionId: session.id, err: err.message,
     });
     // Fail closed when collection is enabled. Checks still run; only legacy
@@ -1615,7 +1615,7 @@ async function getForSession(pool, sessionId, expectedCommit = null) {
 // object { id, path, viewport, commit, scenarioId, scenarioFingerprint,
 // fellBack } (current query) — the object form carries the group label,
 // frame, revision/scenario provenance, and before-fallback flag so the
-// vote-panel tiles render only current, correctly labelled evidence.
+// vote-panel tiles render only current, correctly labelled shots.
 function shapeAgg(agg, expectedCommit = null) {
   if (!agg || typeof agg !== 'object') return null;
   const rows = [];
@@ -1679,14 +1679,14 @@ async function clearPrVisuals(pool, session, repoOwner, repoName) {
   }
 }
 
-// A fresh run supersedes the previous evidence immediately, not only after
+// A fresh run supersedes the previous shots immediately, not only after
 // its replacement succeeds. That closes two misleading windows: an open
 // session retaining the old tiles while a new revision is being tested, and
 // a PR body retaining them when the replacement run ultimately fails. The
 // row delete is best-effort because storeArtifacts repeats it transactionally
 // on success; the null event still tells already-open clients to stop showing
 // their cached copy.
-async function resetVisualEvidence(pool, session, repoOwner, repoName, send) {
+async function resetShots(pool, session, repoOwner, repoName, send) {
   let removed = false;
   try {
     const result = await pool.query('DELETE FROM session_visuals WHERE session_id = $1', [session.id]);
@@ -1855,14 +1855,14 @@ async function publishCaptureError(pool, sessionId, revision, err, send) {
 
 // The legacy checks/capture pipeline remains the preview-readiness
 // chokepoint during rollout. Once it settles (successfully or not), launch
-// revision-scoped evidence independently. The orchestrator reloads the row,
+// revision-scoped shots independently. The orchestrator reloads the row,
 // deduplicates by session+head, and owns its own paired application state, so
 // no stale in-memory session metadata or mutable public preview is reused.
-function scheduleVisualEvidence(config, callerPool, sessionId, commitHash, trigger = 'preview-ready') {
-  const orchestrator = require('./visual-evidence-orchestrator');
+function scheduleShots(config, callerPool, sessionId, commitHash, trigger = 'preview-ready') {
+  const orchestrator = require('./shots-orchestrator');
   const lifecycle = require('./preview-lifecycle');
   // Called from a checks run's `finally`: the run's guarded pool refuses
-  // every query once the run settles, and the evidence run outlives it.
+  // every query once the run settles, and the shots run outlives it.
   const pool = callerPool && callerPool === lifecycle.current()?.pool
     ? lifecycle.detach(() => getPool(config))
     : callerPool;
@@ -1882,7 +1882,7 @@ function scheduleVisualEvidence(config, callerPool, sessionId, commitHash, trigg
     headSha: String(commitHash).toLowerCase(),
     trigger,
   }))).catch((err) => {
-    log.warn('visuals', 'Visual evidence scheduling failed', {
+    log.warn('visuals', 'Before & after shots scheduling failed', {
       sessionId: Number(sessionId), headSha: commitHash, err: err.message,
     });
     // A throw here is still a run that never started, and the reviewer
@@ -2000,7 +2000,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     });
     _inFlight.delete(key);
     drainQueued(key, session.id, commitHash, null);
-    scheduleVisualEvidence(config, pool, session.id, commitHash, 'checks-already-decided');
+    scheduleShots(config, pool, session.id, commitHash, 'checks-already-decided');
     return;
   }
 
@@ -2085,10 +2085,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // #607: flip open clients' badges to "Checks running…" right away —
     // the terminal notifyChecks below can be minutes out.
     notifyChecksPending(session.id, commitHash, 'testing', trigger);
-    // Evidence belongs to a completed run, not merely to this session id.
+    // Shots belong to a completed run, not merely to this session id.
     // Clear the previous set before any slow browser/image work so a live
     // client cannot keep presenting it as the revision now under test.
-    await resetVisualEvidence(pool, session, repoOwner, repoName, send);
+    await resetShots(pool, session, repoOwner, repoName, send);
     // The build half is over: close its fifth step with the time the
     // hand-off took (and whether it was spent queued), and publish the
     // finished build so the card does not keep a step pulsing under
@@ -2143,9 +2143,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const captureRouteSource = capturePlan.routeSource;
     const visualScenarios = capturePlan.scenarios;
     const navigationPaths = capturePaths;
-    if (config.visualEvidence?.collect && uiAffecting) {
+    if (config.shots?.collect && uiAffecting) {
       try {
-        await require('./visual-evidence-state').requireIntentForUiChange(
+        await require('./shots-state').requireIntentForUiChange(
           pool,
           Number(session.id),
           {
@@ -2154,7 +2154,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           }
         );
       } catch (err) {
-        log.warn('visuals', 'Could not persist the missing visual-evidence declaration', {
+        log.warn('visuals', 'Could not persist the missing shots declaration', {
           sessionId: session.id, commitHash, err: err.message,
         });
       }
@@ -2797,7 +2797,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     if (harvestable) await checkRuns.finish(operation?.cleanupPool || pool, runId);
     _inFlight.delete(key);
     drainQueued(key, session.id, commitHash, traceStatus);
-    scheduleVisualEvidence(config, pool, session.id, commitHash);
+    scheduleShots(config, pool, session.id, commitHash);
   }
 }
 
@@ -3697,7 +3697,7 @@ module.exports = {
   kubernetesCaptureOrigin,
   sessionEventEnvelope,
   captureForSession,
-  scheduleVisualEvidence,
+  scheduleShots,
   // The settlement half of a run and the in-flight seat, for the harvester
   // (services/check-harvest.js) settling a run whose launcher died.
   settleCaptureRun,
@@ -3712,7 +3712,7 @@ module.exports = {
   usableRuntimeName,
   hasInFlightCapture,
   storeArtifacts,
-  resetVisualEvidence,
+  resetShots,
   getForSession,
   shapeAgg,
   storeCaptureOutcome,

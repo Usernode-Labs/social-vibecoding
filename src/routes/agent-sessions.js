@@ -163,7 +163,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       const draft = await agentSessions.previewDraft(pool, { user: req.user, hint: Object.keys(hint).length ? hint : null });
       return res.json({ draft });
     } catch (err) {
-      return sendError(res, err, 'Preview agent session');
+      return sendError(res, err, 'Shots agent session');
     }
   });
 
