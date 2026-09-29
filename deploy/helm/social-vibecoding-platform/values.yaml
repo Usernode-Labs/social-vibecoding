@@ -106,6 +106,12 @@ config:
   appsDomain: ""
   # Optional waitlist OAuth callback origin. Empty uses the application's canonical origin.
   waitlistOauthOrigin: ""
+  # Invite links skipping the waitlist (INVITE_TREE_ENABLED). While false, a
+  # newcomer following an invite link waits to be let in. While true, people
+  # let off the waitlist by hand get inviteTreeBudgets' first number of skips;
+  # the default "10" gives the people they let in none (no chaining).
+  inviteTreeEnabled: false
+  inviteTreeBudgets: "10"
   platformRepository: https://github.com/replace-me/social-vibecoding
   nodeRpcUrl: http://replace-me.invalid:3000
   # Explorer host[:port] without a scheme. Public hosts use HTTPS; private

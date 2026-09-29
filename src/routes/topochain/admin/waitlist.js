@@ -450,14 +450,15 @@ function waitlistAdminRoutes(config) {
 
   // ── POST /api/v4/admin/users/:id/grant-access ────────────────────────
   // Direct platform-access grant for an account that never joined the
-  // waitlist. Idempotent.
+  // waitlist. Idempotent. A release by hand like Admit, so the account it
+  // lets in gets the invite tree's generation-0 skips.
   router.post('/api/v4/admin/users/:id/grant-access', adminWriteGate, async (req, res) => {
     try {
       const id = toIntId(req.params.id);
       if (!id) return fail(res, 404, 'User not found.');
       const { rows } = await pool.query('SELECT id FROM users WHERE id = $1', [id]);
       if (!rows.length) return fail(res, 404, 'User not found.');
-      await waitlist.grantPlatformAccess(pool, id);
+      await waitlist.grantPlatformAccess(pool, id, { manualRelease: true });
       log.info('topochain-admin', 'Platform access granted directly', { userId: id, adminId: req.user?.id });
       return ok(res, { data: { id, has_platform_access: true } });
     } catch (err) {

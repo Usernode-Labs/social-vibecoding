@@ -58,20 +58,23 @@ test('what a link grants is what its maker could: a collaborator where building 
   assert.match(read('src/db/schema.sql'), /IF r\.collab_visibility = 'private' AND NOT r\.self_hosted THEN\s+INSERT INTO app_collaborators/);
 });
 
-test('THE TREE is off unless switched on, with lifetime skips of 10, 5, 2, then none; admins unlimited', () => {
+test('THE TREE is off unless switched on, with 10 lifetime skips for generation 0 and none after it; admins unlimited', () => {
   const saved = { enabled: process.env.INVITE_TREE_ENABLED, budgets: process.env.INVITE_TREE_BUDGETS };
   try {
     delete process.env.INVITE_TREE_ENABLED;
     delete process.env.INVITE_TREE_BUDGETS;
     assert.equal(invites.treeEnabled(), false);
-    assert.deepEqual(invites.treeBudgets(), [10, 5, 2]);
-    assert.deepEqual([0, 1, 2, 3, 9].map((g) => invites.budgetFor(g)), [10, 5, 2, 0, 0]);
-    assert.equal(invites.budgetFor(null), 0, 'no generation: not let in yet');
+    assert.deepEqual(invites.treeBudgets(), [10]);
+    assert.deepEqual([0, 1, 2, 3, 9].map((g) => invites.budgetFor(g)), [10, 0, 0, 0, 0],
+      'invites do not chain: whoever a link let in has none to give');
+    assert.equal(invites.budgetFor(null), 0, 'no generation (existing accounts, not let in by hand): no skips');
     assert.equal(invites.budgetFor(5, { isAdmin: true }), Infinity);
     process.env.INVITE_TREE_BUDGETS = '4, 3';
     assert.deepEqual(invites.treeBudgets(), [4, 3]);
     process.env.INVITE_TREE_BUDGETS = 'nonsense';
-    assert.deepEqual(invites.treeBudgets(), [10, 5, 2], 'a bad value falls back');
+    assert.deepEqual(invites.treeBudgets(), [10], 'a bad value falls back, never to a chain');
+    process.env.INVITE_TREE_BUDGETS = '';
+    assert.deepEqual(invites.treeBudgets(), [10], 'and so does an empty one');
   } finally {
     if (saved.enabled === undefined) delete process.env.INVITE_TREE_ENABLED; else process.env.INVITE_TREE_ENABLED = saved.enabled;
     if (saved.budgets === undefined) delete process.env.INVITE_TREE_BUDGETS; else process.env.INVITE_TREE_BUDGETS = saved.budgets;
@@ -81,8 +84,41 @@ test('THE TREE is off unless switched on, with lifetime skips of 10, 5, 2, then 
   // IS the record: no counter to drift.
   assert.match(src, /FROM users WHERE id = \$1\s+FOR UPDATE/);
   assert.match(src, /SELECT COUNT\(\*\)::int AS n FROM users WHERE admitted_by = \$1/);
-  // grantPlatformAccess is "let in by us": generation 0, the lowest.
-  assert.match(read('src/services/waitlist.js'), /invite_generation = 0\s+WHERE id = \$1 AND \(has_platform_access = FALSE OR invite_generation IS DISTINCT FROM 0\)/);
+  // No generation reads as no place in the tree, not as generation 0: an
+  // account that had access before the tree gets no skips.
+  assert.doesNotMatch(src, /COALESCE\(invite_generation/);
+  // An admin's link is not a release by hand: its people start at 1.
+  assert.match(src, /const generation = inviter\.is_admin \? 1 : inviter\.generation \+ 1;/);
+  // grantPlatformAccess makes generation 0 only for a release by hand, and
+  // only on the grant that lets somebody in.
+  const waitlistSrc = read('src/services/waitlist.js');
+  assert.match(waitlistSrc, /invite_generation = CASE WHEN \$2::boolean THEN 0 ELSE invite_generation END\s+WHERE id = \$1 AND has_platform_access = FALSE`,\s+\[userId, manualRelease === true\]/);
+  // The three releases by hand ask for it; the invite-equivalent signups do not.
+  assert.equal((waitlistSrc.match(/grantPlatformAccess\(pool, userId, \{ manualRelease: true \}\)/g) || []).length, 2,
+    'an Admit, and an admitted address signing up later');
+  assert.match(read('src/routes/topochain/admin/waitlist.js'), /waitlist\.grantPlatformAccess\(pool, id, \{ manualRelease: true \}\)/);
+  const auth = read('src/routes/auth.js');
+  const grants = auth.match(/grantPlatformAccess\([^)]*\)/g) || [];
+  assert.deepEqual(grants, ['grantPlatformAccess(pool, userId)', 'grantPlatformAccess(pool, userId)'],
+    'activation codes and genesis wallets grant access without skips');
+});
+
+test('the tree is switched on from the chart, and both settings are in the Platform variables panel', () => {
+  // The Kubernetes Deployment lists its env explicitly, so a variable the
+  // chart does not name never reaches the process.
+  const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
+  assert.match(platform, /\{name: INVITE_TREE_ENABLED, value: \{\{ \.Values\.config\.inviteTreeEnabled \| default false \| quote \}\}\}/);
+  assert.match(platform, /\{name: INVITE_TREE_BUDGETS, value: \{\{ \.Values\.config\.inviteTreeBudgets \| default "10" \| quote \}\}\}/);
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  assert.match(values, /^ {2}inviteTreeEnabled: false$/m, 'off until someone turns it on');
+  assert.match(values, /^ {2}inviteTreeBudgets: "10"$/m, 'the chart default is the code default: no chaining');
+  // Declared, so an admin can find them; not required, so this merges unset.
+  const appManifest = require('../src/services/app-manifest');
+  const declared = new Map(appManifest.readPlatformEnv(JSON.parse(read('dapp.json'))).map((e) => [e.key, e]));
+  for (const [key, fallback] of [['INVITE_TREE_ENABLED', 'false'], ['INVITE_TREE_BUDGETS', '10']]) {
+    assert.equal(declared.get(key)?.default, fallback, key);
+    assert.equal(declared.get(key)?.required, false, key);
+  }
 });
 
 test('the tables are staging:private, and a queued invite is applied by a trigger on being let in', () => {

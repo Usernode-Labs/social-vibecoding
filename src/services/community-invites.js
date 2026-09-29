@@ -28,8 +28,12 @@
  *
  * THE INVITE TREE is built and OFF (INVITE_TREE_ENABLED). When on, a link
  * can also let somebody past the waitlist, spending one of its maker's
- * lifetime skips: TREE_BUDGETS by generation (10 for people we let in, then
- * 5, then 2, then none), unlimited for admins, whose invitees start at 10.
+ * lifetime skips: INVITE_TREE_BUDGETS by generation, 10 for the people we
+ * let off the waitlist by hand (generation 0) and none for anybody a link
+ * let in, so invites do not chain. Unlimited for admins, but an admin's link
+ * is not a release by hand: whoever it lets in is generation 1 like anyone
+ * else's invitee. An account with no generation (everyone who had access
+ * before the tree, activation codes, genesis wallets) has no skips.
  * Skips used is a count of users.admitted_by, read under a lock on the
  * maker's row so two people following at once cannot spend a skip that is
  * not there. With it off, everybody new is queued.
@@ -57,11 +61,13 @@ function treeEnabled() {
   return process.env.INVITE_TREE_ENABLED === 'true';
 }
 
-// Lifetime skips by generation: index 0 is people we let in.
+// Lifetime skips by generation: index 0 is people we let off the waitlist by
+// hand, and every generation past the list gets none. The fallback is one
+// entry on purpose: a missing or mistyped value must not switch chaining on.
 function treeBudgets() {
-  const raw = String(process.env.INVITE_TREE_BUDGETS || '10,5,2');
+  const raw = String(process.env.INVITE_TREE_BUDGETS || '10');
   const parsed = raw.split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => Number.isFinite(n) && n >= 0);
-  return parsed.length ? parsed : [10, 5, 2];
+  return parsed.length ? parsed : [10];
 }
 
 /** Skips a person of `generation` gets over their lifetime. */
@@ -425,14 +431,13 @@ async function redeem(pool, { token, user }) {
  * waitlist on one of `inviterId`'s skips, inside the caller's transaction.
  * Locks the inviter's row, counts what they have spent, and when a skip is
  * left, records who let them in, their generation (one below the inviter's;
- * an admin's invitees start at 0, the top) and grants access — which fires
- * the trigger that applies the redemptions this person has queued, this one
- * included. Returns whether it let them in.
+ * an admin's invitees are generation 1, as a root's are) and grants access —
+ * which fires the trigger that applies the redemptions this person has
+ * queued, this one included. Returns whether it let them in.
  */
 async function admitThroughTree(client, { inviterId, userId }) {
   const { rows } = await client.query(
-    `SELECT id, is_admin, has_platform_access,
-            COALESCE(invite_generation, CASE WHEN has_platform_access THEN 0 END) AS generation
+    `SELECT id, is_admin, has_platform_access, invite_generation AS generation
        FROM users WHERE id = $1
        FOR UPDATE`,
     [inviterId]
@@ -447,7 +452,9 @@ async function admitThroughTree(client, { inviterId, userId }) {
     );
     if ((used[0]?.n || 0) >= budget) return false;
   }
-  const generation = inviter.is_admin ? 0 : (inviter.generation ?? 0) + 1;
+  // An admin's link lets in whoever holds it, which is not a release by
+  // hand: its people get what a root's invitees get, not a root's skips.
+  const generation = inviter.is_admin ? 1 : inviter.generation + 1;
   const { rows: admitted } = await client.query(
     `UPDATE users
         SET has_platform_access = TRUE,
@@ -468,8 +475,7 @@ async function admitThroughTree(client, { inviterId, userId }) {
 async function skipsLeft(pool, user) {
   if (!treeEnabled() || !user) return null;
   const { rows } = await pool.query(
-    `SELECT is_admin,
-            COALESCE(invite_generation, CASE WHEN has_platform_access THEN 0 END) AS generation,
+    `SELECT is_admin, invite_generation AS generation,
             (SELECT COUNT(*)::int FROM users x WHERE x.admitted_by = u.id) AS used
        FROM users u WHERE u.id = $1`,
     [user.id]
