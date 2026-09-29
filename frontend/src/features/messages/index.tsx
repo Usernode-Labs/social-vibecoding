@@ -20,7 +20,6 @@ import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
-import { AgentAppDialog } from './agent-dialog';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
@@ -64,7 +63,6 @@ import { useSidePaneBeside } from '../agent-session/spec-layout';
 import { ACTIVITY_LABEL, agentActivity } from '../agent-session/activity';
 import { AgentActivityIcon } from '../agent-session/activity-mark';
 import {
-  agentSessionsEnabled,
   deactivateAgentSession,
   getAgentSessionState,
   loadAgentSessions,
@@ -118,7 +116,7 @@ import type { ConversationMessage, ConversationSummary, MessagesAgentThread } fr
  * first, then the channels — #general and one per app you are a member of.
  */
 
-function openDialog(name: 'messagesCreate' | 'messagesMembers' | 'messagesShare' | 'messagesAgent', payload?: unknown) {
+function openDialog(name: 'messagesCreate' | 'messagesMembers' | 'messagesShare', payload?: unknown) {
   window.UsernodeReact?.dialogs?.[name]?.open(payload);
 }
 
@@ -523,25 +521,16 @@ function InboxFilters({ filter }: { filter: InboxFilter }) {
 const NEW_CHOICES = [
   { key: 'direct', label: 'Direct message', hint: 'Talk to one person' },
   { key: 'group', label: 'Group chat', hint: 'Bring a few people together' },
-  { key: 'agent', label: 'Agent chat', hint: 'Start a change on one of your apps' },
+  // #2779: a conversation with the Mayor that works on any app, so there is
+  // no app to pick first. It replaced "Agent chat", which asked which app and
+  // opened a classic dev session there; those are no longer created.
+  { key: 'agent', label: 'Agent session', hint: 'Plan and build a change on any app' },
 ] as const;
 type NewChoice = typeof NEW_CHOICES[number]['key'];
 
-// #2779: with agent sessions on, the third choice is a conversation with the
-// Mayor that works on any app, so there is no app to pick first.
-function newChoices() {
-  if (!agentSessionsEnabled()) return NEW_CHOICES;
-  return NEW_CHOICES.map((item) => (item.key === 'agent'
-    ? { ...item, label: 'Agent session', hint: 'Plan and build a change on any app' }
-    : item));
-}
-
 function startNew(choice: NewChoice) {
-  // DM and group are the create dialog, opened on the matching tab. Agent
-  // asks which app first (./agent-dialog.tsx) and opens a new dev session
-  // there, unless agent sessions are on: then it is one new conversation.
-  if (choice === 'agent' && agentSessionsEnabled()) void startAgentSession({ entry: 'messages' });
-  else if (choice === 'agent') openDialog('messagesAgent');
+  // DM and group are the create dialog, opened on the matching tab.
+  if (choice === 'agent') void startAgentSession({ entry: 'messages' });
   else openDialog('messagesCreate', choice);
 }
 
@@ -578,7 +567,7 @@ function NewMessageButton() {
     const pu = (window as any).PlatformUI;
     if (pu && typeof pu.isTouch === 'function' && pu.isTouch() && typeof pu.actionSheet === 'function') {
       pu.actionSheet({
-        actions: newChoices().map((item) => ({ label: item.label, handler: () => startNew(item.key) })),
+        actions: NEW_CHOICES.map((item) => ({ label: item.label, handler: () => startNew(item.key) })),
       });
       return;
     }
@@ -618,7 +607,7 @@ function NewMessageButton() {
           onClick={(event) => event.stopPropagation()}
           onKeyDown={menuKeys.onKeyDown}
         >
-          {newChoices().map((item) => (
+          {NEW_CHOICES.map((item) => (
             <button
               key={item.key}
               type="button"
@@ -1973,7 +1962,6 @@ export function MessagesScreen() {
         </div>
       </main>
       <CreateConversationDialog />
-      <AgentAppDialog />
       <ConversationMembersDialog />
       <ShareItemDialog />
     </>

@@ -345,24 +345,18 @@ test('Give feedback still opens the shared dialog for the current app', () => {
   assert.deepEqual(calls, [['close'], ['feedback', true]]);
 });
 
-// #2770 REVERSED THE ROUTE: New change used to open the app's Workshop and
-// then hop to the unsent-change screen through AppView.createProposal, so a
-// phone showed the Workshop tab first and back led to the board. A change is
-// an agent conversation now, so it goes STRAIGHT to /dev/sessions/new (which
-// lights Messages) with Messages recorded as where it hangs off.
+// #2770 sent New change straight to the app's classic unsent-change screen
+// (/dev/sessions/new). #2779: classic sessions are no longer created, so it
+// opens an unsent agent session focused on the target app, whichever app is
+// open, and navigates nowhere else itself.
 for (const currentApp of ['demo', 'other']) {
-  test(`New change goes straight to the unsent change on the target app from ${currentApp}, off Messages`, async () => {
+  test(`New change opens an agent session on the target app from ${currentApp}`, () => {
     const h = improveHarness(currentApp);
     const { Improve, calls } = h;
+    const started = [];
+    h.sandbox.UsernodeReact = { agentSession: { start: (hint) => { started.push(JSON.parse(JSON.stringify(hint))); } } };
     Improve.startSession();
-    await h.navigation;
-    assert.deepEqual(calls, [
-      ['close'],
-      currentApp === 'demo' ? ['switch', 'dev', 'new', 'sessions'] : ['navigate', 'demo', 'dev', 'new', 'sessions'],
-    ], 'no board on the way, and nothing is created by the click (#2241)');
-    assert.equal(Improve._nextSessionOrigin, '#messages',
-      'back from the new change goes up to Messages');
-    assert.equal(h.sandbox.AppView._proposalHint, true,
-      'the one-shot hint createProposal set on this same path still shows');
+    assert.deepEqual(started, [{ slug: 'demo', entry: 'improve' }]);
+    assert.deepEqual(calls, [['close']], 'no board, no classic screen, and nothing is created by the click');
   });
 }

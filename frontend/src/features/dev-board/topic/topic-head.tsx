@@ -30,7 +30,7 @@
 
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode, SyntheticEvent } from 'react';
+import type { FormEvent, KeyboardEvent, ReactNode, SyntheticEvent } from 'react';
 
 import { Html } from '../../../lib/html';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -525,18 +525,8 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
 }
 
 function Transcript({ t }: { t: TranscriptSection }): ReactNode {
-  // "Fork this chat" is painted INSIDE the body, after its fetch, by
-  // `_transcriptActionsHtml` — so it cannot be a child's onClick. The
-  // section delegates, which is what `_renderTopicHead` bound here per
-  // paint before.
-  const onClick = (e: MouseEvent<HTMLDivElement>) => {
-    const btn = (e.target as HTMLElement).closest?.('[data-fork-chat]') as HTMLButtonElement | null;
-    if (!btn || btn.disabled) return;
-    e.preventDefault();
-    call('forkSharedChat', parseInt(btn.dataset.forkChat || '', 10), btn);
-  };
   return (
-    <div className="st-section" data-transcript-section={t.id} onClick={onClick}>
+    <div className="st-section" data-transcript-section={t.id}>
       <button
         type="button"
         className="st-section-head"

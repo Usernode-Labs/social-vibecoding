@@ -9516,9 +9516,10 @@ CREATE TRIGGER users_deleted_username_guard BEFORE INSERT OR UPDATE OF username 
 -- back through chat_sessions.agent_session_id, so every downstream system —
 -- staging, checks, visual evidence, votes, merge, the sweepers — is untouched.
 --
--- The experimental per-user flag. NULL follows the deployment default
--- (AGENT_SESSIONS_DEFAULT); TRUE or FALSE is the user's own choice, so an
--- opt-out survives the day the default flips. See services/agent-sessions.
+-- The retired experimental per-user flag. Agent sessions are on for
+-- everyone and nothing reads this column any more; it stays so a rolling
+-- deploy's older pods, which still SELECT it, keep working. Safe to drop in
+-- a later migration once no such pod can be running.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_sessions_enabled BOOLEAN;
 
 CREATE TABLE IF NOT EXISTS agent_sessions (

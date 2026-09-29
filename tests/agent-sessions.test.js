@@ -1,7 +1,8 @@
 'use strict';
 
-// Agent sessions (#2779), step 3a: the flag, the data layer and its HTTP
-// surface, and the places the rest of the platform hands off to it.
+// Agent sessions (#2779), step 3a: the data layer and its HTTP surface, and
+// the places the rest of the platform hands off to it. The per-user flag it
+// shipped behind is retired: agent sessions are on for everyone.
 //
 // The database-level behaviour (the trigger that stamps every message row,
 // the foreign keys, the constraints) is exercised against a real PostgreSQL
@@ -16,7 +17,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
 
-const flag = require('../src/services/agent-sessions-flag');
 const agentSessions = require('../src/services/agent-sessions');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
@@ -35,48 +35,23 @@ function recordingPool(handlers = {}) {
   };
 }
 
-// ── The flag ───────────────────────────────────────────────────────────
+// ── The retired flag ───────────────────────────────────────────────────
 
-test('a user\'s own choice wins over the deployment default, both ways', () => {
-  const off = { agentSessionsDefault: false };
-  const on = { agentSessionsDefault: true };
-  assert.equal(flag.effective(off, null), false, 'unset follows the default');
-  assert.equal(flag.effective(on, null), true);
-  assert.equal(flag.effective(on, false), false, 'an opt-out survives the default flipping');
-  assert.equal(flag.effective(off, true), true);
-  assert.equal(flag.choiceOf(undefined), null);
-  assert.equal(flag.choiceOf('t'), null, 'only a real boolean is a choice');
-});
-
-test('the opt-in audience decides who may choose', () => {
-  assert.equal(flag.canChoose({ agentSessionsOptIn: 'admins' }, { isAdmin: false }), false);
-  assert.equal(flag.canChoose({ agentSessionsOptIn: 'admins' }, { isAdmin: true }), true);
-  assert.equal(flag.canChoose({ agentSessionsOptIn: 'all' }, { isAdmin: false }), true);
-  assert.equal(flag.canChoose({}, { isAdmin: false }), false, 'a config without the key fails closed');
-  assert.equal(flag.canChoose({ agentSessionsOptIn: 'all' }, null), false);
-});
-
-test('the flag reaches req.user on every browser path, and auth/me reports it', () => {
-  const auth = read('src/middleware/auth.js');
-  // Both user loads — the cookie session and the staging iframe mint.
-  assert.equal((auth.match(/u?\.?agent_sessions_enabled/g) || []).length >= 4, true);
-  assert.match(auth, /agentSessionsEnabled: agentSessionsFlag\.effective\(config, rows\[0\]\.agent_sessions_enabled\)/);
-  assert.match(auth, /agentSessionsEnabled: agentSessionsFlag\.effective\(config, userRow\.agent_sessions_enabled\)/);
-  const routes = read('src/routes/auth.js');
-  assert.match(routes, /agentSessionsEnabled: !!req\.user\.agentSessionsEnabled/);
-  assert.match(routes, /agentSessionsChoosable: agentSessionsFlag\.canChoose\(config, req\.user\)/);
+test('agent sessions are on for everyone: no flag, no default, no opt-in audience', () => {
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'src/services/agent-sessions-flag.js')), false);
   const config = read('src/config.js');
-  assert.match(config, /AGENT_SESSIONS_DEFAULT \|\| 'false'\) === 'true'/, 'off until a user opts in');
-  assert.match(config, /AGENT_SESSIONS_OPT_IN === 'admins' \? 'admins' : 'all'/,
-    'stage 2: every user may opt in unless the deployment closes it to admins');
+  assert.doesNotMatch(config, /AGENT_SESSIONS_DEFAULT|AGENT_SESSIONS_OPT_IN|agentSessionsDefault|agentSessionsOptIn/);
+  // Neither browser user load reads the retired column any more; it stays in
+  // schema.sql only so an older pod's SELECT survives a rolling deploy.
+  const auth = read('src/middleware/auth.js');
+  assert.doesNotMatch(auth, /agent_sessions_enabled|agentSessionsFlag|agentSessionsChoice/);
 });
 
-test('POST /api/me/agent-sessions sets, clears and refuses', async () => {
-  const toggle = read('src/routes/auth.js');
-  const route = toggle.slice(toggle.indexOf("router.post('/api/me/agent-sessions'"));
-  assert.match(route.slice(0, 400), /canChoose\(config, req\.user\)[\s\S]{0,40}403/);
-  assert.match(route, /enabled !== null && typeof enabled !== 'boolean'/, 'null clears the choice');
-  assert.match(route, /UPDATE users SET agent_sessions_enabled = \$1 WHERE id = \$2/);
+test('auth/me still says agent sessions are on, for a shell cached before the switch went', () => {
+  const routes = read('src/routes/auth.js');
+  assert.match(routes, /agentSessionsEnabled: true,/);
+  assert.doesNotMatch(routes, /agentSessionsChoosable|agentSessionsFlag/);
+  assert.doesNotMatch(routes, /\/api\/me\/agent-sessions/, 'the Settings switch\'s route is gone');
 });
 
 // ── The hint ───────────────────────────────────────────────────────────
@@ -383,19 +358,15 @@ const SESSION_ROW = {
   archived_at: null, focus_app_slug: 'recipe-box', focus_app_name: 'Recipe box',
 };
 
-test('creating a session needs the flag; everything else only needs to be yours', async () => {
+test('any signed-in user may create a session; everything else only needs to be yours', async () => {
   const handlers = {
     'INSERT INTO agent_sessions': () => ({ rows: [{ id: 5 }] }),
     'FROM agent_sessions s': () => ({ rows: [SESSION_ROW] }),
     'FROM apps WHERE slug': () => ({ rows: [{ id: 3, slug: 'recipe-box', collab_visibility: 'public', view_visibility: 'public' }] }),
   };
-  await withRoutes({ id: 7, agentSessionsEnabled: false }, handlers, async (call) => {
-    const refused = await call('POST', '/api/agent-sessions', { hint: { slug: 'recipe-box' } });
-    assert.equal(refused.status, 403);
+  await withRoutes({ id: 7 }, handlers, async (call, pool) => {
     const listed = await call('GET', '/api/agent-sessions');
-    assert.equal(listed.status, 200, 'turning the flag off never hides a conversation');
-  });
-  await withRoutes({ id: 7, agentSessionsEnabled: true }, handlers, async (call, pool) => {
+    assert.equal(listed.status, 200);
     const created = await call('POST', '/api/agent-sessions', { hint: { slug: 'recipe-box', entry: 'improve' } });
     assert.equal(created.status, 201);
     assert.equal(created.body.session.id, 5);
@@ -422,10 +393,7 @@ test('an unsent conversation is previewed, then created on its first message wit
       rows: [{ id: 3, slug: 'recipe-box', name: 'Recipe box', collab_visibility: 'public', view_visibility: 'public' }],
     }),
   };
-  await withRoutes({ id: 7, agentSessionsEnabled: false }, handlers, async (call) => {
-    assert.equal((await call('GET', '/api/agent-sessions/draft?slug=recipe-box')).status, 403);
-  });
-  await withRoutes({ id: 7, agentSessionsEnabled: true }, handlers, async (call, pool) => {
+  await withRoutes({ id: 7 }, handlers, async (call, pool) => {
     const draft = await call('GET', '/api/agent-sessions/draft?slug=recipe-box&issueNumber=12&entry=issue');
     assert.equal(draft.status, 200);
     assert.deepEqual(draft.body.draft, {
@@ -471,9 +439,9 @@ test('the model can be changed at any time, mid-turn included, on an open sessio
       rows: [{ ...SESSION_ROW, active_turn: 'busy-turn', agent_backend: 'claude_code', agent_model: 'claude-sonnet-5' }],
     }),
   };
-  await withRoutes({ id: 7, agentSessionsEnabled: false }, handlers, async (call, pool) => {
+  await withRoutes({ id: 7 }, handlers, async (call, pool) => {
     const changed = await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code', model: 'claude-sonnet-5' });
-    assert.equal(changed.status, 200, 'a running turn does not lock the picker, and the flag only gates starting');
+    assert.equal(changed.status, 200, 'a running turn does not lock the picker');
     assert.deepEqual(changed.body.session.agent, { backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null });
     const update = pool.calls.find((c) => /UPDATE agent_sessions/.test(c.sql));
     assert.deepEqual(update.params, [5, 7, 'claude_code', 'claude-sonnet-5', null]);
@@ -493,7 +461,7 @@ test('the model can be changed at any time, mid-turn included, on an open sessio
 });
 
 test('another user\'s session is a 404 on every route', async () => {
-  await withRoutes({ id: 8, agentSessionsEnabled: true }, {}, async (call) => {
+  await withRoutes({ id: 8 }, {}, async (call) => {
     for (const [method, target, body] of [
       ['GET', '/api/agent-sessions/5'],
       ['GET', '/api/agent-sessions/5/messages'],
@@ -516,7 +484,7 @@ test('the conversation is read in id order from the rows its changes wrote', asy
       ],
     }),
   };
-  await withRoutes({ id: 7, agentSessionsEnabled: true }, handlers, async (call, pool) => {
+  await withRoutes({ id: 7 }, handlers, async (call, pool) => {
     const res = await call('GET', '/api/agent-sessions/5/messages?after=10&limit=2');
     assert.equal(res.status, 200);
     assert.deepEqual(res.body.messages.map((m) => [m.id, m.changeId]), [[11, null], [12, 50]]);

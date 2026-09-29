@@ -4422,10 +4422,14 @@ const App = {
         }
         if (tab === 'dev') {
           const sec = parts[3] || null;
+          if (sec === 'sessions' && parts[4] === 'new') {
+            // #2779: the retired classic unsent change (#2241).
+            App.openNewChangeAsAgentSession(slug);
+            return;
+          }
           if (sec === 'sessions' && parts[4]) {
             subTab = 'sessions';
-            // #2241: `new` is the unsent change (see _normalizeTab).
-            ref = parts[4] === 'new' ? 'new' : (parseInt(parts[4]) || null);
+            ref = parseInt(parts[4]) || null;
           } else if (sec === 'chat') {
             // Full-screen general chat (also where legacy group-chat
             // links land — the old Chat sub-tab's original meaning).
@@ -6219,6 +6223,27 @@ const App = {
   // the React store (features/agent-session) loads the conversation, and
   // this router owns the screen swap and chrome. The store retitles the bar
   // with the conversation's title once it has it.
+  // #2779: /app/<slug>/dev/sessions/new was the classic unsent-change
+  // screen (#2241). Classic sessions are no longer created, so that address
+  // — a bookmark, Back, a link an older page wrote — opens an unsent agent
+  // session focused on the app instead, at the address New change uses. The
+  // history entry is REPLACED, so Back does not land on the old address and
+  // bounce straight forward again. The side panel's own document keeps its
+  // `agent/new`, the one form of that address its route table knows.
+  openNewChangeAsAgentSession(slug) {
+    const agentSession = window.UsernodeReact?.agentSession;
+    agentSession?.prepareDraft?.(slug ? { slug, entry: 'app' } : null);
+    const next = App.embeddedPanel ? '#agent/new' : '#messages/agent/new';
+    try {
+      // From the root, not beside the clean /app/<slug>/… path it came in on.
+      history.replaceState(history.state, '', App._rootUrl(next));
+    } catch (_) {
+      window.location.hash = next;
+      return;
+    }
+    App.restoreFromHash();
+  },
+
   navigateToAgentSession(id, options = {}) {
     const agentSession = window.UsernodeReact?.agentSession;
     if (App._inAgentSession && agentSession?.isOpen?.() && agentSession?.currentId?.() === id) {

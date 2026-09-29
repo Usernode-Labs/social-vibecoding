@@ -52,7 +52,7 @@ import { sameChoice } from './model-choice';
 import {
   markStranded, mergeRows, newClientId, readOutbox, withoutLanded, writeOutbox, type OutboxItem,
 } from './outbox';
-import { requestSeed } from './request-seed';
+import { draftSeed } from './request-seed';
 import { toolActivity } from './transcript';
 import { writeUnsent } from './unsent';
 
@@ -380,16 +380,6 @@ export function getAgentSessionState() {
 
 function errorText(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
-}
-
-/**
- * Whether new work starts in an agent session for this viewer (#2779): the
- * per-user experimental flag, as /api/auth/me reported it. Only STARTING
- * reads it; a conversation that already exists opens either way.
- */
-export function agentSessionsEnabled(): boolean {
-  if (typeof window === 'undefined') return false;
-  return window.App?.user?.agentSessionsEnabled === true;
 }
 
 export function composerId(host: AgentSessionHost) {
@@ -909,10 +899,11 @@ function openDraft(host: AgentSessionHost) {
   const version = ++navigation;
   const hint = fresh ? (pendingHint || null) : null;
   pendingHint = undefined;
-  // Started from a request (Start work): the box offers that request's first
-  // message (the composer reads it off the hint, ./request-seed.ts), not the
-  // text an earlier unsent conversation left behind.
-  if (requestSeed(hint)) writeUnsent('new', '');
+  // Started from a request (Start work), or handed a message (Global Chat,
+  // Explore): the box offers that first message (the composer reads it off
+  // the hint, ./request-seed.ts), not the text an earlier unsent
+  // conversation left behind.
+  if (draftSeed(hint)) writeUnsent('new', '');
   seen.clear();
   closeEvents();
   stopPoll();
@@ -939,7 +930,9 @@ function openDraft(host: AgentSessionHost) {
     drafts: [],
     attachments: dropAllAttachments(),
     credits: null,
-    handoff: null,
+    // The out-of-credits card's "Use Claude Code" / "Use Codex" opens the
+    // conversation on its "Build with" tab (AppView.createProposal).
+    handoff: hint?.handoff === 'claude-code' || hint?.handoff === 'codex' ? hint.handoff : null,
     outbox: [],
     version: null,
   });

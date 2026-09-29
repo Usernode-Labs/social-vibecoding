@@ -21,6 +21,11 @@
 // req.user. The count queries are answered by regex so each test can put
 // the user at an exact occupancy.
 //
+// #2779: only an agent session's Mayor creates a change now, so every
+// request carries its delegated grant, and the conversation's own reads
+// answer as an open session with nothing active to park. The caps are the
+// same caps.
+//
 // Run with: node --test tests/session-cap-enforcement.test.js
 
 const test = require('node:test');
@@ -28,7 +33,11 @@ const assert = require('node:assert/strict');
 
 const poolMod = require('../src/db/pool');
 let poolQueryHandler = async () => ({ rows: [] });
-poolMod.getPool = () => ({ query: (sql, params) => poolQueryHandler(sql, params) });
+poolMod.getPool = () => ({
+  query: (sql, params) => (/FROM agent_sessions/.test(String(sql))
+    ? Promise.resolve({ rows: [{ id: 3, active_change_id: null, agent_backend: null }] })
+    : poolQueryHandler(sql, params)),
+});
 
 const appAccess = require('../src/services/app-access');
 const github = require('../src/services/github');
@@ -69,7 +78,11 @@ function occupancy({ own, global: globalCount }) {
 async function createSession({ user, config }) {
   const app = express();
   app.use(express.json());
-  app.use((req, res, next) => { req.user = user; next(); });
+  app.use((req, res, next) => {
+    req.user = user;
+    req.mcpDelegation = { kind: 'agent_mayor', agentSessionId: 3 };
+    next();
+  });
   app.use(sessionRoutes(config || {}));
   const server = await new Promise((resolve) => {
     const s = app.listen(0, () => resolve(s));

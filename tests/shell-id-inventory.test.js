@@ -408,8 +408,11 @@ const ADDED_IDS = {
   // #messages-new-agent, never shipped in the prerendered document (it is
   // gated on the global-chat flags), so it was never in this map. Both were
   // only ever ADDED ids, so they simply leave.
-  'messages-agent-dialog': '#2778: "which app?" — the Agent chat choice under the "+". An agent chat is, for now, a new dev session on one app, so this lists the apps the viewer is a member of (the same rows as their channels, already loaded) and opens the chosen one\'s new-session screen, where nothing is created until the first send. A React-owned dialog driven through useDialog like the other Messages dialogs; a platform-wide agent session will take its place later without the "+" changing.',
-  'messages-agent-apps': '#2778: the agent dialog\'s list of apps — a stable host a declared check can find, whatever is in it.',
+  // #messages-agent-dialog and #messages-agent-apps left this map in #2779:
+  // the "+"'s Agent choice asked which app and opened a classic dev session
+  // there, and classic sessions are no longer created; it opens an unsent
+  // agent session instead, which needs no app first. Both were only ever
+  // ADDED ids, so they simply leave.
   "messages-search": "#2718 review: the Messages inbox's search. It takes the place of the <h2> that used to name the screen under a bar already naming it \u2014 two titles, one word, an inch apart. A CLIENT-SIDE match over the three lists already in memory (people, app discussions, agent chats), so it answers on every keystroke and adds no endpoint; what it matches is the text each row DRAWS, because a search that found rows by a field the reader cannot see returns results they cannot explain. It composes with the filter strip rather than replacing it, and a query that matches nothing says so in its own line rather than borrowing the empty inbox's offer to start a conversation.",
   'sidebar-toggle': '#2718 review: folds and unfolds the desktop rail, from the header\'s left group — the window\'s top-left corner, where VS Code, Slack, Linear and Notion all put this control. DESKTOP ONLY: app.css gives it `display` inside `@media (min-width: 768px)` and nothing else does, because a phone\'s bar is at the FOOT of the screen and is the only navigation there is, so folding must never reach it. It ships PRESSED, matching navStore\'s `railOpen: true` and the visible bar the prerender carries; a folded rail is always something the viewer did, and it is session-only for the same reason. It renders nothing at all where the route has no rail (inside an app, chromeless, signed out), which is also what makes the header\'s left group empty on those screens rather than holding a dead control. The way back from folded is #platform-rail-peek, the same hot zone an open app already uses.',
   // ── #2370: the social-account scope disclosure ───────────────────
@@ -885,11 +888,9 @@ const ADDED_IDS = {
   // ── #2377: Global Chat (experimental) ───────────────────────────
   'global-chat-screen': '#2377/#2543: the React-owned conversational screen. It ships hidden for hydration parity, then the hash router reveals the durable session selected from Improve.',
   'global-chat-composer': '#2377: the compact prompt field inside Global Chat. The stable id gives its label and focus behavior one owner across desktop, mobile web, and the native wrapper.',
-  // ── #2779: agent sessions (experimental, behind a per-user flag) ──
+  // ── #2779: agent sessions (on for everyone; the Experimental pane's
+  //    switch and its status line are retired and left this map) ──
   'agent-session-screen': '#2779: the React-owned agent session screen, one conversation with the Mayor that works on any app. Ships hidden and empty for hydration parity; the hash router reveals it at #agent/<id>, and App.REACT_SCREEN_IDS keeps its visibility single-owned. Everything inside it renders only once a conversation is open, so the root is its one static id.',
-  'settings-agent-sessions-row': '#2779: the Experimental pane\'s agent-sessions row. Ships hidden; settings.js shows it only to a user the server lets choose (agentSessionsChoosable), so the id is how that one writer finds it.',
-  'agent-sessions-enabled': '#2779: the agent-sessions switch. settings.js binds its change handler by id (POST /api/me/agent-sessions), the same way the two switches above it are bound.',
-  'agent-sessions-status': '#2779: the switch\'s status line, where a refused or failed save says why. Ships empty and hidden, like the two status lines above it.',
   // ── #2707: the feedback destination is chosen, never assumed ────
   'feedback-target-hint': 'The line under the Send Feedback destination row. With both destinations selectable nothing is preselected any more, so Submit is disabled until one is tapped — and a control that refuses without saying why is the dead button #1603 fixed one field down. Ships empty and hidden (the controller owns the text, and the one-destination case never shows it), and carries the radiogroup\'s aria-describedby while it is up.',
   // ── #2718 REVIEW: the Improve panel retired, and ten ids with it ─────

@@ -137,7 +137,7 @@ import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { ProposeButton } from './propose-confirm';
 import { readUnsent, writeUnsent } from './unsent';
-import { draftRequest, requestSeed, type DraftRequest } from './request-seed';
+import { draftRequest, draftSeed, type DraftRequest } from './request-seed';
 import { CreditsCard, HandoffPanel } from './handoff';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
@@ -1601,11 +1601,12 @@ function Composer({ id }: { id: string }) {
   };
 
   // The conversation's unsent text, back after a reload or a switch. An
-  // unsent conversation started from a request (Start work) offers that
-  // request's first message when nothing was typed (./request-seed.ts),
-  // from the hint, so it is kept only once edited and never turns up in a
-  // later New change. A new hint is a new start, even on the same address.
-  const seed = target === 'new' ? requestSeed(snapshot.draft?.hint) : '';
+  // unsent conversation started from a request (Start work), or handed a
+  // message (Global Chat, Explore), offers that first message when nothing
+  // was typed (./request-seed.ts), from the hint, so it is kept only once
+  // edited and never turns up in a later New change. A new hint is a new
+  // start, even on the same address.
+  const seed = target === 'new' ? draftSeed(snapshot.draft?.hint) : '';
   const hint = snapshot.draft?.hint;
   useEffect(() => {
     if (target == null) return;

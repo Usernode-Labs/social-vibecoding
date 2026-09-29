@@ -339,7 +339,10 @@ test('issue card: a ready headless run IS the primary, replacing Start work', ()
   }));
   const html = cardHtml(model);
   assert.ok(hasAction(model, 'startFromAutoSession', 90), 'contextual ready run is the primary');
-  assert.match(html, />Review spec/, 'and it wears the contextual label');
+  // #2779: it starts an agent session on the request (the run is no longer
+  // cloned into a classic dev chat), and its title says what the run did.
+  assert.match(html, />Start work</, 'and it reads as starting work');
+  assert.match(html, /An auto-solve run finished here \(it drafted a spec\)/);
   assert.ok(!hasAction(model, 'chooseIssueWork'), 'Start work is superseded, not stacked beside it');
   // Two primaries: the state-driven one, plus the promoted claim toggle.
   assertCardActionContract(AppView, html, { primary: 2, menu: true });

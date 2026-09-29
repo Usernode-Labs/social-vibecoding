@@ -849,6 +849,9 @@ function ClientActionResult({ result }: { result: GlobalChatResult }) {
   const actionState = snapshot.clientActionStates[result.id];
   const navigation = action.transport === 'navigation';
   const localSetting = action.transport === 'local_setting';
+  // #2779: development work opens an agent session with the task in its box;
+  // the bare address would open one without them, so it is not offered.
+  const agentHandoff = action.transport === 'agent_session_handoff';
   return (
     <div className="global-chat-inline-actions global-chat-client-action">
       <button
@@ -857,9 +860,9 @@ function ClientActionResult({ result }: { result: GlobalChatResult }) {
         disabled={actionState === 'running' || actionState === 'done'}
         onClick={() => void runGlobalChatClientAction(result)}
       >
-        {actionState === 'running' ? 'Applying…' : actionState === 'done' ? 'Done' : navigation ? 'Open in Classic' : localSetting ? 'Apply' : 'Open'}
+        {actionState === 'running' ? 'Applying…' : actionState === 'done' ? 'Done' : navigation ? 'Open in Classic' : localSetting ? 'Apply' : agentHandoff ? 'Open agent session' : 'Open'}
       </button>
-      {!navigation && result.classicPath ? <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button> : null}
+      {!navigation && !agentHandoff && result.classicPath ? <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button> : null}
     </div>
   );
 }

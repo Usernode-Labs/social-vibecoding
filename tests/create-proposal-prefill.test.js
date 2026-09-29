@@ -1,17 +1,17 @@
-// #609: "Create proposal" prefills the kickoff message instead of sending it.
-// AppView.createPrForIssue used to create the session, navigate, and
-// immediately DevChat.sendMessage(seed) — kicking off the agent before the
-// user could edit anything. It now stashes the seed as the session's draft
-// (DevChat._setDraft) BEFORE App.switchTab, so the chat view's render path
-// (_restoreDraft) fills the composer unsent, plus a direct-set fallback for
-// localStorage-disabled browsers and a fine-pointer-only focus. These tests
-// pin that contract: _setDraft gets the EXACT seed text, sendMessage is
-// never called, and the pre-existing switchTab / optimistic myPrSessionId
-// behaviour is preserved.
+// Start work on a request (#609, #2779).
+//
+// #609 made "Create proposal" prefill its kickoff message instead of sending
+// it: the seed went into a new classic dev chat's draft, unsent. #2779 moved
+// Start work into an agent session: AppView.createPrForIssue opens an UNSENT
+// conversation with the Mayor, focused on the request, and the box offers the
+// request's first message (frontend/src/features/agent-session/
+// request-seed.ts). Classic sessions are no longer created, so these tests pin
+// that nothing on the classic path runs: no session, no draft, no navigation,
+// and nothing is ever sent.
 //
 // app-view.js is a plain browser script (`const AppView = {…}`); we load it
-// into a vm context, stub the globals it reaches, and spy on the DevChat /
-// App collaborators — same harness as card-action-layout.test.js.
+// into a vm context, stub the globals it reaches, and spy on the agent session
+// controller — same harness as card-action-layout.test.js.
 //
 // Run with: node --test tests/create-proposal-prefill.test.js
 
@@ -26,26 +26,13 @@ const SRC = fs.readFileSync(
   'utf8'
 );
 
-// Fake #dc-input textarea the fallback/focus path can poke at.
-function makeInput() {
-  return {
-    value: '',
-    style: {},
-    scrollHeight: 40,
-    focused: false,
-    selection: null,
-    focus() { this.focused = true; },
-    setSelectionRange(a, b) { this.selection = [a, b]; },
-  };
-}
-
-function makeHarness({ input = null, coarsePointer = false, draftWorks = true } = {}) {
+function makeHarness({ controller = true } = {}) {
   const calls = {
     createSession: [],
     setDraft: [],
     sendMessage: [],
     switchTab: [],
-    repaint: 0,
+    started: [],
   };
   const sandbox = {
     console,
@@ -53,13 +40,14 @@ function makeHarness({ input = null, coarsePointer = false, draftWorks = true } 
     Kudos: { renderButton: () => '' },
     ConfirmModal: { show: async () => true },
     document: {
-      getElementById: (id) => (id === 'dc-input' ? input : null),
+      getElementById: () => null,
       querySelector: () => null,
       querySelectorAll: () => ({ forEach: () => {} }),
       addEventListener: () => {},
       createElement: () => ({ style: {}, classList: { add: () => {}, remove: () => {} } }),
       body: { appendChild: () => {} },
     },
+    location: { hash: '' },
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     alert: () => {},
     setTimeout, clearTimeout, setInterval, clearInterval,
@@ -74,133 +62,76 @@ function makeHarness({ input = null, coarsePointer = false, draftWorks = true } 
         calls.createSession.push(args);
         return { id: 42 };
       },
-      _drafts: {},
-      _setDraft(sessionId, value) {
-        calls.setDraft.push([sessionId, value]);
-        if (draftWorks) this._drafts[sessionId] = value;
-      },
+      _setDraft(sessionId, value) { calls.setDraft.push([sessionId, value]); },
       sendMessage: (...args) => { calls.sendMessage.push(args); },
-      _isCoarsePointer: () => coarsePointer,
     },
   };
+  if (controller) {
+    // The hint is made in the vm's realm: record it as plain data.
+    sandbox.UsernodeReact = {
+      agentSession: { start: (hint) => { calls.started.push(JSON.parse(JSON.stringify(hint))); } },
+    };
+  }
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { slug: 'test-app' };
-  AppView._repaintCards = () => { calls.repaint++; };
   return { AppView, calls, sandbox };
 }
 
 const ISSUE = { number: 5, title: 'Fix the thing', body: 'It is broken in two ways.' };
 
-// The exact seed wording is pinned byte-for-byte: on an unedited send the
-// Mayor's issue-linking / `Closes #N` behaviour must be identical to the
-// old auto-send flow.
-const EXPECTED_SEED =
-  'Please implement GitHub issue #5: "Fix the thing".\n\nIt is broken in two ways.\n\n'
-  + 'Open a PR that closes this issue (include "Closes #5" so it links and closes the issue on merge).';
+function assertNoClassicSession(calls) {
+  assert.equal(calls.createSession.length, 0, 'no classic session is created');
+  assert.equal(calls.setDraft.length, 0, 'nor drafted into');
+  assert.equal(calls.switchTab.length, 0, 'nor navigated to');
+  assert.equal(calls.sendMessage.length, 0, 'and nothing is ever sent');
+}
 
-test('createPrForIssue: stashes the exact seed as a draft, never sends', async () => {
+// The hint carries the request's title as well as its number, so the
+// conversation names the request and offers its first message in the box
+// rather than opening blank.
+test('createPrForIssue: opens an agent session on the request, carrying its title', () => {
   const { AppView, calls } = makeHarness();
   AppView._ghIssues = [{ ...ISSUE }];
 
-  await AppView.createPrForIssue(5);
+  AppView.createPrForIssue(5);
 
-  assert.equal(calls.setDraft.length, 1, '_setDraft called once');
-  assert.deepEqual(calls.setDraft[0], [42, EXPECTED_SEED], 'draft keyed to the new session with the exact seed');
-  assert.equal(calls.sendMessage.length, 0, 'sendMessage is NEVER called');
+  assert.deepEqual(calls.started, [{ slug: 'test-app', issueNumber: 5, entry: 'issue', issueTitle: 'Fix the thing' }]);
+  assertNoClassicSession(calls);
 });
 
-test('createPrForIssue: draft is set before switchTab, and existing nav/flip behaviour holds', async () => {
-  const order = [];
-  const { AppView, calls, sandbox } = makeHarness();
-  const issue = { ...ISSUE };
-  AppView._ghIssues = [issue];
-  const origSetDraft = sandbox.DevChat._setDraft.bind(sandbox.DevChat);
-  sandbox.DevChat._setDraft = (...a) => { order.push('setDraft'); origSetDraft(...a); };
-  sandbox.App.switchTab = async (...args) => { order.push('switchTab'); calls.switchTab.push(args); };
-
-  await AppView.createPrForIssue(5);
-
-  assert.deepEqual(order, ['setDraft', 'switchTab'], 'draft stashed BEFORE navigating so _restoreDraft finds it');
-  assert.deepEqual(calls.switchTab, [['dev', 42, 'sessions']], 'navigates to the new session');
-  assert.deepEqual(calls.createSession, [['test-app', 5]], 'session created with the issue number (#287 link)');
-  assert.equal(issue.myPrSessionId, 42, 'optimistic has-session flip preserved');
-  assert.equal(calls.repaint, 1, 'row repainted for the button flip');
-});
-
-test('createPrForIssue: fallback fills an empty composer and focuses on fine pointers', async () => {
-  const input = makeInput();
-  const { AppView } = makeHarness({ input, coarsePointer: false });
-  AppView._ghIssues = [{ ...ISSUE }];
-
-  await AppView.createPrForIssue(5);
-
-  assert.equal(input.value, EXPECTED_SEED, 'empty box gets the seed directly');
-  assert.equal(input.focused, true, 'focused on fine-pointer devices');
-  assert.deepEqual(input.selection, [EXPECTED_SEED.length, EXPECTED_SEED.length], 'cursor parked at the end');
-});
-
-test('createPrForIssue: fallback never clobbers a box _restoreDraft already filled', async () => {
-  const input = makeInput();
-  input.value = 'already restored by _restoreDraft';
-  const { AppView } = makeHarness({ input, coarsePointer: false });
-  AppView._ghIssues = [{ ...ISSUE }];
-
-  await AppView.createPrForIssue(5);
-
-  assert.equal(input.value, 'already restored by _restoreDraft', 'non-empty box left alone');
-  assert.equal(input.focused, true, 'still focused on desktop');
-});
-
-test('createPrForIssue: no focus on coarse-pointer (touch) devices — #568', async () => {
-  const input = makeInput();
-  const { AppView } = makeHarness({ input, coarsePointer: true });
-  AppView._ghIssues = [{ ...ISSUE }];
-
-  await AppView.createPrForIssue(5);
-
-  assert.equal(input.value, EXPECTED_SEED, 'box still filled');
-  assert.equal(input.focused, false, 'no focus — would pop the on-screen keyboard');
-});
-
-test('createPrForIssue: issue missing from cache still drafts (empty title/body), never sends', async () => {
+test('createPrForIssue: a request the board has not loaded still starts, by number alone', () => {
   const { AppView, calls } = makeHarness();
   AppView._ghIssues = [];
 
-  await AppView.createPrForIssue(7);
+  AppView.createPrForIssue(7);
 
-  assert.equal(calls.setDraft.length, 1);
-  const [, seed] = calls.setDraft[0];
-  assert.match(seed, /^Please implement GitHub issue #7: ""\./, 'seed built with empty title');
-  assert.match(seed, /Closes #7/, 'Closes line present');
-  assert.equal(calls.sendMessage.length, 0, 'still nothing sent');
+  assert.deepEqual(calls.started, [{ slug: 'test-app', issueNumber: 7, entry: 'issue' }]);
+  assertNoClassicSession(calls);
 });
 
-// #2779: with agent sessions on, Start work opens an unsent conversation with
-// the Mayor instead of a dev chat. The hint carries the request's title as
-// well as its number, so that conversation names the request and offers its
-// first message in the box (frontend/src/features/agent-session/
-// request-seed.ts) rather than opening blank. No dev chat is made.
-test('createPrForIssue: with agent sessions on, the hint carries the request and its title', async () => {
-  const { AppView, calls, sandbox } = makeHarness();
-  const started = [];
-  sandbox.App.user = { id: 42, agentSessionsEnabled: true };
-  // The hint is made in the vm's realm: compare it as plain data.
-  sandbox.UsernodeReact = { agentSession: { start: (hint) => { started.push(JSON.parse(JSON.stringify(hint))); } } };
+test('createPrForIssue: with no app on screen it is a quiet no-op', () => {
+  const { AppView, calls } = makeHarness();
+  AppView.appData = null;
+
+  AppView.createPrForIssue(5);
+
+  assert.equal(calls.started.length, 0);
+  assertNoClassicSession(calls);
+});
+
+// The controller is published by the shell bundle before anything can be
+// clicked. Without it the address still opens an unsent conversation, only
+// without the hint, rather than a dead button or a classic session.
+test('createPrForIssue: without the agent-session controller, the address still opens one', () => {
+  const { AppView, calls, sandbox } = makeHarness({ controller: false });
   AppView._ghIssues = [{ ...ISSUE }];
 
-  await AppView.createPrForIssue(5);
+  AppView.createPrForIssue(5);
 
-  assert.deepEqual(started, [{ slug: 'test-app', issueNumber: 5, entry: 'issue', issueTitle: 'Fix the thing' }]);
-  assert.equal(calls.createSession.length, 0, 'no dev chat is made');
-  assert.equal(calls.setDraft.length, 0);
-
-  // A request the board has not loaded still starts, by number alone.
-  started.length = 0;
-  AppView._ghIssues = [];
-  await AppView.createPrForIssue(7);
-  assert.deepEqual(started, [{ slug: 'test-app', issueNumber: 7, entry: 'issue' }]);
+  assert.equal(sandbox.location.hash, '#agent/new');
+  assertNoClassicSession(calls);
 });

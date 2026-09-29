@@ -161,6 +161,18 @@ export interface AgentHint {
    * request itself, so this never leaves the browser (serverHint).
    */
   issueTitle?: string;
+  /**
+   * The first message the unsent conversation offers, unsent and editable,
+   * when the entry point has one to hand over: Global Chat's development
+   * task, or Explore's message about a proposal. For the screen only, like
+   * the title (./request-seed.ts draftSeed).
+   */
+  message?: string;
+  /**
+   * Open the composer's "Build with" sheet on this agent's tab: the
+   * out-of-credits card's "Use Claude Code" / "Use Codex". Screen only.
+   */
+  handoff?: 'claude-code' | 'codex';
 }
 
 /** The hint as the server takes it: the fields it resolves, nothing the screen added. */

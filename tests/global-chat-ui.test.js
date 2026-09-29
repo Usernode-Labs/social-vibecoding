@@ -212,6 +212,9 @@ test('the browser transport uses authenticated POST SSE and same-origin client a
   assert.match(store, /\['GET', 'POST', 'PUT', 'PATCH', 'DELETE'\]\.includes\(method\)/);
   assert.match(store, /transport === 'development_handoff'/);
   assert.match(store, /action\.transport === 'local_setting'/);
+  // #2779: Start development work opens an unsent agent session with the task.
+  assert.match(store, /action\.transport === 'agent_session_handoff'/);
+  assert.match(store, /agentSession\?\.prepareDraft\(hint\)[\s\S]{0,200}closeGlobalChat\('#messages\/agent\/new'\)/);
   assert.match(store, /drainResponse\(response\.body\)/);
   assert.match(api, /\/turn-status/);
   assert.match(api, /\/cancel/);

@@ -1164,7 +1164,8 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
     'headless and in_progress derivations both skip synthetic authors');
   const sessions = read('src/routes/sessions.js');
   const capClause = "AND user_id NOT IN (SELECT id FROM users WHERE is_synthetic = TRUE)";
-  assert.equal((sessions.match(new RegExp(capClause.replace(/[()]/g, '\\$&'), 'g')) || []).length, 5,
+  // Four: the fork's count went with the fork (#2779).
+  assert.equal((sessions.match(new RegExp(capClause.replace(/[()]/g, '\\$&'), 'g')) || []).length, 4,
     'every global-cap count leaves synthetic sessions out');
 });
 

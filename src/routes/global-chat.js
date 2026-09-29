@@ -1027,9 +1027,11 @@ function globalChatRoutes(config) {
       const presentation = enrichPresentation(validatePresentation({
         message: pendingAction?.transport === 'development_handoff'
           ? 'Development session ready. Opening it now.'
-          : pendingAction
-            ? 'Ready to apply.'
-            : 'Done.',
+          : pendingAction?.transport === 'agent_session_handoff'
+            ? 'Opening an agent session with your task ready to send.'
+            : pendingAction
+              ? 'Ready to apply.'
+              : 'Done.',
         resultRefs: [result.id],
         suggestions: [
           {

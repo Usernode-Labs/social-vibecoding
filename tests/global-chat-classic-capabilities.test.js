@@ -297,7 +297,7 @@ test('generic input parsing never silently truncates or repairs a write body', (
   }), '#app/demo%2Fother');
 });
 
-test('development handoff creates a session without letting the global model choose its agent', async () => {
+test('development handoff opens an unsent agent session with the task, creating nothing (#2779)', async () => {
   const startRoute = inventory.routes.find((item) => (
     item.method === 'POST' && item.path === '/api/apps/:slug/sessions'
   ));
@@ -305,7 +305,7 @@ test('development handoff creates a session without letting the global model cho
   const registry = new CapabilityRegistry(classicCapabilityDefinitions());
   const definition = registry.get(startRoute.capabilityId);
   assert.equal(definition.title, 'Start development work');
-  assert.match(definition.summary, /configured Development AI profile/);
+  assert.match(definition.summary, /agent session/);
   assert.deepEqual(Object.keys(definition.inputSchema.properties).sort(), [
     'appSlug', 'issueNumber', 'task',
   ]);
@@ -313,41 +313,39 @@ test('development handoff creates a session without letting the global model cho
     'appSlug', 'issueNumber', 'task',
   ]);
 
-  let invoked;
+  // Classic sessions are no longer created, so the capability never calls
+  // the create route: the Mayor's start_change is the only caller it takes.
+  let invoked = false;
   const execution = context({
     classicApi: {
       route: () => ({}),
-      async invoke(id, input) {
-        invoked = { id, input };
-        return {
-          ok: true,
-          status: 201,
-          authoritativeResult: {
-            session: {
-              id: 44, app_slug: 'demo', status: 'active',
-              agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash',
-              agent_reasoning_effort: 'high',
-            },
-          },
-          modelResult: { ok: true, status: 201, data: {} },
-        };
-      },
+      async invoke() { invoked = true; return { ok: true, status: 201, authoritativeResult: {} }; },
     },
   });
   const result = await registry.execute(startRoute.capabilityId, {
     appSlug: 'demo', task: 'Implement the compact global-chat cards.', issueNumber: 2377,
   }, execution);
-  assert.equal(invoked.id, startRoute.capabilityId);
-  assert.deepEqual(invoked.input, {
-    pathParameters: { slug: 'demo' }, query: [], body: { issueNumber: 2377 },
-  });
-  assert.equal(Object.hasOwn(invoked.input.body, 'backend'), false);
-  assert.equal(result.classicPath, '#app/demo/dev/sessions/44');
+  assert.equal(invoked, false);
+  assert.equal(result.classicPath, '#messages/agent/new');
   assert.equal(result.authoritativeResult.data.state, 'client_action_required');
-  assert.deepEqual(result.authoritativeResult.data.action.input.body, {
+  assert.deepEqual(result.authoritativeResult.data.action, {
+    transport: 'agent_session_handoff',
+    hint: { slug: 'demo', issueNumber: 2377, entry: 'global-chat' },
     message: 'Implement the compact global-chat cards.',
+    classicPath: '#messages/agent/new',
   });
-  assert.equal(result.modelResult.data.session.agentModel, 'z-ai/glm-5.3-flash');
+  assert.equal(Object.hasOwn(result.authoritativeResult.data.action.hint, 'backend'), false,
+    'the conversation follows the user\'s own model choice; the global model never picks one');
+  assert.equal(result.modelResult.data.handoffReady, true);
+
+  const noIssue = await registry.execute(startRoute.capabilityId, {
+    appSlug: 'demo', task: 'Tidy the footer.', issueNumber: null,
+  }, execution);
+  assert.deepEqual(noIssue.authoritativeResult.data.action.hint, { slug: 'demo', entry: 'global-chat' });
+
+  await assert.rejects(registry.execute(startRoute.capabilityId, {
+    appSlug: 'Demo_App', task: 'x', issueNumber: null,
+  }, execution), /app slug is unavailable/, 'a slug the agent-session hint would refuse');
 });
 
 test('development continuation validates the owned session then queues its pinned agent turn', async () => {
