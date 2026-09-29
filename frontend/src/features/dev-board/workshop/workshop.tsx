@@ -136,9 +136,10 @@ const SINCE_STEP = 3;
  * from the Workshop — and the tab it belongs to stays lit while it is up,
  * with a way back above it. Their `?ws=` deep links still land on them.
  *
- * The hub's label says what kind of hub it is — Community hub, Group hub,
- * or plain Hub for a project that is just yours — once the community record
- * has said; plain Hub until then.
+ * The hub's label says what kind of hub it is — Community hub for a public
+ * or a private community, plain Hub for a project that is just yours — once
+ * the community record has said; plain Hub until then. Public or private is
+ * the hero chip's to say: "Private community hub" does not fit the tab.
  */
 const TABS: { key: TabKey; label: string; Icon: typeof NewspaperIcon }[] = [
   { key: 'status', label: 'Hub', Icon: UserGroupIcon },
@@ -147,8 +148,7 @@ const TABS: { key: TabKey; label: string; Icon: typeof NewspaperIcon }[] = [
 
 /** The hub tab's label for a community's audience. */
 export function hubLabel(audience: string | null | undefined): string {
-  if (audience === 'open') return 'Community hub';
-  if (audience === 'invited') return 'Group hub';
+  if (audience === 'open' || audience === 'invited') return 'Community hub';
   return 'Hub';
 }
 

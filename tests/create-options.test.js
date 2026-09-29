@@ -18,7 +18,7 @@ test('an audience resolves to the two visibility columns it implies', () => {
   assert.deepEqual(
     [parse('solo'), parse('invited'), parse('open')].map((o) => [o.collabVisibility, o.viewVisibility]),
     [['private', 'private'], ['private', 'private'], ['public', 'public']],
-    'Just me and A group are private; A community is open to see and to build',
+    'Just me and A private community are private; A public community is open to see and to build',
   );
   assert.equal(parse('solo').audience, 'solo');
   assert.match(options.parseCreateOptions({ audience: 'public' }).error, /audience must be/);
@@ -38,11 +38,11 @@ test('a body with no audience keeps today\'s two fields, defaults and rule', () 
   assert.match(route, /const validateVisibilityCombo = createOptions\.visibilityComboError;/);
 });
 
-test('invitees are usernames, for a group only, deduplicated and bounded', () => {
+test('invitees are usernames, for a private community only, deduplicated and bounded', () => {
   const group = options.parseCreateOptions({ audience: 'invited', invitees: [' @Ada ', 'ada', 'grace', '', '@'] });
   assert.deepEqual(group.invitees, ['Ada', 'grace'], '@ and case do not make a second invite');
-  assert.match(options.parseCreateOptions({ audience: 'solo', invitees: ['ada'] }).error, /Only a group/);
-  assert.match(options.parseCreateOptions({ audience: 'open', invitees: ['ada'] }).error, /Only a group/);
+  assert.match(options.parseCreateOptions({ audience: 'solo', invitees: ['ada'] }).error, /Only a private community/);
+  assert.match(options.parseCreateOptions({ audience: 'open', invitees: ['ada'] }).error, /Only a private community/);
   assert.deepEqual(options.parseCreateOptions({ audience: 'open', invitees: [] }).invitees, [],
     'an empty list is no invites, not an error');
   assert.match(options.parseCreateOptions({ audience: 'invited', invitees: 'ada' }).error, /list of usernames/);
@@ -69,12 +69,12 @@ test('who approves is dapp.json\'s own block, read strictly', () => {
     { approverPolicy: 'invited', approvalsRequired: null });
 });
 
-test('invite emails are addresses, for a group only, lowercased, deduplicated, and share the twenty', () => {
+test('invite emails are addresses, for a private community only, lowercased, deduplicated, and share the twenty', () => {
   const group = options.parseCreateOptions({ audience: 'invited', invitees: ['ada'], inviteEmails: [' Sam@Example.com ', 'sam@example.com', ''] });
   assert.deepEqual(group.inviteEmails, ['sam@example.com']);
   assert.deepEqual(group.invitees, ['ada']);
   assert.deepEqual(options.parseCreateOptions({ audience: 'invited' }).inviteEmails, []);
-  assert.match(options.parseCreateOptions({ audience: 'open', inviteEmails: ['a@b.co'] }).error, /Only a group/);
+  assert.match(options.parseCreateOptions({ audience: 'open', inviteEmails: ['a@b.co'] }).error, /Only a private community/);
   assert.match(options.parseCreateOptions({ audience: 'invited', inviteEmails: ['nope'] }).error, /not an email address/);
   assert.match(options.parseCreateOptions({ audience: 'invited', inviteEmails: 'a@b.co' }).error, /list of email addresses/);
   const people = Array.from({ length: 15 }, (_, i) => `u${i}`);

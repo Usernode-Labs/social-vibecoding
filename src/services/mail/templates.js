@@ -401,7 +401,7 @@ function projectInvite(payload) {
   const inviter = payload.inviter ? `@${payload.inviter}` : 'Someone';
   const project = payload.project || 'a project';
   const url = payload.url || '';
-  const lead = `${inviter} invited you to ${project}, a group on Homeroom, where communities build the apps they use together.`;
+  const lead = `${inviter} invited you to ${project}, a private community on Homeroom, where communities build the apps they use together.`;
   const how = 'Join the waitlist with this email address. Once you are in, the invite will be waiting for you.';
   return {
     why: 'You are receiving this because someone on Homeroom invited this address to a project. '

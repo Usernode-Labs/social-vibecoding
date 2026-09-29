@@ -183,7 +183,7 @@ function parseCreateOptions(body = {}) {
   const mail = parseInviteEmails(body.inviteEmails);
   if (mail.error) return { error: mail.error };
   if ((inv.invitees.length || mail.emails.length) && audience !== 'invited') {
-    return { error: 'Only a group is created with invites. Invite people from a project’s page.' };
+    return { error: 'Only a private community is created with invites. Invite people from a project’s page.' };
   }
   if (inv.invitees.length + mail.emails.length > MAX_INVITEES) {
     return { error: `Invite at most ${MAX_INVITEES} people when you create it; add more from its page.` };

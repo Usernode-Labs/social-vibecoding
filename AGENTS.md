@@ -212,13 +212,14 @@ remaining live-proposal boundary.
   audience.** Every app belongs to exactly one community (`apps.community_id`,
   the "Communities" block at the end of `src/db/schema.sql`,
   `src/services/communities.js`), and a community is what people join.
-  People see it by its audience — **Just you** (`solo`), **Group**
-  (`invited`) or **Community** (`open`) — and what it owns are **projects**.
-  Use "project" in user-facing copy where the app is the thing being built;
-  keep "app" where it is the thing being used (the App tab, Discover).
+  People see it by its audience — **Just you** (`solo`), **Private
+  community** (`invited`) or **Public community** (`open`) — and what it
+  owns are **projects**. Use "project" in user-facing copy where the app is
+  the thing being built; keep "app" where it is the thing being used (the
+  App tab, Discover).
 - **Communities is the fourth tab, beside you; Messages is in the middle.**
-  It lists every community you are in
-  (Communities, Groups, Just you) at `#communities` (`#workshop` still routes
+  It lists every community you are in (Public communities, Private
+  communities, Just you) at `#communities` (`#workshop` still routes
   there; the tab's key and ids keep `workshop`). A project's page opens on
   its **hub** (a hero with who is here and a 14-day trend, then its channel,
   Needs you, and Since your last visit) beside its **Workshop** (what you are
@@ -243,18 +244,20 @@ remaining live-proposal boundary.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a
-  project GROWS by the same two levers: Invite makes Just you a Group, and
-  the hero's "Open it up" / "Make it a group" opens the visibility PR
-  (`POST /api/apps/:slug/visibility-pr`), which applies once it merges.
+  project GROWS by the same two levers: Invite makes Just you a Private
+  community, and the hero's "Open it up" / "Make it private" opens the
+  visibility PR (`POST /api/apps/:slug/visibility-pr`), which applies once
+  it merges.
 - **Communities and apps are one-to-one today.** A community with a single
   project is drawn as that project — its name, icon and page — and nothing
   should render a separate "community" layer for it. The table is bare on
   purpose; a name and an audience move onto it when a community can own
   more than one project.
 - **A project is created FOR someone.** The create dialog asks who it is for
-  first (Just me, A group, A community) and `POST /api/apps` takes
-  `audience`, a group's `invitees` and the approval rule as dapp.json's own
-  `governance` block (`src/services/create-options.js`). The rule is written
+  first (Just me, A private community, A public community) and
+  `POST /api/apps` takes `audience`, a private community's `invitees` and
+  the approval rule as dapp.json's own `governance` block
+  (`src/services/create-options.js`). The rule is written
   into the new repository's dapp.json by the template, so it is votable later
   like any other line there; an import's own dapp.json decides instead. Every
   project uses an app slot whatever its audience: each one is a real
