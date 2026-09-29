@@ -1494,22 +1494,22 @@
       "expectText": "Add to the board"
     },
     {
-      "name": "New change survives the '+' menu dedup, and the drawer's retirement (#1490, #2718 review)",
+      "name": "Starting a change leads the menu's Agent sessions list (#1490, #2718 review)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
-      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-new-session",
-      "expectText": "New change"
+      "expectSelector": "#apps-switcher-sheet[data-open] #app-menu-continue > #improve-row-new-session",
+      "expectText": "Make a change with an agent session"
     },
     {
-      "name": "Give feedback survives the menu split, in exactly one place (#1490, #2718)",
+      "name": "Ask for a change survives the menu split, in exactly one place (#1490, #2718)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback",
-      "expectText": "Give feedback"
+      "expectText": "Ask for a change"
     },
     {
       "name": "The Homeroom menu opens anchored under the mark, not as a panel in the middle of the screen (#2784)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
-      "expectSelector": "body:has(#platform-mark-btn[aria-expanded=\"true\"]) #apps-switcher-sheet[data-open][style*=\"--menu-anchor-top\"][style*=\"--menu-anchor-left\"] #improve-quick-actions > #improve-row-new-session",
-      "expectText": "New change"
+      "expectSelector": "body:has(#platform-mark-btn[aria-expanded=\"true\"]) #apps-switcher-sheet[data-open][style*=\"--menu-anchor-top\"][style*=\"--menu-anchor-left\"] #improve-quick-actions > #improve-row-feedback",
+      "expectText": "Ask for a change"
     },
     {
       "name": "The Dev '+' menu files an issue directly and keeps New change in Improve (#1900)",
@@ -2255,7 +2255,7 @@
       "expectSelector": "#app-install"
     },
     {
-      "name": "The app's own menu carries Improve's two actions on an app view",
+      "name": "The app's own menu carries Improve's action on an app view",
       "path": "/app/staging-demo-admins",
       "expectSelector": "#apps-switcher-sheet #improve-quick-actions > #improve-row-feedback",
       "allowConsoleErrors": true
@@ -2271,9 +2271,9 @@
       "expectSelector": "#apps-switcher-sheet #switcher-nav > a#app-menu-row-workshop[data-context-row=\"workshop\"]"
     },
     {
-      "name": "The app-context sheet carries the + New change action (Streamlined Concept)",
+      "name": "The app-context sheet carries the + Make a change row (Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-quick-actions #improve-row-new-session"
+      "expectSelector": "#app-menu-continue #improve-row-new-session"
     },
     {
       "name": "The header names the app it is in, as a heading (#2718)",
@@ -2306,7 +2306,7 @@
       "expectSelector": "#header-title #header-title-name"
     },
     {
-      "name": "Home's menu offers to improve the platform, same two buttons (#2718 review)",
+      "name": "Home's menu offers to improve the platform, same button (#2718 review)",
       "path": "/?shot=app-context",
       "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback"
     },
@@ -2859,10 +2859,10 @@
       "expectText": "Session finished"
     },
     {
-      "name": "The menu leads with Give feedback, ahead of New change (#2718 review)",
+      "name": "The menu leads with one full-width Ask for a change (#2718 review)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback:first-child + #improve-row-new-session",
-      "expectText": "Give feedback"
+      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback:only-child",
+      "expectText": "Ask for a change"
     },
     {
       "name": "Settings' About pane: all three version rows share one left edge",

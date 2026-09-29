@@ -138,13 +138,13 @@ export const TOUR_STEPS: readonly TourStep[] = [
     advanceOn: 'menu-open',
   },
   {
-    // Give feedback and New change, as ONE step: they sit side by side in
-    // the menu's action well (`#improve-quick-actions`,
-    // ../../improve/actions.tsx), so one cut-out draws around both and one
-    // sentence says what each is for.
+    // The menu's action well (`#improve-quick-actions`,
+    // ../../improve/actions.tsx): Ask for a change, full width. Making the
+    // change yourself is the first row of the Agent sessions list below it,
+    // so the same sentence points there.
     id: 'menu-actions',
-    title: 'Give feedback, or change it',
-    body: 'Feedback sends the community a note about what should change. New change starts one yourself: describe it, try the preview, then put it to a vote.',
+    title: 'Ask for a change',
+    body: 'Ask for a change sends the community a note about what should change. To make it yourself, start an agent session from the list below: describe it, try the preview, then put it to a vote.',
     targets: ['#improve-quick-actions', '#improve-row-feedback'],
     needsPanel: true,
   },

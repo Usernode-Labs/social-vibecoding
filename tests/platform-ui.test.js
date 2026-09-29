@@ -383,8 +383,11 @@ test('the Improve row is retired; the two actions it led to are in the menu', ()
   // so a row inside it was never the place a cue could be read from.
   const band = INDEX.match(/<div id="improve-quick-actions"[\s\S]*?<\/div>/);
   assert.ok(band, 'missing #improve-quick-actions');
-  assert.ok(band[0].includes('id="improve-row-feedback"'), 'Give feedback leads');
-  assert.ok(band[0].includes('id="improve-row-new-session"'), 'New change follows it');
+  assert.ok(band[0].includes('id="improve-row-feedback"'), 'Ask for a change fills it');
+  assert.ok(!band[0].includes('id="improve-row-new-session"'),
+    'starting a change is the Agent sessions list\'s first row, not a second button here');
+  assert.match(INDEX, /<div id="app-menu-continue"[^>]*>[\s\S]*?id="improve-row-new-session"/,
+    'and ships in the prerendered menu');
   assert.ok(!/\bhidden\b/.test(band[0].slice(0, band[0].indexOf('>'))),
     'the band itself ships visible');
 
@@ -600,8 +603,11 @@ test('the two actions lead the menu, shaped like the pill that used to open them
   // element claiming it.
   assert.ok(!read('frontend/src/features/app-context/app-context-sheet.tsx')
     .includes('id="improve-row-feedback"'), 'and not in two places');
-  assert.match(panel, /id="improve-row-new-session"/, 'New change survives');
-  assert.match(panel, /Improve\.startSession\(\)/, 'with the same handler');
+  // New change survives as the Agent sessions list's first row, in the
+  // menu's own file, beside the sessions it starts.
+  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(menu, /id="improve-row-new-session"/, 'New change survives');
+  assert.match(menu, /Improve\.startSession\(\)/, 'with the same handler');
   // The BAND stays, and it is the same element: `#improve-quick-actions`
   // was a direct child of `#improve-body` and is a direct child of the
   // menu's sheet now. dapp.json's band-order check used to select the four

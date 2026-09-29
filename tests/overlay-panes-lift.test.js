@@ -116,8 +116,10 @@ test('the declared feedback text checks open their pane before reading it', () =
   //
   // `?shot=improve` and `?shot=app-context` both open that one pane now (see
   // App._openImproveShot), so either name is a pane that is actually up.
-  const checks = manifest.tests.filter((t) => t.expectText === 'Give feedback');
-  assert.equal(checks.length, 2, 'the two feedback text checks must exist');
+  // The button reads "Ask for a change" now; the anchored-menu check reads it
+  // too, since the well holds nothing else.
+  const checks = manifest.tests.filter((t) => t.expectText === 'Ask for a change');
+  assert.equal(checks.length, 3, 'the three feedback text checks must exist');
   for (const check of checks) {
     assert.match(check.path, /shot=(improve|app-context)/,
       `${check.name} opens the pane it reads`);

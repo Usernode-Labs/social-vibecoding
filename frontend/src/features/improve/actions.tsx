@@ -22,14 +22,11 @@ import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
 
 /**
- * `flex-1 basis-0` so the two share the row evenly, which is what "next to
- * each other" asks for and what the panel's own well did.
+ * `flex-1 basis-0`, so the one action fills the well's width.
  *
- * Every id is the one it has always had: `#improve-row-feedback` is what the
- * outbox dot's writer selects and `#improve-row-new-session` has named
- * Improve.startSession() since the panel existed. Both are ids, so both can
- * exist exactly once — which is why the panel had to go rather than sit
- * behind the menu carrying a second copy.
+ * `#improve-row-feedback` is the id it has always had: the outbox dot's
+ * writer selects it. It is an id, so it exists exactly once, which is why the
+ * panel had to go rather than sit behind the menu carrying a second copy.
  */
 const ACTION_BASE =
   'inline-flex flex-1 basis-0 min-w-0 items-center justify-center h-9 px-3 '
@@ -56,20 +53,19 @@ function QuickAction({ id, label, onClick }: {
 }
 
 /**
- * Give feedback, then New change.
+ * Ask for a change, one full-width button.
  *
- * FEEDBACK LEADS, because it is the one action that needs nothing of the
- * viewer — no collaborator bit, no session, no repo — and New change is
- * hidden outright for a viewer who may not write. "Give feedback", not
- * "Feedback": both are things you DO, and a bare noun beside the verb phrase
- * read as a category label sitting next to an action.
+ * It was "Give feedback" beside "New change". Asking is the one action that
+ * needs nothing of the viewer (no collaborator bit, no session, no repo), so
+ * it keeps the well to itself. Making the change yourself is the first row of
+ * the menu's Agent sessions list (../app-context/app-context-sheet.tsx),
+ * beside the sessions it starts.
  *
  * ON THE PLATFORM TOO. The panel's target could be the platform's own
- * self-hosted row (#1367), and so can this: on Home these act on Homeroom
- * itself, which is what "that also shows up on the platform" asks for.
+ * self-hosted row (#1367), and so can this: on Home it asks for a change to
+ * Homeroom itself.
  */
 export function ImproveQuickActions(): ReactNode {
-  const state = useStoreState(improveStore);
   return (
     <div
       id="improve-quick-actions"
@@ -77,16 +73,9 @@ export function ImproveQuickActions(): ReactNode {
     >
       <QuickAction
         id="improve-row-feedback"
-        label="Give feedback"
+        label="Ask for a change"
         onClick={() => Improve.giveFeedback()}
       />
-      {state.readOnly ? null : (
-        <QuickAction
-          id="improve-row-new-session"
-          label="New change"
-          onClick={() => Improve.startSession()}
-        />
-      )}
     </div>
   );
 }
@@ -113,7 +102,7 @@ export function ImproveQuickActions(): ReactNode {
  * mid-turn had a fourth line here (#3015), saying what the corner spinner on
  * the Homeroom mark meant. The spinner stays (../header/platform-mark.tsx,
  * with its hover title); the sentence under it went, because the menu that
- * carried it lists the working session itself under Continue, spinner and
+ * carried it lists the working session itself under Agent sessions, spinner and
  * all, which says the same thing where it can be acted on.
  *
  * `versionState` is the platform's, published from

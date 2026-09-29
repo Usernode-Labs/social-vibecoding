@@ -124,6 +124,7 @@ import {
   FlagIcon,
   InfoCircleIcon,
   LinkIcon,
+  PlusIcon,
   PlusWideIcon,
   SparklesIcon,
   TerminalIcon,
@@ -135,6 +136,7 @@ import { AboutPane } from './about-pane';
 import { InvitePane } from './invite-pane';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
+import { Improve } from '../improve/improve-controller.js';
 import { openReport } from '../dialogs/report';
 import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
@@ -283,7 +285,7 @@ export function AppsSwitcherSheet(): ReactNode {
   // and what About prints — and adds no fetch: the Improve panel was reading
   // exactly these for the rows that moved here.
   const {
-    slug, name, showTerminal, target, restricted, canReport,
+    slug, name, showTerminal, target, restricted, canReport, readOnly,
   } = useStoreState(improveStore);
   const agentSessions = useAgentSessions();
   // Votes this viewer owes on the app in context — the badge on the
@@ -332,7 +334,7 @@ export function AppsSwitcherSheet(): ReactNode {
   const close = useCallback(() => AppContext.close(), []);
 
   /*
-      CONTINUE (#2779 follow-up): your five most recent agent sessions, on
+      AGENT SESSIONS (#2779 follow-up): your five most recent agent sessions, on
       any app, below this app's own rows, so going back to one is a tap from
       anywhere (Home included), each with the lists' mark (a spinner while it
       works, a green dot once it finished unseen); then, when there are more,
@@ -758,14 +760,33 @@ export function AppsSwitcherSheet(): ReactNode {
             </button>
           ) : null}
           {/*
-              CONTINUE (#2779 follow-up), BELOW the app's own rows: Go to
-              workshop, the discussion and About are this app's section, and
-              your agent sessions, on every app, follow under their own
-              heading. See the comment on `continuing` above.
+              AGENT SESSIONS (#2779 follow-up; "Continue" until it led with
+              starting one), BELOW the app's own rows: Go to workshop, the
+              discussion and About are this app's section, and your agent
+              sessions, on every app, follow under their own heading. See the
+              comment on `continuing` above.
+
+              Its first row starts a new one. It was "New change", beside Give
+              feedback in the well above; it sits here because what it starts
+              is the next row of this list. Same id and the same
+              Improve.startSession(), hidden for a viewer who may not write,
+              as it was. It renders in the prerender, as the button it
+              replaced did, so the heading ships with it; the sessions
+              themselves still load after mount.
           */}
-          {continuing.rows.length ? (
+          {!readOnly || continuing.rows.length ? (
             <div id="app-menu-continue" data-app-menu-continue={continuing.rows.length}>
-              <div className={SECTION}>Continue</div>
+              <div className={SECTION}>Agent sessions</div>
+              {readOnly ? null : (
+                <button
+                  id="improve-row-new-session"
+                  type="button"
+                  className={`${ROW} w-full text-left`}
+                  onClick={() => Improve.startSession()}
+                >
+                  <RowBody icon={<PlusIcon />} label="Make a change with an agent session" />
+                </button>
+              )}
               {continuing.rows.map((row, index) => (
                 <MenuRow
                   key={row.key}

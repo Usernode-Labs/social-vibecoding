@@ -536,6 +536,7 @@ const ADDED_IDS = {
   // owner asked for a plain "Go to workshop" row instead of a toggle, and for
   // nothing in place of the App segment — the parked app on the bar (#2762)
   // is the way back to a running app.
+  'app-menu-continue': 'The menu\'s Agent sessions list ("Continue" until it led with starting one) now ships in the prerender: its first row is #improve-row-new-session, moved from the action well above it as "Make a change with an agent session", and that row renders for a viewer who may write, as the button it replaced did. The sessions under it still load after mount.',
   'app-menu-row-workshop': '#2761: "Go to workshop" — the row that replaced the App | Workshop strip under the mark. It links to #app/<slug>/workshop and carries the vote-count badge (#app-menu-workshop-owed, conditional, so not in this map) the strip\'s Workshop segment carried. Rendered unconditionally, like the strip, so the prerender and the hydrating render agree.',
   // ── #1443: the chip and its menu ────────────────────────────────
   // ── #2718: the chip came back apart ──────────────────────────────

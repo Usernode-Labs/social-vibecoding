@@ -24,11 +24,11 @@
  *     Next opens the menu through `AppContext.open()` — the same path — and
  *     the same watcher advances it, so Next never lands on step 3 with the
  *     menu shut;
- *   * step 3 spotlights `#improve-quick-actions`, the well holding Give
- *     feedback and New change INSIDE the menu the viewer just opened. It is
+ *   * step 3 spotlights `#improve-quick-actions`, the well holding Ask for
+ *     a change INSIDE the menu the viewer just opened. It is
  *     DESCRIBED, not driven: the cut-out blocks the press the way the dim
- *     around it does, because each of them leaves the tour (a dialog, a new
- *     session) and a spotlight is not an instruction to press.
+ *     around it does, because pressing it leaves the tour (a dialog) and a
+ *     spotlight is not an instruction to press.
  *     ./tour-steps.ts carries the whole argument;
  *   * step 4 shuts the menu through `Improve.close()`, the controller's own
  *     close path and never a write into its DOM, then points at the Me tab,

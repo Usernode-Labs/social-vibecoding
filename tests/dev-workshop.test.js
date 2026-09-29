@@ -1533,12 +1533,12 @@ test('#2573: the banner presses the same New change the menu does', () => {
   assert.match(WORKSHOP, /import \{ Improve \} from '\.\.\/\.\.\/improve\/improve-controller\.js'/);
   assert.match(WORKSHOP, /onClick=\{\(\) => Improve\.startSession\(\)\}/);
   // The other button was the Improve panel's row; the panel retired (#2718
-  // review) and its two actions are the mark menu's, in ../improve/actions.tsx.
-  // Same method, which is the whole point of asserting both: two buttons
-  // saying "new change" have to mean it.
-  const ACTIONS = read('frontend/src/features/improve/actions.tsx');
-  assert.match(ACTIONS, /id="improve-row-new-session"[\s\S]*?onClick=\{\(\) => Improve\.startSession\(\)\}/,
-    'which is the method the menu\'s button calls');
+  // review), and starting a change is now the first row of the mark menu's
+  // Agent sessions list. Same method, which is the whole point of asserting
+  // both: two controls that start a change have to mean it.
+  const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(SHEET, /id="improve-row-new-session"[\s\S]*?onClick=\{\(\) => Improve\.startSession\(\)\}/,
+    'which is the method the menu\'s row calls');
 });
 
 test('"try taking this one next" names an open issue nobody is on', () => {
