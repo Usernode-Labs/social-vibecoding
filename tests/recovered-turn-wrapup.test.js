@@ -66,7 +66,6 @@ function loadSubject({ chat, llmEnabled = true, billing } = {}) {
         };
       },
       estimateCostCents: () => 7,
-      FALLBACK_TARGET_MODEL: 'claude-sonnet-5',
     })],
     [paths.limits, stubModule(paths.limits, {
       resolveBillingPath: async () => billing || { apiKey: null, byok: false },

@@ -7089,7 +7089,7 @@ async function runHeadlessSession({
   const noteModelFallback = async (result) => {
     if (!result || !result.fallbackServed) return;
     const requested = selectedModel;
-    const served = result.servedModel || llm.FALLBACK_TARGET_MODEL;
+    const served = result.servedModel;
     const category = (result.stopDetails && result.stopDetails.category) || null;
     await modelFallback.record(pool, {
       kind: events.EVENT_TYPES.MODEL_FALLBACK,
@@ -8979,7 +8979,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       await modelFallback.record(pool, {
         kind: events.EVENT_TYPES.MODEL_FALLBACK,
         userId: user.id, appId: session.app_id, sessionId: session.id,
-        requested: selectedModel, served: mayor2.servedModel || llm.FALLBACK_TARGET_MODEL,
+        requested: selectedModel, served: mayor2.servedModel,
         category: (mayor2.stopDetails && mayor2.stopDetails.category) || null,
         source: 'headless-resume',
       });

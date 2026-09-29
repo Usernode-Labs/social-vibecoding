@@ -36,10 +36,14 @@ test('the retired Opus 5 id resolves to Opus 5.5 (#2818)', () => {
   }
 });
 
-test('the platform LLM default and the Fable fallback moved to Opus 5.5 (#2818)', () => {
+test('the platform LLM default moved to Opus 5.5 (#2818); the Fable fallback is Anthropic\'s default, not a pinned model', () => {
   const llm = require('../src/services/llm');
   assert.equal(llm.DEFAULT_MODEL, models.DEFAULT_MODEL);
-  assert.equal(llm.FALLBACK_TARGET_MODEL, 'claude-opus-5-5');
+  // #2818 also pinned the Fable fallback to Opus 5.5, which is not in
+  // claude-fable-5-1's allowed_fallback_models: every Fable request 400'd.
+  assert.equal(llm.FALLBACK_MODE, 'default');
+  assert.equal(llm.FALLBACK_BETA, 'server-side-fallback-2026-07-01');
+  assert.equal(llm.FALLBACK_TARGET_MODEL, undefined, 'no model list to keep valid');
 });
 
 test('Opus 5.5 is billed at its own $4/$20 rate, and a recorded Opus 5 turn at $5/$25', () => {
