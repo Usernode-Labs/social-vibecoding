@@ -12,18 +12,31 @@
 //     `bp_released_at`, which is what lets the mobile node enable its
 //     block producer (surfaced via GET /api/v4/mobile/me).
 // Plus a direct per-user access grant for accounts that never joined
-// the waitlist.
+// the waitlist, and the switch for invite links skipping the waitlist
+// (services/community-invites.js, the invite tree).
 'use strict';
 
 const { Router } = require('express');
 const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
 const waitlist = require('../../../services/waitlist');
+const communityInvites = require('../../../services/community-invites');
 const { signalsFor } = require('../../../services/waitlist-signals');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
 const { ok, fail, iso, paginate, meta, csvField } = require('../helpers');
+
+function formatInviteTree(p) {
+  return {
+    enabled: p.enabled,
+    root_skips: p.rootSkips,
+    roots: p.roots,
+    through_links: p.throughLinks,
+    updated_at: iso(p.updatedAt),
+    updated_by: p.updatedBy,
+  };
+}
 
 function formatSignup(row) {
   return {
@@ -463,6 +476,32 @@ function waitlistAdminRoutes(config) {
       return ok(res, { data: { id, has_platform_access: true } });
     } catch (err) {
       log.error('topochain-admin', 'POST /admin/users/:id/grant-access failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── GET / PUT /api/v4/admin/invite-tree ──────────────────────────────
+  // Whether invite links let people new to Homeroom skip the waitlist. On
+  // unless switched off here; a save applies on every server within the
+  // setting's short cache, with no deploy.
+  router.get('/api/v4/admin/invite-tree', async (req, res) => {
+    try {
+      return ok(res, { data: formatInviteTree(await communityInvites.adminPayload(pool)) });
+    } catch (err) {
+      log.error('topochain-admin', 'GET /admin/invite-tree failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  router.put('/api/v4/admin/invite-tree', adminWriteGate, async (req, res) => {
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') return fail(res, 422, 'Provide enabled: true or false.');
+    try {
+      await communityInvites.setTreeEnabled(pool, { enabled, actorId: req.user?.id ?? null });
+      log.info('topochain-admin', 'Invite tree switched', { enabled, adminId: req.user?.id });
+      return ok(res, { data: formatInviteTree(await communityInvites.adminPayload(pool)) });
+    } catch (err) {
+      log.error('topochain-admin', 'PUT /admin/invite-tree failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });

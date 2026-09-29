@@ -290,8 +290,9 @@ remaining live-proposal boundary.
   page carries the token in an HttpOnly cookie, so signing up or in from it
   follows the link server-side (`redeemCarried` in `routes/auth.js`). The
   invite tree (`users.admitted_by`, `invite_generation`; 10 skips for
-  generation 0, none after it, so invites do not chain) is built and OFF
-  behind `INVITE_TREE_ENABLED`. Only a release by hand
+  generation 0, none after it, so invites do not chain) is ON unless an admin
+  switches it off in Admin → Waitlist (the `invite_tree_enabled` platform
+  setting, read through a 10-second cache). Only a release by hand
   (`grantPlatformAccess(…, { manualRelease: true })` on an account without
   access) makes generation 0; existing accounts, activation codes, genesis
   wallets and an admin's link's invitees get no skips.

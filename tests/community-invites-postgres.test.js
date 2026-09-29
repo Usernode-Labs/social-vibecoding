@@ -81,6 +81,10 @@ async function connectPool() {
     CREATE TABLE events (
       id SERIAL PRIMARY KEY, user_id INTEGER, app_id INTEGER, session_id INTEGER,
       event_type TEXT, metadata JSONB, created_at TIMESTAMPTZ DEFAULT NOW());
+    CREATE TABLE platform_settings (
+      key TEXT PRIMARY KEY, value TEXT NOT NULL, description TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL);
   `);
   await pool.query(stageSixBlock());
   // The fixture: ada (who had access before the invite tree), an open
@@ -119,7 +123,7 @@ test('invite links against a real PostgreSQL', async (t) => {
   const app = async (slug) => (await pool.query(`SELECT ${APP_COLUMNS} FROM apps WHERE slug = $1`, [slug])).rows[0];
   const member = async (communityId, userId) => (await pool.query(
     'SELECT 1 FROM community_members WHERE community_id = $1 AND user_id = $2', [communityId, userId])).rows.length === 1;
-  const saved = { enabled: process.env.INVITE_TREE_ENABLED, budgets: process.env.INVITE_TREE_BUDGETS };
+  const saved = { budgets: process.env.INVITE_TREE_BUDGETS };
   try {
     let token;
     await t.test('a member makes a link; somebody outside the project cannot', async () => {
@@ -215,9 +219,9 @@ test('invite links against a real PostgreSQL', async (t) => {
       await pool.query('DELETE FROM community_invite_redemptions WHERE user_id = 7');
     });
 
-    await t.test('THE TREE, switched on: only a release by hand has skips, and invites do not chain', async () => {
-      process.env.INVITE_TREE_ENABLED = 'true';
+    await t.test('THE TREE, on by default: only a release by hand has skips, and invites do not chain', async () => {
       process.env.INVITE_TREE_BUDGETS = '1';
+      assert.equal(await invites.treeEnabled(pool), true, 'no setting stored: on');
       const arena = await app('arena');
       const generation = async (id) => (await pool.query('SELECT invite_generation FROM users WHERE id = $1', [id])).rows[0].invite_generation;
 
@@ -238,6 +242,16 @@ test('invite links against a real PostgreSQL', async (t) => {
       const CY = as(3, 'cy', true);
       assert.equal(await invites.skipsLeft(pool, CY), 1);
       const cys = await invites.createInvite(pool, { app: arena, user: CY });
+
+      // Switched off in Admin → Waitlist, a skip is not spent: ivy waits.
+      await invites.setTreeEnabled(pool, { enabled: false, actorId: 9 });
+      assert.equal(await invites.skipsLeft(pool, CY), null, 'off: nothing to show');
+      const ivyId = (await pool.query("INSERT INTO users (username) VALUES ('ivy') RETURNING id")).rows[0].id;
+      const ivy = await invites.redeem(pool, { token: cys.link.token, user: as(ivyId, 'ivy', false) });
+      assert.deepEqual([ivy.status, ivy.skippedWaitlist], ['queued', false]);
+      await invites.setTreeEnabled(pool, { enabled: true, actorId: 9 });
+      assert.equal(await invites.skipsLeft(pool, CY), 1, 'nothing was spent while it was off');
+
       const fay = await invites.redeem(pool, { token: cys.link.token, user: as(6, 'fay', false) });
       assert.deepEqual([fay.status, fay.skippedWaitlist, fay.slug], ['joined', true, 'arena']);
       const row = await pool.query('SELECT has_platform_access, admitted_by, invite_generation FROM users WHERE id = 6');
@@ -267,11 +281,15 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.deepEqual(gusRow.rows[0], { admitted_by: 9, invite_generation: 1 });
       assert.equal(await invites.skipsLeft(pool, as(7, 'gus', true)), 0);
 
-      process.env.INVITE_TREE_ENABLED = '';
-      assert.equal(await invites.skipsLeft(pool, CY), null, 'off: nothing to show');
+      // What the Waitlist screen shows.
+      const shown = await invites.adminPayload(pool);
+      assert.deepEqual(
+        { enabled: shown.enabled, rootSkips: shown.rootSkips, roots: shown.roots, throughLinks: shown.throughLinks, updatedBy: shown.updatedBy },
+        { enabled: true, rootSkips: 1, roots: 1, throughLinks: 2, updatedBy: 'root' },
+        'cy can invite; fay and gus got in through links; root switched it last',
+      );
     });
   } finally {
-    process.env.INVITE_TREE_ENABLED = saved.enabled || '';
     process.env.INVITE_TREE_BUDGETS = saved.budgets || '';
     await dropSchema(pool);
   }

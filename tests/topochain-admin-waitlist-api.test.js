@@ -47,8 +47,11 @@ let signupRows;
 let userRows;
 let mailRows;
 let socialRows;
+// The invite-tree switch's platform_settings row: null is no row (on).
+let inviteSetting;
 
 function resetFixtures() {
+  inviteSetting = null;
   signupRows = [
     {
       id: 1,
@@ -252,6 +255,19 @@ function handleQuery(rawSql, params = []) {
     const removed = signupRows.filter((r) => ids.includes(r.id));
     signupRows = signupRows.filter((r) => !ids.includes(r.id));
     return { rows: removed.map((r) => ({ id: r.id, email: r.email })) };
+  }
+
+  // The invite-tree switch (services/community-invites.js).
+  if (sql.startsWith('SELECT s.value, s.updated_at, u.username AS updated_by FROM platform_settings s')) {
+    assert.deepEqual(params, ['invite_tree_enabled']);
+    return { rows: inviteSetting ? [{ ...inviteSetting, updated_by: 'full-admin' }] : [] };
+  }
+  if (sql.startsWith('INSERT INTO platform_settings')) {
+    inviteSetting = { value: params[1], updated_at: new Date(NOW), actor: params[3] };
+    return { rows: [] };
+  }
+  if (sql.startsWith('SELECT COUNT(*) FILTER (WHERE invite_generation = 0')) {
+    return { rows: [{ roots: 2, through_links: 5 }] };
   }
 
   throw new Error(`Unhandled mock query: ${sql}`);
@@ -719,4 +735,40 @@ test('an empty, missing, or all-invalid ids array is rejected without querying',
   assert.equal(missing.status, 422);
 
   assert.equal(signupRows.length, 5, 'a rejected bulk-delete must not remove any row');
+});
+
+// ─── The invite-tree switch ─────────────────────────────────────────────
+
+test('the invite switch reads as on with nothing stored, for a view-only admin too', async () => {
+  const denied = await get('/api/v4/admin/invite-tree', 'user');
+  assert.equal(denied.status, 403);
+
+  const { status, body } = await get('/api/v4/admin/invite-tree', 'readonly');
+  assert.equal(status, 200);
+  assert.deepEqual(body, {
+    success: true,
+    data: { enabled: true, root_skips: 10, roots: 2, through_links: 5, updated_at: null, updated_by: null },
+  });
+});
+
+test('only a full admin can switch it, and only to a boolean', async () => {
+  const ro = await mutate('PUT', '/api/v4/admin/invite-tree', { enabled: false }, 'readonly');
+  assert.equal(ro.status, 403);
+  assert.equal(inviteSetting, null, 'a refused request writes nothing');
+
+  for (const bad of [{}, { enabled: 'false' }, { enabled: 0 }, { enabled: null }]) {
+    const res = await mutate('PUT', '/api/v4/admin/invite-tree', bad);
+    assert.equal(res.status, 422, JSON.stringify(bad));
+  }
+  assert.equal(inviteSetting, null);
+
+  const off = await mutate('PUT', '/api/v4/admin/invite-tree', { enabled: false });
+  assert.equal(off.status, 200);
+  assert.equal(off.body.data.enabled, false);
+  assert.equal(off.body.data.updated_by, 'full-admin');
+  assert.match(off.body.data.updated_at, /\+00:00$/, 'the v4 date format');
+  assert.deepEqual([inviteSetting.value, inviteSetting.actor], ['false', 902]);
+
+  const again = await get('/api/v4/admin/invite-tree');
+  assert.equal(again.body.data.enabled, false, 'the write dropped the cache');
 });

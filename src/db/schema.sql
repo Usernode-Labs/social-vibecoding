@@ -10422,8 +10422,9 @@ CREATE INDEX IF NOT EXISTS idx_community_invite_redemptions_user
   ON community_invite_redemptions (user_id) WHERE applied_at IS NULL;
 COMMENT ON TABLE community_invite_redemptions IS 'staging:private';
 
--- THE INVITE TREE: who let whom in. Built, and off until
--- INVITE_TREE_ENABLED says otherwise (services/community-invites.js).
+-- THE INVITE TREE: who let whom in. On unless an admin switches it off in
+-- Admin → Waitlist, which writes the `invite_tree_enabled` platform_settings
+-- row (services/community-invites.js; no row is on).
 -- `invite_generation` 0 is "let off the waitlist by us, by hand" (an admin
 -- admitting a waitlist row, or granting an account directly): grantPlatform-
 -- Access writes it only when that grant is what lets them in. 1 is somebody

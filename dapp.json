@@ -569,18 +569,11 @@
       "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it is this deployment's canonical origin; it is http://localhost:<PORT> only when USERNODE_LOCAL_DEV=1 marks a local run, so a missing variable cannot yield a callback that works only on a laptop. Change it and you must register the matching callback with GitHub, X and LinkedIn, which all validate redirect_uri first."
     },
     {
-      "key": "INVITE_TREE_ENABLED",
-      "group": "Waitlist",
-      "required": false,
-      "default": "false",
-      "description": "Set true to let invite links skip the waitlist. Somebody let off the waitlist by hand (Admit, or a direct grant of access) then has INVITE_TREE_BUDGETS skips to give; accounts that already had access, activation codes, genesis wallets and anyone a link let in have none. While false, a newcomer following a link waits to be let in."
-    },
-    {
       "key": "INVITE_TREE_BUDGETS",
       "group": "Waitlist",
       "required": false,
       "default": "10",
-      "description": "Lifetime waitlist skips by invite-tree generation, comma-separated: the first number is for people let off the waitlist by hand, the next for the people their links let in, and so on, with none past the end. The default, 10, is ten each and no chaining. An empty or unreadable value falls back to 10. Only read while INVITE_TREE_ENABLED is true."
+      "description": "Lifetime waitlist skips by invite-tree generation, comma-separated: the first number is for people let off the waitlist by hand, the next for the people their links let in, and so on, with none past the end. The default, 10, is ten each and no chaining. An empty or unreadable value falls back to 10. Whether links skip the waitlist at all is switched in Admin → Waitlist."
     },
     {
       "key": "USERNODE_OPENROUTER_MANAGEMENT_API_KEY",
