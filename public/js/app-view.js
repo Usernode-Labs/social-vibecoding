@@ -22483,8 +22483,16 @@ if (typeof window !== 'undefined') {
   // navigating Home. Drop the pending activity first: close() normally
   // flushes it, but the blocked app no longer accepts that request.
   window.addEventListener('app-blocks-changed', (event) => {
-    if (!event.detail?.blocked || !AppView.appData
-        || event.detail.slug !== AppView.appData.slug) return;
+    const { slug, blocked } = event.detail || {};
+    if (!blocked || !slug) return;
+    // Main keeps recently used apps alive. A block must discard that frame
+    // and its resume handles before navigateHome can park the outgoing app.
+    if (window.App?._runningApp?.slug === slug) window.App._runningApp = null;
+    window.UsernodeReact?.nav?.forget?.(slug);
+    delete AppView._issueStateBySlug[slug];
+    AppView._appFrame().evict(slug);
+    if (AppView.appData?.slug !== slug) return;
+    AppView._issueStateSource = null;
     AppView.activeSeconds = 0;
     AppView.stopActivityTracking();
   });
