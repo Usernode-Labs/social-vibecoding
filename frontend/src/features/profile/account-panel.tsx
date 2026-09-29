@@ -48,7 +48,7 @@ import { type ReactNode } from 'react';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
-import { ChatIcon, CogIcon, ThumbsUpIcon, TrophyIcon } from '@/components/ui/icons';
+import { BallotIcon, ChatIcon, CogIcon, ThumbsUpIcon, TrophyIcon } from '@/components/ui/icons';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { walletSheetStore } from '../header/wallet-sheet-store';
@@ -59,7 +59,12 @@ const TITLE = 'text-base font-semibold';
 const SUBTITLE = 'text-[0.8125rem]';
 
 export function MorePanel({ rows }: {
-  rows: { challenges: string | null; kudos: string | null; feedback?: string | null };
+  rows: {
+    challenges: string | null;
+    kudos: string | null;
+    proposals?: string | null;
+    feedback?: string | null;
+  };
 }): ReactNode {
   // A CAPABILITY, published rather than fetched: App.renderAdminButton in
   // public/js/app.js writes it after the session resolves. The Admin console
@@ -122,6 +127,16 @@ export function MorePanel({ rows }: {
           title="Settings"
           titleClassName={TITLE}
           subtitle={settingsLine}
+          subtitleClassName={SUBTITLE}
+        />
+        <ListRow
+          as="a"
+          id="profile-row-proposals"
+          href="#profile/proposals"
+          leading={<IconTile size="sm"><BallotIcon /></IconTile>}
+          title="Your proposals"
+          titleClassName={TITLE}
+          subtitle={rows.proposals || 'Every proposal you have started'}
           subtitleClassName={SUBTITLE}
         />
       </GroupedList>

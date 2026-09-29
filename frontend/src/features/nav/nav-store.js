@@ -74,6 +74,7 @@ export const TAB_FOR_SCREEN = Object.freeze({
   'leaderboard-screen': 'me',
   'settings-screen': 'me',
   'admin-screen': 'me',
+  'profile-proposals-screen': 'me',
 });
 
 /**

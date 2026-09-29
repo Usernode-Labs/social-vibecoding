@@ -431,6 +431,13 @@
     },
     {
       "source": "src/routes/profile.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "3ffc1b3759301eea2752",
+      "count": 1,
+      "preview": "MY_PROPOSALS_SQL"
+    },
+    {
+      "source": "src/routes/profile.js",
       "kind": "structural-template",
       "fingerprint": "30d76681d24c561144ce",
       "count": 1,

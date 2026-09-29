@@ -93,6 +93,11 @@ const App = {
   _inGlobalChat: false,
   // Agent sessions (#2779): one conversation with the Mayor at #agent/<id>.
   _inAgentSession: false,
+  // "Your proposals" (#5310): every proposal-carrying dev session the viewer
+  // has ever started, across every project, grouped by status. A drill-in
+  // from Profile's own rows, not a rail root — set by
+  // navigateToProfileProposals() / _exitProfileProposals() / navigateHome().
+  _inProfileProposals: false,
 
   // Chromeless full-screen mode (/app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -4036,6 +4041,7 @@ const App = {
         else if (App._inAgentSession) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
         else if (App._inWorkshop) App.navigateHome();
+        else if (App._inProfileProposals) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -4063,7 +4069,8 @@ const App = {
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings || App._inBrowse
           || App._inGlobalChat || App._inAgentSession
-          || App._inMessages || App._inWorkshop) {
+          || App._inMessages || App._inWorkshop
+          || App._inProfileProposals) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -4117,6 +4124,14 @@ const App = {
           history.replaceState(null, '', '#leaderboard/challenges');
         } catch (err) { /* non-fatal: navigation below still works */ }
         App.navigateToLeaderboard('challenges', null);
+        return;
+      }
+      if (parts[0] === 'profile' && parts[1] === 'proposals') {
+        // Your proposals (#5310) — a drill-in from Profile's own rows, not
+        // a username. Must come before the generic profile branch below,
+        // which otherwise treats parts[1] as a username to view.
+        App.setChromeless(false);
+        App.navigateToProfileProposals();
         return;
       }
       if (parts[0] === 'profile') {
@@ -4508,6 +4523,7 @@ const App = {
         if (App._inSettings) App._exitSettings();
             if (App._inBrowse) App._exitBrowse();
             if (App._inWorkshop) App._exitWorkshop();
+            if (App._inProfileProposals) App._exitProfileProposals();
         App._showOnlyScreen('home-screen');
         App.setHeaderTitle('Homeroom');
         // Home has no Improve target: clear whatever screen published one, or
@@ -4723,7 +4739,7 @@ const App = {
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
     'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
     'settings-screen', 'messages-screen', 'global-chat-screen',
-    'agent-session-screen'],
+    'agent-session-screen', 'profile-proposals-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
   // `keepAlso`), and publish the incoming screen's default back slot.
@@ -5228,6 +5244,9 @@ const App = {
     // features/workshop/index.tsx takes useVisibilityHiddenClass, so it has to
     // be listed here or the class gets the two owners the note above describes.
     'workshop-screen',
+    // Your proposals (#5310). React-owned end to end, same as Workshop —
+    // features/profile/my-proposals.tsx takes useVisibilityHiddenClass.
+    'profile-proposals-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on
@@ -5397,6 +5416,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inProfileProposals) App._exitProfileProposals();
     // Screen reveal + chrome, all inside the transition callback so the
     // outgoing page is snapshotted as it actually looked (#979).
     const screen = document.getElementById('leaderboard-screen');
@@ -5549,6 +5569,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('profile-screen');
     App._inProfile = true;
     // Loads into the still-hidden root BEFORE the transition, as the Workshop
@@ -5595,6 +5616,44 @@ const App = {
     if (window.Profile?.close) Profile.close();
   },
 
+  // Show the "Your proposals" screen (#5310) — every proposal-carrying dev
+  // session the viewer has ever started, across every project, grouped by
+  // status. Reached from Profile's #profile-row-proposals row
+  // (frontend/src/features/profile/account-panel.tsx), a drill-in exactly
+  // like navigateToLeaderboard, so it follows that method's shape: exit
+  // every sibling root screen, then hand off to the screen's own
+  // Workshop-style controller (window.UsernodeReact.profileProposals),
+  // registered inline by frontend/src/features/profile/my-proposals.tsx.
+  navigateToProfileProposals() {
+    if (App._inProfileProposals && window.UsernodeReact?.profileProposals?.isOpen?.()) {
+      return;
+    }
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
+    const screen = document.getElementById('profile-proposals-screen');
+    App._inProfileProposals = true;
+    window.UsernodeReact?.profileProposals?.open?.();
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('profile-proposals-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle('Your proposals');
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // State-only (#979) — see _exitLeaderboard.
+  _exitProfileProposals() {
+    App._inProfileProposals = false;
+    window.UsernodeReact?.profileProposals?.close?.();
+  },
+
   // Show the browse-all-apps screen (#apps). Sibling to
   // navigateToProfile — hides home + app, reveals #browse-screen, lets
   // the Browse module (public/js/browse.js) render into #browse-list.
@@ -5623,6 +5682,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('browse-screen');
     App._inBrowse = true;
     // Renders into the still-hidden screen; `chrome: false` holds back its
@@ -5688,6 +5748,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inMessages) App._exitMessages();
+    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('workshop-screen');
     App._inWorkshop = true;
     // Loads into the still-hidden root: the island renders nothing remote
@@ -5939,6 +6000,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('admin-screen');
     App._inAdmin = true;
     // Renders into the still-hidden screen; `chrome: false` holds its
@@ -5988,6 +6050,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('settings-screen');
     App._inSettings = true;
     // Renders every section into the still-hidden screen — invisible, so
@@ -6049,6 +6112,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inProfileProposals) App._exitProfileProposals();
     const screen = document.getElementById('messages-screen');
     App._inMessages = true;
     // Route the still-hidden island first. It renders no remote data until its
@@ -6130,6 +6194,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inProfileProposals) App._exitProfileProposals();
     if (App._inMessages) App._exitMessages();
     const screen = document.getElementById('global-chat-screen');
     App._inGlobalChat = true;
@@ -6169,6 +6234,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inProfileProposals) App._exitProfileProposals();
     if (App._inMessages) App._exitMessages();
     const screen = document.getElementById('agent-session-screen');
     App._inAgentSession = true;
@@ -6757,6 +6823,7 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
+    if (App._inProfileProposals) App._exitProfileProposals();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
     // hides the app view and clears its content — exactly once on
@@ -6870,6 +6937,7 @@ const App = {
     'leaderboard-screen': ['arrow', '#profile'],
     'settings-screen': ['arrow', '#profile'],
     'admin-screen': ['arrow', '#profile'],
+    'profile-proposals-screen': ['arrow', '#profile'],
   },
 
   // The slot for a screen, as setBackIcon's own arguments. Anything off the
