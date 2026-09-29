@@ -71,8 +71,8 @@
  * season progress leads, then the cards, then what they unlock. That keeps
  * `.home-panel-season + .home-panel-body` adjacent in every state. It shows
  * only while setup is locked and no placeholder draws (no count to draw):
- * "Finish these to unlock the rest of the season." Once unlocked there is no
- * note.
+ * "Finish these to unlock the rest of the season." Once unlocked the note
+ * names the first not-done challenge to start with (#3254).
  *
  * ── The standings preview is GONE ─────────────────────────────────────
  *

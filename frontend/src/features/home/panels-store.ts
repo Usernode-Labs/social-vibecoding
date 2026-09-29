@@ -154,8 +154,9 @@ export interface ChallengesView {
   summary: string | null;
   /**
    * "Finish these to unlock the rest of the season." while setup gates the
-   * season; null once unlocked or with no gate. Drawn only when the locked
-   * placeholder is not, which says the same thing.
+   * season; "Season unlocked - start with <first not-done challenge>." once
+   * it opens (#3254), or null with no gate. Drawn only when the locked
+   * placeholder is not, which says the locked line itself.
    */
   onboardingNote?: string | null;
   /**

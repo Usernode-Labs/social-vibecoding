@@ -1454,13 +1454,40 @@ test('locked setup: one dashed placeholder after the cards, and no second unlock
     assert.match(out, /<p class="pt-2 pb-1\.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">Finish these/);
   }
 
-  // Unlocked: a stray count draws nothing, and there is no note at all (S10).
+  // Unlocked (#3254): a stray count draws nothing, and the note now says so
+  // instead of vanishing — pointing at the first not-done card in the block's
+  // own order, the one the cards above the note already lead with.
   const open = panel({ onboarding: onboarding({ unlocked: true, hidden_count: 6 }) });
   assert.equal(HP.challengesView(open).lockedCount, 0);
-  assert.equal(HP.challengesView(open).onboardingNote, null, 'nothing to say once unlocked');
+  assert.equal(HP.challengesView(open).onboardingNote,
+    'Season unlocked - start with Report a reproducible bug.',
+    'the note names the first not-done challenge by its card title');
   const unlocked = renderWith({ registry: [], hidden: [], panels: [open] }).html;
   assert.doesNotMatch(unlocked, /home-challenge-locked|challenges locked/);
-  assert.doesNotMatch(unlocked, /are unlocked|unlock the rest/, 'no unlock note');
+  assert.match(unlocked, /<p class="pt-2 pb-1\.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">Season unlocked - start with Report a reproducible bug\.<\/p>/,
+    'the note renders in the same status slot as the locked one');
+  assert.doesNotMatch(unlocked, /unlock the rest/, 'the locked line is gone once the gate opens');
+
+  // All done, nothing left to point at: the season is unlocked, full stop.
+  // (And a not-done row with a blank goal falls back the same way.)
+  const allDone = panel({
+    done: 1,
+    onboarding: onboarding({ unlocked: true }),
+    challenges: [challenge({ progress: { done: true, current: null, target: null } })],
+  });
+  assert.equal(HP.challengesView(allDone).onboardingNote, 'Season unlocked.');
+  const blank = panel({
+    onboarding: onboarding({ unlocked: true }),
+    challenges: [challenge({ goal: '   ' })],
+  });
+  assert.equal(HP.challengesView(blank).onboardingNote, 'Season unlocked.');
+
+  // The gate's shape is strict, as setupFinished's is: `unlocked` is only a
+  // finished onboarding when it is exactly `true`, so anything else keeps the
+  // locked note.
+  const shape = panel({ onboarding: onboarding({ unlocked: 1 }) });
+  assert.equal(HP.challengesView(shape).onboardingNote,
+    'Finish these to unlock the rest of the season.');
 });
 
 // The area LABEL is the section's own, not the block's (see SectionHeading in

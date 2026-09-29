@@ -487,13 +487,17 @@ const HomePanels = {
       // heading; `season` is where it shows.
       summary: HomePanels.summaryLine(panel),
       season,
-      // The unlock note, only while setup gates the season, in the Challenges
-      // tab's words (its grid `notice`). The dashed placeholder carries the
-      // same line whenever it draws, so the block shows the note only without
-      // one. Once unlocked there is nothing to say: no note.
-      onboardingNote: panel.onboarding && !panel.onboarding.unlocked
-        ? 'Finish these to unlock the rest of the season.'
-        : null,
+      // The unlock note: while setup gates the season, in the Challenges
+      // tab's words (its grid `notice`), and once the gate opens (#3254), a
+      // pointer at the block's own first not-done card — the same order that
+      // put that card first — so the new categories do not arrive silently.
+      // The dashed placeholder draws only while locked and carries the locked
+      // line itself, so the note shows only without one.
+      onboardingNote: !panel.onboarding
+        ? null
+        : panel.onboarding.unlocked === true
+          ? HomePanels.unlockedNote(rows)
+          : 'Finish these to unlock the rest of the season.',
       // How many challenges setup still hides, for the dashed "6 challenges
       // locked" placeholder under the setup cards. Only while the gate is
       // closed; a payload without the count (an older server) draws none, and
@@ -553,6 +557,18 @@ const HomePanels = {
     const setup = (Array.isArray(rows) ? rows : [])
       .filter((c) => c && HomePanels.groupOf(c).key === 'setup');
     return setup.length > 0 && setup.every((c) => HomePanels.orderDone(c));
+  },
+
+  // The unlocked note's challenge to start with: the first not-done row in
+  // the block's own order (visibleSlots' sequence), by its card title. Every
+  // row done, or none with a title to name, and the note points nowhere.
+  // Pure; built only when the server's gate says unlocked.
+  unlockedNote(rows) {
+    const next = (Array.isArray(rows) ? rows : [])
+      .find((c) => !HomePanels.orderDone(c) && c && String(c.goal || '').trim());
+    return next
+      ? `Season unlocked - start with ${String(next.goal).trim()}.`
+      : 'Season unlocked.';
   },
 
   // The not-done key the ordering sorts on and the collapsed block picks its
