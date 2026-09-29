@@ -290,6 +290,11 @@ function MergesSection() {
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState(false);
+  // Remembered from the last time "Live" was on, so the strip survives the
+  // checkbox being turned off — that is exactly the paused-live state it
+  // describes. It re-arms on every enable; disarming happens below when the
+  // filters change.
+  const [liveWasOn, setLiveWasOn] = useState(false);
 
   const alive = useRef(true);
   const cursor = useRef<Record<string, unknown> | null>(null);
@@ -368,8 +373,24 @@ function MergesSection() {
     return () => { clearInterval(timer); };
   }, [live, loadFirstPage]);
 
+  // Arming: any enable of Live marks that this session had it on. It only
+  // disarms through a filters change (below) or unmounting — never through
+  // Refresh or a poll, which leave the filter state alone.
+  useEffect(() => {
+    if (live) setLiveWasOn(true);
+  }, [live]);
+
+  // Disarming: a changed filter re-queries, so the strip's "Checks passing"
+  // would stop describing what the list shows. The first change after a
+  // reload (EMPTY_FILTERS → EMPTY_FILTERS) is a no-op and keeps nothing.
+  useEffect(() => {
+    setLiveWasOn(false);
+  }, [filters]);
+
   const set = (k: keyof Filters) => (e: { target: { value: string } }) =>
     setFilters((prev) => ({ ...prev, [k]: e.target.value }));
+
+  const pausedStrip = !live && liveWasOn && filters.outcome === 'passing';
 
   return (
     <div id="admin-merges-root">
@@ -422,6 +443,14 @@ function MergesSection() {
             </label>
           </section>
 
+          {pausedStrip ? (
+            <p id="admin-merges-paused-live"
+              role="status" aria-live="polite"
+              className="rounded-lg border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 px-3 py-1.5 text-sm font-medium text-sky-800 dark:text-sky-300">
+              Paused live view · Checks passing
+            </p>
+          ) : null}
+
           <div id="admin-merges-runs" className="space-y-2">
             {error
               ? <div className="text-sm text-red-700 dark:text-red-400">Failed to load: {error}</div>
@@ -464,4 +493,4 @@ const AdminMerges = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminMerges = AdminMerges;
 
-export { AdminMerges };
+export { AdminMerges, MergesSection };
