@@ -442,12 +442,12 @@ export interface TopicBody {
    */
   build?: { kind: 'owner' | 'published'; label: string } | null;
   /**
-   * The visual evidence, as "What changes for you" reads it: the claims as
+   * The before & after shots, as "What changes for you" reads it: the claims as
    * bullets and the run's state as one strip. A verified run keeps the
    * before/after card in `actions.visuals` instead, which leads with the
    * claims itself.
    */
-  evidence?: {
+  shots?: {
     state: string;
     verified: boolean;
     /**

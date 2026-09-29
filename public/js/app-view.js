@@ -4207,7 +4207,7 @@ const AppView = {
     const gh = kind === 'issue' ? item.htmlUrl : item.pr_url;
     const shortcuts = ['View checks', 'Re-run checks', 'Open public discussion',
       'Continue building', 'Open session', 'Put up for vote', 'View PR on GitHub',
-      'Retry preview', 'Before/after screenshots', 'Before/after shots'];
+      'Retry preview', 'Before/after screenshots', 'Before & after'];
     const menu = [...(AppView._cardMenus[card.rail.menuKey] || [])]
       .filter((a) => !body.changeId || !shortcuts.some((label) =>
         a.label === label || a.label.startsWith(`${label} (`)));
@@ -4576,8 +4576,8 @@ const AppView = {
     const votes = rows.find((r) => r.key === 'votes');
     if (votes) votes.label = 'Review';
     body.build = AppView._buildDoorView(item);
-    // The evidence claims and state, for "What changes for you".
-    body.evidence = AppView._evidenceView(item.visualEvidence);
+    // The shots claims and state, for "What changes for you".
+    body.shots = AppView._shotsView(item.shots);
     if (underway) {
       const checks = rows.find((r) => r.key === 'checks');
       if (item.check_state === 'failing' && checks) checks.text = [{ b: 'Failing.', tone: 'bad' }, ' Required checks need attention before this change can merge.'];
@@ -4877,11 +4877,11 @@ const AppView = {
     // renders no tiles, which is what stopped the looping <video>s anyway.
     let visuals = null;
     if (kind === 'proposal' || (kind === 'session' && item.source === 'imported')) {
-      // Once a proposal has entered evidence v2, its state is authoritative.
-      // In particular, pending/failed evidence must never be visually
+      // Once a proposal has entered shots v2, its state is authoritative.
+      // In particular, pending/failed shots must never be visually
       // replaced by an older route capture that happens to exist.
-      const tilesHtml = item.visualEvidence
-        ? AppView.visualEvidenceHtml(item.visualEvidence, { sessionId: item.id })
+      const tilesHtml = item.shots
+        ? AppView.shotsHtml(item.shots, { sessionId: item.id })
         : AppView.visualsTilesHtml(item.visuals);
       // Open: the tiles are the About sheet's before/after row now, not a
       // toggle behind a button.
@@ -7651,14 +7651,14 @@ const AppView = {
   // shot on, and whether it was a phone-frame capture (#768). Null when no
   // group has a still on either side; a group with one honest half is kept,
   // and the feed then shows that side alone.
-  _workshopVisuals(visuals, evidence = null) {
-    if (evidence && typeof evidence === 'object') {
+  _workshopVisuals(visuals, shots = null) {
+    if (shots && typeof shots === 'object') {
       // A v2 record is authoritative even while pending/failed: returning
       // null suppresses the legacy capture instead of substituting a picture
       // that may have nothing to do with the claim.
-      if (evidence.state !== 'verified') return null;
-      const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/evidence\/[0-9a-f]{32}$/.test(String(url || ''));
-      const find = (claimValue, viewportName, side, variant) => (Array.isArray(evidence.artifacts) ? evidence.artifacts : []).find((a) => (
+      if (shots.state !== 'verified') return null;
+      const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}$/.test(String(url || ''));
+      const find = (claimValue, viewportName, side, variant) => (Array.isArray(shots.artifacts) ? shots.artifacts : []).find((a) => (
         a && a.storyId === claimValue?.id && a.viewport === viewportName
         && a.side === side && a.variant === variant && a.media === 'png' && urlOk(a.url)
       ));
@@ -7669,11 +7669,11 @@ const AppView = {
       let viewport = 'desktop';
       let before = null;
       let after = null;
-      for (const candidate of (Array.isArray(evidence.claims) ? evidence.claims : [])) {
+      for (const candidate of (Array.isArray(shots.claims) ? shots.claims : [])) {
         const name = Array.isArray(candidate?.viewports) && candidate.viewports[0]
           ? String(candidate.viewports[0]) : 'desktop';
-        const cropsLead = AppView._evidenceCropReadable(find(candidate, name, 'base', 'focus'))
-          && AppView._evidenceCropReadable(find(candidate, name, 'head', 'focus'));
+        const cropsLead = AppView._shotsCropReadable(find(candidate, name, 'base', 'focus'))
+          && AppView._shotsCropReadable(find(candidate, name, 'head', 'focus'));
         const pick = (side) => (cropsLead && find(candidate, name, side, 'focus')) || find(candidate, name, side, 'context');
         const beforeCandidate = pick('base');
         const afterCandidate = pick('head');
@@ -7684,8 +7684,8 @@ const AppView = {
       }
       if (!before && !after) return null;
       return {
-        path: claim?.claim || 'Before/after shots',
-        claim: claim?.claim || 'Before/after shots',
+        path: claim?.claim || 'Before & after',
+        claim: claim?.claim || 'Before & after',
         mobile: viewport === 'mobile',
         before: before?.url || null,
         after: after?.url || null,
@@ -8562,7 +8562,7 @@ const AppView = {
         number: item && (item.pr_number || item.id) != null ? Number(item.pr_number || item.id) : null,
         body: null,
         visuals: kind === 'proposal'
-          ? AppView._workshopVisuals(item && item.visuals, item && item.visualEvidence)
+          ? AppView._workshopVisuals(item && item.visuals, item && item.shots)
           : null,
       };
       return kind ? AppView._attachRowConversation(row, kind, item) : row;
@@ -12236,13 +12236,13 @@ const AppView = {
         act: () => AppView.swapToStagingForSession(pr.id, ''),
       });
     }
-    const hasVisualEvidence = !!pr.visualEvidence;
-    if (hasVisualEvidence || AppView.visualsTilesHtml(pr.visuals)) {
+    const hasShots = !!pr.shots;
+    if (hasShots || AppView.visualsTilesHtml(pr.visuals)) {
       items.push({
-        label: hasVisualEvidence ? 'Before/after shots' : 'Before/after screenshots',
+        label: hasShots ? 'Before & after' : 'Before/after screenshots',
         icon: 'visuals',
-        title: hasVisualEvidence
-          ? 'Open the declared changes and their before/after shots'
+        title: hasShots
+          ? 'Open the declared changes and their before & after shots'
           : 'Open this proposal and expand its before/after captures',
         act: () => { AppView._visualsOpen.add(pr.id); AppView.openTopic('proposal', pr.id); },
       });
@@ -12465,11 +12465,11 @@ const AppView = {
     for (const r of AppView.blockReasons(pr)) {
       const by = saidByBox[r.key];
       if (by && covered.has(by)) continue;
-      // Visual evidence lives under "What changes for you" now: the claims
+      // Before & after shots lives under "What changes for you" now: the claims
       // as bullets, and one status strip. It is a ledger row only while it
       // is an ENFORCED merge gate; a soft reason here said the same thing
       // twice, once as a step that is not one.
-      if (r.key === 'visual_evidence' && r.soft) continue;
+      if (r.key === 'shots' && r.soft) continue;
       const [label, count] = String(r.label || '').split(' · ');
       const n = count ? parseInt(count, 10) : NaN;
       rows.push({
@@ -17423,27 +17423,27 @@ const AppView = {
       });
     }
 
-    const evidence = p.visualEvidence;
-    if (evidence && evidence.required !== false
-        && !['verified', 'not_required', 'overridden'].includes(evidence.state)) {
+    const shots = p.shots;
+    if (shots && shots.required !== false
+        && !['verified', 'not_required', 'overridden'].includes(shots.state)) {
       // #2601/#2558: 'planned' is only in flight while it is fresh. A run
       // that has sat there past the idle threshold has not started, so the
       // tag says so with the recorded reason and stops spinning — the
       // neutral in-flight tone was the thing reading as "any moment now"
       // on proposals nothing was ever going to pick up.
-      const notStarted = AppView._evidenceNotStarted(evidence);
+      const notStarted = AppView._shotsNotStarted(shots);
       const running = !notStarted
-        && ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(evidence.state);
-      const enforced = AppView.appData?.visualEvidenceEnforced === true;
+        && ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(shots.state);
+      const enforced = AppView.appData?.shotsEnforced === true;
       out.push({
-        key: 'visual_evidence',
-        label: running ? 'Taking before/after shots'
-          : notStarted ? 'Before/after shots not started'
-            : evidence.state === 'failed' ? 'Couldn\u2019t take the shots' : 'Before/after shots needed',
-        detail: (notStarted ? AppView._evidenceNotStartedReason(evidence) : evidence.failureReason)
+        key: 'shots',
+        label: running ? 'Taking before & after shots'
+          : notStarted ? 'Before & after not started'
+            : shots.state === 'failed' ? 'Couldn\u2019t take the shots' : 'Before & after needed',
+        detail: (notStarted ? AppView._shotsNotStartedReason(shots) : shots.failureReason)
           || (enforced
-            ? 'Voting and merging wait for before/after shots of the current proposal commit.'
-            : 'This proposal has no before/after shots for its current commit yet.'),
+            ? 'Voting and merging wait for before & after shots of the current proposal commit.'
+            : 'This proposal has no before & after shots for its current commit yet.'),
         running,
         soft: !enforced,
       });
@@ -18001,7 +18001,7 @@ const AppView = {
     return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…${count}</span>`;
   },
 
-  // #2380: claim-first, exact-revision visual evidence. The server already
+  // #2380: claim-first, exact-revision before & after shots. The server already
   // returns one sanitized view model to every proposal surface; this is the
   // shared HTML adapter for the remaining legacy/React boundaries. It never
   // accepts an absolute URL and never reaches the public /visuals route.
@@ -18013,46 +18013,46 @@ const AppView = {
   // So 'planned' is read as two different things: a run that was minted
   // moments ago is starting, and one this old with nothing under way has
   // not started. Five minutes is the product owner's threshold.
-  EVIDENCE_IDLE_MS: 5 * 60 * 1000,
+  SHOTS_IDLE_MS: 5 * 60 * 1000,
 
   // True when a 'planned' run has sat untouched past that threshold. An
   // unparseable or missing timestamp reads as "still starting": the spinner
   // is the safer of the two when the age is unknown.
-  _evidenceNotStarted(evidence) {
-    const e = evidence || {};
+  _shotsNotStarted(shots) {
+    const e = shots || {};
     if (String(e.state || '') !== 'planned') return false;
     const at = Date.parse(e.updatedAt || '');
-    return Number.isFinite(at) && (Date.now() - at) > AppView.EVIDENCE_IDLE_MS;
+    return Number.isFinite(at) && (Date.now() - at) > AppView.SHOTS_IDLE_MS;
   },
 
   // The reason the run never started, when the server recorded one.
-  _evidenceNotStartedReason(evidence) {
-    const e = evidence || {};
+  _shotsNotStartedReason(shots) {
+    const e = shots || {};
     const reason = typeof e.notStartedReason === 'string' ? e.notStartedReason.trim() : '';
     return reason || 'Nothing has picked this preview up yet.';
   },
 
-  // The words for each evidence state — a label and a sentence — shared by
+  // The words for each shots state — a label and a sentence — shared by
   // the verified/pending card below and the change page's strip.
-  _evidenceStateCopy(evidence) {
-    const e = evidence || {};
-    const taking = ['Taking the shots', 'The preview agent is following each declared change on the before and after builds.'];
+  _shotsStateCopy(shots) {
+    const e = shots || {};
+    const taking = ['Taking the shots', 'The shots agent is following each declared change on the before and after builds.'];
     return {
-      planned: AppView._evidenceNotStarted(e)
-        ? ['Before/after shots not started', AppView._evidenceNotStartedReason(e)]
-        : ['Before/after shots queued', 'Getting ready to take the shots.'],
+      planned: AppView._shotsNotStarted(e)
+        ? ['Before & after not started', AppView._shotsNotStartedReason(e)]
+        : ['Before & after queued', 'Getting ready to take the shots.'],
       provisioning: ['Building before and after', 'Homeroom is starting private copies of the app from before and after this change.'],
       exploring: taking,
       // Runs from before shots; a current run never enters this state.
       replaying: taking,
       reviewing: ['Saving the shots', 'The shots are being saved to the proposal.'],
-      failed: e.failureCode === 'evidence_stopped'
+      failed: e.failureCode === 'shots_stopped'
         ? ['Shots stopped', e.failureReason || 'Stopped before it finished. No shots were taken for this commit.']
-        : ['Couldn\u2019t take the shots', e.failureReason || 'The preview agent could not take the before/after shots.'],
+        : ['Couldn\u2019t take the shots', e.failureReason || 'The shots agent could not take the before & after shots.'],
       stale: ['Shots are out of date', e.failureReason || 'A newer revision of this proposal replaced these shots.'],
       cancelled: ['Shots cancelled', e.failureReason || 'A newer run replaced this one before it finished.'],
-      not_required: ['No before/after shots needed', e.rationale || 'The author says nothing visible changes.'],
-      overridden: ['Shots waived', e.overrideReason || 'An app administrator let review continue without before/after shots.'],
+      not_required: ['No before & after needed', e.rationale || 'The author says nothing visible changes.'],
+      overridden: ['Shots waived', e.overrideReason || 'An app administrator let review continue without before & after shots.'],
     };
   },
 
@@ -18060,19 +18060,19 @@ const AppView = {
   // "What changes for you" (topic/topic-head.tsx): the declared changes,
   // which are the plainest statement of the change there is, as bullets, and
   // the run's state as one strip. A VERIFIED run keeps the before/after card
-  // (visualEvidenceHtml), which already leads with the declared changes.
-  _evidenceView(evidence) {
-    if (!evidence || typeof evidence !== 'object') return null;
-    const state = String(evidence.state || 'planned');
-    const copy = AppView._evidenceStateCopy(evidence)[state] || ['Shots pending', 'The before/after shots are not ready yet.'];
+  // (shotsHtml), which already leads with the declared changes.
+  _shotsView(shots) {
+    if (!shots || typeof shots !== 'object') return null;
+    const state = String(shots.state || 'planned');
+    const copy = AppView._shotsStateCopy(shots)[state] || ['Shots pending', 'The before & after shots are not ready yet.'];
     const detail = String(copy[1] || '').replace(/\.\s*$/, '');
-    const claims = (Array.isArray(evidence.claims) ? evidence.claims : [])
+    const claims = (Array.isArray(shots.claims) ? shots.claims : [])
       .slice(0, 3).map((c) => String((c && c.claim) || '').trim()).filter(Boolean);
     const settled = state === 'not_required' || state === 'overridden';
     // #2601/#2558: a 'planned' run that never started is not in flight, so
     // it neither spins nor promises shots are being taken. It reads as its
     // own state, with whatever reason the server recorded.
-    const notStarted = AppView._evidenceNotStarted(evidence);
+    const notStarted = AppView._shotsNotStarted(shots);
     const running = !notStarted
       && ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(state);
     return {
@@ -18087,7 +18087,7 @@ const AppView = {
         : settled
           ? `${detail}.`
           : running
-            ? `Before/after shots: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Homeroom shows each declared change before and after, on this exact proposal build.`
+            ? `Before & after: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Homeroom shows each declared change before and after, on this exact proposal build.`
             : `${copy[0]}. ${detail}.`,
       claims,
     };
@@ -18096,7 +18096,7 @@ const AppView = {
   // An element shot too small to read at card size (a corner badge is a few
   // dozen pixels) does not lead; the screen shot does, on both sides, so the
   // pair stays comparable. A shot without recorded dimensions still leads.
-  _evidenceCropReadable(shot) {
+  _shotsCropReadable(shot) {
     if (!shot) return true;
     const width = Number(shot.width);
     const height = Number(shot.height);
@@ -18104,50 +18104,50 @@ const AppView = {
     return width >= 120 && height >= 40;
   },
 
-  visualEvidenceHtml(evidence, opts = {}) {
-    if (!evidence || typeof evidence !== 'object') return '';
+  shotsHtml(shots, opts = {}) {
+    if (!shots || typeof shots !== 'object') return '';
     const sessionId = Number(opts.sessionId);
-    const claims = Array.isArray(evidence.claims) ? evidence.claims.slice(0, 3) : [];
-    const artifacts = Array.isArray(evidence.artifacts) ? evidence.artifacts : [];
-    const state = String(evidence.state || 'planned');
+    const claims = Array.isArray(shots.claims) ? shots.claims.slice(0, 3) : [];
+    const artifacts = Array.isArray(shots.artifacts) ? shots.artifacts : [];
+    const state = String(shots.state || 'planned');
     const esc = escapeHtml;
     const attr = escapeAttr;
     const shortSha = (sha) => /^[0-9a-f]{40}$/i.test(String(sha || ''))
       ? String(sha).slice(0, 8) : 'unknown';
-    const evidenceUrl = (url) => {
+    const shotsUrl = (url) => {
       const value = String(url || '');
-      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/evidence\/[0-9a-f]{32}$/.exec(value);
+      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/shots\/[0-9a-f]{32}$/.exec(value);
       if (!match || (Number.isInteger(sessionId) && sessionId > 0 && Number(match[1]) !== sessionId)) return '';
       return value;
     };
-    const stateCopy = AppView._evidenceStateCopy(evidence);
+    const stateCopy = AppView._shotsStateCopy(shots);
     const badge = state === 'verified'
       ? '<span class="dev-badge bg-violet-500/10 text-violet-700 dark:text-violet-400">Shots ready</span>'
-      : `<span class="dev-badge ${state === 'failed' && evidence.failureCode !== 'evidence_stopped' ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Shots pending'])[0])}</span>`;
-    const provenance = `<span>before <code>${esc(shortSha(evidence.baseSha))}</code></span><span aria-hidden="true">→</span><span>after <code>${esc(shortSha(evidence.headSha))}</code></span>`;
+      : `<span class="dev-badge ${state === 'failed' && shots.failureCode !== 'shots_stopped' ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Shots pending'])[0])}</span>`;
+    const provenance = `<span>before <code>${esc(shortSha(shots.baseSha))}</code></span><span aria-hidden="true">→</span><span>after <code>${esc(shortSha(shots.headSha))}</code></span>`;
 
     if (state !== 'verified') {
-      const copy = stateCopy[state] || ['Shots pending', 'The before/after shots are not ready yet.'];
+      const copy = stateCopy[state] || ['Shots pending', 'The before & after shots are not ready yet.'];
       const declared = claims.map((claim) => `<li>${esc(claim.claim || '')}</li>`).join('');
       // #2601/#2558: the same control a failed run offers, on a run that
       // never started. The rerun route already accepts a 'planned' run (it
       // reruns the same head), and a stuck run is precisely the case where
       // a reader needs a way to kick it.
       const retryable = (state === 'failed'
-          && (evidence.repairAvailable === true || evidence.failureCode === 'evidence_stopped'))
-        || AppView._evidenceNotStarted(evidence);
+          && (shots.repairAvailable === true || shots.failureCode === 'shots_stopped'))
+        || AppView._shotsNotStarted(shots);
       const retry = retryable && Number.isInteger(sessionId) && sessionId > 0
-        ? `<button type="button" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunVisualEvidence(${sessionId}, this)">Take the shots again</button>`
+        ? `<button type="button" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">Take the shots again</button>`
         : '';
       const stoppable = ['provisioning', 'exploring', 'replaying', 'reviewing'].includes(state)
         && Number.isInteger(sessionId) && sessionId > 0;
       const stop = stoppable
-        ? `<button type="button" data-evidence-stop="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.stopVisualEvidence(${sessionId}, this)">Stop</button>`
+        ? `<button type="button" data-shots-stop="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.stopShots(${sessionId}, this)">Stop</button>`
         : '';
-      const override = state === 'overridden' && evidence.overriddenAt
-        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">Overridden ${esc(new Date(evidence.overriddenAt).toLocaleString())}</div>`
+      const override = state === 'overridden' && shots.overriddenAt
+        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">Overridden ${esc(new Date(shots.overriddenAt).toLocaleString())}</div>`
         : '';
-      return `<section data-visual-evidence="1" data-evidence-state="${attr(state)}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
+      return `<section data-shots="1" data-shots-state="${attr(state)}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div class="flex items-center justify-between gap-3"><strong class="text-sm">${esc(copy[0])}</strong>${badge}</div>
         <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(copy[1])}</p>
         ${declared ? `<ul class="mt-2 list-disc pl-4 text-xs text-zinc-700 dark:text-zinc-300">${declared}</ul>` : ''}
@@ -18157,20 +18157,20 @@ const AppView = {
 
     const by = (storyId, viewport, side, variant, media = null) => artifacts.find((a) => (
       a && a.storyId === storyId && a.viewport === viewport && a.side === side
-      && a.variant === variant && (!media || a.media === media) && evidenceUrl(a.url)
+      && a.variant === variant && (!media || a.media === media) && shotsUrl(a.url)
     ));
     const rendered = [];
     // One result per declared change; runs from before shots have none.
-    const shotResults = Array.isArray(evidence.shotResults) ? evidence.shotResults : [];
+    const shotResults = Array.isArray(shots.shotResults) ? shots.shotResults : [];
     const persona = (claim) => (claim.persona === 'read_only_admin' ? 'read-only admin'
       : claim.persona === 'full_admin' ? 'full admin' : 'member');
     const videoStyle = 'display:block;width:100%;max-height:360px;border-radius:6px;background:rgba(0,0,0,0.35)';
     for (const claim of claims) {
       const result = shotResults.find((entry) => entry && entry.id === claim.id);
       if (result && result.status === 'skipped') {
-        rendered.push(`<article data-evidence-story="${attr(claim.id || '')}" data-evidence-shot-status="skipped" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
+        rendered.push(`<article data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="skipped" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-zinc-500/10 text-zinc-600 dark:text-zinc-400">Skipped</span></div>
-        <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || 'The preview agent could not get to this change.')}</p>
+        <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || 'The shots agent could not get to this change.')}</p>
       </article>`);
         continue;
       }
@@ -18190,73 +18190,73 @@ const AppView = {
         const headClip = by(claim.id, viewport, 'head', 'animation', 'webm');
         const pairedClip = by(claim.id, viewport, 'paired', 'animation', 'webm');
         // The element shot leads when there is one; otherwise the screen.
-        const focusLeads = AppView._evidenceCropReadable(baseFocus) && AppView._evidenceCropReadable(headFocus);
-        const baseUrl = focusLeads && baseFocus ? evidenceUrl(baseFocus.url) : (baseContext ? evidenceUrl(baseContext.url) : '');
-        const headUrl = focusLeads && headFocus ? evidenceUrl(headFocus.url) : (headContext ? evidenceUrl(headContext.url) : '');
-        const beforeContextUrl = baseContext ? evidenceUrl(baseContext.url) : baseUrl;
-        const afterContextUrl = headContext ? evidenceUrl(headContext.url) : headUrl;
+        const focusLeads = AppView._shotsCropReadable(baseFocus) && AppView._shotsCropReadable(headFocus);
+        const baseUrl = focusLeads && baseFocus ? shotsUrl(baseFocus.url) : (baseContext ? shotsUrl(baseContext.url) : '');
+        const headUrl = focusLeads && headFocus ? shotsUrl(headFocus.url) : (headContext ? shotsUrl(headContext.url) : '');
+        const beforeContextUrl = baseContext ? shotsUrl(baseContext.url) : baseUrl;
+        const afterContextUrl = headContext ? shotsUrl(headContext.url) : headUrl;
         const compareAttrs = `data-before-url="${attr(beforeContextUrl)}" data-head-url="${attr(afterContextUrl)}" data-claim="${attr(claim.claim || '')}" data-viewport="${attr(viewport)}" data-base-absent="${baseAbsent ? '1' : '0'}"`;
         const imageStyle = 'display:block;width:100%;height:180px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.24);border-radius:6px';
         const side = (label, url, missing) => `<figure style="flex:1 1 280px;min-width:0;margin:0">
           <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${label}</figcaption>
-          ${url ? `<button type="button" ${compareAttrs} class="block w-full rounded-md border-0 bg-transparent p-0 text-left" aria-label="Open the ${attr(viewport)} before and after of ${attr(claim.claim || '')}" onclick="AppView.openEvidenceComparison(this)"><img src="${attr(url)}" alt="${attr(`${label}: ${claim.claim || ''}`)}" loading="lazy" style="${imageStyle}"></button>`
+          ${url ? `<button type="button" ${compareAttrs} class="block w-full rounded-md border-0 bg-transparent p-0 text-left" aria-label="Open the ${attr(viewport)} before and after of ${attr(claim.claim || '')}" onclick="AppView.openShotsComparison(this)"><img src="${attr(url)}" alt="${attr(`${label}: ${claim.claim || ''}`)}" loading="lazy" style="${imageStyle}"></button>`
             : `<div class="flex items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400" style="height:180px">${esc(missing)}</div>`}
         </figure>`;
         const clip = (label, artifact, poster) => `<figure style="flex:1 1 280px;min-width:0;margin:0">
           <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${label} clip</figcaption>
-          ${artifact ? `<video src="${attr(evidenceUrl(artifact.url))}"${poster ? ` poster="${attr(poster)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(`${label} clip: ${claim.claim || ''}`)}" style="${videoStyle}"></video>`
+          ${artifact ? `<video src="${attr(shotsUrl(artifact.url))}"${poster ? ` poster="${attr(poster)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(`${label} clip: ${claim.claim || ''}`)}" style="${videoStyle}"></video>`
             : `<div class="flex items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400" style="height:120px">No clip</div>`}
         </figure>`;
         const controls = [];
         if (beforeContextUrl || afterContextUrl) {
-          controls.push(`<button type="button" ${compareAttrs} class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.openEvidenceComparison(this)">Open full screen</button>`);
+          controls.push(`<button type="button" ${compareAttrs} class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.openShotsComparison(this)">Open full screen</button>`);
         }
         if (pairedClip && !baseClip && !headClip) {
           const videoKind = claim.animation === 'motion' ? 'animation' : 'interaction';
-          controls.push(`<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">Play ${videoKind}</summary><video src="${attr(evidenceUrl(pairedClip.url))}" controls preload="none" muted playsinline aria-label="${videoKind === 'animation' ? 'Animation' : 'Interaction'} for ${attr(claim.claim || '')}" style="${videoStyle};margin-top:6px"></video></details>`);
+          controls.push(`<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">Play ${videoKind}</summary><video src="${attr(shotsUrl(pairedClip.url))}" controls preload="none" muted playsinline aria-label="${videoKind === 'animation' ? 'Animation' : 'Interaction'} for ${attr(claim.claim || '')}" style="${videoStyle};margin-top:6px"></video></details>`);
         }
         const clips = baseClip || headClip
-          ? `<div data-evidence-clips="1" class="mt-2 flex flex-wrap items-stretch gap-2">${clip('Before', baseClip, beforeContextUrl)}${clip('After', headClip, afterContextUrl)}</div>`
+          ? `<div data-shots-clips="1" class="mt-2 flex flex-wrap items-stretch gap-2">${clip('Before', baseClip, beforeContextUrl)}${clip('After', headClip, afterContextUrl)}</div>`
           : '';
-        viewportRows.push(`<div data-evidence-viewport="${attr(viewport)}" class="mt-3">
+        viewportRows.push(`<div data-shots-viewport="${attr(viewport)}" class="mt-3">
           <div class="mb-1 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${esc(viewport)} · ${esc(persona(claim))}</div>
           <div class="flex flex-wrap items-stretch gap-2">${side(baseAbsent ? 'Before · Not there yet' : 'Before', baseUrl, baseAbsent ? 'Not there yet' : 'No shot')}${side('After', headUrl, 'No shot')}</div>
           ${clips}
           ${controls.length ? `<div class="mt-2 flex flex-wrap items-start gap-3">${controls.join('')}</div>` : ''}
         </div>`);
       }
-      // What the preview agent said its shots leave out of the claim.
+      // What the shots agent said its shots leave out of the claim.
       const shotNote = result && result.status === 'ready' && typeof result.note === 'string' ? result.note : '';
-      rendered.push(`<article data-evidence-story="${attr(claim.id || '')}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
+      rendered.push(`<article data-shots-story="${attr(claim.id || '')}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>${badge}</div>
         ${flow ? `<div class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${flow}</div>` : ''}
-        ${shotNote ? `<p data-evidence-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Not in these shots:</span> ${esc(shotNote)}</p>` : ''}
+        ${shotNote ? `<p data-shots-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Not in these shots:</span> ${esc(shotNote)}</p>` : ''}
         ${viewportRows.join('')}
         <details class="mt-2 text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">Shot details</summary>
-          <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>shots <code>${esc(String(evidence.planHash || '').slice(0, 12) || 'unknown')}</code></span>${shotResults.length ? '<span>taken by the preview agent</span>' : ''}</div>
+          <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>shots <code>${esc(String(shots.planHash || '').slice(0, 12) || 'unknown')}</code></span>${shotResults.length ? '<span>taken by the shots agent</span>' : ''}</div>
         </details>
       </article>`);
     }
     if (!rendered.length) {
-      return `<section data-visual-evidence="1" data-evidence-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">These before/after shots are missing their details, so none can be shown.</section>`;
+      return `<section data-shots="1" data-shots-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">These before & after shots are missing their details, so none can be shown.</section>`;
     }
     const lookCopy = artifacts.some((artifact) => artifact?.variant === 'animation')
       ? 'Look at the shots and clips to decide whether they show the change.'
       : 'Look at the shots to decide whether they show the change.';
-    return `<section data-visual-evidence="1" data-evidence-state="verified" aria-label="Before/after shots" class="space-y-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">Taken on the exact before and after builds of this proposal. ${lookCopy}</p>${rendered.join('')}</section>`;
+    return `<section data-shots="1" data-shots-state="verified" aria-label="Before &amp; after" class="space-y-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">Taken on the exact before and after builds of this proposal. ${lookCopy}</p>${rendered.join('')}</section>`;
   },
 
-  // Authenticated evidence uses full relative URLs rather than public
+  // Authenticated shots uses full relative URLs rather than public
   // artifact ids. Re-validate them at the DOM boundary before placing them
   // in the React-owned comparison overlay.
-  openEvidenceComparison(triggerEl) {
+  openShotsComparison(triggerEl) {
     if (!triggerEl) return;
     const d = triggerEl.dataset || {};
-    const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/evidence\/[0-9a-f]{32}$/.test(String(url || ''));
+    const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}$/.test(String(url || ''));
     const before = urlOk(d.beforeUrl) ? d.beforeUrl : '';
     const head = urlOk(d.headUrl) ? d.headUrl : '';
     if (!before && !head) return;
-    const label = `${d.claim || 'Before/after shots'}${d.viewport ? ` · ${d.viewport}` : ''}`;
+    const label = `${d.claim || 'Before & after'}${d.viewport ? ` · ${d.viewport}` : ''}`;
     const baseAbsent = d.baseAbsent === '1';
     const colStyle = 'flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:6px';
     const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
@@ -18279,21 +18279,21 @@ const AppView = {
     document.addEventListener('keydown', AppView._visualCompareKeyHandler);
   },
 
-  async rerunVisualEvidence(sessionId, button) {
+  async rerunShots(sessionId, button) {
     const id = Number(sessionId);
     const slug = AppView.appData && AppView.appData.slug;
     if (!Number.isInteger(id) || id <= 0 || !slug) return;
     if (button) button.disabled = true;
     try {
-      const response = await fetch(`/api/apps/${encodeURIComponent(slug)}/proposals/${id}/evidence/rerun`, {
+      const response = await fetch(`/api/apps/${encodeURIComponent(slug)}/proposals/${id}/shots/rerun`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || result.error || `HTTP ${response.status}`);
-      PlatformUI.toast('Taking the before/after shots again.');
-      AppView.refreshDevData('evidence');
+      PlatformUI.toast('Taking the before & after shots again.');
+      AppView.refreshDevData('shots');
     } catch (error) {
       PlatformUI.toast(`Could not take the shots again: ${error.message}`);
     } finally {
@@ -18301,23 +18301,23 @@ const AppView = {
     }
   },
 
-  async stopVisualEvidence(sessionId, button) {
+  async stopShots(sessionId, button) {
     const id = Number(sessionId);
     const slug = AppView.appData && AppView.appData.slug;
     if (!Number.isInteger(id) || id <= 0 || !slug) return;
     if (button) button.disabled = true;
     try {
-      const response = await fetch(`/api/apps/${encodeURIComponent(slug)}/proposals/${id}/evidence/stop`, {
+      const response = await fetch(`/api/apps/${encodeURIComponent(slug)}/proposals/${id}/shots/stop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || result.error || `HTTP ${response.status}`);
-      PlatformUI.toast(result.stopped ? 'Stopped the before/after shots.' : 'The before/after shots had already finished.');
-      AppView.refreshDevData('evidence');
+      PlatformUI.toast(result.stopped ? 'Stopped the before & after shots.' : 'The before & after shots had already finished.');
+      AppView.refreshDevData('shots');
     } catch (error) {
-      PlatformUI.toast(`Could not stop the before/after shots: ${error.message}`);
+      PlatformUI.toast(`Could not stop the before & after shots: ${error.message}`);
     } finally {
       if (button) button.disabled = false;
     }

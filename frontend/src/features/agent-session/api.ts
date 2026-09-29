@@ -577,7 +577,7 @@ export async function stopTurn(id: number): Promise<{ stopped: boolean; reason?:
 /** Stop the change's running before/after shots (the proposal's Take again starts them again). */
 export async function stopPreviewCapture(appSlug: string, changeId: number): Promise<{ stopped: boolean; reason?: string }> {
   return json<{ stopped: boolean; reason?: string }>(
-    await request(`/api/apps/${encodeURIComponent(appSlug)}/proposals/${changeId}/evidence/stop`, { method: 'POST', body: '{}' }),
+    await request(`/api/apps/${encodeURIComponent(appSlug)}/proposals/${changeId}/shots/stop`, { method: 'POST', body: '{}' }),
     'Could not stop capturing previews.',
   );
 }

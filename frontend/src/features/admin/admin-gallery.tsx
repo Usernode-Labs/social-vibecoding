@@ -76,7 +76,7 @@ interface Proposal {
   captureState?: string;
   captureReason?: string;
   visuals?: Visuals;
-  visualEvidence?: {
+  shots?: {
     state?: string;
     failureReason?: string;
     [key: string]: unknown;
@@ -92,7 +92,7 @@ interface Stats {
   root_only?: number;
   failed_or_skipped?: number;
   unknown_state?: number;
-  evidence_verified?: number;
+  shots_verified?: number;
   relevance_failure?: number;
   replay_failure?: number;
   unsupported_agent?: number;
@@ -147,10 +147,10 @@ const PROBLEMS: Array<[string, string]> = [
   ['before_fell_back', 'Before fell back to home page'],
   ['root_only', 'Shot at the front page only'],
   ['failed_or_skipped', 'Capture failed or skipped'],
-  ['relevance_failure', 'Preview not relevant'],
-  ['replay_failure', 'Preview replay failed'],
-  ['unsupported_agent', 'Unsupported preview agent'],
-  ['override', 'Preview overridden'],
+  ['relevance_failure', 'Shots not relevant'],
+  ['replay_failure', 'Shots failed'],
+  ['unsupported_agent', 'Unsupported shots agent'],
+  ['override', 'Shots waived'],
 ];
 
 const DOT = <span className="text-zinc-500 dark:text-zinc-500">·</span>;
@@ -171,8 +171,8 @@ function ProposalCard({ p }: { p: Proposal }) {
   // A v2 record owns this proposal's visual story even while pending or
   // failed. Never fall back to a route-only capture that may show a different
   // screen. Both paths use AppView's shared reviewer renderer.
-  const tiles: string = appView && p.visualEvidence
-    ? appView.visualEvidenceHtml(p.visualEvidence, { sessionId: p.id })
+  const tiles: string = appView && p.shots
+    ? appView.shotsHtml(p.shots, { sessionId: p.id })
     : ((appView && p.visuals)
       ? appView.visualsTilesHtml(p.visuals, { preload: 'none', overlay: false })
       : '');
@@ -210,11 +210,11 @@ function ProposalCard({ p }: { p: Proposal }) {
           </div>
         </div>
         <div className="shrink-0"><Chip
-          state={p.visualEvidence
-            ? (p.visualEvidence.state === 'verified' ? 'captured'
-              : (p.visualEvidence.state === 'failed' ? 'failed' : 'partial'))
+          state={p.shots
+            ? (p.shots.state === 'verified' ? 'captured'
+              : (p.shots.state === 'failed' ? 'failed' : 'partial'))
             : p.captureState}
-          reason={(p.visualEvidence?.failureReason as string | undefined) || p.captureReason}
+          reason={(p.shots?.failureReason as string | undefined) || p.captureReason}
         /></div>
       </div>
       {/* No tiles is a real state, not an error: console_only / failed
@@ -251,7 +251,7 @@ function StatsStrip({ s }: { s: Stats }) {
       {item('before fell back', s.before_fell_back || 0, true)}
       {item('front page only', s.root_only || 0, true)}
       {item('failed / skipped', s.failed_or_skipped || 0, true)}
-      {item('preview captured', s.evidence_verified || 0, true)}
+      {item('preview captured', s.shots_verified || 0, true)}
       {item('relevance failures', s.relevance_failure || 0, true)}
       {item('replay failures', s.replay_failure || 0, true)}
       {item('unsupported agents', s.unsupported_agent || 0, true)}
@@ -358,13 +358,13 @@ function GallerySection() {
 
   return (
     <div id="admin-gallery-root">
-      <h2 className="text-lg font-semibold mb-4">Before/after shots gallery</h2>
+      <h2 className="text-lg font-semibold mb-4">Before & after gallery</h2>
       {gate ? <div id="admin-gallery-gate" className="text-zinc-500 dark:text-zinc-400 text-center py-20">{gate}</div> : null}
 
       {ready ? (
         <main id="admin-gallery-content" className="space-y-4">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Before/after shots of each declared change on merged proposals, newest first.
+            Before & after shots of each declared change on merged proposals, newest first.
             Historical proposals retain their legacy capture diagnostics.
           </p>
 
