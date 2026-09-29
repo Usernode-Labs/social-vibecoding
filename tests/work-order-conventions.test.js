@@ -32,8 +32,10 @@ const CONVENTIONS = fs.readFileSync(
 );
 
 // The excerpt has to survive a host model that may truncate the work order,
-// and it is background guidance — generous, but not unbounded.
-const MAX_ESSENTIALS_BYTES = 6 * 1024;
+// and it is background guidance — generous, but not unbounded. Raised from
+// 6 KB for rule 11, the content rules (#2722): an offline agent must not
+// build what keeps an app from rating "None".
+const MAX_ESSENTIALS_BYTES = 7 * 1024;
 
 test('the work-order markers exist in app-conventions.md, exactly once each', () => {
   const begins = CONVENTIONS.split(prompts.WORK_ORDER_BEGIN).length - 1;
@@ -78,6 +80,8 @@ test('the excerpt covers what an offline agent gets wrong, in priority order', (
   assert.match(essentials, /USERNODE_PLATFORM_API_V1_URL/);
   assert.match(essentials, /never a hardcoded host/);
   assert.match(essentials, /SIGTERM/);
+  assert.match(essentials, /Content rules/);
+  assert.match(essentials, /loot boxes/);
 });
 
 test('the excerpt states the vendoring rule without claiming a check enforces it', () => {

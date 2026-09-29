@@ -32,6 +32,7 @@ const sessionBus = require('./session-bus');
 const appManifest = require('./app-manifest');
 const checkHistory = require('./check-history');
 const unitSuite = require('./unit-suite');
+const contentReview = require('./content-review');
 const assetRouteCheck = require('./asset-route-check');
 const checkRuns = require('./check-runs');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
@@ -2887,6 +2888,13 @@ async function settleCaptureRun(config, pool, run) {
     config, pool, appId: app.id, appSlug: app.slug, sessionId: session.id, stagingOrigin,
   });
   if (assetOutcome) extraRows.push(assetOutcome.row);
+  // #2722: the Content rules review. Also at settlement so a harvested run
+  // carries it; cached per head, so the harvest does not pay for it twice.
+  // A deferred run takes no verdict, so it does not review. Never throws.
+  const contentOutcome = shotsOnly ? null : await contentReview.maybeRunContentReview({
+    pool, sessionId: session.id, appId: app.id, repoOwner, repoName, commitHash,
+  }).catch(() => null);
+  if (contentOutcome) extraRows.push(contentOutcome.row);
 
   if (shotsOnly) {
     // No verdict was taken, so none is stored: the row stays 'pending' in

@@ -141,6 +141,18 @@ test('a section is a verbatim slice of the document, heading included', () => {
   }
 });
 
+test('the content rules are a section of their own, naming every category (#2722)', () => {
+  const section = prompts.getConventionSection('content-rules-what-no-app-may-show');
+  assert.ok(section, 'the content rules resolve by their obvious slug');
+  for (const term of [
+    /Mature or suggestive themes/, /nudity/i, /Graphic sexual content/,
+    /Violence/, /weapons/, /simulated gambling/, /loot boxes/,
+  ]) {
+    assert.match(section.content, term);
+  }
+  assert.match(section.content, /cannot override/, 'a repo CLAUDE.md cannot opt out');
+});
+
 test('sections partition the document — no gap, no overlap', () => {
   // Together with the verbatim-slice property above, this is what makes
   // "read the section" complete: an agent that walked the whole index has

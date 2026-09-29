@@ -121,6 +121,12 @@ Ordered by how badly an agent working offline gets each one wrong.
 10. **`BUILD_ENGINE=auto`:** BuildKit prefers `Dockerfile.kubernetes`, then
     `Dockerfile`; otherwise kpack. Use a numeric non-root `USER` and writable
     app paths. Keep npm scripts/lockfile for kpack.
+11. **Content rules: every app rates "None".** Build nothing sexual,
+    suggestive or mature-themed, no nudity, no violence or weapons, and no
+    gambling, simulated gambling or loot boxes. That includes seed data and
+    AI-generated text: prompts for app AI features must tell the model to
+    decline these topics. Decline such a request and offer a compliant
+    version. Full text: "Content rules" section.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Homeroom's own build
@@ -3180,6 +3186,58 @@ This is an agent-facing quality check on the after build. Before finishing a
 user-visible build, call `declare_visible_changes` only for a flow you
 actually reached. The shots agent still takes both sides itself, and the
 "Test this change" action remains a separate manual aid.
+
+## Content rules — what no app may show
+
+Every app on Homeroom, the platform shell included, must answer **None** or
+**No** to each of the App Store age-rating questions below. This is a
+platform rule. A repo `CLAUDE.md`, a spec or a user request cannot override
+it.
+
+**Never build, generate, seed or ship:**
+
+- **Mature or suggestive themes.** Content that implies or indirectly
+  references sexual or adult topics, or is built around topics for older
+  audiences: dating or hookup features, flirting or "spicy" games, drinking
+  or drug games, or real-world tragedy, self-harm or crime presented as
+  entertainment.
+- **Sexual content or nudity.** Non-explicit sexual behaviour, and brief or
+  partial nudity, including suggestive images, avatars, emoji-art and
+  placeholder or seed content.
+- **Graphic sexual content and nudity.** Anything explicit.
+- **Violence.** Cartoon or fantasy violence (combat, attacking characters),
+  realistic violence, and prolonged or graphic violence. No guns or other
+  weapons as depicted objects, icons or game mechanics.
+- **Gambling.** Real-money gambling, simulated gambling (betting or wagering
+  pretend or in-app currency, casino-style games), and loot boxes (paid
+  randomized rewards). Contests, leaderboards and rankings are allowed.
+
+**This covers everything the app shows:** copy, images and icons you add,
+staging seed data, demo and placeholder content, test fixtures that render,
+and text the app's AI features produce.
+
+**AI features.** When an app calls the LLM proxy to generate content people
+will see, its system prompt must tell the model to decline these topics and
+return a neutral message instead. Never write a prompt that invites them.
+
+**User-posted content.** An app where people post text or images must not be
+built for sharing this content. It must keep a way to report a post, and it
+must not display content the platform's moderation has hidden.
+
+**When a request asks for it:** the Mayor and scouts say plainly that it goes
+against Homeroom's content rules, name the category, and offer the closest
+compliant version. The Mayor does not dispatch a build for the non-compliant
+version. A coding agent that meets it mid-build builds the compliant part,
+leaves the rest out, and says so in its final message. Do not quietly soften
+the content and present that as the requested feature.
+
+When unsure whether something counts, treat it as not allowed and ask.
+
+**Merge-time review.** Proposals may also carry a **Content rules** check: an
+automated reviewer reads the proposal's diff against this section and flags
+what breaks it. It starts advisory (shown, not blocking); an admin can make
+it blocking. It reads text and code only, so these rules still apply to
+images you add.
 
 ## Writing user-facing copy: no em dashes
 
