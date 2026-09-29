@@ -1573,7 +1573,7 @@ async function resolveExplicitAgentPreference(client, userId, config, {
     ? catalog.models.find((candidate) => candidate.id === modelId)
     : null;
   if (!selectedCatalogModel) {
-    throw new AgentSelectionError(400, 'That model is not available under your OpenRouter key.');
+    throw new AgentSelectionError(400, 'That model is not in the OpenRouter catalog.');
   }
 
   return {

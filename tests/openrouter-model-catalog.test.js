@@ -151,7 +151,7 @@ test('recommendations start favorited, durable overrides win, and refresh stays 
     body: JSON.stringify({ modelId: 'missing/model', favorite: true }),
   });
   assert.equal(unavailable.status, 400);
-  assert.match((await unavailable.json()).error, /not available under your OpenRouter key/i);
+  assert.match((await unavailable.json()).error, /not in the OpenRouter catalog/i);
 });
 
 test('the favorites table stores positive and negative overrides', () => {

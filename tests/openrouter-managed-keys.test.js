@@ -853,14 +853,14 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
 });
 
 test('configured GLM 5.3 Flash is preferred without filtering the remaining model catalog', async (t) => {
-  const original = require('../src/services/openrouter-client').fetchUserModels;
-  require('../src/services/openrouter-client').fetchUserModels = async () => [
+  const original = require('../src/services/openrouter-client').fetchModels;
+  require('../src/services/openrouter-client').fetchModels = async () => [
     { id: 'vendor/cheap', pricing: { prompt: '0', completion: '0' }, supported_parameters: ['tools'], context_length: 64000 },
     { id: 'z-ai/glm-5.3-flash', pricing: { prompt: '0.000000075', completion: '0.00000025' }, supported_parameters: ['tools'], context_length: 1310720 },
     { id: 'vendor/other', pricing: { prompt: '0.000003', completion: '0.000004' }, supported_parameters: ['tools'], context_length: 64000 },
   ];
   t.after(() => {
-    require('../src/services/openrouter-client').fetchUserModels = original;
+    require('../src/services/openrouter-client').fetchModels = original;
     agentModels.invalidateAll();
   });
   agentModels.invalidateAll();

@@ -23,7 +23,6 @@ function revokeLocal(userId, sessionIds = []) {
   require('./ws').disconnectUser(userId);
   require('./app-access').invalidateAllVisibility();
   require('./app-admins').invalidateAppAdmins();
-  require('./agent-models').invalidateUser(userId);
   const registry = require('./stop-registry');
   for (const id of sessionIds) {
     const handle = registry.get(id);

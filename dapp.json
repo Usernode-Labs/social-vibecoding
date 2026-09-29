@@ -427,7 +427,7 @@
       "group": "AI & coding agents",
       "required": false,
       "default": "z-ai/glm-5.3-flash",
-      "description": "Preferred OpenRouter model for new coding-agent sessions. The complete key-visible catalog remains selectable; if this slug is absent, Homeroom safely recommends another compatible model."
+      "description": "Preferred OpenRouter model for new coding-agent sessions. The complete OpenRouter catalog remains selectable; if this slug is absent, Homeroom safely recommends another compatible model."
     },
     {
       "key": "OPENROUTER_MODEL_HARNESSES",
