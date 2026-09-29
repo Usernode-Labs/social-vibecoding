@@ -1222,7 +1222,11 @@ const AppView = {
         const tick = setInterval(() => {
           if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
           if (document.querySelector('[data-ws-since-seen]')) { done(); return; }
-          const more = document.querySelector('button[data-ws-since-more]:not([disabled])');
+          // The Workshop page folds each week's seen rows into one row, so
+          // that row is the press when there is one; `Show older` steps back
+          // a week to find one when there is not.
+          const more = document.querySelector('button[data-ws-since-seen-fold]')
+            || document.querySelector('button[data-ws-since-more]:not([disabled])');
           if (more) more.click();
         }, 300);
       }
@@ -8751,10 +8755,10 @@ const AppView = {
         shipped: moved.filter((e) => e.kind === 'merged').length,
         opened: moved.filter((e) => e.kind === 'issue').length,
         proposed: moved.filter((e) => e.kind === 'proposal').length,
-        rows: moved.slice(0, AppView.WORKSHOP_SINCE_MAX).map((e) => ({ ...e.row, key: `since:${e.row.key}` })),
+        rows: moved.slice(0, AppView.WORKSHOP_SINCE_MAX).map((e) => ({ ...e.row, key: `since:${e.row.key}`, at: e.t })),
         seen: {
           total: seen.length,
-          rows: seen.slice(0, AppView.WORKSHOP_SEEN_MAX).map((e) => ({ ...e.row, key: `seen:${e.row.key}` })),
+          rows: seen.slice(0, AppView.WORKSHOP_SEEN_MAX).map((e) => ({ ...e.row, key: `seen:${e.row.key}`, at: e.t })),
         },
       };
     }
@@ -10424,7 +10428,7 @@ const AppView = {
 
     const cols = [
       {
-        key: 'issues', title: 'Issues', count: kIssues.length,
+        key: 'issues', title: 'Requests', count: kIssues.length,
         rows: cardRows(kIssues, (i) => AppView._issueCardModel(i), (i) => ({ kind: 'issue', item: i })),
         empty: kIssues.length ? null : emptyNote,
         footer: issuesFooter,

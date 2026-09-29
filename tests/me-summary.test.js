@@ -41,7 +41,7 @@ test('kudos is what the product calls kudos RECEIVED: direct PR kudos plus award
 test('an account with nothing yet is zeros, not a failure', () => {
   const summary = profile.shapeSummary({ counts: undefined, contributions: undefined, challenges: null });
   assert.deepEqual(summary, {
-    merged: 0, apps: 0, proposalsTotal: 0, kudos: 0, memberSince: null,
+    merged: 0, apps: 0, proposalsTotal: 0, inProgress: 0, kudos: 0, memberSince: null,
     challenges: { done: 0, total: 0, season: null },
     contributions: [],
   });

@@ -37,6 +37,10 @@ const FABLE_MODEL = 'claude-fable-5-1';
 const FALLBACK_MODE = 'default';
 const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 
+// The per-change metadata call (title, description, plain-English summary)
+// and the hub's since-your-last-visit summary both run on this model.
+const PR_METADATA_MODEL = 'claude-sonnet-5-5';
+
 // A fallback-served response is detected reliably ONLY via
 // usage.iterations carrying a 'fallback_message' entry. A sticky-served
 // turn (conversation already pinned to the fallback model) carries NO
@@ -547,9 +551,14 @@ function recordAnthropicError({
   }
 }
 
+// `fallbacks: true` sends the request through the beta endpoint with the
+// server-side refusal fallback ("default" mode, FALLBACK_BETA above), so a
+// safety classifier declining the request re-runs it on a fallback model
+// inside the same call instead of coming back empty. A client without the
+// beta namespace (the test stubs) takes the plain path unchanged.
 async function createMessageWithTelemetry({
   activeClient, params, requestOptions, passRequestOptions = false,
-  telemetryContext, defaults, apiKey,
+  telemetryContext, defaults, apiKey, fallbacks = false,
 }) {
   const context = telemetryBase(telemetryContext, defaults, apiKey);
   const startedAt = new Date();
@@ -557,12 +566,16 @@ async function createMessageWithTelemetry({
   const requestMetrics = llmTelemetry.isCollectionEnabled()
     ? anthropicRequestMetrics(params, { requestMode: 'single' })
     : {};
+  const beta = fallbacks && activeClient.beta && activeClient.beta.messages
+    && typeof activeClient.beta.messages.create === 'function';
+  const target = beta ? activeClient.beta.messages : activeClient.messages;
+  const sent = beta ? { ...params, betas: [FALLBACK_BETA], fallbacks: FALLBACK_MODE } : params;
   try {
     // Preserve the provider call's arity as well as its params object. Some
     // SDK stubs distinguish create(params) from create(params, undefined).
     const response = passRequestOptions
-      ? await activeClient.messages.create(params, requestOptions)
-      : await activeClient.messages.create(params);
+      ? await target.create(sent, requestOptions)
+      : await target.create(sent);
     recordAnthropicResponse({
       context,
       requestedModel: params.model,
@@ -932,26 +945,111 @@ ${sumBlock}
 ${specBlock ? `\nSPEC${specList.length > 1 ? 'S' : ''} (intended scope / theme):\n${specBlock}\n` : ''}
 Author: ${stripLoneSurrogates(username) || 'unknown'}`;
 
-  const model = 'claude-haiku-4-5';
+  // Sonnet 5.5, not Haiku: the summary written here is the first thing
+  // every voter reads about a change, and the hub's since-your-last-visit
+  // line is built from it. Sonnet 5.5 thinks by default and its thinking
+  // counts against max_tokens, so the old 512 would end the call before
+  // the JSON: low effort keeps the thinking short and 4000 leaves room.
+  // A refusal returns no text to parse, so it throws like any other
+  // failure and the caller keeps its deterministic title.
+  const model = PR_METADATA_MODEL;
   const resp = await createMessageWithTelemetry({
     activeClient,
     params: {
       model,
-      max_tokens: 512,
+      max_tokens: 4000,
       system,
       messages: [{ role: 'user', content: user }],
+      output_config: { effort: 'low' },
     },
     telemetryContext,
     defaults: { backend: 'helper', component: 'pr_metadata' },
     apiKey,
+    fallbacks: true,
   });
+  if (resp.stop_reason === 'refusal') throw new Error('PR metadata request was refused');
 
   const text = (resp.content || []).find((b) => b.type === 'text')?.text || '';
   const { title, body, summary } = parsePrMetadataText(text);
   // Surface usage so callers (pr-metadata.js) can debit the user
   // who triggered the PR. May be undefined if the SDK strips it on
-  // some response shapes; callers must tolerate that.
-  return { title, body, summary, usage: resp.usage, model };
+  // some response shapes; callers must tolerate that. A fallback-served
+  // response bills at the model that actually answered.
+  const served = detectFallback(resp) && typeof resp.model === 'string' ? resp.model : model;
+  return { title, body, summary, usage: resp.usage, model: served };
+}
+
+// ── The hub's since-your-last-visit line ─────────────────────────────
+//
+// One or two sentences at the top of a project's page on what landed
+// while a member was away (services/since-summary.js decides when it is
+// needed and caches it per window). Written from each change's own
+// plain-English summary, which the metadata call above produces, so it
+// never has to read a diff.
+//
+// The prompt spends its length on the ways a one-liner goes wrong on a
+// busy board, which the Workshop digest learned first (see
+// WORKSHOP_DIGEST_SCHEMA): describing the top of a truncated list as the
+// whole, and leading with the newest or loudest change instead of what
+// most of them were about. The count sits beside the line on screen, so
+// the line carries none.
+const SINCE_SUMMARY_VERSION = 1;
+const SINCE_SUMMARY_MAX = 400;
+const SINCE_SUMMARY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['summary'],
+  properties: { summary: { type: 'string' } },
+};
+
+async function generateSinceSummary({ changes, total, truncated, fromDate, telemetryContext }) {
+  if (!client) throw new Error('LLM not initialized');
+  const system = `You write the short news a member reads at the top of a project's page when they come back to it: what landed while they were away.
+
+You are given the changes merged into the project since a date, newest first. Each has a title and, usually, a plain-English summary of what changed for people using the app. "total" is how many landed in that time. When "truncated" is true you see only the newest "shown" of them, so never describe the list in front of you as if it were everything.
+
+Write one or two short sentences, 45 words at most, in plain everyday English, saying what changed for somebody USING the app:
+- Lead with what MOST of the changes were about, by how many there are, not with the newest or the most visible one.
+- Name concrete things a person will notice: what looks different, what they can now do, what stopped going wrong.
+- If they are mostly small fixes and polish, say so plainly.
+- No numbers or counts (the page shows the count beside your line), no dates, no people's names, no pull request numbers.
+- No file names, identifiers, code or developer vocabulary.
+- No emoji and no dashes as punctuation. Do not start with "Since", "This week" or "While you were away"; the page already labels the time.
+
+Respond with JSON: {"summary": "..."}.`;
+  const user = JSON.stringify({
+    since: fromDate,
+    total,
+    shown: changes.length,
+    truncated: !!truncated,
+    changes,
+  });
+  const model = PR_METADATA_MODEL;
+  const resp = await createMessageWithTelemetry({
+    activeClient: client,
+    params: {
+      model,
+      // Low effort thinks briefly; the room above it is for that thinking.
+      max_tokens: 2000,
+      system,
+      messages: [{ role: 'user', content: user }],
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: SINCE_SUMMARY_SCHEMA } },
+    },
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'since_summary' },
+    fallbacks: true,
+  });
+  if (resp.stop_reason === 'refusal') throw new Error('Since summary request was refused');
+  if (resp.stop_reason === 'max_tokens') throw new Error('Since summary ran out of tokens');
+  const text = (resp.content || []).find((b) => b.type === 'text')?.text || '';
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON object in since summary response');
+  const parsed = JSON.parse(match[0]);
+  let summary = typeof parsed.summary === 'string' ? parsed.summary.replace(/\s+/g, ' ').trim() : '';
+  if (!summary) throw new Error('Empty since summary');
+  if (summary.length > SINCE_SUMMARY_MAX) summary = summary.slice(0, SINCE_SUMMARY_MAX).trimEnd();
+  const served = detectFallback(resp) && typeof resp.model === 'string' ? resp.model : model;
+  return { summary, usage: resp.usage, model: served };
 }
 
 // Clamp an estimate phrase to something safe to inline in the dev-chat
@@ -2642,6 +2740,7 @@ module.exports = {
   answerWorkshopQuestion, WORKSHOP_ASK_MODEL, WORKSHOP_ASK_HISTORY_MAX,
   // Fable 5 classifier-fallback surface (+ tests)
   detectFallback, sanitizeFallbackContent, fallbackBoundary,
-  FABLE_MODEL, FALLBACK_MODE, FALLBACK_BETA,
+  FABLE_MODEL, FALLBACK_MODE, FALLBACK_BETA, PR_METADATA_MODEL,
+  generateSinceSummary, SINCE_SUMMARY_VERSION,
   _setClientForTests,
 };

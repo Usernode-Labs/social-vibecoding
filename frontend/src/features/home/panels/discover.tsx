@@ -194,8 +194,8 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           }`}
           data-slug={tile.slug}
           data-added={String(added)}
-          title={added ? 'Added. Tap to remove from Your apps' : 'Add to Your apps'}
-          aria-label={added ? `Remove ${tile.name} from Your apps` : `Add ${tile.name} to Your apps`}
+          title={added ? 'Added. Tap to remove from Shortcuts' : 'Add to Shortcuts'}
+          aria-label={added ? `Remove ${tile.name} from Shortcuts` : `Add ${tile.name} to Shortcuts`}
           aria-pressed={added}
         >
           {added

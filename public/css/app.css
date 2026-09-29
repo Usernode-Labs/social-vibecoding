@@ -15344,22 +15344,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-lead-head { display: flex; align-items: baseline; gap: 10px; margin-top: 12px; }
 .dev-ws-lead-title { font-size: 13px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-primary); }
 .dev-ws-open-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
-/* THE WAY BACK OUT, at the foot of the block that does not move. Right of
-   the column, because it acts on what is BELOW it rather than on the
-   sentence it follows — a control at the left margin would read as
-   belonging to the paragraph. */
-.dev-ws-lead-foot { display: flex; justify-content: flex-end; margin-top: 8px; }
-.dev-ws-lead-collapse {
-  display: inline-flex; align-items: center; gap: 5px;
-  border: 0; background: none; padding: 2px 0 0; cursor: pointer;
-  font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .01em;
-  color: var(--text-muted);
-}
-.dev-ws-lead-collapse:hover { color: var(--accent); }
-.dev-ws-lead-collapse:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
-/* The reveal's caret turned over: this undoes that control, so it is the
-   same mark pointing the other way rather than a second glyph. */
-.dev-ws-lead-chev { width: 14px; height: 14px; transform: rotate(180deg); }
 /* What moved, in words, under the heading that gives it an antecedent. It
    was a `N shipped since` pill on the dashboard's head four blocks up — a
    fragment with its object missing, beside numbers about the board. */
@@ -15402,88 +15386,11 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    block, which is where a centred row would put it. */
 .dev-ws-chat-row { align-items: flex-start; }
 .dev-ws-chat-row > .dev-card-icon { margin-top: 1px; }
-/* ── The digest's three cards ────────────────────────────────
-   One paragraph became three, because one paragraph was answering three
-   questions — what landed last week, what has landed this week, what is
-   still open — and a reader scanning for one of them had to parse all of
-   it. Full-width and stacked rather than a three-column row: the lines are
-   sentences, and three sentences side by side at Dev-screen widths wrap to
-   ragged two- and three-line columns that are harder to scan than the
-   paragraph they replaced.
-
-   The title is the parsing aid. It is small, upper-case and muted against a
-   14px body line, so the eye lands on the label first and the sentence
-   second — the opposite weighting to the sentence itself, which is what
-   makes the block scannable rather than just subdivided. It inherits the
-   pane's own line colour, so the cards read as divisions OF the pane rather
-   than as objects sitting on it. */
-.dev-ws-cards { display: flex; flex-direction: column; }
-/* Each card is ONE line: the label, a middot, the sentence. It was a title
-   stacked above its line, which cost three rows of vertical space to carry
-   three short sentences and made the block read as three objects rather than
-   three entries in a list. Inline, the eye runs down the labels in a single
-   column and across only where it wants the detail.
-
-   `align-items: baseline` and not `center`: the label is 12px and the
-   sentence 14px, so centring them leaves the label floating slightly high
-   against the text it introduces. Wrapping is the sentence's own — the line
-   is the flex item that grows, so a long one wraps under itself and the
-   label keeps the first row to itself rather than being pushed onto its own.
-
-   SOLID, not translucent. `--dc-sheet` is #ffffff in light and #1c1c1e in
-   dark, so "white" survives the theme; the strip behind these is
-   `--dc-sheet-fill`, which is translucent, so a solid card reads as a card
-   ON the pane rather than another wash of the same surface. */
-.dev-ws-card {
-  /* A BLOCK ON A RULE, not a lifted card. These were white cards with a
-     hairline and a two-layer drop shadow, floating inside a pane that is
-     itself a surface — and the walk stacks them, so the deeper it went the
-     more the pane read as a pile of objects. They are divisions OF the pane
-     now: a hairline above each, the heading, its figures, its sentence.
-     One surface, an internal rhythm. */
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--app-sheet-line);
-  margin-top: 12px;
-  padding-top: 11px;
-}
-/* The heading: a name and its range side by side, or — on every window but
-   the live one — the range alone, standing as the name. */
-.dev-ws-card-title {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text-primary);
-}
-/* A dated window IS its dates, so they take the heading's own weight and
-   ink. `tabular-nums` because a column of ranges is read down. */
+/* A dated week IS its dates (the since list's headings, workshop.tsx
+   SinceWeekBlock), so they take the heading's own weight and ink; the live
+   week wears its range as a muted gloss. `tabular-nums` because a column
+   of ranges is read down. */
 .dev-ws-card-dates { font-variant-numeric: tabular-nums; }
-/* What the window paid, drawn SMALL — a footnote to the figures at the top
-   of the pane, not a second row of them. */
-.dev-ws-card-counts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  margin: 6px 0 0;
-}
-.dev-ws-card-count {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-.dev-ws-card-count > b {
-  font-weight: 600;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-.dev-ws-card-count-ic { width: 13px; height: 13px; flex: none; color: var(--state-ok); }
-.dev-ws-card-line { margin: 7px 0 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
 .dev-ws-card-range {
   font-size: 12px;
   font-weight: 500;
@@ -15491,18 +15398,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-/* THE ONE-LINE CARD IS A WIDE-VIEWPORT LAYOUT, and it always was — the
-   design note above describes reading down a column of labels and across to
-   the sentences, which is what happens at 420px and up. Below that, a 104px
-   label column against a 14px sentence left the text ~250px wide and every
-   card wrapped to three rows, so the "column of labels" was a column of
-   labels each floating beside a paragraph. Stacked, the same card is two
-   rows and the sentence gets the full width. */
-@media (max-width: 419px) {
-  .dev-ws-card { flex-direction: column; align-items: stretch; gap: 2px; }
-  .dev-ws-card-title { flex-direction: row; align-items: baseline; gap: 6px; width: auto; }
-  .dev-ws-card-range { margin-top: 0; }
 }
 /* ── The pane's reveal control ──────────────────────────────────
    ONE style for "put more of this pane on screen": the step backwards
@@ -15572,36 +15467,11 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   background: var(--brand-tint); color: var(--brand-ink);
   font-size: 11px; font-variant-numeric: tabular-nums;
 }
-/* `Show older` is the week walk's own control — `.dev-ws-reveal`, centred,
-   caret down at what it is about to reveal — and it sits under a stack of
-   full-width rows exactly as that one does, so it takes the centred form
-   rather than `.dev-ws-reveal-start`'s lane indent. Nothing of its own but
-   the air between it and the last row. */
-/* THE TWO REVEAL CONTROLS SIT IN THE SAME AIR. `Show past week` and `Show
-   older` are the same control one pane apart, close enough that a reader
-   compares them — and each takes its spacing from a different place, which
-   is why they kept drifting. `Show older` follows a stack of rows inside
-   its strip and needs nothing: a row's 4px tail, the strip's 8px gap and
-   its own 2px put it 14px below the last row, and the strip's padding puts
-   it 12px above the pane's edge.
-
-   `Show past week` has to be built up to the same two numbers. ABOVE:
-   `.dev-ws-cards` carried `gap: 6px` while every window was a floating
-   card; the windows space themselves now (12px above, 11px below) and the
-   gap went with the cards. COLLAPSED — which is what every visit opens on
-   — this button is that container's only child and inherits only the
-   strip's 8px, so 6 + 8 makes the 14. EXPANDED it follows a window
-   instead, and 11 mirrors the padding the rule above each window uses, so
-   the control keeps the rhythm of the blocks it follows. BELOW: the chat
-   row adds its own 12px on top of that same 8px strip gap, which is 20 to
-   the hairline against the 12 `Show older` gets to its pane edge — so when
-   the block above the row ends in this button, the row gives the 8 back.
-   Scoped to `.dev-ws-cards` because with no weeks at all there is no walk
-   and no button, and the row follows a paragraph that does want the air. */
-.dev-ws-week-more { margin-top: 6px; }
-.dev-ws-week-more:not(:first-child) { margin-top: 11px; }
+/* `Show older` steps the since list back a week: `.dev-ws-reveal`, centred,
+   caret down at what it is about to reveal, under a stack of full-width
+   rows, so it takes the centred form rather than `.dev-ws-reveal-start`'s
+   lane indent. Nothing of its own but the air between it and the last row. */
 .dev-ws-since-more { margin-top: 2px; }
-.dev-ws-cards + .dev-ws-chat-row { margin-top: 4px; }
 /* #2183: the control is always drawn and DISABLED when the walk is over,
    rather than leaving — so it reads as spent, not pressable. */
 .dev-ws-reveal:disabled { color: var(--text-muted); opacity: .45; cursor: default; }
@@ -16237,31 +16107,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-fact.dev-ws-fact-progress { color: var(--state-progress); }
 .dev-ws-fact.dev-ws-fact-warn { color: var(--state-attention); }
 .dev-ws-fact.dev-ws-fact-blocked { color: var(--state-blocked); }
-/* ── The Communities screen's two views (features/workshop/index.tsx) ──
-   Current status and Needs you switch the way a project's own page switches
-   Hub and Workshop: the raised track and the lit tab of `.dev-ws-tablist`
-   and `.dev-ws-tab` at their desktop size, at every width here, because
-   this strip shares a row with the All apps chip rather than spanning the
-   screen. The selected tab carries the marker's fill itself: two tabs, and
-   nothing to slide. */
-.workshop-scope-tabs {
-  display: inline-flex; align-items: center; gap: 2px;
-  padding: 2px; border-radius: 9999px;
-  background-color: var(--dc-sheet-raise);
-}
-.workshop-scope-tab {
-  display: inline-flex; align-items: center; justify-content: center;
-  height: 32px; padding: 0 16px; border: 0; border-radius: 9999px;
-  background: transparent; color: var(--text-muted);
-  font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer;
-}
-.workshop-scope-tab-on {
-  background: var(--lit-tint); color: var(--lit-ink);
-  box-shadow: inset 0 0 0 1px var(--lit-line);
-}
-@media (hover: hover) {
-  .workshop-scope-tab:not(.workshop-scope-tab-on):hover { color: var(--text-primary); }
-}
+/* The Communities screen's two views (Current status | Needs you,
+   `.workshop-scope-tabs`) are gone with the UI overhaul: the list is the
+   page, and Needs you is a row at its top that opens the feed below. */
 /* ── The Communities screen's Needs you feed (#3270, workshop/needs-reel.tsx) ──
    One decision per screen, like a project's own Needs you page: the reel is
    its own scroller, a screen tall less the bars around it, and snaps a card
@@ -16401,12 +16249,153 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-hub-needs-title { font-size: 15px; font-weight: 650; color: var(--text-primary); }
 .dev-ws-hub-needs-sub { font-size: 13px; color: var(--text-muted); }
 .dev-ws-hub-needs-join { margin: 0; font-size: 12.5px; color: var(--text-muted); }
-/* The way back from Needs you or All items to the tab they belong to. */
+/* ── A page's head: the way back, and the page's name ──────────────────
+   workshop.tsx's PageBack, in the bar a page leads with (the Workshop,
+   Needs you, All items; the hub has none). The back is the header's own
+   back disc, in the header's brand ink, since it does the header's job one
+   level down; the name is the page's one heading, under the name of where
+   the disc goes. */
+.dev-ws-pagehead { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .dev-ws-page-back {
-  display: inline-flex; align-items: center; gap: 2px; align-self: flex-start;
-  background: none; border: 0; padding: 2px 0; cursor: pointer;
-  font-size: 14px; font-weight: 600; color: var(--accent);
+  width: 36px; height: 36px; flex: none; padding: 0;
+  display: grid; place-items: center;
+  border: 0; border-radius: 999px; cursor: pointer;
+  background: var(--brand-tint); color: var(--brand-ink);
+  -webkit-tap-highlight-color: transparent;
 }
+.dev-ws-page-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-ws-page-back-glyph { width: 18px; height: 18px; stroke-width: 2.2; }
+.dev-ws-pagehead-text { display: flex; flex-direction: column; min-width: 0; }
+.dev-ws-pagehead-over {
+  font-size: 12px; line-height: 16px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dev-ws-pagehead-title {
+  margin: 0; font-size: 20px; font-weight: 700; line-height: 24px;
+  letter-spacing: -.01em; color: var(--text-primary);
+}
+
+/* ── The hub's doors (hub-cards.tsx) ──────────────────────────────────
+   Needs you and the Workshop are a row each that opens its page: a
+   picture of where it goes, its name and a line, and a chevron. The row
+   is `.dev-ws-hub-row` laid out across rather than down. */
+.dev-ws-hub-row.dev-ws-hub-door { flex-direction: row; align-items: center; gap: 12px; }
+.dev-ws-hub-door-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.dev-ws-hub-door .dev-ws-hub-chev { flex: none; margin-left: 0; }
+.dev-ws-hub-door-tile {
+  width: 44px; height: 44px; flex: none;
+  display: grid; place-items: center;
+  border-radius: 12px; background: var(--bg-tertiary); color: var(--text-primary);
+}
+.dev-ws-hub-door-glyph { width: 22px; height: 22px; }
+/* The reel: a phone-shaped card with its progress segments and a second
+   card behind it, the shape of the feed Needs you opens. Drawn, not an
+   image, so it takes the theme; decoration only. */
+.dev-ws-reel { position: relative; width: 44px; height: 58px; flex: none; }
+.dev-ws-reel-back {
+  position: absolute; left: 8px; top: 0; width: 34px; height: 50px;
+  border-radius: 7px; background: var(--brand-tint); transform: rotate(6deg);
+}
+.dev-ws-reel-front {
+  position: absolute; left: 0; top: 6px; width: 36px; height: 52px; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 4px; padding: 4px 4px 5px; overflow: hidden;
+  border-radius: 7px; background: #1c1c1e; box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+}
+.dark .dev-ws-reel-front { background: #3a3a3c; }
+.dev-ws-reel-bars { display: flex; gap: 2px; }
+.dev-ws-reel-bars > span { flex: 1 1 0; height: 2px; border-radius: 1px; background: rgba(255, 255, 255, .35); }
+.dev-ws-reel-bars > span:first-child { background: #fff; }
+.dev-ws-reel-line { width: 70%; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .85); }
+.dev-ws-reel-line-short { width: 50%; background: rgba(255, 255, 255, .5); }
+.dev-ws-reel-pic { width: 22px; height: 18px; border-radius: 4px; background: var(--accent); }
+/* #2915: a search or filter left on in All items, said where it is out of
+   sight (the Workshop's door, All items' See all): the accent, a 6px round. */
+.dev-ws-filter-dot { flex: none; width: 6px; height: 6px; border-radius: 999px; background: var(--accent); }
+.dev-ws-hub-open .dev-ws-filter-dot { margin: 0 2px; }
+/* Your work's "Show N more" turns its caret over once it reads "Show less". */
+.dev-ws-hub-work-more { margin-top: 2px; }
+
+/* ── What landed since you were last here (since-summary-card.tsx) ─────
+   The hub's first card: the window as the heading, the count, "AI summary"
+   when a model wrote it, and the × at the far end; then the sentence at the
+   reading size, or the titles when there are three or fewer. */
+.dev-ws-since-card { gap: 6px; }
+.dev-ws-since-card-n { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+.dev-ws-since-card-tag { margin-left: auto; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+.dev-ws-since-card-x {
+  width: 28px; height: 28px; margin: -4px -6px -4px 0; flex: none; padding: 0;
+  display: grid; place-items: center;
+  border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); cursor: pointer;
+}
+.dev-ws-since-card-n + .dev-ws-since-card-x { margin-left: auto; }
+.dev-ws-since-card-x-glyph { width: 14px; height: 14px; stroke-width: 2.25; }
+.dev-ws-since-card-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (hover: hover) {
+  .dev-ws-since-card-x:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+}
+.dev-ws-since-card-text { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
+.dev-ws-since-card-list {
+  margin: 0; padding: 0 0 0 18px;
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: 14px; line-height: 20px; color: var(--text-primary);
+}
+
+/* ── Since your last visit, week by week (the Workshop page) ──────────
+   Each week is a division of the pane, as the walk's windows were: a
+   hairline, the week's heading and range, its line, and what moved in it
+   nested under a rule at the left, so the rows read as the line's
+   evidence. A week's rows past the first three, and the ones already seen,
+   are one quiet row each until pressed. */
+.dev-ws-since-week {
+  display: flex; flex-direction: column;
+  border-top: 1px solid var(--app-sheet-line);
+  margin-top: 4px; padding-top: 11px;
+}
+.dev-ws-since-week-head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 0;
+  font-size: 13px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-primary);
+}
+.dev-ws-since-week-n { font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--text-muted); }
+.dev-ws-since-week-line { margin: 6px 0 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
+.dev-ws-since-nest {
+  display: flex; flex-direction: column; gap: 4px;
+  margin: 10px 0 0; padding-left: 10px;
+  border-left: 2px solid var(--app-sheet-line);
+}
+.dev-ws-since-fold {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  min-height: 36px; box-sizing: border-box; padding: 0 10px;
+  border: 0; border-radius: 12px; cursor: pointer; text-align: left;
+  background: var(--bg-secondary); color: var(--text-muted);
+  font: inherit; font-size: 13px;
+}
+.dev-ws-since-fold-new { color: var(--accent); font-weight: 600; }
+.dev-ws-since-fold-label { flex: 1 1 auto; min-width: 0; }
+.dev-ws-since-fold-check { width: 14px; height: 14px; flex: none; color: var(--state-ok); }
+.dev-ws-since-fold-chev { width: 14px; height: 14px; flex: none; }
+.dev-ws-since-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) {
+  .dev-ws-since-fold:hover { color: var(--text-primary); }
+  .dev-ws-since-fold-new:hover { color: var(--accent); }
+}
+.dev-ws-since-nest > .dev-ws-since-seen { margin-top: 2px; padding-left: 0; }
+
+/* ── Share it (community-card.tsx ShareItCard) ──────────────────────
+   A project that is just yours: its two ways to grow, side by side. The
+   "Open it up" question hangs from its button's LEFT here, since the
+   buttons lead the row and a popup opening leftward would leave the screen. */
+.dev-ws-share-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dev-ws-share .dev-ws-join-anchor { margin-left: 0; }
+.dev-ws-share .dev-ws-join-pop { left: -6px; right: auto; }
+.dev-ws-share .dev-ws-join-pop::before { left: 26px; right: auto; }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-share .dev-ws-join-pop { transform-origin: 32px 0; }
+}
+.dev-ws-share:has(.dev-ws-join-pop) { position: relative; z-index: 5; }
+
+/* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
+.dev-ws-rules-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
+.dev-ws-rules-sub { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--text-muted); }
 
 /* ── Swipe to vote, on a phone (#3052) ─────────────────────────────────
    workshop.tsx's `useSwipeVote` is the gesture; this is how it looks. A
@@ -16807,7 +16796,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-hero-activity-words { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .dev-ws-hero-activity-line { font-size: 14px; line-height: 19px; color: var(--text-primary); }
 .dev-ws-hero-activity-line b { font-weight: 650; }
-.dev-ws-hero-activity-cap { font-size: 12px; color: var(--text-muted); }
 .dev-ws-hero-spark { flex: none; width: 112px; height: 30px; display: flex; align-items: flex-end; gap: 2px; }
 .dev-ws-hero-spark-bar {
   flex: 1 1 0; min-width: 0; border-radius: 2px 2px 1px 1px;
@@ -16847,6 +16835,43 @@ a.dev-ws-hero-pending {
 @media (prefers-reduced-motion: no-preference) {
   .dev-ws-hero .dev-ws-join-pop { transform-origin: 32px 0; }
 }
+/* JOIN AND JOINED, ACROSS FROM THE NAME. The name's column takes the row
+   and the pill ends it; Join's popup then hangs from the RIGHT, as it does
+   at the end of the members row, or it would leave the screen. */
+.dev-ws-hero-id-text { flex: 1 1 auto; }
+.dev-ws-hero-id-end { flex: none; display: flex; align-items: center; }
+.dev-ws-hero .dev-ws-hero-id-end .dev-ws-join-pop { left: auto; right: -6px; }
+.dev-ws-hero .dev-ws-hero-id-end .dev-ws-join-pop::before { left: auto; right: 26px; }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-hero .dev-ws-hero-id-end .dev-ws-join-pop { transform-origin: calc(100% - 32px) 0; }
+}
+/* THE ⋯ ENDS THE MEMBERS ROW, Invite's height and fill (actions-row.tsx
+   draws the fill), a circle. Its menu hangs below it over the cards under
+   the hero, so the hero lifts while the menu is open, as it does for the
+   Join popup. */
+.dev-ws-hero .dev-ws-plus-btn { width: 32px; height: 32px; }
+.dev-ws-hero .dev-ws-plus-glyph { width: 18px; height: 18px; }
+.dev-ws-hero:has(#dev-plus-menu:not(.hidden)) { position: relative; z-index: 5; }
+/* THE CHART'S TIP (community-card.tsx Spark). Against the chart's right
+   edge, above it, so it never runs off the screen; the day it is about is
+   the lit bar. `pan-y` keeps a vertical drag scrolling the page and hands a
+   sideways one to the chart, which is what lets a finger follow the days. */
+.dev-ws-hero-spark-wrap { position: relative; flex: none; display: flex; }
+.dev-ws-hero-spark { touch-action: pan-y; cursor: default; -webkit-user-select: none; user-select: none; }
+.dev-ws-hero-spark[data-ws-spark-active] .dev-ws-hero-spark-bar { opacity: .35; }
+.dev-ws-hero-spark[data-ws-spark-active] .dev-ws-hero-spark-bar-on { opacity: 1; }
+.dev-ws-hero-spark-bar-quiet.dev-ws-hero-spark-bar-on { background: var(--text-muted); }
+.dev-ws-hero-spark-tip {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 6;
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 7px 9px; border-radius: 9px; white-space: nowrap;
+  background: #1c1c1e; color: #fff;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .18);
+  pointer-events: none;
+}
+.dark .dev-ws-hero-spark-tip { background: #3a3a3c; }
+.dev-ws-hero-spark-tip-day { font-size: 12.5px; font-weight: 650; }
+.dev-ws-hero-spark-tip-cap { font-size: 11px; color: rgba(255, 255, 255, .65); }
 
 /* ── The ask pane, inside its sheet ────────────────────────────────── */
 .dev-ws-ask { gap: 8px; }
@@ -17284,8 +17309,9 @@ a.dev-ws-hero-pending {
   }
 }
 .dev-ws-reveal[aria-expanded="true"] .dev-ws-reveal-chev { transform: rotate(180deg); }
-/* Same story as the button above: `.dev-ws-cards`' gap used to hold this
-   note off the last window, and the windows space themselves now. */
+/* A note under a list: the since list's "nothing has changed" and its
+   floor, and the hub's quiet lines. Held off what it follows by its own
+   margin. */
 .dev-ws-week-note {
   margin: 11px 0 0; font-size: 12px; color: var(--text-muted); text-align: center;
 }

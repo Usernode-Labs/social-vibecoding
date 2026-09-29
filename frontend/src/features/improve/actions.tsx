@@ -1,6 +1,7 @@
 /**
- * The two ACTIONS and the update NOTICE, which is all that outlived the
- * Improve panel (#2718 review).
+ * The ACTION and the update NOTICE, which is all that outlived the Improve
+ * panel (#2718 review). There were two actions until the UI overhaul; see
+ * ImproveQuickActions.
  *
  * The panel was a drawer you opened from a row in the mark's menu to reach
  * two buttons, a list of sessions and a notice. The sessions are the
@@ -22,17 +23,14 @@ import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
 
 /**
- * `flex-1 basis-0` so the two share the row evenly, which is what "next to
- * each other" asks for and what the panel's own well did.
+ * `flex-1` so the one action spans the menu's width, which is what the
+ * design draws: a single filled button over the list, not two sharing a row.
  *
- * Every id is the one it has always had: `#improve-row-feedback` is what the
- * outbox dot's writer selects and `#improve-row-new-session` has named
- * Improve.startSession() since the panel existed. Both are ids, so both can
- * exist exactly once — which is why the panel had to go rather than sit
- * behind the menu carrying a second copy.
+ * The id is the one it has always had: `#improve-row-feedback` is what the
+ * outbox dot's writer selects, and an id can exist exactly once.
  */
 const ACTION_BASE =
-  'inline-flex flex-1 basis-0 min-w-0 items-center justify-center h-9 px-3 '
+  'inline-flex flex-1 basis-0 min-w-0 items-center justify-center h-10 px-3 '
   + 'rounded-full text-sm font-semibold transition-colors un-touch-target';
 
 const ACTION_FILL =
@@ -56,20 +54,25 @@ function QuickAction({ id, label, onClick }: {
 }
 
 /**
- * Give feedback, then New change.
+ * Ask for a change: ONE BUTTON, where there were two (UI overhaul).
  *
- * FEEDBACK LEADS, because it is the one action that needs nothing of the
- * viewer — no collaborator bit, no session, no repo — and New change is
- * hidden outright for a viewer who may not write. "Give feedback", not
- * "Feedback": both are things you DO, and a bare noun beside the verb phrase
- * read as a category label sitting next to an action.
+ * The menu offered "Give feedback" and "New change" side by side, and people
+ * found both confusing: feedback read as a note to nobody in particular, and
+ * New change started an agent session without saying so. The two did the
+ * same thing from where the viewer stands, asking for something to change,
+ * and differed in who does the work. So the button asks for the change (the
+ * same dialog, headed "Ask for a change", which posts a request members can
+ * see, vote on and pick up), and starting one yourself is "Start a new
+ * change" under Agent sessions in the list below, because what it opens is
+ * an agent session (../app-context/app-context-sheet.tsx).
+ *
+ * It needs nothing of the viewer (no collaborator bit, no session, no repo),
+ * so it is always shown.
  *
  * ON THE PLATFORM TOO. The panel's target could be the platform's own
- * self-hosted row (#1367), and so can this: on Home these act on Homeroom
- * itself, which is what "that also shows up on the platform" asks for.
+ * self-hosted row (#1367), and so can this: on Home it asks Homeroom itself.
  */
 export function ImproveQuickActions(): ReactNode {
-  const state = useStoreState(improveStore);
   return (
     <div
       id="improve-quick-actions"
@@ -77,16 +80,9 @@ export function ImproveQuickActions(): ReactNode {
     >
       <QuickAction
         id="improve-row-feedback"
-        label="Give feedback"
+        label="Ask for a change"
         onClick={() => Improve.giveFeedback()}
       />
-      {state.readOnly ? null : (
-        <QuickAction
-          id="improve-row-new-session"
-          label="New change"
-          onClick={() => Improve.startSession()}
-        />
-      )}
     </div>
   );
 }

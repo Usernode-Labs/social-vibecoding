@@ -193,12 +193,13 @@ export function Shell() {
       */}
       <Island name="WorkshopScreen"><WorkshopScreen /></Island>
       {/*
-          "Your proposals" screen (hidden by default, #5310): every proposal
-          the viewer has started, grouped by status. A drill-in from
-          Profile's #profile-row-proposals row at #profile/proposals. Fully
+          The Your work screen (hidden by default; "Your proposals" #5310
+          until the UI overhaul): Your changes, Your requests or Your votes,
+          the three rows of Profile's "Your work", one view at a time
+          (#profile/your-changes, /your-requests, /your-votes). Fully
           React-owned like #workshop-screen, shipped hidden and empty; the
-          rows arrive from GET /api/me/proposal-history in the controller's
-          open(). Mounted by App.navigateToProfileProposals.
+          rows arrive in the controller's open(). Mounted by
+          App.navigateToProfileProposals(kind).
       */}
       <Island name="ProfileProposalsScreen"><ProfileProposalsScreen /></Island>
       {/*

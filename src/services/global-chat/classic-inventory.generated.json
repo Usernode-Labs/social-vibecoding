@@ -6839,6 +6839,21 @@
     {
       "source": "src/routes/profile.js",
       "method": "GET",
+      "path": "/api/me/requests",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.me.requests.973c5721",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/profile.js",
+      "method": "GET",
       "path": "/api/me/proposal-history",
       "expression": null,
       "status": "mapped",
@@ -8022,6 +8037,21 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#app/:slug/dev/proposals/:sessionId"
+    },
+    {
+      "source": "src/routes/since-summary.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/since-summary",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.apps.item.since.summary.63cb374c",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app"
     },
     {
       "source": "src/routes/social-identities.js",

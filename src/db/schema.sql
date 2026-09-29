@@ -3112,8 +3112,8 @@ COMMENT ON TABLE session_visuals IS 'staging:private';
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_visuals_applied TEXT;
 
 -- Plain-language, user-facing summary of a proposed change (1-3 sentences,
--- no jargon/file names/code). Generated alongside pr_title by the Haiku
--- PR-metadata call, prepended as the first paragraph of the GitHub PR body,
+-- no jargon/file names/code). Generated alongside pr_title by the
+-- PR-metadata call (Sonnet 5.5, llm.PR_METADATA_MODEL), prepended as the first paragraph of the GitHub PR body,
 -- and rendered at the top of the in-app proposal view (the column is this
 -- surface's single source of truth). NULL = none generated yet (legacy /
 -- pre-feature proposals, or an LLM-unavailable fallback); the view simply
@@ -7371,6 +7371,32 @@ ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_error TEXT;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovery_version INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS placement_version INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_version INTEGER NOT NULL DEFAULT 1;
+
+-- The hub's since-your-last-visit line (services/since-summary.js). One row
+-- per app per WINDOW, shared by every viewer whose last visit falls in it:
+-- a visit is floored to a six-hour block within the last day, to its UTC
+-- day within two weeks, and to two weeks ago before that, so a project has
+-- about twenty live windows whoever is visiting. Built from merged changes
+-- only, which every viewer of the app may see, exactly like
+-- app_workshop_themes above. head_at is the newest change the line was
+-- written for; a newer merge makes it stale, and a stale line is served as
+-- is while it is rewritten behind the request, at most once an hour.
+--   summary      the one or two sentences (Claude Sonnet 5.5)
+--   error        the last failed attempt, for the hourly retry backoff
+--   version      llm.SINCE_SUMMARY_VERSION the line was written under
+-- Rows for windows older than the longest one are dropped on write.
+CREATE TABLE IF NOT EXISTS app_since_summaries (
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  window_start  TIMESTAMPTZ NOT NULL,
+  head_at       TIMESTAMPTZ NOT NULL,
+  change_count  INTEGER NOT NULL DEFAULT 0,
+  summary       TEXT,
+  error         TEXT,
+  model         VARCHAR(64),
+  version       INTEGER NOT NULL DEFAULT 1,
+  generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, window_start)
+);
 
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,

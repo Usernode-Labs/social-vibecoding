@@ -112,12 +112,12 @@ export interface TourStep {
  */
 export const TOUR_STEPS: readonly TourStep[] = [
   {
-    // The Your apps section, heading and grid together, so the card never
+    // The Shortcuts section, heading and grid together, so the card never
     // sits on the heading the step is about. `#app-list` is the fallback
     // for a section that has not rendered its box yet.
     id: 'apps',
-    title: 'Your apps',
-    body: 'Shortcuts to the apps you use. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.',
+    title: 'Shortcuts',
+    body: 'The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.',
     targets: ['#home-apps-section', '#app-list'],
   },
   {
@@ -138,13 +138,14 @@ export const TOUR_STEPS: readonly TourStep[] = [
     advanceOn: 'menu-open',
   },
   {
-    // Give feedback and New change, as ONE step: they sit side by side in
-    // the menu's action well (`#improve-quick-actions`,
-    // ../../improve/actions.tsx), so one cut-out draws around both and one
-    // sentence says what each is for.
+    // The menu's one button, Ask for a change, in its well
+    // (`#improve-quick-actions`, ../../improve/actions.tsx). It was Give
+    // feedback and New change side by side, and people found both
+    // confusing; the step says what the button does and where making the
+    // change yourself went (Start a new change, under Agent sessions).
     id: 'menu-actions',
-    title: 'Give feedback, or change it',
-    body: 'Feedback sends the community a note about what should change. New change starts one yourself: describe it, try the preview, then put it to a vote.',
+    title: 'Ask for a change',
+    body: 'Post a request the members can see, vote on and pick up. To make a change yourself, use Start a new change under Agent sessions.',
     targets: ['#improve-quick-actions', '#improve-row-feedback'],
     needsPanel: true,
   },

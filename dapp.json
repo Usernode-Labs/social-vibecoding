@@ -1,6 +1,6 @@
 {
   "name": "Homeroom",
-  "description": "Build small web apps together — every change is proposed, previewed and merged by a group vote.",
+  "description": "The community for the platform itself. Discuss the platform and help make it better.",
   "icon": {
     "image": "public/apple-touch-icon.png"
   },
@@ -650,10 +650,10 @@
     },
     {
       "id": "profile.feedback-list",
-      "name": "Me: the \"More\" list is Challenges & standings, Kudos, Your feedback and Settings, and Your feedback lists what you sent with its status (#3186)",
+      "name": "Me: Your work leads, then More (Challenges & standings, Kudos, Friends, Settings); the feedback challenge's card lists what you sent with its status (#3186, UI overhaul)",
       "path": "/?demo=1#profile?feedback",
       "expectText": "Counted",
-      "expectSelector": "body:has(#profile-feedback-sheet a[data-feedback-status=\"received\"] ~ a[data-feedback-status=\"counted\"]) #profile-more #profile-row-challenges + #profile-row-kudos + #profile-row-feedback[href=\"#profile?feedback\"] + #profile-row-settings",
+      "expectSelector": "body:has(#profile-feedback-sheet a[data-feedback-status=\"received\"] ~ a[data-feedback-status=\"counted\"]) #profile-work + #profile-more #profile-row-challenges + #profile-row-kudos + #profile-row-friends[href=\"#profile?friends\"] + #profile-row-settings",
       "visual": true,
       "impact": [
         "frontend/src/features/profile/feedback-sheet.tsx",
@@ -663,10 +663,10 @@
       ]
     },
     {
-      "name": "Me: Your contributions lists merged proposals, each opening its proposal, and See all",
+      "name": "Me: Your work lists Your changes, Your requests and Your votes, each a way to its list (UI overhaul; it was Your contributions)",
       "path": "/?demo=1#profile",
-      "expectText": "Your contributions",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-contributions:has(#profile-contributions-all[href^=\"#leaderboard/users/\"]) a[data-contribution][href*=\"/dev/proposals/\"]"
+      "expectText": "Your work",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#profile/your-changes\"] + #profile-row-feedback[href=\"#profile/your-requests\"] + #profile-row-votes[href=\"#profile/your-votes\"]"
     },
     {
       "name": "A History tab after Standings lists the seasons that ended, with each season's and each event's winner",
@@ -686,10 +686,22 @@
       "expectSelector": "#profile-screen:not(.hidden) #public-profile-card:has([data-message-person=\"lin\"]) #public-profile-friend [data-friend-state=\"incoming\"] button[data-friend-action=\"accept\"] + button[data-friend-action=\"decline\"]"
     },
     {
-      "name": "Me: a private Friends section leads with a username search, then requests to answer, then your friends (#2386, #3048)",
-      "path": "/?demo=1#profile",
+      "name": "Me: Friends is a row, and its card leads with a username search, then requests to answer, then your friends (#2386, #3048, UI overhaul)",
+      "path": "/?demo=1#profile?friends",
       "expectText": "Only you can see your friends",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-more ~ #profile-friends:has(#profile-friend-search-input):has([data-friend-request-accept=\"lin\"] + [data-friend-request-decline=\"lin\"]) #profile-friends-list a[data-friend=\"ada\"][href=\"#profile/ada\"]"
+      "expectSelector": "#profile-friends-sheet #profile-friends:has(#profile-friend-search-input):has([data-friend-request-accept=\"lin\"] + [data-friend-request-decline=\"lin\"]) #profile-friends-list a[data-friend=\"ada\"][href=\"#profile/ada\"]"
+    },
+    {
+      "name": "Your changes groups what you started: in progress, then merged, then closed (UI overhaul)",
+      "path": "/?demo=1#profile/your-changes",
+      "expectSelector": "#profile-proposals-screen:not(.hidden)[data-profile-work=\"changes\"] [data-profile-work-group=\"inProgress\"] ~ [data-profile-work-group=\"merged\"] ~ [data-profile-work-group=\"closed\"]",
+      "expectText": "In progress"
+    },
+    {
+      "name": "Your requests lists what you asked for, open then done, with Ask for a change at the foot (UI overhaul)",
+      "path": "/?demo=1#profile/your-requests",
+      "expectSelector": "#profile-proposals-screen:not(.hidden)[data-profile-work=\"requests\"] [data-profile-work-group=\"open\"] ~ [data-profile-work-group=\"done\"] ~ div > button[data-profile-work-ask]",
+      "expectText": "someone is on it"
     },
     {
       "name": "Edit profile keeps social accounts proof-backed and sends management to Connectors (#982, #1939)",
@@ -738,13 +750,13 @@
       "expectText": "You can attach up to 3 images."
     },
     {
-      "name": "First feedback is congratulated in a lasting confirmation (#1583)",
+      "name": "A first request is congratulated in a lasting confirmation (#1583, UI overhaul)",
       "path": "/?shot=feedback-first#app/usernode-2d5619/dev",
       "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-first-success:not(.hidden)",
-      "expectText": "Congratulations on your first feedback!"
+      "expectText": "Congratulations on your first request!"
     },
     {
-      "name": "First feedback offers an editable fix, this app's board and Your feedback (#1583, #3186)",
+      "name": "A first request offers an editable fix, this app's board and Your requests (#1583, #3186)",
       "path": "/?shot=feedback-first#app/usernode-2d5619/dev",
       "expectSelector": "#feedback-first-success:not(.hidden):has(#feedback-first-fix:not(:disabled)) #feedback-first-board:not(:disabled) + #feedback-first-mine",
       "expectText": "Try a fix yourself"
@@ -778,23 +790,23 @@
       "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-submit:not(:disabled)"
     },
     {
-      "name": "The feedback description is marked required before you type anything (#1603)",
+      "name": "The request asks what should change, on the field it requires, before you type anything (#1603, UI overhaul)",
       "path": "/?shot=feedback",
-      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-text-label #feedback-text-required",
-      "expectText": "Description"
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-text-label + #feedback-text[aria-required=\"true\"]",
+      "expectText": "What should change?"
     },
     {
       "name": "An empty submit says what is missing instead of doing nothing (#1603)",
       "path": "/?shot=feedback-required",
       "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-text-error:not(.hidden)",
-      "expectText": "Please add a description"
+      "expectText": "Please say what should change"
     },
     {
       "id": "feedback.destination-choice",
-      "name": "With two destinations available, neither is preselected and the row says to choose (#2707)",
+      "name": "With two destinations available, neither is preselected and the row asks where it should go (#2707, UI overhaul)",
       "path": "/?shot=feedback-choose",
-      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-target:has(#feedback-target-app[aria-checked=\"false\"]):has(#feedback-target-platform[aria-checked=\"false\"]) + #feedback-target-hint:not(.hidden)",
-      "expectText": "Choose where this feedback goes",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-target-label + #feedback-target:has(#feedback-target-app[aria-checked=\"false\"]):has(#feedback-target-platform[aria-checked=\"false\"]) + #feedback-target-hint.hidden",
+      "expectText": "Where should this go?",
       "visual": true,
       "impact": [
         "frontend/src/features/dialogs/feedback.tsx",
@@ -802,16 +814,17 @@
       ]
     },
     {
-      "name": "Submit stays pressable while no destination is picked (#2707, #2888)",
+      "name": "Post request stays pressable while no destination is picked, and nothing is red yet (#2707, #2888)",
       "path": "/?shot=feedback-choose",
-      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint:not(.hidden)):has(#feedback-target:not([aria-invalid])) #feedback-submit:not(:disabled)"
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint.hidden):has(#feedback-target:not([aria-invalid])) #feedback-submit:not(:disabled)",
+      "expectText": "Post request"
     },
     {
       "id": "feedback.destination-missed",
-      "name": "Submit with no destination turns the row red and says why (#2888)",
+      "name": "Post request with no destination turns the row red and says why (#2888)",
       "path": "/?shot=feedback-choose-missed",
       "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target[aria-invalid=\"true\"]):has(#feedback-target-app.\\!border-red-600[aria-checked=\"false\"]) #feedback-target-hint[role=\"alert\"]:not(.hidden)",
-      "expectText": "Choose where this feedback goes",
+      "expectText": "Choose where this goes",
       "visual": true,
       "impact": [
         "frontend/src/features/dialogs/feedback.tsx",
@@ -819,7 +832,7 @@
       ]
     },
     {
-      "name": "With only one destination reachable it stays selected and Submit is live (#2707)",
+      "name": "With only one destination reachable it stays selected and Post request is live (#2707)",
       "path": "/?shot=feedback",
       "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-platform[aria-checked=\"true\"]):has(#feedback-target-hint.hidden) #feedback-submit:not(:disabled)"
     },
@@ -1333,10 +1346,10 @@
       "expectText": "Nothing to discover right now"
     },
     {
-      "name": "Adding from Discover lands in Your apps with no reload, and removing takes it out again (#1567)",
+      "name": "Adding from Discover lands in Shortcuts with no reload, and removing takes it out again (#1567)",
       "path": "/?shot=discover-add",
       "expectSelector": "body[data-shot-add=\"round-trip\"] #home-apps-section #app-list",
-      "expectText": "Your apps"
+      "expectText": "Shortcuts"
     },
     {
       "name": "The launcher grid shows two rows by default, with a way to the rest",
@@ -1348,7 +1361,7 @@
       "name": "Each home area is introduced by its own label (#1478)",
       "path": "/?demo=1",
       "expectSelector": "#home-body #home-apps-section > h2.home-area-label",
-      "expectText": "Your apps"
+      "expectText": "Shortcuts"
     },
     {
       "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
@@ -1489,39 +1502,39 @@
       "expectText": "[Mock] Appearance & theming"
     },
     {
-      "name": "Import Feature from a PR entry present in the Dev + menu (#687)",
-      "path": "/?demo=1&ws=all#app/usernode-2d5619/dev",
-      "expectSelector": "[data-plus=\"import-pr\"]"
+      "name": "Import Feature from a PR entry present in the hub's ⋯ menu (#687)",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
+      "expectSelector": ".dev-ws-hero #dev-plus-menu [data-plus=\"import-pr\"]"
     },
     {
-      "name": "The Dev '+' menu separates adding to the board from managing the app (#1900)",
-      "path": "/?demo=1&ws=all&shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu [data-plus-group=\"build\"] ~ [data-plus=\"issue\"] ~ [data-plus-group=\"settings\"]",
-      "expectText": "Add to the board"
+      "name": "The hub's ⋯ menu leads with Ask for a change, then names its settings group (#1900)",
+      "path": "/?demo=1&ws=status&shot=plus-menu#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-menu > button[data-plus=\"issue\"]:first-child ~ [data-plus-group=\"settings\"]",
+      "expectText": "Ask for a change"
     },
     {
-      "name": "New change survives the '+' menu dedup, and the drawer's retirement (#1490, #2718 review)",
+      "name": "Start a new change leads the menu's Agent sessions, where New change went (#1490, #2718 review, UI overhaul)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
-      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-new-session",
-      "expectText": "New change"
+      "expectSelector": "#apps-switcher-sheet[data-open] #app-menu-sessions > #improve-row-new-session",
+      "expectText": "Start a new change"
     },
     {
-      "name": "Give feedback survives the menu split, in exactly one place (#1490, #2718)",
+      "name": "Ask for a change is the menu's one button, in exactly one place (#1490, #2718, UI overhaul)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback",
-      "expectText": "Give feedback"
+      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback:only-child",
+      "expectText": "Ask for a change"
     },
     {
       "name": "The Homeroom menu opens anchored under the mark, not as a panel in the middle of the screen (#2784)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
-      "expectSelector": "body:has(#platform-mark-btn[aria-expanded=\"true\"]) #apps-switcher-sheet[data-open][style*=\"--menu-anchor-top\"][style*=\"--menu-anchor-left\"] #improve-quick-actions > #improve-row-new-session",
-      "expectText": "New change"
+      "expectSelector": "body:has(#platform-mark-btn[aria-expanded=\"true\"]) #apps-switcher-sheet[data-open][style*=\"--menu-anchor-top\"][style*=\"--menu-anchor-left\"] #improve-quick-actions > #improve-row-feedback",
+      "expectText": "Ask for a change"
     },
     {
-      "name": "The Dev '+' menu files an issue directly and keeps New change in Improve (#1900)",
-      "path": "/?demo=1&ws=all&shot=plus-menu#app/usernode-2d5619/dev",
+      "name": "The hub's ⋯ menu asks for a change directly and keeps New change in Improve (#1900)",
+      "path": "/?demo=1&ws=status&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"])) button[data-plus=\"issue\"] ~ [data-plus=\"import-pr\"]",
-      "expectText": "File an issue"
+      "expectText": "Ask for a change"
     },
     {
       "name": "Custom category chip renders on a Dev card (#780)",
@@ -1754,13 +1767,13 @@
       "expectSelector": ".un-popover .card-menu-header .card-menu-title"
     },
     {
-      "name": "Dev \"+\" menu opens as an action sheet on touch (#929)",
-      "path": "/?ws=all&shot=plus-menu&un-platform=ios#app/usernode-2d5619/dev",
+      "name": "The hub's ⋯ menu opens as an action sheet on touch (#929)",
+      "path": "/?ws=status&shot=plus-menu&un-platform=ios#app/usernode-2d5619/dev",
       "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
     },
     {
-      "name": "Dev \"+\" menu still opens the anchored dropdown on desktop (#929)",
-      "path": "/?ws=all&shot=plus-menu#app/usernode-2d5619/dev",
+      "name": "The hub's ⋯ menu still opens the anchored dropdown on desktop (#929)",
+      "path": "/?ws=status&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu:not(.hidden) button[data-plus=\"rename\"]"
     },
     {
@@ -2150,9 +2163,9 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] ~ [data-ws-dash-cell=\"shipped\"] > b"
     },
     {
-      "name": "Workshop: What you are working on stays on screen when it is empty, and says so (#2182), under All items (#3299)",
+      "name": "Workshop: Your work stays on screen when it is empty, and says so (#2182), leading the Workshop page",
       "path": "/?demo=1&shot=mine-empty&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-dashboard] ~ [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
       "expectText": "You have no work going on."
     },
     {
@@ -2261,13 +2274,13 @@
       "expectSelector": "#app-install"
     },
     {
-      "name": "The app's own menu carries Improve's two actions on an app view",
+      "name": "The app's own menu carries Ask for a change on an app view",
       "path": "/app/staging-demo-admins",
       "expectSelector": "#apps-switcher-sheet #improve-quick-actions > #improve-row-feedback",
       "allowConsoleErrors": true
     },
     {
-      "name": "The Dev view carries the standing Improve actions, one tap behind the mark",
+      "name": "The Dev view carries Ask for a change, one tap behind the mark",
       "path": "/app/staging-demo-admins/dev",
       "expectSelector": "#apps-switcher-sheet #improve-quick-actions > #improve-row-feedback"
     },
@@ -2277,9 +2290,9 @@
       "expectSelector": "#apps-switcher-sheet #switcher-nav > a#app-menu-row-workshop[data-context-row=\"workshop\"]"
     },
     {
-      "name": "The app-context sheet carries the + New change action (Streamlined Concept)",
+      "name": "The app-context sheet carries Start a new change under Agent sessions (Streamlined Concept, UI overhaul)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-quick-actions #improve-row-new-session"
+      "expectSelector": "#app-menu-sessions #improve-row-new-session"
     },
     {
       "name": "The header names the app it is in, as a heading (#2718)",
@@ -2302,7 +2315,7 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban"
     },
     {
-      "name": "#2761: the mark's menu opens its list on Go to community hub, with no App segment above it (owner's decision; reverses #1386's App segment)",
+      "name": "#2761: the mark's menu opens its list on Go to community, with no App segment above it (owner's decision; reverses #1386's App segment)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet > #improve-quick-actions + #switcher-nav > a#app-menu-row-workshop:first-child"
     },
@@ -2312,13 +2325,13 @@
       "expectSelector": "#header-title #header-title-name"
     },
     {
-      "name": "Home's menu offers to improve the platform, same two buttons (#2718 review)",
+      "name": "Home's menu offers to ask the platform for a change, the same button (#2718 review, UI overhaul)",
       "path": "/?shot=app-context",
       "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback"
     },
     {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
-      "path": "/?demo=1&ws=all#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-btn"
     },
     {
@@ -2382,14 +2395,14 @@
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
     {
-      "name": "Re-pointed: the + closes the Workshop's view-tab strip (prototype wsTabs), not the actions row",
-      "path": "/?demo=1&ws=all#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop:has(#dev-actions > #dev-kanban-filterbar:last-child) [data-ws-tabs] > .dev-ws-tabtrack > .dev-ws-tablist[role=\"tablist\"] + .dev-ws-plus > #dev-plus-btn"
+      "name": "Re-pointed: the ⋯ ends the hub hero's members row, beside Invite, not the actions row",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-workshop .dev-ws-hero[data-ws-community] .dev-ws-hero-people > .dev-ws-hero-actions > .dev-ws-plus:last-child > #dev-plus-btn"
     },
     {
-      "name": "A project's page opens on its hub, lit, with the votes you owe and a 14-day trend on it; its two tabs are hub and Workshop (prototype wsTabs)",
+      "name": "A project's page opens on its hub: no tab strip, the votes you owe as a door, and a 14-day trend on the hero",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:has(.dev-ws-tabbody > [data-ws-hub-needs-votes]):has([data-ws-members-trend]) > [data-ws-tabs] .dev-ws-tablist:has(> [data-ws-tab-btn=\"status\"][aria-selected=\"true\"] + [data-ws-tab-btn=\"workshop\"]:last-child)"
+      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:not(:has([data-ws-pagebar])):has([data-ws-members-trend]) > .dev-ws-tabbody > [data-ws-hub-needs-votes] > button[data-ws-hub-needs-open]"
     },
     {
       "name": "The Dev screen names its section, Communities, once, with no subtitle beside it (#2718 review)",
@@ -2430,9 +2443,9 @@
       "expectText": "Staging demo: one line on what the open issues and waiting proposals are about."
     },
     {
-      "name": "A project's Workshop page leads with a hero that says who it is for and how a change gets in (communities)",
+      "name": "A project's hub leads with a hero that says who it is for (communities)",
       "path": "/#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"] > [data-ws-community-rule]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"] [data-ws-community-audience]",
       "expectText": "Public community"
     },
     {
@@ -2484,9 +2497,9 @@
       "expectText": "All items"
     },
     {
-      "name": "Workshop: a dot on the Workshop tab says All items' search is still on, seen from the hub (#2915)",
+      "name": "Workshop: a dot on the hub's Workshop door says All items' search is still on (#2915)",
       "path": "/?demo=1&ws=status&q=nothing-matches-this#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-tab-btn=\"workshop\"][aria-selected=\"false\"] > [data-ws-tab-filtered]"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] button[data-ws-workshop-open] [data-ws-filtered]"
     },
     {
       "name": "Dev board: the search reads issue bodies, not only titles (#2089)",
@@ -2549,16 +2562,34 @@
       "expectSelector": "#dev-forum-scroll:not(:has(#dev-chat-card)) #dev-workshop"
     },
     {
-      "name": "Since your last visit carries a Clear on its heading and a Show older that is drawn even when nothing is new (#2183)",
-      "path": "/?demo=1&shot=since-visit#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-since] > .dev-ws-since-head:has(> .dev-ws-since-n + button[data-ws-since-clear]) ~ button.dev-ws-since-more[data-ws-since-more]",
+      "name": "Since your last visit, on the Workshop page, files what moved under each week's heading, with a Clear on its own and a Show older always drawn (#2183)",
+      "path": "/?demo=1&shot=since-visit&ws=workshop#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has(> [data-ws-since-week] > .dev-ws-since-week-head) > .dev-ws-since-head:has(> .dev-ws-since-n + button[data-ws-since-clear]) ~ button.dev-ws-since-more[data-ws-since-more]",
       "expectText": "Show older"
     },
     {
-      "name": "Since your last visit: Clear goes live once Show older has walked below the line, so the seen rows can be folded again (#2240)",
-      "path": "/?demo=1&shot=since-seen#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has(> [data-ws-since-seen]) > .dev-ws-since-head > button[data-ws-since-clear]:not([disabled])",
+      "name": "Since your last visit: Clear goes live once a week's seen rows are unfolded, so they can be folded again (#2240)",
+      "path": "/?demo=1&shot=since-seen&ws=workshop#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has([data-ws-since-seen]) > .dev-ws-since-head > button[data-ws-since-clear]:not([disabled])",
       "expectText": "Clear"
+    },
+    {
+      "name": "A project's hub opens on what landed since your last visit, in a sentence or two, with a way to dismiss it (staging demo line)",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-since-summary=\"ai\"]:has(> .dev-ws-head > button[data-ws-since-summary-dismiss]) > [data-ws-since-summary-text]",
+      "expectText": "Staging demo: mostly polish on Messages and Discover"
+    },
+    {
+      "name": "The hub ends with a door to the Workshop page",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-workshop-door]:last-child > button[data-ws-workshop-open]",
+      "expectText": "Workshop"
+    },
+    {
+      "name": "The Workshop page leads with its way back to the hub and ends with the approval rules, which were the hero's last line",
+      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:has(> [data-ws-pagebar] [data-ws-page-back]) > .dev-ws-tabbody > [data-ws-approval-rules]:last-child > [data-ws-community-rule]",
+      "expectText": "to merge"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",
@@ -2865,10 +2896,10 @@
       "expectText": "Session finished"
     },
     {
-      "name": "The menu leads with Give feedback, ahead of New change (#2718 review)",
+      "name": "The menu leads with Ask for a change, one button where there were two (#2718 review, UI overhaul)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback:first-child + #improve-row-new-session",
-      "expectText": "Give feedback"
+      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions:not(:has(#improve-row-new-session)) > #improve-row-feedback:first-child",
+      "expectText": "Ask for a change"
     },
     {
       "name": "Settings' About pane: all three version rows share one left edge",
@@ -2904,7 +2935,7 @@
       "expectSelector": "head > meta[name=\"platform-build\"][content]"
     },
     {
-      "name": "The mark's menu: the two actions, then the app's options, with no view strip between them (#2718 review, #2761)",
+      "name": "The mark's menu: the action, then the app's options, with no view strip between them (#2718 review, #2761)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet > #improve-quick-actions + #switcher-nav"
     },
@@ -3226,27 +3257,28 @@
       "expectText": "Challenges"
     },
     {
-      "name": "The mark opens the menu, and it lists the app's own options, Invite to community among them (#2718, invite links)",
+      "name": "The mark opens the menu, and it lists the app's own options, then Agent sessions, with no discussion or invite row (#2718, #3362)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #app-menu-row-discussion + #app-menu-row-invite + #app-menu-row-about"
+      "expectSelector": "#apps-switcher-sheet[data-open]:not(:has(#app-menu-row-discussion, #app-menu-row-invite)) #switcher-nav > #app-menu-row-workshop ~ #app-menu-row-about + #app-menu-sessions"
     },
     {
-      "name": "The menu links out to the project's community hub, scoped to the app, as a Go to community hub row (#2718, #2761, #3287)",
+      "name": "The menu links out to the project's community, scoped to the app, as a Go to community row (#2718, #2761, #3287)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-workshop[href=\"#app/usernode-2d5619/workshop\"]",
-      "expectText": "Go to community hub"
+      "expectText": "Go to community"
     },
     {
-      "name": "#2763: Go to app discussion opens the two-pane Messages route, not the old full-screen chat",
+      "name": "Agent sessions leads with Start a new change, sessions or none (UI overhaul; it was Continue)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-discussion[href=\"#messages/app/usernode-2d5619\"]"
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav > #app-menu-sessions > #improve-row-new-session:nth-child(2)",
+      "expectText": "Agent sessions"
     },
     {
       "id": "workshop.all-apps",
       "name": "Workshop links joined communities to their actual app Workshop",
       "path": "/?demo=1#workshop",
       "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-section=\"open\"] a[data-workshop-app][href$=\"/workshop\"]",
-      "expectText": "Votes waiting on you",
+      "expectText": "Public communities",
       "visual": true,
       "impact": [
         "frontend/src/features/workshop/**",
@@ -3268,14 +3300,14 @@
       "expectText": "Public communities"
     },
     {
-      "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All chip over its Current status and Needs you tabs, lit like a project page's (#3051)",
+      "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All chip over the list itself, with no tabs (#3051)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-scope[aria-controls=\"workshop-scope-picker\"] ~ div > #workshop-tab-status.workshop-scope-tab-on[aria-current=\"page\"] + #workshop-tab-needs):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
+      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-scope[aria-controls=\"workshop-scope-picker\"]):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
     },
     {
-      "name": "The Communities screen's Needs you tab is one feed of every decision owed, mixed across projects, one card per screen (#3270)",
+      "name": "The Communities screen's Needs you page is one feed of every decision owed, mixed across projects, one card per screen, with a way back (#3270)",
       "path": "/?demo=1&ws=needs#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-tab-needs[aria-current=\"page\"]) [data-needs-reel] article[data-needs-card=\"governance\"][data-needs-app=\"staging-demo-your-app\"] a[href^=\"#app/staging-demo-your-app/dev/governance/\"]"
+      "expectSelector": "#workshop-screen:not(.hidden):has([data-workshop-needs-back][aria-label=\"Back to Communities\"]) [data-needs-reel] article[data-needs-card=\"governance\"][data-needs-app=\"staging-demo-your-app\"] a[href^=\"#app/staging-demo-your-app/dev/governance/\"]"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
@@ -3587,7 +3619,7 @@
       "expectSelector": "#settings-section-content [data-settings-section]:not(.hidden)"
     },
     {
-      "name": "Home 'Your apps' section renders for the seeded admin",
+      "name": "Home's Shortcuts section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
     },
@@ -3627,8 +3659,8 @@
       "expectText": "Staging demo read-only proposal"
     },
     {
-      "name": "Dev '+' menu holds rename and secrets directly, no App settings nesting (#645)",
-      "path": "/?demo=1&ws=all#app/usernode-2d5619/dev",
+      "name": "The hub's ⋯ menu holds rename and secrets directly, no App settings nesting (#645)",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu [data-plus='rename']"
     },
     {
@@ -3644,13 +3676,13 @@
       "expectText": "demo mode"
     },
     {
-      "name": "Dev '+' menu shows Members & approvals on a managed app (#2304)",
-      "path": "/app/staging-demo-readonly/dev?ws=all",
+      "name": "The hub's ⋯ menu shows Members & approvals on a managed app (#2304)",
+      "path": "/app/staging-demo-readonly/dev?ws=status",
       "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
     {
-      "name": "Dev '+' menu shows the approver roster on an invited-approvers app (#646)",
-      "path": "/?demo=1&ws=all&shot=plus-menu#app/staging-demo-invited-approvers/dev",
+      "name": "The hub's ⋯ menu shows the approver roster on an invited-approvers app (#646)",
+      "path": "/?demo=1&ws=status&shot=plus-menu#app/staging-demo-invited-approvers/dev",
       "expectSelector": "#dev-plus-menu [data-plus='members']",
       "expectText": "Members & approvals"
     },
@@ -3705,7 +3737,7 @@
       "expectSelector": ".app-card[data-yours].cursor-grab"
     },
     {
-      "name": "A persisted staging sample appears in expanded Your apps",
+      "name": "A persisted staging sample appears in expanded Shortcuts",
       "path": "/?demo=1&shot=home-apps",
       "expectSelector": ".app-card[data-slug='staging-demo-your-app']"
     },
@@ -4517,9 +4549,9 @@
       "expectSelector": "#dev-actions > #dev-kanban-filterbar #dev-kanban-filters-btn.rounded-full"
     },
     {
-      "name": "Re-pointed: the filter chips hold the actions row alone; the + closes the tab strip above the pane",
+      "name": "Re-pointed: the filter chips hold the actions row alone; the ⋯ is the hub hero's, not the pane's",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop:has([data-ws-tabs] .dev-ws-plus > #dev-plus-btn) [data-ws-pane] #dev-actions > #dev-kanban-filterbar:last-child"
+      "expectSelector": "#dev-workshop:not(:has(#dev-plus-btn)) [data-ws-pane] #dev-actions > #dev-kanban-filterbar:last-child"
     },
     {
       "name": "The Filters dialog offers the priority select (Streamlined Concept)",
@@ -4527,14 +4559,14 @@
       "expectSelector": "#board-filters-modal #board-filters-priority"
     },
     {
-      "name": "Re-pointed: the + is the tab strip's last item, its menu hung off its right edge so it opens on-screen",
-      "path": "/?demo=1&ws=all&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop [data-ws-tabs] > .dev-ws-tabtrack > .dev-ws-plus:last-child > #dev-plus-btn + #dev-plus-menu.absolute.right-0.top-full"
+      "name": "Re-pointed: the ⋯ ends the hero's actions, its menu hung off its right edge so it opens on-screen",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-workshop .dev-ws-hero-actions > .dev-ws-plus:last-child > #dev-plus-btn + #dev-plus-menu.absolute.right-0.top-full"
     },
     {
-      "name": "Re-pointed: the Workshop's actions row shows the filled filter bar, and the + it sat beside is in the tab strip",
+      "name": "Re-pointed: the Workshop's actions row shows the filled filter bar; the ⋯ it sat beside is the hub's",
       "path": "/?demo=1&ws=all&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop:has([data-ws-tabs] #dev-plus-btn) [data-ws-pane] #dev-actions > #dev-kanban-filterbar:not(:empty):last-child"
+      "expectSelector": "#dev-workshop:not(:has(#dev-plus-btn)) [data-ws-pane] #dev-actions > #dev-kanban-filterbar:not(:empty):last-child"
     },
     {
       "name": "The Notifications sheet shows read rows on the All tab (Streamlined Concept)",
@@ -4721,7 +4753,7 @@
       "expectSelector": "#notifications-sheet.dc-lift.dc-lift-panel[data-open] #notifications-sheet-close"
     },
     {
-      "name": "The menu's two actions ride the same lifted pane as the bell's sheet",
+      "name": "The menu's action rides the same lifted pane as the bell's sheet",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet.dc-lift.dc-lift-panel[data-open] #improve-quick-actions"
     },

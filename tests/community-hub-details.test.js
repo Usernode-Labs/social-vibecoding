@@ -48,39 +48,54 @@ const community = (over = {}) => ({
 const days = (counts) => counts.map((n, i) => ({ day: `2026-09-${String(10 + i).padStart(2, '0')}`, n }));
 
 test('#3268: the hero carries who is here and the fortnight, with the actions at the row\'s end', () => {
-  const { HeroPeople, HeroActivity, HERO_FACES } = loadTsx(CARD);
+  const { HeroPeople, HeroActivity, HERO_FACES, sparkTip } = loadTsx(CARD);
   const members = ['ada', 'lin', 'kai', 'mia', 'sam', 'zoe', 'raj'].map((u, i) => ({ id: i + 1, username: u }));
   const people = renderToHtml(createElement(HeroPeople, { members, count: 19 },
-    createElement('span', { className: 'dev-ws-hero-actions' }, 'Joined')));
+    createElement('span', { className: 'dev-ws-hero-actions' }, 'Invite')));
   assert.equal(HERO_FACES, 5);
   assert.equal([...people.matchAll(/class="dev-ws-hero-face"/g)].length, 5, 'five faces, then the count says the rest');
-  assert.match(people, /<span class="dev-ws-hero-count" data-ws-members-cell="members">19 members<\/span><span class="dev-ws-hero-actions">Joined<\/span>/,
+  assert.match(people, /<span class="dev-ws-hero-count" data-ws-members-cell="members">19 members<\/span><span class="dev-ws-hero-actions">Invite<\/span>/,
     'the count, then the actions at the far end of the same row');
 
   const counts = [0, 1, 2, 0, 0, 3, 4, 0, 1, 0, 0, 2, 0, 4];
   const html = renderToHtml(createElement(HeroActivity, { activity: { active_week: 4, shipped_month: 3, daily: days(counts) } }));
   assert.match(html, /<span data-ws-members-cell="active"><b>4<\/b> active this week<\/span> · <span data-ws-members-cell="shipped"><b>3<\/b> shipped this month<\/span>/);
-  assert.match(html, /Who took part, last 14 days/);
-  const bars = [...html.matchAll(/<span class="(dev-ws-hero-spark-bar[^"]*)" style="height:(\d+)%" title="([^"]+)"/g)];
+  // No caption under the line and no native tooltip on a bar: the chart's
+  // own tip carries both, and it is not drawn until a bar is pointed at.
+  assert.doesNotMatch(html, /Who took part, last 14 days/);
+  assert.doesNotMatch(html, /data-ws-spark-tip/);
+  const bars = [...html.matchAll(/<span class="(dev-ws-hero-spark-bar[^"]*)" style="height:(\d+)%"><\/span>/g)];
   assert.equal(bars.length, 14);
   assert.deepEqual(bars.map((b) => Number(b[2])), counts.map((n) => (n ? Math.max(12, Math.round((n / 4) * 100)) : 8)));
   assert.ok(bars.every((b, i) => counts[i] ? !/quiet/.test(b[1]) : /quiet/.test(b[1])), 'a quiet day is a sliver in the rule colour');
-  assert.match(bars[1][3], /: 1 person$/);
-  assert.match(bars[13][3], /: 4 people$/);
+  assert.match(sparkTip({ day: '2026-09-11', n: 1 }), / · 1 person$/);
+  assert.match(sparkTip({ day: '2026-09-26', n: 21 }), /Sep 26 · 21 people$/);
   assert.match(html, /data-ws-members-trend="" role="img" aria-label="People taking part each day, last 14 days: 0, 1, 2/);
+  // The tip follows a mouse and a finger alike, and lingers after a tap.
+  assert.match(CARD_SRC, /onPointerMove=\{\(e\) => \{\s*if \(e\.pointerType === 'mouse' \|\| at != null\) pick\(e\.clientX\);/);
+  assert.match(CARD_SRC, /e\.currentTarget\.setPointerCapture\(e\.pointerId\)/);
+  assert.match(CARD_SRC, /linger\.current = setTimeout\(\(\) => setAt\(null\), TIP_LINGER_MS\);/);
+  assert.match(CSS, /\.dev-ws-hero-spark \{ touch-action: pan-y;/, 'a sideways drag is the chart\'s, a vertical one still scrolls');
+  assert.match(CSS, /\.dev-ws-hero-spark-tip \{\s*position: absolute; right: 0; bottom: calc\(100% \+ 8px\);/, 'against the chart\'s right edge, so it never leaves the screen');
 
-  // A zero says nothing; a silent fortnight is one sentence.
+  // A shared tip, not a second way to lose the numbers.
+  const quiet = renderToHtml(createElement(HeroActivity, { activity: { active_week: 0, shipped_month: 0, daily: days(Array(14).fill(0)) } }));
+  assert.match(quiet, /data-ws-members-trend="" data-ws-trend-empty="">Nobody has been around in the last 14 days\./);
   const shippedOnly = renderToHtml(createElement(HeroActivity, { activity: { active_week: 0, shipped_month: 2, daily: days(counts) } }));
   assert.doesNotMatch(shippedOnly, /active this week/);
   assert.match(shippedOnly, /<b>2<\/b> shipped this month/);
-  const quiet = renderToHtml(createElement(HeroActivity, { activity: { active_week: 0, shipped_month: 0, daily: days(Array(14).fill(0)) } }));
-  assert.match(quiet, /data-ws-members-trend="" data-ws-trend-empty="">Nobody has been around in the last 14 days\./);
 
-  // Just you: the hero stays as it was; a Community or a Group gets both rows.
+  // Just you: the actions have the row alone; a Community or a Group gets both rows.
   const src = CARD_SRC;
   assert.match(src, /\{solo \? actions : \(\s*<HeroPeople members=\{data\.members\} count=\{Number\(data\.member_count\) \|\| 0\}>\s*\{actions\}\s*<\/HeroPeople>\s*\)\}\s*\{solo \? null : <HeroActivity activity=\{data\.activity\} \/>\}/);
   assert.ok(src.indexOf('data-ws-community-description') < src.indexOf('<HeroPeople members'), 'what it is, then who is here');
-  assert.ok(src.indexOf('<HeroActivity activity') < src.indexOf('data-ws-community-rule=""'), 'and how a change gets in last');
+  // Joined sits across from the name; Invite, Open it up and the ⋯ end the members row.
+  assert.match(src, /<HeroId app=\{tileApp\} end=\{membership\}>/);
+  assert.match(src, /const actions = \(\s*<div className="dev-ws-hero-actions">[\s\S]*?data-ws-community-invite=""[\s\S]*?<AudienceChange[\s\S]*?\{menu\}\s*<\/div>/);
+  // How a change gets in is the Workshop page's Approval rules card now.
+  const hero = src.slice(src.indexOf('export function CommunityCard('), src.indexOf('export function ApprovalRules('));
+  assert.doesNotMatch(hero, /data-ws-community-rule/);
+  assert.match(src, /export function ApprovalRules\([\s\S]*?data-ws-approval-rules=""[\s\S]*?data-ws-community-rule="">\{approvalLine\(data\.approval\)\}/);
   assert.doesNotMatch(read(HUB), /export function MembersCard/, 'the hub has no Members & activity card any more');
 });
 
@@ -147,7 +162,8 @@ test('the channel card\'s composer sends to the room and re-reads the hub', () =
 
 test('a person who has not joined sees "Recently" over the same rows', () => {
   assert.match(LANDER, /const outsider = !!community && !community\.is_member;/);
-  assert.match(LANDER, /<span className="dev-ws-since-label">\{outsider \? 'Recently' : 'Since your last visit'\}<\/span>/);
+  // A first visit, with no last visit to be since, reads "Recently" too.
+  assert.match(LANDER, /<span className="dev-ws-since-label">\{v\.since && !outsider \? 'Since your last visit' : 'Recently'\}<\/span>/);
   // The rows and Clear are the same for everyone (declared checks select on
   // Clear on Homeroom's page); only the heading's words change.
   assert.doesNotMatch(LANDER, /outsider \? null/);
@@ -166,7 +182,9 @@ test('the hero offers Open it up or Make it private, as a proposal, to whoever m
     'a public community is public to use and to build; a private community is private to both, as the create dialog maps them');
   assert.match(change, /if \(!res\.ok && res\.status !== 409\)/, 'one already up is not an error: the hero shows it');
   assert.match(change, /Members vote on this first, and it applies once it merges\./, 'it says it is a proposal, not a switch');
-  assert.match(CARD_SRC, /\{data\.can_manage && !data\.audience_change \? \(\s*<AudienceChange /);
+  // A project that is just yours offers it on its Share it card instead.
+  assert.match(CARD_SRC, /\{data\.can_manage && !data\.audience_change && !solo \? \(\s*<AudienceChange /);
+  assert.match(CARD_SRC, /\{canOpenUp \? \(\s*<AudienceChange /);
   assert.match(CARD_SRC, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/proposals\/\$\{data\.audience_change\.session_id\}`\}/);
   // The server offers it to exactly whom POST /visibility-pr accepts.
   const route = read('src/routes/apps.js');
@@ -214,13 +232,17 @@ test('Discover rows open the hub; the controls sit over the list\'s card', () =>
     'the same address App._hubHref builds');
 });
 
-test('the Communities toggle is the project page\'s strip, not the black pill', () => {
+test('the Communities screen has no toggle: Needs you is a row that opens a page', () => {
+  // It had two tabs, Current status and Needs you, drawn as the project
+  // page's strip. The UI overhaul made the list the page and Needs you a
+  // row at its top ("3 votes waiting on you"), which opens the feed with a
+  // way back; the strip and its CSS went with the tabs.
   const screen = read('frontend/src/features/workshop/index.tsx');
-  assert.doesNotMatch(screen, /SECTION_TAB_ACTIVE/);
-  assert.match(screen, /<TabsList className="workshop-scope-tabs" aria-label="Communities sections">/);
-  assert.equal((screen.match(/className="workshop-scope-tab"\s*activeClassName="workshop-scope-tab-on"/g) || []).length, 2);
-  assert.match(CSS, /\.workshop-scope-tabs \{[^}]*background-color: var\(--dc-sheet-raise\);/);
-  assert.match(CSS, /\.workshop-scope-tab-on \{\s*background: var\(--lit-tint\); color: var\(--lit-ink\);\s*box-shadow: inset 0 0 0 1px var\(--lit-line\);/);
+  assert.doesNotMatch(screen, /SECTION_TAB_ACTIVE|<TabsList|workshop-scope-tab/);
+  assert.doesNotMatch(CSS, /\.workshop-scope-tabs? \{/);
+  assert.match(screen, /<ListRow\s+as="button"\s+data-workshop-needs-open=""/);
+  assert.match(screen, /className="dev-ws-page-back un-touch-target"\s+data-workshop-needs-back=""/,
+    'the way back is the project page\'s own back disc');
 });
 
 test('Home\'s Browse all links carry the accent, not the header\'s periwinkle', () => {

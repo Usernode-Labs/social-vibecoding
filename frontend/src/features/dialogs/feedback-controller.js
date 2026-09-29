@@ -191,7 +191,7 @@ export function init() {
       firstFixNote.textContent = firstFix.disabled
         ? (hasBoard ? 'You need collaborator access to try a fix. You can still explore the board.' : 'This repository does not have an app board you can access here.')
         : 'Start with a draft you can edit before sending it to the coding agent.';
-      firstNotice.textContent = notice || 'Your feedback has been sent.';
+      firstNotice.textContent = notice || 'Your request has been posted.';
       feedbackForm.classList.add('hidden');
       // A queued first report can land while a filed one's confirmation is
       // up; the moment replaces it rather than stacking under it.
@@ -204,11 +204,11 @@ export function init() {
     const closeFeedback = () => document.getElementById('feedback-cancel').click();
     document.getElementById('feedback-first-done')?.addEventListener('click', closeFeedback);
 
-    // #3186: "See your feedback", in both confirmations: the ordinary one
-    // (#feedback-sent) and the first-feedback moment (#feedback-first-mine).
-    // Both open the Me screen's "Your feedback" list by its address, which
-    // Profile.open() honours, so the report just filed is on screen with its
-    // status one tap after sending.
+    // #3186: "See your requests" (it was "See your feedback"), in both
+    // confirmations: the ordinary one (#feedback-sent) and the first-request
+    // moment (#feedback-first-mine). Both open Profile's Your requests by its
+    // address, so the request just posted is on screen with its status one
+    // tap after sending.
     //
     // The ordinary confirmation used to be the status line, and the dialog
     // closed itself 1.5 s later: "it vanished", in the report this answers,
@@ -224,7 +224,7 @@ export function init() {
     // traversal and the viewer ended up back where they sent the report from.
     // Closing second finds the page already moved off the record, and
     // lib/back-stack.ts leaves a record it is not standing on alone.
-    const SEE_MINE_ROUTE = '#profile?feedback';
+    const SEE_MINE_ROUTE = '#profile/your-requests';
     const openMine = () => {
       location.hash = SEE_MINE_ROUTE;
       closeFeedback();
@@ -232,8 +232,14 @@ export function init() {
     document.getElementById('feedback-sent-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-first-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-sent-done')?.addEventListener('click', closeFeedback);
-    const showSent = (notice) => {
+    // "Posted to Run Club" / "Posted to Homeroom" is the heading; the notice
+    // under it carries only what else happened (a bounty, the app's state),
+    // and says nothing when nothing did.
+    const sentTitle = document.getElementById('feedback-sent-title');
+    const showSent = (title, notice = '') => {
+      if (sentTitle) sentTitle.textContent = title;
       sentNotice.textContent = notice;
+      sentNotice.classList.toggle('hidden', !notice);
       feedbackForm.classList.add('hidden');
       sentSection.classList.remove('hidden');
       // Off the composer, as the first-feedback moment's focus() is: the
@@ -325,10 +331,13 @@ export function init() {
     const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600', 'hover:bg-violet-500'];
     const inactiveHoverClasses = ['hover:bg-zinc-100', 'dark:hover:bg-zinc-800'];
     const disabledTargetClasses = ['opacity-40', 'cursor-not-allowed'];
-    // #2707: the copy under the row while no destination is chosen. One
-    // literal, in one place, because the declared dapp.json check matches on
-    // this text — see tests/feedback-target-choice.test.js.
-    const CHOOSE_TARGET_HINT = 'Choose where this feedback goes.';
+    // #2888: the refusal under the row when Post request is pressed with no
+    // destination. It was also the grey prompt while the choice was open
+    // (#2707, "Choose where this feedback goes."); the row's label asks the
+    // question now, so this is only the refusal. One literal, in one place,
+    // because the declared dapp.json check matches on this text — see
+    // tests/feedback-target-choice.test.js.
+    const CHOOSE_TARGET_HINT = 'Choose where this goes.';
     // `feedbackBtn.disabled` means BUSY and nothing else: submitting, saved
     // for later, or behind the first-feedback confirmation. Taken by
     // disableSubmit(), and only the path that took it hands it back, with
@@ -366,22 +375,28 @@ export function init() {
       if (on) feedbackTargetHint.setAttribute('role', 'alert');
       else feedbackTargetHint.removeAttribute('role');
     };
+    // The line under the row, and the radiogroup pointed at it while it is up,
+    // the way the empty description points the textarea at
+    // #feedback-text-error.
+    const showTargetHint = (on) => {
+      feedbackTargetHint.textContent = on ? CHOOSE_TARGET_HINT : '';
+      feedbackTargetHint.classList.toggle('hidden', !on);
+      if (on) feedbackTargetGroup?.setAttribute('aria-describedby', 'feedback-target-hint');
+      else feedbackTargetGroup?.removeAttribute('aria-describedby');
+    };
     const setAwaitingTarget = (waiting) => {
       awaitingTarget = waiting;
-      feedbackTargetHint.textContent = waiting ? CHOOSE_TARGET_HINT : '';
-      feedbackTargetHint.classList.toggle('hidden', !waiting);
-      // Point the radiogroup at its own explanation, the way the empty
-      // description points the textarea at #feedback-text-error.
-      if (waiting) feedbackTargetGroup?.setAttribute('aria-describedby', 'feedback-target-hint');
-      else feedbackTargetGroup?.removeAttribute('aria-describedby');
-      // A fresh question is asked quietly; only a submit makes it an error.
+      // A fresh question is asked quietly, by the row's own label ("Where
+      // should this go?"); only a submit puts a line under it.
+      showTargetHint(false);
       paintTargetError(false);
     };
-    // #2888: Submit was pressed with no destination. Nothing is sent; the
-    // row says what is missing and takes focus, because it is the thing to
-    // fix — the first control, so the reading order agrees.
+    // #2888: Post request was pressed with no destination. Nothing is sent;
+    // the row says what is missing and takes focus, because it is the thing
+    // to fix — the first control, so the reading order agrees.
     const showTargetError = () => {
       setAwaitingTarget(true);
+      showTargetHint(true);
       paintTargetError(true);
       try { feedbackTargetApp.focus(); } catch { /* detached in tests */ }
     };
@@ -440,9 +455,22 @@ export function init() {
     // With only the platform reachable there is nothing to disambiguate, so
     // it stays selected and Submit is live on open. A tap that has exactly
     // one possible answer teaches people to tap past the question.
+    // The app option's two lines (UI overhaul): its NAME first, then "This
+    // app" under it, mirroring "Homeroom / The platform itself". With no name
+    // the first line says "This app" and the second goes; with no app open at
+    // all it says so.
+    const feedbackTargetAppName = document.getElementById('feedback-target-app-name');
+    const feedbackTargetAppSub = document.getElementById('feedback-target-app-sub');
+    const labelAppTarget = (appData) => {
+      const named = !!appData?.name;
+      if (feedbackTargetAppName) {
+        feedbackTargetAppName.textContent = named ? appData.name : (appData ? 'This app' : 'No app open');
+      }
+      feedbackTargetAppSub?.classList.toggle('hidden', !named);
+    };
     const applyTargetAvailability = (canTargetApp, appData) => {
       if (canTargetApp) {
-        feedbackTargetApp.textContent = appData?.name ? `This app (${appData.name})` : 'This app';
+        labelAppTarget(appData);
         setAppTargetEnabled(true);
         setFeedbackTarget(null);
         setAwaitingTarget(true);
@@ -450,9 +478,7 @@ export function init() {
         // With an app actually open (no repo yet, or self-hosted) keep
         // its name on the grayed label — "No app open" would be wrong
         // there. Only show "No app open" when no app is really open.
-        feedbackTargetApp.textContent = appData
-          ? (appData.name ? `This app (${appData.name})` : 'This app')
-          : 'No app open';
+        labelAppTarget(appData);
         setAppTargetEnabled(false);
         setAwaitingTarget(false);
         setFeedbackTarget('platform');
@@ -724,7 +750,7 @@ export function init() {
     // one lives on the field it is about, which is also where the fix is.
     const showDescriptionError = () => {
       if (!feedbackTextError) return;
-      feedbackTextError.textContent = 'Please add a description.';
+      feedbackTextError.textContent = 'Please say what should change.';
       feedbackTextError.classList.remove('hidden');
       feedbackText.setAttribute('aria-invalid', 'true');
       feedbackText.setAttribute('aria-describedby', 'feedback-text-error');
@@ -1109,7 +1135,7 @@ export function init() {
       // #2707: `submitBusy`, not `feedbackBtn.disabled`. They are the same
       // thing again since #2888 made Submit live while the destination row
       // waits, but the busy flag is the one that says what it means.
-      if (!submitBusy) feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
+      if (!submitBusy) feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Post request';
       const owned = feedbackStatus.classList.contains('hidden')
         || (queueLineText && feedbackStatus.textContent === queueLineText);
       if (!owned) return;
@@ -1320,7 +1346,7 @@ export function init() {
       if (titleGenTimer) { clearTimeout(titleGenTimer); titleGenTimer = null; }
       titleGenSeq++;
       feedbackTitle.placeholder = titleIdlePlaceholder;
-      disableSubmit(); feedbackBtn.textContent = 'Submitting...';
+      disableSubmit(); feedbackBtn.textContent = 'Posting…';
       const submittedPresentation = presentation;
       const submittedBy = App.user?.id;
       try {
@@ -1391,7 +1417,7 @@ export function init() {
         if (isOfflineNow()) {
           if (await saveForLater(body)) return;
           enableSubmit();
-          feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
+          feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Post request';
           return;
         }
         // #1054: the POST is caught on its own — narrowly — so a *transport*
@@ -1409,7 +1435,7 @@ export function init() {
         } catch (err) {
           if (await saveForLater(body)) return;
           enableSubmit();
-          feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
+          feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Post request';
           return;
         }
         const data = await res.json();
@@ -1437,12 +1463,12 @@ export function init() {
               bountyNotice = ` Couldn't add the bounty: ${data.bounty.error || 'the bounty could not be placed'}.`;
             }
           }
-          const filedAgainst = (target === 'app'
-            ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}`
-            : 'Thanks! Filed against Homeroom');
+          const postedTo = (target === 'app'
+            ? `Posted to ${AppView?.appData?.name || 'this app'}`
+            : 'Posted to Homeroom');
           // Both variants end the first sentence before appending, so the
           // bounty outcome reads as its own sentence either way.
-          feedbackStatus.textContent = `${filedAgainst}.${bountyNotice}${stateNotice}`;
+          feedbackStatus.textContent = `${postedTo}.${bountyNotice}${stateNotice}`;
           feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
@@ -1463,7 +1489,7 @@ export function init() {
           // already been filed — fixes #32. Both controls are
           // re-enabled when the modal is reopened below.
           setComposerLocked(true);
-          feedbackBtn.textContent = 'Submitted';
+          feedbackBtn.textContent = 'Posted';
           // #125: make the new issue show up in this app's "Open Issues"
           // panel without a reload. The server seeds its issues cache and
           // broadcasts an issue_update (handled in connectEvents) for
@@ -1476,10 +1502,10 @@ export function init() {
                 || (target === 'platform' && AppView?.appData?.self_hosted))) {
             AppView.refreshDevData('issue');
           }
-          // #3186: the confirmation stays, with "See your feedback" in it,
+          // #3186: the confirmation stays, with "See your requests" in it,
           // instead of closing itself (see showSent above).
           if (!showFirstFeedback(data.firstFeedback, feedbackStatus.textContent)) {
-            showSent(feedbackStatus.textContent);
+            showSent(postedTo, `${bountyNotice}${stateNotice}`.trim());
           }
           return;
         }
@@ -1495,7 +1521,7 @@ export function init() {
         feedbackStatus.classList.remove('hidden');
       }
       enableSubmit();
-      feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
+      feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Post request';
     };
 
     // The state half of "open the Send Feedback modal", called by the
@@ -1511,23 +1537,20 @@ export function init() {
       firstFeedback = null;
       // Every open hands back an editable composer (showFirstFeedback re-locks).
       setComposerLocked(false);
-      // QA 2026-09-24: the heading says what was asked for. The Workshop "+"
-      // menu's "File an issue" row opened a dialog headed "Send Feedback",
-      // which read as the wrong thing having opened. Same dialog either way;
-      // it passes `intent: 'issue'`, and every other way in is feedback.
-      const heading = feedbackForm?.querySelector('h2');
-      if (heading) heading.textContent = opts.intent === 'issue' ? 'File an issue' : 'Send feedback';
+      // The heading is "Ask for a change" from every way in (UI overhaul),
+      // so it is the markup's own and nothing renames it; `opts.intent`
+      // ('issue', from the hub's ⋯) is still accepted and changes nothing.
       firstSuccess?.classList.add('hidden');
       // #3186: the last filed report's confirmation never greets the next open.
       hideSent();
       feedbackForm?.classList.remove('hidden');
       // Opening a queued success must not consume a failed outbox draft or
       // start screenshot/title probes behind the confirmation.
-      if (opts.firstFeedback && showFirstFeedback(opts.firstFeedback, 'Your saved feedback has been sent.')) return;
+      if (opts.firstFeedback && showFirstFeedback(opts.firstFeedback, 'Your saved request has been posted.')) return;
       // #2707: clear the previous open's question (and #2888 its red) first;
       // the destination branch below asks again when it has to.
       setAwaitingTarget(false);
-      enableSubmit(); feedbackBtn.textContent = 'Submit';
+      enableSubmit(); feedbackBtn.textContent = 'Post request';
       feedbackStatus.classList.add('hidden');
       // #1603: a refusal from a previous open never greets the next one.
       clearDescriptionError();
@@ -1713,7 +1736,7 @@ export function init() {
       // same dialog, with the same unanswered row, is about to be presented
       // again.
       if (!captureInFlight) setAwaitingTarget(false);
-      enableSubmit(); feedbackBtn.textContent = 'Submit';
+      enableSubmit(); feedbackBtn.textContent = 'Post request';
       // #683: cancelling discards the attachments client-side; an already
       // uploaded (now orphaned) row is GC'd server-side after 24h. #3027: not
       // mid-capture, though — with room for several images, the ones already
@@ -1777,7 +1800,7 @@ export function init() {
     if (!readCaptureDraft()) return;
     bootDraftAnnounced = true;
     try {
-      PlatformUI?.toast?.('Your feedback draft was saved. Reopen Send feedback to finish it.');
+      PlatformUI?.toast?.('Your request draft was saved. Reopen Ask for a change to finish it.');
     } catch { /* the draft is in the stash either way */ }
   };
   App.noticeRescuedFeedbackDraft();
@@ -1820,13 +1843,13 @@ export function init() {
   App._simulateFirstFeedback = () => showFirstFeedback({
     userId: App.user?.id, appSlug: App.currentApp || 'usernode-2d5619',
     issueNumber: 900008, canFix: true,
-  }, 'Your feedback has been sent.');
+  }, 'Your request has been posted.');
 
   // #3186: ?shot=feedback-sent. The composer locks as a real send locks it,
   // and the confirmation reads what a platform report's does. Writes nothing.
   App._simulateFeedbackSent = () => {
     setComposerLocked(true);
     disableSubmit();
-    showSent('Thanks! Filed against Homeroom.');
+    showSent('Posted to Homeroom');
   };
 }
