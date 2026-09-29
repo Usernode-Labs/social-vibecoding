@@ -3,10 +3,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const visuals = require('../src/services/visuals');
-const fixtures = require('../src/services/visual-evidence-fixtures');
-const identities = require('../src/services/visual-evidence-identities');
+const fixtures = require('../src/services/shots-fixtures');
+const identities = require('../src/services/shots-identities');
 
-test('full-admin evidence token names only the identity installed in disposable clones', async () => {
+test('full-admin shots token names only the identity installed in disposable clones', async () => {
   const original = visuals.mintCaptureToken;
   const queries = [];
   visuals.mintCaptureToken = (user, appId) => `${appId}:${user.id}:${user.username}`;
@@ -23,7 +23,7 @@ test('full-admin evidence token names only the identity installed in disposable 
         ] };
       },
     };
-    const tokens = await identities.mintEvidenceAuthTokens(pool, 42);
+    const tokens = await identities.mintShotsAuthTokens(pool, 42);
     assert.equal(tokens.member, `42:10:${visuals.CAPTURE_USERNAME}`);
     assert.equal(tokens.read_only_admin, `42:11:${visuals.CAPTURE_ADMIN_USERNAME}`);
     assert.equal(tokens.full_admin,

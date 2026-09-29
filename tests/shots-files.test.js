@@ -1,16 +1,16 @@
 'use strict';
 
-// Before/after shots: the pure checks behind every file the preview agent
-// saves (src/services/visual-evidence-shots.js), and the fold of everything
+// Before/after shots: the pure checks behind every file the shots agent
+// saves (src/services/shots-files.js), and the fold of everything
 // saved into one result per declared change. Nothing here touches a
 // database, a browser or the network.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const contract = require('../src/services/visual-evidence-plan');
-const shots = require('../src/services/visual-evidence-shots');
-const fixtures = require('./fixtures/visual-evidence');
+const contract = require('../src/services/visible-changes');
+const shots = require('../src/services/shots-files');
+const fixtures = require('./fixtures/shots');
 
 const sha256 = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 
@@ -185,7 +185,7 @@ test('a change is ready only with a before and an after screen shot on every scr
   assert.deepEqual(summary.stories, [{
     id: 'invite-suggestions',
     status: 'skipped',
-    reason: 'The preview agent did not save the before shot on desktop, the after shot on desktop, '
+    reason: 'The shots agent did not save the before shot on desktop, the after shot on desktop, '
       + 'the before shot on mobile, the after shot on mobile.',
   }]);
   assert.equal(summary.readyCount, 0);
@@ -199,7 +199,7 @@ test('a change is ready only with a before and an after screen shot on every scr
   shot('mobile', 'before', 'element');
   summary = shots.summarize(intent, saved);
   assert.equal(summary.stories[0].status, 'skipped');
-  assert.equal(summary.stories[0].reason, 'The preview agent did not save the before shot on mobile.');
+  assert.equal(summary.stories[0].reason, 'The shots agent did not save the before shot on mobile.');
   assert.deepEqual(summary.files, []);
 
   shot('mobile', 'before');
@@ -220,7 +220,7 @@ test('a motion change also needs a before and an after clip', () => {
   assert.deepEqual(toast, {
     id: 'saved-toast',
     status: 'skipped',
-    reason: 'The preview agent did not save the before clip on desktop, the after clip on desktop.',
+    reason: 'The shots agent did not save the before clip on desktop, the after clip on desktop.',
   });
   save(saved, intent, { change: 'saved-toast', screen: 'desktop', side: 'before', kind: 'clip' }, fixtures.webm());
   save(saved, intent, { change: 'saved-toast', screen: 'desktop', side: 'after', kind: 'clip' }, fixtures.webm(4096));

@@ -5,28 +5,28 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
-const routes = require('../src/routes/visual-evidence');
-const fixtures = require('./fixtures/visual-evidence');
+const routes = require('../src/routes/shots');
+const fixtures = require('./fixtures/shots');
 const db = require('../src/db/pool');
 const appAccess = require('../src/services/app-access');
 const appAdmins = require('../src/services/app-admins');
 const github = require('../src/services/github');
-const orchestrator = require('../src/services/visual-evidence-orchestrator');
-const state = require('../src/services/visual-evidence-state');
+const orchestrator = require('../src/services/shots-orchestrator');
+const state = require('../src/services/shots-state');
 
-// Mounts the evidence routes over a fake pool with the given stubs, the way
+// Mounts the shots routes over a fake pool with the given stubs, the way
 // server.js does (JSON bodies parsed first), and restores every stub after.
-async function serve(t, { pool, user, config = { visualEvidence: { present: true, execute: true } }, stubs = [] }) {
+async function serve(t, { pool, user, config = { shots: { present: true, execute: true } }, stubs = [] }) {
   const saved = [[db, 'getPool', db.getPool], ...stubs.map(([target, key]) => [target, key, target[key]])];
   db.getPool = () => pool;
   for (const [target, key, value] of stubs) target[key] = value;
-  const routePath = require.resolve('../src/routes/visual-evidence');
+  const routePath = require.resolve('../src/routes/shots');
   delete require.cache[routePath];
-  const isolatedRoutes = require('../src/routes/visual-evidence');
+  const isolatedRoutes = require('../src/routes/shots');
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => { req.user = { id: user() }; next(); });
-  app.use(isolatedRoutes.visualEvidenceRoutes(config));
+  app.use(isolatedRoutes.shotsRoutes(config));
   const server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   t.after(() => {
@@ -34,7 +34,7 @@ async function serve(t, { pool, user, config = { visualEvidence: { present: true
     for (const [target, key, value] of saved) target[key] = value;
     delete require.cache[routePath];
   });
-  return `http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/evidence`;
+  return `http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/shots`;
 }
 
 test('retry of a no-impact claim settles as not required without reclassifying files', async (t) => {
@@ -44,23 +44,23 @@ test('retry of a no-impact claim settles as not required without reclassifying f
   const declaration = { version: 1, impact: 'none', rationale: 'Server-only change.', stories: [] };
   const session = {
     id: 42, app_id: 9, user_id: 7, source: 'imported', status: 'merged',
-    imported_pr_head_sha: head, visual_evidence_state: 'failed', visual_evidence_run_id: runId,
+    imported_pr_head_sha: head, shots_state: 'failed', shots_run_id: runId,
   };
   const oldRun = {
     id: runId, session_id: 42, base_sha: base, head_sha: head, state: 'failed',
     intent: declaration, current_run_id: runId,
-    failure_code: 'evidence_capture_incomplete',
+    failure_code: 'shots_capture_incomplete',
   };
   const inserted = [];
   const sessionUpdates = [];
   const pool = { query: async (sql, params) => {
     const text = String(sql);
     if (text.includes('FROM chat_sessions cs')) return { rows: [session] };
-    if (text.includes('FROM visual_evidence_runs r') && text.includes('JOIN chat_sessions s')) {
+    if (text.includes('FROM shot_runs r') && text.includes('JOIN chat_sessions s')) {
       return { rows: [oldRun] };
     }
-    if (text.includes('UPDATE visual_evidence_runs')) return { rowCount: 1, rows: [] };
-    if (text.includes('INSERT INTO visual_evidence_runs')) {
+    if (text.includes('UPDATE shot_runs')) return { rowCount: 1, rows: [] };
+    if (text.includes('INSERT INTO shot_runs')) {
       const row = {
         id: params[0], session_id: params[1], base_sha: params[2], head_sha: params[3],
         intent: JSON.parse(params[5]), state: params[6], trigger: params[7],
@@ -87,12 +87,12 @@ test('retry of a no-impact claim settles as not required without reclassifying f
     scheduled.push(options.headSha);
     return { scheduled: false, reason: 'not_required' };
   };
-  const routePath = require.resolve('../src/routes/visual-evidence');
+  const routePath = require.resolve('../src/routes/shots');
   delete require.cache[routePath];
-  const isolatedRoutes = require('../src/routes/visual-evidence');
+  const isolatedRoutes = require('../src/routes/shots');
   const app = express();
   app.use((req, _res, next) => { req.user = { id: 7 }; next(); });
-  app.use(isolatedRoutes.visualEvidenceRoutes({ visualEvidence: { execute: true } }));
+  app.use(isolatedRoutes.shotsRoutes({ shots: { execute: true } }));
   const server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   t.after(() => {
@@ -103,11 +103,11 @@ test('retry of a no-impact claim settles as not required without reclassifying f
     orchestrator.scheduleForSession = saved.schedule;
     delete require.cache[routePath];
   });
-  const url = `http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/evidence/rerun`;
+  const url = `http://127.0.0.1:${server.address().port}/api/apps/demo/proposals/42/shots/rerun`;
   const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   const body = await response.json();
   assert.equal(response.status, 202);
-  assert.equal(body.visualEvidenceState, 'not_required');
+  assert.equal(body.shotsState, 'not_required');
   assert.equal(inserted.length, 1);
   assert.equal(inserted[0].state, 'not_required', 'a zero-story declaration never becomes a shots run');
   assert.equal(sessionUpdates.at(-1).state, 'not_required');
@@ -140,8 +140,8 @@ test('run diagnostics are private to the author or app manager, available live, 
   const runId = '1'.repeat(32);
   const session = {
     id: 42, app_id: 9, user_id: 7, source: 'imported',
-    imported_pr_head_sha: head, visual_evidence_state: 'failed',
-    visual_evidence_run_id: runId,
+    imported_pr_head_sha: head, shots_state: 'failed',
+    shots_run_id: runId,
   };
   const stories = [
     { id: 'invite-suggestions', status: 'ready', files: 2 },
@@ -160,13 +160,13 @@ test('run diagnostics are private to the author or app manager, available live, 
     hard_verdict: { passed: true, mode: 'shots', runs: 1, stories },
     // Columns a replay-era row may still hold; none of them is read.
     replay_plan: { secret: 'must not escape' }, author_plan: { secret: 'must not escape' }, repair_attempt: 1,
-    failure_code: 'evidence_capture_incomplete', failure_reason: 'The preview agent could not reach the dialog.',
+    failure_code: 'shots_capture_incomplete', failure_reason: 'The shots agent could not reach the dialog.',
     trace_summary: {
       heartbeat: { processId: 'a'.repeat(16), poolWaiting: 3 },
-      idleWait: { version: 1, outcome: 'timeout', waitClass: 'evidence_recovery',
-        recoveryReason: 'evidence_turn', normalLimitMs: 120000, recoveryLimitMs: 240000,
+      idleWait: { version: 1, outcome: 'timeout', waitClass: 'shots_recovery',
+        recoveryReason: 'shots_turn', normalLimitMs: 120000, recoveryLimitMs: 240000,
         waitedMs: 240000, polls: 481, activeTurnPresent: true,
-        activeTurnMode: 'evidence', activeTurnPhase: 'cleanup_pending',
+        activeTurnMode: 'shots', activeTurnPhase: 'cleanup_pending',
         workerInFlight: false, workerMode: null },
       agentAttempts: 1,
       agentDispatches: [{ requestedBackend: 'codex_openrouter', requestedModel: 'glm-4', backend: 'claude_code', model: 'claude-sonnet', fallbackReason: 'model_without_tools', outcome: 'completed' }],
@@ -174,7 +174,7 @@ test('run diagnostics are private to the author or app manager, available live, 
       agentFinalResponse: { excerpt: 'I could not open the dialog.', characters: 28 },
       agentFinalResponses: [{ dispatch: 1, excerpt: 'The first attempt saved nothing.', characters: 32 }],
       tokenUsage: { inputTokens: 123 }, artifactBytes: 345,
-      failure: { phase: 'agent', code: 'evidence_capture_incomplete', tool: 'save_shot',
+      failure: { phase: 'agent', code: 'shots_capture_incomplete', tool: 'save_shot',
         toolCode: 'unknown_screen', toolMessage: 'Screen "tablet" is not declared.' },
       control: { saved: 2, skipped: ['empty-search'], skippedAll: false },
       // Replay-era trace fields are not passed through.
@@ -188,12 +188,12 @@ test('run diagnostics are private to the author or app manager, available live, 
   };
   const pool = { query: async (sql, params) => {
     if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
-    if (String(sql).includes('FROM visual_evidence_runs')) {
+    if (String(sql).includes('FROM shot_runs')) {
       assert.doesNotMatch(String(sql), /state IN/);
       assert.doesNotMatch(String(sql), /replay_plan|author_plan|repair_attempt/);
       return { rows: params[0] === runId && params[1] === session.id ? [run] : [] };
     }
-    if (String(sql).includes('FROM visual_evidence_artifacts')) {
+    if (String(sql).includes('FROM shot_artifacts')) {
       assert.deepEqual(params, [runId]);
       return { rows: [{
         story_id: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'context',
@@ -204,7 +204,7 @@ test('run diagnostics are private to the author or app manager, available live, 
   } };
   let userId = 7;
   const url = `${await serve(t, {
-    pool, user: () => userId, config: { visualEvidence: { present: true } },
+    pool, user: () => userId, config: { shots: { present: true } },
     stubs: [
       [appAccess, 'getAppForUser', async () => ({ id: 9, slug: 'demo' })],
       [appAdmins, 'canManageApp', async (_pool, app, user) => app.id === 9 && user.id === 8],
@@ -213,6 +213,10 @@ test('run diagnostics are private to the author or app manager, available live, 
   const ownerResponse = await fetch(url);
   assert.equal(ownerResponse.status, 200);
   assert.match(ownerResponse.headers.get('cache-control'), /no-store/);
+  // A tab still running the previous shell asks under the old name.
+  const legacy = await fetch(url.replace('/shots/diagnostics', '/evidence/diagnostics'));
+  assert.equal(legacy.status, 200);
+  assert.equal((await legacy.json()).diagnostics.runId, runId);
   const { diagnostics } = await ownerResponse.json();
   assert.equal(diagnostics.runId, runId);
   assert.equal(diagnostics.currentRun, true);
@@ -227,7 +231,7 @@ test('run diagnostics are private to the author or app manager, available live, 
   }
   assert.doesNotMatch(JSON.stringify(diagnostics), /must not escape/);
   assert.equal(diagnostics.trace.heartbeat.poolWaiting, 3);
-  assert.equal(diagnostics.trace.idleWait.waitClass, 'evidence_recovery');
+  assert.equal(diagnostics.trace.idleWait.waitClass, 'shots_recovery');
   assert.equal(diagnostics.trace.idleWait.activeTurnPhase, 'cleanup_pending');
   assert.match(diagnostics.observer.processId, /^[0-9a-f]{16}$/);
   assert.equal(diagnostics.observer.ownsRun, false);
@@ -257,7 +261,7 @@ test('run diagnostics are private to the author or app manager, available live, 
   assert.equal((await fetch(url)).status, 404);
   userId = 8;
   session.imported_pr_head_sha = 'd'.repeat(40);
-  session.visual_evidence_run_id = '2'.repeat(32);
+  session.shots_run_id = '2'.repeat(32);
   run.state = 'stale';
   assert.equal((await fetch(url)).status, 404);
   const historical = await fetch(`${url}?runId=${runId}`);
@@ -281,9 +285,9 @@ test('run diagnostics are private to the author or app manager, available live, 
   run.hard_verdict = { passed: true, runs: 2 };
   assert.deepEqual((await (await fetch(`${url}?runId=${runId}`)).json()).diagnostics.shotResults, []);
 
-  session.visual_evidence_run_id = null;
-  session.visual_evidence_state = 'planned';
-  session.visual_evidence_detail = { notStartedReason: 'No staging preview was built.' };
+  session.shots_run_id = null;
+  session.shots_state = 'planned';
+  session.shots_detail = { notStartedReason: 'No staging preview was built.' };
   const notStarted = (await (await fetch(url)).json()).diagnostics;
   assert.equal(notStarted.runId, null);
   assert.equal(notStarted.notStartedReason, 'No staging preview was built.');
@@ -291,17 +295,17 @@ test('run diagnostics are private to the author or app manager, available live, 
 });
 
 test('the binary route is authenticated, current-run fenced, exact-head fenced, and private', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/visual-evidence.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/shots.js'), 'utf8');
   assert.match(src, /loadContext\(pool, req\.params\.slug, id, req\.user, 'view'\)/);
-  assert.match(src, /!config\.visualEvidence\?\.present/);
-  assert.match(src, /s\.visual_evidence_run_id = r\.id/);
-  assert.match(src, /s\.visual_evidence_state = 'verified' AND r\.state = 'verified'/);
+  assert.match(src, /!config\.shots\?\.present/);
+  assert.match(src, /s\.shots_run_id = r\.id/);
+  assert.match(src, /s\.shots_state = 'verified' AND r\.state = 'verified'/);
   assert.match(src, /r\.head_sha = COALESCE/);
   assert.match(src, /Cache-Control': 'private, max-age=31536000, immutable'/);
   assert.match(src, /Vary: 'Cookie, Authorization'/);
   assert.match(src, /res\.status\(206\)/);
   assert.match(src, /res\.status\(416\)/);
-  assert.doesNotMatch(src, /\/visuals\//, 'evidence never uses the public legacy media route');
+  assert.doesNotMatch(src, /\/visuals\//, 'shots never uses the public legacy media route');
 });
 
 test('the diagnostic image route and the author plan route are gone', async (t) => {
@@ -310,8 +314,8 @@ test('the diagnostic image route and the author plan route are gone', async (t) 
   const runId = '1'.repeat(32);
   const session = {
     id: 42, app_id: 9, user_id: 7, status: 'active', source: 'imported',
-    imported_pr_head_sha: head, visual_evidence_run_id: runId, visual_evidence_state: 'failed',
-    visual_evidence_detail: { intent: fixtures.intent() },
+    imported_pr_head_sha: head, shots_run_id: runId, shots_state: 'failed',
+    shots_detail: { intent: fixtures.intent() },
   };
   const queries = [];
   const pool = { query: async (sql, params) => {
@@ -343,10 +347,10 @@ test('the diagnostic image route and the author plan route are gone', async (t) 
   assert.equal(plan.status, 404);
   assert.deepEqual(scheduled, [], 'no submitted plan starts a run');
   assert.deepEqual(reruns, []);
-  assert.ok(!queries.some((sql) => /visual_evidence_diagnostic_artifacts/.test(sql)));
+  assert.ok(!queries.some((sql) => /shot_diagnostic_artifacts/.test(sql)));
 
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/visual-evidence.js'), 'utf8');
-  assert.doesNotMatch(src, /evidence\/plan'|evidence\/diagnostics\/:artifactId|visual_evidence_diagnostic_artifacts|authorPlan/);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/shots.js'), 'utf8');
+  assert.doesNotMatch(src, /shots\/plan'|shots\/diagnostics\/:artifactId|shot_diagnostic_artifacts|authorPlan/);
 });
 
 test('rerun, stop and override keep their access rules', async (t) => {
@@ -354,8 +358,8 @@ test('rerun, stop and override keep their access rules', async (t) => {
   const runId = '2'.repeat(32);
   const session = {
     id: 42, app_id: 9, user_id: 7, status: 'active', source: 'imported',
-    imported_pr_head_sha: head, visual_evidence_run_id: runId, visual_evidence_state: 'failed',
-    visual_evidence_detail: { intent: fixtures.intent() },
+    imported_pr_head_sha: head, shots_run_id: runId, shots_state: 'failed',
+    shots_detail: { intent: fixtures.intent() },
   };
   const pool = { query: async (sql) => {
     if (String(sql).includes('FROM chat_sessions cs')) return { rows: [{ ...session }] };
@@ -394,7 +398,7 @@ test('rerun, stop and override keep their access rules', async (t) => {
   // The author takes the shots again for the same head.
   const rerun = await post('rerun');
   assert.equal(rerun.status, 202);
-  assert.deepEqual(rerun.body, { ok: true, runId: '3'.repeat(32), visualEvidenceState: 'planned' });
+  assert.deepEqual(rerun.body, { ok: true, runId: '3'.repeat(32), shotsState: 'planned' });
   assert.deepEqual(reruns, [{ id: runId, options: { trigger: 'manual-rerun', intent: null } }]);
   assert.deepEqual(scheduled.map(({ sessionId, headSha, trigger }) => ({ sessionId, headSha, trigger })),
     [{ sessionId: 42, headSha: head, trigger: 'manual-rerun' }]);
@@ -402,10 +406,11 @@ test('rerun, stop and override keep their access rules', async (t) => {
   // A replacement declaration is validated before anything is written.
   const invalid = fixtures.intent();
   invalid.stories[0].intent.startPath = 'https://evil.example/';
-  const refused = await post('rerun', { visualEvidence: invalid });
+  const refused = await post('rerun', { visibleChanges: invalid });
   assert.equal(refused.status, 400);
-  assert.equal(refused.body.error, 'invalid_visual_evidence');
+  assert.equal(refused.body.error, 'invalid_visible_changes');
   assert.equal(reruns.length, 1);
+  // The name the declaration had before the rename is still read.
   const replaced = await post('rerun', { visualEvidence: fixtures.motionIntent() });
   assert.equal(replaced.status, 202);
   assert.equal(reruns[1].options.intent.impact, 'motion');
@@ -421,7 +426,7 @@ test('rerun, stop and override keep their access rules', async (t) => {
   assert.equal((await post('override', { reason: 'Copy-only change.' })).status, 404, 'the author cannot waive their own shots');
   userId = 8;
   const waived = await post('override', { reason: 'Copy-only change.' });
-  assert.deepEqual(waived.body, { ok: true, runId, visualEvidenceState: 'overridden' });
+  assert.deepEqual(waived.body, { ok: true, runId, shotsState: 'overridden' });
   assert.deepEqual(overrides, [{ id: runId, options: { userId: 8, reason: 'Copy-only change.' } }]);
 
   // Anyone else sees no proposal at all.
@@ -435,8 +440,8 @@ test('rerun, stop and override keep their access rules', async (t) => {
 
   // With no current run there is nothing to waive.
   userId = 8;
-  session.visual_evidence_run_id = null;
+  session.shots_run_id = null;
   const missing = await post('override', { reason: 'Copy-only change.' });
   assert.equal(missing.status, 409);
-  assert.equal(missing.body.error, 'visual_evidence_run_missing');
+  assert.equal(missing.body.error, 'shots_run_missing');
 });

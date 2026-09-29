@@ -2,21 +2,21 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fixtures = require('../src/services/visual-evidence-fixtures');
+const fixtures = require('../src/services/shots-fixtures');
 
-test('evidence identities and rows cannot be created, inspected, or copied outside the run database', async () => {
+test('shots identities and rows cannot be created, inspected, or copied outside the run database', async () => {
   const input = {
     databaseUrl: 'postgres://usernode:localdev@127.0.0.1:5440/usernode',
     slug: 'usernode-2d5619', runId: '1'.repeat(32), side: 'base',
     selfAppSlug: 'usernode-2d5619',
   };
-  await assert.rejects(fixtures.ensureFullAdminIdentity(input), /isolated evidence database/);
-  await assert.rejects(fixtures.ensureHostedAppFixture(input), /isolated evidence database/);
-  await assert.rejects(fixtures.canCopyMemberAgentSession(input), /isolated evidence database/);
-  await assert.rejects(fixtures.copyMemberAgentSession(input), /isolated evidence database/);
+  await assert.rejects(fixtures.ensureFullAdminIdentity(input), /isolated shots database/);
+  await assert.rejects(fixtures.ensureHostedAppFixture(input), /isolated shots database/);
+  await assert.rejects(fixtures.canCopyMemberAgentSession(input), /isolated shots database/);
+  await assert.rejects(fixtures.copyMemberAgentSession(input), /isolated shots database/);
 });
 
-test('the hosted-app fixture is a public running row bound to the exact evidence run', async () => {
+test('the hosted-app fixture is a public running row bound to the exact shots run', async () => {
   const queries = [];
   const runId = 'a'.repeat(32);
   const client = {
@@ -34,7 +34,7 @@ test('the hosted-app fixture is a public running row bound to the exact evidence
   assert.equal(installed.appSlug, fixtures.hostedAppSlug(runId));
   assert.match(insert.sql, /'running'/);
   assert.match(insert.sql, /'public', 'public'/);
-  assert.deepEqual(JSON.parse(insert.params[2]).usernode_evidence_fixture, {
+  assert.deepEqual(JSON.parse(insert.params[2]).usernode_shots_fixture, {
     version: 1, runId, kind: 'hosted-app-bridge',
   });
 });
@@ -60,7 +60,7 @@ test('the hosted-app fixture refuses a cloned row that occupies its reserved ide
     /conflicts with cloned data/);
 });
 
-test('the isolated full-admin fixture includes self-app membership for channel evidence', async () => {
+test('the isolated full-admin fixture includes self-app membership for channel shots', async () => {
   const queries = [];
   const client = {
     async query(sql, params) {

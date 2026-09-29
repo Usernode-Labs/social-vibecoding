@@ -2,13 +2,13 @@
 
 // Exercise the actual import transaction's SQL with PostgreSQL. A recording
 // client cannot catch parameter-type errors or a declaration that is lost
-// between the uncommitted proposal row and its evidence pointer.
+// between the uncommitted proposal row and its shots pointer.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Client } = require('pg');
-const state = require('../src/services/visual-evidence-state');
-const contract = require('../src/services/visual-evidence-plan');
-const fixtures = require('./fixtures/visual-evidence');
+const state = require('../src/services/shots-state');
+const contract = require('../src/services/visible-changes');
+const fixtures = require('./fixtures/shots');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://usernode:localdev@127.0.0.1:5440/usernode';
@@ -21,17 +21,17 @@ test('the declaration and the proposal pointer commit together on real PostgreSQ
     t.skip(`PostgreSQL unavailable: ${error.code || error.message}`);
     return;
   }
-  const schema = `visual_evidence_import_${process.pid}_${Date.now()}`;
+  const schema = `shots_import_${process.pid}_${Date.now()}`;
   try {
     await client.query('BEGIN');
     await client.query(`CREATE SCHEMA ${schema}`);
     await client.query(`SET LOCAL search_path TO ${schema}`);
     await client.query(`CREATE TABLE chat_sessions (
-      id INTEGER PRIMARY KEY, visual_evidence_state VARCHAR(24),
-      visual_evidence_run_id VARCHAR(32), visual_evidence_detail JSONB,
-      visual_evidence_updated_at TIMESTAMPTZ
+      id INTEGER PRIMARY KEY, shots_state VARCHAR(24),
+      shots_run_id VARCHAR(32), shots_detail JSONB,
+      shots_updated_at TIMESTAMPTZ
     )`);
-    await client.query(`CREATE TABLE visual_evidence_runs (
+    await client.query(`CREATE TABLE shot_runs (
       id VARCHAR(32) PRIMARY KEY, session_id INTEGER NOT NULL,
       base_sha VARCHAR(40) NOT NULL, head_sha VARCHAR(40) NOT NULL,
       plan_version INTEGER NOT NULL, intent JSONB NOT NULL,
@@ -50,22 +50,22 @@ test('the declaration and the proposal pointer commit together on real PostgreSQ
     assert.equal(recorded.accepted, true);
     assert.equal(recorded.unchanged, false);
     assert.equal(recorded.state, 'planned');
-    assert.equal(recorded.runId, null, 'the preview agent\'s run is created later, not by the import');
+    assert.equal(recorded.runId, null, 'the shots agent\'s run is created later, not by the import');
 
     const row = (await client.query(
-      `SELECT visual_evidence_state, visual_evidence_run_id, visual_evidence_detail
+      `SELECT shots_state, shots_run_id, shots_detail
          FROM chat_sessions WHERE id = 42`
     )).rows[0];
-    assert.equal(row.visual_evidence_state, 'planned');
-    assert.equal(row.visual_evidence_run_id, null);
-    assert.deepEqual(row.visual_evidence_detail.intent, contract.parseIntent(declared),
+    assert.equal(row.shots_state, 'planned');
+    assert.equal(row.shots_run_id, null);
+    assert.deepEqual(row.shots_detail.intent, contract.parseIntent(declared),
       'the strictly parsed declaration survives the JSONB round trip');
-    assert.equal(row.visual_evidence_detail.headSha, headSha);
-    assert.equal(row.visual_evidence_detail.required, true);
-    assert.deepEqual(row.visual_evidence_detail.claims.map((claim) => claim.id),
+    assert.equal(row.shots_detail.headSha, headSha);
+    assert.equal(row.shots_detail.required, true);
+    assert.deepEqual(row.shots_detail.claims.map((claim) => claim.id),
       ['invite-suggestions', 'saved-toast']);
-    assert.equal(Object.hasOwn(row.visual_evidence_detail, 'authorPlan'), false);
-    const runs = await client.query('SELECT count(*)::int AS n FROM visual_evidence_runs');
+    assert.equal(Object.hasOwn(row.shots_detail, 'authorPlan'), false);
+    const runs = await client.query('SELECT count(*)::int AS n FROM shot_runs');
     assert.equal(runs.rows[0].n, 0, 'an import stores the declaration and no run');
 
     // A retried import of the same declaration is idempotent.
@@ -75,14 +75,14 @@ test('the declaration and the proposal pointer commit together on real PostgreSQ
     // A changed declaration cancels active work for the proposal, so shots
     // of the old declaration can never publish as current.
     await client.query(
-      `INSERT INTO visual_evidence_runs (id, session_id, base_sha, head_sha, plan_version, intent, state)
+      `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, plan_version, intent, state)
        VALUES ($1, 42, $2, $3, 1, $4::jsonb, 'exploring')`,
       ['1'.repeat(32), 'a'.repeat(40), headSha, JSON.stringify(contract.parseIntent(declared))]
     );
     const changed = await state.recordIntentInTransaction(client, 42, fixtures.intent(), { headSha });
     assert.equal(changed.unchanged, false);
     const cancelled = (await client.query(
-      'SELECT state, failure_code, completed_at FROM visual_evidence_runs WHERE id = $1', ['1'.repeat(32)]
+      'SELECT state, failure_code, completed_at FROM shot_runs WHERE id = $1', ['1'.repeat(32)]
     )).rows[0];
     assert.equal(cancelled.state, 'cancelled');
     assert.equal(cancelled.failure_code, 'intent_changed');

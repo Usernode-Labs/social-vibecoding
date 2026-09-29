@@ -3,9 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
-const { createServer, HTML, NONCE } = require('../evidence/hosted-app-fixture');
+const { createServer, HTML, NONCE } = require('../shots/hosted-app-fixture');
 
-test('the evidence hosted app is self-contained, healthy, and does not reflect launch credentials', async () => {
+test('the shots hosted app is self-contained, healthy, and does not reflect launch credentials', async () => {
   const server = createServer();
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');

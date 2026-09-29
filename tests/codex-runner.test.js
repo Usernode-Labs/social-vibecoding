@@ -157,35 +157,35 @@ test('runner: fresh and resumed GLM invocations put catalog limits into actual H
   assert.ok(requests.every(r => r.key === 'Bearer sk-or-v1-test'));
 });
 
-// Every preview (evidence) turn runs on Claude Code through run-cc.sh. The
-// Codex runner has no evidence mode, so it refuses one before it touches the
+// Every shots turn runs on Claude Code through run-cc.sh. The
+// Codex runner has no shots mode, so it refuses one before it touches the
 // workspace, writes a config, or starts Codex.
-test('runner: MODE=evidence is refused before anything starts', () => {
+test('runner: MODE=shots is refused before anything starts', () => {
   const { dir, env } = makeEnv('#!/bin/sh\necho "$*" >> "$INVOKE_LOG"\n');
   try {
     Object.assign(env, {
-      MODE: 'evidence',
-      EVIDENCE_JWT: 'test-evidence-jwt', EVIDENCE_RUN_ID: '1'.repeat(32),
-      EVIDENCE_MEMBER_TOKEN: 'member-token',
+      MODE: 'shots',
+      SHOTS_JWT: 'test-shots-jwt', SHOTS_RUN_ID: '1'.repeat(32),
+      SHOTS_MEMBER_TOKEN: 'member-token',
     });
     const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
     assert.notEqual(r.status, 0);
-    assert.match(r.stdout, /__USERNODE_ERROR__ evidence turns run on Claude Code \(run-cc\.sh\)/);
+    assert.match(r.stdout, /__USERNODE_ERROR__ shots turns run on Claude Code \(run-cc\.sh\)/);
     assert.doesNotMatch(r.stdout, /__USERNODE_PHASE__/, 'no phase ran');
-    assert.doesNotMatch(r.stdout + r.stderr, /member-token|test-evidence-jwt/);
+    assert.doesNotMatch(r.stdout + r.stderr, /member-token|test-shots-jwt/);
     assert.equal(fs.existsSync(env.INVOKE_LOG), false, 'Codex never ran');
     assert.equal(fs.existsSync(path.join(env.CODEX_HOME, 'config.toml')), false, 'no config was written');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
   // Nothing of the retired evidence path is left: no origin proxy or browser
-  // bootstrap, no shots bridge, no per-persona browsers, no evidence-only
-  // Codex settings. The build turn's intent tool (build-evidence-mcp.js) is
+  // bootstrap, no shots bridge, no per-persona browsers, no shots-only
+  // Codex settings. The build turn's intent tool (visible-changes-mcp.js) is
   // a different server and stays.
   const source = fs.readFileSync(RUNNER, 'utf8');
   assert.doesNotMatch(source,
-    /EVIDENCE_|(?<!build-)evidence-(?:origin-proxy|browser-bootstrap|browser-observer|hosted-origins|mcp)\.js|cleanup_evidence|\[mcp_servers\.(?:shots|browser_member|browser_admin|browser_full_admin)\]|developer_instructions|SYSTEM_PROMPT_FILE/);
-  assert.match(source, /args = \["\/usr\/local\/bin\/build-evidence-mcp\.js"\]/);
+    /SHOTS_|(?<!build-)evidence-(?:origin-proxy|browser-bootstrap|browser-observer|hosted-origins|mcp)\.js|cleanup_shots|\[mcp_servers\.(?:shots|browser_member|browser_admin|browser_full_admin)\]|developer_instructions|SYSTEM_PROMPT_FILE/);
+  assert.match(source, /args = \["\/usr\/local\/bin\/visible-changes-mcp\.js"\]/);
 });
 
 test('runner: only build and scout are accepted modes', () => {
@@ -490,11 +490,11 @@ exit 1
     'startup_timeout_sec = 30',
     'tool_timeout_sec = 60',
     '',
-    '[mcp_servers.visual_intent]',
+    '[mcp_servers.visible_changes]',
     'command = "node"',
-    'args = ["/usr/local/bin/build-evidence-mcp.js"]',
+    'args = ["/usr/local/bin/visible-changes-mcp.js"]',
     'env_vars = ["WORKER_JWT", "SESSION_ID", "PLATFORM_URL"]',
-    'enabled_tools = ["record_visual_evidence_intent"]',
+    'enabled_tools = ["declare_visible_changes"]',
     'startup_timeout_sec = 15',
     'tool_timeout_sec = 30',
     '',

@@ -249,18 +249,18 @@ test('before review the page is the same shape: the change’s own status in the
   assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Technical details'));
 });
 
-test('the picture: verified evidence keeps its card, a run under way is one line with the spinner, a failed one keeps its strip', () => {
+test('the picture: verified shots keeps its card, a run under way is one line with the spinner, a failed one keeps its strip', () => {
   const av = context();
   const claim = { claim: 'The preview waits for sign-in', viewports: ['desktop'], steps: ['Open a preview'] };
-  const building = render(av, { ...PR, visualEvidence: { state: 'exploring', claims: [claim], artifacts: [] } }).html;
-  assert.match(building, /<p class="dev-topic-hero-evidence" data-evidence-state="exploring"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking before\/after shots<\/span><\/p>/);
-  assert.ok(!building.includes('data-visual-evidence="1"'), 'no panel for a run still going');
-  const failed = render(av, { ...PR, visualEvidence: { state: 'failed', failureReason: 'The dialog never opened.', claims: [claim], artifacts: [] } }).html;
-  assert.match(failed, /<div class="dev-topic-evidence" data-evidence-state="failed"><span class="dev-badge bg-red-500\/10 text-red-700 dark:text-red-400">Couldn\u2019t take the shots<\/span>/);
-  assert.match(failed, /<span class="dev-topic-evidence-text">Couldn\u2019t take the shots\. The dialog never opened\.<\/span>/);
-  const verified = render(av, { ...PR, visualEvidence: { state: 'verified', claims: [claim], artifacts: [], baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) } }).html;
+  const building = render(av, { ...PR, shots: { state: 'exploring', claims: [claim], artifacts: [] } }).html;
+  assert.match(building, /<p class="dev-topic-hero-shots" data-shots-state="exploring"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking before &amp; after shots<\/span><\/p>/);
+  assert.ok(!building.includes('data-shots="1"'), 'no panel for a run still going');
+  const failed = render(av, { ...PR, shots: { state: 'failed', failureReason: 'The dialog never opened.', claims: [claim], artifacts: [] } }).html;
+  assert.match(failed, /<div class="dev-topic-shots" data-shots-state="failed"><span class="dev-badge bg-red-500\/10 text-red-700 dark:text-red-400">Couldn\u2019t take the shots<\/span>/);
+  assert.match(failed, /<span class="dev-topic-shots-text">Couldn\u2019t take the shots\. The dialog never opened\.<\/span>/);
+  const verified = render(av, { ...PR, shots: { state: 'verified', claims: [claim], artifacts: [], baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) } }).html;
   assert.match(verified, /<div class="dev-topic-visuals" data-visuals-scope="1"><div class="usn-visuals-body">/);
-  assert.ok(!verified.includes('dev-topic-hero-evidence'));
+  assert.ok(!verified.includes('dev-topic-hero-shots'));
 });
 
 test('an issue page keeps the card and the sections under it', () => {
@@ -328,21 +328,21 @@ const CLAIM = { claim: 'The preview waits for sign-in', viewports: ['desktop'], 
 test('a fresh planned run is in progress, and says so in the words the state uses', () => {
   const av = context();
   const evidence = { state: 'planned', updatedAt: ago(30 * 1000), claims: [CLAIM], artifacts: [] };
-  assert.equal(av._evidenceNotStarted(evidence), false);
-  const v = av._evidenceView(evidence);
-  assert.equal(v.label, 'Before/after shots queued');
+  assert.equal(av._shotsNotStarted(evidence), false);
+  const v = av._shotsView(evidence);
+  assert.equal(v.label, 'Before & after queued');
   assert.equal(v.notStarted, false);
-  assert.match(v.sentence, /^Before\/after shots: getting ready to take the shots\. Homeroom shows each declared change before and after, on this exact proposal build\.$/);
+  assert.match(v.sentence, /^Before & after: getting ready to take the shots\. Homeroom shows each declared change before and after, on this exact proposal build\.$/);
   // It is still a run under way, so the page keeps the quiet spinner line
   // rather than a panel that reads as a verdict.
-  const { html } = render(av, { ...PR, visualEvidence: evidence });
-  assert.match(html, /<p class="dev-topic-hero-evidence" data-evidence-state="planned"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking before\/after shots<\/span><\/p>/);
+  const { html } = render(av, { ...PR, shots: evidence });
+  assert.match(html, /<p class="dev-topic-hero-shots" data-shots-state="planned"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span>Taking before &amp; after shots<\/span><\/p>/);
 });
 
 test('a failed run quotes its reason as written and promises no shots', () => {
   const av = context();
-  const v = av._evidenceView({
-    state: 'failed', failureCode: 'evidence_capture_incomplete',
+  const v = av._shotsView({
+    state: 'failed', failureCode: 'shots_capture_incomplete',
     failureReason: 'API returned 500 on the members list.', claims: [CLAIM], artifacts: [],
   });
   assert.equal(v.sentence, 'Couldn\u2019t take the shots. API returned 500 on the members list.');
@@ -354,68 +354,68 @@ test('a planned run untouched past five minutes has not started: no spinner, the
   const evidence = {
     state: 'planned',
     updatedAt: ago(IDLE + 60 * 1000),
-    notStartedReason: 'Before/after shots are not being taken on this deployment.',
+    notStartedReason: 'Before & after shots are not being taken on this deployment.',
     claims: [CLAIM],
     artifacts: [],
   };
-  assert.equal(av._evidenceNotStarted(evidence), true);
-  const v = av._evidenceView(evidence);
-  assert.equal(v.label, 'Before/after shots not started');
+  assert.equal(av._shotsNotStarted(evidence), true);
+  const v = av._shotsView(evidence);
+  assert.equal(v.label, 'Before & after not started');
   assert.equal(v.notStarted, true);
   assert.match(v.sentence, /not being taken on this deployment\. None have been taken for this commit yet\.$/);
   assert.ok(!/Homeroom shows each declared change/.test(v.sentence),
     'a run that never started is not promising shots are being taken');
 
-  const { html } = render(av, { ...PR, visualEvidence: evidence });
+  const { html } = render(av, { ...PR, shots: evidence });
   assert.ok(!html.includes('dc-status-spinner-arc'), 'nothing spins on a run that is not moving');
-  assert.ok(!html.includes('Taking before/after shots'));
+  assert.ok(!html.includes('Taking before & after shots'));
   // The panel, not the one-line strip: this is the pending state with
   // something for the reader to do.
-  assert.match(html, /data-visual-evidence="1" data-evidence-state="planned"/);
-  assert.match(html, /Before\/after shots not started/);
-  assert.match(html, /Before\/after shots are not being taken on this deployment\./);
-  assert.match(html, /onclick="AppView\.rerunVisualEvidence\(4090, this\)">Take the shots again<\/button>/);
+  assert.match(html, /data-shots="1" data-shots-state="planned"/);
+  assert.match(html, /Before &amp; after not started/);
+  assert.match(html, /Before &amp; after shots are not being taken on this deployment\./);
+  assert.match(html, /onclick="AppView\.rerunShots\(4090, this\)">Take the shots again<\/button>/);
   assert.doesNotMatch(html, /Visual change preview|Retry visual/);
 });
 
 test('with no reason recorded the not-started state still stands on its own', () => {
   const av = context();
   const evidence = { state: 'planned', updatedAt: ago(IDLE + 1000), claims: [CLAIM], artifacts: [] };
-  const v = av._evidenceView(evidence);
-  assert.equal(v.label, 'Before/after shots not started');
+  const v = av._shotsView(evidence);
+  assert.equal(v.label, 'Before & after not started');
   assert.match(v.sentence, /nothing has picked this preview up yet/i);
 });
 
 test('an unknown or missing timestamp reads as still starting, never as stuck', () => {
   const av = context();
   for (const updatedAt of [undefined, null, '', 'not a date']) {
-    assert.equal(av._evidenceNotStarted({ state: 'planned', updatedAt }), false,
+    assert.equal(av._shotsNotStarted({ state: 'planned', updatedAt }), false,
       `a ${JSON.stringify(updatedAt)} timestamp must not be read as an idle run`);
   }
   // And the threshold itself is the five minutes that was asked for.
-  assert.equal(av.EVIDENCE_IDLE_MS, 5 * 60 * 1000);
-  assert.equal(av._evidenceNotStarted({ state: 'planned', updatedAt: ago(IDLE - 30 * 1000) }), false);
+  assert.equal(av.SHOTS_IDLE_MS, 5 * 60 * 1000);
+  assert.equal(av._shotsNotStarted({ state: 'planned', updatedAt: ago(IDLE - 30 * 1000) }), false);
   // Only 'planned' is ever read this way: the other pending states are
   // written by a run that is demonstrably executing.
   for (const state of ['provisioning', 'exploring', 'replaying', 'reviewing', 'failed', 'verified']) {
-    assert.equal(av._evidenceNotStarted({ state, updatedAt: ago(IDLE * 10) }), false, state);
+    assert.equal(av._shotsNotStarted({ state, updatedAt: ago(IDLE * 10) }), false, state);
   }
 });
 
 test('the card tag follows the same split, and only the moving one spins', () => {
   const av = context();
-  const reasons = (evidence) => av.blockReasons({ ...PR, visualEvidence: evidence })
-    .find((r) => r.key === 'visual_evidence');
+  const reasons = (evidence) => av.blockReasons({ ...PR, shots: evidence })
+    .find((r) => r.key === 'shots');
 
   const moving = reasons({ state: 'planned', updatedAt: ago(10 * 1000), required: true });
-  assert.equal(moving.label, 'Taking before/after shots');
+  assert.equal(moving.label, 'Taking before & after shots');
   assert.equal(moving.running, true);
 
   const stuck = reasons({
     state: 'planned', updatedAt: ago(IDLE + 1000), required: true,
     notStartedReason: 'No staging preview was built for this commit.',
   });
-  assert.equal(stuck.label, 'Before/after shots not started');
+  assert.equal(stuck.label, 'Before & after not started');
   assert.equal(stuck.running, false, 'the neutral in-flight tone is what read as "any moment now"');
   assert.equal(stuck.detail, 'No staging preview was built for this commit.');
 
@@ -424,35 +424,35 @@ test('the card tag follows the same split, and only the moving one spins', () =>
   assert.equal(failed.running, false);
   assert.equal(failed.detail, 'The dialog never opened.');
   const exploring = reasons({ state: 'exploring', updatedAt: ago(IDLE * 2), required: true });
-  assert.equal(exploring.label, 'Taking before/after shots');
+  assert.equal(exploring.label, 'Taking before & after shots');
   assert.equal(exploring.running, true);
   // A set that is neither moving nor failed (a newer commit made it stale)
   // still owes the proposal its shots.
   const stale = reasons({ state: 'stale', updatedAt: ago(IDLE * 2), required: true });
-  assert.equal(stale.label, 'Before/after shots needed');
+  assert.equal(stale.label, 'Before & after needed');
   assert.equal(stale.running, false);
-  assert.equal(stale.detail, 'This proposal has no before/after shots for its current commit yet.');
+  assert.equal(stale.detail, 'This proposal has no before & after shots for its current commit yet.');
   // Shots that are ready, waived or not needed owe nothing.
   for (const state of ['verified', 'overridden', 'not_required']) {
     assert.equal(reasons({ state, required: true }), undefined, state);
   }
 });
 
-test('every state reads in the before/after shots words', () => {
+test('every state reads in the before & after words', () => {
   const av = context();
-  const copy = (evidence) => av._evidenceStateCopy(evidence);
+  const copy = (evidence) => av._shotsStateCopy(evidence);
   const at = copy({ state: 'planned', updatedAt: ago(10 * 1000) });
-  assert.equal(at.planned[0], 'Before/after shots queued');
+  assert.equal(at.planned[0], 'Before & after queued');
   assert.equal(at.provisioning[0], 'Building before and after');
   assert.equal(at.exploring[0], 'Taking the shots');
   assert.equal(at.reviewing[0], 'Saving the shots');
   assert.equal(at.failed[0], 'Couldn\u2019t take the shots');
   assert.equal(at.stale[0], 'Shots are out of date');
   assert.equal(at.cancelled[0], 'Shots cancelled');
-  assert.equal(at.not_required[0], 'No before/after shots needed');
+  assert.equal(at.not_required[0], 'No before & after needed');
   assert.equal(at.overridden[0], 'Shots waived');
-  assert.equal(copy({ state: 'failed', failureCode: 'evidence_stopped' }).failed[0], 'Shots stopped');
+  assert.equal(copy({ state: 'failed', failureCode: 'shots_stopped' }).failed[0], 'Shots stopped');
   // A verified run's strip label is the card's badge.
-  assert.equal(av._evidenceView({ state: 'verified', claims: [CLAIM] }).label, 'Shots ready');
+  assert.equal(av._shotsView({ state: 'verified', claims: [CLAIM] }).label, 'Shots ready');
   assert.doesNotMatch(JSON.stringify(at), /visual change preview|visual preview/i);
 });

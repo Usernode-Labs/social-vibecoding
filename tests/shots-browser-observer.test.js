@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
-const { createObserver, lineTap, MARKER } = require('../worker/evidence-browser-observer');
+const { createObserver, lineTap, MARKER } = require('../worker/shots-browser-observer');
 
 test('browser boundary reports real pending/completion time and response shape without page content', () => {
   const events = [];
@@ -99,15 +99,15 @@ test('oversized screenshot responses still complete the browser call when the RP
 });
 
 test('observer forwards MCP JSON-RPC unchanged through a child server', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-browser-observer-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-browser-observer-'));
   const diagnosticFile = path.join(dir, 'diagnostics.log');
   fs.writeFileSync(diagnosticFile, '');
   try {
-    const observerPath = path.join(__dirname, '..', 'worker', 'evidence-browser-observer.js');
+    const observerPath = path.join(__dirname, '..', 'worker', 'shots-browser-observer.js');
     const stub = `process.stdin.setEncoding('utf8');let b='';process.stdin.on('data',c=>{b+=c;let i;while((i=b.indexOf('\\n'))>=0){const m=JSON.parse(b.slice(0,i));b=b.slice(i+1);process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text:'- heading \\"ok\\"'}]}})+'\\n')}});`;
     const launcher = `require(${JSON.stringify(observerPath)}).start({persona:'member',origins:['http://base.internal','http://head.internal'],binary:process.execPath,args:['-e',${JSON.stringify(stub)}]});`;
     const child = spawn(process.execPath, ['-e', launcher], {
-      env: { ...process.env, EVIDENCE_BROWSER_DIAGNOSTIC_FILE: diagnosticFile },
+      env: { ...process.env, SHOTS_BROWSER_DIAGNOSTIC_FILE: diagnosticFile },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const stdout = [];
@@ -133,8 +133,8 @@ test('observer forwards MCP JSON-RPC unchanged through a child server', async ()
   }
 });
 
-test('observer command-line entry point accepts the full-admin evidence persona', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-browser-observer-cli-'));
+test('observer command-line entry point accepts the full-admin shots persona', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-browser-observer-cli-'));
   const diagnosticFile = path.join(dir, 'diagnostics.log');
   const stubPath = path.join(dir, 'mcp-server-playwright');
   fs.writeFileSync(diagnosticFile, '');
@@ -153,12 +153,12 @@ process.stdin.on('data', chunk => {
 });
 `, { mode: 0o755 });
   try {
-    const observerPath = path.join(__dirname, '..', 'worker', 'evidence-browser-observer.js');
+    const observerPath = path.join(__dirname, '..', 'worker', 'shots-browser-observer.js');
     const child = spawn(process.execPath, [observerPath, 'full_admin'], {
       env: {
         ...process.env,
         PATH: `${dir}${path.delimiter}${process.env.PATH || ''}`,
-        EVIDENCE_BROWSER_DIAGNOSTIC_FILE: diagnosticFile,
+        SHOTS_BROWSER_DIAGNOSTIC_FILE: diagnosticFile,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -183,7 +183,7 @@ process.stdin.on('data', chunk => {
 });
 
 test('observer exits after a client stops the browser while stdin remains open', async () => {
-  const observerPath = path.join(__dirname, '..', 'worker', 'evidence-browser-observer.js');
+  const observerPath = path.join(__dirname, '..', 'worker', 'shots-browser-observer.js');
   const stub = `process.stdin.on('data',chunk=>{const m=JSON.parse(chunk.toString());process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{content:[]}})+'\\n')});`;
   const launcher = `require(${JSON.stringify(observerPath)}).start({persona:'member',binary:process.execPath,args:['-e',${JSON.stringify(stub)}]});`;
   const child = spawn(process.execPath, ['-e', launcher], { stdio: ['pipe', 'pipe', 'pipe'] });

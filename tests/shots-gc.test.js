@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const gc = require('../src/services/visual-evidence-gc');
+const gc = require('../src/services/shots-gc');
 
 test('recovery starts settled intent-only proposals once for their current checked head', async () => {
   const head = 'a'.repeat(40);
@@ -20,7 +20,7 @@ test('recovery starts settled intent-only proposals once for their current check
     queryText = String(sql);
     return { rows };
   } };
-  const result = await gc.recoverUnstarted({ visualEvidence: { execute: true } }, pool, {
+  const result = await gc.recoverUnstarted({ shots: { execute: true } }, pool, {
     schedule: async (_config, options) => {
       calls.push(options);
       return { scheduled: true };
@@ -29,7 +29,7 @@ test('recovery starts settled intent-only proposals once for their current check
   assert.deepEqual(result, { examined: 3, scheduled: 1 });
   assert.deepEqual(calls.map(({ sessionId, headSha, trigger }) => ({ sessionId, headSha, trigger })),
     [{ sessionId: 42, headSha: head, trigger: 'planned-recovery' }]);
-  assert.match(queryText, /visual_evidence_run_id IS NULL/);
+  assert.match(queryText, /shots_run_id IS NULL/);
   assert.match(queryText, /cs\.status IN \('active', 'promoted'\)/);
   assert.match(queryText, /cs\.check_state IN \('passing', 'failing', 'error', 'skipped'\)/);
   assert.match(queryText, /recoveryAttemptAt/);
@@ -39,14 +39,14 @@ test('recovery starts only run-less declarations and treats every stalled planne
   // Author-submitted plans are gone, so a planned run is never waiting on an
   // import-time plan: recovery neither schedules one nor spares it.
   const queries = [];
-  await gc.recoverUnstarted({ visualEvidence: { execute: true } }, { query: async (sql) => {
+  await gc.recoverUnstarted({ shots: { execute: true } }, { query: async (sql) => {
     queries.push(String(sql));
     return { rows: [] };
   } }, { schedule: async () => { throw new Error('nothing to schedule'); } });
-  assert.match(queries[0], /cs\.visual_evidence_run_id IS NULL/);
-  assert.doesNotMatch(queries[0], /author_plan|JOIN visual_evidence_runs/);
+  assert.match(queries[0], /cs\.shots_run_id IS NULL/);
+  assert.doesNotMatch(queries[0], /author_plan|JOIN shot_runs/);
   const interrupted = [];
-  await gc.recoverInterrupted({ visualEvidence: {} }, { query: async (sql) => {
+  await gc.recoverInterrupted({ shots: {} }, { query: async (sql) => {
     interrupted.push(String(sql));
     return { rows: [] };
   } });
@@ -64,7 +64,7 @@ test('an unlaunchable planned claim is deferred so it cannot starve later claims
     writes.push({ sql: String(sql), params });
     return { rows: [], rowCount: 1 };
   } };
-  const result = await gc.recoverUnstarted({ visualEvidence: { execute: true } }, pool, {
+  const result = await gc.recoverUnstarted({ shots: { execute: true } }, pool, {
     schedule: async () => ({ scheduled: false, reason: 'missing_base' }),
   });
   assert.deepEqual(result, { examined: 1, scheduled: 0 });
@@ -82,7 +82,7 @@ test('a rollout-interrupted run is retried on its current head, a bounded number
     return { rows: [
       { run_id: '1'.repeat(32), head_sha: head, id: 42, source: 'imported',
         imported_pr_head_sha: head, checks_commit_sha: head },
-      // A newer commit owns this proposal; its own checks start evidence.
+      // A newer commit owns this proposal; its own checks start shots.
       { run_id: '2'.repeat(32), head_sha: head, id: 43, source: 'imported',
         imported_pr_head_sha: newer, checks_commit_sha: newer },
       // Someone else retried it first: the rerun is refused and skipped.
@@ -92,12 +92,12 @@ test('a rollout-interrupted run is retried on its current head, a bounded number
   } };
   const reruns = [];
   const schedules = [];
-  const result = await gc.retryInterrupted({ visualEvidence: { execute: true } }, pool, {
+  const result = await gc.retryInterrupted({ shots: { execute: true } }, pool, {
     stateService: {
       rerunSameHead: async (_pool, runId, options) => {
         reruns.push({ runId, trigger: options.trigger });
         if (runId === '3'.repeat(32)) {
-          throw Object.assign(new Error('owner changed'), { code: 'stale_evidence_operation' });
+          throw Object.assign(new Error('owner changed'), { code: 'stale_shots_operation' });
         }
         return { id: '9'.repeat(32), head_sha: head, state: 'planned' };
       },
@@ -112,15 +112,15 @@ test('a rollout-interrupted run is retried on its current head, a bounded number
   assert.deepEqual(schedules.map(({ sessionId, headSha, trigger }) => ({ sessionId, headSha, trigger })),
     [{ sessionId: 42, headSha: head, trigger: 'interrupted-retry' }]);
   const { sql, params } = queries[0];
-  assert.match(sql, /r\.failure_code = 'evidence_run_interrupted'/);
-  assert.match(sql, /JOIN visual_evidence_runs r ON r\.id = cs\.visual_evidence_run_id/);
+  assert.match(sql, /r\.failure_code = 'shots_run_interrupted'/);
+  assert.match(sql, /JOIN shot_runs r ON r\.id = cs\.shots_run_id/);
   assert.match(sql, /cs\.status NOT IN \('merged', 'archived'\)/);
   assert.match(sql, /prior\.trigger = \$3\) < \$4/);
   assert.deepEqual(params.slice(2), ['interrupted-retry', gc.MAX_INTERRUPTED_RETRIES]);
   assert.equal(gc.MAX_INTERRUPTED_RETRIES, 2);
 
-  const disabled = await gc.retryInterrupted({ visualEvidence: { execute: false } }, {
-    query: async () => { throw new Error('must not query while evidence is disabled'); },
+  const disabled = await gc.retryInterrupted({ shots: { execute: false } }, {
+    query: async () => { throw new Error('must not query while shots is disabled'); },
   });
   assert.deepEqual(disabled, { examined: 0, scheduled: 0 });
 });
@@ -136,7 +136,7 @@ test('recovery releases an abandoned current run while preserving longer grace f
     }
     return { rows: [], rowCount: 1 };
   } };
-  const result = await gc.recoverInterrupted({ visualEvidence: { maxRunMs: 120_000 } }, pool, {
+  const result = await gc.recoverInterrupted({ shots: { maxRunMs: 120_000 } }, pool, {
     cleanup: async () => [],
     stateService: { transitionRun: async (_pool, runId, next, patch) => {
       transitions.push({ runId, next, patch });
@@ -147,7 +147,7 @@ test('recovery releases an abandoned current run while preserving longer grace f
   assert.match(queries[0].sql, /trace_summary.*\? 'progress'/s);
   assert.deepEqual(transitions.map(({ runId, next, patch }) =>
     ({ runId, next, code: patch.failureCode, minIdleMs: patch.recoveryMinIdleMs })),
-  [{ runId: id, next: 'failed', code: 'evidence_run_interrupted', minIdleMs: gc.LEGACY_RUN_GRACE_MS }]);
+  [{ runId: id, next: 'failed', code: 'shots_run_interrupted', minIdleMs: gc.LEGACY_RUN_GRACE_MS }]);
   assert.ok(queries.some(({ sql }) => sql.includes("'{cleanupComplete}'")));
 });
 
@@ -162,7 +162,7 @@ test('recovery retries cleanup left unfinished by a process exit', async () => {
     }
     return { rows: [], rowCount: 1 };
   } };
-  const result = await gc.recoverInterrupted({ visualEvidence: {} }, pool, {
+  const result = await gc.recoverInterrupted({ shots: {} }, pool, {
     cleanup: async () => { cleaned += 1; return []; },
   });
   assert.deepEqual(result, { examined: 0, failed: 0, cancelled: 0, cleanupRetried: 1 });
@@ -178,8 +178,8 @@ test('recovery leaves a renewed current run and its resources untouched', async 
       ? [{ id, current_run_id: id, app_slug: 'demo', trace_summary: { progress: { phase: 'build_revisions' } } }]
       : [],
   }) };
-  const result = await gc.recoverInterrupted({ visualEvidence: { maxRunMs: 720_000 } }, pool, {
-    stateService: { transitionRun: async () => { throw Object.assign(new Error('renewed'), { code: 'evidence_run_active' }); } },
+  const result = await gc.recoverInterrupted({ shots: { maxRunMs: 720_000 } }, pool, {
+    stateService: { transitionRun: async () => { throw Object.assign(new Error('renewed'), { code: 'shots_run_active' }); } },
     cleanup: async () => { cleanupCalls += 1; return []; },
   });
   assert.deepEqual(result, { examined: 1, failed: 0, cancelled: 0, cleanupRetried: 0 });
@@ -196,13 +196,13 @@ test('superseded recovery fences terminalization to its old owner and idle thres
     }
     return { rows: [], rowCount: 0 };
   } };
-  const result = await gc.recoverInterrupted({ visualEvidence: { maxRunMs: 720_000 } }, pool, {
+  const result = await gc.recoverInterrupted({ shots: { maxRunMs: 720_000 } }, pool, {
     cleanup: async () => { throw new Error('row was no longer stale'); },
   });
   assert.deepEqual(result, { examined: 1, failed: 0, cancelled: 0, cleanupRetried: 0 });
   const update = statements.find(({ sql }) => sql.includes("SET state = 'cancelled'"));
   assert.deepEqual(update.values, [300_000, gc.LEGACY_RUN_GRACE_MS, id]);
-  assert.match(update.sql, /s\.visual_evidence_run_id IS DISTINCT FROM r\.id/);
+  assert.match(update.sql, /s\.shots_run_id IS DISTINCT FROM r\.id/);
   assert.match(update.sql, /r\.updated_at < NOW\(\)/);
 });
 
@@ -215,26 +215,63 @@ test('retention uses configured windows and never deletes the current session-ow
     },
   };
   await gc.prune(pool, {
-    visualEvidence: { failedArtifactRetentionHours: 6, failedMetadataRetentionDays: 45 },
+    shots: { failedArtifactRetentionHours: 6, failedMetadataRetentionDays: 45 },
   });
   assert.deepEqual(calls.map((call) => call.params[0]), [6, gc.ROLLBACK_MEDIA_DAYS, 45]);
-  assert.match(calls[2].sql, /NOT EXISTS[\s\S]*visual_evidence_run_id = r\.id/);
+  assert.match(calls[2].sql, /NOT EXISTS[\s\S]*shots_run_id = r\.id/);
 });
 
-test('orphan checkout sweep removes only old, inactive, tightly named evidence directories', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'visual-evidence-gc-test-'));
+test('orphan checkout sweep removes only old, inactive, tightly named shots directories', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'shots-gc-test-'));
   try {
-    const active = 'usernode-evidence-aaaaaaaa-active';
-    const orphan = 'usernode-evidence-bbbbbbbb-orphan';
-    const unrelated = 'usernode-evidence-bad';
-    await Promise.all([active, orphan, unrelated].map((name) => fs.mkdir(path.join(root, name))));
+    const active = 'usernode-shots-aaaaaaaa-active';
+    const orphan = 'usernode-shots-bbbbbbbb-orphan';
+    // A checkout the previous release made, named before the rename.
+    const legacy = 'usernode-evidence-cccccccc-orphan';
+    const unrelated = 'usernode-shots-bad';
+    const names = [active, orphan, legacy, unrelated];
+    await Promise.all(names.map((name) => fs.mkdir(path.join(root, name))));
     const old = new Date(Date.now() - 120_000);
-    await Promise.all([active, orphan, unrelated].map((name) => fs.utimes(path.join(root, name), old, old)));
+    await Promise.all(names.map((name) => fs.utimes(path.join(root, name), old, old)));
     const pool = { query: async () => ({ rows: [{ id: 'aaaaaaaa' + '0'.repeat(24) }] }) };
     const result = await gc.sweepOrphanCheckouts(pool, { maxAgeMs: 60_000, tmpDir: root });
-    assert.equal(result.removed, 1);
+    assert.equal(result.removed, 2);
     assert.deepEqual((await fs.readdir(root)).sort(), [active, unrelated].sort());
   } finally {
     await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('cleanup of an interrupted run also removes what the previous release named it', async () => {
+  const applicationRuntime = require('../src/services/application-runtime');
+  const dbManager = require('../src/services/db-manager');
+  const saved = { mode: applicationRuntime.mode, remove: applicationRuntime.remove, drop: dbManager.dropDatabase,
+    release: dbManager.releasePreparedCloneSource };
+  const removed = [];
+  const dropped = [];
+  applicationRuntime.mode = () => 'kubernetes';
+  applicationRuntime.remove = async (_config, ref) => {
+    removed.push(ref.runtimeName);
+    if (ref.runtimeName.includes('-evidence-')) throw new Error('not found');
+  };
+  dbManager.dropDatabase = async (name) => { dropped.push(name); };
+  dbManager.releasePreparedCloneSource = async () => {};
+  try {
+    const runId = 'd'.repeat(32);
+    const errors = await gc.cleanupRunResources({}, { id: runId, app_slug: 'demo' });
+    assert.deepEqual(errors, [], 'a legacy name that is not there is not a cleanup failure');
+    assert.deepEqual(removed, [
+      'sv-shots-dddddddddddddddd-b', 'sv-evidence-dddddddddddddddd-b',
+      'sv-shots-dddddddddddddddd-h', 'sv-evidence-dddddddddddddddd-h',
+    ]);
+    assert.deepEqual(dropped.filter((name) => /_evidence_/.test(name)), [
+      dbManager.legacyShotsDbName('demo', runId, 'base'), dbManager.legacyShotsDbName('demo', runId, 'head'),
+    ]);
+    assert.equal(dropped.filter((name) => /_shots_/.test(name)).length, 2);
+  } finally {
+    applicationRuntime.mode = saved.mode;
+    applicationRuntime.remove = saved.remove;
+    dbManager.dropDatabase = saved.drop;
+    dbManager.releasePreparedCloneSource = saved.release;
   }
 });

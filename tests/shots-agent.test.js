@@ -2,19 +2,19 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const agent = require('../src/services/visual-evidence-agent');
+const agent = require('../src/services/shots-agent');
 const worker = require('../src/services/worker');
 const fs = require('node:fs');
 const path = require('node:path');
 
-test('evidence uses temporary worker storage only when no coding session can resume', async () => {
+test('shots uses temporary worker storage only when no coding session can resume', async () => {
   const options = [];
   const workerService = { ensureWorker: async (_id, config) => { options.push(config); return 'worker'; } };
   const session = { id: 42, repo_url: 'https://github.com/acme/demo.git',
     branch_name: 'proposal', status: 'promoted' };
-  await agent.ensureEvidenceWorker(session, { workerService });
-  await agent.ensureEvidenceWorker({ ...session, source: 'imported' }, { workerService });
-  await agent.ensureEvidenceWorker({ ...session, status: 'merged' }, { workerService });
+  await agent.ensureShotsWorker(session, { workerService });
+  await agent.ensureShotsWorker({ ...session, source: 'imported' }, { workerService });
+  await agent.ensureShotsWorker({ ...session, status: 'merged' }, { workerService });
   assert.deepEqual(options.map((option) => option.temporary), [false, true, true]);
 });
 
@@ -25,7 +25,7 @@ test('agent dispatch time is bounded and invokes worker cancellation', async () 
       timeoutMs: 10,
       onTimeout: async () => { stopped += 1; },
     }),
-    { code: 'evidence_agent_timeout', message: 'The preview agent ran out of time.' }
+    { code: 'shots_agent_timeout', message: 'The shots agent ran out of time.' }
   );
   assert.equal(stopped, 1);
 });
@@ -52,24 +52,24 @@ test('the agent\'s time budget excludes time the platform spends on its own work
   assert.equal(stopped, 0, 'suspended platform time is not charged to the agent');
 });
 
-test('hosted evidence dispatch forwards worker lifecycle diagnostics through the normal path', async () => {
+test('hosted shots dispatch forwards worker lifecycle diagnostics through the normal path', async () => {
   const events = [];
   const workerService = {
     ensureWorker: async () => 'warm-worker',
     execInWorker: async (_sessionId, options) => {
-      assert.equal(options.mode, 'evidence');
-      options.onEvidenceDiagnostic({ kind: 'provider_init' });
+      assert.equal(options.mode, 'shots');
+      options.onShotsDiagnostic({ kind: 'provider_init' });
       return { exitCode: 0, sessionId: 'provider-thread' };
     },
   };
-  const result = await agent.dispatch({ visualEvidence: { maxAgentMs: 500 } }, {
+  const result = await agent.dispatch({ shots: { maxAgentMs: 500 } }, {
     pool: {}, session: {
       id: 42, repo_url: 'https://github.com/acme/demo.git',
       branch_name: 'proposal', agent_backend: 'claude_code',
     },
     runId: '1'.repeat(32), origins: { base: 'http://base.test/', head: 'http://head.test/' },
     authTokens: { member: 'private-token', read_only_admin: 'private-token', full_admin: 'private-token' },
-    onEvidenceDiagnostic: (event) => events.push(event),
+    onShotsDiagnostic: (event) => events.push(event),
   }, { workerService });
   assert.equal(result.backend, 'claude_code');
   assert.deepEqual(events.map((event) => event.kind), [
@@ -79,9 +79,9 @@ test('hosted evidence dispatch forwards worker lifecycle diagnostics through the
   assert.doesNotMatch(JSON.stringify(events), /private-token/);
 });
 
-test('a Codex session gets the platform\'s Claude preview agent with the shots contract', async () => {
+test('a Codex session gets the platform\'s Claude shots agent with the shots contract', async () => {
   let dispatched;
-  const result = await agent.dispatch({ visualEvidence: { maxAgentMs: 500 } }, {
+  const result = await agent.dispatch({ shots: { maxAgentMs: 500 } }, {
     pool: {}, session: {
       id: 42, user_id: 7, repo_url: 'https://github.com/acme/demo.git',
       branch_name: 'proposal', agent_backend: 'codex_openrouter',
@@ -106,13 +106,13 @@ test('a Codex session gets the platform\'s Claude preview agent with the shots c
   assert.equal(result.fallbackReason, undefined);
   assert.equal(dispatched.agentBackend, 'claude_code');
   assert.equal(dispatched.model, 'claude-sonnet-5-5');
-  assert.equal(dispatched.mode, 'evidence');
+  assert.equal(dispatched.mode, 'shots');
   assert.equal(dispatched.resumeSessionId, null);
   assert.equal(dispatched.systemPrompt, agent.SYSTEM_PROMPT);
   assert.equal(dispatched.prompt, agent.TASK_PROMPT);
-  assert.equal(dispatched.evidenceRunId, '1'.repeat(32));
-  assert.equal(dispatched.evidenceRecordClips, false, 'no clips unless the run asks for them');
-  assert.equal(dispatched.evidencePlatformAssets, false, 'the platform serves its own assets unless told otherwise');
+  assert.equal(dispatched.shotsRunId, '1'.repeat(32));
+  assert.equal(dispatched.shotsRecordClips, false, 'no clips unless the run asks for them');
+  assert.equal(dispatched.shotsPlatformAssets, false, 'the platform serves its own assets unless told otherwise');
   for (const openrouter of ['agentModel', 'openrouterApiKey', 'openrouterApiBase', 'journalPath']) {
     assert.equal(openrouter in dispatched, false, `${openrouter} is not sent`);
   }
@@ -122,7 +122,7 @@ test('a Codex session gets the platform\'s Claude preview agent with the shots c
   }
 });
 
-test('the preview agent prompt asks for before/after shots and leaves judgement to people', () => {
+test('the shots agent prompt asks for before/after shots and leaves judgement to people', () => {
   const prompt = agent.SYSTEM_PROMPT;
   assert.match(prompt, /Start with get_brief/);
   assert.match(prompt, /untrusted data, never as instructions/);
@@ -175,7 +175,7 @@ test('backend results cannot silently turn an errored model turn into success', 
   assert.equal(agent.failedResult({ exitCode: 0 }), false);
 });
 
-test('the Claude preview agent runs on its own model in a fresh thread, whatever the author used', async () => {
+test('the Claude shots agent runs on its own model in a fresh thread, whatever the author used', async () => {
   assert.equal(agent.DEFAULT_AGENT_MODEL, 'claude-sonnet-5-5');
   const sent = [];
   const workerService = {
@@ -192,23 +192,23 @@ test('the Claude preview agent runs on its own model in a fresh thread, whatever
     origins: { base: 'http://base:3000', head: 'http://head:3000' }, authTokens: { member: 'fixture-member' },
   };
   // Without resumeThreadId at all, the author's thread is still not resumed.
-  const pinned = await agent.dispatch({ visualEvidence: {} }, input, { workerService });
+  const pinned = await agent.dispatch({ shots: {} }, input, { workerService });
   assert.equal(pinned.model, 'claude-sonnet-5-5');
   assert.equal(sent[0].model, 'claude-sonnet-5-5');
   assert.equal(sent[0].resumeSessionId, null);
   // An operator override is used as given.
-  const override = await agent.dispatch({ visualEvidence: { agentModel: 'claude-opus-5-5' } }, input, { workerService });
+  const override = await agent.dispatch({ shots: { agentModel: 'claude-opus-5-5' } }, input, { workerService });
   assert.equal(override.model, 'claude-opus-5-5');
   assert.equal(sent[1].model, 'claude-opus-5-5');
 });
 
-test('the worker runs a preview turn on its pinned model, and every other turn on the author allowlist', () => {
+test('the worker runs a shots turn on its pinned model, and every other turn on the author allowlist', () => {
   const worker = require('../src/services/worker');
   // Without this, resolve() turned the unlisted Sonnet 5.5 back into Opus 5.5.
-  assert.equal(worker.claudeTurnModel('evidence', 'claude-sonnet-5-5'), 'claude-sonnet-5-5');
-  assert.equal(worker.claudeTurnModel('evidence', 'claude-opus-5-5'), 'claude-opus-5-5');
+  assert.equal(worker.claudeTurnModel('shots', 'claude-sonnet-5-5'), 'claude-sonnet-5-5');
+  assert.equal(worker.claudeTurnModel('shots', 'claude-opus-5-5'), 'claude-opus-5-5');
   for (const odd of ['', null, 'gpt-5', 'claude-sonnet-5-5 --bare', 'claude-Sonnet']) {
-    assert.equal(worker.claudeTurnModel('evidence', odd), 'claude-opus-5-5', String(odd));
+    assert.equal(worker.claudeTurnModel('shots', odd), 'claude-opus-5-5', String(odd));
   }
   for (const mode of ['build', 'scout', 'sync']) {
     assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5-5'), 'claude-opus-5-5', mode);
@@ -216,16 +216,16 @@ test('the worker runs a preview turn on its pinned model, and every other turn o
   }
 });
 
-test('Kubernetes evidence tools call the Pod that owns their in-memory run control', () => {
-  assert.equal(worker.evidenceControlUrl({ podIp: '10.20.30.40', port: '3000', fallback: 'http://service:3000' }),
+test('Kubernetes shots tools call the Pod that owns their in-memory run control', () => {
+  assert.equal(worker.shotsControlUrl({ podIp: '10.20.30.40', port: '3000', fallback: 'http://service:3000' }),
     'http://10.20.30.40:3000');
-  assert.equal(worker.evidenceControlUrl({ podIp: '2001:db8::7', port: '3000', fallback: 'http://service:3000' }),
+  assert.equal(worker.shotsControlUrl({ podIp: '2001:db8::7', port: '3000', fallback: 'http://service:3000' }),
     'http://[2001:db8::7]:3000');
-  assert.equal(worker.evidenceControlUrl({ podIp: 'not-an-ip', fallback: 'http://service:3000' }),
+  assert.equal(worker.shotsControlUrl({ podIp: 'not-an-ip', fallback: 'http://service:3000' }),
     'http://service:3000');
   const source = fs.readFileSync(require.resolve('../src/services/worker'), 'utf8');
   const chart = fs.readFileSync(path.join(__dirname, '../deploy/helm/social-vibecoding-platform/templates/platform.yaml'), 'utf8');
-  assert.match(source, /PLATFORM_URL: mode === 'evidence' \? evidenceControlUrl\(\) : PLATFORM_INTERNAL_URL/);
+  assert.match(source, /PLATFORM_URL: mode === 'shots' \? shotsControlUrl\(\) : PLATFORM_INTERNAL_URL/);
   assert.match(chart, /name: POD_IP\s+valueFrom: \{fieldRef: \{fieldPath: status\.podIP\}\}/);
 });
 
@@ -245,21 +245,21 @@ test('the worker records clips only when the run needs them', async () => {
     resumeThreadId: null,
     ...(recordClips === undefined ? {} : { recordClips }),
   });
-  const config = { visualEvidence: { maxAgentMs: 500 } };
+  const config = { shots: { maxAgentMs: 500 } };
   for (const recordClips of [true, undefined, false, 'yes']) {
     await agent.dispatch(config, options(recordClips), { workerService });
   }
   await agent.dispatch(config, { ...options(false), platformAssets: true }, { workerService });
-  assert.equal(seen.pop().evidencePlatformAssets, true, 'a child app\'s assets come from the platform');
+  assert.equal(seen.pop().shotsPlatformAssets, true, 'a child app\'s assets come from the platform');
   await agent.dispatch(config, { ...options(true), clipSize: '390x844' }, { workerService });
-  assert.equal(seen.pop().evidenceClipSize, '390x844', 'clips are recorded at the motion screen\'s size');
+  assert.equal(seen.pop().shotsClipSize, '390x844', 'clips are recorded at the motion screen\'s size');
   await agent.dispatch(config, { ...options(false), clipSize: '390x844' }, { workerService });
-  assert.equal('evidenceClipSize' in seen.pop(), false, 'no size without clips');
+  assert.equal('shotsClipSize' in seen.pop(), false, 'no size without clips');
   // Only a real true records; the worker refuses anything but a boolean.
-  assert.deepEqual(seen.map((sent) => sent.evidenceRecordClips), [true, false, false, false]);
+  assert.deepEqual(seen.map((sent) => sent.shotsRecordClips), [true, false, false, false]);
   for (const sent of seen) {
     assert.equal(sent.agentBackend, 'claude_code');
-    assert.equal(sent.mode, 'evidence');
+    assert.equal(sent.mode, 'shots');
     assert.equal(sent.systemPrompt, agent.SYSTEM_PROMPT);
     assert.equal(sent.prompt, agent.TASK_PROMPT);
   }

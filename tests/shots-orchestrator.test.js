@@ -6,14 +6,14 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const contract = require('../src/services/visual-evidence-plan');
-const controlPlane = require('../src/services/visual-evidence-control');
-const shots = require('../src/services/visual-evidence-shots');
-const orchestrator = require('../src/services/visual-evidence-orchestrator');
+const contract = require('../src/services/visible-changes');
+const controlPlane = require('../src/services/shots-control');
+const shots = require('../src/services/shots-files');
+const orchestrator = require('../src/services/shots-orchestrator');
 const logger = require('../src/services/logger');
-const fixtures = require('./fixtures/visual-evidence');
+const fixtures = require('./fixtures/shots');
 
-test('evidence and staging use the same UI file classifier', () => {
+test('shots and staging use the same UI file classifier', () => {
   const serverOnly = [
     'src/routes/notifications.js', 'src/services/mobile-push-badge.js',
     'tests/mobile-push-badge.test.js',
@@ -45,7 +45,7 @@ function virtualWaitClock() {
   };
 }
 
-test('an ordinary coding turn keeps the normal evidence start deadline', async () => {
+test('an ordinary coding turn keeps the normal shots start deadline', async () => {
   const clock = virtualWaitClock();
   const pool = { query: async () => ({ rows: [{ active_turn: {
     mode: 'build', phase: 'executing',
@@ -58,7 +58,7 @@ test('an ordinary coding turn keeps the normal evidence start deadline', async (
     wait: clock.wait,
     workerService: { isInFlight: () => true, getActiveTurnMode: () => 'build' },
   }), (error) => {
-    assert.equal(error.code, 'evidence_agent_busy');
+    assert.equal(error.code, 'shots_agent_busy');
     assert.deepEqual(error.detail.idleWait, {
       version: 1, outcome: 'timeout', waitClass: 'session_busy', recoveryReason: null,
       normalLimitMs: 20, recoveryLimitMs: 50, waitedMs: 20, polls: 3,
@@ -69,11 +69,11 @@ test('an ordinary coding turn keeps the normal evidence start deadline', async (
   });
 });
 
-test('an interrupted evidence turn may finish cleanup after the normal deadline', async () => {
+test('an interrupted shots turn may finish cleanup after the normal deadline', async () => {
   const clock = virtualWaitClock();
   const pool = { query: async () => ({ rows: [{
     active_turn: clock.now() < 30
-      ? { mode: 'evidence', phase: 'cleanup_pending' }
+      ? { mode: 'shots', phase: 'cleanup_pending' }
       : null,
   }] }) };
   const result = await orchestrator.waitForSessionIdle(pool, 42, {
@@ -85,18 +85,18 @@ test('an interrupted evidence turn may finish cleanup after the normal deadline'
     workerService: { isInFlight: () => false, getActiveTurnMode: () => null },
   });
   assert.deepEqual(result, {
-    version: 1, outcome: 'idle', waitClass: 'evidence_recovery',
-    recoveryReason: 'evidence_turn', normalLimitMs: 20, recoveryLimitMs: 50,
+    version: 1, outcome: 'idle', waitClass: 'shots_recovery',
+    recoveryReason: 'shots_turn', normalLimitMs: 20, recoveryLimitMs: 50,
     waitedMs: 30, polls: 4, activeTurnPresent: false,
     activeTurnMode: null, activeTurnPhase: null, workerInFlight: false, workerMode: null,
   });
 });
 
-test('a stuck evidence cleanup fails at the extended deadline with diagnostics', async () => {
+test('a stuck shots cleanup fails at the extended deadline with diagnostics', async () => {
   const clock = virtualWaitClock();
   const observations = [];
   const pool = { query: async () => ({ rows: [{ active_turn: {
-    mode: 'evidence', phase: 'cleanup_pending',
+    mode: 'shots', phase: 'cleanup_pending',
   } }] }) };
   await assert.rejects(orchestrator.waitForSessionIdle(pool, 42, {
     timeoutMs: 20,
@@ -107,8 +107,8 @@ test('a stuck evidence cleanup fails at the extended deadline with diagnostics',
     onObservation: (observation) => observations.push(observation),
     workerService: { isInFlight: () => false, getActiveTurnMode: () => null },
   }), (error) => {
-    assert.equal(error.code, 'evidence_agent_busy');
-    assert.equal(error.detail.idleWait.waitClass, 'evidence_recovery');
+    assert.equal(error.code, 'shots_agent_busy');
+    assert.equal(error.detail.idleWait.waitClass, 'shots_recovery');
     assert.equal(error.detail.idleWait.waitedMs, 40);
     assert.equal(error.detail.idleWait.polls, 5);
     assert.equal(error.detail.idleWait.outcome, 'timeout');
@@ -137,7 +137,7 @@ function saveClips(control, change) {
   }
 }
 
-// The control plane the preview agent reaches through the internal routes.
+// The control plane the shots agent reaches through the internal routes.
 function controlFor(options) {
   return controlPlane.forRequest({ runId: options.runId, sessionId: 42 });
 }
@@ -191,7 +191,7 @@ function setup({ dispatch, storeArtifacts } = {}) {
       transitionRun: async (_pool, _runId, next, patch) => {
         // Like the database, a settled run refuses any further transition.
         if (['failed', 'verified', 'cancelled'].includes(currentState)) {
-          throw Object.assign(new Error('The run already settled.'), { code: 'invalid_evidence_transition' });
+          throw Object.assign(new Error('The run already settled.'), { code: 'invalid_shots_transition' });
         }
         transitions.push({ next, patch });
         order.push(`state:${next}`);
@@ -215,8 +215,8 @@ function setup({ dispatch, storeArtifacts } = {}) {
       },
       cleanupPair: async () => { calls.cleaned += 1; order.push('cleanup'); },
     },
-    identities: { mintEvidenceAuthTokens: async () => { calls.minted += 1; return { ...TOKENS }; } },
-    evidenceAgent: {
+    identities: { mintShotsAuthTokens: async () => { calls.minted += 1; return { ...TOKENS }; } },
+    shotsAgent: {
       dispatch: async (_config, options) => {
         calls.dispatches += 1;
         if (dispatch) return dispatch(options, calls.dispatches);
@@ -225,7 +225,7 @@ function setup({ dispatch, storeArtifacts } = {}) {
         return { backend: 'claude_code', threadId: 'thread-1' };
       },
     },
-    evidenceControl: controlPlane,
+    shotsControl: controlPlane,
     worker: {
       isInFlight: () => false,
       getActiveTurnMode: () => turnMode,
@@ -244,7 +244,7 @@ function setup({ dispatch, storeArtifacts } = {}) {
 async function execute(fixture, options = {}) {
   controlPlane._clearForTests();
   return orchestrator.executeRun({
-    visualEvidence: {
+    shots: {
       maxRunMs: 60_000,
       maxAgentMs: options.maxAgentMs || 10_000,
     },
@@ -263,28 +263,28 @@ async function execute(fixture, options = {}) {
 test('an idle-wait failure is retained in the durable run trace before any model call', async () => {
   const fixture = setup();
   const waiting = {
-    version: 1, outcome: 'waiting', waitClass: 'evidence_recovery',
-    recoveryReason: 'evidence_turn', normalLimitMs: 120_000, recoveryLimitMs: 240_000,
+    version: 1, outcome: 'waiting', waitClass: 'shots_recovery',
+    recoveryReason: 'shots_turn', normalLimitMs: 120_000, recoveryLimitMs: 240_000,
     waitedMs: 239_500, polls: 480, activeTurnPresent: true,
-    activeTurnMode: 'evidence', activeTurnPhase: 'cleanup_pending',
+    activeTurnMode: 'shots', activeTurnPhase: 'cleanup_pending',
     workerInFlight: false, workerMode: null,
   };
   const timeout = { ...waiting, outcome: 'timeout', waitedMs: 240_000, polls: 481 };
   fixture.dependencies.waitForSessionIdle = async (_pool, _sessionId, options) => {
     options.onObservation(waiting);
-    throw Object.assign(new Error('The previous evidence worker is still clearing.'), {
-      code: 'evidence_agent_busy', detail: { idleWait: timeout },
+    throw Object.assign(new Error('The previous shots worker is still clearing.'), {
+      code: 'shots_agent_busy', detail: { idleWait: timeout },
     });
   };
 
-  await assert.rejects(execute(fixture), { code: 'evidence_agent_busy' });
+  await assert.rejects(execute(fixture), { code: 'shots_agent_busy' });
   assert.deepEqual(fixture.transitions.map((entry) => entry.next), ['failed']);
   const trace = fixture.transitions.at(-1).patch.traceSummary;
   assert.deepEqual(trace.idleWait, timeout);
   // The error's own detail is kept, bounded, for the owner's diagnostics.
   assert.deepEqual(trace.failure, {
-    phase: 'wait_for_idle', code: 'evidence_agent_busy',
-    message: 'The previous evidence worker is still clearing.',
+    phase: 'wait_for_idle', code: 'shots_agent_busy',
+    message: 'The previous shots worker is still clearing.',
     detail: { idleWait: timeout },
   });
   assert.equal(Object.hasOwn(trace, 'control'), false, 'no run control existed yet');
@@ -297,13 +297,13 @@ test('a UI-classified no-story declaration fails before provisioning or agent di
   fixture.run.intent = contract.parseIntent({
     version: 1, impact: 'none', rationale: 'Only an error state changes.', stories: [],
   });
-  await assert.rejects(execute(fixture), { code: 'visual_evidence_intent_conflict' });
+  await assert.rejects(execute(fixture), { code: 'visible_changes_conflict' });
   assert.equal(fixture.calls.dispatches, 0);
   assert.equal(fixture.calls.cleaned, 0);
   assert.deepEqual(fixture.transitions.map((entry) => entry.next), ['failed']);
 });
 
-// ── One run, end to end: the preview agent saves through RunControl ─────
+// ── One run, end to end: the shots agent saves through RunControl ─────
 
 test('every declared change saved publishes the ready files, tears the builds down, then verifies', async () => {
   let stored = null;
@@ -340,7 +340,7 @@ test('every declared change saved publishes the ready files, tears the builds do
   assert.equal(dispatchOptions.recordClips, false, 'no declared change is motion');
   assert.equal(dispatchOptions.clipSize, null);
   assert.equal(dispatchOptions.resumeThreadId, null);
-  assert.equal('forceBackend' in dispatchOptions, false, 'there is one preview agent');
+  assert.equal('forceBackend' in dispatchOptions, false, 'there is one shots agent');
   assert.equal(dispatchOptions.platformAssets, true, 'a child app loads the platform\'s assets through the proxy');
   assert.ok(dispatchOptions.timeoutMs > 0 && dispatchOptions.timeoutMs <= 10_000);
   assert.deepEqual(dispatchOptions.navigationHints.intentPaths, ['/lists/demo', '/lists/demo']);
@@ -382,7 +382,7 @@ test('every declared change saved publishes the ready files, tears the builds do
   assert.deepEqual(verified.hardVerdict, reviewing.hardVerdict);
   assert.equal(verified.traceSummary.planHash, manifestHash);
   assert.equal(verified.traceSummary.runs, 1);
-  assert.equal(verified.traceSummary.planSource, 'preview_agent');
+  assert.equal(verified.traceSummary.planSource, 'shots_agent');
   assert.equal(verified.traceSummary.terminalFailureClass, null);
   assert.equal(verified.traceSummary.artifactBytes,
     stored.artifacts.reduce((sum, file) => sum + file.bytes, 0));
@@ -434,13 +434,13 @@ test('nothing saved and a change skipped fails as incomplete with the skip reaso
     },
   });
   await assert.rejects(execute(fixture), (error) => {
-    assert.equal(error.code, 'evidence_capture_incomplete');
+    assert.equal(error.code, 'shots_capture_incomplete');
     assert.match(error.message, /Before never loads the members list/);
     return true;
   });
   assert.deepEqual(fixture.transitions.map((entry) => entry.next), ['provisioning', 'exploring', 'failed']);
   const failed = fixture.transitions.at(-1).patch;
-  assert.equal(failed.failureCode, 'evidence_capture_incomplete');
+  assert.equal(failed.failureCode, 'shots_capture_incomplete');
   assert.match(failed.failureReason, /Before never loads the members list/);
   assert.equal(failed.traceSummary.failure.phase, 'agent_exploration');
   assert.deepEqual(failed.traceSummary.control, { savedFiles: 0, skippedChanges: 1, notedChanges: 0, skippedAll: false });
@@ -456,7 +456,7 @@ test('skipping every change at once fails with the one shared reason', async () 
     },
   });
   fixture.run.intent = twoChangeIntent();
-  await assert.rejects(execute(fixture), { code: 'evidence_capture_incomplete' });
+  await assert.rejects(execute(fixture), { code: 'shots_capture_incomplete' });
   const failed = fixture.transitions.at(-1).patch;
   assert.equal(failed.failureReason, 'Every screen shows the sign-in page.',
     'the shared reason is said once, not once per change');
@@ -466,16 +466,16 @@ test('skipping every change at once fails with the one shared reason', async () 
 test('nothing saved, nothing skipped and a failed agent keeps the agent\'s own error', async () => {
   const fixture = setup({
     dispatch: async () => {
-      throw Object.assign(new Error('The preview agent exceeded its bounded time.'),
-        { code: 'evidence_agent_timeout' });
+      throw Object.assign(new Error('The shots agent exceeded its bounded time.'),
+        { code: 'shots_agent_timeout' });
     },
   });
-  await assert.rejects(execute(fixture), { code: 'evidence_agent_timeout' });
+  await assert.rejects(execute(fixture), { code: 'shots_agent_timeout' });
   const failed = fixture.transitions.at(-1).patch;
-  assert.equal(failed.failureCode, 'evidence_agent_timeout');
+  assert.equal(failed.failureCode, 'shots_agent_timeout');
   assert.match(failed.failureReason, /bounded time/);
   assert.equal(failed.traceSummary.agentDispatches[0].outcome, 'failed');
-  assert.equal(failed.traceSummary.agentDispatches[0].code, 'evidence_agent_timeout');
+  assert.equal(failed.traceSummary.agentDispatches[0].code, 'shots_agent_timeout');
   assert.equal(fixture.calls.dispatches, 1, 'a Claude turn is not retried');
   assert.equal(fixture.calls.cleaned, 1);
 });
@@ -484,11 +484,11 @@ test('a failed agent that explained a skip reports the skip rather than its erro
   const fixture = setup({
     dispatch: async (options) => {
       controlFor(options).skipChange({ change: 'invite-suggestions', reason: 'The invite button is hidden for members.' });
-      throw Object.assign(new Error('The preview agent exceeded its bounded time.'),
-        { code: 'evidence_agent_timeout' });
+      throw Object.assign(new Error('The shots agent exceeded its bounded time.'),
+        { code: 'shots_agent_timeout' });
     },
   });
-  await assert.rejects(execute(fixture), { code: 'evidence_capture_incomplete' });
+  await assert.rejects(execute(fixture), { code: 'shots_capture_incomplete' });
   assert.match(fixture.transitions.at(-1).patch.failureReason, /invite button is hidden/);
 });
 
@@ -496,8 +496,8 @@ test('a complete before/after set is published even when the agent then runs out
   const fixture = setup({
     dispatch: async (options) => {
       saveStills(controlFor(options), 'invite-suggestions');
-      throw Object.assign(new Error('The preview agent exceeded its bounded time.'),
-        { code: 'evidence_agent_timeout' });
+      throw Object.assign(new Error('The shots agent exceeded its bounded time.'),
+        { code: 'shots_agent_timeout' });
     },
   });
   const result = await execute(fixture);
@@ -505,7 +505,7 @@ test('a complete before/after set is published even when the agent then runs out
   assert.equal(fixture.calls.stored, 1);
   const trace = fixture.transitions.at(-1).patch.traceSummary;
   assert.equal(trace.agentDispatches[0].outcome, 'failed');
-  assert.equal(trace.agentDispatches[0].code, 'evidence_agent_timeout');
+  assert.equal(trace.agentDispatches[0].code, 'shots_agent_timeout');
 });
 
 test('a motion change with stills but no clips is skipped for its missing clips', async () => {
@@ -586,10 +586,10 @@ test('a refused save stays diagnosable after the agent ends its turn', async () 
       return { backend: 'claude_code', threadId: 'shots-thread' };
     },
   });
-  await assert.rejects(execute(fixture), { code: 'evidence_capture_incomplete' });
+  await assert.rejects(execute(fixture), { code: 'shots_capture_incomplete' });
   const failure = fixture.transitions.at(-1).patch.traceSummary.failure;
   assert.equal(failure.phase, 'agent_exploration');
-  assert.equal(failure.code, 'evidence_capture_incomplete');
+  assert.equal(failure.code, 'shots_capture_incomplete');
   // The later, successful skip does not erase the last refused call.
   assert.equal(failure.tool, 'save-shot');
   assert.equal(failure.toolCode, 'clip_not_needed');
@@ -601,9 +601,9 @@ test('a refused save stays diagnosable after the agent ends its turn', async () 
 test('a build that cannot be prepared fails before sign-in, with nothing to tear down', async () => {
   const fixture = setup();
   fixture.dependencies.environment.preparePair = async () => {
-    throw Object.assign(new Error('The before image did not build.'), { code: 'evidence_build_failed' });
+    throw Object.assign(new Error('The before image did not build.'), { code: 'shots_build_failed' });
   };
-  await assert.rejects(execute(fixture), { code: 'evidence_build_failed' });
+  await assert.rejects(execute(fixture), { code: 'shots_build_failed' });
   assert.deepEqual(fixture.transitions.map((entry) => entry.next), ['provisioning', 'failed']);
   assert.equal(fixture.transitions.at(-1).patch.traceSummary.failure.phase, 'prepare_pair');
   assert.equal(fixture.calls.cleaned, 0);
@@ -614,9 +614,9 @@ test('a build that cannot be prepared fails before sign-in, with nothing to tear
 test('a failed reset tears the prepared builds down and never signs anyone in', async () => {
   const fixture = setup();
   fixture.dependencies.environment.resetPair = async () => {
-    throw Object.assign(new Error('The fixture clone timed out.'), { code: 'evidence_reset_failed' });
+    throw Object.assign(new Error('The fixture clone timed out.'), { code: 'shots_reset_failed' });
   };
-  await assert.rejects(execute(fixture), { code: 'evidence_reset_failed' });
+  await assert.rejects(execute(fixture), { code: 'shots_reset_failed' });
   assert.equal(fixture.transitions.at(-1).patch.traceSummary.failure.phase, 'exploration_reset');
   assert.equal(fixture.calls.cleaned, 1);
   assert.equal(fixture.calls.minted, 0);
@@ -628,7 +628,7 @@ test('builds that do not match their fixture and images fail before any token is
   fixture.dependencies.environment.resetPair = async () => ({
     origins: { ...ORIGINS }, ...provenance, headImageDigest: 'sha256:other',
   });
-  await assert.rejects(execute(fixture), { code: 'evidence_provenance_mismatch' });
+  await assert.rejects(execute(fixture), { code: 'shots_provenance_mismatch' });
   assert.deepEqual(fixture.transitions.map((entry) => entry.next), ['provisioning', 'failed']);
   assert.equal(fixture.calls.minted, 0);
   assert.equal(fixture.calls.dispatches, 0);
@@ -646,12 +646,12 @@ test('fixture sign-in tokens are minted for this app once and reach only the age
       brief = control.getContext();
       // The run-scoped control answers only this proposal's session.
       assert.throws(() => controlPlane.forRequest({ runId: options.runId, sessionId: 43 }),
-        { code: 'evidence_scope_mismatch' });
+        { code: 'shots_scope_mismatch' });
       saveStills(control, 'invite-suggestions');
       return { backend: 'claude_code', threadId: 'shots-thread' };
     },
   });
-  fixture.dependencies.identities.mintEvidenceAuthTokens = async (pool, appId, ...rest) => {
+  fixture.dependencies.identities.mintShotsAuthTokens = async (pool, appId, ...rest) => {
     minted.push({ pool, appId, rest, state: fixture.current() });
     return { ...TOKENS };
   };
@@ -669,7 +669,7 @@ test('fixture sign-in tokens are minted for this app once and reach only the age
   assert.doesNotMatch(JSON.stringify(fixture.transitions), /member\.jwt|admin\.jwt/,
     'no durable trace carries sign-in material');
   assert.throws(() => controlPlane.forRequest({ runId: RUN_ID, sessionId: 42 }),
-    { code: 'evidence_control_not_found' }, 'the control is unregistered once the run ends');
+    { code: 'shots_control_not_found' }, 'the control is unregistered once the run ends');
 });
 
 test('slow paired environment provisioning does not consume the agent budget', async () => {
@@ -689,8 +689,8 @@ test('slow paired environment provisioning does not consume the agent budget', a
 
 // ── The shots brief ──────────────────────────────────────────────────────
 
-test('evidence brief ranks a relevant check beyond the first 80 manifest entries', () => {
-  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-checks-'));
+test('shots brief ranks a relevant check beyond the first 80 manifest entries', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-checks-'));
   try {
     const tests = Array.from({ length: 100 }, (_, index) => ({
       name: `Generic screen ${index}`, path: `/screen-${index}`,
@@ -715,7 +715,7 @@ test('evidence brief ranks a relevant check beyond the first 80 manifest entries
 });
 
 test('the brief names the declared changes, both addresses and revisions, and no fixture secrets', () => {
-  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-testing-route-'));
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-testing-route-'));
   const route = '/?demo=1&ws=status#app/demo/workshop';
   try {
     const tests = Array.from({ length: 100 }, (_, index) => ({
@@ -739,10 +739,10 @@ test('the brief names the declared changes, both addresses and revisions, and no
       },
       pair: {
         fixtureFingerprint: 'fixture-1',
-        preparedSource: { fingerprint: 'fp', url: 'postgres://evidence:fixture-db-password@db/app' },
+        preparedSource: { fingerprint: 'fp', url: 'postgres://shots:fixture-db-password@db/app' },
         sides: {
-          base: { imageDigest: 'sha256:base', dbName: 'evidence_base_db', env: fixtureEnv },
-          head: { imageDigest: 'sha256:head', checkout, dbName: 'evidence_head_db', env: fixtureEnv },
+          base: { imageDigest: 'sha256:base', dbName: 'shots_base_db', env: fixtureEnv },
+          head: { imageDigest: 'sha256:head', checkout, dbName: 'shots_head_db', env: fixtureEnv },
         },
       },
       deployment: {
@@ -779,7 +779,7 @@ test('the brief names the declared changes, both addresses and revisions, and no
 
 // ── Workers, threads and backends ────────────────────────────────────────
 
-test('imported evidence releases its temporary worker after a published run', async () => {
+test('imported shots releases its temporary worker after a published run', async () => {
   const fixture = setup();
   fixture.session.source = 'imported';
   const result = await execute(fixture);
@@ -787,10 +787,10 @@ test('imported evidence releases its temporary worker after a published run', as
   assert.equal(fixture.calls.workerReleased, 1);
 });
 
-test('imported evidence releases its temporary worker after the agent fails', async () => {
-  const fixture = setup({ dispatch: async () => { throw new Error('preview agent failed'); } });
+test('imported shots releases its temporary worker after the agent fails', async () => {
+  const fixture = setup({ dispatch: async () => { throw new Error('shots agent failed'); } });
   fixture.session.source = 'imported';
-  await assert.rejects(execute(fixture), /preview agent failed/);
+  await assert.rejects(execute(fixture), /shots agent failed/);
   assert.equal(fixture.calls.workerReleased, 1);
 });
 
@@ -798,20 +798,20 @@ test('a run that fails before dispatch does not tear down an imported worker it 
   const fixture = setup();
   fixture.session.source = 'imported';
   fixture.dependencies.environment.resetPair = async () => {
-    throw Object.assign(new Error('The fixture clone timed out.'), { code: 'evidence_reset_failed' });
+    throw Object.assign(new Error('The fixture clone timed out.'), { code: 'shots_reset_failed' });
   };
-  await assert.rejects(execute(fixture), { code: 'evidence_reset_failed' });
+  await assert.rejects(execute(fixture), { code: 'shots_reset_failed' });
   assert.equal(fixture.calls.dispatches, 0);
   assert.equal(fixture.calls.workerReleased, 0);
 });
 
-test('first hosted evidence turn does not resume the proposal coding thread', async () => {
+test('first hosted shots turn does not resume the proposal coding thread', async () => {
   const fixture = setup({
     dispatch: async (options) => {
       assert.equal(options.resumeThreadId, null);
       assert.equal(fixture.calls.stopClears, 1, 'a new run retires the previous stop before dispatch');
       saveStills(controlFor(options), 'invite-suggestions');
-      return { backend: 'claude_code', threadId: 'evidence-thread' };
+      return { backend: 'claude_code', threadId: 'shots-thread' };
     },
   });
   fixture.session.agent_thread_id = 'coding-thread';
@@ -821,7 +821,7 @@ test('first hosted evidence turn does not resume the proposal coding thread', as
   assert.equal(fixture.calls.stopClears, 1);
 });
 
-test('a Codex session gets the platform preview agent, dispatched once', async () => {
+test('a Codex session gets the platform shots agent, dispatched once', async () => {
   const fixture = setup({
     dispatch: async (options) => {
       saveStills(controlFor(options), 'invite-suggestions');
@@ -852,45 +852,45 @@ test('the platform\'s own proposals serve their own bridge and kit to the previe
   assert.equal(dispatchOptions.platformAssets, false);
 });
 
-test('a preview agent that fails before saving anything is not dispatched a second time', async () => {
+test('a shots agent that fails before saving anything is not dispatched a second time', async () => {
   const fixture = setup({
     dispatch: async () => {
-      throw Object.assign(new Error('model cannot use browser tools'), { code: 'evidence_agent_failed' });
+      throw Object.assign(new Error('model cannot use browser tools'), { code: 'shots_agent_failed' });
     },
   });
   fixture.session.agent_backend = 'codex_openrouter';
-  await assert.rejects(execute(fixture), { code: 'evidence_agent_failed' });
+  await assert.rejects(execute(fixture), { code: 'shots_agent_failed' });
   assert.equal(fixture.calls.dispatches, 1);
 });
 
-test('a preview agent that already explored is not dispatched again after timing out', async () => {
+test('a shots agent that already explored is not dispatched again after timing out', async () => {
   const fixture = setup({
     dispatch: async (options) => {
-      options.onEvidenceDiagnostic({ kind: 'provider_dispatched', backend: 'codex_openrouter',
+      options.onShotsDiagnostic({ kind: 'provider_dispatched', backend: 'codex_openrouter',
         requestMode: 'agent_new' });
-      options.onEvidenceDiagnostic({ kind: 'tool_start', sequence: 1,
+      options.onShotsDiagnostic({ kind: 'tool_start', sequence: 1,
         tool: 'browser_navigate', side: 'base', routeOrdinal: 1 });
-      throw Object.assign(new Error('The preview agent timed out.'), { code: 'evidence_agent_timeout' });
+      throw Object.assign(new Error('The shots agent timed out.'), { code: 'shots_agent_timeout' });
     },
   });
   fixture.session.agent_backend = 'codex_openrouter';
-  await assert.rejects(execute(fixture), { code: 'evidence_agent_timeout' });
+  await assert.rejects(execute(fixture), { code: 'shots_agent_timeout' });
   assert.equal(fixture.calls.dispatches, 1);
   assert.equal(fixture.calls.stopClears, 1);
   assert.equal(fixture.transitions.at(-1).patch.traceSummary.agentDispatches.length, 1);
 });
 
-test('a preview agent that saved a shot keeps its run rather than launching a second one', async () => {
+test('a shots agent that saved a shot keeps its run rather than launching a second one', async () => {
   const fixture = setup({
     dispatch: async (options) => {
       controlFor(options).saveShot(
         { change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen' }, fixtures.png()
       );
-      throw Object.assign(new Error('model stopped responding'), { code: 'evidence_agent_failed' });
+      throw Object.assign(new Error('model stopped responding'), { code: 'shots_agent_failed' });
     },
   });
   fixture.session.agent_backend = 'codex_openrouter';
-  await assert.rejects(execute(fixture), { code: 'evidence_agent_failed' });
+  await assert.rejects(execute(fixture), { code: 'shots_agent_failed' });
   assert.equal(fixture.calls.dispatches, 1);
   assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.control,
     { savedFiles: 1, skippedChanges: 0, notedChanges: 0, skippedAll: false });
@@ -901,17 +901,17 @@ test('a preview agent that saved a shot keeps its run rather than launching a se
 test('an agent timeout keeps a bounded, content-free record of its last active tool', async () => {
   const fixture = setup({
     dispatch: async (options) => {
-      options.onEvidenceDiagnostic({ kind: 'worker_prepare_start' });
-      options.onEvidenceDiagnostic({ kind: 'worker_prepare_end' });
-      options.onEvidenceDiagnostic({ kind: 'provider_dispatched', backend: 'claude_code', requestMode: 'agent_new' });
-      options.onEvidenceDiagnostic({ kind: 'tool_start', sequence: 1,
+      options.onShotsDiagnostic({ kind: 'worker_prepare_start' });
+      options.onShotsDiagnostic({ kind: 'worker_prepare_end' });
+      options.onShotsDiagnostic({ kind: 'provider_dispatched', backend: 'claude_code', requestMode: 'agent_new' });
+      options.onShotsDiagnostic({ kind: 'tool_start', sequence: 1,
         tool: 'browser_navigate', persona: 'member', side: 'base', routeOrdinal: 2,
         url: 'https://private.invalid/?token=secret' });
-      options.onEvidenceDiagnostic({ kind: 'agent_deadline' });
-      throw Object.assign(new Error('The agent timed out.'), { code: 'evidence_agent_timeout' });
+      options.onShotsDiagnostic({ kind: 'agent_deadline' });
+      throw Object.assign(new Error('The agent timed out.'), { code: 'shots_agent_timeout' });
     },
   });
-  await assert.rejects(execute(fixture), { code: 'evidence_agent_timeout' });
+  await assert.rejects(execute(fixture), { code: 'shots_agent_timeout' });
   const trace = fixture.transitions.at(-1).patch.traceSummary;
   assert.equal(trace.agentActivity.budgetMs, 10_000);
   assert.equal(trace.agentActivity.counts.tool_start, 1);
@@ -928,7 +928,7 @@ test('agent sign-in records every persona and side without retaining credentials
     dispatch: async (options) => {
       for (const persona of ['member', 'admin', 'full_admin']) {
         for (const side of ['base', 'head']) {
-          options.onEvidenceDiagnostic({
+          options.onShotsDiagnostic({
             kind: 'auth_bootstrap', persona, side, attempted: true,
             responseStatus: 200, sessionCookieInstalled: true,
             sessionCookiePresent: true, token: 'private-token',
@@ -939,7 +939,7 @@ test('agent sign-in records every persona and side without retaining credentials
       return { backend: 'claude_code', threadId: 'thread-1' };
     },
   });
-  await assert.rejects(execute(fixture), { code: 'evidence_capture_incomplete' });
+  await assert.rejects(execute(fixture), { code: 'shots_capture_incomplete' });
   const events = fixture.transitions.at(-1).patch.traceSummary.agentActivity.events
     .filter((event) => event.kind === 'auth_bootstrap');
   assert.equal(events.length, 6);
@@ -955,19 +955,19 @@ test('agent sign-in records every persona and side without retaining credentials
 test('agent records public-app catalog and frame loading without storing app URLs', async () => {
   const fixture = setup({
     dispatch: async (options) => {
-      options.onEvidenceDiagnostic({ kind: 'hosted_app_catalog', side: 'base',
+      options.onShotsDiagnostic({ kind: 'hosted_app_catalog', side: 'base',
         outcome: 'ok', httpStatus: 200, count: 1, catalogCount: 2,
         url: 'https://private.example.invalid/secret' });
-      options.onEvidenceDiagnostic({ kind: 'hosted_app_catalog', side: 'head',
+      options.onShotsDiagnostic({ kind: 'hosted_app_catalog', side: 'head',
         outcome: 'ok', httpStatus: 200, count: 1 });
-      options.onEvidenceDiagnostic({ kind: 'hosted_app_allowlist', count: 1 });
-      options.onEvidenceDiagnostic({ kind: 'hosted_app_allowlist', outcome: 'loaded', count: 1 });
-      options.onEvidenceDiagnostic({ kind: 'document_response', side: 'hosted',
+      options.onShotsDiagnostic({ kind: 'hosted_app_allowlist', count: 1 });
+      options.onShotsDiagnostic({ kind: 'hosted_app_allowlist', outcome: 'loaded', count: 1 });
+      options.onShotsDiagnostic({ kind: 'document_response', side: 'hosted',
         documentOrdinal: 3, outcome: 'ok', httpStatus: 200, durationMs: 128 });
       return { backend: 'claude_code', threadId: 'thread-1' };
     },
   });
-  await assert.rejects(execute(fixture), { code: 'evidence_capture_incomplete' });
+  await assert.rejects(execute(fixture), { code: 'shots_capture_incomplete' });
   const events = fixture.transitions.at(-1).patch.traceSummary.agentActivity.events;
   assert.deepEqual(events.map((event) => event.kind), [
     'hosted_app_catalog', 'hosted_app_catalog', 'hosted_app_allowlist',
@@ -982,20 +982,20 @@ test('agent records public-app catalog and frame loading without storing app URL
 test('a timeout retains browser-boundary timing and document outcome without raw page data', async () => {
   const fixture = setup({
     dispatch: async (options) => {
-      options.onEvidenceDiagnostic({ kind: 'browser_call_start', persona: 'member',
+      options.onShotsDiagnostic({ kind: 'browser_call_start', persona: 'member',
         callOrdinal: 2, tool: 'browser_navigate', side: 'base', routeOrdinal: 1,
         routeHint: 'declared_check', checkRank: 3, url: 'https://private.invalid/token' });
-      options.onEvidenceDiagnostic({ kind: 'document_request', side: 'base', documentOrdinal: 1 });
-      options.onEvidenceDiagnostic({ kind: 'document_response', side: 'base', documentOrdinal: 1,
+      options.onShotsDiagnostic({ kind: 'document_request', side: 'base', documentOrdinal: 1 });
+      options.onShotsDiagnostic({ kind: 'document_response', side: 'base', documentOrdinal: 1,
         outcome: 'http_error', httpStatus: 404, durationMs: 482, bodyBytes: 1274,
         text: 'private page content' });
-      options.onEvidenceDiagnostic({ kind: 'browser_call_pending', persona: 'member',
+      options.onShotsDiagnostic({ kind: 'browser_call_pending', persona: 'member',
         callOrdinal: 2, tool: 'browser_navigate', side: 'base', routeOrdinal: 1,
         durationMs: 30_000 });
-      throw Object.assign(new Error('The agent timed out.'), { code: 'evidence_agent_timeout' });
+      throw Object.assign(new Error('The agent timed out.'), { code: 'shots_agent_timeout' });
     },
   });
-  await assert.rejects(execute(fixture), { code: 'evidence_agent_timeout' });
+  await assert.rejects(execute(fixture), { code: 'shots_agent_timeout' });
   const activity = fixture.transitions.at(-1).patch.traceSummary.agentActivity;
   assert.equal(activity.browserCallCounts.browser_navigate, 1);
   assert.equal(activity.pendingBrowserCalls[0].durationMs, 30_000);
@@ -1009,16 +1009,16 @@ test('a timeout retains browser-boundary timing and document outcome without raw
 test('a timeout identifies an unfinished GLM request and its last observed stage', async () => {
   const fixture = setup({
     dispatch: async (options) => {
-      options.onEvidenceDiagnostic({ kind: 'provider_request_start', requestOrdinal: 1,
+      options.onShotsDiagnostic({ kind: 'provider_request_start', requestOrdinal: 1,
         prompt: 'private user prompt' });
-      options.onEvidenceDiagnostic({ kind: 'provider_response_headers', requestOrdinal: 1,
+      options.onShotsDiagnostic({ kind: 'provider_response_headers', requestOrdinal: 1,
         httpStatus: 200, durationMs: 4200, providerUrl: 'https://private.invalid' });
-      options.onEvidenceDiagnostic({ kind: 'provider_request_pending', requestOrdinal: 1,
+      options.onShotsDiagnostic({ kind: 'provider_request_pending', requestOrdinal: 1,
         stage: 'await_first_byte', durationMs: 45_000, output: 'private model output' });
-      throw Object.assign(new Error('The agent timed out.'), { code: 'evidence_agent_timeout' });
+      throw Object.assign(new Error('The agent timed out.'), { code: 'shots_agent_timeout' });
     },
   });
-  await assert.rejects(execute(fixture), { code: 'evidence_agent_timeout' });
+  await assert.rejects(execute(fixture), { code: 'shots_agent_timeout' });
   const activity = fixture.transitions.at(-1).patch.traceSummary.agentActivity;
   assert.equal(activity.pendingProviderRequests.length, 1);
   assert.equal(activity.pendingProviderRequests[0].requestOrdinal, 1);
@@ -1031,19 +1031,19 @@ test('a timeout identifies an unfinished GLM request and its last observed stage
 test('a completed agent turn without tool calls retains the shots tool surface and brief read', async () => {
   const fixture = setup({
     dispatch: async (options) => {
-      options.onEvidenceDiagnostic({ kind: 'provider_dispatched', backend: 'claude_code', requestMode: 'agent_new' });
-      options.onEvidenceDiagnostic({ kind: 'provider_init', mcpServerCount: 4, toolDefinitionCount: 26,
+      options.onShotsDiagnostic({ kind: 'provider_dispatched', backend: 'claude_code', requestMode: 'agent_new' });
+      options.onShotsDiagnostic({ kind: 'provider_init', mcpServerCount: 4, toolDefinitionCount: 26,
         briefToolAvailable: true, saveShotToolAvailable: true, skipChangeToolAvailable: true,
         browserMemberToolCount: 7, browserAdminToolCount: 7, browserFullAdminToolCount: 7 });
-      options.onEvidenceDiagnostic({ kind: 'context_result', outcome: 'ok', responseCharacters: 12000,
+      options.onShotsDiagnostic({ kind: 'context_result', outcome: 'ok', responseCharacters: 12000,
         jsonValid: true, declaredChangesPresent: true, addressesPresent: true,
         revisionsPresent: true, storyCount: 3 });
-      options.onEvidenceDiagnostic({ kind: 'first_output' });
-      options.onEvidenceDiagnostic({ kind: 'provider_result', outcome: 'ok' });
-      return { backend: 'claude_code', threadId: 'evidence-thread' };
+      options.onShotsDiagnostic({ kind: 'first_output' });
+      options.onShotsDiagnostic({ kind: 'provider_result', outcome: 'ok' });
+      return { backend: 'claude_code', threadId: 'shots-thread' };
     },
   });
-  await assert.rejects(execute(fixture), { code: 'evidence_capture_incomplete' });
+  await assert.rejects(execute(fixture), { code: 'shots_capture_incomplete' });
   const trace = fixture.transitions.at(-1).patch.traceSummary;
   assert.deepEqual(trace.control, { savedFiles: 0, skippedChanges: 0, notedChanges: 0, skippedAll: false });
   assert.equal(trace.agentDispatches[0].outcome, 'completed');
@@ -1083,7 +1083,7 @@ test('a model exit without shots keeps its redacted final words for the owner an
     }),
   });
   await assert.rejects(execute(fixture, { onAgentFinalResponse: (summary) => observed.push(summary) }),
-    { code: 'evidence_capture_incomplete' });
+    { code: 'shots_capture_incomplete' });
   const trace = fixture.transitions.at(-1).patch.traceSummary;
   const response = trace.agentFinalResponse;
   assert.match(response.excerpt, /could not find the browser/);
@@ -1097,7 +1097,7 @@ test('a model exit without shots keeps its redacted final words for the owner an
 
   const logged = newLog(before, 'Before/after run ended without shots');
   assert.ok(logged, 'the failure is logged');
-  assert.equal(logged.data.code, 'evidence_capture_incomplete');
+  assert.equal(logged.data.code, 'shots_capture_incomplete');
   assert.equal(Object.hasOwn(logged.data.trace, 'agentFinalResponse'), false);
   assert.equal(Object.hasOwn(logged.data.trace, 'agentFinalResponses'), false);
   assert.doesNotMatch(JSON.stringify(logged), /could not find the browser/);
@@ -1127,7 +1127,7 @@ test('a published run keeps the agent\'s final words in its private trace, not t
 
 // ── Heartbeat, terminal metadata and storage fencing ────────────────────
 
-test('background evidence heartbeat records progress and stops when the run ends', async () => {
+test('background shots heartbeat records progress and stops when the run ends', async () => {
   const seen = [];
   const writes = [];
   const heartbeatPool = { totalCount: 10, idleCount: 1, waitingCount: 3 };
@@ -1136,11 +1136,11 @@ test('background evidence heartbeat records progress and stops when the run ends
   }, null, 10);
   heartbeat.onProgress({ stage: 'checkout_revisions' });
   heartbeat.onAgentDiagnostic({ version: 1, events: [{ kind: 'tool_start', tool: 'save_shot' }] }, 'tool_start');
-  heartbeat.onAgentFinalResponse({ excerpt: 'Preview agent stopped.', characters: 22 });
+  heartbeat.onAgentFinalResponse({ excerpt: 'Shots agent stopped.', characters: 22 });
   await new Promise((resolve) => setTimeout(resolve, 35));
   assert.ok(seen.includes('checkout_revisions'));
   assert.equal(writes.at(-1).agentActivity.events[0].tool, 'save_shot');
-  assert.equal(writes.at(-1).agentFinalResponse.excerpt, 'Preview agent stopped.');
+  assert.equal(writes.at(-1).agentFinalResponse.excerpt, 'Shots agent stopped.');
   assert.match(writes.at(-1).heartbeat.processId, /^[0-9a-f]{16}$/);
   assert.equal(writes.at(-1).heartbeat.poolTotal, 10);
   assert.equal(writes.at(-1).heartbeat.poolIdle, 1);
@@ -1196,17 +1196,17 @@ test('terminal failure metadata fits the database and redacts credentials before
   });
   assert.equal(updated, true);
   assert.equal(persisted.next, 'failed');
-  assert.equal(persisted.patch.failureCode, 'visual_evidence_failed');
+  assert.equal(persisted.patch.failureCode, 'shots_failed');
   assert.doesNotMatch(persisted.patch.failureReason, /secret\.jwt|topsecret/);
 });
 
 test('a stale artifact fence cannot publish or transition the superseded run to verified', async () => {
-  const stale = Object.assign(new Error('The proposal head moved.'), { code: 'stale_evidence_operation' });
+  const stale = Object.assign(new Error('The proposal head moved.'), { code: 'stale_shots_operation' });
   const fixture = setup({ storeArtifacts: async () => { throw stale; } });
   fixture.dependencies.state.getRun = async () => ({
     ...fixture.run, state: 'reviewing', current_run_id: '2'.repeat(32),
   });
-  await assert.rejects(execute(fixture), { code: 'stale_evidence_operation' });
+  await assert.rejects(execute(fixture), { code: 'stale_shots_operation' });
   assert.equal(fixture.calls.cleaned, 1);
   assert.equal(fixture.transitions.some((entry) => entry.next === 'verified'), false);
   assert.equal(fixture.transitions.some((entry) => entry.next === 'failed'), false,
@@ -1220,7 +1220,7 @@ test('a stale artifact fence cannot publish or transition the superseded run to 
 function scheduleFixture(fixture, t) {
   fixture.session.handoff_base_sha = BASE;
   fixture.session.imported_pr_head_sha = HEAD;
-  fixture.session.visual_evidence_detail = { intent: fixtures.intent() };
+  fixture.session.shots_detail = { intent: fixtures.intent() };
   fixture.pool.query = async (sql) => {
     if (/FROM chat_sessions cs/.test(String(sql))) return { rows: [{ ...fixture.session, app_name: 'Demo' }] };
     if (/SELECT active_turn/.test(String(sql))) return { rows: [{ active_turn: false }] };
@@ -1230,11 +1230,11 @@ function scheduleFixture(fixture, t) {
   fixture.dependencies.state.createRun = async () => ({ created: true, run: fixture.run });
   fixture.dependencies.state.clearNotStarted = async () => ({ cleared: true });
   const metadata = require('../src/services/pr-metadata');
-  const sync = metadata.syncEvidencePrBlock;
-  metadata.syncEvidencePrBlock = async () => {};
-  t.after(() => { metadata.syncEvidencePrBlock = sync; });
+  const sync = metadata.syncShotsPrBlock;
+  metadata.syncShotsPrBlock = async () => {};
+  t.after(() => { metadata.syncShotsPrBlock = sync; });
   controlPlane._clearForTests();
-  return { visualEvidence: { execute: true, maxRunMs: 60_000, maxAgentMs: 10_000 } };
+  return { shots: { execute: true, maxRunMs: 60_000, maxAgentMs: 10_000 } };
 }
 
 test('competing schedulers claim a planned run only once before building the pair', async (t) => {
@@ -1244,7 +1244,7 @@ test('competing schedulers claim a planned run only once before building the pai
   const transitionRun = fixture.dependencies.state.transitionRun;
   fixture.dependencies.state.transitionRun = async (...args) => {
     if (args[2] === 'provisioning') {
-      if (claimed) throw Object.assign(new Error('Already claimed'), { code: 'invalid_evidence_transition' });
+      if (claimed) throw Object.assign(new Error('Already claimed'), { code: 'invalid_shots_transition' });
       claimed = true;
     }
     return transitionRun(...args);
@@ -1283,28 +1283,28 @@ test('a merged proposal permits a deliberate rerun but no automatic worker reviv
   assert.equal(fixture.calls.workerReleased, 1);
 });
 
-test('a Stop during the preview turn ends the run without dispatching another agent', async (t) => {
+test('a Stop during the shots turn ends the run without dispatching another agent', async (t) => {
   const fixture = setup({
     dispatch: async () => {
-      fixture.setTurnMode('evidence');
+      fixture.setTurnMode('shots');
       const stopped = await orchestrator.stopForSession(fixture.pool, 42, fixture.dependencies);
       assert.deepEqual(stopped, { stopped: true, runId: RUN_ID });
       fixture.setTurnMode(null);
       // The killed worker ends the turn before any provider request.
-      throw Object.assign(new Error('The preview agent was stopped.'), { code: 'evidence_agent_failed' });
+      throw Object.assign(new Error('The shots agent was stopped.'), { code: 'shots_agent_failed' });
     },
   });
   fixture.session.agent_backend = 'codex_openrouter';
-  fixture.session.visual_evidence_run_id = RUN_ID;
+  fixture.session.shots_run_id = RUN_ID;
   const config = scheduleFixture(fixture, t);
   const scheduled = await orchestrator.scheduleForSession(config,
     { pool: fixture.pool, sessionId: 42, headSha: HEAD }, fixture.dependencies);
   assert.equal(scheduled.scheduled, true);
-  await assert.rejects(scheduled.promise, { code: 'evidence_stopped' });
+  await assert.rejects(scheduled.promise, { code: 'shots_stopped' });
   assert.equal(fixture.calls.dispatches, 1, 'no fallback model is dispatched after a Stop');
   assert.deepEqual(fixture.calls.turnStops, [42]);
   assert.deepEqual(fixture.transitions.map((entry) => entry.next), ['provisioning', 'exploring', 'failed']);
-  assert.equal(fixture.transitions.at(-1).patch.failureCode, 'evidence_stopped');
+  assert.equal(fixture.transitions.at(-1).patch.failureCode, 'shots_stopped');
   assert.equal(fixture.calls.cleaned, 1);
 });
 
@@ -1372,7 +1372,7 @@ test('a refused schedule records why on the proposal and returns its reason', as
     query: async () => { throw new Error('must not load a session when execution is off'); },
   };
   const disabled = await orchestrator.scheduleForSession(
-    { visualEvidence: { execute: false } },
+    { shots: { execute: false } },
     { pool: disabledPool, sessionId: 42 },
     injected
   );
@@ -1381,10 +1381,10 @@ test('a refused schedule records why on the proposal and returns its reason', as
 
   // No declared change recorded: there is nothing to shoot.
   const noIntentPool = {
-    query: async () => ({ rows: [{ id: 42, app_id: 9, app_slug: 'demo', visual_evidence_detail: null }] }),
+    query: async () => ({ rows: [{ id: 42, app_id: 9, app_slug: 'demo', shots_detail: null }] }),
   };
   const missing = await orchestrator.scheduleForSession(
-    { visualEvidence: { execute: true } },
+    { shots: { execute: true } },
     { pool: noIntentPool, sessionId: 42 },
     injected
   );
@@ -1403,15 +1403,15 @@ test('a refused schedule records why on the proposal and returns its reason', as
   }
 });
 
-test('an asynchronous schedule cannot launch evidence for a head that moved meanwhile', async () => {
+test('an asynchronous schedule cannot launch shots for a head that moved meanwhile', async () => {
   const pool = {
     query: async () => ({ rows: [{
       id: 42, app_id: 9, app_slug: 'demo', source: 'imported',
-      imported_pr_head_sha: HEAD, visual_evidence_detail: { intent: fixtures.intent() },
+      imported_pr_head_sha: HEAD, shots_detail: { intent: fixtures.intent() },
     }] }),
   };
   const result = await orchestrator.scheduleForSession(
-    { visualEvidence: { execute: true } },
+    { shots: { execute: true } },
     { pool, sessionId: 42, headSha: 'c'.repeat(40) }
   );
   assert.deepEqual(result, { scheduled: false, reason: 'head_moved' });
@@ -1437,9 +1437,9 @@ test('an unknown refusal logs but writes nothing, so no proposal carries an empt
 
 // ── Stop ─────────────────────────────────────────────────────────────────
 
-function stopHarness({ runState = 'exploring', turnMode = 'evidence', currentRunId = RUN_ID } = {}) {
+function stopHarness({ runState = 'exploring', turnMode = 'shots', currentRunId = RUN_ID } = {}) {
   const calls = { transitions: [], stops: [] };
-  const pool = { query: async () => ({ rows: [{ id: 42, app_id: 7, app_slug: 'demo', visual_evidence_run_id: currentRunId }] }) };
+  const pool = { query: async () => ({ rows: [{ id: 42, app_id: 7, app_slug: 'demo', shots_run_id: currentRunId }] }) };
   const stateService = {
     getRun: async (_pool, runId) => ({ id: runId, current_run_id: currentRunId, state: runState, head_sha: HEAD }),
     transitionRun: async (_pool, runId, next, patch) => { calls.transitions.push({ runId, next, patch }); },
@@ -1451,13 +1451,13 @@ function stopHarness({ runState = 'exploring', turnMode = 'evidence', currentRun
   return { calls, pool, injected: { state: stateService, worker: workerApi } };
 }
 
-test('Stop fails the running shots as stopped and kills only an evidence turn', async () => {
+test('Stop fails the running shots as stopped and kills only a shots turn', async () => {
   const running = stopHarness();
   assert.deepEqual(await orchestrator.stopForSession(running.pool, 42, running.injected), { stopped: true, runId: RUN_ID });
   assert.equal(running.calls.transitions.length, 1);
   assert.equal(running.calls.transitions[0].next, 'failed');
-  assert.equal(running.calls.transitions[0].patch.failureCode, 'evidence_stopped');
-  assert.equal(running.calls.transitions[0].patch.failureReason, orchestrator.EVIDENCE_STOPPED_REASON);
+  assert.equal(running.calls.transitions[0].patch.failureCode, 'shots_stopped');
+  assert.equal(running.calls.transitions[0].patch.failureReason, orchestrator.SHOTS_STOPPED_REASON);
   assert.deepEqual(running.calls.stops, [42]);
 
   const saving = stopHarness({ runState: 'reviewing', turnMode: 'build' });

@@ -80,9 +80,9 @@ Checklist per board:
 - Touch: every control at least 44px tall including the back disc's hit area.
 - Console: no error on load or on the route change, in both themes.
 
-**Gate 2, declared visual evidence.** Each proposal declares
-`visual_evidence` stories in `submit_build` (`src/cli/main.js`, schema at
-`visualEvidenceIntentSchema`): one story per board it changes, viewports
+**Gate 2, declared before & after shots.** Each proposal declares
+`shots` stories in `submit_build` (`src/cli/main.js`, schema at
+`visibleChangesSchema`): one story per board it changes, viewports
 390×844 and 1280×800, `startPath` the real hash route, `steps` the real taps,
 `checkpoint` the board's name. The pipeline replays these against base and
 head. Open issue: the persona enum is `member | read_only_admin`; the landing

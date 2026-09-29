@@ -133,7 +133,7 @@ Known differences from a Codex turn:
   from the catalog. OpenRouter bills each web search separately, and the key's
   own limit still covers it.
 - **Scout and build only.** The dev chat and agent chats dispatch through the
-  same scout and build, so both use the map. Visual evidence and the Homeroom
+  same scout and build, so both use the map. Before & after shots and the Homeroom
   bot still run Codex. They call the runtime without `harness: 'auto'`, and a
   thread written by the other CLI is not resumed there.
 

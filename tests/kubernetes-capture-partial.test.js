@@ -171,7 +171,7 @@ for (const scenario of ['opt-out', 'unit-suite']) {
   });
 }
 
-// Before/after shots are taken by a preview agent in an evidence worker, not
+// Before/after shots are taken by a shots agent in a shots worker, not
 // by a capture-image Job, so there is one check Job kind fewer: the replay
 // Job (and its per-pass random names) is gone, and a capture Job keeps its
 // deterministic, run-scoped name.
@@ -206,8 +206,8 @@ test('a capture Job is named for its run and reads its input from a matching Sec
   assert.deepEqual(secretNames, [`${body.metadata.name}-input`]);
   const [container] = body.spec.template.spec.containers;
   assert.deepEqual(container.args, ['exec node /app/capture.js < /var/run/usernode-capture/tests.json']);
-  assert.doesNotMatch(JSON.stringify(body), /evidence-replay|sv-evidence/);
-  assert.equal(kubernetes.runEvidenceJob, undefined, 'there is no replay Job kind to launch');
+  assert.doesNotMatch(JSON.stringify(body), /shots-replay|sv-shots/);
+  assert.equal(kubernetes.runShotsJob, undefined, 'there is no replay Job kind to launch');
 });
 
 test('a Kubernetes API conflict is reported as a launcher error, not a container exit', async (t) => {

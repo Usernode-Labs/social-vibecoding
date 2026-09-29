@@ -1,25 +1,25 @@
 'use strict';
 
-// The preview agent's only way into the platform: three run-scoped internal
-// routes (src/routes/internal.js) behind a purpose-bound evidence JWT that
+// The shots agent's only way into the platform: three run-scoped internal
+// routes (src/routes/internal.js) behind a purpose-bound shots JWT that
 // names both the proposal session and the run.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 
-process.env.WORKER_JWT_SECRET = process.env.WORKER_JWT_SECRET || 'evidence-route-test-secret';
-process.env.JWT_SECRET = process.env.JWT_SECRET || 'evidence-route-test-secret';
+process.env.WORKER_JWT_SECRET = process.env.WORKER_JWT_SECRET || 'shots-route-test-secret';
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'shots-route-test-secret';
 
 // The route acquires a pool at construction, but these requests need only the
 // run-scoped in-memory control. Keep the HTTP test independent of Postgres.
 require('../src/db/pool').getPool = () => ({ query: async () => assert.fail('unexpected database request') });
 
 const { internalRoutes } = require('../src/routes/internal');
-const controlPlane = require('../src/services/visual-evidence-control');
+const controlPlane = require('../src/services/shots-control');
 const platformJwt = require('../src/services/platform-jwt');
-const shots = require('../src/services/visual-evidence-shots');
-const fixtures = require('./fixtures/visual-evidence');
+const shots = require('../src/services/shots-files');
+const fixtures = require('./fixtures/shots');
 
 async function listen(app, t) {
   const server = await new Promise((resolve) => {
@@ -44,8 +44,8 @@ async function serve(t, { runId, sessionId = 42, intent = fixtures.motionIntent(
   app.use(express.json());
   app.use(internalRoutes({ jwtSecret: process.env.JWT_SECRET }));
   const server = await listen(app, t);
-  const base = `http://127.0.0.1:${server.address().port}/api/internal/evidence/${runId}`;
-  const token = platformJwt.signEvidenceToken({ runId, sessionId });
+  const base = `http://127.0.0.1:${server.address().port}/api/internal/shots/${runId}`;
+  const token = platformJwt.signShotsToken({ runId, sessionId });
   return { registration, base, token };
 }
 
@@ -55,7 +55,7 @@ async function json(response) {
   return { status: response.status, body: await response.json() };
 }
 
-test('the brief is readable only with this run\'s evidence token', async (t) => {
+test('the brief is readable only with this run\'s shots token', async (t) => {
   const runId = 'a'.repeat(32);
   const context = {
     version: 2, runId,
@@ -77,14 +77,14 @@ test('the brief is readable only with this run\'s evidence token', async (t) => 
   assert.equal((await get()).status, 401);
   assert.equal((await get({ authorization: 'Bearer not-a-jwt' })).status, 401);
 
-  // An evidence token for another run, or for this run under another
+  // A shots token for another run, or for this run under another
   // session, never reads this brief.
-  const otherRun = await json(await get(bearer(platformJwt.signEvidenceToken({ runId: 'b'.repeat(32), sessionId: 42 }))));
-  assert.deepEqual([otherRun.status, otherRun.body.code], [403, 'evidence_scope_mismatch']);
-  const otherSession = await json(await get(bearer(platformJwt.signEvidenceToken({ runId, sessionId: 43 }))));
-  assert.deepEqual([otherSession.status, otherSession.body.code], [403, 'evidence_scope_mismatch']);
+  const otherRun = await json(await get(bearer(platformJwt.signShotsToken({ runId: 'b'.repeat(32), sessionId: 42 }))));
+  assert.deepEqual([otherRun.status, otherRun.body.code], [403, 'shots_scope_mismatch']);
+  const otherSession = await json(await get(bearer(platformJwt.signShotsToken({ runId, sessionId: 43 }))));
+  assert.deepEqual([otherSession.status, otherSession.body.code], [403, 'shots_scope_mismatch']);
 
-  // The session's general and narrow worker tokens are not evidence tokens.
+  // The session's general and narrow worker tokens are not shots tokens.
   for (const other of [
     platformJwt.signWorkerToken({ sessionId: 42 }),
     platformJwt.signWorkerPushToken({ sessionId: 42 }),
@@ -95,14 +95,14 @@ test('the brief is readable only with this run\'s evidence token', async (t) => 
 
   registration.unregister();
   const gone = await json(await get(bearer(token)));
-  assert.deepEqual([gone.status, gone.body.code], [410, 'evidence_control_not_found']);
+  assert.deepEqual([gone.status, gone.body.code], [410, 'shots_control_not_found']);
 });
 
 test('an expired run answers 410 even to its own token', async (t) => {
   const runId = 'f'.repeat(32);
   const { base, token } = await serve(t, { runId, expiresAt: Date.now() - 1 });
   const response = await json(await fetch(`${base}/context`, { headers: bearer(token) }));
-  assert.deepEqual([response.status, response.body.code], [410, 'evidence_control_expired']);
+  assert.deepEqual([response.status, response.body.code], [410, 'shots_control_expired']);
 });
 
 test('the shot route takes the raw file and maps each refusal to a status', async (t) => {
@@ -166,8 +166,8 @@ test('the shot route takes the raw file and maps each refusal to a status', asyn
 
   // A token scoped to another run cannot publish here.
   const foreign = await json(await post({ ...still, side: 'before' }, image,
-    { auth: platformJwt.signEvidenceToken({ runId: 'd'.repeat(32), sessionId: 42 }) }));
-  assert.deepEqual([foreign.status, foreign.body.code], [403, 'evidence_scope_mismatch']);
+    { auth: platformJwt.signShotsToken({ runId: 'd'.repeat(32), sessionId: 42 }) }));
+  assert.deepEqual([foreign.status, foreign.body.code], [403, 'shots_scope_mismatch']);
   const unauthenticated = await fetch(`${base}/shot?${new URLSearchParams({ ...still, side: 'before' })}`, {
     method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: image,
   });
@@ -200,8 +200,8 @@ test('the skip route records a reason per change or for all, then closes the tur
     assert.deepEqual([refused.status, refused.body.code], [400, code]);
   }
   const foreign = await json(await skip({ reason: 'Not mine to skip.' },
-    platformJwt.signEvidenceToken({ runId, sessionId: 43 })));
-  assert.deepEqual([foreign.status, foreign.body.code], [403, 'evidence_scope_mismatch']);
+    platformJwt.signShotsToken({ runId, sessionId: 43 })));
+  assert.deepEqual([foreign.status, foreign.body.code], [403, 'shots_scope_mismatch']);
   assert.equal(registration.control.skippedAll, null);
 
   // The bridge sends change: null to skip everything.
@@ -213,13 +213,13 @@ test('the skip route records a reason per change or for all, then closes the tur
   ]);
 
   const again = await json(await skip({ change: 'invite-suggestions', reason: 'Another try.' }));
-  assert.deepEqual([again.status, again.body.code], [409, 'evidence_turn_finished']);
+  assert.deepEqual([again.status, again.body.code], [409, 'shots_turn_finished']);
   const late = await json(await fetch(`${base}/shot?${new URLSearchParams({
     change: 'invite-suggestions', screen: 'desktop', side: 'after',
   })}`, {
     method: 'POST', headers: { ...bearer(token), 'content-type': 'application/octet-stream' }, body: fixtures.png(),
   }));
-  assert.deepEqual([late.status, late.body.code], [409, 'evidence_turn_finished']);
+  assert.deepEqual([late.status, late.body.code], [409, 'shots_turn_finished']);
   assert.equal(registration.control.saved.size, 0);
 });
 
@@ -244,15 +244,15 @@ test('the note route records what a change\'s shots leave out, for its own run o
     assert.deepEqual([refused.status, refused.body.code], [400, code]);
   }
   const foreign = await json(await note({ change: 'invite-suggestions', note: 'Not mine.' },
-    platformJwt.signEvidenceToken({ runId, sessionId: 43 })));
-  assert.deepEqual([foreign.status, foreign.body.code], [403, 'evidence_scope_mismatch']);
+    platformJwt.signShotsToken({ runId, sessionId: 43 })));
+  assert.deepEqual([foreign.status, foreign.body.code], [403, 'shots_scope_mismatch']);
   const unsigned = await fetch(`${base}/note`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
   });
   assert.equal(unsigned.status, 401);
 });
 
-test('the brief, shot, skip and note routes are the whole evidence surface', async (t) => {
+test('the brief, shot, skip and note routes are the whole shots surface', async (t) => {
   const runId = '1'.repeat(32);
   const { base, token } = await serve(t, { runId });
   // The replay-era routes are gone, even for a valid token of this run.

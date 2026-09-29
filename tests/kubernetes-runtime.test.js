@@ -247,7 +247,7 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     app: { id: 7, slug: 'demo' }, environment: 'production',
     imageRef: 'ghcr.io/example/social-apps/demo@sha256:deadbeef',
     env: { DATABASE_URL: 'postgres://redacted', PORT: '3000' },
-    command: ['node', '/app/evidence-hosted-app-fixture.js'],
+    command: ['node', '/app/shots-hosted-app-fixture.js'],
     labels: { 'usernode.env.fp': '0123456789abcdef', 'app.kubernetes.io/managed-by': 'cannot-override-owner' },
   });
   // The app's own four resources — everything except the shared backend.
@@ -268,7 +268,7 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
   assert.equal((await kubernetes.inspectApplication(config(), result.runtimeName)).labels['usernode.env.fp'], '0123456789abcdef');
   assert.equal(deployment.spec.template.spec.containers[0].image, 'ghcr.io/example/social-apps/demo@sha256:deadbeef');
   assert.deepEqual(deployment.spec.template.spec.containers[0].command,
-    ['node', '/app/evidence-hosted-app-fixture.js']);
+    ['node', '/app/shots-hosted-app-fixture.js']);
   assert.equal(deployment.spec.template.spec.serviceAccountName, 'social-generated-app');
   assert.equal(
     deployment.spec.template.metadata.annotations['social.usernode.io/env-checksum'],
@@ -312,12 +312,12 @@ test('internal-only evidence deploy creates no Ingress or shared public asset ro
   const result = await kubernetes.deployApplication(config(), {
     app: { id: 7, slug: 'demo' }, environment: 'staging', sessionId: 42,
     imageRef: 'ghcr.io/example/demo@sha256:deadbeef', env: {},
-    runtimeName: 'sv-evidence-0123456789abcdef-b', internalOnly: true,
+    runtimeName: 'sv-shots-0123456789abcdef-b', internalOnly: true,
   });
   assert.deepEqual(written.map((item) => item.kind).sort(), ['Deployment', 'Secret', 'Service']);
-  assert.equal(result.runtimeName, 'sv-evidence-0123456789abcdef-b');
-  assert.equal(result.url, 'http://sv-evidence-0123456789abcdef-b.social-apps.svc:3000');
-  assert.equal(result.hostname, 'sv-evidence-0123456789abcdef-b.social-apps.svc');
+  assert.equal(result.runtimeName, 'sv-shots-0123456789abcdef-b');
+  assert.equal(result.url, 'http://sv-shots-0123456789abcdef-b.social-apps.svc:3000');
+  assert.equal(result.hostname, 'sv-shots-0123456789abcdef-b.social-apps.svc');
 });
 
 for (const [name, environment, database, preferred] of [
@@ -482,7 +482,7 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
   assert.equal(deployment.spec.template.spec.volumes[0].persistentVolumeClaim.claimName, result.pvcName);
 });
 
-test('temporary evidence worker uses pod storage without allocating a PVC', async () => {
+test('temporary shots worker uses pod storage without allocating a PVC', async () => {
   const written = [];
   const record = (kind) => async ({ body }) => { written.push({ kind, body }); return body; };
   kubernetes._setClientsForTest({

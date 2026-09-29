@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const view = require('../src/services/visual-evidence-view');
+const view = require('../src/services/shots-view');
 
 const BASE = 'a'.repeat(40);
 const HEAD = 'b'.repeat(40);
@@ -14,8 +14,8 @@ function session(overrides = {}) {
     id: 42,
     source: 'native',
     reviewed_head_sha: HEAD,
-    visual_evidence_state: 'verified',
-    visual_evidence_detail: {
+    shots_state: 'verified',
+    shots_detail: {
       impact: 'ui',
       rationale: 'The dialog changed.',
       headSha: HEAD,
@@ -48,12 +48,12 @@ function run(overrides = {}) {
   };
 }
 
-test('verified evidence exposes only authenticated artifact metadata for the exact head', () => {
+test('verified shots exposes only authenticated artifact metadata for the exact head', () => {
   const result = view.serialize(run(), session(), 'demo-app', HEAD);
   assert.equal(result.state, 'verified');
   assert.equal(result.artifacts.length, 1);
   assert.equal(result.artifacts[0].url,
-    `/api/apps/demo-app/proposals/42/evidence/${ARTIFACT}`);
+    `/api/apps/demo-app/proposals/42/shots/${ARTIFACT}`);
   assert.equal(Object.hasOwn(result.artifacts[0], 'data'), false);
   assert.equal(result.claims[0].baseState, 'present');
   assert.deepEqual(result.shotResults, [{ id: 'dialog', status: 'ready', reason: null, note: null }]);
@@ -75,7 +75,7 @@ test('a newer head makes the whole set stale and suppresses every artifact', () 
 
 test('pending, failed, and malformed artifact rows never leak media URLs', () => {
   for (const state of ['planned', 'failed', 'reviewing']) {
-    const result = view.serialize(run({ state }), session({ visual_evidence_state: state }), 'demo-app', HEAD);
+    const result = view.serialize(run({ state }), session({ shots_state: state }), 'demo-app', HEAD);
     assert.deepEqual(result.artifacts, [], state);
     assert.deepEqual(result.shotResults, [], state);
   }
@@ -93,8 +93,8 @@ test('active progress shows the last stage only for the current proposal head', 
 
 test('snapshot serialization is truthful before a durable run exists', () => {
   const result = view.fromSnapshot(session({
-    visual_evidence_state: 'planned',
-    visual_evidence_detail: {
+    shots_state: 'planned',
+    shots_detail: {
       required: true, impact: 'ui', rationale: 'Visible change', headSha: HEAD,
       claims: [{
         id: 'new-screen', claim: 'A new route is available.', persona: 'member',
@@ -111,8 +111,8 @@ test('snapshot serialization is truthful before a durable run exists', () => {
 // ── #2601/#2558: the run that never started ──────────────────────────────
 test('a planned run carries the recorded reason it never started, as its own field', () => {
   const s = session({
-    visual_evidence_state: 'planned',
-    visual_evidence_detail: {
+    shots_state: 'planned',
+    shots_detail: {
       impact: 'ui',
       headSha: HEAD,
       notStartedReason: 'Visual change previews are not being run on this deployment.',
@@ -140,24 +140,24 @@ test('the not-started reason is dropped once the run moves on, and on a supersed
   // A run under way owns its own state; a note about it not starting is
   // stale the moment it does.
   assert.equal(view.notStartedReason(
-    { visual_evidence_state: 'exploring', visual_evidence_detail: detail }, false
+    { shots_state: 'exploring', shots_detail: detail }, false
   ), null);
   assert.equal(view.notStartedReason(
-    { visual_evidence_state: 'verified', visual_evidence_detail: detail }, false
+    { shots_state: 'verified', shots_detail: detail }, false
   ), null);
   // A newer revision superseded the attempt the note describes.
   assert.equal(view.notStartedReason(
-    { visual_evidence_state: 'planned', visual_evidence_detail: detail }, true
+    { shots_state: 'planned', shots_detail: detail }, true
   ), null);
   assert.equal(view.notStartedReason(
-    { visual_evidence_state: 'planned', visual_evidence_detail: detail }, false
+    { shots_state: 'planned', shots_detail: detail }, false
   ), detail.notStartedReason);
 });
 
 test('a planned run with nothing recorded reports no reason rather than an empty string', () => {
   const snapshot = view.fromSnapshot(session({
-    visual_evidence_state: 'planned',
-    visual_evidence_detail: { impact: 'ui', headSha: HEAD, notStartedReason: '   ' },
+    shots_state: 'planned',
+    shots_detail: { impact: 'ui', headSha: HEAD, notStartedReason: '   ' },
   }), HEAD);
   assert.equal(snapshot.notStartedReason, null);
 });
@@ -165,7 +165,7 @@ test('a planned run with nothing recorded reports no reason rather than an empty
 // ── Before/after shots: per-change results and clips ─────────────────────
 
 test('shot results are exposed only for the verified run on the current head', () => {
-  const state = require('../src/services/visual-evidence-state');
+  const state = require('../src/services/shots-state');
   const row = {
     state: 'verified', base_sha: BASE, head_sha: HEAD, plan_hash: 'c'.repeat(64),
     intent: null, trace_summary: { runs: 1 },
@@ -188,7 +188,7 @@ test('shot results are exposed only for the verified run on the current head', (
   // A replay-era run has no per-change results.
   const replayRun = state.runSummary({ ...row, hard_verdict: { passed: true, runs: 2, stories: [] } });
   assert.deepEqual(view.serialize(replayRun, session(), 'demo', HEAD).shotResults, []);
-  assert.deepEqual(view.fromSnapshot({ visual_evidence_state: 'planned', visual_evidence_detail: { required: true } }, null).shotResults, []);
+  assert.deepEqual(view.fromSnapshot({ shots_state: 'planned', shots_detail: { required: true } }, null).shotResults, []);
 });
 
 test('shot results are cleaned before they reach any reviewer surface', () => {
@@ -234,7 +234,7 @@ test('a clip is one WebM per side; a legacy paired animation still plays', () =>
     assert.ok(clip, side);
     assert.equal(clip.side, side);
     assert.equal(clip.media, 'webm');
-    assert.equal(clip.url, `/api/apps/demo-app/proposals/42/evidence/${ARTIFACT}`);
+    assert.equal(clip.url, `/api/apps/demo-app/proposals/42/shots/${ARTIFACT}`);
   }
   // Runs from before shots stored one paired before/after recording.
   for (const [media, contentType] of [['webm', 'video/webm'], ['gif', 'image/gif']]) {

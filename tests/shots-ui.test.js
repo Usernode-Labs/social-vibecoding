@@ -5,9 +5,9 @@ const assert = require('node:assert/strict');
 const AppView = require('../public/js/app-view.js');
 
 const id = (char) => char.repeat(32);
-const url = (char) => `/api/apps/demo/proposals/42/evidence/${id(char)}`;
+const url = (char) => `/api/apps/demo/proposals/42/shots/${id(char)}`;
 
-function evidence(overrides = {}) {
+function shots(overrides = {}) {
   return {
     state: 'verified',
     required: true,
@@ -48,13 +48,13 @@ function clipArtifacts(storyId = 'dialog') {
 }
 
 test('verified cards lead with the declared change, escaped, authenticated, and never autoplay', () => {
-  const value = evidence();
+  const value = shots();
   value.artifacts.push(legacyPaired());
-  const html = AppView.visualEvidenceHtml(value, { sessionId: 42 });
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
   assert.match(html, /Typing shows &lt;matching&gt; users &amp; keeps &quot;Invite&quot; visible/);
   assert.doesNotMatch(html, /<matching>|evil\.example|\/visuals\//);
   assert.ok(html.indexOf('Typing shows') < html.indexOf('<img src='), 'the declared change precedes the shots');
-  assert.match(html, /aria-label="Before\/after shots"/);
+  assert.match(html, /aria-label="Before &amp; after"/);
   assert.match(html, /<video[^>]* controls[^>]*preload="none"[^>]* muted[^>]*playsinline/);
   assert.doesNotMatch(html, /<video[^>]*\bautoplay\b/);
   assert.match(html, /before <code>aaaaaaaa<\/code>/);
@@ -62,7 +62,7 @@ test('verified cards lead with the declared change, escaped, authenticated, and 
   assert.match(html, /shots <code>cccccccccccc<\/code>/);
   assert.match(html, /Shots ready/);
   assert.match(html, /Shot details/);
-  assert.match(html, /taken by the preview agent/);
+  assert.match(html, /taken by the shots agent/);
   assert.match(html, /Open full screen/);
   assert.match(html, /Look at the shots and clips to decide whether they show the change\./);
   // The retired replay vocabulary is gone.
@@ -70,27 +70,27 @@ test('verified cards lead with the declared change, escaped, authenticated, and 
 });
 
 test('a legacy paired recording still plays, labelled by what the change declared', () => {
-  const steps = evidence();
+  const steps = shots();
   steps.artifacts.push(legacyPaired());
-  const interaction = AppView.visualEvidenceHtml(steps, { sessionId: 42 });
+  const interaction = AppView.shotsHtml(steps, { sessionId: 42 });
   assert.match(interaction, /Play interaction/);
   assert.match(interaction, new RegExp(`<video src="${url('5')}"`));
-  assert.doesNotMatch(interaction, /data-evidence-clips/);
+  assert.doesNotMatch(interaction, /data-shots-clips/);
 
-  const motion = evidence();
+  const motion = shots();
   motion.claims[0].animation = 'motion';
   motion.artifacts.push(legacyPaired());
-  const html = AppView.visualEvidenceHtml(motion, { sessionId: 42 });
+  const html = AppView.shotsHtml(motion, { sessionId: 42 });
   assert.match(html, /Play animation/);
   assert.doesNotMatch(html, /Play interaction/);
 });
 
 test('a motion change with a clip per side shows a before and an after player', () => {
-  const value = evidence();
+  const value = shots();
   value.claims[0].animation = 'motion';
   value.artifacts.push(...clipArtifacts());
-  const html = AppView.visualEvidenceHtml(value, { sessionId: 42 });
-  const clips = /<div data-evidence-clips="1"[^>]*>([\s\S]*?)<\/div>\s*<div class="mt-2 flex/.exec(html);
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  const clips = /<div data-shots-clips="1"[^>]*>([\s\S]*?)<\/div>\s*<div class="mt-2 flex/.exec(html);
   assert.ok(clips, 'the clips sit in their own block');
   const players = clips[1].match(/<video [^>]*>/g) || [];
   assert.equal(players.length, 2);
@@ -109,46 +109,46 @@ test('a motion change with a clip per side shows a before and an after player', 
   assert.match(html, /Look at the shots and clips/);
 
   // A clip missing on one side says so rather than hiding the other.
-  const oneSided = evidence();
+  const oneSided = shots();
   oneSided.claims[0].animation = 'motion';
   oneSided.artifacts.push(clipArtifacts()[1]);
-  const partial = AppView.visualEvidenceHtml(oneSided, { sessionId: 42 });
-  assert.match(partial, /data-evidence-clips="1"/);
+  const partial = AppView.shotsHtml(oneSided, { sessionId: 42 });
+  assert.match(partial, /data-shots-clips="1"/);
   assert.match(partial, /No clip/);
   assert.equal((partial.match(/<video /g) || []).length, 1);
 
   // A clip URL for another proposal is never played.
-  const foreign = evidence();
+  const foreign = shots();
   foreign.claims[0].animation = 'motion';
   foreign.artifacts.push(...clipArtifacts().map((clip) => ({ ...clip, url: clip.url.replace('/42/', '/43/') })));
-  assert.doesNotMatch(AppView.visualEvidenceHtml(foreign, { sessionId: 42 }), /<video|data-evidence-clips/);
+  assert.doesNotMatch(AppView.shotsHtml(foreign, { sessionId: 42 }), /<video|data-shots-clips/);
 });
 
 test('the element shot leads over the screen shot, and full screen opens the screen shots', () => {
-  const html = AppView.visualEvidenceHtml(evidence(), { sessionId: 42 });
+  const html = AppView.shotsHtml(shots(), { sessionId: 42 });
   const images = [...html.matchAll(/<img src="([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(images, [url('1'), url('2')]);
   assert.match(html, new RegExp(`data-before-url="${url('3')}" data-head-url="${url('4')}"`));
 
   // Without an element shot the screen shot stands in.
-  const screens = evidence({ artifacts: evidence().artifacts.filter((artifact) => artifact.variant === 'context') });
-  const fallback = AppView.visualEvidenceHtml(screens, { sessionId: 42 });
+  const screens = shots({ artifacts: shots().artifacts.filter((artifact) => artifact.variant === 'context') });
+  const fallback = AppView.shotsHtml(screens, { sessionId: 42 });
   assert.deepEqual([...fallback.matchAll(/<img src="([^"]+)"/g)].map((match) => match[1]), [url('3'), url('4')]);
 });
 
 test('an element shot too small to read does not lead, on either side', () => {
-  const sized = (dims) => evidence({
-    artifacts: evidence().artifacts.map((artifact) => (artifact.variant === 'focus' ? { ...artifact, ...dims(artifact) } : artifact)),
+  const sized = (dims) => shots({
+    artifacts: shots().artifacts.map((artifact) => (artifact.variant === 'focus' ? { ...artifact, ...dims(artifact) } : artifact)),
   });
   // A 46×28 crop of a corner badge: the screens lead instead, on both sides.
-  const tiny = AppView.visualEvidenceHtml(sized(() => ({ width: 46, height: 28 })), { sessionId: 42 });
+  const tiny = AppView.shotsHtml(sized(() => ({ width: 46, height: 28 })), { sessionId: 42 });
   assert.deepEqual([...tiny.matchAll(/<img src="([^"]+)"/g)].map((match) => match[1]), [url('3'), url('4')]);
   // One small side is enough to keep the pair comparable.
-  const oneSmall = AppView.visualEvidenceHtml(
+  const oneSmall = AppView.shotsHtml(
     sized((artifact) => (artifact.side === 'base' ? { width: 352, height: 61 } : { width: 90, height: 30 })), { sessionId: 42 });
   assert.deepEqual([...oneSmall.matchAll(/<img src="([^"]+)"/g)].map((match) => match[1]), [url('3'), url('4')]);
   // A readable crop still leads.
-  const readable = AppView.visualEvidenceHtml(sized(() => ({ width: 352, height: 61 })), { sessionId: 42 });
+  const readable = AppView.shotsHtml(sized(() => ({ width: 352, height: 61 })), { sessionId: 42 });
   assert.deepEqual([...readable.matchAll(/<img src="([^"]+)"/g)].map((match) => match[1]), [url('1'), url('2')]);
   // The Workshop thumbnail follows the same rule.
   assert.deepEqual(AppView._workshopVisuals(null, sized(() => ({ width: 46, height: 28 }))),
@@ -156,36 +156,36 @@ test('an element shot too small to read does not lead, on either side', () => {
 });
 
 test('a privileged declared change is explicitly labelled as full admin', () => {
-  const value = evidence();
+  const value = shots();
   value.claims[0].persona = 'full_admin';
-  const html = AppView.visualEvidenceHtml(value, { sessionId: 42 });
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
   assert.match(html, /desktop · full admin/);
 });
 
 test('a still change shows before and after PNGs without suggesting a video', () => {
-  const value = evidence();
+  const value = shots();
   value.claims[0].animation = 'none';
-  const html = AppView.visualEvidenceHtml(value, { sessionId: 42 });
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
   assert.match(html, /Look at the shots to decide whether they show the change\./);
   assert.match(html, /<img src=/);
-  assert.doesNotMatch(html, /<video|Play interaction|Play animation|shots and clips|data-evidence-clips/);
+  assert.doesNotMatch(html, /<video|Play interaction|Play animation|shots and clips|data-shots-clips/);
 });
 
 test('absence is labelled only when the author explicitly declared a new before state', () => {
-  const withoutBase = evidence({ artifacts: evidence().artifacts.filter((a) => a.side !== 'base') });
-  const ordinary = AppView.visualEvidenceHtml(withoutBase, { sessionId: 42 });
+  const withoutBase = shots({ artifacts: shots().artifacts.filter((a) => a.side !== 'base') });
+  const ordinary = AppView.shotsHtml(withoutBase, { sessionId: 42 });
   assert.match(ordinary, /No shot/);
   assert.doesNotMatch(ordinary, /Not there yet/);
 
   withoutBase.claims = [{ ...withoutBase.claims[0], baseState: 'not_present' }];
-  const absent = AppView.visualEvidenceHtml(withoutBase, { sessionId: 42 });
+  const absent = AppView.shotsHtml(withoutBase, { sessionId: 42 });
   assert.match(absent, /Before · Not there yet/);
 });
 
 test('a skipped change shows its reason and no media, beside a ready one', () => {
-  const value = evidence({
+  const value = shots({
     claims: [
-      { ...evidence().claims[0], animation: 'none' },
+      { ...shots().claims[0], animation: 'none' },
       { id: 'empty', claim: 'An empty <search> says no users match.', persona: 'member',
         viewports: ['desktop'], steps: ['Type zz'], baseState: 'present', animation: 'none' },
     ],
@@ -194,10 +194,10 @@ test('a skipped change shows its reason and no media, beside a ready one', () =>
       { id: 'empty', status: 'skipped', reason: 'The member fixture has no <list> to search.' },
     ],
     // A run may publish only the screen shots; thumbnails use them.
-    artifacts: evidence().artifacts.filter((artifact) => artifact.variant === 'context'),
+    artifacts: shots().artifacts.filter((artifact) => artifact.variant === 'context'),
   });
-  const html = AppView.visualEvidenceHtml(value, { sessionId: 42 });
-  const skipped = /<article data-evidence-story="empty" data-evidence-shot-status="skipped"[\s\S]*?<\/article>/.exec(html);
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  const skipped = /<article data-shots-story="empty" data-shots-shot-status="skipped"[\s\S]*?<\/article>/.exec(html);
   assert.ok(skipped, 'the skipped change is marked');
   assert.match(skipped[0], /An empty &lt;search&gt; says no users match\./);
   assert.match(skipped[0], />Skipped</);
@@ -205,12 +205,12 @@ test('a skipped change shows its reason and no media, beside a ready one', () =>
   assert.doesNotMatch(skipped[0], /<img|<video|Open full screen|Shots ready/);
   assert.match(html, new RegExp(`<img src="${url('3')}"`), 'the ready change still shows its shots');
   assert.match(html, new RegExp(`<img src="${url('4')}"`));
-  assert.doesNotMatch(html, /data-evidence-story="dialog" data-evidence-shot-status/);
+  assert.doesNotMatch(html, /data-shots-story="dialog" data-shots-shot-status/);
 
-  const unexplained = AppView.visualEvidenceHtml({
+  const unexplained = AppView.shotsHtml({
     ...value, shotResults: [value.shotResults[0], { id: 'empty', status: 'skipped', reason: null }],
   }, { sessionId: 42 });
-  assert.match(unexplained, /The preview agent could not get to this change\./);
+  assert.match(unexplained, /The shots agent could not get to this change\./);
 
   const summary = AppView._workshopVisuals(null, {
     ...value,
@@ -221,12 +221,12 @@ test('a skipped change shows its reason and no media, beside a ready one', () =>
   assert.equal(summary.after, url('4'));
 });
 
-test('a ready change shows the preview agent\'s note on what its shots leave out, as text', () => {
-  const noted = AppView.visualEvidenceHtml(evidence({
+test('a ready change shows the shots agent\'s note on what its shots leave out, as text', () => {
+  const noted = AppView.shotsHtml(shots({
     shotResults: [{ id: 'dialog', status: 'ready', reason: null, note: 'The <b>Show more</b> fold needs a hidden app.' }],
   }), { sessionId: 42 });
-  const article = /<article data-evidence-story="dialog"[\s\S]*?<\/article>/.exec(noted)[0];
-  assert.match(article, /<p data-evidence-shot-note="1"[^>]*>.*Not in these shots:<\/span> The &lt;b&gt;Show more&lt;\/b&gt; fold needs a hidden app\.<\/p>/);
+  const article = /<article data-shots-story="dialog"[\s\S]*?<\/article>/.exec(noted)[0];
+  assert.match(article, /<p data-shots-shot-note="1"[^>]*>.*Not in these shots:<\/span> The &lt;b&gt;Show more&lt;\/b&gt; fold needs a hidden app\.<\/p>/);
   assert.match(article, /<img /, 'the shots are still shown beside the note');
   // No note, a skipped change's note, or a non-string note renders nothing.
   for (const shotResults of [
@@ -234,63 +234,63 @@ test('a ready change shows the preview agent\'s note on what its shots leave out
     [{ id: 'dialog', status: 'ready', reason: null, note: null }],
     [{ id: 'dialog', status: 'ready', reason: null, note: { html: '<b>x</b>' } }],
   ]) {
-    assert.doesNotMatch(AppView.visualEvidenceHtml(evidence({ shotResults }), { sessionId: 42 }), /data-evidence-shot-note/);
+    assert.doesNotMatch(AppView.shotsHtml(shots({ shotResults }), { sessionId: 42 }), /data-shots-shot-note/);
   }
 });
 
 test('pending or failed shots show the declared changes and status but no media or legacy fallback', () => {
   for (const state of ['planned', 'failed', 'stale']) {
-    const html = AppView.visualEvidenceHtml(evidence({
+    const html = AppView.shotsHtml(shots({
       state,
       failureReason: state === 'failed' ? 'The dialog could not be reached.' : null,
       repairAvailable: state === 'failed',
     }), { sessionId: 42 });
-    assert.match(html, new RegExp(`data-evidence-state="${state}"`));
+    assert.match(html, new RegExp(`data-shots-state="${state}"`));
     assert.doesNotMatch(html, /<img|<video|\/visuals\//);
     assert.match(html, /<li>Typing shows &lt;matching&gt;/);
   }
-  assert.equal(AppView._workshopVisuals({ after: { png: id('a') } }, evidence({ state: 'failed' })), null);
+  assert.equal(AppView._workshopVisuals({ after: { png: id('a') } }, shots({ state: 'failed' })), null);
 });
 
 test('the workshop summary uses protected element shots only after verification', () => {
-  const summary = AppView._workshopVisuals(null, evidence());
+  const summary = AppView._workshopVisuals(null, shots());
   assert.equal(summary.protected, true);
   assert.equal(summary.before, url('1'));
   assert.equal(summary.after, url('2'));
-  assert.equal(summary.claim, evidence().claims[0].claim);
+  assert.equal(summary.claim, shots().claims[0].claim);
 });
 
 test('running shots offer Stop, and a stopped or failed set offers to take them again', () => {
-  const running = AppView.visualEvidenceHtml(evidence({ state: 'exploring', artifacts: [] }), { sessionId: 42 });
+  const running = AppView.shotsHtml(shots({ state: 'exploring', artifacts: [] }), { sessionId: 42 });
   assert.match(running, /Taking the shots/);
-  assert.match(running, /data-evidence-stop="1"[^>]*onclick="AppView\.stopVisualEvidence\(42, this\)">Stop</);
-  assert.match(AppView.visualEvidenceHtml(evidence({ state: 'provisioning', artifacts: [] }), { sessionId: 42 }),
+  assert.match(running, /data-shots-stop="1"[^>]*onclick="AppView\.stopShots\(42, this\)">Stop</);
+  assert.match(AppView.shotsHtml(shots({ state: 'provisioning', artifacts: [] }), { sessionId: 42 }),
     /Building before and after/);
-  assert.match(AppView.visualEvidenceHtml(evidence({ state: 'reviewing', artifacts: [] }), { sessionId: 42 }),
+  assert.match(AppView.shotsHtml(shots({ state: 'reviewing', artifacts: [] }), { sessionId: 42 }),
     /Saving the shots/);
-  const notStarted = AppView.visualEvidenceHtml(evidence({ state: 'planned', artifacts: [] }), { sessionId: 42 });
-  assert.doesNotMatch(notStarted, /data-evidence-stop/, 'nothing is running to stop');
+  const notStarted = AppView.shotsHtml(shots({ state: 'planned', artifacts: [] }), { sessionId: 42 });
+  assert.doesNotMatch(notStarted, /data-shots-stop/, 'nothing is running to stop');
 
-  const stopped = AppView.visualEvidenceHtml(evidence({
-    state: 'failed', artifacts: [], failureCode: 'evidence_stopped', repairAvailable: false,
+  const stopped = AppView.shotsHtml(shots({
+    state: 'failed', artifacts: [], failureCode: 'shots_stopped', repairAvailable: false,
     failureReason: 'Stopped before it finished.',
   }), { sessionId: 42 });
   assert.match(stopped, /Shots stopped/);
   assert.doesNotMatch(stopped, /bg-red-500\/10/, 'a stop is not a failure');
-  assert.match(stopped, /onclick="AppView\.rerunVisualEvidence\(42, this\)">Take the shots again</);
-  assert.doesNotMatch(stopped, /data-evidence-stop/);
+  assert.match(stopped, /onclick="AppView\.rerunShots\(42, this\)">Take the shots again</);
+  assert.doesNotMatch(stopped, /data-shots-stop/);
 
-  const failed = AppView.visualEvidenceHtml(evidence({
-    state: 'failed', artifacts: [], failureCode: 'evidence_capture_incomplete', repairAvailable: true,
-    failureReason: 'The preview agent could not reach the dialog.',
+  const failed = AppView.shotsHtml(shots({
+    state: 'failed', artifacts: [], failureCode: 'shots_capture_incomplete', repairAvailable: true,
+    failureReason: 'The shots agent could not reach the dialog.',
   }), { sessionId: 42 });
   assert.match(failed, /Couldn’t take the shots/);
-  assert.match(failed, /The preview agent could not reach the dialog\./);
+  assert.match(failed, /The shots agent could not reach the dialog\./);
   assert.match(failed, /bg-red-500\/10/);
   assert.match(failed, />Take the shots again</);
 
-  const conflict = AppView.visualEvidenceHtml(evidence({
-    state: 'failed', artifacts: [], failureCode: 'visual_evidence_intent_conflict', repairAvailable: false,
+  const conflict = AppView.shotsHtml(shots({
+    state: 'failed', artifacts: [], failureCode: 'visible_changes_conflict', repairAvailable: false,
     failureReason: 'The declaration says nothing visible changed.',
   }), { sessionId: 42 });
   assert.doesNotMatch(conflict, /Take the shots again/, 'a retry that would repeat the failure is not offered');
@@ -300,8 +300,8 @@ test('no state of the card says "Visual change preview"', () => {
   const states = ['planned', 'provisioning', 'exploring', 'replaying', 'reviewing', 'verified',
     'failed', 'stale', 'cancelled', 'not_required', 'overridden'];
   for (const state of states) {
-    for (const extra of [{}, { failureCode: 'evidence_stopped' }, { notStartedReason: 'Switched off here.' }]) {
-      const html = AppView.visualEvidenceHtml(evidence({ state, ...extra }), { sessionId: 42 });
+    for (const extra of [{}, { failureCode: 'shots_stopped' }, { notStartedReason: 'Switched off here.' }]) {
+      const html = AppView.shotsHtml(shots({ state, ...extra }), { sessionId: 42 });
       assert.doesNotMatch(html, /visual change preview/i, `${state} ${JSON.stringify(extra)}`);
     }
   }

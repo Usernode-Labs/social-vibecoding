@@ -286,9 +286,9 @@ test('the work order separates manual testing routes from interaction evidence',
   assert.doesNotMatch(order, /query param handled at boot/);
 
   // The agent declares what changed and how a person reaches that exact
-  // state; Homeroom's preview agent takes the before/after shots.
-  assert.match(order, /visualEvidence/);
-  assert.match(order, /record_visual_evidence_intent/);
+  // state; Homeroom's shots agent takes the before/after shots.
+  assert.match(order, /shots/);
+  assert.match(order, /declare_visible_changes/);
   assert.match(order, /helper is not exposed[\s\S]*documented version-1 object directly/,
     'a connector without the helper still documents the supported v1 input path');
   assert.match(order, /before\/after shots/);
@@ -299,9 +299,9 @@ test('the work order separates manual testing routes from interaction evidence',
   // The submission response distinguishes a malformed manual route from the
   // evidence lifecycle instead of silently replacing either with '/'.
   assert.match(order, /testingPathsRejected/);
-  assert.match(order, /visualEvidenceAccepted/);
-  assert.match(order, /visualEvidenceState/);
-  assert.match(order, /visualEvidenceNextStep/);
+  assert.match(order, /visibleChangesAccepted/);
+  assert.match(order, /shotsState/);
+  assert.match(order, /shotsNextStep/);
 });
 
 test('the work order says the checks gate merge and how to clear them', () => {
@@ -321,7 +321,7 @@ test('the work order says the checks gate merge and how to clear them', () => {
   assert.match(step7, /do not call `prepare_work`/);
   // Evidence is revision-scoped and can fail honestly; no generic home-page
   // screenshot is allowed to masquerade as proof of an unreachable state.
-  assert.match(step7, /visualEvidence/);
+  assert.match(step7, /shots/);
   assert.match(step7, /check that your declared changes were accepted/);
   assert.match(step7, /wait for `verified`/);
   assert.match(step7, /`shotResults` says why any change was skipped/);
@@ -362,7 +362,7 @@ test('every addition sits above the appendix, and none brings a fence', () => {
   for (const marker of [
     'get_platform_conventions',
     'testingPaths',
-    'visualEvidence',
+    'shots',
     '7. THEN CHECK THE CHECKS',
   ]) {
     const at = order.indexOf(marker);

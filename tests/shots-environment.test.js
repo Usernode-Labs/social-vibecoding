@@ -3,33 +3,33 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const environment = require('../src/services/visual-evidence-environment');
+const environment = require('../src/services/shots-environment');
 const runtime = require('../src/services/application-runtime');
 const dbManager = require('../src/services/db-manager');
-const fixtures = require('../src/services/visual-evidence-fixtures');
+const fixtures = require('../src/services/shots-fixtures');
 
-test('evidence resource names are deterministic, side-specific, and bounded', () => {
+test('shots resource names are deterministic, side-specific, and bounded', () => {
   const runId = '0123456789abcdef0123456789abcdef';
-  assert.equal(environment.runtimeName(runId, 'base', 'docker'), 'usernode-evidence-0123456789abcdef-base');
-  assert.equal(environment.runtimeName(runId, 'head', 'kubernetes'), 'sv-evidence-0123456789abcdef-h');
+  assert.equal(environment.runtimeName(runId, 'base', 'docker'), 'usernode-shots-0123456789abcdef-base');
+  assert.equal(environment.runtimeName(runId, 'head', 'kubernetes'), 'sv-shots-0123456789abcdef-h');
   assert.ok(environment.runtimeName(runId, 'base', 'kubernetes').length <= 63);
   assert.notEqual(environment.runtimeName(runId, 'base'), environment.runtimeName(runId, 'head'));
   assert.throws(() => environment.runtimeName(runId, 'other'), /invalid/i);
 });
 
-test('evidence image tags key the exact revision and recipe', () => {
+test('shots image tags key the exact revision and recipe', () => {
   const sha = 'a'.repeat(40);
   const tag = environment.dockerImageName({ id: 42 }, sha);
-  assert.equal(tag, `usernode-evidence-42:${'a'.repeat(16)}-${environment.IMAGE_RECIPE}`);
+  assert.equal(tag, `usernode-shots-42:${'a'.repeat(16)}-${environment.IMAGE_RECIPE}`);
   assert.throws(() => environment.dockerImageName({ id: 42 }, 'main'), /exact 40-character/);
 });
 
-test('only the Homeroom self-app evidence runtime bypasses the server app cap', () => {
+test('only the Homeroom self-app shots runtime bypasses the server app cap', () => {
   const config = { selfAppSlug: 'usernode-2d5619' };
-  assert.deepEqual(environment.evidenceCapacityEnv(config, { slug: 'usernode-2d5619' }), {
+  assert.deepEqual(environment.shotsCapacityEnv(config, { slug: 'usernode-2d5619' }), {
     MAX_APPS: '0',
   });
-  assert.deepEqual(environment.evidenceCapacityEnv(config, { slug: 'another-app' }), {});
+  assert.deepEqual(environment.shotsCapacityEnv(config, { slug: 'another-app' }), {});
 });
 
 test('only canonical HTTPS GitHub repositories are accepted', () => {
@@ -72,7 +72,7 @@ test('each paired reset serializes clones and adds the same member fixture to bo
     app: { slug }, runId, sessionId: 42,
     preparedSource: { fingerprint: 'source-fingerprint' },
     sides: Object.fromEntries(['base', 'head'].map((side) => [side, {
-      dbName: dbManager.evidenceDbName(slug, runId, side), runtimeName: `evidence-${side}`,
+      dbName: dbManager.shotsDbName(slug, runId, side), runtimeName: `shots-${side}`,
       sha: side === 'base' ? 'a'.repeat(40) : 'b'.repeat(40),
       imageRef: `image-${side}`, imageDigest: `digest-${side}`, env: {},
     }])),
@@ -132,7 +132,7 @@ test('each paired reset serializes clones and adds the same member fixture to bo
     const pairedEnvs = deployedEnvs.filter((env) => env.DATABASE_URL);
     assert.equal(pairedEnvs.length, 2);
     assert.ok(pairedEnvs.every((env) => env.MAX_APPS === '0'));
-    assert.ok(progress.includes('seed_evidence_identities'));
+    assert.ok(progress.includes('seed_shots_identities'));
     assert.ok(progress.includes('deploy_hosted_app_fixture'));
     assert.ok(progress.includes('seed_hosted_app_fixture'));
     assert.equal(deployment.fixtureFingerprint, crypto.createHash('sha256')
@@ -165,17 +165,17 @@ test('paired cleanup removes the hosted app runtime with both exact revisions', 
     const pair = {
       runId: 'f'.repeat(32),
       sides: {
-        base: { runtimeName: 'evidence-base', dbName: 'fixture-base' },
-        head: { runtimeName: 'evidence-head', dbName: 'fixture-head' },
+        base: { runtimeName: 'shots-base', dbName: 'fixture-base' },
+        head: { runtimeName: 'shots-head', dbName: 'fixture-head' },
       },
-      hostedFixtureRef: { runtimeKind: 'kubernetes', runtimeName: 'evidence-hosted-app' },
-      hostedFixtureDeployment: { runtimeName: 'evidence-hosted-app' },
+      hostedFixtureRef: { runtimeKind: 'kubernetes', runtimeName: 'shots-hosted-app' },
+      hostedFixtureDeployment: { runtimeName: 'shots-hosted-app' },
       preparedSource: { fingerprint: 'fixture' },
     };
     const result = await environment.cleanupPair({ appRuntime: 'kubernetes' }, pair);
     assert.equal(result.cleaned, true);
     assert.deepEqual(removed.sort(), [
-      'evidence-base', 'evidence-head', 'evidence-hosted-app',
+      'shots-base', 'shots-head', 'shots-hosted-app',
     ]);
     assert.equal(pair.hostedFixtureDeployment, null);
   } finally {

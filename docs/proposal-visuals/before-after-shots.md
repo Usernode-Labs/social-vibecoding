@@ -1,9 +1,9 @@
-# Before/after shots
+# Before & after shots
 
-Every proposal that changes something people can see gets before/after
+Every proposal that changes something people can see gets before & after
 shots. The author declares each change in plain words, along with how to
 reach it. Homeroom then builds private copies of the app from before and
-after the change. A preview agent follows the declared steps on both builds
+after the change. A shots agent follows the declared steps on both builds
 and saves what it sees: a still for each screen size and side, plus a short
 clip of each side when the change is motion a still cannot show. People look
 at the shots to judge the change. Nothing replays them and no model grades
@@ -25,18 +25,48 @@ program failed replay on a locator, an assertion, or a fingerprint.
 | shot | A PNG of the screen (`kind: "screen"`) or of one element (`kind: "element"`) | variant `context` / `focus` |
 | clip | A WebM of one side, for a `motion` change | variant `animation`, side `base`/`head` |
 | screen | A declared viewport (`desktop`, `mobile`, …) | `viewport` |
-| skipped | A change the preview agent could not reach, with its reason | `hard_verdict.stories[].status` |
-| preview agent | The hosted model that takes the shots (Claude Sonnet 5.5 for every proposal) | evidence worker turn |
+| skipped | A change the shots agent could not reach, with its reason | `hard_verdict.stories[].status` |
+| shots agent | The hosted model that takes the shots (Claude Sonnet 5.5 for every proposal) | shots worker turn |
+| visible changes | The author's declaration of the changes (`impact`, `rationale`, `stories`) | `visibleChanges` on the way in, `intent` once stored |
+| preview | The running staging build of a proposal, and only that | |
 
-Database tables, API fields and routes keep their original names
-(`visual_evidence_*`, `visualEvidence`, `/evidence/`). Stored sides stay
-`base`/`head`; the agent and people only see *before* and *after*.
+On screen the feature is **Before & after**. In code, the API and storage,
+the images are `shots`: tables `shot_runs`, `shot_artifacts` and
+`shot_diagnostic_artifacts`, columns `chat_sessions.shots_*`, routes under
+`/shots`, settings `SHOTS_*`. Stored sides stay `base`/`head`; the agent and
+people only see *before* and *after*.
+
+### Names from before the rename
+
+Until 2026-09-29 all of this was called "visual evidence". The old names
+still work, so nothing outside this repository breaks on the rename:
+
+- `visualEvidence` on `submit_work` and the proposal-handoff routes, and
+  `visual_evidence` on the CLI's `proposal_submit_build`, are read as
+  `visibleChanges` (`visible-changes.declaredChanges`).
+- `/api/apps/:slug/proposals/:sessionId/evidence…` is answered by the
+  `/shots…` routes, for a tab still running the previous shell
+  (`routes/shots.js`), and the worker's old
+  `/api/internal/sessions/:id/visual-evidence-intent` by `/visible-changes`.
+- Each `SHOTS_*` setting falls back to its `VISUAL_EVIDENCE_*` name
+  (`VISUAL_EVIDENCE_V2_ENABLED` for `SHOTS_ENABLED`); the deploy workflow
+  reads either repository variable. The Helm value is now
+  `platform.shotsEnabled`; `platform.visualEvidenceV2Enabled` is no longer
+  read.
+- A pull request body's `usernode:visual-evidence` block is found and
+  replaced by the `usernode:shots` one (`pr-metadata.js`).
+- Failure codes and turn modes recorded under the old names are read as
+  the new ones (`shots-state.currentCode`).
+- A database that had the old tables renames them in place, and keeps a view
+  under each old table name and synced `chat_sessions.visual_evidence_*`
+  columns, so the previous release's pods keep working through a rolling
+  update. `schema.sql` says when to drop them.
 
 ## Declaring a change
 
-The implementing agent declares changes with `record_visual_evidence_intent`
-on a hosted build turn, or with `visualEvidence` on `submit_work` from an
-external agent. The shape is unchanged from version 1:
+The implementing agent declares changes with `declare_visible_changes`
+on a hosted build turn, or with `visibleChanges` on `submit_work` from an
+external agent (`visible_changes` on the CLI's `proposal_submit_build`). The shape is unchanged from version 1:
 
 ```json
 {
@@ -69,9 +99,9 @@ external agent. The shape is unchanged from version 1:
 - `animation: "motion"` asks for clips as well as stills.
 - `hints` are optional. They pass on what the author learned while building
   (data to create first, text that proves the state was reached, and the
-  element to point at), so the preview agent can go straight there. They are
+  element to point at), so the shots agent can go straight there. They are
   guidance only and are never executed.
-- `controlledFailurePath` still lets an error state be shot. The preview
+- `controlledFailurePath` still lets an error state be shot. The shots
   agent makes that exact API GET fail on both builds, and the shots are
   labelled as a controlled test.
 
@@ -85,8 +115,8 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
 2. **Building before and after** (`provisioning`). Homeroom builds isolated
    copies of the exact base and head revisions. It resets both to the same
    fixture data and signs in each persona's browser.
-3. **Taking the shots** (`exploring`). The preview agent gets one turn in an
-   evidence worker. It has three browsers, one per persona, and the "shots"
+3. **Taking the shots** (`exploring`). The shots agent gets one turn in a
+   shots worker. It has three browsers, one per persona, and the "shots"
    tools:
 
    | Tool | What it does |
@@ -119,7 +149,7 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    torn down.
 5. **Shots ready** (`verified`). A run publishes if at least one change is
    ready, so one unreachable change never hides the others. If none is
-   ready, the run fails with `evidence_capture_incomplete` and each change's
+   ready, the run fails with `shots_capture_incomplete` and each change's
    reason. If the agent itself failed and skipped nothing, it keeps the
    agent's error instead.
 
@@ -158,7 +188,7 @@ the one third-party host admitted. The platform's own proposals serve the
 assets their revision carries.
 
 It does **not** prove that a "before" shot was taken on the before address,
-or that the shot shows the change. These are the preview agent's
+or that the shot shows the change. These are the shots agent's
 observations, and people are the judges, which is also how the replay
 pipeline ended: people still had to look. The builds are platform-made from
 exact revisions with fixture data, so no author's local data or credentials
@@ -190,40 +220,43 @@ paired clips still play.
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| `VISUAL_EVIDENCE_V2_ENABLED` | `true` | The one kill switch: stops collecting declarations, taking shots and showing them |
-| `VISUAL_EVIDENCE_MAX_AGENT_MS` | 480000 | The preview agent's turn budget |
-| `VISUAL_EVIDENCE_MAX_RUN_MS` | 1440000 | Whole-run budget, also used by recovery |
-| `VISUAL_EVIDENCE_AGENT_MODEL` | `claude-sonnet-5-5` | The preview agent's model, whatever model or backend the author's session used; any other `claude-…` id overrides it |
+| `SHOTS_ENABLED` | `true` | The one kill switch: stops collecting declarations, taking shots and showing them |
+| `SHOTS_MAX_AGENT_MS` | 480000 | The shots agent's turn budget |
+| `SHOTS_MAX_RUN_MS` | 1440000 | Whole-run budget, also used by recovery |
+| `SHOTS_AGENT_MODEL` | `claude-sonnet-5-5` | The shots agent's model, whatever model or backend the author's session used; any other `claude-…` id overrides it |
 
-The preview agent is always Claude Code on this model, in a fresh thread
+The shots agent is always Claude Code on this model, in a fresh thread
 started from its brief, including for proposals built on Codex (OpenRouter).
 
 Clips are recorded only for runs with a `motion` change
-(`EVIDENCE_RECORD_CLIPS=1` in the worker adds `--save-video=1280x800` to each
+(`SHOTS_RECORD_CLIPS=1` in the worker adds `--save-video=1280x800` to each
 browser). Each persona's browser saves files under
-`EVIDENCE_SHOTS_DIR/<member|admin|full_admin>` via `--output-dir`.
+`SHOTS_DIR/<member|admin|full_admin>` via `--output-dir`.
 
 ## Where it lives
 
 | Piece | File |
 | --- | --- |
-| Declaration schema (`parseIntent`, `hints`, `needsClip`) | `src/services/visual-evidence-plan.js` |
-| File checks and per-change results (`shotTarget`, `summarize`) | `src/services/visual-evidence-shots.js` |
-| Run-scoped control (`saveShot`, `skipChange`, `noteChange`, `summary`) | `src/services/visual-evidence-control.js` |
+| Declaration schema (`parseIntent`, `declaredChanges`, `hints`, `needsClip`) | `src/services/visible-changes.js` |
+| Declaring on a hosted turn (`declare_visible_changes`) | `worker/visible-changes-mcp.js`, `POST /api/internal/sessions/:id/visible-changes` |
+| File checks and per-change results (`shotTarget`, `summarize`) | `src/services/shots-files.js` |
+| Run-scoped control (`saveShot`, `skipChange`, `noteChange`, `summary`) | `src/services/shots-control.js` |
 | Internal routes (`/context`, raw `/shot`, `/skip`, `/note`) | `src/routes/internal.js` |
-| Run flow and the brief (`executeRun`, `shotsBrief`) | `src/services/visual-evidence-orchestrator.js` |
-| Preview agent prompt and dispatch | `src/services/visual-evidence-agent.js` |
-| Shots bridge (MCP server `shots`) | `worker/evidence-mcp.js` |
-| Browser servers (`--output-dir`, `--save-video`) | `worker/write-evidence-mcp-config.js` |
-| Egress proxy (origins, platform assets, controlled failures) | `worker/evidence-origin-proxy.js` |
+| Run flow and the brief (`executeRun`, `shotsBrief`) | `src/services/shots-orchestrator.js` |
+| Shots agent prompt and dispatch | `src/services/shots-agent.js` |
+| Shots bridge (MCP server `shots`) | `worker/shots-mcp.js` |
+| Browser servers (`--output-dir`, `--save-video`) | `worker/write-shots-mcp-config.js` |
+| Egress proxy (origins, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
 | Local dry run: the pair, then the shots | `scripts/shots-dry-run-pair.js`, `scripts/shots-dry-run.js` |
-| States, storage, public summary | `src/services/visual-evidence-state.js`, `src/services/visual-evidence-view.js` |
-| Proposal card | `public/js/app-view.js` (`visualEvidenceHtml`) |
+| States, storage, public summary | `src/services/shots-state.js`, `src/services/shots-view.js` |
+| Public routes (summary, files, diagnostics, take again, stop, waive) | `src/routes/shots.js` |
+| Tables, and the rename from `visual_evidence_*` | `src/db/schema.sql` (the "Renamed from visual_evidence_*" block) |
+| Proposal card | `public/js/app-view.js` (`shotsHtml`) |
 
 ## Diagnosing a run
 
 The proposal author and app managers can read
-`GET /api/apps/:slug/proposals/:sessionId/evidence/diagnostics` (add
+`GET /api/apps/:slug/proposals/:sessionId/shots/diagnostics` (add
 `?runId=` for an earlier run). It carries the run's revisions, provenance,
 `shotResults`, stored files (sizes and hashes, not bytes), the failure code
 and reason, and a bounded trace:
@@ -234,7 +267,7 @@ and reason, and a bounded trace:
   whether everything was skipped;
 - `trace.agentDispatches` and `trace.agentActivity` give the backend and
   model, fallback, tool counts, and pending browser and provider calls. See
-  `evidence-planner-diagnostics.md` for reading a timeout;
+  `shots-agent-diagnostics.md` for reading a timeout;
 - `trace.agentFinalResponse(s)` holds the agent's own last words (private
   to this route).
 
@@ -246,11 +279,11 @@ data dump restored per side, the per-side fixtures, the three personas
 signed in on both) and prints the next command.
 `npm run shots:dry-run -- --intent FILE --before URL --after URL` then takes
 the shots outside Homeroom, on the two running builds. Everything
-between the agent and the saved files is the production code: the preview
+between the agent and the saved files is the production code: the shots
 agent's prompts, the shots bridge, the internal routes and the run control.
 The browsers are Playwright MCP with the worker's flags, and the agent is
 your local `claude` CLI (`--claude-bin` names another; Sonnet 5.5 needs
-2.1.284 or later) on the hosted preview agent's model unless `--model` says
+2.1.284 or later) on the hosted shots agent's model unless `--model` says
 otherwise, with no built-in tools and only the shots and browser servers
 allowed. Run from inside a Claude Code session, it starts the agent without
 that session's environment. `--fixtures` passes the seeded fixtures into the
@@ -299,6 +332,6 @@ Still open:
   `--save-video` with `browser_start_video`/`browser_stop_video`; the same
   server is the coding agent's in-loop browser. Upgrading is its own change.
 - The agent does not always call `browser_wait_for` before shooting.
-- The hosted-app evidence fixture (a child app beside the platform) was not
+- The hosted-app shots fixture (a child app beside the platform) was not
   part of the local runs, so the platform-asset route for child apps is
   covered by tests, not yet by a model run.

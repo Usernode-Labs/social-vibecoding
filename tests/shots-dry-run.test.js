@@ -1,7 +1,7 @@
 'use strict';
 
 // scripts/shots-dry-run.js takes before/after shots of declared changes on
-// two local builds with a real preview agent. The run itself needs a browser
+// two local builds with a real shots agent. The run itself needs a browser
 // and a model; these pin its argument contract and the contact sheet people
 // judge from, which renders proposal text and so must escape it.
 
@@ -9,7 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { parseArgs, contactSheet, agentEnv, watchAgentStream } = require('../scripts/shots-dry-run');
-const fixtures = require('./fixtures/visual-evidence');
+const fixtures = require('./fixtures/shots');
 
 test('the dry run needs a declaration and two origins, and takes exact commits only', () => {
   assert.throws(() => parseArgs(['--intent', 'i.json', '--before', 'http://127.0.0.1:1']), /--after is required/);
@@ -30,7 +30,7 @@ test('the dry run needs a declaration and two origins, and takes exact commits o
   [path.resolve('lab/pw/bin/mcp-server-playwright'), '--flag'], 'the agent runs elsewhere, so a relative command is resolved');
   assert.equal(options.fixturesFile, null, 'no fixtures unless the pair seeded some');
   assert.equal(options.claudeBin, 'claude');
-  assert.equal(options.model, null, 'the run falls back to the hosted preview agent\'s model');
+  assert.equal(options.model, null, 'the run falls back to the hosted shots agent\'s model');
   assert.equal(parseArgs(['--intent', 'i.json', '--before', 'http://a', '--after', 'http://b',
     '--claude-bin', 'bin/claude']).claudeBin, path.resolve('bin/claude'));
   assert.equal(parseArgs(['--intent', 'i.json', '--before', 'http://a', '--after', 'http://b',

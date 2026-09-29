@@ -1584,10 +1584,10 @@ test('submit_work carries the request its work order named into the import', () 
 });
 
 test('submit_work documents the v1 declaration it takes directly when the helper tool is absent', () => {
-  // A connector session has no record_visual_evidence_intent, so the input's
+  // A connector session has no declare_visible_changes, so the input's
   // own description is the only place an external agent learns the shape.
   const block = registration('submit_work');
-  assert.match(block, /record_visual_evidence_intent, or build that shape directly/);
+  assert.match(block, /declare_visible_changes, or build that shape directly/);
   assert.match(block, /1-3 declared changes/);
   assert.match(block, /optional hints \{setup, expectText, focusTarget\}/);
   assert.match(block, /before and after shot, plus a short clip for animation "motion"/);
@@ -1595,20 +1595,21 @@ test('submit_work documents the v1 declaration it takes directly when the helper
 
 test('submit_work validates the declared changes and forwards only them — no author plan', () => {
   // The replay plan an author used to hand over beside the declaration is
-  // gone: the preview agent takes the shots, so the tool has one evidence
+  // gone: the shots agent takes the shots, so the tool has one declaration
   // input, validated by the same parser the hosted helper uses.
   const block = registration('submit_work');
-  assert.match(block, /visualEvidencePlan\.parseIntent\(visualEvidence\)/);
-  assert.match(block, /toolError\('invalid_visual_evidence', err\.message\)/);
-  assert.match(block, /extra\.visualEvidence \? \{ visualEvidence: extra\.visualEvidence \}/);
-  assert.doesNotMatch(block, /parseAuthorPlanSubmission|acceptedVisualEvidencePlan/);
+  assert.match(block, /visibleChangesContract\.declaredChanges\(\{ visibleChanges, visualEvidence \}\)/);
+  assert.match(block, /visibleChangesContract\.parseIntent\(declared\)/);
+  assert.match(block, /toolError\('invalid_visible_changes', err\.message\)/);
+  assert.match(block, /extra\.visibleChanges \? \{ visibleChanges: extra\.visibleChanges \}/);
+  assert.doesNotMatch(block, /parseAuthorPlanSubmission|acceptedVisibleChangesPlan/);
   assert.doesNotMatch(block, /visualEvidencePlan: /,
     'neither an input field nor a forwarded key carries a plan');
   assert.doesNotMatch(block, /submit_visual_evidence_plan/);
 });
 
 // The update shape, stood up the way the #1217 test above stands it up.
-function evidenceUpdateConnector(platformAnswer) {
+function shotsUpdateConnector(platformAnswer) {
   const gh = require('../src/services/github');
   const githubLink = require('../src/services/github-link');
   const real = { gh: gh.isEnabled, link: githubLink.isEnabled };
@@ -1623,17 +1624,17 @@ function evidenceUpdateConnector(platformAnswer) {
 }
 
 test('submit_work accepts a v1 declaration and carries the parsed copy to the platform', async () => {
-  const fixture = require('./fixtures/visual-evidence');
+  const fixture = require('./fixtures/shots');
   const declared = fixture.motionIntent();
-  const c = evidenceUpdateConnector({
+  const c = shotsUpdateConnector({
     updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52,
     headSha: 'b'.repeat(40), votesCleared: 0, submittedVia: 'update_branch',
-    visualEvidenceState: 'planned', visualEvidenceAccepted: true,
-    visualEvidenceRequired: true, visualEvidenceNextStep: 'await_visual_evidence',
+    shotsState: 'planned', visibleChangesAccepted: true,
+    shotsRequired: true, shotsNextStep: 'await_shots',
   });
   try {
     const res = await c.handlers.get('submit_work')({
-      proposalId: 3140, branch: 'my-fix', visualEvidence: declared,
+      proposalId: 3140, branch: 'my-fix', visibleChanges: declared,
       // A stale caller may still send the retired field. It is not an input
       // any more, so nothing of it reaches the platform.
       visualEvidencePlan: { baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), plan: {} },
@@ -1641,46 +1642,66 @@ test('submit_work accepts a v1 declaration and carries the parsed copy to the pl
     assert.notEqual(res.isError, true);
     const sent = c.calls.at(-1);
     assert.equal(sent.pathname, '/api/apps/recipe-box/proposals/3140/update-from-fork');
-    assert.deepEqual(sent.body.visualEvidence,
-      require('../src/services/visual-evidence-plan').parseIntent(declared),
+    assert.deepEqual(sent.body.visibleChanges,
+      require('../src/services/visible-changes').parseIntent(declared),
       'the validated declaration travels, not the raw argument');
     assert.equal('visualEvidencePlan' in sent.body, false);
     const out = res.structuredContent;
-    assert.equal(out.visualEvidenceAccepted, true);
-    assert.equal(out.visualEvidenceState, 'planned');
-    assert.equal(out.visualEvidenceRequired, true);
-    assert.equal(out.visualEvidenceNextStep, 'await_visual_evidence');
+    assert.equal(out.visibleChangesAccepted, true);
+    assert.equal(out.shotsState, 'planned');
+    assert.equal(out.shotsRequired, true);
+    assert.equal(out.shotsNextStep, 'await_shots');
     const { z } = require('zod');
     assert.equal(z.object(c.specs.get('submit_work').outputSchema).safeParse(out).success, true,
       'the answer satisfies the tool\'s own outputSchema');
   } finally { c.restore(); }
 });
 
+test('submit_work still reads the declaration under its name from before the rename', async () => {
+  const fixture = require('./fixtures/shots');
+  const declared = fixture.motionIntent();
+  const c = shotsUpdateConnector({
+    updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52,
+    headSha: 'b'.repeat(40), votesCleared: 0, submittedVia: 'update_branch',
+    shotsState: 'planned', visibleChangesAccepted: true,
+    shotsRequired: true, shotsNextStep: 'await_shots',
+  });
+  try {
+    const res = await c.handlers.get('submit_work')({
+      proposalId: 3140, branch: 'my-fix', visualEvidence: declared,
+    });
+    assert.notEqual(res.isError, true);
+    const sent = c.calls.at(-1);
+    assert.deepEqual(sent.body.visibleChanges, require('../src/services/visible-changes').parseIntent(declared));
+    assert.equal('visualEvidence' in sent.body, false);
+  } finally { c.restore(); }
+});
+
 test('submit_work refuses an invalid declaration before anything reaches the platform', async () => {
-  const c = evidenceUpdateConnector({ updated: true });
+  const c = shotsUpdateConnector({ updated: true });
   try {
     const res = await c.handlers.get('submit_work')({
       proposalId: 3140, branch: 'my-fix',
-      visualEvidence: { version: 1, impact: 'ui', stories: [] },
+      visibleChanges: { version: 1, impact: 'ui', stories: [] },
     });
     assert.equal(res.isError, true);
-    assert.match(res.content[0].text, /invalid_visual_evidence/);
+    assert.match(res.content[0].text, /invalid_visible_changes/);
     assert.equal(c.calls.length, 0, 'refused before any platform call');
   } finally { c.restore(); }
 });
 
 test('submit_work reports no evidence fields when no declaration was sent', async () => {
-  const c = evidenceUpdateConnector({
+  const c = shotsUpdateConnector({
     updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: 52,
     headSha: 'b'.repeat(40), votesCleared: 0, submittedVia: 'update_branch',
-    visualEvidenceState: 'planned', visualEvidenceAccepted: true,
+    shotsState: 'planned', visibleChangesAccepted: true,
   });
   try {
     const res = await c.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix' });
-    assert.equal('visualEvidence' in c.calls.at(-1).body, false);
-    assert.equal(res.structuredContent.visualEvidenceAccepted, null,
+    assert.equal('shots' in c.calls.at(-1).body, false);
+    assert.equal(res.structuredContent.visibleChangesAccepted, null,
       'null says "you sent none", not "it was refused"');
-    assert.equal(res.structuredContent.visualEvidenceNextStep, null);
+    assert.equal(res.structuredContent.shotsNextStep, null);
   } finally { c.restore(); }
 });
 
@@ -2709,7 +2730,7 @@ test('a submission whose every route is rejected is told so in its own answer', 
   assert.equal(shaped.rejectedPaths.length, 2);
   const note = tools.testingRouteNote(shaped, false);
   assert.match(note, /could not use any of the testingPaths/);
-  assert.match(note, /declare visualEvidence for the before\/after shots/,
+  assert.match(note, /declare visibleChanges for the before\/after shots/,
     'the answer points to the declared changes without promising a root fallback');
   assert.doesNotMatch(note, /default.*home page/i);
 });
@@ -2719,7 +2740,7 @@ test('a partly usable list says what will actually be shot', () => {
   const note = tools.testingRouteNote(shaped, false);
   assert.match(note, /could not use 1 of the testingPaths/);
   assert.match(note, /manual test link uses \/board @mobile only/,
-    'the surviving manual route is named without calling it visual evidence');
+    'the surviving manual route is named without calling it before & after shots');
 });
 
 test('a first submission with no routes at all is warned, an update is not', () => {
@@ -3483,7 +3504,7 @@ test('get_proposal carries before/after shot results through its own output sche
     contentType: media === 'png' ? 'image/png' : 'video/webm',
     width: media === 'png' ? 1280 : null, height: media === 'png' ? 800 : null,
     bytes: 2048, focusRect: null, stageLabels: null,
-    url: `/api/apps/recipe-box/proposals/4301/evidence/artifacts/${id}`,
+    url: `/api/apps/recipe-box/proposals/4301/shots/artifacts/${id}`,
   });
   const evidence = {
     state: 'verified', required: true, impact: 'motion',
@@ -3508,19 +3529,19 @@ test('get_proposal carries before/after shot results through its own output sche
     ],
     updatedAt: '2026-09-28T10:00:00.000Z',
   };
-  const c = connector(() => ({ session: { id: 4301, app_slug: 'recipe-box', visualEvidence: evidence } }));
+  const c = connector(() => ({ session: { id: 4301, app_slug: 'recipe-box', shots: evidence } }));
   try {
     const result = await c.handlers.get('get_proposal')({ proposalId: 4301 });
     assert.ok(!result.isError);
     const parsed = validateOutput(c.specs.get('get_proposal'), result);
     assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
-    assert.deepEqual(parsed.data.visualEvidence.shotResults, evidence.shotResults);
-    assert.deepEqual(parsed.data.visualEvidence.artifacts.map((a) => `${a.side}/${a.media}`),
+    assert.deepEqual(parsed.data.shots.shotResults, evidence.shotResults);
+    assert.deepEqual(parsed.data.shots.artifacts.map((a) => `${a.side}/${a.media}`),
       ['base/png', 'head/png', 'base/webm', 'head/webm'], 'a clip is stored per side');
 
     // The replay-era fields are not part of the contract any more, and a
     // status outside ready/skipped is refused rather than passed through.
-    const shape = z.object(c.specs.get('get_proposal').outputSchema).shape.visualEvidence
+    const shape = z.object(c.specs.get('get_proposal').outputSchema).shape.shots
       .unwrap().shape;
     assert.ok('shotResults' in shape);
     for (const gone of ['captureMode', 'claimResults', 'replayCount', 'repairCount']) {

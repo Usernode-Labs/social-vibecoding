@@ -1,14 +1,14 @@
 'use strict';
 
-// The run-scoped control plane behind the preview agent's shots tools
-// (src/services/visual-evidence-control.js). It holds what one run saved and
+// The run-scoped control plane behind the shots agent's shots tools
+// (src/services/shots-control.js). It holds what one run saved and
 // skipped, refuses anything outside the declared changes, and is reachable
 // only by the session that owns the run while the run is live.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const controlPlane = require('../src/services/visual-evidence-control');
-const fixtures = require('./fixtures/visual-evidence');
+const controlPlane = require('../src/services/shots-control');
+const fixtures = require('./fixtures/shots');
 
 const { RunControl } = controlPlane;
 
@@ -99,8 +99,8 @@ test('progress reports each change as missing, ready or skipped', () => {
   const initial = run.progress();
   assert.deepEqual(statuses(run), [['invite-suggestions', 'missing'], ['saved-toast', 'missing']]);
   assert.equal(initial[0].detail,
-    'The preview agent did not save the before shot on desktop, the after shot on desktop.');
-  assert.equal(initial[1].detail, 'The preview agent did not save the before shot on desktop, '
+    'The shots agent did not save the before shot on desktop, the after shot on desktop.');
+  assert.equal(initial[1].detail, 'The shots agent did not save the before shot on desktop, '
     + 'the before clip on desktop, the after shot on desktop, the after clip on desktop.');
 
   shootBothSides(run, 'invite-suggestions');
@@ -149,10 +149,10 @@ test('skipping every change keeps what was shot and closes the turn', () => {
 
   const before = run.saved.size;
   assert.throws(() => run.saveShot({ change: 'member-count', screen: 'desktop', side: 'after' }, fixtures.png()),
-    { code: 'evidence_turn_finished', status: 409 });
+    { code: 'shots_turn_finished', status: 409 });
   assert.throws(() => run.skipChange({ change: 'member-count', reason: 'Changed my mind.' }),
-    { code: 'evidence_turn_finished', status: 409 });
-  assert.throws(() => run.skipChange({ reason: 'Again.' }), { code: 'evidence_turn_finished' });
+    { code: 'shots_turn_finished', status: 409 });
+  assert.throws(() => run.skipChange({ reason: 'Again.' }), { code: 'shots_turn_finished' });
   assert.equal(run.saved.size, before);
   assert.equal(run.skippedAll, 'Every other screen shows a sign-in page.');
 });
@@ -231,7 +231,7 @@ test('a note on what a change\'s shots leave out is kept with the ready change',
 
   run.skipChange({ reason: 'Nothing else loads.' });
   assert.throws(() => run.noteChange({ change: 'invite-suggestions', note: 'Too late.' }),
-    { code: 'evidence_turn_finished', status: 409 });
+    { code: 'shots_turn_finished', status: 409 });
 });
 
 test('the last refused tool call is kept for the owner\'s diagnostics', () => {
@@ -253,14 +253,14 @@ test('the last refused tool call is kept for the owner\'s diagnostics', () => {
 
 test('an expired run refuses its brief, shots and skips with 410', () => {
   const run = control({ expiresAt: Date.now() - 1 });
-  const expired = { code: 'evidence_control_expired', status: 410 };
+  const expired = { code: 'shots_control_expired', status: 410 };
   assert.throws(() => run.getContext(), expired);
   assert.throws(() => run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' },
     fixtures.png()), expired);
   assert.throws(() => run.skipChange({ change: 'invite-suggestions', reason: 'Too late.' }), expired);
   assert.equal(run.saved.size, 0);
   assert.equal(run.skipped.size, 0);
-  assert.equal(run.lastToolFailure.error.code, 'evidence_control_expired');
+  assert.equal(run.lastToolFailure.error.code, 'shots_control_expired');
 });
 
 test('the brief is a copy of the context with progress attached', () => {
@@ -278,9 +278,9 @@ test('the brief is a copy of the context with progress attached', () => {
 });
 
 test('a control only accepts an intent the author could have declared', () => {
-  assert.throws(() => control({ intent: fixtures.intent({ impact: 'none' }) }), { code: 'invalid_visual_evidence' });
+  assert.throws(() => control({ intent: fixtures.intent({ impact: 'none' }) }), { code: 'invalid_visible_changes' });
   assert.throws(() => control({ intent: { version: 1, impact: 'ui', rationale: 'x', stories: [] } }),
-    { code: 'invalid_visual_evidence' });
+    { code: 'invalid_visible_changes' });
   // The stored intent is the parsed one, with its defaults.
   assert.equal(control({ intent: fixtures.intent() }).intent.stories[0].intent.baseState, 'present');
 });
@@ -293,12 +293,12 @@ test('one registration owns a run id at a time', (t) => {
     expiresAt: Date.now() + 10_000,
   };
   assert.throws(() => controlPlane.registerRun({ ...options, runId: 'not-a-run' }),
-    { code: 'invalid_evidence_run', status: 400 });
+    { code: 'invalid_shots_run', status: 400 });
   assert.throws(() => controlPlane.registerRun({ ...options, runId: 'B'.repeat(32) }),
-    { code: 'invalid_evidence_run' });
+    { code: 'invalid_shots_run' });
 
   const first = controlPlane.registerRun(options);
-  assert.throws(() => controlPlane.registerRun(options), { code: 'evidence_control_exists', status: 409 });
+  assert.throws(() => controlPlane.registerRun(options), { code: 'shots_control_exists', status: 409 });
   first.unregister();
   const second = controlPlane.registerRun(options);
   assert.notEqual(second.control, first.control);
@@ -307,7 +307,7 @@ test('one registration owns a run id at a time', (t) => {
   assert.equal(controlPlane.forRequest({ runId: options.runId, sessionId: 42 }), second.control);
   second.unregister();
   assert.throws(() => controlPlane.forRequest({ runId: options.runId, sessionId: 42 }),
-    { code: 'evidence_control_not_found' });
+    { code: 'shots_control_not_found' });
 });
 
 test('a request reaches a control only for its own session while the run is live', (t) => {
@@ -320,18 +320,18 @@ test('a request reaches a control only for its own session while the run is live
   assert.equal(controlPlane.forRequest({ runId, sessionId: 42 }), live);
   assert.equal(controlPlane.forRequest({ runId, sessionId: '42' }), live, 'a JWT claim may carry the id as text');
   assert.throws(() => controlPlane.forRequest({ runId, sessionId: 43 }),
-    { code: 'evidence_scope_mismatch', status: 403 });
+    { code: 'shots_scope_mismatch', status: 403 });
   assert.throws(() => controlPlane.forRequest({ runId, sessionId: undefined }),
-    { code: 'evidence_scope_mismatch', status: 403 });
+    { code: 'shots_scope_mismatch', status: 403 });
   assert.throws(() => controlPlane.forRequest({ runId: 'd'.repeat(32), sessionId: 42 }),
-    { code: 'evidence_control_not_found', status: 410 });
+    { code: 'shots_control_not_found', status: 410 });
   assert.throws(() => controlPlane.forRequest({ sessionId: 42 }),
-    { code: 'evidence_control_not_found', status: 410 });
+    { code: 'shots_control_not_found', status: 410 });
 
   const expiredRun = 'e'.repeat(32);
   controlPlane.registerRun({
     runId: expiredRun, sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() - 1,
   });
   assert.throws(() => controlPlane.forRequest({ runId: expiredRun, sessionId: 42 }),
-    { code: 'evidence_control_expired', status: 410 });
+    { code: 'shots_control_expired', status: 410 });
 });

@@ -4,13 +4,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const worker = require('../src/services/worker');
 
-test('evidence worker reports the last browser tool without retaining its inputs or results', () => {
+test('shots worker reports the last browser tool without retaining its inputs or results', () => {
   const events = [];
   const state = worker.newWatchState();
-  state.evidenceDiagnosticObserver = (event) => events.push(event);
+  state.shotsDiagnosticObserver = (event) => events.push(event);
   const progress = () => {};
   const privateUrl = 'https://example.invalid/?token=private-token';
-  worker.parseLine('__USERNODE_PHASE__ evidence_browser_bootstrap', progress, state);
+  worker.parseLine('__USERNODE_PHASE__ shots_browser_bootstrap', progress, state);
   worker.parseLine(JSON.stringify({
     type: 'system', subtype: 'init', session_id: 'private-session',
     mcp_servers: [
@@ -35,7 +35,7 @@ test('evidence worker reports the last browser tool without retaining its inputs
   }), progress, state);
 
   assert.deepEqual(events, [
-    { kind: 'runner_phase', phase: 'evidence_browser_bootstrap' },
+    { kind: 'runner_phase', phase: 'shots_browser_bootstrap' },
     { kind: 'provider_init', mcpServerCount: 4, toolDefinitionCount: 4,
       briefToolAvailable: true, saveShotToolAvailable: true,
       skipChangeToolAvailable: true,
@@ -51,8 +51,8 @@ test('evidence worker reports the last browser tool without retaining its inputs
 test('provider init distinguishes unavailable shots tools from absent tool metadata', () => {
   const events = [];
   const state = worker.newWatchState();
-  state.evidenceDiagnosticObserver = (event) => events.push(event);
-  // The retired evidence tools do not count as the shots tools.
+  state.shotsDiagnosticObserver = (event) => events.push(event);
+  // The retired shots tools do not count as the shots tools.
   worker.parseLine(JSON.stringify({
     type: 'system', subtype: 'init', tools: ['mcp__browser_member__browser_navigate',
       'mcp__evidence__evidence_get_context', 'mcp__evidence__evidence_capture'],
@@ -66,7 +66,7 @@ test('provider init distinguishes unavailable shots tools from absent tool metad
 
   const missing = [];
   const missingState = worker.newWatchState();
-  missingState.evidenceDiagnosticObserver = (event) => missing.push(event);
+  missingState.shotsDiagnosticObserver = (event) => missing.push(event);
   worker.parseLine(JSON.stringify({ type: 'system', subtype: 'init' }), () => {}, missingState);
   assert.deepEqual(missing, [{
     kind: 'provider_init', mcpServerCount: null, toolDefinitionCount: null,
@@ -80,7 +80,7 @@ test('provider init distinguishes unavailable shots tools from absent tool metad
 test('the brief result reports its shape and normal model exit without retaining content', () => {
   const events = [];
   const state = worker.newWatchState();
-  state.evidenceDiagnosticObserver = (event) => events.push(event);
+  state.shotsDiagnosticObserver = (event) => events.push(event);
   const progress = () => {};
   worker.parseLine(JSON.stringify({
     type: 'assistant', message: { content: [{
@@ -115,10 +115,10 @@ test('the brief result reports its shape and normal model exit without retaining
   assert.doesNotMatch(JSON.stringify(events), /private-token|base\.invalid|head\.invalid/);
 });
 
-test('the shots tools are named in diagnostics; the retired evidence tools are not', () => {
+test('the shots tools are named in diagnostics; the retired shots tools are not', () => {
   const events = [];
   const state = worker.newWatchState();
-  state.evidenceDiagnosticObserver = (event) => events.push(event);
+  state.shotsDiagnosticObserver = (event) => events.push(event);
   const names = ['get_brief', 'save_shot', 'save_clip', 'skip_change', 'fail_request',
     'evidence_get_context', 'evidence_run_plan', 'evidence_finish', 'evidence_capture', 'evidence_report_blocker'];
   worker.parseLine(JSON.stringify({
@@ -133,10 +133,10 @@ test('the shots tools are named in diagnostics; the retired evidence tools are n
   assert.doesNotMatch(JSON.stringify(events), /private-change/);
 });
 
-test('evidence diagnostics classify unknown tools and phases without copying their names', () => {
+test('shots diagnostics classify unknown tools and phases without copying their names', () => {
   const events = [];
   const state = worker.newWatchState();
-  state.evidenceDiagnosticObserver = (event) => events.push(event);
+  state.shotsDiagnosticObserver = (event) => events.push(event);
   worker.parseLine('__USERNODE_PHASE__ secret-phase private-token', () => {}, state);
   worker.parseLine(JSON.stringify({
     type: 'assistant', message: { content: [{
@@ -152,11 +152,11 @@ test('evidence diagnostics classify unknown tools and phases without copying the
 test('navigation diagnostics identify paired sides and repeated routes without storing URLs', () => {
   const events = [];
   const state = worker.newWatchState();
-  state.evidenceOrigins = { base: 'http://base.internal:3000', head: 'http://head.internal:3000' };
-  state.evidenceNavigationHints = {
+  state.shotsOrigins = { base: 'http://base.internal:3000', head: 'http://head.internal:3000' };
+  state.shotsNavigationHints = {
     intentPaths: ['/'], declaredPaths: ['/?token=private#app/private-route'],
   };
-  state.evidenceDiagnosticObserver = (event) => events.push(event);
+  state.shotsDiagnosticObserver = (event) => events.push(event);
   const navigate = (id, url) => {
     worker.parseLine(JSON.stringify({
       type: 'assistant', message: { content: [{

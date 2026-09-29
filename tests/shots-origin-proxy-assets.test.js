@@ -2,7 +2,7 @@
 
 // A child app's pages load /usernode-bridge|native|tailwind/ from their own
 // origin, and the production edge routes those paths to the platform. The
-// evidence proxy does the same for a child-app pair (and a hosted app), so the
+// shots proxy does the same for a child-app pair (and a hosted app), so the
 // before/after shots are not taken of an unstyled page: the regression #3357
 // fixed in the replay runner that before/after shots replaced.
 
@@ -23,11 +23,11 @@ async function listen(handler) {
 }
 
 async function startProxy(t, { origins, env }) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-proxy-assets-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-proxy-assets-'));
   const ready = path.join(dir, 'proxy.ready');
-  const proxy = spawn(process.execPath, [path.join(__dirname, '..', 'worker', 'evidence-origin-proxy.js')], {
-    env: { PATH: process.env.PATH, EVIDENCE_ALLOWED_ORIGINS: JSON.stringify(origins),
-      EVIDENCE_PROXY_PORT: '0', EVIDENCE_PROXY_READY: ready, ...env },
+  const proxy = spawn(process.execPath, [path.join(__dirname, '..', 'worker', 'shots-origin-proxy.js')], {
+    env: { PATH: process.env.PATH, SHOTS_ALLOWED_ORIGINS: JSON.stringify(origins),
+      SHOTS_PROXY_PORT: '0', SHOTS_PROXY_READY: ready, ...env },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   const diagnostics = [];
@@ -43,8 +43,8 @@ async function startProxy(t, { origins, env }) {
   return {
     port: Number(fs.readFileSync(ready, 'utf8')),
     kinds: () => Buffer.concat(diagnostics).toString().trim().split('\n')
-      .filter((line) => line.startsWith('__USERNODE_EVIDENCE_BROWSER__ '))
-      .map((line) => JSON.parse(line.slice('__USERNODE_EVIDENCE_BROWSER__ '.length))),
+      .filter((line) => line.startsWith('__USERNODE_SHOTS_BROWSER__ '))
+      .map((line) => JSON.parse(line.slice('__USERNODE_SHOTS_BROWSER__ '.length))),
     raw: () => Buffer.concat(diagnostics).toString(),
   };
 }
@@ -94,7 +94,7 @@ async function fixtures(t) {
 test('a child-app pair gets the platform\'s bridge, kit and Tailwind build instead of its SPA fallback', async (t) => {
   const { app, platform, appOrigin, platformOrigin } = await fixtures(t);
   const proxy = await startProxy(t, { origins: [appOrigin, 'http://head.invalid:3000'],
-    env: { EVIDENCE_PLATFORM_ASSETS: '1', PLATFORM_URL: platformOrigin } });
+    env: { SHOTS_PLATFORM_ASSETS: '1', PLATFORM_URL: platformOrigin } });
 
   const bridge = await send(proxy.port, `${appOrigin}/usernode-bridge/v1/usernode-bridge.js?v=2`,
     { headers: { cookie: 'session=app-session', authorization: 'Bearer app-token', 'if-none-match': '"abc"' } });
@@ -129,7 +129,7 @@ test('a child-app pair gets the platform\'s bridge, kit and Tailwind build inste
 test('the platform\'s own pair keeps the assets its revision serves', async (t) => {
   const { app, platform, appOrigin, platformOrigin } = await fixtures(t);
   const proxy = await startProxy(t, { origins: [appOrigin, 'http://head.invalid:3000'],
-    env: { EVIDENCE_PLATFORM_ASSETS: '0', PLATFORM_URL: platformOrigin } });
+    env: { SHOTS_PLATFORM_ASSETS: '0', PLATFORM_URL: platformOrigin } });
   const response = await send(proxy.port, `${appOrigin}/usernode-native/v1/native.css`);
   assert.equal(response.status, 200);
   assert.deepEqual(app.hits, ['GET /usernode-native/v1/native.css']);
@@ -139,11 +139,11 @@ test('the platform\'s own pair keeps the assets its revision serves', async (t) 
 test('only a child-app pair may reach the legacy Tailwind CDN, and no other third-party host', async (t) => {
   const { appOrigin, platformOrigin } = await fixtures(t);
   const platformPair = await startProxy(t, { origins: [appOrigin, 'http://head.invalid:3000'],
-    env: { EVIDENCE_PLATFORM_ASSETS: '0', PLATFORM_URL: platformOrigin } });
+    env: { SHOTS_PLATFORM_ASSETS: '0', PLATFORM_URL: platformOrigin } });
   assert.match(await connect(platformPair.port, 'cdn.tailwindcss.com:443'), /^HTTP\/1\.1 403/);
 
   const childPair = await startProxy(t, { origins: [appOrigin, 'http://head.invalid:3000'],
-    env: { EVIDENCE_PLATFORM_ASSETS: '1', PLATFORM_URL: platformOrigin } });
+    env: { SHOTS_PLATFORM_ASSETS: '1', PLATFORM_URL: platformOrigin } });
   // Whether or not the network reaches the CDN from here, the proxy does not refuse it.
   assert.doesNotMatch(await connect(childPair.port, 'cdn.tailwindcss.com:443'), /403/);
   assert.ok(childPair.kinds().some((event) => event.kind === 'legacy_tailwind_cdn'));

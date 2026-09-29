@@ -501,30 +501,30 @@ test('a hosted Claude build cannot dispatch without authoritative system context
   } finally { restore(); }
 });
 
-// Every preview (evidence) turn runs on Claude Code. An OpenRouter evidence
+// Every shots turn runs on Claude Code. An OpenRouter evidence
 // turn, on either harness, is refused before a token is minted, a context
 // file is written, or the provider is touched.
-test('an evidence turn on an OpenRouter backend is refused before anything is dispatched', async () => {
+test('a shots turn on an OpenRouter backend is refused before anything is dispatched', async () => {
   const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
   try {
     for (const [sessionId, agentHarness] of [[8304, null], [8305, 'codex'], [8306, 'claude']]) {
       warmSession(worker, sessionId);
       await assert.rejects(
         () => worker.execInWorker(sessionId, {
-          mode: 'evidence',
+          mode: 'shots',
           prompt: 'open the run context',
-          systemPrompt: 'Preview agent contract.',
+          systemPrompt: 'Shots agent contract.',
           branchName: 'dev/test',
           agentBackend: 'codex_openrouter',
           agentHarness,
           agentModel: 'z-ai/glm-5.3-flash',
           agentModelMetadata: { supportsTools: true },
           openrouterApiKey: 'sk-or-must-not-appear-in-argv',
-          evidenceRunId: '1'.repeat(32),
-          evidenceOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
-          evidenceAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
+          shotsRunId: '1'.repeat(32),
+          shotsOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
+          shotsAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
         }),
-        /execInWorker: evidence turns run on Claude Code/,
+        /execInWorker: shots turns run on Claude Code/,
         String(agentHarness),
       );
     }
@@ -532,27 +532,27 @@ test('an evidence turn on an OpenRouter backend is refused before anything is di
   } finally { restore(); }
 });
 
-test('an evidence turn refuses a clip size that is not WIDTHxHEIGHT before anything is dispatched', async () => {
+test('a shots turn refuses a clip size that is not WIDTHxHEIGHT before anything is dispatched', async () => {
   const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
   try {
     warmSession(worker, 8307);
-    for (const evidenceClipSize of ['390', '390x844 --flag', '0x844', 12]) {
+    for (const shotsClipSize of ['390', '390x844 --flag', '0x844', 12]) {
       await assert.rejects(
         () => worker.execInWorker(8307, {
-          mode: 'evidence',
+          mode: 'shots',
           prompt: 'open the run context',
-          systemPrompt: 'Preview agent contract.',
+          systemPrompt: 'Shots agent contract.',
           branchName: 'dev/test',
           agentBackend: 'claude_code',
           model: 'claude-sonnet-5-5',
-          evidenceRunId: '1'.repeat(32),
-          evidenceOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
-          evidenceAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
-          evidenceRecordClips: true,
-          evidenceClipSize,
+          shotsRunId: '1'.repeat(32),
+          shotsOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
+          shotsAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
+          shotsRecordClips: true,
+          shotsClipSize,
         }),
-        /execInWorker: evidence clip size must be WIDTHxHEIGHT/,
-        String(evidenceClipSize),
+        /execInWorker: shots clip size must be WIDTHxHEIGHT/,
+        String(shotsClipSize),
       );
     }
     assert.equal(calls.length, 0);

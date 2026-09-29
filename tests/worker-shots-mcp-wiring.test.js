@@ -10,10 +10,10 @@ const path = require('node:path');
 
 const workerDir = path.join(__dirname, '..', 'worker');
 const read = (name) => fs.readFileSync(path.join(workerDir, name), 'utf8');
-const { browserAllowedOrigins, hostedAppSlugs, trustedHostedAppOrigins } = require('../worker/evidence-hosted-origins');
-const hostedContract = require('../worker/evidence-hosted-app-contract');
+const { browserAllowedOrigins, hostedAppSlugs, trustedHostedAppOrigins } = require('../worker/shots-hosted-origins');
+const hostedContract = require('../worker/shots-hosted-app-contract');
 
-test('only the platform-owned hosted app for this exact run enters the evidence catalog', () => {
+test('only the platform-owned hosted app for this exact run enters the shots catalog', () => {
   const runId = 'b'.repeat(32);
   const slug = hostedContract.hostedAppSlug(runId);
   const fixture = {
@@ -32,7 +32,7 @@ test('only the platform-owned hosted app for this exact run enters the evidence 
 });
 
 test('planner origin list rejects stale or malformed hosted-app catalogs', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-origins-test-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-origins-test-'));
   const file = path.join(dir, 'hosted.json');
   const base = 'http://base.example.invalid';
   const head = 'http://head.example.invalid';
@@ -77,44 +77,44 @@ function writeConfig(dir, extra = {}) {
   const output = path.join(dir, `mcp-${crypto.randomUUID()}.json`);
   const env = {
     ...process.env,
-    EVIDENCE_BROWSER_STATE_DIR: path.join(dir, 'state'),
-    EVIDENCE_PROXY_SERVER: 'http://127.0.0.1:17891',
-    EVIDENCE_BASE_ORIGIN: 'http://base.example.invalid',
-    EVIDENCE_HEAD_ORIGIN: 'http://head.example.invalid',
-    EVIDENCE_HOSTED_ORIGINS_FILE: hostedFile,
-    EVIDENCE_SHOTS_DIR: path.join(dir, 'shots'),
+    SHOTS_BROWSER_STATE_DIR: path.join(dir, 'state'),
+    SHOTS_PROXY_SERVER: 'http://127.0.0.1:17891',
+    SHOTS_BASE_ORIGIN: 'http://base.example.invalid',
+    SHOTS_HEAD_ORIGIN: 'http://head.example.invalid',
+    SHOTS_HOSTED_ORIGINS_FILE: hostedFile,
+    SHOTS_DIR: path.join(dir, 'shots'),
   };
-  delete env.EVIDENCE_RECORD_CLIPS;
+  delete env.SHOTS_RECORD_CLIPS;
   // An undefined value leaves that variable out entirely.
   for (const [key, value] of Object.entries(extra)) {
     if (value === undefined) delete env[key];
     else env[key] = value;
   }
-  execFileSync(process.execPath, [path.join(workerDir, 'write-evidence-mcp-config.js'), output], {
+  execFileSync(process.execPath, [path.join(workerDir, 'write-shots-mcp-config.js'), output], {
     env, stdio: ['ignore', 'pipe', 'pipe'],
   });
   return { output, config: JSON.parse(fs.readFileSync(output, 'utf8')) };
 }
 
-test('the preview agent launches Playwright through the content-free timing observer', () => {
+test('the shots agent launches Playwright through the content-free timing observer', () => {
   const dockerfile = read('Dockerfile');
   const claudeRunner = read('run-cc.sh');
   const codexRunner = read('run-codex-agent.sh');
 
   assert.match(dockerfile, /npm install -g @playwright\/mcp@\$\{PLAYWRIGHT_MCP_VERSION\}/);
   assert.match(dockerfile, /command -v mcp-server-playwright/);
-  assert.match(dockerfile, /RUN node \/usr\/local\/bin\/verify-evidence-browser-mcp\.js/);
-  assert.match(dockerfile, /RUN node \/usr\/local\/bin\/verify-evidence-browser-auth\.js/);
-  assert.match(dockerfile, /COPY evidence-mcp\.js \/usr\/local\/bin\/evidence-mcp\.js/);
+  assert.match(dockerfile, /RUN node \/usr\/local\/bin\/verify-shots-browser-mcp\.js/);
+  assert.match(dockerfile, /RUN node \/usr\/local\/bin\/verify-shots-browser-auth\.js/);
+  assert.match(dockerfile, /COPY shots-mcp\.js \/usr\/local\/bin\/shots-mcp\.js/);
   assert.match(claudeRunner, /command -v mcp-server-playwright[^\n]*\n\s*\|\| die/);
-  assert.match(dockerfile, /COPY evidence-browser-observer\.js \/usr\/local\/bin\/evidence-browser-observer\.js/);
-  assert.match(claudeRunner, /EVIDENCE_BROWSER_DIAGNOSTIC_FILE/);
-  // Every preview turn runs on Claude Code. The Codex runner has no preview
-  // path: it refuses MODE=evidence and starts no evidence browser.
-  assert.match(codexRunner, /\n\s+evidence\) die "evidence turns run on Claude Code \(run-cc\.sh\)" ;;\n/);
-  assert.doesNotMatch(codexRunner, /evidence-browser-observer\.js|EVIDENCE_BROWSER_DIAGNOSTIC_FILE|--proxy-server/);
+  assert.match(dockerfile, /COPY shots-browser-observer\.js \/usr\/local\/bin\/shots-browser-observer\.js/);
+  assert.match(claudeRunner, /SHOTS_BROWSER_DIAGNOSTIC_FILE/);
+  // Every shots turn runs on Claude Code. The Codex runner has no shots
+  // path: it refuses MODE=shots and starts no shots browser.
+  assert.match(codexRunner, /\n\s+shots\) die "shots turns run on Claude Code \(run-cc\.sh\)" ;;\n/);
+  assert.doesNotMatch(codexRunner, /shots-browser-observer\.js|SHOTS_BROWSER_DIAGNOSTIC_FILE|--proxy-server/);
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-config-test-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-config-test-'));
   try {
     const { config } = writeConfig(dir);
     for (const [server, state] of [
@@ -124,7 +124,7 @@ test('the preview agent launches Playwright through the content-free timing obse
     ]) {
       const args = config.mcpServers[server].args;
       assert.equal(config.mcpServers[server].command, 'node');
-      assert.equal(args[0], '/usr/local/bin/evidence-browser-observer.js');
+      assert.equal(args[0], '/usr/local/bin/shots-browser-observer.js');
       assert.ok(args.includes(path.join(dir, 'state', state)));
       assert.ok(args.includes('http://base.example.invalid;http://head.example.invalid;https://hosted.example.invalid'));
       assert.ok(args.includes('--no-sandbox'));
@@ -135,36 +135,36 @@ test('the preview agent launches Playwright through the content-free timing obse
     fs.rmSync(dir, { recursive: true, force: true });
   }
   assert.match(read('worker-run.sh'), /"--browser", "chromium", "--headless", "--isolated", "--no-sandbox"/);
-  assert.match(claudeRunner, /EVIDENCE_HOSTED_ORIGINS_FILE/);
+  assert.match(claudeRunner, /SHOTS_HOSTED_ORIGINS_FILE/);
 });
 
 test('only a child-app pair\'s browsers may load the legacy Tailwind CDN', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-cdn-config-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-cdn-config-'));
   try {
     const allowed = (extra) => writeConfig(dir, extra).config.mcpServers.browser_member.args[
       writeConfig(dir, extra).config.mcpServers.browser_member.args.indexOf('--allowed-origins') + 1];
-    assert.doesNotMatch(allowed({ EVIDENCE_PLATFORM_ASSETS: undefined }), /tailwindcss/);
-    assert.doesNotMatch(allowed({ EVIDENCE_PLATFORM_ASSETS: '0' }), /tailwindcss/);
-    assert.match(allowed({ EVIDENCE_PLATFORM_ASSETS: '1' }), /;https:\/\/cdn\.tailwindcss\.com$/);
+    assert.doesNotMatch(allowed({ SHOTS_PLATFORM_ASSETS: undefined }), /tailwindcss/);
+    assert.doesNotMatch(allowed({ SHOTS_PLATFORM_ASSETS: '0' }), /tailwindcss/);
+    assert.match(allowed({ SHOTS_PLATFORM_ASSETS: '1' }), /;https:\/\/cdn\.tailwindcss\.com$/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test('the config writer gives each persona its own shots directory and records clips only when asked', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-shots-config-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-shots-config-'));
   try {
     const shotsDir = path.join(dir, 'shots');
     const { output, config } = writeConfig(dir, {
-      EVIDENCE_JWT: 'secret-evidence-jwt', EVIDENCE_MEMBER_TOKEN: 'secret-member-token',
+      SHOTS_JWT: 'secret-shots-jwt', SHOTS_MEMBER_TOKEN: 'secret-member-token',
     });
     assert.deepEqual(Object.keys(config.mcpServers).sort(),
       ['browser_admin', 'browser_full_admin', 'browser_member', 'shots']);
     // The bridge is named "shots" (Claude sees mcp__shots__*) and its
     // credentials come from the environment, never from this file.
-    assert.deepEqual(config.mcpServers.shots, { command: 'node', args: ['/usr/local/bin/evidence-mcp.js'] });
+    assert.deepEqual(config.mcpServers.shots, { command: 'node', args: ['/usr/local/bin/shots-mcp.js'] });
     const text = fs.readFileSync(output, 'utf8');
-    assert.doesNotMatch(text, /secret-evidence-jwt|secret-member-token/);
+    assert.doesNotMatch(text, /secret-shots-jwt|secret-member-token/);
     assert.equal(fs.statSync(output).mode & 0o777, 0o600);
 
     for (const [server, persona] of [
@@ -177,31 +177,31 @@ test('the config writer gives each persona its own shots directory and records c
       assert.equal(args.some((arg) => arg.startsWith('--save-video')), false, 'no video unless a change is motion');
     }
 
-    const clips = writeConfig(dir, { EVIDENCE_RECORD_CLIPS: '1' }).config;
+    const clips = writeConfig(dir, { SHOTS_RECORD_CLIPS: '1' }).config;
     for (const server of ['browser_member', 'browser_admin', 'browser_full_admin']) {
       assert.equal(clips.mcpServers[server].args.filter((arg) => arg === '--save-video=1280x800').length, 1);
       assert.equal(clips.mcpServers[server].args.filter((arg) => arg.startsWith('--save-video')).length, 1);
     }
     // Recorded at the motion screen's own size, so a phone clip fills its frame.
-    const phone = writeConfig(dir, { EVIDENCE_RECORD_CLIPS: '1', EVIDENCE_CLIP_SIZE: '390x844' }).config;
+    const phone = writeConfig(dir, { SHOTS_RECORD_CLIPS: '1', SHOTS_CLIP_SIZE: '390x844' }).config;
     assert.ok(phone.mcpServers.browser_member.args.includes('--save-video=390x844'));
     for (const odd of ['390', '390x844 --flag', '0x0', 'x']) {
-      const fallback = writeConfig(dir, { EVIDENCE_RECORD_CLIPS: '1', EVIDENCE_CLIP_SIZE: odd }).config;
+      const fallback = writeConfig(dir, { SHOTS_RECORD_CLIPS: '1', SHOTS_CLIP_SIZE: odd }).config;
       assert.ok(fallback.mcpServers.browser_member.args.includes('--save-video=1280x800'), odd);
     }
-    assert.equal(writeConfig(dir, { EVIDENCE_CLIP_SIZE: '390x844' }).config.mcpServers.browser_member.args
+    assert.equal(writeConfig(dir, { SHOTS_CLIP_SIZE: '390x844' }).config.mcpServers.browser_member.args
       .some((arg) => arg.startsWith('--save-video')), false, 'a size alone records nothing');
     for (const value of ['0', 'true', 'yes', '']) {
-      const off = writeConfig(dir, { EVIDENCE_RECORD_CLIPS: value }).config;
+      const off = writeConfig(dir, { SHOTS_RECORD_CLIPS: value }).config;
       for (const server of ['browser_member', 'browser_admin', 'browser_full_admin']) {
         assert.equal(off.mcpServers[server].args.some((arg) => arg.startsWith('--save-video')), false,
-          `EVIDENCE_RECORD_CLIPS=${JSON.stringify(value)} records nothing`);
+          `SHOTS_RECORD_CLIPS=${JSON.stringify(value)} records nothing`);
       }
     }
 
     // Without a shots directory there is nowhere safe to save, so no config.
     for (const missing of [undefined, '']) {
-      assert.throws(() => writeConfig(dir, { EVIDENCE_SHOTS_DIR: missing }), /inputs are incomplete/);
+      assert.throws(() => writeConfig(dir, { SHOTS_DIR: missing }), /inputs are incomplete/);
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -212,39 +212,39 @@ test('the Claude runner gives the shots bridge its directory; the Codex runner h
   const claudeRunner = read('run-cc.sh');
   const codexRunner = read('run-codex-agent.sh');
   const workerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
-  // Every evidence turn takes shots now; nothing depends on a mode flag.
-  assert.match(claudeRunner, /export EVIDENCE_SHOTS_DIR="\$EVIDENCE_TMP\/shots"/);
+  // Every shots turn takes shots now; nothing depends on a mode flag.
+  assert.match(claudeRunner, /export SHOTS_DIR="\$SHOTS_TMP\/shots"/);
   assert.match(claudeRunner,
-    /mkdir -p "\$EVIDENCE_SHOTS_DIR\/member" "\$EVIDENCE_SHOTS_DIR\/admin" "\$EVIDENCE_SHOTS_DIR\/full_admin"/);
+    /mkdir -p "\$SHOTS_DIR\/member" "\$SHOTS_DIR\/admin" "\$SHOTS_DIR\/full_admin"/);
   assert.doesNotMatch(claudeRunner, /EVIDENCE_MODE/);
   assert.doesNotMatch(claudeRunner, /EVIDENCE_COMPLETION_REMINDER/);
   assert.doesNotMatch(claudeRunner, RETIRED_TOOLS);
   // Claude's MCP config is written after the directory exists.
-  assert.ok(claudeRunner.indexOf('export EVIDENCE_SHOTS_DIR=')
-    < claudeRunner.indexOf('node /usr/local/bin/write-evidence-mcp-config.js'));
+  assert.ok(claudeRunner.indexOf('export SHOTS_DIR=')
+    < claudeRunner.indexOf('node /usr/local/bin/write-shots-mcp-config.js'));
 
-  // Every preview turn runs on Claude Code, so the Codex runner registers no
+  // Every shots turn runs on Claude Code, so the Codex runner registers no
   // shots bridge and takes no shots directory.
-  assert.doesNotMatch(codexRunner, /\[mcp_servers\.(?:shots|evidence)\]|EVIDENCE_SHOTS_DIR|EVIDENCE_RECORD_CLIPS/);
+  assert.doesNotMatch(codexRunner, /\[mcp_servers\.(?:shots|evidence|visual_evidence)\]|SHOTS_DIR|SHOTS_RECORD_CLIPS/);
   assert.doesNotMatch(codexRunner, RETIRED_TOOLS);
   for (const tool of SHOTS_TOOLS) assert.doesNotMatch(codexRunner, new RegExp(`"${tool}"`));
 
   // The platform turns the run's decision into the runner's 0/1 flag, and
   // refuses anything that is not a boolean.
-  assert.match(workerSource, /evidenceRecordClips = false,/);
-  assert.match(workerSource, /EVIDENCE_RECORD_CLIPS: evidenceRecordClips \? '1' : '0'/);
-  assert.match(workerSource, /if \(typeof evidenceRecordClips !== 'boolean'\) \{\n\s*throw new Error/);
+  assert.match(workerSource, /shotsRecordClips = false,/);
+  assert.match(workerSource, /SHOTS_RECORD_CLIPS: shotsRecordClips \? '1' : '0'/);
+  assert.match(workerSource, /if \(typeof shotsRecordClips !== 'boolean'\) \{\n\s*throw new Error/);
 
   // The image smoke test exercises the same writer with clips on and proves
   // a named screenshot lands in the browser's shots directory.
-  const smoke = read('verify-evidence-browser-mcp.js');
-  assert.match(smoke, /EVIDENCE_SHOTS_DIR: path\.join\(dir, 'shots'\)/);
-  assert.match(smoke, /EVIDENCE_RECORD_CLIPS: '1'/);
+  const smoke = read('verify-shots-browser-mcp.js');
+  assert.match(smoke, /SHOTS_DIR: path\.join\(dir, 'shots'\)/);
+  assert.match(smoke, /SHOTS_RECORD_CLIPS: '1'/);
   assert.match(smoke, /arguments: \{ filename: 'image-smoke\.png' \}/);
   assert.match(smoke, /fs\.existsSync\(path\.join\(outputDir, 'image-smoke\.png'\)\)/);
 });
 
-// Load worker/evidence-mcp.js with the MCP SDK and zod replaced by recorders,
+// Load worker/shots-mcp.js with the MCP SDK and zod replaced by recorders,
 // so its tool handlers run for real against a temporary shots directory and a
 // fake platform. Nothing is spawned and nothing leaves the process.
 function loadBridge(env, platformFetch) {
@@ -270,13 +270,13 @@ function loadBridge(env, platformFetch) {
     exit: (code) => { throw new Error(`bridge exited ${code}`); },
     stderr: { write() {} },
   };
-  const source = read('evidence-mcp.js').replace(/^#!.*\n/, '');
+  const source = read('shots-mcp.js').replace(/^#!.*\n/, '');
   new Function('require', 'process', 'fetch', source)(bridgeRequire, bridgeProcess, platformFetch);
   return { tools, serverInfo };
 }
 
 function bridgeFixture(t, { declaredChanges } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-bridge-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-bridge-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const shotsDir = path.join(dir, 'shots');
   for (const persona of ['member', 'admin', 'full_admin']) fs.mkdirSync(path.join(shotsDir, persona), { recursive: true });
@@ -307,7 +307,7 @@ function bridgeFixture(t, { declaredChanges } = {}) {
       method: init.method || 'GET', headers: init.headers || {}, body: init.body,
     });
     let payload;
-    if (parsed.pathname === '/__usernode_evidence_control/request-failure') {
+    if (parsed.pathname === '/__usernode_shots_control/request-failure') {
       payload = { enabled: JSON.parse(init.body).enabled, hitCount: 0 };
     } else if (parsed.pathname.endsWith('/context')) {
       payload = { ok: true, context };
@@ -318,12 +318,12 @@ function bridgeFixture(t, { declaredChanges } = {}) {
   };
   const env = {
     PLATFORM_URL: 'http://platform.test:3000/',
-    EVIDENCE_RUN_ID: runId,
-    EVIDENCE_JWT: 'run-scoped-jwt',
-    EVIDENCE_PROXY_SERVER: 'http://127.0.0.1:17891',
-    EVIDENCE_PROXY_CONTROL_TOKEN: 'c'.repeat(64),
-    EVIDENCE_SHOTS_DIR: shotsDir,
-    EVIDENCE_HOSTED_ORIGINS_FILE: hostedFile,
+    SHOTS_RUN_ID: runId,
+    SHOTS_JWT: 'run-scoped-jwt',
+    SHOTS_PROXY_SERVER: 'http://127.0.0.1:17891',
+    SHOTS_PROXY_CONTROL_TOKEN: 'c'.repeat(64),
+    SHOTS_DIR: shotsDir,
+    SHOTS_HOSTED_ORIGINS_FILE: hostedFile,
   };
   const { tools, serverInfo } = loadBridge(env, platformFetch);
   const call = async (name, args = {}) => {
@@ -337,7 +337,7 @@ test('the shots bridge offers exactly six tools and talks only to its own run', 
   const bridge = bridgeFixture(t);
   assert.equal(bridge.serverInfo.name, 'usernode-before-after-shots');
   assert.deepEqual([...bridge.tools.keys()], SHOTS_TOOLS);
-  assert.deepEqual([...read('evidence-mcp.js').matchAll(/registerTool\('([a-z_]+)'/g)].map((match) => match[1]),
+  assert.deepEqual([...read('shots-mcp.js').matchAll(/registerTool\('([a-z_]+)'/g)].map((match) => match[1]),
     SHOTS_TOOLS);
 
   const brief = await bridge.call('get_brief');
@@ -353,10 +353,10 @@ test('the shots bridge offers exactly six tools and talks only to its own run', 
   assert.equal(note.isError, false);
 
   assert.deepEqual(bridge.calls.map((sent) => [sent.method, sent.origin, sent.path]), [
-    ['GET', 'http://platform.test:3000', `/api/internal/evidence/${bridge.runId}/context`],
-    ['POST', 'http://platform.test:3000', `/api/internal/evidence/${bridge.runId}/skip`],
-    ['POST', 'http://platform.test:3000', `/api/internal/evidence/${bridge.runId}/skip`],
-    ['POST', 'http://platform.test:3000', `/api/internal/evidence/${bridge.runId}/note`],
+    ['GET', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/context`],
+    ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/skip`],
+    ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/skip`],
+    ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/note`],
   ]);
   assert.ok(bridge.calls.every((sent) => sent.headers.authorization === 'Bearer run-scoped-jwt'));
   assert.deepEqual(JSON.parse(bridge.calls[1].body), { change: null, reason: 'Every screen shows a sign-in page.' });
@@ -364,7 +364,7 @@ test('the shots bridge offers exactly six tools and talks only to its own run', 
   assert.deepEqual(JSON.parse(bridge.calls[3].body), { change: 'saved-toast', note: 'The undo link needs a second list.' });
 
   // A bridge without its run, token or platform refuses to start.
-  for (const broken of [{ EVIDENCE_JWT: '' }, { EVIDENCE_RUN_ID: 'not-a-run' }, { PLATFORM_URL: 'file:///etc' }]) {
+  for (const broken of [{ SHOTS_JWT: '' }, { SHOTS_RUN_ID: 'not-a-run' }, { PLATFORM_URL: 'file:///etc' }]) {
     assert.throws(() => loadBridge({ ...bridge.env, ...broken }, bridge.platformFetch), /bridge exited 1/);
   }
 });
@@ -380,7 +380,7 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
   assert.equal(bridge.calls.length, 1);
   const [sent] = bridge.calls;
   assert.equal(sent.method, 'POST');
-  assert.equal(sent.path, `/api/internal/evidence/${bridge.runId}/shot`);
+  assert.equal(sent.path, `/api/internal/shots/${bridge.runId}/shot`);
   assert.deepEqual(sent.query, { ...shot, kind: 'screen' });
   assert.equal(sent.headers['content-type'], 'application/octet-stream');
   assert.ok(Buffer.from(sent.body).equals(image));
@@ -470,7 +470,7 @@ test('fail_request only toggles an API path a change declared', async (t) => {
   assert.deepEqual(enabled, { isError: false, value: { ok: true, path: '/api/lists/demo', enabled: true, hitCount: 0 } });
   const control = bridge.calls.at(-1);
   assert.equal(control.origin, 'http://127.0.0.1:17891');
-  assert.equal(control.path, '/__usernode_evidence_control/request-failure');
-  assert.equal(control.headers['x-evidence-control-token'], 'c'.repeat(64));
+  assert.equal(control.path, '/__usernode_shots_control/request-failure');
+  assert.equal(control.headers['x-shots-control-token'], 'c'.repeat(64));
   assert.deepEqual(JSON.parse(control.body), { path: '/api/lists/demo', enabled: true });
 });

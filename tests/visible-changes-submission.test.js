@@ -5,54 +5,54 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const proposalUpdate = require('../src/services/proposal-update');
-const evidenceState = require('../src/services/visual-evidence-state');
+const shotsState = require('../src/services/shots-state');
 const handoff = require('../src/routes/proposal-handoff');
 const votes = require('../src/routes/votes');
-const contract = require('../src/services/visual-evidence-plan');
-const { intent, motionIntent } = require('./fixtures/visual-evidence');
+const contract = require('../src/services/visible-changes');
+const { intent, motionIntent } = require('./fixtures/shots');
 
 const HEAD = 'a'.repeat(40);
 
 test('submission response fields are explicit about acceptance, requirement, and next action', () => {
-  assert.deepEqual(proposalUpdate.visualEvidenceSubmissionFields({
+  assert.deepEqual(proposalUpdate.visibleChangesSubmissionFields({
     accepted: true, rejected: false, required: true, state: 'planned',
   }), {
-    visualEvidenceState: 'planned',
-    visualEvidenceAccepted: true,
-    visualEvidenceRejected: false,
-    visualEvidenceRequired: true,
-    visualEvidenceNextStep: 'await_visual_evidence',
+    shotsState: 'planned',
+    visibleChangesAccepted: true,
+    visibleChangesRejected: false,
+    shotsRequired: true,
+    shotsNextStep: 'await_shots',
   });
-  assert.equal(proposalUpdate.visualEvidenceNextStep('failed', { required: true }),
-    'rerun_or_correct_visual_evidence');
-  assert.equal(proposalUpdate.visualEvidenceNextStep(null, { rejected: true }),
-    'retry_visual_evidence_intent');
+  assert.equal(proposalUpdate.shotsNextStep('failed', { required: true }),
+    'rerun_or_correct_shots');
+  assert.equal(proposalUpdate.shotsNextStep(null, { rejected: true }),
+    'retry_visible_changes');
 });
 
 test('a disabled collector rejects a supplied declaration instead of pretending it was stored', async () => {
-  const result = await proposalUpdate.applyVisualEvidenceRevision({
+  const result = await proposalUpdate.applyShotsRevision({
     pool: {},
-    config: { visualEvidence: { collect: false } },
-    session: { id: 42, visual_evidence_state: null, visual_evidence_detail: null },
+    config: { shots: { collect: false } },
+    session: { id: 42, shots_state: null, shots_detail: null },
     headSha: HEAD,
-    visualEvidence: intent(),
+    visibleChanges: intent(),
     headChanged: true,
   });
   assert.equal(result.accepted, false);
   assert.equal(result.rejected, true);
   assert.equal(result.changed, false);
-  assert.equal(result.nextStep, 'visual_evidence_collection_disabled');
+  assert.equal(result.nextStep, 'shots_collection_disabled');
 });
 
-test('a head-changing update stales old evidence before recording the preserved declaration', async () => {
-  const originalStale = evidenceState.markStaleForHead;
-  const originalRecord = evidenceState.recordIntent;
+test('a head-changing update stales old shots before recording the preserved declaration', async () => {
+  const originalStale = shotsState.markStaleForHead;
+  const originalRecord = shotsState.recordIntent;
   const calls = [];
   try {
-    evidenceState.markStaleForHead = async (_pool, sessionId, headSha) => {
+    shotsState.markStaleForHead = async (_pool, sessionId, headSha) => {
       calls.push(['stale', sessionId, headSha]);
     };
-    evidenceState.recordIntent = async (_pool, sessionId, parsed, options) => {
+    shotsState.recordIntent = async (_pool, sessionId, parsed, options) => {
       calls.push(['record', sessionId, parsed.impact, options.headSha]);
       return {
         accepted: true, unchanged: false, required: true, state: 'planned',
@@ -61,39 +61,43 @@ test('a head-changing update stales old evidence before recording the preserved 
     };
     const session = {
       id: 42,
-      visual_evidence_state: 'verified',
-      visual_evidence_detail: { intent: intent(), required: true, headSha: 'b'.repeat(40) },
+      shots_state: 'verified',
+      shots_detail: { intent: intent(), required: true, headSha: 'b'.repeat(40) },
     };
-    const result = await proposalUpdate.applyVisualEvidenceRevision({
-      pool: {}, config: { visualEvidence: { collect: true } }, session,
-      headSha: HEAD, visualEvidence: undefined, headChanged: true,
+    const result = await proposalUpdate.applyShotsRevision({
+      pool: {}, config: { shots: { collect: true } }, session,
+      headSha: HEAD, visibleChanges: undefined, headChanged: true,
     });
     assert.deepEqual(calls.map((call) => call[0]), ['stale', 'record']);
     assert.equal(result.accepted, false, 'preserved intent was not falsely reported as newly submitted');
     assert.equal(result.rejected, false);
     assert.equal(result.required, true);
     assert.equal(result.state, 'planned');
-    assert.equal(result.nextStep, 'await_visual_evidence');
+    assert.equal(result.nextStep, 'await_shots');
   } finally {
-    evidenceState.markStaleForHead = originalStale;
-    evidenceState.recordIntent = originalRecord;
+    shotsState.markStaleForHead = originalStale;
+    shotsState.recordIntent = originalRecord;
   }
 });
 
-test('native handoff build requests accept the same strictly parsed visual intent', () => {
+test('native handoff build requests accept the same strictly parsed declaration', () => {
   const parsed = handoff.parseBuildBody({
     schemaVersion: 1,
     headSha: HEAD,
     history: [],
     tests: [],
-    visualEvidence: intent(),
+    visibleChanges: intent(),
   });
-  assert.equal(parsed.visualEvidence.impact, 'ui');
-  assert.equal(parsed.visualEvidence.stories[0].intent.baseState, 'present');
+  assert.equal(parsed.visibleChanges.impact, 'ui');
+  assert.equal(parsed.visibleChanges.stories[0].intent.baseState, 'present');
+  // A CLI from before the rename sends it as visualEvidence.
+  assert.equal(handoff.parseBuildBody({
+    schemaVersion: 1, headSha: HEAD, history: [], tests: [], visualEvidence: intent(),
+  }).visibleChanges.impact, 'ui');
   const bad = intent();
   bad.stories[0].intent.startPath = 'https://evil.example';
   assert.throws(() => handoff.parseBuildBody({
-    schemaVersion: 1, headSha: HEAD, history: [], tests: [], visualEvidence: bad,
+    schemaVersion: 1, headSha: HEAD, history: [], tests: [], visibleChanges: bad,
   }), /relative in-app path/);
 });
 
@@ -104,11 +108,11 @@ test('PR import records the declaration on its existing transaction client', () 
     source.indexOf("const sessionId = inserted[0].id")
   );
   assert.match(transaction,
-    /recordIntentInTransaction\(\s*importClient,\s*inserted\[0\]\.id,\s*importVisualEvidence/,
-    'the uncommitted session row and its evidence are written atomically');
+    /recordIntentInTransaction\(\s*importClient,\s*inserted\[0\]\.id,\s*importVisibleChanges/,
+    'the uncommitted session row and its shots are written atomically');
   assert.doesNotMatch(transaction, /recordIntent\(\s*importClient/,
     'the pool-owning helper must not receive an already checked-out PoolClient');
-  // The declaration is all an import stores. The preview agent's run is
+  // The declaration is all an import stores. The shots agent's run is
   // created later from it; no author-supplied plan or run rides the import.
   assert.doesNotMatch(transaction, /createRunInTransaction|authorPlan|visualEvidencePlan/);
 });
@@ -117,29 +121,31 @@ test('PR import parses only the declaration; an author plan in the body is ignor
   const declared = motionIntent();
   const stalePlan = { baseSha: 'b'.repeat(40), headSha: 'a'.repeat(40), planHash: 'c'.repeat(64), plan: {} };
   assert.deepEqual(
-    votes.parseImportVisualEvidence({ visualEvidence: declared, visualEvidencePlan: stalePlan }),
+    votes.parseImportVisibleChanges({ visibleChanges: declared, visualEvidencePlan: stalePlan }),
     contract.parseIntent(declared),
     'the strict v1 parser owns the import boundary, whatever else the body carries'
   );
+  assert.deepEqual(votes.parseImportVisibleChanges({ visualEvidence: declared }), contract.parseIntent(declared),
+    'the name from before the rename is still read');
   // Absent stays absent, so a browser import writes exactly what it did.
-  assert.equal(votes.parseImportVisualEvidence({ visualEvidencePlan: stalePlan }), undefined);
-  assert.equal(votes.parseImportVisualEvidence(undefined), undefined);
+  assert.equal(votes.parseImportVisibleChanges({ visualEvidencePlan: stalePlan }), undefined);
+  assert.equal(votes.parseImportVisibleChanges(undefined), undefined);
   // An invalid declaration is still refused rather than stored.
   const bad = intent();
   bad.stories[0].intent.startPath = 'https://evil.example';
-  assert.throws(() => votes.parseImportVisualEvidence({ visualEvidence: bad }), /relative in-app path/);
-  assert.equal(votes.parseImportVisualEvidencePlan, undefined, 'the plan parser is gone');
+  assert.throws(() => votes.parseImportVisibleChanges({ visibleChanges: bad }), /relative in-app path/);
+  assert.equal(votes.parseImportVisibleChangesPlan, undefined, 'the plan parser is gone');
 });
 
-test('PR import evidence failures expose a safe stage and field without leaking the database error', () => {
+test('PR import shots failures expose a safe stage and field without leaking the database error', () => {
   const err = new Error('password=not-for-callers');
-  err.prImportStage = 'visual_evidence_intent';
-  err.prImportField = 'visualEvidence';
+  err.prImportStage = 'visible_changes';
+  err.prImportField = 'visibleChanges';
   const body = votes.prImportFailureBody(err);
   assert.deepEqual(body, {
-    error: 'PR import failed while recording visualEvidence.',
-    stage: 'visual_evidence_intent',
-    field: 'visualEvidence',
+    error: 'PR import failed while recording the visible changes.',
+    stage: 'visible_changes',
+    field: 'visibleChanges',
     retryable: true,
   });
   assert.doesNotMatch(JSON.stringify(body), /password/);
@@ -149,6 +155,6 @@ test('PR import evidence failures expose a safe stage and field without leaking 
   // The import no longer records a plan, so that stage is not a boundary a
   // caller can act on: it reads as any other internal failure.
   const planError = new Error('password=not-for-callers');
-  planError.prImportStage = 'visual_evidence_plan';
+  planError.prImportStage = 'shots_plan';
   assert.deepEqual(votes.prImportFailureBody(planError), { error: 'Internal server error' });
 });

@@ -1,4 +1,4 @@
-// Restart recovery must END an orphaned visual-evidence turn, never resume
+// Restart recovery must END an orphaned shots turn, never resume
 // it. The turn's MCP bridge calls back to the pod that dispatched it and
 // answers to a run that only existed in that process, so a resumed turn
 // retries dead tool calls forever while holding the session busy.
@@ -8,7 +8,7 @@
 // or sweepers. The worker module is stubbed via require.cache BEFORE the
 // require so server.js binds the stub.
 //
-// Run with: node --test tests/evidence-turn-recovery.test.js
+// Run with: node --test tests/shots-turn-recovery.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -82,11 +82,11 @@ function makePool(sessionRow) {
   };
 }
 
-const CODEX_EVIDENCE_TURN = {
+const CODEX_SHOTS_TURN = {
   turnId: '00000000-0000-4000-8000-000000004738',
   turnUuid: '10000000-0000-4000-8000-000000004738',
   backend: 'codex_openrouter',
-  mode: 'evidence',
+  mode: 'shots',
   phase: 'executing',
   journal: '/home/node/.claude/turn-1.log',
 };
@@ -119,8 +119,8 @@ test.beforeEach(() => {
   inFlightMode = null;
 });
 
-test('a running orphaned evidence turn is stopped and terminalized instead of resumed', async () => {
-  const pool = makePool(sessionWith(CODEX_EVIDENCE_TURN));
+test('a running orphaned shots turn is stopped and terminalized instead of resumed', async () => {
+  const pool = makePool(sessionWith(CODEX_SHOTS_TURN));
   await adopt(pool, 'running');
 
   assert.deepEqual(names(), [
@@ -128,21 +128,21 @@ test('a running orphaned evidence turn is stopped and terminalized instead of re
     'completeCodexAttempt', 'finishTurn',
   ]);
   const ledger = calls.find((call) => call[0] === 'completeCodexAttempt')[1];
-  assert.equal(ledger.turnUuid, CODEX_EVIDENCE_TURN.turnUuid);
+  assert.equal(ledger.turnUuid, CODEX_SHOTS_TURN.turnUuid);
   assert.equal(ledger.status, 'failed');
   assert.equal(ledger.errorCode, 'recovery_abandoned');
   assert.deepEqual(calls.find((call) => call[0] === 'finishTurn').slice(1), [4738, {
-    turnId: CODEX_EVIDENCE_TURN.turnId,
-    journal: CODEX_EVIDENCE_TURN.journal,
+    turnId: CODEX_SHOTS_TURN.turnId,
+    journal: CODEX_SHOTS_TURN.journal,
   }]);
-  assert.ok(noChatRows(pool), 'evidence turns never narrate into the chat');
+  assert.ok(noChatRows(pool), 'shots turns never narrate into the chat');
 });
 
-test('an unconfirmed stop retains the evidence turn for a recovery retry', async () => {
+test('an unconfirmed stop retains the shots turn for a recovery retry', async () => {
   for (const probe of [true, null]) {
     calls.length = 0;
     executingAfterStop = probe;
-    const pool = makePool(sessionWith(CODEX_EVIDENCE_TURN));
+    const pool = makePool(sessionWith(CODEX_SHOTS_TURN));
     await assert.rejects(adopt(pool, 'running'),
       (error) => error.retainActiveTurn === true && error.retryWorkerRecovery === true);
     assert.ok(!names().some((name) => ['completeCodexAttempt', 'finishTurn', 'clearActiveTurn'].includes(name)),
@@ -154,10 +154,10 @@ for (const scenario of [
   { label: 'a missing Kubernetes worker', kubernetes: true, state: 'not_found' },
   { label: 'an exited Docker worker', kubernetes: false, state: 'exited' },
 ]) {
-  test(`${scenario.label} with an evidence turn is cleared without a scrape or narration`, async () => {
+  test(`${scenario.label} with a shots turn is cleared without a scrape or narration`, async () => {
     kubernetesMode = scenario.kubernetes;
     runtimeState = scenario.state;
-    const claudeTurn = { turnId: 'turn-7', mode: 'evidence', journal: '/home/node/.claude/turn-7.log' };
+    const claudeTurn = { turnId: 'turn-7', mode: 'shots', journal: '/home/node/.claude/turn-7.log' };
     const pool = makePool(sessionWith(claudeTurn));
     await adopt(pool, scenario.state);
 
@@ -167,9 +167,9 @@ for (const scenario of [
   });
 }
 
-test('an evidence turn this process is still executing is left to its own run', async () => {
-  inFlightMode = 'evidence';
-  const pool = makePool(sessionWith(CODEX_EVIDENCE_TURN));
+test('a shots turn this process is still executing is left to its own run', async () => {
+  inFlightMode = 'shots';
+  const pool = makePool(sessionWith(CODEX_SHOTS_TURN));
   await adopt(pool, 'running');
 
   assert.deepEqual(calls, []);

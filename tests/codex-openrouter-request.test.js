@@ -58,8 +58,8 @@ function codex0146BuildTools() {
       { type: 'function', name: 'browser_take_screenshot' },
       { type: 'function', name: 'browser_close' },
     ] },
-    { type: 'namespace', name: 'mcp__visual_intent', tools: [
-      { type: 'function', name: 'record_visual_evidence_intent' },
+    { type: 'namespace', name: 'mcp__visible_changes', tools: [
+      { type: 'function', name: 'declare_visible_changes' },
     ] },
     { type: 'namespace', name: 'mcp__homeroom', tools: [
       { type: 'function', name: 'get_platform_conventions' },
@@ -116,7 +116,7 @@ test('the wire cap is enforced on every GLM request, independently of history si
 // The adapter changes only the output cap: Codex's whole tool surface, its
 // tool choice and its parallel-call flag reach the provider exactly as sent,
 // and nothing about the tools enters the timing stream. (The tool inventory
-// served only the retired Codex preview agent; every preview turn runs on
+// served only the retired Codex shots agent; every shots turn runs on
 // Claude Code now.)
 test('a request keeps its whole tool surface and the timing stream never describes it', async t => {
   const calls = [];
@@ -144,7 +144,7 @@ test('a request keeps its whole tool surface and the timing stream never describ
   }
   assert.equal(events.filter(event => event.kind === 'provider_request_start').length, 2);
   assert.equal(events.some(event => event.kind === 'provider_tool_config'), false);
-  assert.doesNotMatch(JSON.stringify(events), /browser_navigate|record_visual_evidence_intent|mcp__/);
+  assert.doesNotMatch(JSON.stringify(events), /browser_navigate|declare_visible_changes|mcp__/);
 });
 
 test('request timing separates provider wait, first byte, and stream completion without content', async t => {

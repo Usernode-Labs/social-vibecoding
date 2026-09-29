@@ -31,12 +31,12 @@ test('a pair is two exact, different commits, named after the after commit unles
   assert.equal(parseArgs(['down']).label, null, 'down without a label stops every pair');
 });
 
-test('a pair\'s databases are the evidence databases a hosted run would name, and its hosts differ', () => {
+test('a pair\'s databases are the shots databases a hosted run would name, and its hosts differ', () => {
   const names = pairNames('p4832');
   assert.equal(names.runId.length, 32);
   assert.deepEqual(names.dbs, {
-    base: dbManager.evidenceDbName('usernode-2d5619', names.runId, 'base'),
-    head: dbManager.evidenceDbName('usernode-2d5619', names.runId, 'head'),
+    base: dbManager.shotsDbName('usernode-2d5619', names.runId, 'base'),
+    head: dbManager.shotsDbName('usernode-2d5619', names.runId, 'head'),
   });
   assert.deepEqual(names.containers, { base: 'shots-p4832-before', head: 'shots-p4832-after' });
   assert.equal(pairNames('p4832').runId, names.runId, 'the same label always names the same pair');

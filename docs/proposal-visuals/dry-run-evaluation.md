@@ -1,13 +1,13 @@
 # Evaluating before/after shots on real proposals (local dry run)
 
-Goal: find out whether the preview agent, given only a proposal's declared
+Goal: find out whether the shots agent, given only a proposal's declared
 changes, reaches each change on real builds and saves shots a person would
 accept, before this replaces replay in production. The shots code has only
 been exercised with scripted tool calls; this is its first run with a model.
 
 This plan runs on a developer machine with Docker, the local Homeroom stack
 and a logged-in `claude` CLI. It uses `scripts/shots-dry-run.js`, which runs
-the production preview-agent prompts, shots bridge, internal routes and run
+the production shots-agent prompts, shots bridge, internal routes and run
 control against two builds you start, and writes a contact sheet to judge.
 
 ## 0. Ground rules
@@ -20,14 +20,14 @@ control against two builds you start, and writes a contact sheet to judge.
   connector or API only.
 - You may fix `scripts/shots-dry-run.js` and add throwaway helpers under
   `.shots-dry-run/` (ignored). Write down, rather than fix, anything that
-  looks wrong in the platform's shots code, with the proposal and evidence.
+  looks wrong in the platform's shots code, with the proposal and shots.
 
 ## 1. Pick 4–5 proposals
 
 Candidates are recent `usernode-2d5619` proposals whose replay run failed
 with real declared changes: 4781, 4832, 4842, 4844, 4854, 4868, 4885, 4907,
 4908, 4909, 4911, 4913, 4922, 4935, 4937, 4946, 4947. With `get_proposal`,
-keep those whose `visualEvidence.claims` is non-empty, and choose a mix: a
+keep those whose `shots.claims` is non-empty, and choose a mix: a
 plain member flow, a `read_only_admin` or `full_admin` change, a `mobile`
 viewport, and anything with `animation: "motion"`. Record each one's old
 `failureCode` / `failureReason` for comparison.
@@ -35,7 +35,7 @@ viewport, and anything with `animation: "motion"`. Record each one's old
 For each, you need `baseSha`, `branch.headSha`, and the full version-1
 declaration. `get_proposal` omits `startPath`, viewport sizes, `checkpoint`
 and `focus`. Get them from the owner-only diagnostics
-(`GET /api/apps/usernode-2d5619/proposals/<id>/evidence/diagnostics`, via the
+(`GET /api/apps/usernode-2d5619/proposals/<id>/shots/diagnostics`, via the
 `usernode-api` skill): production still runs replay, so an accepted run's
 `replayPlan.stories[]` carries the full intent. Where no plan exists,
 reconstruct the missing fields from the claim, its steps and the PR diff,
@@ -51,7 +51,7 @@ npm run shots:pair -- up --before <baseSha> --after <headSha> --label <id>
 ```
 
 It builds each exact revision's image once (from a detached worktree),
-restores one dump of the local dev database into two evidence databases,
+restores one dump of the local dev database into two shots databases,
 runs both images on
 `usernode-net` with a credential-free env (fresh secrets, its own iframe key
 pair; it never reads your `.env`), applies the per-side fixtures a hosted
@@ -92,8 +92,8 @@ npm run shots:dry-run -- \
   --out .shots-dry-run/<id>/run-1
 ```
 
-The preview agent's model is `claude-sonnet-5-5` in production
-(`VISUAL_EVIDENCE_AGENT_MODEL`), and the dry run uses the same unless
+The shots agent's model is `claude-sonnet-5-5` in production
+(`SHOTS_AGENT_MODEL`), and the dry run uses the same unless
 `--model` says otherwise; it needs `claude` 2.1.284 or later
 (`--claude-bin`). Add `--executable-path` if Playwright's Chromium is not
 installed, `--fixtures` with the descriptors the per-side fixtures returned,

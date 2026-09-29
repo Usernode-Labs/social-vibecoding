@@ -566,8 +566,8 @@ test('a long conversation is compacted after the turn, and replays only what fol
 
 function dispatchDeps({
   change = CHANGE_ROW, busy = false, tool = null, cleared = true, choice = null, switched = { ok: true },
-  // What holds a busy change: a turn, or only a visual-evidence run.
-  evidenceRun = null, evidenceWaitMs = undefined,
+  // What holds a busy change: a turn, or only a shots run.
+  shotsRun = null, shotsWaitMs = undefined,
 } = {}) {
   const isBusy = typeof busy === 'function' ? busy : () => busy;
   const log = [];
@@ -589,12 +589,12 @@ function dispatchDeps({
     },
     activeWorkers: {
       isSessionBusy: () => isBusy(),
-      hasSessionOperation: () => isBusy() && !evidenceRun,
+      hasSessionOperation: () => isBusy() && !shotsRun,
       activeWorkers: new Map(),
       beginSessionOperation: (id) => { log.push(['begin', id]); return () => log.push(['release', id]); },
     },
-    evidenceRunFor: () => evidenceRun,
-    evidenceWaitMs,
+    shotsRunFor: () => shotsRun,
+    shotsWaitMs,
     stopRegistry: {
       createHandle: ({ sessionId, phase, send }) => ({ sessionId, phase, send, stopped: false, stoppedBy: null, abort: new AbortController() }),
       set: (id, handle) => registry.set(id, handle),
@@ -742,23 +742,23 @@ test('a dispatch is refused when there is nothing to build on', async () => {
   assert.equal(dispatch.canDispatch(null), false);
 });
 
-test('a change held only by a visual-evidence run waits it out, then builds', async () => {
+test('a change held only by a shots run waits it out, then builds', async () => {
   let running = true;
   let finish;
-  const evidenceRun = new Promise((resolve) => { finish = resolve; });
-  const { deps } = dispatchDeps({ busy: () => running, evidenceRun });
+  const shotsRun = new Promise((resolve) => { finish = resolve; });
+  const { deps } = dispatchDeps({ busy: () => running, shotsRun });
   assert.equal(dispatch.canDispatch(CHANGE_ROW, deps), true, 'the tools stay on offer while evidence records');
   setTimeout(() => { running = false; finish(); }, 5);
-  const { outcome, log, agentEvents } = await dispatchWith({ busy: () => running, evidenceRun });
+  const { outcome, log, agentEvents } = await dispatchWith({ busy: () => running, shotsRun });
   assert.equal(outcome.toolResultText, 'built');
-  assert.match(agentEvents[0].text, /^Visual evidence is being recorded/);
+  assert.match(agentEvents[0].text, /^Before & after shots is being recorded/);
   assert.equal(agentEvents[0].changeId, 50);
   assert.deepEqual(log[0], ['begin', 50], 'claimed only after the run ended');
 });
 
-test('an evidence run that outlasts the wait is refused as what it is, not as the coding agent', async () => {
-  const { outcome, log } = await dispatchWith({ busy: true, evidenceRun: new Promise(() => {}), evidenceWaitMs: 5 });
-  assert.match(outcome.toolResultText, /^busy_visual_evidence: /);
+test('a shots run that outlasts the wait is refused as what it is, not as the coding agent', async () => {
+  const { outcome, log } = await dispatchWith({ busy: true, shotsRun: new Promise(() => {}), shotsWaitMs: 5 });
+  assert.match(outcome.toolResultText, /^busy_shots: /);
   assert.match(outcome.toolResultText, /not the coding agent/);
   assert.match(outcome.toolResultText, /nothing will retry it automatically/);
   assert.ok(!log.some((e) => e[0] === 'begin'));
