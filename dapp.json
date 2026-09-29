@@ -5065,6 +5065,12 @@
       "expectText": "What should this session change?"
     },
     {
+      "name": "#3370: the empty state keeps its heading and drops the paragraph that repeated the hint above it",
+      "path": "/#app/usernode-2d5619/dev/sessions/new",
+      "expectSelector": "#dc-tab-chat #dc-messages #dc-empty-state:has(.dc-empty-title):not(:has(.dc-empty-text))",
+      "expectText": "promoting this session's PR is what creates the proposal"
+    },
+    {
       "name": "#2241/#2607: the unsent change has a live composer and the venue dropdown, and no controls for a session that does not exist",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
       "expectSelector": "#dc-session-header:has(> button#dc-venue-select[data-venue-change]):not(:has(#dc-session-actions)) ~ .dc-session-body #dc-form #dc-input:not([disabled])"

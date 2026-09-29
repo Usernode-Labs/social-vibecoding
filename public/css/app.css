@@ -5606,7 +5606,6 @@ body:has(#platform-header.hidden) #app-frame-host {
   text-align: center;
 }
 .dc-empty-title { font-size: 20px; font-weight: 600; color: var(--text-primary); }
-.dc-empty-text { margin: 0; max-width: 26rem; font-size: 14px; line-height: 1.5; color: var(--text-muted); }
 
 /* #1905: on a brand-new session the composer comes up to meet the empty
    state, the way a new conversation opens in Claude or ChatGPT: title,

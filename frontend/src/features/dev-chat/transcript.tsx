@@ -850,10 +850,6 @@ export function DevChatTranscript({ embedded = false }: { embedded?: boolean }):
       {s.empty ? (
         <div id="dc-empty-state" className="dc-empty-state">
           <div className="dc-empty-title">What should this session change?</div>
-          <p className="dc-empty-text">
-            Describe it in the box below. The agent works it out with you, builds it, and
-            gives you a preview to try before anything goes to a vote.
-          </p>
         </div>
       ) : null}
       {s.rows.map((r, i) => {
