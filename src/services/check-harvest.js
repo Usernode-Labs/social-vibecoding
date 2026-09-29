@@ -296,11 +296,11 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       await visuals.storeCaptureOutcome(writePool, sessionId, 'failed', { reason: why.slice(0, 300) }).catch(() => {});
       const stored = await visuals.storeChecks(writePool, sessionId, commitSha, { state: 'error', results: [] }, why);
       if (stored) visuals.notifyChecks(sessionId, { state: 'error', results: [] }, commitSha, null);
-      // A live capture schedules evidence from its finally block. This run's
+      // A live capture schedules shots from its finally block. This run's
       // launcher is gone, so the harvester must perform that hand-off itself.
-      // Evidence uses its own exact-revision pair and can still succeed when
+      // The shots use their own exact-revision pair and can still succeed when
       // the legacy capture Job produced no usable output.
-      visuals.scheduleVisualEvidence(config, pool, sessionId, commitSha, 'checks-harvested');
+      visuals.scheduleShots(config, pool, sessionId, commitSha, 'checks-harvested');
       verdict = 'error';
       mergeDebug.endRun(pool, manifest.debugRunId || null, {
         status: 'error', summary: `checks error in ${Math.round((Date.now() - (manifest.startedAt || startedAt)) / 1000)}s (harvested: ${why})`,
@@ -338,9 +338,9 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     });
     verdict = settled.traceStatus;
     // The live capture's finally block does not run after adoption. Without
-    // this call a successfully harvested proposal keeps its evidence claim in
+    // this call a successfully harvested proposal keeps its shots claim in
     // "planned" forever even though checks and screenshots have settled.
-    visuals.scheduleVisualEvidence(config, pool, sessionId, commitSha, 'checks-harvested');
+    visuals.scheduleShots(config, pool, sessionId, commitSha, 'checks-harvested');
     mergeDebug.endRun(pool, manifest.debugRunId || null, {
       status: verdict,
       summary: `checks ${verdict} in ${Math.round((Date.now() - (Number(manifest.startedAt) || startedAt)) / 1000)}s (harvested)`,

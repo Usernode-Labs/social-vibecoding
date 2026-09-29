@@ -35,15 +35,15 @@ const CREDENTIAL_PATTERNS = Object.freeze([
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/,
 ]);
 
-class VisualEvidenceValidationError extends Error {
+class VisibleChangesValidationError extends Error {
   constructor(issues) {
     const normalized = Array.isArray(issues) ? issues : [{ path: [], message: String(issues) }];
     super(normalized.map((issue) => {
-      const path = Array.isArray(issue.path) && issue.path.length ? issue.path.join('.') : 'visualEvidence';
+      const path = Array.isArray(issue.path) && issue.path.length ? issue.path.join('.') : 'shots';
       return `${path}: ${issue.message}`;
     }).join('; '));
-    this.name = 'VisualEvidenceValidationError';
-    this.code = 'invalid_visual_evidence';
+    this.name = 'VisibleChangesValidationError';
+    this.code = 'invalid_visible_changes';
     this.issues = normalized.map((issue) => ({
       path: Array.isArray(issue.path) ? issue.path.map(String) : [],
       message: String(issue.message || 'Invalid value'),
@@ -65,8 +65,8 @@ function validRelativePath(value) {
   if (!singleLine(value) || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return false;
   if (ABSOLUTE_URL_RE.test(value) || /%2f%2f/i.test(value)) return false;
   try {
-    const parsed = new URL(value, 'https://evidence.invalid');
-    return parsed.origin === 'https://evidence.invalid'
+    const parsed = new URL(value, 'https://shots.invalid');
+    return parsed.origin === 'https://shots.invalid'
       && !parsed.username && !parsed.password
       && ![...parsed.searchParams.keys()].some((key) => /^(?:token|access_token|auth|authorization|password|passwd|secret|api[_-]?key)$/i.test(key))
       && parsed.pathname.startsWith('/');
@@ -86,7 +86,7 @@ const relativePathSchema = z.string().max(MAX_PATH)
 function validControlledFailurePath(value) {
   if (!validRelativePath(value) || !value.startsWith('/api/') || value.includes('*')) return false;
   try {
-    const parsed = new URL(value, 'https://evidence.invalid');
+    const parsed = new URL(value, 'https://shots.invalid');
     return !parsed.hash && `${parsed.pathname}${parsed.search}` === value;
   } catch { return false; }
 }
@@ -181,7 +181,7 @@ const semanticIntentSchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['stories'], message: 'No stories are allowed when impact is "none"' });
   }
   if (intent.impact !== 'none' && intent.stories.length === 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['stories'], message: 'At least one evidence story is required for a visible change' });
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['stories'], message: 'At least one shots story is required for a visible change' });
   }
   const ids = new Set();
   intent.stories.forEach((story, index) => {
@@ -212,7 +212,7 @@ function normalizeZodIssues(error) {
 
 function parseWith(schema, value) {
   const parsed = schema.safeParse(value);
-  if (!parsed.success) throw new VisualEvidenceValidationError(normalizeZodIssues(parsed.error));
+  if (!parsed.success) throw new VisibleChangesValidationError(normalizeZodIssues(parsed.error));
   return parsed.data;
 }
 
@@ -220,10 +220,17 @@ function parseIntent(value) {
   return parseWith(semanticIntentSchema, value);
 }
 
+// The declaration on any write that carries one. Agents and CLIs built
+// before the rename send it as `visualEvidence`; that name is still read.
+function declaredChanges(body) {
+  if (!body || typeof body !== 'object') return undefined;
+  return body.visibleChanges !== undefined ? body.visibleChanges : body.visualEvidence;
+}
+
 function safeParseIntent(value) {
   try { return { ok: true, value: parseIntent(value), errors: [] }; }
   catch (err) {
-    if (!(err instanceof VisualEvidenceValidationError)) throw err;
+    if (!(err instanceof VisibleChangesValidationError)) throw err;
     return { ok: false, value: null, errors: err.issues };
   }
 }
@@ -273,10 +280,11 @@ module.exports = {
   ANIMATIONS,
   CONTROLLED_FAILURE_LABEL,
   LOCATOR_KINDS,
-  VisualEvidenceValidationError,
+  VisibleChangesValidationError,
   validRelativePath,
   credentialLike,
   parseIntent,
+  declaredChanges,
   safeParseIntent,
   canonicalJson,
   needsClip,

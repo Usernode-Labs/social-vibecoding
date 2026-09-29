@@ -136,10 +136,10 @@ function shapeChangeRow(row) {
     // The before/after shots being taken now, which the conversation
     // shows with a Stop. Null once it settles, and on the changes-list rows,
     // which do not read it.
-    previewCapture: CAPTURING_STATES.has(row.change_evidence_state)
+    previewCapture: CAPTURING_STATES.has(row.change_shots_state)
       ? {
-        state: row.change_evidence_state,
-        startedAt: row.change_evidence_started_at ? new Date(row.change_evidence_started_at).toISOString() : null,
+        state: row.change_shots_state,
+        startedAt: row.change_shots_started_at ? new Date(row.change_shots_started_at).toISOString() : null,
       }
       : null,
   };
@@ -233,8 +233,8 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
-            c.visual_evidence_state AS change_evidence_state,
-            (SELECT r.started_at FROM visual_evidence_runs r WHERE r.id = c.visual_evidence_run_id) AS change_evidence_started_at,
+            c.shots_state AS change_shots_state,
+            (SELECT r.started_at FROM shot_runs r WHERE r.id = c.shots_run_id) AS change_shots_started_at,
             ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
             (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM agent_sessions s
@@ -272,8 +272,8 @@ async function getAgentSession(pool, { userId, id }) {
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
-            c.visual_evidence_state AS change_evidence_state,
-            (SELECT r.started_at FROM visual_evidence_runs r WHERE r.id = c.visual_evidence_run_id) AS change_evidence_started_at,
+            c.shots_state AS change_shots_state,
+            (SELECT r.started_at FROM shot_runs r WHERE r.id = c.shots_run_id) AS change_shots_started_at,
             ca.slug AS change_app_slug, ca.name AS change_app_name, ca.self_hosted AS change_app_self_hosted,
             (SELECT COUNT(*)::int FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.test_results) = 'array' THEN c.test_results ELSE '[]'::jsonb END) t WHERE t->>'status' = 'fail') AS change_check_failing
        FROM agent_sessions s

@@ -5,9 +5,9 @@ const os = require('os');
 const path = require('path');
 const applicationRuntime = require('./application-runtime');
 const dbManager = require('./db-manager');
-const environment = require('./visual-evidence-environment');
+const environment = require('./shots-environment');
 const log = require('./logger');
-const state = require('./visual-evidence-state');
+const state = require('./shots-state');
 const { visualHeadForSession, sameSha } = require('./pr-vote-revision');
 
 const FAILED_MEDIA_HOURS = 24;
@@ -29,8 +29,15 @@ async function cleanupRunResources(config, run) {
     await applicationRuntime.remove(config, {
       runtimeKind: applicationRuntime.mode(config), runtimeName,
     }).catch((err) => errors.push(err));
-    const dbName = dbManager.evidenceDbName(run.app_slug, run.id, side);
+    const dbName = dbManager.shotsDbName(run.app_slug, run.id, side);
     await dbManager.dropDatabase(dbName, { strict: true }).catch((err) => errors.push(err));
+    // A run the previous release started used the names from before the
+    // rename. Best-effort: a newer run has nothing by those names.
+    await applicationRuntime.remove(config, {
+      runtimeKind: applicationRuntime.mode(config),
+      runtimeName: environment.legacyRuntimeName(run.id, side, applicationRuntime.mode(config)),
+    }).catch(() => {});
+    await dbManager.dropDatabase(dbManager.legacyShotsDbName(run.app_slug, run.id, side)).catch(() => {});
   }
   const prepared = dbManager.preparedCloneSourceName(dbManager.appDbName(run.app_slug), run.id);
   await dbManager.releasePreparedCloneSource(prepared).catch((err) => errors.push(err));
@@ -40,12 +47,12 @@ async function cleanupRunResources(config, run) {
 async function recoverInterrupted(config, pool, {
   maxAgeMs = null, limit = 20, cleanup = cleanupRunResources, stateService = state,
 } = {}) {
-  const runBudgetMs = Math.max(60_000, Number(config.visualEvidence?.maxRunMs) || 1_440_000);
+  const runBudgetMs = Math.max(60_000, Number(config.shots?.maxRunMs) || 1_440_000);
   const ageMs = Math.max(60_000, Number(maxAgeMs) || Math.min(runBudgetMs, HEARTBEAT_SILENCE_MS));
   const legacyAgeMs = Math.max(ageMs, LEGACY_RUN_GRACE_MS);
   const { rows } = await pool.query(
-    `SELECT r.*, a.slug AS app_slug, s.visual_evidence_run_id AS current_run_id
-       FROM visual_evidence_runs r
+    `SELECT r.*, a.slug AS app_slug, s.shots_run_id AS current_run_id
+       FROM shot_runs r
        JOIN chat_sessions s ON s.id = r.session_id
        JOIN apps a ON a.id = s.app_id
       WHERE r.state IN ('planned','provisioning','exploring','replaying','reviewing')
@@ -58,11 +65,11 @@ async function recoverInterrupted(config, pool, {
   let failed = 0;
   let cancelled = 0;
   const markCleaned = (id) => pool.query(
-    `UPDATE visual_evidence_runs
+    `UPDATE shot_runs
         SET trace_summary = jsonb_set(COALESCE(trace_summary, '{}'::jsonb),
           '{cleanupComplete}', 'true'::jsonb, true)
       WHERE id = $1 AND state IN ('failed','cancelled')
-        AND failure_code = 'evidence_run_interrupted'`,
+        AND failure_code = 'shots_run_interrupted'`,
     [id]
   );
   for (const run of rows) {
@@ -71,16 +78,16 @@ async function recoverInterrupted(config, pool, {
     if (run.current_run_id === run.id) {
       try {
         await stateService.transitionRun(pool, run.id, 'failed', {
-          failureCode: 'evidence_run_interrupted',
+          failureCode: 'shots_run_interrupted',
           failureReason: 'The before/after shots stopped reporting progress before they finished. The cause is not recorded; you can take them again.',
           recoveryMinIdleMs: minIdleMs,
         });
         failed += 1;
         terminalized = true;
       } catch (err) {
-        if (err.code !== 'evidence_run_active' && err.code !== 'stale_evidence_operation'
-            && err.code !== 'invalid_evidence_transition') {
-          log.warn('visual-evidence', 'Interrupted run could not use normal transition', {
+        if (err.code !== 'shots_run_active' && err.code !== 'stale_shots_operation'
+            && err.code !== 'invalid_shots_transition') {
+          log.warn('shots', 'Interrupted run could not use normal transition', {
             runId: run.id, err: err.message,
           });
         }
@@ -90,13 +97,13 @@ async function recoverInterrupted(config, pool, {
       // a late heartbeat or a changed owner, just as the current-run path is
       // fenced by transitionRun's row lock and idle check.
       const result = await pool.query(
-        `UPDATE visual_evidence_runs r
-            SET state = 'cancelled', failure_code = 'evidence_run_interrupted',
-              failure_reason = 'The preview agent stopped before the shots were finished.',
+        `UPDATE shot_runs r
+            SET state = 'cancelled', failure_code = 'shots_run_interrupted',
+              failure_reason = 'The shots agent stopped before the shots were finished.',
               completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
            FROM chat_sessions s
           WHERE r.id = $3 AND s.id = r.session_id
-            AND s.visual_evidence_run_id IS DISTINCT FROM r.id
+            AND s.shots_run_id IS DISTINCT FROM r.id
             AND r.state IN ('planned','provisioning','exploring','replaying','reviewing')
             AND r.updated_at < NOW() - (
               (CASE WHEN COALESCE(r.trace_summary, '{}'::jsonb) ? 'progress'
@@ -111,7 +118,7 @@ async function recoverInterrupted(config, pool, {
     // row after this point, and a process exit during cleanup is retried below.
     const cleanupErrors = await cleanup(config, run);
     if (cleanupErrors.length) {
-      log.warn('visual-evidence', 'Interrupted evidence cleanup was incomplete', {
+      log.warn('shots', 'Interrupted shots cleanup was incomplete', {
         runId: run.id, errors: cleanupErrors.map((error) => error.message).slice(0, 4),
       });
     } else {
@@ -123,11 +130,11 @@ async function recoverInterrupted(config, pool, {
   // cleanup is deterministic and safe to repeat for missing resources.
   const retries = await pool.query(
     `SELECT r.*, a.slug AS app_slug
-       FROM visual_evidence_runs r
+       FROM shot_runs r
        JOIN chat_sessions s ON s.id = r.session_id
        JOIN apps a ON a.id = s.app_id
       WHERE r.state IN ('failed','cancelled')
-        AND r.failure_code = 'evidence_run_interrupted'
+        AND r.failure_code = 'shots_run_interrupted'
         AND NOT (COALESCE(r.trace_summary, '{}'::jsonb) @> '{"cleanupComplete":true}'::jsonb)
       ORDER BY r.updated_at ASC LIMIT $1`,
     [Math.max(1, Math.min(100, Number(limit) || 20))]
@@ -136,7 +143,7 @@ async function recoverInterrupted(config, pool, {
   for (const run of retries.rows) {
     const errors = await cleanup(config, run);
     if (errors.length) {
-      log.warn('visual-evidence', 'Interrupted evidence cleanup retry failed', {
+      log.warn('shots', 'Interrupted shots cleanup retry failed', {
         runId: run.id, errors: errors.map((error) => error.message).slice(0, 4),
       });
       continue;
@@ -151,32 +158,32 @@ async function recoverInterrupted(config, pool, {
 // completion event starts the shots, but a process can die between those
 // two writes; this hands such a proposal to a run within minutes.
 async function recoverUnstarted(config, pool, { limit = 10, minAgeMs = 60_000, schedule = null } = {}) {
-  if (!config.visualEvidence?.execute) return { examined: 0, scheduled: 0 };
+  if (!config.shots?.execute) return { examined: 0, scheduled: 0 };
   const retryAfterMs = 10 * 60_000;
   const { rows } = await pool.query(
     `SELECT cs.id, cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
             cs.checks_commit_sha, cs.handoff_head_sha
        FROM chat_sessions cs
-      WHERE cs.visual_evidence_state = 'planned'
-        AND cs.visual_evidence_run_id IS NULL
+      WHERE cs.shots_state = 'planned'
+        AND cs.shots_run_id IS NULL
         AND cs.status IN ('active', 'promoted')
-        AND cs.visual_evidence_detail->>'required' = 'true'
-        AND jsonb_typeof(cs.visual_evidence_detail->'intent') = 'object'
+        AND cs.shots_detail->>'required' = 'true'
+        AND jsonb_typeof(cs.shots_detail->'intent') = 'object'
         AND (cs.check_state IN ('passing', 'failing', 'error', 'skipped')
              OR cs.check_phase = 'deferred')
-        AND cs.visual_evidence_updated_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
-        AND COALESCE((cs.visual_evidence_detail->>'recoveryAttemptAt')::bigint, 0)
+        AND cs.shots_updated_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
+        AND COALESCE((cs.shots_detail->>'recoveryAttemptAt')::bigint, 0)
             < (EXTRACT(EPOCH FROM NOW()) * 1000)::bigint - $3::bigint
-      ORDER BY cs.visual_evidence_updated_at ASC LIMIT $2`,
+      ORDER BY cs.shots_updated_at ASC LIMIT $2`,
     [Math.max(0, Number(minAgeMs) || 0), Math.max(1, Math.min(50, Number(limit) || 10)), retryAfterMs]
   );
-  const dispatch = schedule || require('./visual-evidence-orchestrator').scheduleForSession;
+  const dispatch = schedule || require('./shots-orchestrator').scheduleForSession;
   const defer = async (id) => {
     await pool.query(
       `UPDATE chat_sessions
-          SET visual_evidence_detail = visual_evidence_detail
+          SET shots_detail = shots_detail
                 || jsonb_build_object('recoveryAttemptAt', $2::bigint)
-        WHERE id = $1 AND visual_evidence_state = 'planned'`,
+        WHERE id = $1 AND shots_state = 'planned'`,
       [id, Date.now()]
     );
   };
@@ -191,7 +198,7 @@ async function recoverUnstarted(config, pool, { limit = 10, minAgeMs = 60_000, s
       if (result.scheduled) scheduled += 1;
       else if (result.reason !== 'already_running') await defer(session.id);
     } catch (error) {
-      log.warn('visual-evidence', 'Could not recover an unstarted visual evidence claim', {
+      log.warn('shots', 'Could not recover an unstarted before & after shots claim', {
         sessionId: session.id, headSha: head, error: error.message,
       });
       await defer(session.id).catch(() => {});
@@ -214,27 +221,27 @@ async function retryInterrupted(config, pool, {
   limit = 10, minAgeMs = 30_000, maxRetries = MAX_INTERRUPTED_RETRIES,
   schedule = null, stateService = state,
 } = {}) {
-  if (!config.visualEvidence?.execute) return { examined: 0, scheduled: 0 };
+  if (!config.shots?.execute) return { examined: 0, scheduled: 0 };
   const { rows } = await pool.query(
     `SELECT r.id AS run_id, r.head_sha, cs.id, cs.source, cs.imported_pr_head_sha,
             cs.reviewed_head_sha, cs.checks_commit_sha, cs.handoff_head_sha
        FROM chat_sessions cs
-       JOIN visual_evidence_runs r ON r.id = cs.visual_evidence_run_id
+       JOIN shot_runs r ON r.id = cs.shots_run_id
       WHERE r.state = 'failed'
-        AND r.failure_code = 'evidence_run_interrupted'
+        AND r.failure_code = 'shots_run_interrupted'
         AND cs.status NOT IN ('merged', 'archived')
         AND r.updated_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
-        AND (SELECT COUNT(*) FROM visual_evidence_runs prior
+        AND (SELECT COUNT(*) FROM shot_runs prior
               WHERE prior.session_id = cs.id AND prior.head_sha = r.head_sha
                 AND prior.trigger = $3) < $4
       ORDER BY r.updated_at ASC LIMIT $2`,
     [Math.max(0, Number(minAgeMs) || 0), Math.max(1, Math.min(50, Number(limit) || 10)),
       INTERRUPTED_RETRY_TRIGGER, Math.max(0, Number(maxRetries) || 0)]
   );
-  const dispatch = schedule || require('./visual-evidence-orchestrator').scheduleForSession;
+  const dispatch = schedule || require('./shots-orchestrator').scheduleForSession;
   let scheduled = 0;
   for (const row of rows) {
-    // A newer commit owns the proposal now; its own checks start evidence.
+    // A newer commit owns the proposal now; its own checks start shots.
     if (!sameSha(visualHeadForSession(row), row.head_sha)) continue;
     try {
       await stateService.rerunSameHead(pool, row.run_id, { trigger: INTERRUPTED_RETRY_TRIGGER });
@@ -244,7 +251,7 @@ async function retryInterrupted(config, pool, {
       if (result.scheduled) scheduled += 1;
     } catch (error) {
       // Another pod or a person may have retried it first; both are fine.
-      log.warn('visual-evidence', 'Could not retry an interrupted visual evidence run', {
+      log.warn('shots', 'Could not retry an interrupted before & after shots run', {
         sessionId: row.id, runId: row.run_id, code: error.code, error: error.message,
       });
     }
@@ -254,30 +261,30 @@ async function retryInterrupted(config, pool, {
 
 async function prune(pool, config = {}) {
   const failedMediaHours = Math.max(1,
-    Number(config.visualEvidence?.failedArtifactRetentionHours) || FAILED_MEDIA_HOURS);
+    Number(config.shots?.failedArtifactRetentionHours) || FAILED_MEDIA_HOURS);
   const failedRunDays = Math.max(1,
-    Number(config.visualEvidence?.failedMetadataRetentionDays) || RUN_RETENTION_DAYS);
+    Number(config.shots?.failedMetadataRetentionDays) || RUN_RETENTION_DAYS);
   const failedMedia = await pool.query(
-    `DELETE FROM visual_evidence_artifacts a
-      USING visual_evidence_runs r
+    `DELETE FROM shot_artifacts a
+      USING shot_runs r
       WHERE a.run_id = r.id
         AND r.state IN ('failed','cancelled')
         AND COALESCE(r.completed_at, r.updated_at) < NOW() - ($1::int * INTERVAL '1 hour')`,
     [failedMediaHours]
   );
   const rollbackMedia = await pool.query(
-    `DELETE FROM visual_evidence_artifacts a
-      USING visual_evidence_runs r
+    `DELETE FROM shot_artifacts a
+      USING shot_runs r
       WHERE a.run_id = r.id AND r.state = 'stale'
         AND COALESCE(r.completed_at, r.updated_at) < NOW() - ($1::int * INTERVAL '1 day')`,
     [ROLLBACK_MEDIA_DAYS]
   );
   const runs = await pool.query(
-    `DELETE FROM visual_evidence_runs r
+    `DELETE FROM shot_runs r
       WHERE r.state IN ('failed','stale','cancelled','not_required','overridden')
         AND COALESCE(r.completed_at, r.updated_at) < NOW() - ($1::int * INTERVAL '1 day')
         AND NOT EXISTS (
-          SELECT 1 FROM chat_sessions s WHERE s.visual_evidence_run_id = r.id
+          SELECT 1 FROM chat_sessions s WHERE s.shots_run_id = r.id
         )`,
     [failedRunDays]
   );
@@ -291,7 +298,7 @@ async function prune(pool, config = {}) {
 async function sweepOrphanCheckouts(pool, { maxAgeMs = 720_000, tmpDir = os.tmpdir() } = {}) {
   const boundedAge = Math.max(60_000, Number(maxAgeMs) || 720_000);
   const active = await pool.query(
-    `SELECT id FROM visual_evidence_runs
+    `SELECT id FROM shot_runs
       WHERE state IN ('planned','provisioning','exploring','replaying','reviewing')
         AND updated_at >= NOW() - (
           (CASE WHEN COALESCE(trace_summary, '{}'::jsonb) ? 'progress'
@@ -303,14 +310,14 @@ async function sweepOrphanCheckouts(pool, { maxAgeMs = 720_000, tmpDir = os.tmpd
   try {
     entries = await fs.readdir(tmpDir, { withFileTypes: true });
   } catch (err) {
-    log.warn('visual-evidence', 'Could not inspect temporary evidence checkouts', { error: err.message });
+    log.warn('shots', 'Could not inspect temporary shots checkouts', { error: err.message });
     return { examined: 0, removed: 0 };
   }
   let examined = 0;
   let removed = 0;
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    const match = /^usernode-evidence-([0-9a-f]{8})-[A-Za-z0-9._-]+$/.exec(entry.name);
+    const match = /^usernode-(?:shots|evidence)-([0-9a-f]{8})-[A-Za-z0-9._-]+$/.exec(entry.name);
     if (!match || activePrefixes.has(match[1])) continue;
     const target = path.join(tmpDir, entry.name);
     let stat;
@@ -321,7 +328,7 @@ async function sweepOrphanCheckouts(pool, { maxAgeMs = 720_000, tmpDir = os.tmpd
       await fs.rm(target, { recursive: true, force: true });
       removed += 1;
     } catch (err) {
-      log.warn('visual-evidence', 'Could not remove orphan evidence checkout', {
+      log.warn('shots', 'Could not remove orphan shots checkout', {
         directory: entry.name, error: err.message,
       });
     }
@@ -332,7 +339,7 @@ async function sweepOrphanCheckouts(pool, { maxAgeMs = 720_000, tmpDir = os.tmpd
 async function sweep(config, pool) {
   const recovered = await recoverInterrupted(config, pool);
   const checkouts = await sweepOrphanCheckouts(pool, {
-    maxAgeMs: config.visualEvidence?.maxRunMs || 1_440_000,
+    maxAgeMs: config.shots?.maxRunMs || 1_440_000,
   });
   const pruned = await prune(pool, config);
   return {

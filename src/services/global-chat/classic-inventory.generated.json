@@ -5369,7 +5369,7 @@
     {
       "source": "src/routes/internal.js",
       "method": "GET",
-      "path": "/api/internal/evidence/:runId/context",
+      "path": "/api/internal/shots/:runId/context",
       "expression": null,
       "status": "exempt",
       "reason": "platform-to-worker/internal service protocol"
@@ -5377,7 +5377,7 @@
     {
       "source": "src/routes/internal.js",
       "method": "POST",
-      "path": "/api/internal/evidence/:runId/shot",
+      "path": "/api/internal/shots/:runId/shot",
       "expression": null,
       "status": "exempt",
       "reason": "platform-to-worker/internal service protocol"
@@ -5385,7 +5385,7 @@
     {
       "source": "src/routes/internal.js",
       "method": "POST",
-      "path": "/api/internal/evidence/:runId/skip",
+      "path": "/api/internal/shots/:runId/skip",
       "expression": null,
       "status": "exempt",
       "reason": "platform-to-worker/internal service protocol"
@@ -5393,7 +5393,15 @@
     {
       "source": "src/routes/internal.js",
       "method": "POST",
-      "path": "/api/internal/evidence/:runId/note",
+      "path": "/api/internal/shots/:runId/note",
+      "expression": null,
+      "status": "exempt",
+      "reason": "platform-to-worker/internal service protocol"
+    },
+    {
+      "source": "src/routes/internal.js",
+      "method": "POST",
+      "path": "/api/internal/sessions/:sessionId/visible-changes",
       "expression": null,
       "status": "exempt",
       "reason": "platform-to-worker/internal service protocol"
@@ -7902,6 +7910,89 @@
       "classicPath": "#workshop"
     },
     {
+      "source": "src/routes/shots.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/proposals/:sessionId/shots",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "governance.get.apps.item.proposals.item.shots.eb9a0bfd",
+      "domain": "governance",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "proposal",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/dev/proposals/:sessionId"
+    },
+    {
+      "source": "src/routes/shots.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/proposals/:sessionId/shots/diagnostics",
+      "expression": null,
+      "status": "exempt",
+      "reason": "proposal-owner troubleshooting export for local replay, not a Classic user control"
+    },
+    {
+      "source": "src/routes/shots.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/proposals/:sessionId/shots/:artifactId",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "governance.get.apps.item.proposals.item.shots.item.64f60321",
+      "domain": "governance",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "proposal",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/dev/proposals/:sessionId"
+    },
+    {
+      "source": "src/routes/shots.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/proposals/:sessionId/shots/rerun",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "governance.post.apps.item.proposals.item.shots.rerun.045d210d",
+      "domain": "governance",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "proposal",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/dev/proposals/:sessionId"
+    },
+    {
+      "source": "src/routes/shots.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/proposals/:sessionId/shots/stop",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "governance.post.apps.item.proposals.item.shots.stop.832ab1fb",
+      "domain": "governance",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "proposal",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/dev/proposals/:sessionId"
+    },
+    {
+      "source": "src/routes/shots.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/proposals/:sessionId/shots/override",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "governance.post.apps.item.proposals.item.shots.override.dadfd2aa",
+      "domain": "governance",
+      "risk": "destructive",
+      "confirmation": "required",
+      "renderer": "proposal",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/dev/proposals/:sessionId"
+    },
+    {
       "source": "src/routes/social-identities.js",
       "method": "GET",
       "path": "/api/me/social-identities",
@@ -10304,89 +10395,6 @@
       "transport": "server_loopback",
       "mobileSupported": true,
       "classicPath": "#settings"
-    },
-    {
-      "source": "src/routes/visual-evidence.js",
-      "method": "GET",
-      "path": "/api/apps/:slug/proposals/:sessionId/evidence",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "governance.get.apps.item.proposals.item.evidence.251d3f75",
-      "domain": "governance",
-      "risk": "read",
-      "confirmation": "never",
-      "renderer": "proposal",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#app/:slug/dev/proposals/:sessionId"
-    },
-    {
-      "source": "src/routes/visual-evidence.js",
-      "method": "GET",
-      "path": "/api/apps/:slug/proposals/:sessionId/evidence/diagnostics",
-      "expression": null,
-      "status": "exempt",
-      "reason": "proposal-owner troubleshooting export for local replay, not a Classic user control"
-    },
-    {
-      "source": "src/routes/visual-evidence.js",
-      "method": "GET",
-      "path": "/api/apps/:slug/proposals/:sessionId/evidence/:artifactId",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "governance.get.apps.item.proposals.item.evidence.item.189d252d",
-      "domain": "governance",
-      "risk": "read",
-      "confirmation": "never",
-      "renderer": "proposal",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#app/:slug/dev/proposals/:sessionId"
-    },
-    {
-      "source": "src/routes/visual-evidence.js",
-      "method": "POST",
-      "path": "/api/apps/:slug/proposals/:sessionId/evidence/rerun",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "governance.post.apps.item.proposals.item.evidence.rerun.c1706354",
-      "domain": "governance",
-      "risk": "external_write",
-      "confirmation": "required",
-      "renderer": "proposal",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#app/:slug/dev/proposals/:sessionId"
-    },
-    {
-      "source": "src/routes/visual-evidence.js",
-      "method": "POST",
-      "path": "/api/apps/:slug/proposals/:sessionId/evidence/stop",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "governance.post.apps.item.proposals.item.evidence.stop.6d65aed7",
-      "domain": "governance",
-      "risk": "external_write",
-      "confirmation": "required",
-      "renderer": "proposal",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#app/:slug/dev/proposals/:sessionId"
-    },
-    {
-      "source": "src/routes/visual-evidence.js",
-      "method": "POST",
-      "path": "/api/apps/:slug/proposals/:sessionId/evidence/override",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "governance.post.apps.item.proposals.item.evidence.override.2ee0c4fc",
-      "domain": "governance",
-      "risk": "destructive",
-      "confirmation": "required",
-      "renderer": "proposal",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#app/:slug/dev/proposals/:sessionId"
     },
     {
       "source": "src/routes/visuals.js",

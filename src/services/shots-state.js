@@ -7,8 +7,8 @@
 // revisions; people decide whether those shots show the change.
 
 const crypto = require('crypto');
-const planContract = require('./visual-evidence-plan');
-const shots = require('./visual-evidence-shots');
+const planContract = require('./visible-changes');
+const shots = require('./shots-files');
 
 const STATES = Object.freeze([
   'planned', 'provisioning', 'exploring', 'replaying', 'reviewing',
@@ -22,7 +22,7 @@ const TERMINAL_STATES = new Set([
 const TRANSITIONS = Object.freeze({
   planned: new Set(['provisioning', 'failed', 'cancelled']),
   provisioning: new Set(['exploring', 'failed', 'cancelled']),
-  // exploring -> reviewing: the preview agent's shots are stored, then
+  // exploring -> reviewing: the shots agent's shots are stored, then
   // published. 'replaying' remains only so rows from the retired replay
   // mode can still be failed or cancelled by recovery.
   exploring: new Set(['reviewing', 'failed', 'cancelled']),
@@ -49,10 +49,24 @@ const PATCH_COLUMNS = Object.freeze({
   completedAt: 'completed_at',
 });
 
-class VisualEvidenceStateError extends Error {
+// Codes written before the rename name "evidence": runs, snapshots and turns
+// recorded then, or by the previous release's pods during a rollout. Read
+// them as the codes this release writes.
+const RENAMED_CODES = Object.freeze({
+  visual_evidence_intent_conflict: 'visible_changes_conflict',
+  invalid_visual_evidence: 'invalid_visible_changes',
+  evidence: 'shots',
+});
+
+function currentCode(code) {
+  if (typeof code !== 'string' || !code.includes('evidence')) return code;
+  return RENAMED_CODES[code] || code.replace(/visual_evidence/g, 'shots').replace(/evidence/g, 'shots');
+}
+
+class ShotsStateError extends Error {
   constructor(code, message, status = 409) {
     super(message);
-    this.name = 'VisualEvidenceStateError';
+    this.name = 'ShotsStateError';
     this.code = code;
     this.status = status;
   }
@@ -68,9 +82,9 @@ function validSha(value) {
 
 function assertTransition(from, to) {
   if (!STATES.includes(from) || !STATES.includes(to) || !TRANSITIONS[from]?.has(to)) {
-    throw new VisualEvidenceStateError(
-      'invalid_evidence_transition',
-      `Visual evidence cannot move from ${JSON.stringify(from)} to ${JSON.stringify(to)}.`
+    throw new ShotsStateError(
+      'invalid_shots_transition',
+      `Before & after shots cannot move from ${JSON.stringify(from)} to ${JSON.stringify(to)}.`
     );
   }
 }
@@ -154,19 +168,19 @@ async function withTransaction(pool, fn) {
 
 async function recordIntentWithClient(client, sessionId, intent, detail, state, options) {
   const selected = await client.query(
-    `SELECT visual_evidence_state, visual_evidence_run_id, visual_evidence_detail
+    `SELECT shots_state, shots_run_id, shots_detail
        FROM chat_sessions WHERE id = $1 FOR UPDATE`,
     [sessionId]
   );
   const session = selected.rows[0];
-  if (!session) throw new VisualEvidenceStateError('session_not_found', 'Proposal session not found.', 404);
+  if (!session) throw new ShotsStateError('session_not_found', 'Proposal session not found.', 404);
 
   // Build tools can report the same declaration more than once (for
   // example after a transport retry). Treat that as an idempotent write so
   // a completed, same-head run is not accidentally invalidated.
-  const currentIntent = session.visual_evidence_detail?.intent || null;
+  const currentIntent = session.shots_detail?.intent || null;
   const sameRevision = !options.headSha
-    || session.visual_evidence_detail?.headSha === options.headSha;
+    || session.shots_detail?.headSha === options.headSha;
   const sameIntent = currentIntent
     && planContract.canonicalJson(currentIntent) === planContract.canonicalJson(intent)
     && requiredForIntent(currentIntent, options) === detail.required
@@ -176,19 +190,19 @@ async function recordIntentWithClient(client, sessionId, intent, detail, state, 
       accepted: true,
       unchanged: true,
       required: detail.required,
-      state: session.visual_evidence_state || state,
+      state: session.shots_state || state,
       intent,
-      detail: session.visual_evidence_detail,
-      runId: session.visual_evidence_run_id || null,
+      detail: session.shots_detail,
+      runId: session.shots_run_id || null,
     };
   }
 
   // A changed declaration changes what reviewers are being asked to
-  // verify. Cancel active work and stale terminal evidence before moving
+  // verify. Cancel active work and stale terminal shots before moving
   // the session pointer; old media may remain for audit/retention but can
-  // no longer be served as current evidence.
+  // no longer be served as current shots.
   await client.query(
-    `UPDATE visual_evidence_runs
+    `UPDATE shot_runs
         SET state = CASE
               WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
                 THEN 'cancelled'
@@ -210,10 +224,10 @@ async function recordIntentWithClient(client, sessionId, intent, detail, state, 
   );
   await client.query(
     `UPDATE chat_sessions
-        SET visual_evidence_state = $2,
-            visual_evidence_run_id = NULL,
-            visual_evidence_detail = $3::jsonb,
-            visual_evidence_updated_at = NOW()
+        SET shots_state = $2,
+            shots_run_id = NULL,
+            shots_detail = $3::jsonb,
+            shots_updated_at = NOW()
       WHERE id = $1`,
     [sessionId, state, JSON.stringify(detail)]
   );
@@ -235,7 +249,7 @@ async function recordIntent(pool, sessionId, rawIntent, options = {}) {
 }
 
 // PR import already owns the transaction that inserts the proposal row. Its
-// evidence declaration must be part of that same atomic write: a second pool
+// shots declaration must be part of that same atomic write: a second pool
 // connection cannot see the uncommitted row, while calling `.connect()` on
 // the checked-out PoolClient throws and releasing it would steal ownership
 // from the route. Make that ownership explicit rather than trying to infer a
@@ -253,10 +267,10 @@ async function recordIntentInTransaction(client, sessionId, rawIntent, options =
 async function clearIntent(pool, sessionId) {
   const { rowCount } = await pool.query(
     `UPDATE chat_sessions
-        SET visual_evidence_state = NULL,
-            visual_evidence_run_id = NULL,
-            visual_evidence_detail = NULL,
-            visual_evidence_updated_at = NOW()
+        SET shots_state = NULL,
+            shots_run_id = NULL,
+            shots_detail = NULL,
+            shots_updated_at = NOW()
       WHERE id = $1`,
     [sessionId]
   );
@@ -270,29 +284,29 @@ async function clearIntent(pool, sessionId) {
 // semantic contract.
 async function requireIntentForUiChange(pool, sessionId, options = {}) {
   if (options.headSha && !validSha(options.headSha)) {
-    throw new VisualEvidenceStateError('invalid_evidence_revision', 'A valid head SHA is required.', 400);
+    throw new ShotsStateError('invalid_shots_revision', 'A valid head SHA is required.', 400);
   }
   return withTransaction(pool, async (client) => {
     const selected = await client.query(
-      `SELECT visual_evidence_state, visual_evidence_run_id, visual_evidence_detail
+      `SELECT shots_state, shots_run_id, shots_detail
          FROM chat_sessions WHERE id = $1 FOR UPDATE`,
       [sessionId]
     );
     const session = selected.rows[0];
-    if (!session) throw new VisualEvidenceStateError('session_not_found', 'Proposal session not found.', 404);
-    if (session.visual_evidence_detail && typeof session.visual_evidence_detail === 'object'
-        && (session.visual_evidence_detail.intent
+    if (!session) throw new ShotsStateError('session_not_found', 'Proposal session not found.', 404);
+    if (session.shots_detail && typeof session.shots_detail === 'object'
+        && (session.shots_detail.intent
           || !options.headSha
-          || session.visual_evidence_detail.headSha === options.headSha)) {
+          || session.shots_detail.headSha === options.headSha)) {
       return {
         changed: false,
-        required: session.visual_evidence_detail.required !== false,
-        state: session.visual_evidence_state || 'planned',
-        detail: session.visual_evidence_detail,
+        required: session.shots_detail.required !== false,
+        state: session.shots_state || 'planned',
+        detail: session.shots_detail,
       };
     }
     await client.query(
-      `UPDATE visual_evidence_runs
+      `UPDATE shot_runs
           SET state = CASE
                 WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
                   THEN 'cancelled'
@@ -315,10 +329,10 @@ async function requireIntentForUiChange(pool, sessionId, options = {}) {
     const detail = missingIntentDetail(options);
     await client.query(
       `UPDATE chat_sessions
-          SET visual_evidence_state = 'planned',
-              visual_evidence_run_id = NULL,
-              visual_evidence_detail = $2::jsonb,
-              visual_evidence_updated_at = NOW()
+          SET shots_state = 'planned',
+              shots_run_id = NULL,
+              shots_detail = $2::jsonb,
+              shots_updated_at = NOW()
         WHERE id = $1`,
       [sessionId, JSON.stringify(detail)]
     );
@@ -341,13 +355,13 @@ function runSummary(row, artifactSummary = []) {
     claims: claimsFromIntent(intent),
     baseSha: row.base_sha,
     headSha: row.head_sha,
-    failureCode: row.failure_code || null,
+    failureCode: currentCode(row.failure_code) || null,
     failureReason: row.failure_reason || null,
     // Any finished run on the current head can be taken again; an explicit
     // no-visible-change declaration or a stop has nothing to retry.
-    repairAvailable: row.state === 'failed' && row.failure_code !== 'visual_evidence_intent_conflict',
+    repairAvailable: row.state === 'failed' && currentCode(row.failure_code) !== 'visible_changes_conflict',
     planHash: row.plan_hash || null,
-    // One result per declared change: ready (with the preview agent's note
+    // One result per declared change: ready (with the shots agent's note
     // on what its shots leave out, if any), or skipped with the reason
     // people see on the proposal. Runs from before shots have none.
     shotResults: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.stories)
@@ -374,7 +388,7 @@ async function createRunWithClient(client, {
   sessionId, baseSha, headSha, intent: rawIntent, trigger = null, heuristicUi = false,
 }) {
   if (!validSha(baseSha) || !validSha(headSha)) {
-    throw new VisualEvidenceStateError('invalid_evidence_revision', 'Visual evidence requires exact 40-character base and head SHAs.', 400);
+    throw new ShotsStateError('invalid_shots_revision', 'Before & after shots requires exact 40-character base and head SHAs.', 400);
   }
   const intent = planContract.parseIntent(rawIntent);
   const required = requiredForIntent(intent, { heuristicUi });
@@ -385,9 +399,9 @@ async function createRunWithClient(client, {
     'SELECT id FROM chat_sessions WHERE id = $1 FOR UPDATE',
     [sessionId]
   );
-  if (!locked.rows[0]) throw new VisualEvidenceStateError('session_not_found', 'Proposal session not found.', 404);
+  if (!locked.rows[0]) throw new ShotsStateError('session_not_found', 'Proposal session not found.', 404);
   const existing = await client.query(
-    `SELECT * FROM visual_evidence_runs
+    `SELECT * FROM shot_runs
       WHERE session_id = $1 AND head_sha = $2
         AND state NOT IN ('stale', 'cancelled')
       ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
@@ -398,7 +412,7 @@ async function createRunWithClient(client, {
   // In-flight work for an older revision is cancelled; a terminal verdict
   // becomes stale. Both happen before the session pointer moves.
   await client.query(
-    `UPDATE visual_evidence_runs
+    `UPDATE shot_runs
         SET state = CASE
               WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
                 THEN 'cancelled'
@@ -411,7 +425,7 @@ async function createRunWithClient(client, {
   );
 
   const inserted = await client.query(
-    `INSERT INTO visual_evidence_runs
+    `INSERT INTO shot_runs
        (id, session_id, base_sha, head_sha, plan_version, intent, state,
         trigger, completed_at)
      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::varchar(24), $8,
@@ -429,14 +443,14 @@ async function createRunWithClient(client, {
   };
   const updated = await client.query(
     `UPDATE chat_sessions
-        SET visual_evidence_state = $2,
-            visual_evidence_run_id = $3,
-            visual_evidence_detail = $4::jsonb,
-            visual_evidence_updated_at = NOW()
+        SET shots_state = $2,
+            shots_run_id = $3,
+            shots_detail = $4::jsonb,
+            shots_updated_at = NOW()
       WHERE id = $1`,
     [sessionId, initialState, id, JSON.stringify(detail)]
   );
-  if (!updated.rowCount) throw new VisualEvidenceStateError('session_not_found', 'Proposal session not found.', 404);
+  if (!updated.rowCount) throw new ShotsStateError('session_not_found', 'Proposal session not found.', 404);
   return { created: true, run };
 }
 
@@ -450,17 +464,17 @@ function assertTransitionPayload(row, next, patch) {
   const planHash = patch.planHash ?? row.plan_hash;
 
   if (next === 'reviewing' && hard?.passed !== true) {
-    throw new VisualEvidenceStateError('evidence_hard_verdict_required', 'Publishing shots requires at least one ready change.');
+    throw new ShotsStateError('shots_hard_verdict_required', 'Publishing shots requires at least one ready change.');
   }
   if (next === 'verified') {
     if (!planHash || hard?.passed !== true) {
-      throw new VisualEvidenceStateError('evidence_verdict_required', 'Published shots require a manifest and at least one ready change.');
+      throw new ShotsStateError('shots_verdict_required', 'Published shots require a manifest and at least one ready change.');
     }
     patch.completedAt = patch.completedAt || new Date();
   }
   if (next === 'failed') {
     patch.failureReason = clip(patch.failureReason || row.failure_reason, 2000);
-    if (!patch.failureReason) throw new VisualEvidenceStateError('evidence_failure_reason_required', 'Failed evidence requires a user-visible reason.');
+    if (!patch.failureReason) throw new ShotsStateError('shots_failure_reason_required', 'Failed shots requires a user-visible reason.');
     patch.completedAt = patch.completedAt || new Date();
   }
   if (next === 'cancelled' || next === 'stale') patch.completedAt = patch.completedAt || new Date();
@@ -468,24 +482,24 @@ function assertTransitionPayload(row, next, patch) {
 
 async function transitionRun(pool, runId, nextState, rawPatch = {}) {
   if (!/^[0-9a-f]{32}$/.test(String(runId || ''))) {
-    throw new VisualEvidenceStateError('invalid_evidence_run', 'Invalid visual evidence run id.', 400);
+    throw new ShotsStateError('invalid_shots_run', 'Invalid before & after shots run id.', 400);
   }
   const patch = { ...rawPatch };
   return withTransaction(pool, async (client) => {
     const selected = await client.query(
-      `SELECT r.*, s.visual_evidence_run_id AS current_run_id
-         FROM visual_evidence_runs r
+      `SELECT r.*, s.shots_run_id AS current_run_id
+         FROM shot_runs r
          JOIN chat_sessions s ON s.id = r.session_id
         WHERE r.id = $1
         FOR UPDATE OF r, s`,
       [runId]
     );
     const row = selected.rows[0];
-    if (!row) throw new VisualEvidenceStateError('evidence_run_not_found', 'Before/after shots run not found.', 404);
+    if (!row) throw new ShotsStateError('shots_run_not_found', 'Before/after shots run not found.', 404);
     if (row.current_run_id !== row.id) {
-      throw new VisualEvidenceStateError(
-        'stale_evidence_operation',
-        'This run no longer owns the proposal evidence slot.'
+      throw new ShotsStateError(
+        'stale_shots_operation',
+        'This run no longer owns the proposal shots slot.'
       );
     }
     // Recovery reads the run before acquiring this lock. A heartbeat may
@@ -494,8 +508,8 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
     if (Object.prototype.hasOwnProperty.call(patch, 'recoveryMinIdleMs')) {
       const idleMs = Date.now() - new Date(row.updated_at).getTime();
       if (!Number.isFinite(idleMs) || idleMs < patch.recoveryMinIdleMs) {
-        throw new VisualEvidenceStateError(
-          'evidence_run_active', 'These before/after shots are still being taken.'
+        throw new ShotsStateError(
+          'shots_run_active', 'These before/after shots are still being taken.'
         );
       }
       delete patch.recoveryMinIdleMs;
@@ -518,7 +532,7 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
       }
     }
     const updated = await client.query(
-      `UPDATE visual_evidence_runs SET ${sets.join(', ')} WHERE id = $1 RETURNING *`, values
+      `UPDATE shot_runs SET ${sets.join(', ')} WHERE id = $1 RETURNING *`, values
     );
     const next = updated.rows[0];
     let artifacts = [];
@@ -527,7 +541,7 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
         `SELECT id, story_id AS "storyId", viewport, side, variant, media,
                 content_type AS "contentType", width, height, bytes, sha256,
                 focus_rect AS "focusRect", stage_labels AS "stageLabels"
-           FROM visual_evidence_artifacts
+           FROM shot_artifacts
           WHERE run_id = $1
           ORDER BY story_id, viewport, side, variant`,
         [next.id]
@@ -537,31 +551,31 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
     const detail = { ...runSummary(next, artifacts), intent: next.intent };
     const sessionUpdate = await client.query(
       `UPDATE chat_sessions
-          SET visual_evidence_state = $2,
-              visual_evidence_run_id = $3,
-              visual_evidence_detail = $4::jsonb,
-              visual_evidence_updated_at = NOW()
-        WHERE id = $1 AND visual_evidence_run_id = $3`,
+          SET shots_state = $2,
+              shots_run_id = $3,
+              shots_detail = $4::jsonb,
+              shots_updated_at = NOW()
+        WHERE id = $1 AND shots_run_id = $3`,
       [next.session_id, next.state, next.id, JSON.stringify(detail)]
     );
     if (!sessionUpdate.rowCount) {
-      throw new VisualEvidenceStateError(
-        'stale_evidence_operation',
-        'The proposal evidence owner changed while the run was updating.'
+      throw new ShotsStateError(
+        'stale_shots_operation',
+        'The proposal shots owner changed while the run was updating.'
       );
     }
     return next;
   });
 }
 
-// A fire-and-forget evidence run belongs to a web process. Keep a durable
+// A fire-and-forget shots run belongs to a web process. Keep a durable
 // lease while that process is alive so a rollout can be distinguished from a
 // slow checkout, clone, or image build. Only the current active run may renew
 // its lease; a late heartbeat cannot revive a failed or superseded run.
 async function heartbeatRun(pool, runId, phase, progress = null) {
   if (!/^[0-9a-f]{32}$/.test(String(runId || ''))
       || !/^[a-z][a-z0-9_-]{0,63}$/.test(String(phase || ''))) {
-    throw new VisualEvidenceStateError('invalid_evidence_heartbeat', 'Evidence heartbeat identity or phase is invalid.', 400);
+    throw new ShotsStateError('invalid_shots_heartbeat', 'Shots heartbeat identity or phase is invalid.', 400);
   }
   const progressPatch = progress == null ? null : JSON.stringify({
     ...(progress.agentActivity ? { agentActivity: progress.agentActivity } : {}),
@@ -569,10 +583,10 @@ async function heartbeatRun(pool, runId, phase, progress = null) {
     ...(progress.heartbeat ? { heartbeat: progress.heartbeat } : {}),
   });
   if (progressPatch && progressPatch.length > 64_000) {
-    throw new VisualEvidenceStateError('invalid_evidence_heartbeat', 'Evidence heartbeat trace is too large.', 400);
+    throw new ShotsStateError('invalid_shots_heartbeat', 'Shots heartbeat trace is too large.', 400);
   }
   const result = await pool.query(
-    `UPDATE visual_evidence_runs r
+    `UPDATE shot_runs r
         SET updated_at = NOW(),
             trace_summary = jsonb_set(
               COALESCE(r.trace_summary, '{}'::jsonb), '{progress}',
@@ -580,7 +594,7 @@ async function heartbeatRun(pool, runId, phase, progress = null) {
               || COALESCE($3::jsonb, '{}'::jsonb)
        FROM chat_sessions s
       WHERE r.id = $1 AND s.id = r.session_id
-        AND s.visual_evidence_run_id = r.id
+        AND s.shots_run_id = r.id
         AND r.state IN ('provisioning','exploring','replaying','reviewing')`,
     [runId, phase, progressPatch]
   );
@@ -588,17 +602,17 @@ async function heartbeatRun(pool, runId, phase, progress = null) {
 }
 
 async function markStaleForHead(pool, sessionId, headSha, reason = 'A newer revision of this proposal replaced these shots.') {
-  if (!validSha(headSha)) throw new VisualEvidenceStateError('invalid_evidence_revision', 'A valid head SHA is required.', 400);
+  if (!validSha(headSha)) throw new ShotsStateError('invalid_shots_revision', 'A valid head SHA is required.', 400);
   return withTransaction(pool, async (client) => {
     const selected = await client.query(
-      `SELECT visual_evidence_state, visual_evidence_run_id, visual_evidence_detail
+      `SELECT shots_state, shots_run_id, shots_detail
          FROM chat_sessions WHERE id = $1 FOR UPDATE`,
       [sessionId]
     );
     const session = selected.rows[0];
-    if (!session) throw new VisualEvidenceStateError('session_not_found', 'Proposal session not found.', 404);
+    if (!session) throw new ShotsStateError('session_not_found', 'Proposal session not found.', 404);
     const result = await client.query(
-      `UPDATE visual_evidence_runs
+      `UPDATE shot_runs
           SET state = CASE
                 WHEN state IN ('planned','provisioning','exploring','replaying','reviewing')
                   THEN 'cancelled'
@@ -620,8 +634,8 @@ async function markStaleForHead(pool, sessionId, headSha, reason = 'A newer revi
        RETURNING id`,
       [sessionId, headSha, clip(reason, 2000)]
     );
-    const previous = session.visual_evidence_detail && typeof session.visual_evidence_detail === 'object'
-      ? session.visual_evidence_detail : {};
+    const previous = session.shots_detail && typeof session.shots_detail === 'object'
+      ? session.shots_detail : {};
     const intent = previous.intent && typeof previous.intent === 'object' ? previous.intent : null;
     const revisionChanged = previous.headSha && previous.headSha !== headSha;
     if (result.rowCount || revisionChanged) {
@@ -644,10 +658,10 @@ async function markStaleForHead(pool, sessionId, headSha, reason = 'A newer revi
       }
       await client.query(
         `UPDATE chat_sessions
-            SET visual_evidence_state = $2,
-                visual_evidence_run_id = NULL,
-                visual_evidence_detail = $3::jsonb,
-                visual_evidence_updated_at = NOW()
+            SET shots_state = $2,
+                shots_run_id = NULL,
+                shots_detail = $3::jsonb,
+                shots_updated_at = NOW()
           WHERE id = $1`,
         [sessionId, nextState, JSON.stringify(detail)]
       );
@@ -659,26 +673,26 @@ async function markStaleForHead(pool, sessionId, headSha, reason = 'A newer revi
 async function overrideRun(pool, runId, { userId, reason }) {
   const overrideReason = clip(reason, 1000);
   if (!Number.isInteger(Number(userId)) || Number(userId) <= 0 || !overrideReason) {
-    throw new VisualEvidenceStateError('invalid_evidence_override', 'An authorized user and visible override reason are required.', 400);
+    throw new ShotsStateError('invalid_shots_override', 'An authorized user and visible override reason are required.', 400);
   }
   return withTransaction(pool, async (client) => {
     const selected = await client.query(
-      `SELECT r.*, s.visual_evidence_run_id AS current_run_id
-         FROM visual_evidence_runs r
+      `SELECT r.*, s.shots_run_id AS current_run_id
+         FROM shot_runs r
          JOIN chat_sessions s ON s.id = r.session_id
         WHERE r.id = $1 FOR UPDATE OF r, s`,
       [runId]
     );
     const row = selected.rows[0];
-    if (!row) throw new VisualEvidenceStateError('evidence_run_not_found', 'Before/after shots run not found.', 404);
+    if (!row) throw new ShotsStateError('shots_run_not_found', 'Before/after shots run not found.', 404);
     if (row.current_run_id !== row.id) {
-      throw new VisualEvidenceStateError('stale_evidence_operation', 'Only the proposal’s current before/after shots can be waived.');
+      throw new ShotsStateError('stale_shots_operation', 'Only the proposal’s current before/after shots can be waived.');
     }
     if (!['planned', 'provisioning', 'exploring', 'replaying', 'reviewing', 'failed'].includes(row.state)) {
-      throw new VisualEvidenceStateError('invalid_evidence_override_state', `Evidence in state ${row.state} cannot be overridden.`);
+      throw new ShotsStateError('invalid_shots_override_state', `Shots in state ${row.state} cannot be overridden.`);
     }
     const updated = await client.query(
-      `UPDATE visual_evidence_runs
+      `UPDATE shot_runs
           SET state = 'overridden', override_user_id = $2, override_reason = $3,
               overridden_at = NOW(), completed_at = NOW(), updated_at = NOW()
         WHERE id = $1 RETURNING *`,
@@ -687,13 +701,13 @@ async function overrideRun(pool, runId, { userId, reason }) {
     const next = updated.rows[0];
     const sessionUpdated = await client.query(
       `UPDATE chat_sessions
-          SET visual_evidence_state = 'overridden', visual_evidence_run_id = $2,
-              visual_evidence_detail = $3::jsonb, visual_evidence_updated_at = NOW()
-        WHERE id = $1 AND visual_evidence_run_id = $2`,
+          SET shots_state = 'overridden', shots_run_id = $2,
+              shots_detail = $3::jsonb, shots_updated_at = NOW()
+        WHERE id = $1 AND shots_run_id = $2`,
       [next.session_id, next.id, JSON.stringify({ ...runSummary(next), intent: next.intent })]
     );
     if (!sessionUpdated.rowCount) {
-      throw new VisualEvidenceStateError('stale_evidence_operation', 'The proposal evidence owner changed during the override.');
+      throw new ShotsStateError('stale_shots_operation', 'The proposal shots owner changed during the override.');
     }
     return next;
   });
@@ -701,18 +715,18 @@ async function overrideRun(pool, runId, { userId, reason }) {
 
 async function getRun(pool, runId, { forUpdate = false } = {}) {
   if (!/^[0-9a-f]{32}$/.test(String(runId || ''))) {
-    throw new VisualEvidenceStateError('invalid_evidence_run', 'Invalid visual evidence run id.', 400);
+    throw new ShotsStateError('invalid_shots_run', 'Invalid before & after shots run id.', 400);
   }
   const result = await pool.query(
-    `SELECT r.*, s.visual_evidence_run_id AS current_run_id,
-            s.visual_evidence_state AS current_evidence_state,
-            s.visual_evidence_detail AS current_evidence_detail
-       FROM visual_evidence_runs r
+    `SELECT r.*, s.shots_run_id AS current_run_id,
+            s.shots_state AS current_shots_state,
+            s.shots_detail AS current_shots_detail
+       FROM shot_runs r
        JOIN chat_sessions s ON s.id = r.session_id
       WHERE r.id = $1${forUpdate ? ' FOR UPDATE OF r, s' : ''}`,
     [runId]
   );
-  if (!result.rows[0]) throw new VisualEvidenceStateError('evidence_run_not_found', 'Before/after shots run not found.', 404);
+  if (!result.rows[0]) throw new ShotsStateError('shots_run_not_found', 'Before/after shots run not found.', 404);
   return result.rows[0];
 }
 
@@ -725,23 +739,23 @@ async function rerunSameHead(pool, runId, {
   return withTransaction(pool, async (client) => {
     const old = await getRun(client, runId, { forUpdate: true });
     if (!['failed', 'verified', 'overridden', 'not_required'].includes(old.state)) {
-      throw new VisualEvidenceStateError('evidence_rerun_in_flight', 'Wait for the current shots to finish before taking them again.');
+      throw new ShotsStateError('shots_rerun_in_flight', 'Wait for the current shots to finish before taking them again.');
     }
     if (old.current_run_id !== old.id) {
-      throw new VisualEvidenceStateError('stale_evidence_operation', 'Only the proposal\'s current before/after shots can be taken again.');
+      throw new ShotsStateError('stale_shots_operation', 'Only the proposal\'s current before/after shots can be taken again.');
     }
     const intent = planContract.parseIntent(replacementIntent || old.intent);
     const required = requiredForIntent(intent);
     const initialState = required ? 'planned' : 'not_required';
     await client.query(
-      `UPDATE visual_evidence_runs
+      `UPDATE shot_runs
           SET state = 'stale', completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
         WHERE id = $1`,
       [old.id]
     );
     const id = newId();
     const inserted = await client.query(
-      `INSERT INTO visual_evidence_runs
+      `INSERT INTO shot_runs
          (id, session_id, base_sha, head_sha, plan_version, intent, state,
           trigger, completed_at)
        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::varchar(24), $8,
@@ -753,9 +767,9 @@ async function rerunSameHead(pool, runId, {
     const next = inserted.rows[0];
     const updated = await client.query(
       `UPDATE chat_sessions
-          SET visual_evidence_state = $2, visual_evidence_run_id = $3,
-              visual_evidence_detail = $4::jsonb, visual_evidence_updated_at = NOW()
-        WHERE id = $1 AND visual_evidence_run_id = $5`,
+          SET shots_state = $2, shots_run_id = $3,
+              shots_detail = $4::jsonb, shots_updated_at = NOW()
+        WHERE id = $1 AND shots_run_id = $5`,
       [old.session_id, next.state, next.id,
        JSON.stringify({
          ...runSummary(next),
@@ -766,7 +780,7 @@ async function rerunSameHead(pool, runId, {
        }), old.id]
     );
     if (!updated.rowCount) {
-      throw new VisualEvidenceStateError('stale_evidence_operation', 'The proposal evidence owner changed during the rerun.');
+      throw new ShotsStateError('stale_shots_operation', 'The proposal shots owner changed during the rerun.');
     }
     return next;
   });
@@ -786,9 +800,9 @@ async function getForSession(pool, sessionId, { headSha = null } = {}) {
                 'sha256', a.sha256,
                 'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
               ) ORDER BY a.story_id, a.viewport, a.side, a.variant)
-                FROM visual_evidence_artifacts a WHERE a.run_id = r.id
+                FROM shot_artifacts a WHERE a.run_id = r.id
             ), '[]'::jsonb) AS artifact_summary
-       FROM visual_evidence_runs r
+       FROM shot_runs r
       WHERE r.session_id = $1 ${headClause}
         AND r.state NOT IN ('stale','cancelled')
       ORDER BY r.created_at DESC LIMIT 1`,
@@ -813,7 +827,7 @@ async function getForSession(pool, sessionId, { headSha = null } = {}) {
 // because the proposal is what a reviewer has open.
 //
 // Two deliberate omissions. The write does NOT touch
-// `visual_evidence_updated_at`: that timestamp is how the reviewer surfaces
+// `shots_updated_at`: that timestamp is how the reviewer surfaces
 // measure "this has sat here long enough to call it not started", and
 // bumping it on every refusal would restart the clock forever. And it only
 // fires while the session still reads 'planned' — a run that has moved on
@@ -825,11 +839,11 @@ async function recordNotStarted(pool, sessionId, reason) {
   if (!text || !Number.isInteger(id) || id <= 0) return { recorded: false };
   const { rows } = await pool.query(
     `UPDATE chat_sessions
-        SET visual_evidence_detail = COALESCE(visual_evidence_detail, '{}'::jsonb)
+        SET shots_detail = COALESCE(shots_detail, '{}'::jsonb)
               || jsonb_build_object('notStartedReason', $2::text)
       WHERE id = $1
-        AND visual_evidence_state = 'planned'
-        AND visual_evidence_detail->>'notStartedReason' IS DISTINCT FROM $2::text
+        AND shots_state = 'planned'
+        AND shots_detail->>'notStartedReason' IS DISTINCT FROM $2::text
       RETURNING id`,
     [id, text]
   );
@@ -844,8 +858,8 @@ async function clearNotStarted(pool, sessionId) {
   if (!Number.isInteger(id) || id <= 0) return { cleared: false };
   const { rows } = await pool.query(
     `UPDATE chat_sessions
-        SET visual_evidence_detail = visual_evidence_detail - 'notStartedReason'
-      WHERE id = $1 AND jsonb_exists(visual_evidence_detail, 'notStartedReason')
+        SET shots_detail = shots_detail - 'notStartedReason'
+      WHERE id = $1 AND jsonb_exists(shots_detail, 'notStartedReason')
       RETURNING id`,
     [id]
   );
@@ -857,33 +871,33 @@ async function clearNotStarted(pool, sessionId) {
 // (a newer commit, a stop) cannot publish into it.
 async function storeArtifacts(pool, runId, artifacts, { headSha, planHash } = {}) {
   if (!/^[0-9a-f]{32}$/.test(String(runId || ''))) {
-    throw new VisualEvidenceStateError('invalid_evidence_run', 'Invalid preview run id.', 400);
+    throw new ShotsStateError('invalid_shots_run', 'Invalid preview run id.', 400);
   }
   if (!validSha(headSha) || !/^[0-9a-f]{64}$/.test(String(planHash || ''))) {
-    throw new VisualEvidenceStateError('invalid_artifact_fence', 'Publishing shots requires the exact head SHA and manifest hash.');
+    throw new ShotsStateError('invalid_artifact_fence', 'Publishing shots requires the exact head SHA and manifest hash.');
   }
   return withTransaction(pool, async (client) => {
     const selected = await client.query(
       `SELECT r.id
-         FROM visual_evidence_runs r
+         FROM shot_runs r
          JOIN chat_sessions s ON s.id = r.session_id
         WHERE r.id = $1 AND r.head_sha = $2 AND r.plan_hash = $3
           AND r.state = 'reviewing'
-          AND s.visual_evidence_run_id = r.id
-          AND s.visual_evidence_state = 'reviewing'
+          AND s.shots_run_id = r.id
+          AND s.shots_state = 'reviewing'
         FOR UPDATE`,
       [runId, headSha, planHash]
     );
     if (!selected.rowCount) {
-      throw new VisualEvidenceStateError(
-        'stale_evidence_operation',
+      throw new ShotsStateError(
+        'stale_shots_operation',
         'This run no longer owns the proposal\'s before/after slot; its shots were discarded.'
       );
     }
-    await client.query('DELETE FROM visual_evidence_artifacts WHERE run_id = $1', [runId]);
+    await client.query('DELETE FROM shot_artifacts WHERE run_id = $1', [runId]);
     for (const artifact of artifacts) {
       await client.query(
-        `INSERT INTO visual_evidence_artifacts
+        `INSERT INTO shot_artifacts
            (id, run_id, story_id, viewport, side, variant, media, content_type,
             data, width, height, bytes, sha256, focus_rect, stage_labels)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb)`,
@@ -900,10 +914,11 @@ async function storeArtifacts(pool, runId, artifacts, { headSha, planHash } = {}
 
 module.exports = {
   storeArtifacts,
+  currentCode,
   STATES,
   TRANSITIONS,
   TERMINAL_STATES,
-  VisualEvidenceStateError,
+  ShotsStateError,
   newId,
   validSha,
   assertTransition,

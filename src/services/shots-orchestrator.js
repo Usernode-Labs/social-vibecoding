@@ -2,7 +2,7 @@
 
 // End-to-end coordinator for a proposal's before/after shots. The platform
 // builds the exact before (base) and after (head) revisions with fixture data
-// and signed-in fixture users; the preview agent follows each declared change
+// and signed-in fixture users; the shots agent follows each declared change
 // on both and saves what it sees through RunControl; this module then
 // publishes every change that has a complete before/after set.
 
@@ -12,33 +12,33 @@ const os = require('node:os');
 const github = require('./github');
 const log = require('./logger');
 const logRedaction = require('./log-redaction');
-const evidenceAgent = require('./visual-evidence-agent');
-const evidenceControl = require('./visual-evidence-control');
-const environment = require('./visual-evidence-environment');
-const identities = require('./visual-evidence-identities');
-const planContract = require('./visual-evidence-plan');
-const state = require('./visual-evidence-state');
+const shotsAgent = require('./shots-agent');
+const shotsControl = require('./shots-control');
+const environment = require('./shots-environment');
+const identities = require('./shots-identities');
+const planContract = require('./visible-changes');
+const state = require('./shots-state');
 const turnLifecycle = require('./turn-lifecycle');
 const { isUiAffecting: uiFileHeuristic } = require('./visual-file-classifier');
 const worker = require('./worker');
 
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
 const CLOSED_STATUSES = new Set(['merged', 'archived']);
-const EVIDENCE_STOPPED_REASON = 'Stopped before it finished. No shots were taken for this commit; take them again from the proposal.';
+const SHOTS_STOPPED_REASON = 'Stopped before it finished. No shots were taken for this commit; take them again from the proposal.';
 // Runs a person stopped while this process executes them. The stop already
 // made the run terminal in the database; this keeps its runner from handing
-// the preview agent another turn before a state transition refuses it.
+// the shots agent another turn before a state transition refuses it.
 const stopRequested = new Set();
 const DIFF_CONTEXT_CHARS = 8_000;
 const inFlight = new Map();
 const inFlightRunIds = new Map();
 const liveHeartbeats = new Map();
 const HEARTBEAT_INTERVAL_MS = 30_000;
-const EVIDENCE_PROCESS_ID = crypto.randomBytes(8).toString('hex');
-const EVIDENCE_PROCESS_STARTED_AT = new Date().toISOString();
+const SHOTS_PROCESS_ID = crypto.randomBytes(8).toString('hex');
+const SHOTS_PROCESS_STARTED_AT = new Date().toISOString();
 const MAX_AGENT_EVENTS = 128;
 const SESSION_IDLE_WAIT_MS = 120_000;
-const EVIDENCE_RECOVERY_WAIT_MS = 240_000;
+const SHOTS_RECOVERY_WAIT_MS = 240_000;
 
 function progressPhase(event) {
   if (!event || typeof event !== 'object') return null;
@@ -77,8 +77,8 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
         pending = false;
         const patch = {
           heartbeat: {
-            processId: EVIDENCE_PROCESS_ID,
-            processStartedAt: EVIDENCE_PROCESS_STARTED_AT,
+            processId: SHOTS_PROCESS_ID,
+            processStartedAt: SHOTS_PROCESS_STARTED_AT,
             host: os.hostname().replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 128),
             buildSha: exactSha(process.env.GIT_SHA),
             poolTotal: Number.isInteger(pool.totalCount) ? pool.totalCount : null,
@@ -100,7 +100,7 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
     }).catch((error) => {
       live.lastErrorAt = new Date().toISOString();
       live.lastErrorCode = String(error?.code || 'heartbeat_write_failed').slice(0, 64);
-      log.warn('visual-evidence', 'Evidence heartbeat failed', {
+      log.warn('shots', 'Shots heartbeat failed', {
         runId, phase, error: error.message,
         poolTotal: pool.totalCount, poolIdle: pool.idleCount, poolWaiting: pool.waitingCount,
       });
@@ -138,7 +138,7 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
     onProgress(event) {
       if (typeof observer === 'function') {
         try { observer(event); } catch (error) {
-          log.warn('visual-evidence', 'Evidence progress observer failed', { runId, error: error.message });
+          log.warn('shots', 'Shots progress observer failed', { runId, error: error.message });
         }
       }
       const next = progressPhase(event);
@@ -161,8 +161,8 @@ function liveRunObserver(runId, pool) {
   return {
     observedAt: new Date().toISOString(),
     host: os.hostname().replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 128),
-    processId: EVIDENCE_PROCESS_ID,
-    processStartedAt: EVIDENCE_PROCESS_STARTED_AT,
+    processId: SHOTS_PROCESS_ID,
+    processStartedAt: SHOTS_PROCESS_STARTED_AT,
     buildSha: exactSha(process.env.GIT_SHA),
     ownsRun: !!live,
     heartbeatWrite: live ? {
@@ -178,10 +178,10 @@ function liveRunObserver(runId, pool) {
   };
 }
 
-class VisualEvidenceOrchestrationError extends Error {
+class ShotsOrchestrationError extends Error {
   constructor(code, message, detail = null) {
     super(message);
-    this.name = 'VisualEvidenceOrchestrationError';
+    this.name = 'ShotsOrchestrationError';
     this.code = code;
     this.detail = detail;
   }
@@ -207,7 +207,7 @@ function headForSession(session, explicit = null) {
 }
 
 function intentForSession(session) {
-  const detail = session?.visual_evidence_detail;
+  const detail = session?.shots_detail;
   return detail && typeof detail === 'object' && detail.intent
     ? planContract.parseIntent(detail.intent)
     : null;
@@ -235,15 +235,15 @@ async function loadSession(pool, sessionId) {
       WHERE cs.id = $1`,
     [sessionId]
   );
-  if (!rows[0]) throw new VisualEvidenceOrchestrationError('session_not_found', 'Proposal session not found.');
+  if (!rows[0]) throw new ShotsOrchestrationError('session_not_found', 'Proposal session not found.');
   return rows[0];
 }
 
 async function resolveRevisionContext(session, explicitHead = null, githubService = github) {
   const headSha = headForSession(session, explicitHead);
   if (!headSha) {
-    throw new VisualEvidenceOrchestrationError(
-      'missing_evidence_head',
+    throw new ShotsOrchestrationError(
+      'missing_shots_head',
       'The before/after shots cannot start until the proposal has an exact submitted commit.'
     );
   }
@@ -256,8 +256,8 @@ async function resolveRevisionContext(session, explicitHead = null, githubServic
     baseSha = exactSha(comparison.mergeBaseSha);
   }
   if (!baseSha) {
-    throw new VisualEvidenceOrchestrationError(
-      'missing_evidence_base',
+    throw new ShotsOrchestrationError(
+      'missing_shots_base',
       'GitHub did not return an exact merge base for this proposal revision.'
     );
   }
@@ -276,7 +276,7 @@ async function resolveRevisionContext(session, explicitHead = null, githubServic
         truncated: summary?.truncated === true,
       };
     } catch (error) {
-      log.warn('visual-evidence', 'Could not load the bounded proposal diff for evidence context', {
+      log.warn('shots', 'Could not load the bounded proposal diff for shots context', {
         owner, repo, headSha, error: error.message,
       });
     }
@@ -292,7 +292,7 @@ async function resolveRevisionContext(session, explicitHead = null, githubServic
   };
 }
 
-function evidenceWords(value) {
+function shotsWords(value) {
   return new Set(String(value || '').toLowerCase().replace(/\+/g, ' plus ')
     .match(/[a-z0-9]{4,}/g) || []);
 }
@@ -315,8 +315,8 @@ function declaredCheckSummary(checkout, intent = null, testingPaths = []) {
       story.claim, story.intent?.startPath, story.intent?.checkpoint,
       story.intent?.focus, ...(story.intent?.steps || []),
     ].join(' ')).join(' ');
-    const words = evidenceWords(storyText);
-    const navigationWords = evidenceWords((intent?.stories || []).map((story) => [
+    const words = shotsWords(storyText);
+    const navigationWords = shotsWords((intent?.stories || []).map((story) => [
       story.intent?.startPath, ...(story.intent?.steps || []),
     ].join(' ')).join(' '));
     const intentPaths = new Set((intent?.stories || []).map((story) => story.intent?.startPath)
@@ -324,9 +324,9 @@ function declaredCheckSummary(checkout, intent = null, testingPaths = []) {
     const knownTestingPaths = new Set(testingPaths);
     const frequencies = new Map();
     const indexed = checks.map((test, index) => {
-      const nameWords = evidenceWords(test.name);
-      const pathWords = evidenceWords(test.path);
-      const selectorWords = evidenceWords(test.expectSelector);
+      const nameWords = shotsWords(test.name);
+      const pathWords = shotsWords(test.path);
+      const selectorWords = shotsWords(test.expectSelector);
       for (const word of new Set([...nameWords, ...pathWords, ...selectorWords])) {
         if (words.has(word)) frequencies.set(word, (frequencies.get(word) || 0) + 1);
       }
@@ -358,7 +358,7 @@ function declaredCheckSummary(checkout, intent = null, testingPaths = []) {
   }
 }
 
-// What the preview agent reads first: the declared changes, the two
+// What the shots agent reads first: the declared changes, the two
 // addresses to shoot, which browser to use for whom, and background it may
 // use to find the screens. Everything from the proposal is marked untrusted.
 function shotsBrief({ run, session, revision, pair, deployment, intent }) {
@@ -438,7 +438,7 @@ async function waitForSessionIdle(pool, sessionId, {
     lastObservation = {
       version: 1,
       outcome: 'waiting',
-      waitClass: recoveryReason ? 'evidence_recovery' : busyObserved ? 'session_busy' : 'none',
+      waitClass: recoveryReason ? 'shots_recovery' : busyObserved ? 'session_busy' : 'none',
       recoveryReason,
       normalLimitMs,
       recoveryLimitMs,
@@ -457,20 +457,21 @@ async function waitForSessionIdle(pool, sessionId, {
 
   while (true) {
     const { rows } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [sessionId]);
-    if (!rows[0]) throw new VisualEvidenceOrchestrationError('session_not_found', 'Proposal session not found.');
+    if (!rows[0]) throw new ShotsOrchestrationError('session_not_found', 'Proposal session not found.');
     polls += 1;
     const activeTurnPresent = !!rows[0].active_turn;
     const activeTurn = turnLifecycle.parseActiveTurn(rows[0].active_turn);
-    const activeTurnMode = safeTurnField(activeTurn?.mode);
+    // A turn the previous release started is recorded as mode "evidence".
+    const activeTurnMode = state.currentCode(safeTurnField(activeTurn?.mode));
     const activeTurnPhase = safeTurnField(turnLifecycle.phaseOf(activeTurn));
     const workerInFlight = !!(await workerService.isInFlight(sessionId));
     const workerMode = safeTurnField(await workerService.getActiveTurnMode?.(sessionId));
     if (activeTurnPresent || workerInFlight) busyObserved = true;
     if (!recoveryReason) {
-      if (activeTurnMode === 'evidence') recoveryReason = 'evidence_turn';
+      if (activeTurnMode === 'shots') recoveryReason = 'shots_turn';
       else if (activeTurnPhase === turnLifecycle.PHASE_CLEANUP_PENDING) {
         recoveryReason = 'cleanup_pending';
-      } else if (workerMode === 'evidence') recoveryReason = 'evidence_worker';
+      } else if (workerMode === 'shots') recoveryReason = 'shots_worker';
     }
     const observation = observe({
       activeTurnPresent,
@@ -488,10 +489,10 @@ async function waitForSessionIdle(pool, sessionId, {
     if (observation.waitedMs >= activeLimitMs) {
       const result = { ...observation, outcome: 'timeout' };
       if (typeof onObservation === 'function') onObservation({ ...result });
-      throw new VisualEvidenceOrchestrationError(
-        'evidence_agent_busy',
+      throw new ShotsOrchestrationError(
+        'shots_agent_busy',
         recoveryReason
-          ? 'The previous preview agent did not finish shutting down in time.'
+          ? 'The previous shots agent did not finish shutting down in time.'
           : 'The proposal agent stayed busy past the time the before/after shots had to start.',
         { idleWait: result }
       );
@@ -502,7 +503,7 @@ async function waitForSessionIdle(pool, sessionId, {
 
 function errorCode(error) {
   const code = String(error?.code || '');
-  return /^[A-Za-z0-9_]{1,48}$/.test(code) ? code : 'visual_evidence_failed';
+  return /^[A-Za-z0-9_]{1,48}$/.test(code) ? code : 'shots_failed';
 }
 
 function safeModelId(value) {
@@ -521,7 +522,7 @@ function redactDiagnosticText(value, max = 240) {
 }
 
 // The worker deletes a normal-turn journal after it exits. Keep the model's
-// final words only for a turn that did not produce evidence, in the private
+// final words only for a turn that did not produce shots, in the private
 // owner diagnostics. The runtime has seeded fixture data; mask known run
 // credentials and internal origins before storing this bounded excerpt.
 function agentFinalResponseSummary(result, authTokens, origins) {
@@ -596,8 +597,8 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'worker_stop_requested', 'worker_stop_returned',
 ]);
 const AGENT_DIAGNOSTIC_PHASES = new Set([
-  'refresh', 'evidence_proxy', 'evidence_browser_bootstrap',
-  'evidence_mcp_ready', 'claude', 'agent', 'done',
+  'refresh', 'shots_proxy', 'shots_browser_bootstrap',
+  'shots_mcp_ready', 'claude', 'agent', 'done',
 ]);
 const AGENT_DIAGNOSTIC_TOOLS = new Set([
   'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'fail_request',
@@ -801,15 +802,15 @@ function traceSummary(metrics, extra = {}) {
   };
 }
 
-function notifyEvidence(session, app, evidenceState, extra = {}) {
+function notifyShots(session, app, shotsState, extra = {}) {
   try {
     require('./ws').pushVoteUpdate({
       sessionId: Number(session.id),
       appId: app?.id || session.app_id || null,
       appSlug: app?.slug || session.app_slug || null,
       merged: false,
-      action: 'visual_evidence',
-      visualEvidenceState: evidenceState,
+      action: 'shots',
+      shotsState: shotsState,
       ...extra,
     });
   } catch (_) { /* live refresh is best-effort; durable state is authoritative */ }
@@ -842,8 +843,8 @@ async function failCurrentRun(pool, runId, error, stateService = state, runTrace
     });
     return true;
   } catch (transitionError) {
-    if (!['stale_evidence_operation', 'invalid_evidence_transition'].includes(transitionError?.code)) {
-      log.warn('visual-evidence', 'Could not terminalize failed evidence run', {
+    if (!['stale_shots_operation', 'invalid_shots_transition'].includes(transitionError?.code)) {
+      log.warn('shots', 'Could not terminalize failed shots run', {
         runId,
         code: transitionError?.code,
         error: transitionError?.message,
@@ -858,8 +859,8 @@ async function executeRun(config, options, injected = {}) {
     state: injected.state || state,
     environment: injected.environment || environment,
     identities: injected.identities || identities,
-    evidenceAgent: injected.evidenceAgent || evidenceAgent,
-    evidenceControl: injected.evidenceControl || evidenceControl,
+    shotsAgent: injected.shotsAgent || shotsAgent,
+    shotsControl: injected.shotsControl || shotsControl,
     worker: injected.worker || worker,
     waitForSessionIdle: injected.waitForSessionIdle || waitForSessionIdle,
   };
@@ -872,8 +873,8 @@ async function executeRun(config, options, injected = {}) {
   let failurePhase = 'load_run';
   let temporaryWorkerAttempted = false;
   const metrics = newRunMetrics();
-  metrics.planSource = 'preview_agent';
-  const agentBudgetMs = config.visualEvidence?.maxAgentMs || 480_000;
+  metrics.planSource = 'shots_agent';
+  const agentBudgetMs = config.shots?.maxAgentMs || 480_000;
   metrics.agentActivity.budgetMs = agentBudgetMs;
   const progress = (message) => {
     if (typeof onProgress === 'function') onProgress(message);
@@ -888,15 +889,15 @@ async function executeRun(config, options, injected = {}) {
       run = current;
     }
     if (run.current_run_id && run.current_run_id !== run.id) {
-      throw new VisualEvidenceOrchestrationError('stale_evidence_operation', 'A newer run took over these before/after shots before this one started.');
+      throw new ShotsOrchestrationError('stale_shots_operation', 'A newer run took over these before/after shots before this one started.');
     }
     const intent = planContract.parseIntent(run.intent || intentForSession(session));
     if (run.state === 'not_required') return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
     if (intent.impact === 'none') {
       // State settles these as not_required; a legacy row must not start an
       // agent with nothing to shoot.
-      throw new VisualEvidenceOrchestrationError(
-        'visual_evidence_intent_conflict',
+      throw new ShotsOrchestrationError(
+        'visible_changes_conflict',
         'This proposal declares no visible change, so there is nothing to shoot.'
       );
     }
@@ -904,9 +905,9 @@ async function executeRun(config, options, injected = {}) {
     failurePhase = 'wait_for_idle';
     stage(failurePhase);
     const idleStartedAt = Date.now();
-    const runBudgetMs = config.visualEvidence?.maxRunMs || 1_440_000;
+    const runBudgetMs = config.shots?.maxRunMs || 1_440_000;
     const idleTimeoutMs = Math.min(runBudgetMs, SESSION_IDLE_WAIT_MS);
-    const recoveryTimeoutMs = Math.min(runBudgetMs, EVIDENCE_RECOVERY_WAIT_MS);
+    const recoveryTimeoutMs = Math.min(runBudgetMs, SHOTS_RECOVERY_WAIT_MS);
     let recoveryWaitReported = false;
     try {
       metrics.idleWait = await deps.waitForSessionIdle(pool, session.id, {
@@ -915,9 +916,9 @@ async function executeRun(config, options, injected = {}) {
         workerService: deps.worker,
         onObservation: (observation) => {
           metrics.idleWait = observation;
-          if (observation.waitClass === 'evidence_recovery' && !recoveryWaitReported) {
+          if (observation.waitClass === 'shots_recovery' && !recoveryWaitReported) {
             recoveryWaitReported = true;
-            progress('Waiting for the interrupted preview agent to finish cleaning up…');
+            progress('Waiting for the interrupted shots agent to finish cleaning up…');
           }
         },
       });
@@ -938,11 +939,11 @@ async function executeRun(config, options, injected = {}) {
     if (run.state === 'planned') {
       await deps.state.transitionRun(pool, run.id, 'provisioning', { startedAt: new Date() });
     } else if (run.state !== 'provisioning') {
-      throw new VisualEvidenceOrchestrationError(
-        'stale_evidence_operation', 'This run is no longer available to build.'
+      throw new ShotsOrchestrationError(
+        'stale_shots_operation', 'This run is no longer available to build.'
       );
     }
-    notifyEvidence(session, app, 'provisioning');
+    notifyShots(session, app, 'provisioning');
     pair = await deps.environment.preparePair(config, { pool, run, session, app, onProgress });
     failurePhase = 'exploration_reset';
     stage(failurePhase);
@@ -955,11 +956,11 @@ async function executeRun(config, options, injected = {}) {
       headImageDigest: pair.sides.head.imageDigest,
     };
     if (!sameProvenance(exploration, expectedProvenance)) {
-      throw new VisualEvidenceOrchestrationError('evidence_provenance_mismatch', 'The before and after builds did not match their fixture and images.');
+      throw new ShotsOrchestrationError('shots_provenance_mismatch', 'The before and after builds did not match their fixture and images.');
     }
     failurePhase = 'mint_fixture_identities';
     stage(failurePhase);
-    const authTokens = await deps.identities.mintEvidenceAuthTokens(pool, app.id);
+    const authTokens = await deps.identities.mintShotsAuthTokens(pool, app.id);
     failurePhase = 'persist_exploration';
     stage(failurePhase);
     await deps.state.transitionRun(pool, run.id, 'exploring', {
@@ -968,7 +969,7 @@ async function executeRun(config, options, injected = {}) {
       headImageDigest: pair.sides.head.imageDigest,
     });
     addTiming(metrics, 'provisioning', provisioningStartedAt);
-    notifyEvidence(session, app, 'exploring');
+    notifyShots(session, app, 'exploring');
     stage('exploring');
 
     const context = shotsBrief({ run, session, revision, pair, deployment: exploration, intent });
@@ -981,7 +982,7 @@ async function executeRun(config, options, injected = {}) {
     const recordClips = clipSize != null;
     failurePhase = 'register_control';
     stage(failurePhase);
-    registration = deps.evidenceControl.registerRun({
+    registration = deps.shotsControl.registerRun({
       runId: run.id,
       sessionId: session.id,
       intent,
@@ -992,12 +993,12 @@ async function executeRun(config, options, injected = {}) {
     const agentStartedAt = Date.now();
     const dispatchOnce = async () => {
       if (stopRequested.has(run.id)) {
-        throw new VisualEvidenceOrchestrationError('evidence_stopped', EVIDENCE_STOPPED_REASON);
+        throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
       }
       metrics.agentAttempts += 1;
       const dispatchTrace = {
         requestedBackend: 'claude_code',
-        requestedModel: safeModelId(evidenceAgent.agentModel(config)),
+        requestedModel: safeModelId(shotsAgent.agentModel(config)),
         budgetMs: agentBudgetMs,
       };
       metrics.agentDispatches.push(dispatchTrace);
@@ -1008,12 +1009,12 @@ async function executeRun(config, options, injected = {}) {
         const remainingMs = agentBudgetMs - (Date.now() - agentStartedAt);
         dispatchTrace.timeoutMs = Math.max(0, remainingMs);
         if (remainingMs <= 0) {
-          throw new VisualEvidenceOrchestrationError(
-            'evidence_agent_timeout', 'The preview agent ran out of time.'
+          throw new ShotsOrchestrationError(
+            'shots_agent_timeout', 'The shots agent ran out of time.'
           );
         }
-        if (evidenceAgent.temporaryEvidenceWorker(session)) temporaryWorkerAttempted = true;
-        const dispatched = await deps.evidenceAgent.dispatch(config, {
+        if (shotsAgent.temporaryShotsWorker(session)) temporaryWorkerAttempted = true;
+        const dispatched = await deps.shotsAgent.dispatch(config, {
           pool,
           session,
           runId: run.id,
@@ -1023,11 +1024,11 @@ async function executeRun(config, options, injected = {}) {
           recordClips,
           clipSize,
           // A child app's pages load /usernode-bridge|native|tailwind/ from
-          // the platform, which the edge routes in production; the evidence
+          // the platform, which the edge routes in production; the shots
           // browser's proxy does the same. The platform serves its own.
           platformAssets: app.slug !== config.selfAppSlug,
-          onProgress: (line) => progress(`Preview agent: ${line}`),
-          onEvidenceDiagnostic: (event) => {
+          onProgress: (line) => progress(`Shots agent: ${line}`),
+          onShotsDiagnostic: (event) => {
             recordAgentDiagnostic(metrics, event);
             options.onAgentDiagnostic?.(agentActivitySummary(metrics), event?.kind);
           },
@@ -1048,8 +1049,8 @@ async function executeRun(config, options, injected = {}) {
         options.onAgentFinalResponse?.(metrics.agentFinalResponse);
         return { dispatched, error: null };
       } catch (error) {
-        if (error?.evidenceBackend) dispatchTrace.backend = String(error.evidenceBackend).slice(0, 64);
-        if (error?.evidenceModel) dispatchTrace.model = safeModelId(error.evidenceModel);
+        if (error?.shotsBackend) dispatchTrace.backend = String(error.shotsBackend).slice(0, 64);
+        if (error?.shotsModel) dispatchTrace.model = safeModelId(error.shotsModel);
         dispatchTrace.outcome = 'failed';
         dispatchTrace.code = errorCode(error);
         return { dispatched: null, error };
@@ -1060,11 +1061,11 @@ async function executeRun(config, options, injected = {}) {
 
     failurePhase = 'agent_exploration';
     stage(failurePhase);
-    progress('The preview agent is taking before/after shots…');
+    progress('The shots agent is taking before/after shots…');
     const agentOutcome = await dispatchOnce();
-    // A Stop kills the preview agent mid-turn; its error is that stop.
+    // A Stop kills the shots agent mid-turn; its error is that stop.
     if (agentOutcome.error && stopRequested.has(run.id)) {
-      throw new VisualEvidenceOrchestrationError('evidence_stopped', EVIDENCE_STOPPED_REASON);
+      throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
     }
 
     // Publish every change with a complete before/after set, even when the
@@ -1076,9 +1077,9 @@ async function executeRun(config, options, injected = {}) {
       if (agentOutcome.error && !registration.control.skipped.size && !registration.control.skippedAll) {
         throw agentOutcome.error;
       }
-      throw new VisualEvidenceOrchestrationError(
-        'evidence_capture_incomplete',
-        reasons.join(' ').slice(0, 1800) || 'The preview agent did not save a before and after shot.'
+      throw new ShotsOrchestrationError(
+        'shots_capture_incomplete',
+        reasons.join(' ').slice(0, 1800) || 'The shots agent did not save a before and after shot.'
       );
     }
     failurePhase = 'persist_shots';
@@ -1090,7 +1091,7 @@ async function executeRun(config, options, injected = {}) {
         planHash: summary.manifestHash, runs: 1, stories: summary.verdict.stories,
       }),
     });
-    notifyEvidence(session, app, 'reviewing');
+    notifyShots(session, app, 'reviewing');
     const artifactPersistStartedAt = Date.now();
     failurePhase = 'store_artifacts';
     stage(failurePhase);
@@ -1123,12 +1124,12 @@ async function executeRun(config, options, injected = {}) {
       traceSummary: finalTrace,
     });
     const { agentFinalResponses: _privateResponses, ...logFinalTrace } = finalTrace;
-    log.info('visual-evidence', 'Before/after shots published', {
+    log.info('shots', 'Before/after shots published', {
       sessionId: session.id,
       runId: run.id,
       trace: logFinalTrace,
     });
-    notifyEvidence(session, app, 'verified');
+    notifyShots(session, app, 'verified');
     progress('Before/after shots are ready.');
     return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
   } catch (error) {
@@ -1164,7 +1165,7 @@ async function executeRun(config, options, injected = {}) {
       failureTrace
     );
     if (failed && session && app) {
-      notifyEvidence(session, app, 'failed', { failureCode: errorCode(error) });
+      notifyShots(session, app, 'failed', { failureCode: errorCode(error) });
     }
     // The final model answer is for the proposal owner and app managers only;
     // do not copy its potentially app-derived text into the general log ring.
@@ -1173,7 +1174,7 @@ async function executeRun(config, options, injected = {}) {
       agentFinalResponses: _privateResponses,
       ...logTrace
     } = failureTrace;
-    log.warn('visual-evidence', 'Before/after run ended without shots', {
+    log.warn('shots', 'Before/after run ended without shots', {
       sessionId: session?.id || null,
       runId: run?.id || options.runId || null,
       code: errorCode(error),
@@ -1189,7 +1190,7 @@ async function executeRun(config, options, injected = {}) {
         try { await deps.environment.cleanupPair(config, pair); }
         finally {
           addTiming(metrics, 'cleanup', cleanupStartedAt);
-          log.info('visual-evidence', 'Before/after build cleanup finished', {
+          log.info('shots', 'Before/after build cleanup finished', {
             sessionId: session?.id || null,
             runId: run?.id || options.runId || null,
             cleanupMs: metrics.timingsMs.cleanup,
@@ -1200,13 +1201,13 @@ async function executeRun(config, options, injected = {}) {
       if (temporaryWorkerAttempted) {
         try {
           await deps.worker.destroyCcVolume(session.id);
-          log.info('visual-evidence', 'Temporary preview worker released', {
+          log.info('shots', 'Temporary preview worker released', {
             sessionId: session.id, runId: run?.id || options.runId || null,
           });
         } catch (error) {
           // Cleanup must not replace the run's outcome. The Kubernetes
           // error is still logged so operators can investigate a leak.
-          log.warn('visual-evidence', 'Temporary preview worker cleanup failed', {
+          log.warn('shots', 'Temporary preview worker cleanup failed', {
             sessionId: session.id, runId: run?.id || options.runId || null,
             error: error.message,
           });
@@ -1221,10 +1222,10 @@ async function executeRun(config, options, injected = {}) {
 // here on purpose — neither is a run that failed to start, and a run with a
 // state of its own says more than any note could.
 const NOT_STARTED_REASONS = Object.freeze({
-  disabled: 'Before/after shots are not being taken on this deployment, so nothing picked this one up.',
+  disabled: 'Before & after shots are not being taken on this deployment, so nothing picked this one up.',
   missing_intent: 'This proposal has no declared change recorded, so there was nothing to shoot.',
   no_revision: 'The proposal revision to preview could not be resolved, so the run never started.',
-  no_staging_preview: 'No staging preview was built for this commit, so there was nothing to take before/after shots of.',
+  no_staging_preview: 'No staging preview was built for this commit, so there was nothing to take before & after shots of.',
 });
 
 // Store the refusal on the proposal and say so at info level. Both halves
@@ -1232,12 +1233,12 @@ const NOT_STARTED_REASONS = Object.freeze({
 // an exception on a fire-and-forget scheduling path.
 async function noteNotStarted(pool, sessionId, reason, injected = {}) {
   const text = NOT_STARTED_REASONS[reason] || null;
-  log.info('visual-evidence', 'Visual evidence run not started', { sessionId, reason });
+  log.info('shots', 'Before & after shots run not started', { sessionId, reason });
   if (!text) return;
   try {
     await (injected.state || state).recordNotStarted(pool, sessionId, text);
   } catch (error) {
-    log.warn('visual-evidence', 'Could not record why the visual evidence run did not start', {
+    log.warn('shots', 'Could not record why the before & after shots run did not start', {
       sessionId, reason, error: error.message,
     });
   }
@@ -1246,14 +1247,14 @@ async function noteNotStarted(pool, sessionId, reason, injected = {}) {
 async function scheduleForSession(config, options, injected = {}) {
   const { pool, sessionId, headSha = null, trigger = 'preview-ready',
     onProgress = null } = options;
-  if (!config.visualEvidence?.execute) {
+  if (!config.shots?.execute) {
     await noteNotStarted(pool, sessionId, 'disabled', injected);
     return { scheduled: false, reason: 'disabled' };
   }
   const session = await loadSession(pool, sessionId);
-  // Closed changes do not start automatic evidence runs. A proposal owner or
+  // Closed changes do not start automatic shots runs. A proposal owner or
   // manager may still deliberately rerun a merged change to diagnose an old
-  // failure; its temporary evidence worker does not recreate a retained PVC.
+  // failure; its temporary shots worker does not recreate a retained PVC.
   if (CLOSED_STATUSES.has(session.status)
       && !(session.status === 'merged' && trigger === 'manual-rerun')) {
     return { scheduled: false, reason: 'closed' };
@@ -1282,9 +1283,9 @@ async function scheduleForSession(config, options, injected = {}) {
     heuristicUi,
   });
   const run = created.run;
-  notifyEvidence(session, publicSessionAndApp(session).app, run.state);
-  require('./pr-metadata').syncEvidencePrBlock(pool, sessionId).catch((error) => {
-    log.warn('visual-evidence', 'Could not publish the authenticated evidence link to the PR', {
+  notifyShots(session, publicSessionAndApp(session).app, run.state);
+  require('./pr-metadata').syncShotsPrBlock(pool, sessionId).catch((error) => {
+    log.warn('shots', 'Could not publish the authenticated shots link to the PR', {
       sessionId, runId: run.id, error: error.message,
     });
   });
@@ -1303,7 +1304,7 @@ async function scheduleForSession(config, options, injected = {}) {
       startedAt: new Date(),
     });
   } catch (error) {
-    if (['invalid_evidence_transition', 'stale_evidence_operation'].includes(error?.code)) {
+    if (['invalid_shots_transition', 'stale_shots_operation'].includes(error?.code)) {
       return { scheduled: false, reason: 'already_running', runId: run.id };
     }
     throw error;
@@ -1326,7 +1327,7 @@ async function scheduleForSession(config, options, injected = {}) {
     onAgentDiagnostic: heartbeat.onAgentDiagnostic,
     onAgentFinalResponse: heartbeat.onAgentFinalResponse,
   }, injected).catch((error) => {
-    log.warn('visual-evidence', 'Visual evidence run failed', {
+    log.warn('shots', 'Before & after shots run failed', {
       sessionId,
       runId: run.id,
       code: errorCode(error),
@@ -1355,7 +1356,7 @@ function inFlightRunSnapshot() {
   return [...inFlightRunIds.values()];
 }
 
-// The running evidence run on a change, whatever its head, or null. Settles
+// The running shots run on a change, whatever its head, or null. Settles
 // (never rejects) when the run ends.
 function inFlightRunFor(sessionId) {
   const prefix = `${Number(sessionId)}:`;
@@ -1368,15 +1369,15 @@ function inFlightRunFor(sessionId) {
 // A person's Stop on the change's running before/after shots. The run is
 // failed at once, with its own code, so the proposal reads "stopped" and an
 // automatic trigger for the same head does not start it again (a person's
-// Rerun still does). The preview agent is killed only when the change's
-// worker is running an evidence turn: never a coding turn. Whatever step the
+// Rerun still does). The shots agent is killed only when the change's
+// worker is running a shots turn: never a coding turn. Whatever step the
 // runner is inside ends at its next state transition, which the failed run
 // refuses, and its temporary environments are released then.
 async function stopForSession(pool, sessionId, injected = {}) {
   const stateService = injected.state || state;
   const workerApi = injected.worker || worker;
   const session = await loadSession(pool, sessionId);
-  const runId = session.visual_evidence_run_id;
+  const runId = session.shots_run_id;
   if (!runId) return { stopped: false, reason: 'not_running' };
   const run = await stateService.getRun(pool, runId);
   if (!run || run.current_run_id !== run.id || !ACTIVE_STATES.has(run.state)) {
@@ -1384,28 +1385,28 @@ async function stopForSession(pool, sessionId, injected = {}) {
   }
   try {
     await stateService.transitionRun(pool, run.id, 'failed', {
-      failureCode: 'evidence_stopped',
-      failureReason: EVIDENCE_STOPPED_REASON,
+      failureCode: 'shots_stopped',
+      failureReason: SHOTS_STOPPED_REASON,
     });
   } catch (error) {
-    if (['invalid_evidence_transition', 'stale_evidence_operation'].includes(error?.code)) {
+    if (['invalid_shots_transition', 'stale_shots_operation'].includes(error?.code)) {
       return { stopped: false, reason: 'not_running' };
     }
     throw error;
   }
   if (inFlight.has(`${Number(sessionId)}:${run.head_sha}`)) stopRequested.add(run.id);
-  if (workerApi.getActiveTurnMode(sessionId) === 'evidence') {
+  if (workerApi.getActiveTurnMode(sessionId) === 'shots') {
     await workerApi.stopTurn(sessionId).catch((error) => {
-      log.warn('visual-evidence', 'Could not stop the preview agent', { sessionId, runId: run.id, error: error.message });
+      log.warn('shots', 'Could not stop the shots agent', { sessionId, runId: run.id, error: error.message });
     });
   }
-  log.info('visual-evidence', 'Before/after shots stopped', { sessionId, runId: run.id, from: run.state });
-  notifyEvidence(session, publicSessionAndApp(session).app, 'failed', { failureCode: 'evidence_stopped' });
+  log.info('shots', 'Before/after shots stopped', { sessionId, runId: run.id, from: run.state });
+  notifyShots(session, publicSessionAndApp(session).app, 'failed', { failureCode: 'shots_stopped' });
   return { stopped: true, runId: run.id };
 }
 
 module.exports = {
-  VisualEvidenceOrchestrationError,
+  ShotsOrchestrationError,
   exactSha,
   headForSession,
   intentForSession,
@@ -1423,7 +1424,7 @@ module.exports = {
   progressPhase,
   startRunHeartbeat,
   liveRunObserver,
-  notifyEvidence,
+  notifyShots,
   failCurrentRun,
   executeRun,
   scheduleForSession,
@@ -1433,5 +1434,5 @@ module.exports = {
   inFlightRunSnapshot,
   inFlightRunFor,
   stopForSession,
-  EVIDENCE_STOPPED_REASON,
+  SHOTS_STOPPED_REASON,
 };

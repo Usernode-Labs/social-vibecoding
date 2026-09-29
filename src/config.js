@@ -531,33 +531,38 @@ function load() {
     appRuntime,
     workerRuntime: process.env.WORKER_RUNTIME || appRuntime,
     captureRuntime: process.env.CAPTURE_RUNTIME || appRuntime,
-    // #2380 agent-authored visual evidence. The mechanism is ON by default:
+    // #2380 agent-authored before & after shots. The mechanism is ON by default:
     // authors can submit intent, the platform executes it, and reviewers see
     // the verified result without an operator rollout step. One emergency
     // kill switch turns those three pieces off together. Enforcement remains
     // advisory until a separate reviewed product change enables it; the kill
     // switch must never revive legacy default-root screenshots.
-    visualEvidence: (() => {
-      const enabled = process.env.VISUAL_EVIDENCE_V2_ENABLED !== 'false';
-      const boundedInt = (name, fallback, minimum) => {
-        const parsed = Number.parseInt(process.env[name] || String(fallback), 10);
+    shots: (() => {
+      // Each setting is read under its SHOTS_ name first, then under the
+      // VISUAL_EVIDENCE_ name it had before the rename, so a deployment that
+      // still sets the old name keeps working.
+      const env = (name, legacy) => (process.env[name] !== undefined ? process.env[name] : process.env[legacy]);
+      const enabled = env('SHOTS_ENABLED', 'VISUAL_EVIDENCE_V2_ENABLED') !== 'false';
+      const boundedInt = (name, legacy, fallback, minimum) => {
+        const parsed = Number.parseInt(env(name, legacy) || String(fallback), 10);
         return Number.isFinite(parsed) ? Math.max(minimum, parsed) : fallback;
       };
+      const agentModel = env('SHOTS_AGENT_MODEL', 'VISUAL_EVIDENCE_AGENT_MODEL') || '';
       return {
         enabled,
         collect: enabled,
         execute: enabled,
         present: enabled,
         enforce: false,
-        maxRunMs: boundedInt('VISUAL_EVIDENCE_MAX_RUN_MS', 1_440_000, 60_000),
-        maxAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_AGENT_MS', 480_000, 30_000),
-        // The preview agent's own model, not the author's pick: following
+        maxRunMs: boundedInt('SHOTS_MAX_RUN_MS', 'VISUAL_EVIDENCE_MAX_RUN_MS', 1_440_000, 60_000),
+        maxAgentMs: boundedInt('SHOTS_MAX_AGENT_MS', 'VISUAL_EVIDENCE_MAX_AGENT_MS', 480_000, 30_000),
+        // The shots agent's own model, not the author's pick: following
         // declared steps and saving screenshots does not need the model that
         // wrote the change. A malformed override keeps the default.
-        agentModel: /^claude-[a-z0-9][a-z0-9-]{0,62}$/.test(process.env.VISUAL_EVIDENCE_AGENT_MODEL || '')
-          ? process.env.VISUAL_EVIDENCE_AGENT_MODEL : 'claude-sonnet-5-5',
-        failedMetadataRetentionDays: boundedInt('VISUAL_EVIDENCE_FAILED_RETENTION_DAYS', 30, 1),
-        failedArtifactRetentionHours: boundedInt('VISUAL_EVIDENCE_FAILED_ARTIFACT_RETENTION_HOURS', 24, 1),
+        agentModel: /^claude-[a-z0-9][a-z0-9-]{0,62}$/.test(agentModel) ? agentModel : 'claude-sonnet-5-5',
+        failedMetadataRetentionDays: boundedInt('SHOTS_FAILED_RETENTION_DAYS', 'VISUAL_EVIDENCE_FAILED_RETENTION_DAYS', 30, 1),
+        failedArtifactRetentionHours: boundedInt('SHOTS_FAILED_ARTIFACT_RETENTION_HOURS',
+          'VISUAL_EVIDENCE_FAILED_ARTIFACT_RETENTION_HOURS', 24, 1),
       };
     })(),
     // Automatic challenge scoring (services/topochain/challenge-scorer.js).
@@ -914,7 +919,7 @@ function load() {
   }
   console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_CPUS=${config.workerCpus}`);
   console.log(`  APP_RUNTIME=${config.appRuntime} WORKER_RUNTIME=${config.workerRuntime} CAPTURE_RUNTIME=${config.captureRuntime}`);
-  console.log(`  VISUAL_EVIDENCE_V2=collect:${config.visualEvidence.collect} execute:${config.visualEvidence.execute} present:${config.visualEvidence.present} enforce:${config.visualEvidence.enforce}`);
+  console.log(`  SHOTS_V2=collect:${config.shots.collect} execute:${config.shots.execute} present:${config.shots.present} enforce:${config.shots.enforce}`);
   console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);
   console.log(`  SESSION_AUTOPAUSE_IDLE_MS=${config.sessionAutopauseIdleMs}${config.sessionAutopauseIdleMs === 0 ? ' (disabled)' : ''}`);
   console.log(`  STAGING_IDLE_TEARDOWN_MS=${config.stagingIdleTeardownMs}${config.stagingIdleTeardownMs === 0 ? ' (disabled)' : ''}`);

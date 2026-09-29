@@ -2,7 +2,7 @@
 'use strict';
 
 // Build-turn bridge for declaring WHAT the implementing agent changed in the
-// UI, so the preview agent can take before/after shots of it. It cannot take
+// UI, so the shots agent can take before/after shots of it. It cannot take
 // or publish shots and has no broader platform surface; the server validates
 // the same v1 contract used by submission APIs.
 
@@ -42,7 +42,7 @@ const story = z.object({
     baseState: z.enum(['present', 'not_present']).optional()
       .describe('Use not_present only for a genuinely new screen or control; the before shot then shows where it will appear.'),
     animation: z.enum(['none', 'steps', 'motion'])
-      .describe('motion when the change is movement a still cannot show (a transition, an animation); the preview agent then also records a short before and after clip.'),
+      .describe('motion when the change is movement a still cannot show (a transition, an animation); the shots agent then also records a short before and after clip.'),
     controlledFailurePath: z.string().min(6).max(512).optional()
       .describe('Only for an error state: exact same-origin /api/ GET path to block on both revisions. Set the FIRST intent.steps entry exactly to "Controlled test: deliberately block the declared API GET on both revisions." so people see the condition.'),
     hints: z.object({
@@ -59,7 +59,7 @@ const story = z.object({
       }).strict().optional()
         .describe('The element you would point a person at, as you located it while building.'),
     }).strict().optional()
-      .describe('Optional shot-list hints from what you observed while building, so the preview agent can go straight to this state.'),
+      .describe('Optional shot-list hints from what you observed while building, so the shots agent can go straight to this state.'),
   }).strict(),
 }).strict();
 const intentSchema = {
@@ -70,7 +70,7 @@ const intentSchema = {
 };
 
 async function record(intent) {
-  const response = await fetch(`${platform}/api/internal/sessions/${sessionId}/visual-evidence-intent`, {
+  const response = await fetch(`${platform}/api/internal/sessions/${sessionId}/visible-changes`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${token}`,
@@ -84,17 +84,17 @@ async function record(intent) {
   catch { payload = { ok: false, code: 'invalid_platform_response', message: 'Homeroom returned a non-JSON response.' }; }
   if (!response.ok || payload?.ok !== true) {
     const error = new Error(String(payload?.message || `Homeroom returned HTTP ${response.status}`).slice(0, 1000));
-    error.code = String(payload?.code || 'visual_intent_failed');
+    error.code = String(payload?.code || 'visible_changes_failed');
     throw error;
   }
   return payload;
 }
 
 const server = new McpServer(
-  { name: 'usernode-visual-intent', version: '1.0.0' },
-  { instructions: 'After implementing a change, declare what a person will see change, only for a visible state you reached in the running local app with representative test data. Report missing data or an unreachable state instead of guessing. This only records the declared changes; Homeroom\'s preview agent later follows them on the before and after builds and takes the shots.' }
+  { name: 'usernode-visible-changes', version: '1.0.0' },
+  { instructions: 'After implementing a change, declare what a person will see change, only for a visible state you reached in the running local app with representative test data. Report missing data or an unreachable state instead of guessing. This only records the declared changes; Homeroom\'s shots agent later follows them on the before and after builds and takes the shots.' }
 );
-server.registerTool('record_visual_evidence_intent', {
+server.registerTool('declare_visible_changes', {
   description: 'Declare 1-3 visible changes and how a person reaches each one, as you reached them in the running local app with representative test data, or impact=none with a specific rationale for a truly non-visual change. Add hints (setup, expectText, focusTarget) when they would help someone else find the same state. A state that needs a server fault or background job needs a repeatable staging fixture; report that rather than guessing the steps. Call once after implementation and before finishing the build turn.',
   inputSchema: intentSchema,
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -107,7 +107,7 @@ server.registerTool('record_visual_evidence_intent', {
       isError: true,
       content: [{ type: 'text', text: JSON.stringify({
         ok: false,
-        code: String(error?.code || 'visual_intent_failed'),
+        code: String(error?.code || 'visible_changes_failed'),
         message: String(error?.message || 'Could not record visual intent.').slice(0, 1000),
       }) }],
     };

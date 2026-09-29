@@ -93,13 +93,13 @@ fi
 : "${SYSTEM_PROMPT_FILE:=}"
 : "${RESUME_FALLBACK_PROMPT_FILE:=}"
 : "${BROWSER_MCP_CONFIG:=/home/node/.usernode-mcp.json}"
-: "${EVIDENCE_JWT:=}"
-: "${EVIDENCE_RUN_ID:=}"
-: "${EVIDENCE_BASE_ORIGIN:=}"
-: "${EVIDENCE_HEAD_ORIGIN:=}"
-: "${EVIDENCE_MEMBER_TOKEN:=}"
-: "${EVIDENCE_ADMIN_TOKEN:=}"
-: "${EVIDENCE_FULL_ADMIN_TOKEN:=}"
+: "${SHOTS_JWT:=}"
+: "${SHOTS_RUN_ID:=}"
+: "${SHOTS_BASE_ORIGIN:=}"
+: "${SHOTS_HEAD_ORIGIN:=}"
+: "${SHOTS_MEMBER_TOKEN:=}"
+: "${SHOTS_ADMIN_TOKEN:=}"
+: "${SHOTS_FULL_ADMIN_TOKEN:=}"
 : "${AGENT_PROVIDER:=anthropic}"
 
 SYSTEM_PROMPT_FLAGS=""
@@ -135,13 +135,13 @@ run_claude() {
 if { [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; } && [ -z "$WORKER_JWT" ]; then
   die "WORKER_JWT required for $MODE mode"
 fi
-if [ "$MODE" = "scout" ] || [ "$MODE" = "evidence" ]; then
+if [ "$MODE" = "scout" ] || [ "$MODE" = "shots" ]; then
   WORKER_JWT=""
 fi
 export WORKER_JWT
-if [ "$MODE" = "evidence" ]; then
-  [ -n "$EVIDENCE_JWT" ] || die "EVIDENCE_JWT required for evidence mode"
-  [ -n "$EVIDENCE_RUN_ID" ] || die "EVIDENCE_RUN_ID required for evidence mode"
+if [ "$MODE" = "shots" ]; then
+  [ -n "$SHOTS_JWT" ] || die "SHOTS_JWT required for shots mode"
+  [ -n "$SHOTS_RUN_ID" ] || die "SHOTS_RUN_ID required for shots mode"
 fi
 
 # Every hosted Anthropic build has a shortened task prompt and therefore
@@ -150,7 +150,7 @@ fi
 # reduced-context fallback that could silently drop platform rules. An
 # OpenRouter build carries the full conventions block in its prompt instead,
 # exactly as a Codex build does, so the system file is optional there.
-if { [ "$MODE" = "build" ] || [ "$MODE" = "evidence" ]; } && [ -z "$SYSTEM_PROMPT_FILE" ] \
+if { [ "$MODE" = "build" ] || [ "$MODE" = "shots" ]; } && [ -z "$SYSTEM_PROMPT_FILE" ] \
     && [ "$AGENT_PROVIDER" != "openrouter" ]; then
   die "SYSTEM_PROMPT_FILE required for $MODE mode"
 fi
@@ -168,9 +168,9 @@ if [ -n "$RESUME_FALLBACK_PROMPT_FILE" ]; then
     || die "resume fallback prompt file missing or empty: $RESUME_FALLBACK_PROMPT_FILE"
 fi
 
-if [ "$MODE" = "evidence" ]; then
-  WORKSPACE_DIR=$(mktemp -d "/tmp/usernode-evidence-agent-${EVIDENCE_RUN_ID}.XXXXXX") \
-    || die "could not create evidence workspace"
+if [ "$MODE" = "shots" ]; then
+  WORKSPACE_DIR=$(mktemp -d "/tmp/usernode-shots-agent-${SHOTS_RUN_ID}.XXXXXX") \
+    || die "could not create shots workspace"
 else
   WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
 fi
@@ -188,7 +188,7 @@ fi
 # discards any uncommitted state from a prior turn that didn't get
 # committed (rare, but worth defending against).
 echo "__USERNODE_PHASE__ refresh"
-if [ "$MODE" != "evidence" ]; then
+if [ "$MODE" != "shots" ]; then
   if ! git fetch origin --quiet 2>&1; then
     echo "__USERNODE_WARN__ git fetch failed; continuing with local state"
   fi
@@ -328,8 +328,8 @@ fi
 # worker container even if CC misbehaves.
 if [ "$MODE" = "scout" ]; then
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Edit Write NotebookEdit"
-elif [ "$MODE" = "evidence" ]; then
-  # Evidence turns operate only through platform-seeded MCP servers. Removing
+elif [ "$MODE" = "shots" ]; then
+  # Shots turns operate only through platform-seeded MCP servers. Removing
   # every filesystem, shell, web and delegation tool prevents the model from
   # reading browser storage state or inherited process credentials.
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_install"
@@ -368,55 +368,55 @@ if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && [ -f "$HOMEROOM_MCP_CONFIG" ]; then
   fi
 fi
 
-EVIDENCE_PROXY_PID=""
-EVIDENCE_DIAGNOSTIC_TAIL_PID=""
-EVIDENCE_TMP=""
-cleanup_evidence() {
-  if [ -n "$EVIDENCE_PROXY_PID" ]; then kill "$EVIDENCE_PROXY_PID" 2>/dev/null || true; fi
-  if [ -n "$EVIDENCE_DIAGNOSTIC_TAIL_PID" ]; then
+SHOTS_PROXY_PID=""
+SHOTS_DIAGNOSTIC_TAIL_PID=""
+SHOTS_TMP=""
+cleanup_shots() {
+  if [ -n "$SHOTS_PROXY_PID" ]; then kill "$SHOTS_PROXY_PID" 2>/dev/null || true; fi
+  if [ -n "$SHOTS_DIAGNOSTIC_TAIL_PID" ]; then
     sleep 0.3
-    kill "$EVIDENCE_DIAGNOSTIC_TAIL_PID" 2>/dev/null || true
+    kill "$SHOTS_DIAGNOSTIC_TAIL_PID" 2>/dev/null || true
   fi
-  if [ -n "$EVIDENCE_TMP" ]; then rm -rf "$EVIDENCE_TMP" 2>/dev/null || true; fi
+  if [ -n "$SHOTS_TMP" ]; then rm -rf "$SHOTS_TMP" 2>/dev/null || true; fi
 }
-if [ "$MODE" = "evidence" ]; then
+if [ "$MODE" = "shots" ]; then
   command -v mcp-server-playwright >/dev/null 2>&1 \
-    || die "the evidence browser MCP executable is missing"
-  echo "__USERNODE_PHASE__ evidence_proxy"
-  EVIDENCE_TMP=$(mktemp -d "/tmp/usernode-evidence-browser-${EVIDENCE_RUN_ID}.XXXXXX") \
-    || die "could not create evidence browser state"
-  chmod 700 "$EVIDENCE_TMP"
-  export EVIDENCE_BROWSER_STATE_DIR="$EVIDENCE_TMP/state"
-  export EVIDENCE_HOSTED_ORIGINS_FILE="$EVIDENCE_BROWSER_STATE_DIR/hosted-origins.json"
-  export EVIDENCE_BROWSER_DIAGNOSTIC_FILE="$EVIDENCE_TMP/browser-diagnostics.log"
-  : > "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE"
-  # Each persona's browser saves the preview agent's named screenshots (and
+    || die "the shots browser MCP executable is missing"
+  echo "__USERNODE_PHASE__ shots_proxy"
+  SHOTS_TMP=$(mktemp -d "/tmp/usernode-shots-browser-${SHOTS_RUN_ID}.XXXXXX") \
+    || die "could not create shots browser state"
+  chmod 700 "$SHOTS_TMP"
+  export SHOTS_BROWSER_STATE_DIR="$SHOTS_TMP/state"
+  export SHOTS_HOSTED_ORIGINS_FILE="$SHOTS_BROWSER_STATE_DIR/hosted-origins.json"
+  export SHOTS_BROWSER_DIAGNOSTIC_FILE="$SHOTS_TMP/browser-diagnostics.log"
+  : > "$SHOTS_BROWSER_DIAGNOSTIC_FILE"
+  # Each persona's browser saves the shots agent's named screenshots (and
   # clips, when a motion change is declared) here; the shots bridge reads
   # them back by name to publish them.
-  export EVIDENCE_SHOTS_DIR="$EVIDENCE_TMP/shots"
-  mkdir -p "$EVIDENCE_SHOTS_DIR/member" "$EVIDENCE_SHOTS_DIR/admin" "$EVIDENCE_SHOTS_DIR/full_admin" \
+  export SHOTS_DIR="$SHOTS_TMP/shots"
+  mkdir -p "$SHOTS_DIR/member" "$SHOTS_DIR/admin" "$SHOTS_DIR/full_admin" \
     || die "could not create the shots directories"
-  tail -n +1 -s 0.2 -f "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE" &
-  EVIDENCE_DIAGNOSTIC_TAIL_PID=$!
-  export EVIDENCE_PROXY_PORT=17891
-  export EVIDENCE_PROXY_SERVER="http://127.0.0.1:$EVIDENCE_PROXY_PORT"
-  export EVIDENCE_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
-  export EVIDENCE_PROXY_READY="$EVIDENCE_TMP/proxy.ready"
-  export EVIDENCE_ALLOWED_ORIGINS="[\"$EVIDENCE_BASE_ORIGIN\",\"$EVIDENCE_HEAD_ORIGIN\"]"
-  node /usr/local/bin/evidence-origin-proxy.js &
-  EVIDENCE_PROXY_PID=$!
-  trap cleanup_evidence EXIT INT TERM
+  tail -n +1 -s 0.2 -f "$SHOTS_BROWSER_DIAGNOSTIC_FILE" &
+  SHOTS_DIAGNOSTIC_TAIL_PID=$!
+  export SHOTS_PROXY_PORT=17891
+  export SHOTS_PROXY_SERVER="http://127.0.0.1:$SHOTS_PROXY_PORT"
+  export SHOTS_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
+  export SHOTS_PROXY_READY="$SHOTS_TMP/proxy.ready"
+  export SHOTS_ALLOWED_ORIGINS="[\"$SHOTS_BASE_ORIGIN\",\"$SHOTS_HEAD_ORIGIN\"]"
+  node /usr/local/bin/shots-origin-proxy.js &
+  SHOTS_PROXY_PID=$!
+  trap cleanup_shots EXIT INT TERM
   i=0
-  while [ ! -f "$EVIDENCE_PROXY_READY" ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.05; done
-  [ -f "$EVIDENCE_PROXY_READY" ] || die "evidence origin proxy failed to start"
-  echo "__USERNODE_PHASE__ evidence_browser_bootstrap"
-  node /usr/local/bin/evidence-browser-bootstrap.js \
-    || die "evidence browser authentication failed"
-  unset EVIDENCE_MEMBER_TOKEN EVIDENCE_ADMIN_TOKEN EVIDENCE_FULL_ADMIN_TOKEN
-  BROWSER_MCP_CONFIG="$EVIDENCE_TMP/mcp.json"
-  node /usr/local/bin/write-evidence-mcp-config.js "$BROWSER_MCP_CONFIG" \
-    || die "could not create evidence MCP config"
-  echo "__USERNODE_PHASE__ evidence_mcp_ready"
+  while [ ! -f "$SHOTS_PROXY_READY" ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.05; done
+  [ -f "$SHOTS_PROXY_READY" ] || die "shots origin proxy failed to start"
+  echo "__USERNODE_PHASE__ shots_browser_bootstrap"
+  node /usr/local/bin/shots-browser-bootstrap.js \
+    || die "shots browser authentication failed"
+  unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN
+  BROWSER_MCP_CONFIG="$SHOTS_TMP/mcp.json"
+  node /usr/local/bin/write-shots-mcp-config.js "$BROWSER_MCP_CONFIG" \
+    || die "could not create shots MCP config"
+  echo "__USERNODE_PHASE__ shots_mcp_ready"
   BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
 fi
 
@@ -458,7 +458,7 @@ else
   CC_EXIT=$?
 fi
 
-if [ "$MODE" = "scout" ] || [ "$MODE" = "evidence" ]; then
+if [ "$MODE" = "scout" ] || [ "$MODE" = "shots" ]; then
   # Read-only run: no commit, no push. The host pulls scout output out
   # of stream-json's `result` event and writes it into spec_md.
   # behind=0 because scout never modifies the tree; the real number

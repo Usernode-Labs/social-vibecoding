@@ -149,7 +149,7 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // Before/after shot diagnostics are read-only and the handler requires the
   // proposal owner or an app manager. A connector needs this exact route to
   // see why shots were skipped or failed without infrastructure credentials.
-  { method: 'GET', pattern: '/api/apps/:slug/proposals/:id/evidence/diagnostics' },
+  { method: 'GET', pattern: '/api/apps/:slug/proposals/:id/shots/diagnostics' },
   // Sharing work to the IN-PROGRESS area instead of putting it to a vote
   // (#1347). Allowlisted for the same reason as the route above: the agent
   // that wrote the code lives in the connector, and until this existed its

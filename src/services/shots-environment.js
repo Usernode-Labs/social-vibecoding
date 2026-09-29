@@ -1,7 +1,7 @@
 'use strict';
 
 // #2380 — exact-revision, internal-only base/head environments for visual
-// evidence. Both databases are recreated from one immutable redacted source
+// shots. Both databases are recreated from one immutable redacted source
 // before exploration and before each clean replay pass. No caller receives a
 // public hostname and the app is not told which side it is rendering.
 
@@ -18,17 +18,17 @@ const github = require('./github');
 const log = require('./logger');
 const pendingSecrets = require('./pending-secrets');
 const stagingEnv = require('./staging-env');
-const evidenceFixtures = require('./visual-evidence-fixtures');
+const shotsFixtures = require('./shots-fixtures');
 const { getPool } = require('../db/pool');
 
 const IMAGE_RECIPE = 'v1';
-const EVIDENCE_LABEL = 'social.usernode.io/evidence-run';
-const EVIDENCE_SIDE_LABEL = 'social.usernode.io/evidence-side';
+const SHOTS_LABEL = 'social.usernode.io/shots-run';
+const SHOTS_SIDE_LABEL = 'social.usernode.io/shots-side';
 
-class VisualEvidenceEnvironmentError extends Error {
+class ShotsEnvironmentError extends Error {
   constructor(code, message, detail = null) {
     super(message);
-    this.name = 'VisualEvidenceEnvironmentError';
+    this.name = 'ShotsEnvironmentError';
     this.code = code;
     this.detail = detail;
   }
@@ -47,42 +47,48 @@ async function allSettledValues(tasks) {
 function exactSha(value, label = 'revision') {
   const sha = String(value || '').trim().toLowerCase();
   if (!/^[0-9a-f]{40}$/.test(sha)) {
-    throw new VisualEvidenceEnvironmentError('invalid_evidence_revision', `${label} must be an exact 40-character commit SHA.`);
+    throw new ShotsEnvironmentError('invalid_shots_revision', `${label} must be an exact 40-character commit SHA.`);
   }
   return sha;
 }
 
 function repoParts(repoUrl) {
   const match = String(repoUrl || '').match(/^https:\/\/github\.com\/([^/]+)\/([^/#]+?)(?:\.git)?$/i);
-  if (!match) throw new VisualEvidenceEnvironmentError('invalid_evidence_repository', 'Before/after shots need an HTTPS GitHub repository.');
+  if (!match) throw new ShotsEnvironmentError('invalid_shots_repository', 'Before/after shots need an HTTPS GitHub repository.');
   return { owner: match[1], repo: match[2] };
 }
 
 function runtimeName(runId, side, kind = 'docker') {
   if (!/^[0-9a-f]{32}$/.test(String(runId || '')) || !['base', 'head'].includes(side)) {
-    throw new VisualEvidenceEnvironmentError('invalid_evidence_runtime', 'Evidence runtime identity is invalid.');
+    throw new ShotsEnvironmentError('invalid_shots_runtime', 'Shots runtime identity is invalid.');
   }
   const token = runId.slice(0, 16);
   return kind === 'kubernetes'
-    ? `sv-evidence-${token}-${side === 'base' ? 'b' : 'h'}`
-    : `usernode-evidence-${token}-${side}`;
+    ? `sv-shots-${token}-${side === 'base' ? 'b' : 'h'}`
+    : `usernode-shots-${token}-${side}`;
+}
+
+// The name a run's runtime had before the rename, when shots were "visual
+// evidence". Recovery removes it too, for a run the previous release started.
+function legacyRuntimeName(runId, side, kind = 'docker') {
+  return runtimeName(runId, side, kind).replace(/^(sv|usernode)-shots-/, '$1-evidence-');
 }
 
 function dockerImageName(app, sha) {
   const appId = Number(app?.id);
-  if (!Number.isInteger(appId) || appId <= 0) throw new VisualEvidenceEnvironmentError('invalid_evidence_app', 'Evidence app id is invalid.');
-  return `usernode-evidence-${appId}:${exactSha(sha).slice(0, 16)}-${IMAGE_RECIPE}`;
+  if (!Number.isInteger(appId) || appId <= 0) throw new ShotsEnvironmentError('invalid_shots_app', 'Shots app id is invalid.');
+  return `usernode-shots-${appId}:${exactSha(sha).slice(0, 16)}-${IMAGE_RECIPE}`;
 }
 
-function evidenceCapacityEnv(config, app) {
+function shotsCapacityEnv(config, app) {
   return app?.slug === config?.selfAppSlug ? { MAX_APPS: '0' } : {};
 }
 
 function hostedFixtureApp(runId) {
   return {
-    id: evidenceFixtures.HOSTED_APP_ID,
-    slug: evidenceFixtures.hostedAppSlug(runId),
-    name: 'Homeroom evidence app',
+    id: shotsFixtures.HOSTED_APP_ID,
+    slug: shotsFixtures.hostedAppSlug(runId),
+    name: 'Homeroom shots app',
   };
 }
 
@@ -90,9 +96,9 @@ async function hostedFixtureImageRef(config) {
   if (applicationRuntime.mode(config) === 'kubernetes') {
     const imageRef = config?.kubernetes?.captureImage;
     if (!imageRef?.includes('@sha256:')) {
-      throw new VisualEvidenceEnvironmentError(
-        'missing_evidence_fixture_image',
-        'The hosted-app evidence fixture requires the immutable capture image.'
+      throw new ShotsEnvironmentError(
+        'missing_shots_fixture_image',
+        'The hosted-app shots fixture requires the immutable capture image.'
       );
     }
     return imageRef;
@@ -118,9 +124,9 @@ async function ensureHostedFixtureRuntime(config, pair, { onProgress = null } = 
   const imageRef = await hostedFixtureImageRef(config);
   const imageDigest = await immutableImageDigest(config, imageRef);
   if (pair.hostedFixtureImageDigest && pair.hostedFixtureImageDigest !== imageDigest) {
-    throw new VisualEvidenceEnvironmentError(
-      'evidence_fixture_mismatch',
-      'The hosted-app evidence fixture image changed during the run.'
+    throw new ShotsEnvironmentError(
+      'shots_fixture_mismatch',
+      'The hosted-app shots fixture image changed during the run.'
     );
   }
   pair.hostedFixtureImageDigest = imageDigest;
@@ -133,14 +139,14 @@ async function ensureHostedFixtureRuntime(config, pair, { onProgress = null } = 
       dockerName: ref.runtimeName,
       runtimeName: ref.runtimeName,
       internalOnly: false,
-      command: ['node', '/app/evidence-hosted-app-fixture.js'],
+      command: ['node', '/app/shots-hosted-app-fixture.js'],
       env: { NODE_ENV: 'production', PORT: '3000' },
       port: 3000,
       memory: '256m',
       cpus: '0.5',
       labels: {
-        [EVIDENCE_LABEL]: pair.runId,
-        [EVIDENCE_SIDE_LABEL]: 'hosted-app',
+        [SHOTS_LABEL]: pair.runId,
+        [SHOTS_SIDE_LABEL]: 'hosted-app',
       },
     });
     return pair.hostedFixtureDeployment;
@@ -179,13 +185,13 @@ async function checkoutExactRevision({ app, session, sha, side, parentDir }) {
     } catch (err) { lastError = err; }
   }
   if (!checkedOut) {
-    throw new VisualEvidenceEnvironmentError('evidence_revision_unreachable', `Could not check out the exact ${side} revision.`, lastError?.message || null);
+    throw new ShotsEnvironmentError('shots_revision_unreachable', `Could not check out the exact ${side} revision.`, lastError?.message || null);
   }
   await git(['-C', checkoutDir, 'submodule', 'update', '--init', '--recursive', '--depth', '1']).catch(() => {});
   const { stdout } = await git(['-C', checkoutDir, 'rev-parse', 'HEAD'], { timeout: 5_000 });
   const resolved = String(stdout || '').trim().toLowerCase();
   if (resolved !== revision) {
-    throw new VisualEvidenceEnvironmentError('evidence_revision_mismatch', `${side} checkout resolved to a different commit.`);
+    throw new ShotsEnvironmentError('shots_revision_mismatch', `${side} checkout resolved to a different commit.`);
   }
   return { side, sha: revision, dir: checkoutDir };
 }
@@ -199,7 +205,7 @@ async function resolvedStagingEnv(config, pool, session, app, checkoutDir) {
       if (!Object.prototype.hasOwnProperty.call(stored, key)) stored[key] = value;
     }
   } catch (err) {
-    log.warn('visual-evidence', 'Pending proposal secrets unavailable for evidence environment', {
+    log.warn('shots', 'Pending proposal secrets unavailable for shots environment', {
       sessionId: session.id, error: err.message,
     });
   }
@@ -207,9 +213,9 @@ async function resolvedStagingEnv(config, pool, session, app, checkoutDir) {
     manifest, stored, appSecrets.platformDefaultsFromEnv(), { forStaging: true }
   );
   if (merged.missingRequired.length || merged.missingPrivateStagingDefault.length) {
-    throw new VisualEvidenceEnvironmentError(
-      'evidence_missing_secrets',
-      'The paired evidence environment cannot start because its exact revision is missing staging-safe variables.',
+    throw new ShotsEnvironmentError(
+      'shots_missing_secrets',
+      'The paired shots environment cannot start because its exact revision is missing staging-safe variables.',
       {
         missingRequired: merged.missingRequired,
         missingPrivateStagingDefault: merged.missingPrivateStagingDefault,
@@ -260,10 +266,10 @@ async function buildRevision(config, { app, session, checkout, reuseImageRef = n
 }
 
 async function preparePair(config, { pool = getPool(config), run, session, app, onProgress = null }) {
-  if (!run?.id) throw new VisualEvidenceEnvironmentError('invalid_evidence_run', 'Evidence run is required.');
+  if (!run?.id) throw new ShotsEnvironmentError('invalid_shots_run', 'Shots run is required.');
   const baseSha = exactSha(run.base_sha || run.baseSha, 'base SHA');
   const headSha = exactSha(run.head_sha || run.headSha, 'head SHA');
-  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), `usernode-evidence-${run.id.slice(0, 8)}-`));
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), `usernode-shots-${run.id.slice(0, 8)}-`));
   let prepared = null;
   const stage = (name) => {
     if (typeof onProgress === 'function') onProgress({ stage: name });
@@ -309,12 +315,12 @@ async function preparePair(config, { pool = getPool(config), run, session, app, 
       sides: {
         base: {
           sha: baseSha, checkout: baseCheckout.dir, env: baseEnv,
-          dbName: dbManager.evidenceDbName(app.slug, run.id, 'base'),
+          dbName: dbManager.shotsDbName(app.slug, run.id, 'base'),
           runtimeName: runtimeName(run.id, 'base', kind), ...baseImage,
         },
         head: {
           sha: headSha, checkout: headCheckout.dir, env: headEnv,
-          dbName: dbManager.evidenceDbName(app.slug, run.id, 'head'),
+          dbName: dbManager.shotsDbName(app.slug, run.id, 'head'),
           runtimeName: runtimeName(run.id, 'head', kind), ...headImage,
         },
       },
@@ -337,14 +343,14 @@ async function stopPair(config, pair, { strict = false } = {}) {
   )));
   const errors = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
   for (const err of errors) {
-    log.warn('visual-evidence', 'Evidence runtime cleanup failed', {
+    log.warn('shots', 'Shots runtime cleanup failed', {
       runId: pair.runId, error: err.message,
     });
   }
   pair.deployments = null;
   if (strict && errors.length) {
-    throw new VisualEvidenceEnvironmentError(
-      'evidence_runtime_reset_failed',
+    throw new ShotsEnvironmentError(
+      'shots_runtime_reset_failed',
       'The previous before and after builds could not be stopped cleanly.',
       errors.map((err) => err.message).slice(0, 4)
     );
@@ -353,10 +359,10 @@ async function stopPair(config, pair, { strict = false } = {}) {
 }
 
 async function resetPair(config, pair, { onProgress = null } = {}) {
-  if (!pair?.preparedSource || !pair?.sides) throw new VisualEvidenceEnvironmentError('invalid_evidence_pair', 'Prepared evidence pair is required.');
+  if (!pair?.preparedSource || !pair?.sides) throw new ShotsEnvironmentError('invalid_shots_pair', 'Prepared shots pair is required.');
   await stopPair(config, pair, { strict: true });
   try {
-    // Two real evidence resets timed out while the clone passes ran together.
+    // Two real shots resets timed out while the clone passes ran together.
     // The ownership/redaction passes scan this app's large schema; serialize
     // them to reduce contention against the same immutable source.
     const clones = [];
@@ -375,9 +381,9 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       // A production clone can legitimately sit at the platform's app cap.
       // That makes ordinary create-dialog stories unreachable even though
       // the feature works for a member on a server with capacity. Disable
-      // only this self-app limit inside disposable evidence runtimes; neither
+      // only this self-app limit inside disposable shots runtimes; neither
       // production nor an ordinary staging preview receives the override.
-      const evidenceEnv = evidenceCapacityEnv(config, pair.app);
+      const shotsEnv = shotsCapacityEnv(config, pair.app);
       const deployed = await applicationRuntime.deploy(config, {
         app: pair.app,
         environment: 'staging',
@@ -389,15 +395,15 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
         env: {
           DATABASE_URL: dbManager.connectionUrl(spec.dbName, cloneBySide[side].password),
           ...spec.env,
-          ...evidenceEnv,
+          ...shotsEnv,
         },
         port: 3000,
         memory: docker.STAGING_MEMORY,
         cpus: docker.STAGING_CPUS,
         labels: {
-          [EVIDENCE_LABEL]: pair.runId,
-          [EVIDENCE_SIDE_LABEL]: side,
-          [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint({ ...spec.env, ...evidenceEnv }),
+          [SHOTS_LABEL]: pair.runId,
+          [SHOTS_SIDE_LABEL]: side,
+          [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint({ ...spec.env, ...shotsEnv }),
         },
       });
       return [side, deployed];
@@ -411,36 +417,36 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
         databaseUrl: dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password),
         slug: pair.app.slug, runId: pair.runId, side,
       }]));
-      onProgress?.({ stage: 'seed_evidence_identities' });
+      onProgress?.({ stage: 'seed_shots_identities' });
       const admins = await allSettledValues(['base', 'head'].map((side) =>
-        evidenceFixtures.ensureFullAdminIdentity(fixtureInputs[side])));
-      fixtureProfiles.push(evidenceFixtures.FULL_ADMIN_PROFILE);
+        shotsFixtures.ensureFullAdminIdentity(fixtureInputs[side])));
+      fixtureProfiles.push(shotsFixtures.FULL_ADMIN_PROFILE);
       availableFixtures.push(admins[0]);
       await ensureHostedFixtureRuntime(config, pair, { onProgress });
       onProgress?.({ stage: 'seed_hosted_app_fixture' });
       const hostedApps = await allSettledValues(['base', 'head'].map((side) =>
-        evidenceFixtures.ensureHostedAppFixture(fixtureInputs[side])));
-      fixtureProfiles.push(`${evidenceFixtures.HOSTED_APP_PROFILE}@${pair.hostedFixtureImageDigest}`);
+        shotsFixtures.ensureHostedAppFixture(fixtureInputs[side])));
+      fixtureProfiles.push(`${shotsFixtures.HOSTED_APP_PROFILE}@${pair.hostedFixtureImageDigest}`);
       availableFixtures.push(hostedApps[0]);
-      onProgress?.({ stage: 'inspect_evidence_fixtures' });
+      onProgress?.({ stage: 'inspect_shots_fixtures' });
       const ready = await allSettledValues(['base', 'head'].map((side) =>
-        evidenceFixtures.canCopyMemberAgentSession(fixtureInputs[side])));
+        shotsFixtures.canCopyMemberAgentSession(fixtureInputs[side])));
       // A fixture must exist on BOTH exact revisions. Never insert a state
       // on only one side of a before/after comparison.
       if (ready.every(Boolean)) {
-        onProgress?.({ stage: 'seed_evidence_fixtures' });
+        onProgress?.({ stage: 'seed_shots_fixtures' });
         const seeded = await allSettledValues(['base', 'head'].map((side) =>
-          evidenceFixtures.copyMemberAgentSession({
+          shotsFixtures.copyMemberAgentSession({
             ...fixtureInputs[side], selfAppSlug: config.selfAppSlug,
           })));
-        fixtureProfiles.push(evidenceFixtures.PROFILE);
+        fixtureProfiles.push(shotsFixtures.PROFILE);
         availableFixtures.push(seeded[0]);
       }
       fixtureProfile = fixtureProfiles.join('+');
     }
     if (pair.fixtureProfileSet && pair.fixtureProfile !== fixtureProfile) {
-      throw new VisualEvidenceEnvironmentError('evidence_fixture_mismatch',
-        'A paired evidence reset changed the available fixture profile.');
+      throw new ShotsEnvironmentError('shots_fixture_mismatch',
+        'A paired shots reset changed the available fixture profile.');
     }
     pair.fixtureProfileSet = true;
     pair.fixtureProfile = fixtureProfile;
@@ -486,7 +492,7 @@ async function cleanupPair(config, pair) {
   }
   if (pair.rootDir) await fs.rm(pair.rootDir, { recursive: true, force: true }).catch((err) => errors.push(err));
   if (errors.length) {
-    log.warn('visual-evidence', 'Evidence pair cleanup completed with leaks to sweep', {
+    log.warn('shots', 'Shots pair cleanup completed with leaks to sweep', {
       runId: pair.runId, errors: errors.map((err) => err.message).slice(0, 6),
     });
   }
@@ -495,15 +501,16 @@ async function cleanupPair(config, pair) {
 
 module.exports = {
   IMAGE_RECIPE,
-  EVIDENCE_LABEL,
-  EVIDENCE_SIDE_LABEL,
-  VisualEvidenceEnvironmentError,
+  SHOTS_LABEL,
+  SHOTS_SIDE_LABEL,
+  ShotsEnvironmentError,
   allSettledValues,
   exactSha,
   repoParts,
   runtimeName,
+  legacyRuntimeName,
   dockerImageName,
-  evidenceCapacityEnv,
+  shotsCapacityEnv,
   hostedFixtureApp,
   hostedFixtureImageRef,
   ensureHostedFixtureRuntime,

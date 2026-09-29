@@ -1,32 +1,32 @@
 'use strict';
 
-// Evidence-only rows are written to the paired, disposable app databases
+// Shots-only rows are written to the paired, disposable app databases
 // after their exact-revision images boot. The platform's staging check owns
-// agent session 990801 as usernode-capture-admin; the evidence member cannot
+// agent session 990801 as usernode-capture-admin; the shots member cannot
 // read it. Copy its real staging conversation to a separate member-owned row
 // so a member story can follow an actual Messages row on both revisions.
 
 const { Client } = require('pg');
 const dbManager = require('./db-manager');
-const hostedApp = require('../../worker/evidence-hosted-app-contract');
+const hostedApp = require('../../worker/shots-hosted-app-contract');
 
 const SOURCE_SESSION_ID = 990801;
 const SOURCE_CHANGE_ID = 990802;
 const MEMBER_SESSION_ID = 990899;
 const MEMBER_CHANGE_ID = 990898;
 const PROFILE = 'platform-member-agent-session-v1';
-// This identity is inserted only into the two disposable evidence databases.
+// This identity is inserted only into the two disposable shots databases.
 // Production and ordinary staging databases never contain a full-admin
 // service account. The high, fixed id lets the platform mint one short-lived
 // app-scoped iframe token before either isolated browser starts.
 const FULL_ADMIN_USER_ID = 2147483000;
-const FULL_ADMIN_USERNAME = 'usernode-evidence-full-admin';
+const FULL_ADMIN_USERNAME = 'usernode-shots-full-admin';
 const FULL_ADMIN_PROFILE = 'platform-isolated-full-admin-self-member-v2';
 
-function assertEvidenceDatabase(databaseUrl, slug, runId, side) {
-  const expected = dbManager.evidenceDbName(slug, runId, side);
+function assertShotsDatabase(databaseUrl, slug, runId, side) {
+  const expected = dbManager.shotsDbName(slug, runId, side);
   const actual = new URL(databaseUrl).pathname.slice(1);
-  if (actual !== expected) throw new Error('Visual evidence fixture requires its isolated evidence database.');
+  if (actual !== expected) throw new Error('Before & after shots fixture requires its isolated shots database.');
 }
 
 async function withClient(databaseUrl, fn) {
@@ -35,7 +35,7 @@ async function withClient(databaseUrl, fn) {
     connectionTimeoutMillis: 15_000,
     statement_timeout: 30_000,
     query_timeout: 30_000,
-    application_name: 'social-visual-evidence-fixture',
+    application_name: 'social-shots-fixture',
   });
   await client.connect();
   try { return await fn(client); }
@@ -43,7 +43,7 @@ async function withClient(databaseUrl, fn) {
 }
 
 async function canCopyMemberAgentSession({ databaseUrl, slug, runId, side }) {
-  assertEvidenceDatabase(databaseUrl, slug, runId, side);
+  assertShotsDatabase(databaseUrl, slug, runId, side);
   return withClient(databaseUrl, async (client) => {
     const { rows } = await client.query(
       `SELECT to_regclass('public.agent_sessions') IS NOT NULL AS has_sessions,
@@ -77,7 +77,7 @@ async function installFullAdminFixture(client, slug) {
     [slug]
   );
   if (app.rowCount !== 1) {
-    throw new Error('The platform app is missing from the paired visual-evidence fixture.');
+    throw new Error('The platform app is missing from the paired shots fixture.');
   }
   const appId = app.rows[0].id;
   const conflict = await client.query(
@@ -88,14 +88,14 @@ async function installFullAdminFixture(client, slug) {
   );
   if (conflict.rows.some((row) => Number(row.id) !== FULL_ADMIN_USER_ID
       || row.username !== FULL_ADMIN_USERNAME)) {
-    throw new Error('The reserved visual-evidence full-admin identity conflicts with cloned data.');
+    throw new Error('The reserved shots full-admin identity conflicts with cloned data.');
   }
   if (conflict.rowCount === 0) {
     await client.query(
       `INSERT INTO users
          (id, username, password, is_admin, admin_readonly, can_create_apps,
           has_platform_access, platform_access_granted_at)
-       VALUES ($1, $2, '__evidence_not_a_login__', TRUE, FALSE, FALSE, TRUE, NOW())`,
+       VALUES ($1, $2, '__shots_not_a_login__', TRUE, FALSE, FALSE, TRUE, NOW())`,
       [FULL_ADMIN_USER_ID, FULL_ADMIN_USERNAME]
     );
   } else {
@@ -110,7 +110,7 @@ async function installFullAdminFixture(client, slug) {
   }
   // App channels are membership-scoped even for a platform administrator.
   // Make the isolated full-admin identity a real member of the self app so
-  // evidence can exercise the same channel rows a human app member sees.
+  // shots can exercise the same channel rows a human app member sees.
   // This row exists only in the paired disposable databases and is added
   // symmetrically to base and head on every reset before the shots.
   await client.query(
@@ -134,7 +134,7 @@ async function installFullAdminFixture(client, slug) {
 }
 
 async function ensureFullAdminIdentity({ databaseUrl, slug, runId, side }) {
-  assertEvidenceDatabase(databaseUrl, slug, runId, side);
+  assertShotsDatabase(databaseUrl, slug, runId, side);
   return withClient(databaseUrl, async (client) => {
     await client.query('BEGIN');
     try {
@@ -157,7 +157,7 @@ async function installHostedAppFixture(client, runId) {
     [hostedApp.HOSTED_APP_ID, slug]
   );
   if (conflict.rows.some((row) => !hostedApp.isHostedAppFixture(row, runId))) {
-    throw new Error('The reserved visual-evidence hosted app conflicts with cloned data.');
+    throw new Error('The reserved shots hosted app conflicts with cloned data.');
   }
   const manifest = hostedApp.hostedAppManifest(runId);
   if (conflict.rowCount === 0) {
@@ -168,7 +168,7 @@ async function installHostedAppFixture(client, runId) {
           self_hosted, collab_visibility, view_visibility, anon_shell,
           anon_shell_checked_at)
        VALUES
-         ($1, 'Homeroom evidence app', $2, NULL, NULL, 'running', NULL,
+         ($1, 'Homeroom shots app', $2, NULL, NULL, 'running', NULL,
           NOW(), NULL, NOW(), $3::jsonb,
           FALSE, 'public', 'public', 'public', NOW())`,
       [hostedApp.HOSTED_APP_ID, slug, JSON.stringify(manifest)]
@@ -176,7 +176,7 @@ async function installHostedAppFixture(client, runId) {
   } else {
     await client.query(
       `UPDATE apps
-          SET name = 'Homeroom evidence app', repo_url = NULL,
+          SET name = 'Homeroom shots app', repo_url = NULL,
               container_id = NULL, status = 'running', main_sha = NULL,
               last_deploy_at = NOW(), manifest_snapshot = $3::jsonb,
               self_hosted = FALSE, collab_visibility = 'public',
@@ -192,12 +192,12 @@ async function installHostedAppFixture(client, runId) {
     startPath: '/#apps',
     path: `/app/${slug}`,
     appSlug: slug,
-    purpose: 'Clean deployed app for Homeroom app-frame and bridge evidence.',
+    purpose: 'Clean deployed app for Homeroom app-frame and bridge shots.',
   };
 }
 
 async function ensureHostedAppFixture({ databaseUrl, slug, runId, side }) {
-  assertEvidenceDatabase(databaseUrl, slug, runId, side);
+  assertShotsDatabase(databaseUrl, slug, runId, side);
   return withClient(databaseUrl, async (client) => {
     await client.query('BEGIN');
     try {
@@ -212,7 +212,7 @@ async function ensureHostedAppFixture({ databaseUrl, slug, runId, side }) {
 }
 
 async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppSlug }) {
-  assertEvidenceDatabase(databaseUrl, slug, runId, side);
+  assertShotsDatabase(databaseUrl, slug, runId, side);
   return withClient(databaseUrl, async (client) => {
     await client.query('BEGIN');
     try {
@@ -221,7 +221,7 @@ async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppS
       );
       const app = await client.query('SELECT id FROM apps WHERE slug = $1', [selfAppSlug]);
       if (viewer.rowCount !== 1 || app.rowCount !== 1) {
-        throw new Error('Visual evidence member identity or platform app is missing from the paired fixture.');
+        throw new Error('Before & after shots member identity or platform app is missing from the paired fixture.');
       }
       const userId = viewer.rows[0].id;
       const appId = app.rows[0].id;
@@ -245,19 +245,19 @@ async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppS
          RETURNING id, title`,
         [MEMBER_SESSION_ID, userId, appId, SOURCE_SESSION_ID]
       );
-      if (session.rowCount !== 1) throw new Error('The source agent session is unavailable for member evidence.');
+      if (session.rowCount !== 1) throw new Error('The source agent session is unavailable for member shots.');
       const change = await client.query(
         `INSERT INTO chat_sessions
            (id, app_id, user_id, branch_name, session_title, status, agent_session_id,
             created_at, last_activity_at)
-         SELECT $1, $2, $3, 'evidence-fixture/member-agent-session', c.session_title,
+         SELECT $1, $2, $3, 'shots-fixture/member-agent-session', c.session_title,
                 'active', $4, NOW() - INTERVAL '4 minutes', NOW() - INTERVAL '2 minutes'
            FROM chat_sessions c
           WHERE c.id = $5 AND c.agent_session_id = $6
          RETURNING id`,
         [MEMBER_CHANGE_ID, appId, userId, MEMBER_SESSION_ID, SOURCE_CHANGE_ID, SOURCE_SESSION_ID]
       );
-      if (change.rowCount !== 1) throw new Error('The source agent change is unavailable for member evidence.');
+      if (change.rowCount !== 1) throw new Error('The source agent change is unavailable for member shots.');
       await client.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1',
         [MEMBER_SESSION_ID, MEMBER_CHANGE_ID]);
       // Copy a real user message from the exact revision's own staging
@@ -273,7 +273,7 @@ async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppS
          RETURNING id`,
         [MEMBER_SESSION_ID, SOURCE_SESSION_ID]
       );
-      if (message.rowCount !== 1) throw new Error('The source agent message is unavailable for member evidence.');
+      if (message.rowCount !== 1) throw new Error('The source agent message is unavailable for member shots.');
       await client.query('COMMIT');
       return {
         id: PROFILE,

@@ -28,12 +28,12 @@ RUN npm install puppeteer-core@^23 \
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 COPY capture/capture.js /app/capture.js
-COPY evidence/hosted-app-fixture.js /app/evidence-hosted-app-fixture.js
+COPY shots/hosted-app-fixture.js /app/shots-hosted-app-fixture.js
 COPY worker/session-bootstrap.js /worker/session-bootstrap.js
-COPY worker/evidence-hosted-origins.js /worker/evidence-hosted-origins.js
-COPY worker/evidence-hosted-app-contract.js /worker/evidence-hosted-app-contract.js
+COPY worker/shots-hosted-origins.js /worker/shots-hosted-origins.js
+COPY worker/shots-hosted-app-contract.js /worker/shots-hosted-app-contract.js
 
-# This image also serves the short-lived hosted-app evidence fixture through
+# This image also serves the short-lived hosted-app shots fixture through
 # the ordinary Kubernetes app runtime. That runtime enforces runAsNonRoot
 # without assigning a UID, so kubelet must be able to verify a numeric image
 # user before the container starts. UID/GID 1000 are the official node

@@ -23,8 +23,8 @@ const appAccess = require('../services/app-access');
 // needs now lives inside that service.
 const issueDraft = require('../services/issue-draft');
 const platformJwt = require('../services/platform-jwt');
-const visualEvidenceControl = require('../services/visual-evidence-control');
-const visualEvidenceState = require('../services/visual-evidence-state');
+const shotsControl = require('../services/shots-control');
+const shotsState = require('../services/shots-state');
 
 // On-demand-TLS gate for Caddy. Caddy GETs this before issuing a Let's
 // Encrypt cert for a hostname it has never seen (see Caddyfile's
@@ -154,112 +154,113 @@ function internalRoutes(_config) {
   const router = Router();
   const pool = getPool(_config);
 
-  // Run-scoped visual-evidence control plane. The evidence worker receives a
+  // Run-scoped shots control plane. The shots worker receives a
   // purpose-bound token naming both its session and run; it has no access to
   // push, issues, production diagnostics, or the generic worker API. The
   // callbacks live only while the orchestrator owns the paired environments.
-  const evidenceAuth = internalAuthPurpose([platformJwt.PUR_EVIDENCE]);
-  const evidenceLimiter = rateLimit({
+  const shotsAuth = internalAuthPurpose([platformJwt.PUR_SHOTS]);
+  const shotsLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 120,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
-    keyGenerator: (req) => `evidence:${req.workerSession?.evidenceRunId || 'anon'}`,
+    keyGenerator: (req) => `shots:${req.workerSession?.shotsRunId || 'anon'}`,
   });
-  function evidenceControlForRequest(req) {
+  function shotsControlForRequest(req) {
     const runId = String(req.params.runId || '');
-    if (req.workerSession.evidenceRunId !== runId) {
-      throw new visualEvidenceControl.EvidenceControlError(
-        'evidence_scope_mismatch', 'Evidence token does not own this run.', 403
+    if (req.workerSession.shotsRunId !== runId) {
+      throw new shotsControl.ShotsControlError(
+        'shots_scope_mismatch', 'Shots token does not own this run.', 403
       );
     }
-    return visualEvidenceControl.forRequest({ runId, sessionId: req.workerSession.sessionId });
+    return shotsControl.forRequest({ runId, sessionId: req.workerSession.sessionId });
   }
-  function evidenceError(res, err) {
+  function shotsError(res, err) {
     const status = Number(err?.status)
-      || (err?.code === 'invalid_visual_evidence' ? 400 : 500);
-    if (status >= 500) log.warn('visual-evidence', 'Evidence control request failed', { code: err?.code, error: err?.message });
-    return res.status(status).json({ ok: false, code: err?.code || 'evidence_control_failed', message: err?.message || 'Evidence control failed.' });
+      || (err?.code === 'invalid_visible_changes' ? 400 : 500);
+    if (status >= 500) log.warn('shots', 'Shots control request failed', { code: err?.code, error: err?.message });
+    return res.status(status).json({ ok: false, code: err?.code || 'shots_control_failed', message: err?.message || 'Shots control failed.' });
   }
 
-  router.get('/api/internal/evidence/:runId/context', evidenceAuth, evidenceLimiter, (req, res) => {
-    try { return res.json({ ok: true, context: evidenceControlForRequest(req).getContext() }); }
-    catch (err) { return evidenceError(res, err); }
+  router.get('/api/internal/shots/:runId/context', shotsAuth, shotsLimiter, (req, res) => {
+    try { return res.json({ ok: true, context: shotsControlForRequest(req).getContext() }); }
+    catch (err) { return shotsError(res, err); }
   });
 
-  // One shot or clip the preview agent saved on the before or after build.
+  // One shot or clip the shots agent saved on the before or after build.
   // The file travels as the raw body (the global JSON parser ignores it) and
   // its change/screen/side/kind as query fields. The parser limit sits above
   // the clip limit so the structured clip_too_large code wins.
   const shotBody = raw({ type: 'application/octet-stream', limit: '21mb' });
-  router.post('/api/internal/evidence/:runId/shot', evidenceAuth, evidenceLimiter, shotBody, (req, res) => {
+  router.post('/api/internal/shots/:runId/shot', shotsAuth, shotsLimiter, shotBody, (req, res) => {
     try {
-      const result = evidenceControlForRequest(req).saveShot({
+      const result = shotsControlForRequest(req).saveShot({
         change: req.query.change,
         screen: req.query.screen,
         side: req.query.side,
         kind: req.query.kind,
       }, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
       return res.json({ ok: true, result });
-    } catch (err) { return evidenceError(res, err); }
+    } catch (err) { return shotsError(res, err); }
   });
 
-  router.post('/api/internal/evidence/:runId/skip', evidenceAuth, evidenceLimiter, (req, res) => {
+  router.post('/api/internal/shots/:runId/skip', shotsAuth, shotsLimiter, (req, res) => {
     try {
-      const result = evidenceControlForRequest(req).skipChange(req.body || {});
+      const result = shotsControlForRequest(req).skipChange(req.body || {});
       return res.json({ ok: true, result });
-    } catch (err) { return evidenceError(res, err); }
+    } catch (err) { return shotsError(res, err); }
   });
 
   // What a change's shots leave out, shown beside them on the proposal.
-  router.post('/api/internal/evidence/:runId/note', evidenceAuth, evidenceLimiter, (req, res) => {
+  router.post('/api/internal/shots/:runId/note', shotsAuth, shotsLimiter, (req, res) => {
     try {
-      const result = evidenceControlForRequest(req).noteChange(req.body || {});
+      const result = shotsControlForRequest(req).noteChange(req.body || {});
       return res.json({ ok: true, result });
-    } catch (err) { return evidenceError(res, err); }
+    } catch (err) { return shotsError(res, err); }
   });
 
   // Build-agent declaration boundary. Claude build workers carry the legacy
   // worker:session capability; Codex build workers carry only worker:push.
   // Both may record intent for their own session, but neither can execute a
   // replay, read artifacts, or address another proposal.
-  const visualIntentAuth = internalAuthPurpose([
+  const visibleChangesAuth = internalAuthPurpose([
     platformJwt.PUR_WORKER_PUSH,
     platformJwt.PUR_WORKER,
   ]);
-  const visualIntentLimiter = rateLimit({
+  const visibleChangesLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 6,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
-    keyGenerator: (req) => `visual-intent:${req.workerSession?.sessionId || 'anon'}`,
+    keyGenerator: (req) => `visible-changes:${req.workerSession?.sessionId || 'anon'}`,
   });
-  router.post(
-    '/api/internal/sessions/:sessionId/visual-evidence-intent',
-    visualIntentAuth,
-    visualIntentLimiter,
-    async (req, res) => {
-      const sessionId = Number(req.params.sessionId);
-      if (!Number.isInteger(sessionId) || sessionId <= 0) {
-        return res.status(400).json({ ok: false, code: 'bad_session_id', message: 'Invalid proposal session id.' });
-      }
-      if (Number(req.workerSession.sessionId) !== sessionId) {
-        return res.status(403).json({ ok: false, code: 'session_mismatch', message: 'The worker token does not own this proposal.' });
-      }
-      if (!_config.visualEvidence?.collect) {
-        return res.json({
-          ok: true,
-          visualEvidence: { accepted: false, state: 'disabled', reason: 'Visual evidence intent collection is disabled.' },
-        });
-      }
-      try {
-        const result = await visualEvidenceState.recordIntent(pool, sessionId, req.body?.intent);
-        return res.json({ ok: true, visualEvidence: result });
-      } catch (err) {
-        return evidenceError(res, err);
-      }
+  const declareVisibleChanges = async (req, res) => {
+    const sessionId = Number(req.params.sessionId);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      return res.status(400).json({ ok: false, code: 'bad_session_id', message: 'Invalid proposal session id.' });
     }
-  );
+    if (Number(req.workerSession.sessionId) !== sessionId) {
+      return res.status(403).json({ ok: false, code: 'session_mismatch', message: 'The worker token does not own this proposal.' });
+    }
+    if (!_config.shots?.collect) {
+      return res.json({
+        ok: true,
+        shots: { accepted: false, state: 'disabled', reason: 'Collecting declared visible changes is disabled.' },
+      });
+    }
+    try {
+      const result = await shotsState.recordIntent(pool, sessionId, req.body?.intent);
+      return res.json({ ok: true, shots: result });
+    } catch (err) {
+      return shotsError(res, err);
+    }
+  };
+  router.post('/api/internal/sessions/:sessionId/visible-changes',
+    visibleChangesAuth, visibleChangesLimiter, declareVisibleChanges);
+  // The path before the rename, for a worker still on the previous release's
+  // image while a deploy rolls out.
+  router.post('/api/internal/sessions/:sessionId/visual-evidence-intent',
+    visibleChangesAuth, visibleChangesLimiter, declareVisibleChanges);
 
   router.get('/__caddy/access', async (req, res) => {
     const rawHost = req.headers['x-forwarded-host'] || req.headers.host;

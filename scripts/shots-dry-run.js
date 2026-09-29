@@ -2,9 +2,9 @@
 'use strict';
 
 // Take before/after shots of declared changes on two builds that are already
-// running, with a real preview agent, outside Homeroom. Everything between the
-// agent and the saved files is the production code: the preview agent's
-// prompts, the shots bridge (worker/evidence-mcp.js), the internal routes and
+// running, with a real shots agent, outside Homeroom. Everything between the
+// agent and the saved files is the production code: the shots agent's
+// prompts, the shots bridge (worker/shots-mcp.js), the internal routes and
 // the run control. The browsers are Playwright MCP with the worker's flags.
 // What differs from a hosted run: the builds, their data and sign-in are
 // whatever the caller started, and the agent is the local `claude` CLI.
@@ -34,7 +34,7 @@ const DENIED_BROWSER_TOOLS = ['browser_evaluate', 'browser_run_code', 'browser_f
 function usage() {
   return `Usage: node scripts/shots-dry-run.js --intent FILE --before URL --after URL [options]
 
-  --intent FILE          version-1 visualEvidence declaration (JSON)
+  --intent FILE          version-1 shots declaration (JSON)
   --before URL           origin of the build without the change
   --after URL            origin of the build with the change
   --state-dir DIR        Playwright storage state per persona: member.json,
@@ -51,8 +51,8 @@ function usage() {
   --testing-steps TEXT   proposal testing steps, likewise
   --fixtures FILE        JSON array of the fixtures seeded on both builds, as the
                          hosted reset returns them (the brief's availableFixtures)
-  --model ID             model for the preview agent (default: the hosted
-                         preview agent's, claude-sonnet-5-5)
+  --model ID             model for the shots agent (default: the hosted
+                         shots agent's, claude-sonnet-5-5)
   --timeout-ms N         agent budget (default 480000, the hosted default)
   --playwright-mcp CMD   how to start Playwright MCP (default "npx -y @playwright/mcp@0.0.41")
   --browser NAME         browser for Playwright MCP (default chromium)
@@ -145,11 +145,11 @@ function revisionContext(options) {
 // The bridge requires its dependencies from the worker image's global
 // install. Point a copy at this repository's own (same pinned versions).
 function localBridge(runtimeDir) {
-  const source = fs.readFileSync(path.join(ROOT, 'worker', 'evidence-mcp.js'), 'utf8')
+  const source = fs.readFileSync(path.join(ROOT, 'worker', 'shots-mcp.js'), 'utf8')
     .replaceAll('/usr/local/lib/node_modules/', `${path.join(ROOT, 'node_modules')}/`)
-    .replace("require('./evidence-hosted-origins')",
-      `require(${JSON.stringify(path.join(ROOT, 'worker', 'evidence-hosted-origins.js'))})`);
-  const file = path.join(runtimeDir, 'evidence-mcp.js');
+    .replace("require('./shots-hosted-origins')",
+      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-hosted-origins.js'))})`);
+  const file = path.join(runtimeDir, 'shots-mcp.js');
   fs.writeFileSync(file, source, { mode: 0o600 });
   return file;
 }
@@ -285,13 +285,13 @@ async function main() {
   // touch it, so a pool that refuses every query keeps this database-free.
   require('../src/db/pool').getPool = () => ({ query: async () => { throw new Error('No database in a dry run.'); } });
   const express = require('express');
-  const planContract = require('../src/services/visual-evidence-plan');
-  const control = require('../src/services/visual-evidence-control');
+  const planContract = require('../src/services/visible-changes');
+  const control = require('../src/services/shots-control');
   const platformJwt = require('../src/services/platform-jwt');
   const { internalRoutes } = require('../src/routes/internal');
-  const orchestrator = require('../src/services/visual-evidence-orchestrator');
-  const agent = require('../src/services/visual-evidence-agent');
-  const shots = require('../src/services/visual-evidence-shots');
+  const orchestrator = require('../src/services/shots-orchestrator');
+  const agent = require('../src/services/shots-agent');
+  const shots = require('../src/services/shots-files');
 
   const intent = planContract.parseIntent(JSON.parse(fs.readFileSync(options.intentFile, 'utf8')));
   if (intent.impact === 'none' || !intent.stories.length) {
@@ -341,10 +341,10 @@ async function main() {
       env: {
         PATH: process.env.PATH || '',
         PLATFORM_URL: platformUrl,
-        EVIDENCE_RUN_ID: runId,
-        EVIDENCE_JWT: platformJwt.signEvidenceToken({ runId, sessionId }),
-        EVIDENCE_SHOTS_DIR: shotsDir,
-        EVIDENCE_HOSTED_ORIGINS_FILE: hostedFile,
+        SHOTS_RUN_ID: runId,
+        SHOTS_JWT: platformJwt.signShotsToken({ runId, sessionId }),
+        SHOTS_DIR: shotsDir,
+        SHOTS_HOSTED_ORIGINS_FILE: hostedFile,
       },
     },
     ...Object.fromEntries(Object.entries(PERSONAS).map(([persona, { server: name }]) =>
@@ -378,7 +378,7 @@ async function main() {
     child.stdin.end(agent.TASK_PROMPT);
   }
   child.stdout.pipe(stream);
-  process.stdout.write(`Preview agent started (run ${runId.slice(0, 8)}); streaming to ${streamFile}\n`);
+  process.stdout.write(`Shots agent started (run ${runId.slice(0, 8)}); streaming to ${streamFile}\n`);
   let agentOutcome = 'finished';
   child.stdout.on('data', watchAgentStream({
     onRefused: (status) => {

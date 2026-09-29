@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// Mandatory egress boundary for evidence-browser MCP servers. Playwright's
+// Mandatory egress boundary for shots-browser MCP servers. Playwright's
 // allowed-origins option is useful filtering but explicitly is not a security
 // boundary; this proxy independently rejects HTTP requests and CONNECT
 // tunnels outside the paired internal origins and their authenticated,
@@ -13,28 +13,28 @@ const https = require('node:https');
 const net = require('node:net');
 const crypto = require('node:crypto');
 const { performance } = require('node:perf_hooks');
-const { parseHostedOriginsFile } = require('./evidence-hosted-origins');
+const { parseHostedOriginsFile } = require('./shots-hosted-origins');
 
-const DIAGNOSTIC_MARKER = '__USERNODE_EVIDENCE_BROWSER__ ';
+const DIAGNOSTIC_MARKER = '__USERNODE_SHOTS_BROWSER__ ';
 
 let origins;
 try {
-  origins = new Set(JSON.parse(process.env.EVIDENCE_ALLOWED_ORIGINS || '[]').map((value) => new URL(value).origin));
+  origins = new Set(JSON.parse(process.env.SHOTS_ALLOWED_ORIGINS || '[]').map((value) => new URL(value).origin));
 } catch {
   origins = new Set();
 }
 if (origins.size !== 2) {
-  process.stderr.write('Evidence proxy requires exactly two allowed origins.\n');
+  process.stderr.write('Shots proxy requires exactly two allowed origins.\n');
   process.exit(1);
 }
 const authorities = new Set([...origins].map((origin) => {
   const url = new URL(origin);
   return `${url.hostname}:${url.port || (url.protocol === 'https:' ? '443' : '80')}`;
 }));
-const port = Number(process.env.EVIDENCE_PROXY_PORT || 17891);
-const readyFile = process.env.EVIDENCE_PROXY_READY || '';
+const port = Number(process.env.SHOTS_PROXY_PORT || 17891);
+const readyFile = process.env.SHOTS_PROXY_READY || '';
 const originList = [...origins];
-const hostedFile = process.env.EVIDENCE_HOSTED_ORIGINS_FILE || '';
+const hostedFile = process.env.SHOTS_HOSTED_ORIGINS_FILE || '';
 let hostedOrigins = new Set();
 let hostedAuthorities = new Set();
 let hostedLoaded = !hostedFile;
@@ -75,10 +75,10 @@ function permittedAuthority(authority) {
 }
 // A child app's pages load the platform's bridge, native kit and Tailwind
 // build from their own origin, and the production edge routes those paths to
-// the platform. Evidence deployments have no edge in front of them, so these
+// the platform. Shots deployments have no edge in front of them, so these
 // requests would reach the app's SPA fallback, come back as HTML, and leave
 // the page unstyled. Route them to the platform instead, for a child-app pair
-// (EVIDENCE_PLATFORM_ASSETS=1) or a hosted app; the platform's own pairs
+// (SHOTS_PLATFORM_ASSETS=1) or a hosted app; the platform's own pairs
 // serve the copies their revision carries. GET/HEAD of these prefixes only,
 // with no cookie or credential of the page's.
 const PLATFORM_ASSET_PREFIXES = Object.freeze(['/usernode-bridge/', '/usernode-native/', '/usernode-tailwind/']);
@@ -88,7 +88,7 @@ const platformAssetsOrigin = (() => {
     return ['http:', 'https:'].includes(url.protocol) ? url.origin : null;
   } catch { return null; }
 })();
-const childAppPair = process.env.EVIDENCE_PLATFORM_ASSETS === '1';
+const childAppPair = process.env.SHOTS_PLATFORM_ASSETS === '1';
 // A legacy child app still on the Tailwind CDN script renders with it in
 // staging and production; the same one host is reachable for a child-app pair.
 const LEGACY_TAILWIND_CDN = 'cdn.tailwindcss.com:443';
@@ -131,8 +131,8 @@ function forwardPlatformAsset(req, res, target, side) {
 }
 
 let documentOrdinal = 0;
-const controlToken = String(process.env.EVIDENCE_PROXY_CONTROL_TOKEN || '');
-const controlPath = '/__usernode_evidence_control/request-failure';
+const controlToken = String(process.env.SHOTS_PROXY_CONTROL_TOKEN || '');
+const controlPath = '/__usernode_shots_control/request-failure';
 const controlledFailures = new Set();
 let controlledFailureHits = 0;
 
@@ -140,7 +140,7 @@ function validApiPath(value) {
   if (typeof value !== 'string' || value.length > 512 || !value.startsWith('/api/')
       || value.includes('*') || value.includes('\\') || /[\u0000-\u001f\u007f]/.test(value)) return false;
   try {
-    const url = new URL(value, 'http://evidence.invalid');
+    const url = new URL(value, 'http://shots.invalid');
     return !url.hash && `${url.pathname}${url.search}` === value;
   } catch { return false; }
 }
@@ -152,7 +152,7 @@ function validControlToken(value) {
 }
 
 function controlRequest(req, res) {
-  if (req.method !== 'POST' || !validControlToken(req.headers['x-evidence-control-token'])) {
+  if (req.method !== 'POST' || !validControlToken(req.headers['x-shots-control-token'])) {
     return reject(res);
   }
   let data = '';
@@ -183,7 +183,7 @@ function diagnostic(event) {
 function reject(socketOrResponse, code = 403) {
   if (typeof socketOrResponse.writeHead === 'function') {
     socketOrResponse.writeHead(code, { 'content-type': 'text/plain', connection: 'close' });
-    socketOrResponse.end('Blocked by visual-evidence origin policy.');
+    socketOrResponse.end('Blocked by shots origin policy.');
   } else {
     socketOrResponse.end(`HTTP/1.1 ${code} Forbidden\r\nConnection: close\r\n\r\n`);
   }

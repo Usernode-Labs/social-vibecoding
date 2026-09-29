@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 'use strict';
 
-// Transparent stdio wrapper around Playwright MCP in evidence turns. The
+// Transparent stdio wrapper around Playwright MCP in shots turns. The
 // agent's own stream records when a tool call was issued and answered, not
 // how long the browser spent on it. This wrapper observes the JSON-RPC
 // boundary itself and writes only bounded, content-free diagnostics to a
-// worker-local file. The runner tails that file into the evidence trace.
+// worker-local file. The runner tails that file into the shots trace.
 
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const { Transform } = require('node:stream');
 const { performance } = require('node:perf_hooks');
 
-const MARKER = '__USERNODE_EVIDENCE_BROWSER__ ';
+const MARKER = '__USERNODE_SHOTS_BROWSER__ ';
 const MAX_LINE_BYTES = 2 * 1024 * 1024;
 const ID_TAIL_BYTES = 4096;
 const PENDING_INTERVAL_MS = 15_000;
@@ -186,14 +186,14 @@ function createObserver({ persona, origins, hints = {}, emit, now = () => perfor
 
 function start({ persona, args, binary = 'mcp-server-playwright',
   stdin = process.stdin, stdout = process.stdout, stderr = process.stderr,
-  diagnosticFile = process.env.EVIDENCE_BROWSER_DIAGNOSTIC_FILE,
-  origins = JSON.parse(process.env.EVIDENCE_ALLOWED_ORIGINS || '[]'),
-  hints = JSON.parse(process.env.EVIDENCE_NAVIGATION_HINTS || '{}'),
+  diagnosticFile = process.env.SHOTS_BROWSER_DIAGNOSTIC_FILE,
+  origins = JSON.parse(process.env.SHOTS_ALLOWED_ORIGINS || '[]'),
+  hints = JSON.parse(process.env.SHOTS_NAVIGATION_HINTS || '{}'),
 } = {}) {
   const emit = (event) => {
     if (!diagnosticFile) return;
     try { fs.appendFileSync(diagnosticFile, `${MARKER}${JSON.stringify(event)}\n`); }
-    catch { /* Diagnostics must never prevent evidence navigation. */ }
+    catch { /* Diagnostics must never prevent shots navigation. */ }
   };
   const observer = createObserver({ persona, origins, hints, emit });
   const child = spawn(binary, args || [], { stdio: ['pipe', 'pipe', 'pipe'] });

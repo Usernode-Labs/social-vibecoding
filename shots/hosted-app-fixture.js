@@ -2,20 +2,20 @@
 'use strict';
 
 // A deliberately small, dependency-free hosted app for platform visual
-// evidence. It is deployed through the ordinary app runtime and HTTPS edge,
+// shots. It is deployed through the ordinary app runtime and HTTPS edge,
 // then opened in Homeroom's real managed iframe. It never calls an external
 // service, writes browser storage, or logs the token-bearing launch URL.
 
 const http = require('node:http');
 
 const PORT = Number(process.env.PORT || 3000);
-const NONCE = 'homeroom-evidence-bridge-v1';
+const NONCE = 'homeroom-shots-bridge-v1';
 const HTML = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Homeroom evidence app</title>
+  <title>Homeroom shots app</title>
   <style nonce="${NONCE}">
     :root{color-scheme:light dark;font-family:Inter,ui-sans-serif,system-ui,sans-serif}
     *{box-sizing:border-box}
@@ -33,7 +33,7 @@ const HTML = `<!doctype html>
   </style>
 </head>
 <body>
-  <main data-testid="evidence-hosted-app">
+  <main data-testid="shots-hosted-app">
     <p class="eyebrow">Platform test app</p>
     <h1>Hosted app frame</h1>
     <p class="summary">This isolated app verifies Homeroom's real cross-origin frame and bridge.</p>
@@ -49,8 +49,8 @@ const HTML = `<!doctype html>
     (() => {
       const state = { sdk: false, locale: false, safeArea: false };
       const parentOrigin = (() => { try { return new URL(document.referrer).origin; } catch { return '*'; } })();
-      const localeId = 'evidence-locale';
-      const safeAreaId = 'evidence-safe-area';
+      const localeId = 'shots-locale';
+      const safeAreaId = 'shots-safe-area';
       const render = () => {
         if (!state.sdk || !state.locale || !state.safeArea) return;
         const status = document.getElementById('bridge-status');
@@ -117,7 +117,7 @@ function createServer() {
       // properties on <html>. Permit that narrow style-attribute contract
       // while keeping every <style> element protected by this fixture's
       // nonce. Without style-src-attr, Chromium reports the bridge's normal
-      // setProperty calls as CSP violations and evidence replay rejects an
+      // setProperty calls as CSP violations and shots replay rejects an
       // otherwise healthy app frame.
       'content-security-policy': `default-src 'none'; script-src 'self' 'nonce-${NONCE}'; style-src 'nonce-${NONCE}'; style-src-attr 'unsafe-inline'; frame-ancestors *; base-uri 'none'; form-action 'none'`,
       // The bridge uses only the parent's origin. Never expose the path or

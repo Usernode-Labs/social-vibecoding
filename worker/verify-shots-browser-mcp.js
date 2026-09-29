@@ -112,7 +112,7 @@ function verifyBrowser(server, navigationChecks = []) {
     for (const message of [
       { jsonrpc: '2.0', id: 1, method: 'initialize', params: {
         protocolVersion: '2024-11-05', capabilities: {},
-        clientInfo: { name: 'evidence-image-smoke', version: '1' },
+        clientInfo: { name: 'shots-image-smoke', version: '1' },
       } },
       { jsonrpc: '2.0', method: 'notifications/initialized' },
       { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
@@ -121,7 +121,7 @@ function verifyBrowser(server, navigationChecks = []) {
 }
 
 async function main() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evidence-mcp-smoke-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-mcp-smoke-'));
   try {
     const stateDir = path.join(dir, 'state');
     fs.mkdirSync(stateDir);
@@ -136,18 +136,18 @@ async function main() {
     }));
     const diagnosticFile = path.join(dir, 'browser-diagnostics.log');
     fs.writeFileSync(diagnosticFile, '');
-    execFileSync(process.execPath, [path.join(__dirname, 'write-evidence-mcp-config.js'), output], {
+    execFileSync(process.execPath, [path.join(__dirname, 'write-shots-mcp-config.js'), output], {
       env: {
         ...process.env,
-        EVIDENCE_BROWSER_STATE_DIR: stateDir,
-        EVIDENCE_BROWSER_DIAGNOSTIC_FILE: diagnosticFile,
-        EVIDENCE_PROXY_SERVER: 'http://127.0.0.1:17891',
-        EVIDENCE_BASE_ORIGIN: 'http://base.example.invalid',
-        EVIDENCE_HEAD_ORIGIN: 'http://head.example.invalid',
-        EVIDENCE_HOSTED_ORIGINS_FILE: hostedFile,
-        EVIDENCE_SHOTS_DIR: path.join(dir, 'shots'),
+        SHOTS_BROWSER_STATE_DIR: stateDir,
+        SHOTS_BROWSER_DIAGNOSTIC_FILE: diagnosticFile,
+        SHOTS_PROXY_SERVER: 'http://127.0.0.1:17891',
+        SHOTS_BASE_ORIGIN: 'http://base.example.invalid',
+        SHOTS_HEAD_ORIGIN: 'http://head.example.invalid',
+        SHOTS_HOSTED_ORIGINS_FILE: hostedFile,
+        SHOTS_DIR: path.join(dir, 'shots'),
         // Exercise the clip-recording flag too; motion changes turn it on.
-        EVIDENCE_RECORD_CLIPS: '1',
+        SHOTS_RECORD_CLIPS: '1',
       },
     });
     for (const persona of ['member', 'admin', 'full_admin']) {
@@ -158,9 +158,9 @@ async function main() {
       fs.writeFileSync(diagnosticFile, '');
       const tools = await verifyBrowser(config.mcpServers[persona]);
       const records = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')
-        .filter((line) => line.startsWith('__USERNODE_EVIDENCE_BROWSER__ '))
+        .filter((line) => line.startsWith('__USERNODE_SHOTS_BROWSER__ '))
         .flatMap((line) => {
-          try { return [JSON.parse(line.slice('__USERNODE_EVIDENCE_BROWSER__ '.length))]; }
+          try { return [JSON.parse(line.slice('__USERNODE_SHOTS_BROWSER__ '.length))]; }
           catch { return []; }
         })
         .filter((event) => event.persona === (persona === 'browser_admin' ? 'admin'

@@ -4,7 +4,7 @@
 // origins, fixture names, tokens, and model transcripts never enter this
 // view model.
 
-const state = require('./visual-evidence-state');
+const state = require('./shots-state');
 const { visualHeadForSession } = require('./pr-vote-revision');
 
 const PUBLIC_STATES = new Set([
@@ -34,7 +34,7 @@ function cleanClaims(value) {
   })).filter((claim) => claim.id && claim.claim);
 }
 
-// One result per declared change: its shots are ready, or the preview agent
+// One result per declared change: its shots are ready, or the shots agent
 // skipped it and says why.
 function cleanShotResults(value) {
   if (!Array.isArray(value)) return [];
@@ -51,7 +51,7 @@ function cleanShotResults(value) {
 
 function artifactUrl(slug, sessionId, artifactId) {
   if (!ARTIFACT_ID_RE.test(String(artifactId || ''))) return null;
-  return `/api/apps/${encodeURIComponent(slug)}/proposals/${Number(sessionId)}/evidence/${artifactId}`;
+  return `/api/apps/${encodeURIComponent(slug)}/proposals/${Number(sessionId)}/shots/${artifactId}`;
 }
 
 function cleanArtifacts(items, { slug, sessionId, verified }) {
@@ -90,33 +90,33 @@ function cleanArtifacts(items, { slug, sessionId, verified }) {
 }
 
 // #2601/#2558: why a run that is still 'planned' never got under way, as
-// `visual-evidence-orchestrator.noteNotStarted` recorded it on the proposal.
+// `shots-orchestrator.noteNotStarted` recorded it on the proposal.
 // A sibling of `failureReason` rather than a reuse of it: a run that never
 // started has not failed, and the two words reach different copy. It is
 // dropped once the run has moved on, and on a superseded revision, where it
 // would describe a schedule attempt nobody is looking at any more.
 function notStartedReason(session, superseded) {
-  const detail = session?.visual_evidence_detail;
-  if (superseded || session?.visual_evidence_state !== 'planned') return null;
+  const detail = session?.shots_detail;
+  if (superseded || session?.shots_state !== 'planned') return null;
   const value = detail && typeof detail === 'object' ? detail.notStartedReason : null;
   return typeof value === 'string' && value.trim() ? value.slice(0, 300) : null;
 }
 
 function fromSnapshot(session, currentHead) {
-  const detail = session?.visual_evidence_detail;
+  const detail = session?.shots_detail;
   if (!detail || typeof detail !== 'object') return null;
   const recordedHead = typeof detail.headSha === 'string' ? detail.headSha : null;
   const mismatched = !!(recordedHead && currentHead && recordedHead !== currentHead);
   return {
-    state: mismatched ? 'stale' : (PUBLIC_STATES.has(session.visual_evidence_state)
-      ? session.visual_evidence_state : 'planned'),
+    state: mismatched ? 'stale' : (PUBLIC_STATES.has(session.shots_state)
+      ? session.shots_state : 'planned'),
     required: detail.required !== false,
     impact: ['ui', 'motion', 'none'].includes(detail.impact) ? detail.impact : null,
     rationale: typeof detail.rationale === 'string' ? detail.rationale.slice(0, 1000) : null,
     claims: cleanClaims(detail.claims),
     baseSha: typeof detail.baseSha === 'string' ? detail.baseSha : null,
     headSha: recordedHead,
-    failureCode: typeof detail.failureCode === 'string' ? detail.failureCode : null,
+    failureCode: typeof detail.failureCode === 'string' ? state.currentCode(detail.failureCode) : null,
     failureReason: mismatched
       ? 'A newer revision of this proposal replaced these shots.'
       : (typeof detail.failureReason === 'string' ? detail.failureReason.slice(0, 2000) : null),
@@ -130,7 +130,7 @@ function fromSnapshot(session, currentHead) {
     overriddenAt: detail.overriddenAt || null,
     overrideReason: typeof detail.overrideReason === 'string' ? detail.overrideReason.slice(0, 1000) : null,
     artifacts: [],
-    updatedAt: session.visual_evidence_updated_at || detail.updatedAt || null,
+    updatedAt: session.shots_updated_at || detail.updatedAt || null,
   };
 }
 
@@ -141,8 +141,8 @@ function serialize(run, session, slug, currentHead) {
   return {
     state: PUBLIC_STATES.has(publicState) ? publicState : 'failed',
     required: run.required !== false,
-    impact: session?.visual_evidence_detail?.impact || null,
-    rationale: session?.visual_evidence_detail?.rationale || null,
+    impact: session?.shots_detail?.impact || null,
+    rationale: session?.shots_detail?.rationale || null,
     claims: cleanClaims(run.claims),
     baseSha: run.baseSha || null,
     headSha: run.headSha || null,
@@ -162,7 +162,7 @@ function serialize(run, session, slug, currentHead) {
     artifacts: cleanArtifacts(run.artifactSummary, {
       slug, sessionId: session.id, verified: matchesCurrent && run.state === 'verified',
     }),
-    updatedAt: run.updatedAt || session.visual_evidence_updated_at || null,
+    updatedAt: run.updatedAt || session.shots_updated_at || null,
   };
 }
 
@@ -176,7 +176,7 @@ async function getForSession(pool, session, slug = session?.app_slug) {
 
 async function getForSessions(pool, sessions, slug) {
   const list = Array.isArray(sessions) ? sessions : [];
-  const runIds = list.map((session) => session.visual_evidence_run_id).filter(Boolean);
+  const runIds = list.map((session) => session.shots_run_id).filter(Boolean);
   const bySession = new Map();
   if (runIds.length) {
     const { rows } = await pool.query(
@@ -189,9 +189,9 @@ async function getForSessions(pool, sessions, slug) {
                   'height', a.height, 'bytes', a.bytes,
                   'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
                 ) ORDER BY a.story_id, a.viewport, a.side, a.variant)
-                  FROM visual_evidence_artifacts a WHERE a.run_id = r.id
+                  FROM shot_artifacts a WHERE a.run_id = r.id
               ), '[]'::jsonb) AS artifact_summary
-         FROM visual_evidence_runs r WHERE r.id = ANY($1::varchar[])`,
+         FROM shot_runs r WHERE r.id = ANY($1::varchar[])`,
       [runIds]
     );
     for (const row of rows) bySession.set(Number(row.session_id), state.runSummary(row, row.artifact_summary || []));

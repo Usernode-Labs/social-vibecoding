@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-// The preview agent's "shots" tools: a tiny stdio bridge from one before/after
+// The shots agent's "shots" tools: a tiny stdio bridge from one before/after
 // turn to the platform-owned run control. It holds no app identity token,
 // browser cookie, GitHub capability, or generic platform client. The only
-// bearer credential is a short-lived JWT scoped to EVIDENCE_RUN_ID by the
+// bearer credential is a short-lived JWT scoped to SHOTS_RUN_ID by the
 // platform verifier.
 
 const { McpServer } = require('/usr/local/lib/node_modules/@modelcontextprotocol/sdk/dist/cjs/server/mcp.js');
@@ -12,16 +12,16 @@ const { StdioServerTransport } = require('/usr/local/lib/node_modules/@modelcont
 const { z } = require('/usr/local/lib/node_modules/zod');
 const fs = require('node:fs');
 const path = require('node:path');
-const { hostedAppSlugs } = require('./evidence-hosted-origins');
+const { hostedAppSlugs } = require('./shots-hosted-origins');
 
 const platform = String(process.env.PLATFORM_URL || '').replace(/\/$/, '');
-const runId = String(process.env.EVIDENCE_RUN_ID || '');
-const token = String(process.env.EVIDENCE_JWT || '');
-const proxy = String(process.env.EVIDENCE_PROXY_SERVER || '');
-const proxyControlToken = String(process.env.EVIDENCE_PROXY_CONTROL_TOKEN || '');
+const runId = String(process.env.SHOTS_RUN_ID || '');
+const token = String(process.env.SHOTS_JWT || '');
+const proxy = String(process.env.SHOTS_PROXY_SERVER || '');
+const proxyControlToken = String(process.env.SHOTS_PROXY_CONTROL_TOKEN || '');
 // Each persona's browser saves the files it is asked to (screenshots by name,
 // clips when a browser session closes) into its own directory here.
-const shotsDir = String(process.env.EVIDENCE_SHOTS_DIR || '');
+const shotsDir = String(process.env.SHOTS_DIR || '');
 const PERSONA_DIRS = Object.freeze(['member', 'admin', 'full_admin']);
 if (!/^https?:\/\//.test(platform) || !/^[0-9a-f]{32}$/.test(runId) || !token) {
   process.stderr.write('Shots MCP configuration is incomplete.\n');
@@ -29,7 +29,7 @@ if (!/^https?:\/\//.test(platform) || !/^[0-9a-f]{32}$/.test(runId) || !token) {
 }
 
 async function request(route, { method = 'GET', body = null, binary = null, timeoutMs = 120_000 } = {}) {
-  const response = await fetch(`${platform}/api/internal/evidence/${runId}${route}`, {
+  const response = await fetch(`${platform}/api/internal/shots/${runId}${route}`, {
     method,
     headers: {
       authorization: `Bearer ${token}`,
@@ -133,7 +133,7 @@ server.registerTool('get_brief', {
     const context = (await request('/context')).context;
     const origins = context?.origins;
     if (!origins?.base || !origins?.head) throw new Error('The brief has no before and after addresses.');
-    const eligibleHostedAppSlugs = hostedAppSlugs(process.env.EVIDENCE_HOSTED_ORIGINS_FILE,
+    const eligibleHostedAppSlugs = hostedAppSlugs(process.env.SHOTS_HOSTED_ORIGINS_FILE,
       new URL(origins.base).origin, new URL(origins.head).origin);
     return resultContent({ ...context, eligibleHostedAppSlugs });
   } catch (error) { return toolError(error); }
@@ -226,9 +226,9 @@ server.registerTool('fail_request', {
     if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(proxy) || !/^[0-9a-f]{64}$/.test(proxyControlToken)) {
       throw new Error('The request-failure control is unavailable.');
     }
-    const response = await fetch(`${proxy}/__usernode_evidence_control/request-failure`, {
+    const response = await fetch(`${proxy}/__usernode_shots_control/request-failure`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-evidence-control-token': proxyControlToken },
+      headers: { 'content-type': 'application/json', 'x-shots-control-token': proxyControlToken },
       body: JSON.stringify({ path: apiPath, enabled }),
       signal: AbortSignal.timeout(10_000),
     });

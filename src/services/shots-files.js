@@ -1,6 +1,6 @@
 'use strict';
 
-// Before/after shots. The author declares up to three changes; the preview
+// Before/after shots. The author declares up to three changes; the shots
 // agent walks each one on the exact before (base) and after (head) builds
 // and saves what it sees: a screen shot per screen size and side, plus a
 // short clip per side when the change is motion a still cannot show.
@@ -10,7 +10,7 @@
 // the agent could not reach never hides the ones it did.
 
 const crypto = require('crypto');
-const planContract = require('./visual-evidence-plan');
+const planContract = require('./visible-changes');
 
 const SHOTS_MODE = 'shots';
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
@@ -177,7 +177,7 @@ function summarize(intent, saved, skipped = new Map(), { fallbackReason = null, 
     return {
       id: story.id,
       status: 'skipped',
-      reason: fallbackReason || `The preview agent did not save ${missing.join(', ')}.`,
+      reason: fallbackReason || `The shots agent did not save ${missing.join(', ')}.`,
     };
   });
   const ready = stories.filter((story) => story.status === 'ready').length;

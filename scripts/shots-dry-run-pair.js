@@ -8,7 +8,7 @@
 //   npm run shots:pair -- down [--label NAME]
 //
 // `up` builds each exact revision's platform image once (from a detached
-// worktree), restores one dump of the local dev database into two evidence
+// worktree), restores one dump of the local dev database into two shots
 // databases, runs both images on usernode-net with a credential-free env,
 // applies the per-side fixtures (full-admin identity, member agent-session
 // copy, no app cap), mints the three persona tokens, signs each persona in on
@@ -94,14 +94,14 @@ const sh = (bin, args, opts = {}) => execFileSync(bin, args, {
 const docker = (...args) => sh('docker', args);
 const log = (...args) => process.stdout.write(`${args.join(' ')}\n`);
 
-// The pair's own evidence databases, named as a hosted run names them.
+// The pair's own shots databases, named as a hosted run names them.
 function pairNames(label) {
   const runId = crypto.createHash('sha256').update(`shots-dry-run:${label}`).digest('hex').slice(0, 32);
   const dbManager = require('../src/services/db-manager');
   return {
     runId,
     containers: { base: `shots-${label}-before`, head: `shots-${label}-after` },
-    dbs: { base: dbManager.evidenceDbName(SLUG, runId, 'base'), head: dbManager.evidenceDbName(SLUG, runId, 'head') },
+    dbs: { base: dbManager.shotsDbName(SLUG, runId, 'base'), head: dbManager.shotsDbName(SLUG, runId, 'head') },
   };
 }
 
@@ -125,7 +125,7 @@ function labEnv(lab) {
       NODE_RPC_URL: 'http://127.0.0.1:9', EXPLORER_UPSTREAM: '127.0.0.1:9',
       TOPOCHAIN_PARTNER_API_KEY: secret(),
       NATIVE_SESSION_V2_TESTNET_CHAIN_ID: bech32m.encode('utc', bech32m.toWords(crypto.randomBytes(32)), 1023),
-      USERNODE_LOCAL_DEV: '1', VISUAL_EVIDENCE_V2_ENABLED: 'true', APP_HEAL_INTERVAL_MS: '0',
+      USERNODE_LOCAL_DEV: '1', SHOTS_ENABLED: 'true', APP_HEAL_INTERVAL_MS: '0',
     };
     fs.writeFileSync(file, `${Object.entries(env).map(([key, value]) => `${key}=${value}`).join('\n')}\n`,
       { mode: 0o600, flag: 'wx' });
@@ -238,7 +238,7 @@ async function up(options) {
 
   // The same per-side fixtures a hosted reset applies to a self-app pair;
   // availableFixtures keeps the base side's descriptors, as it does there.
-  const fixtures = require('../src/services/visual-evidence-fixtures');
+  const fixtures = require('../src/services/shots-fixtures');
   const input = (side) => ({ databaseUrl: `postgres://usernode:localdev@127.0.0.1:5440/${n.dbs[side]}`,
     slug: SLUG, runId: n.runId, side });
   const availableFixtures = [];
@@ -259,7 +259,7 @@ async function up(options) {
   const { Pool } = require('pg');
   const pool = new Pool({ connectionString: input('base').databaseUrl });
   let tokens;
-  try { tokens = await require('../src/services/visual-evidence-identities').mintEvidenceAuthTokens(pool, appId); }
+  try { tokens = await require('../src/services/shots-identities').mintShotsAuthTokens(pool, appId); }
   finally { await pool.end(); }
   const { chromium } = playwright(lab);
   const { bootstrapInternalSession } = require('../worker/session-bootstrap');

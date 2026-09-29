@@ -165,8 +165,8 @@ selects a skill.
 
 Every proposal that changes something people can see gets before/after shots.
 A hosted dev-chat worker declares its changes with its supplied tool. An
-external agent sends the same version-1 object as `visualEvidence` on
-`submit_work`. Homeroom's preview agent then follows each declared change on
+external agent sends the same version-1 object as `visibleChanges` on
+`submit_work`. Homeroom's shots agent then follows each declared change on
 the exact before and after builds and saves what it sees: a still for each
 screen size and side, plus a short clip of each side for
 `animation: "motion"`. People look at the shots to judge the change. There
@@ -176,7 +176,7 @@ is no replay plan to write and nothing to verify locally.
 - Declare one to three changes, each as a person would say it, with the real
   `startPath` and `steps` that reach it and the persona and screen sizes
   it needs. Declare only a state you actually reached in the running app.
-- Add `intent.hints` when you learned something the preview agent would
+- Add `intent.hints` when you learned something the shots agent would
   otherwise have to rediscover. `setup` names data to create through the UI
   first, `expectText` gives short text that shows the state was reached, and
   `focusTarget` locates the element to point at. Hints guide; they are never
@@ -189,9 +189,9 @@ is no replay plan to write and nothing to verify locally.
   `intent.controlledFailurePath` as one exact same-origin `GET /api/...`
   path, and make the first `intent.steps` entry exactly
   `Controlled test: deliberately block the declared API GET on both revisions.`
-  The preview agent blocks that request on both builds, and people see the
+  The shots agent blocks that request on both builds, and people see the
   controlled-test label. Do not use this for a normal success state.
-- A change the preview agent cannot reach is shown as skipped with its
+- A change the shots agent cannot reach is shown as skipped with its
   reason, and the other changes still publish. A change it could only show
   in part is published with its note ("Not in these shots: ..."). Either way,
   better steps or hints, then "Take the shots again", is the fix. Declare

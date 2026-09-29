@@ -87,7 +87,7 @@ Ordered by how badly an agent working offline gets each one wrong.
    renders against an empty staging database, so seed what it needs.
    Demo routes are fine for regression tests, but never add a
    screenshot-only query parameter. After a visible change, call
-   `record_visual_evidence_intent` with the change, real steps, focus,
+   `declare_visible_changes` with the change, real steps, focus,
    persona, viewports, and animation (`motion` gets clips). Homeroom takes
    before/after shots of it on the exact builds. For a non-visual change,
    record `impact: "none"` with a specific rationale.
@@ -552,13 +552,13 @@ the closest thing to production the gate can reach.
 
 Legacy proposals could only navigate to a URL, so this section historically
 required a query/hash parameter that forced an interaction-only state open.
-Before/after shots remove that requirement: the preview agent performs the
+Before/after shots remove that requirement: the shots agent performs the
 real clicks, typing, keyboard input, selection, hover, scrolling, and pointer
 gestures on both builds, then takes the shots itself. It never falls back to
 the home screen.
 
 Do **not** add a screenshot-only route for a modal, bottom sheet, wizard, game
-state, or menu. Call `record_visual_evidence_intent` instead and describe how a
+state, or menu. Call `declare_visible_changes` instead and describe how a
 person reaches the state. A deterministic demo/deep route is still useful when
 it is part of the product, seeds a durable `dapp.json` regression check, or
 gives reviewers a stable "Test this change" entry point; in those cases keep
@@ -695,7 +695,7 @@ Per-test fields:
 Visual scenario metadata remains useful executable documentation and durable
 regression coverage. Before/after shots are proposal-specific: the authoring
 agent declares up to three changes, with the steps and optional hints it used
-during implementation, and a purpose-bound preview agent follows them on the
+during implementation, and a purpose-bound shots agent follows them on the
 exact before and after builds and saves what it sees. People look at the
 shots to judge the change. No matching scenario and no submitted legacy route
 is ever permission to publish `/` as a fallback.
@@ -1029,7 +1029,7 @@ set instead of a mix of emoji, letters and one-off logos.
   Keep it out of `public/`, `assets/` and other served folders: the
   platform reads the file at deploy time and the app never serves it,
   and a file under those folders counts as a browser UI change, so an
-  icon-only proposal there cannot declare `visualEvidence` impact
+  icon-only proposal there cannot declare `shots` impact
   `none`.
 - **Format.** A 512 × 512 PNG: opaque, full bleed, square corners (the
   tile rounds and crops it), no text or letters. A render in this style
@@ -3136,7 +3136,7 @@ committing.
 
 Use it before declaring a `ui` or `motion` change for before/after shots.
 A declared change must describe a checkpoint you actually reached in the
-local app, including the state the preview agent will need to reach it
+local app, including the state the shots agent will need to reach it
 again (put that in `hints.setup`). For backend-only,
 refactor, or docs work, rendering may tell you nothing and the browser is
 optional. Chromium only launches on the first browser tool call. Scout and
@@ -3161,7 +3161,7 @@ locally inside the worker the same way a staging container does:
   `/app/<slug>/...`; put its other SPA routes after the `#`.
 - Exercise the real interaction and make the declared change concrete. For a
   mobile-only change, resize to the viewport you will declare (for example
-  390×844). This local check helps you fix the after build; the later preview
+  390×844). This local check helps you fix the after build; the later shots
   agent independently follows your steps on both builds.
 - A **blank or empty page usually means missing seed data, not a bug** —
   the local DB starts empty. Check the app's existing staging fixtures or
@@ -3177,8 +3177,8 @@ locally inside the worker the same way a staging container does:
   screenshot-only route or invent a state just to get a shot.
 
 This is an agent-facing quality check on the after build. Before finishing a
-user-visible build, call `record_visual_evidence_intent` only for a flow you
-actually reached. The preview agent still takes both sides itself, and the
+user-visible build, call `declare_visible_changes` only for a flow you
+actually reached. The shots agent still takes both sides itself, and the
 "Test this change" action remains a separate manual aid.
 
 ## Writing user-facing copy: no em dashes

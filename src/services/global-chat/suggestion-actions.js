@@ -151,7 +151,7 @@ function contextualCopy(actionId, definition, parameters, requestedTarget) {
     'issue.comments': [`Comments on ${target}`, `Here are the comments on ${target}.`],
     'governance.detail': [`Open ${target}`, `Here are the details for ${target}.`],
     'proposal.detail': [`Open ${target}`, `Here are the details for ${target}.`],
-    'proposal.evidence': [`Before/after shots for ${target}`, `Here are the before/after shots for ${target}.`],
+    'proposal.shots': [`Before/after shots for ${target}`, `Here are the before/after shots for ${target}.`],
     'session.detail': [`Details for ${target}`, `Here are the details for ${target}.`],
     'session.checks': [`Checks for ${target}`, `Here are the checks for ${target}.`],
     'conversation.detail': [`Open ${target}`, `Here are the details for ${target}.`],
@@ -636,13 +636,13 @@ const ACTIONS = Object.freeze({
       { slug: appSlug, id: proposalId },
     )],
   }),
-  'proposal.evidence': Object.freeze({
+  'proposal.shots': Object.freeze({
     label: 'Proposal before/after shots', message: 'Here are the proposal before/after shots.', domain: 'governance',
     parameters: (value) => exactParameters(value, {
       appSlug: APP_SLUG_RE, proposalId: NUMERIC_ID_RE,
     }),
     steps: ({ appSlug, proposalId }) => [routeStep(
-      'GET', '/api/apps/:slug/proposals/:sessionId/evidence',
+      'GET', '/api/apps/:slug/proposals/:sessionId/shots',
       { slug: appSlug, sessionId: proposalId },
     )],
   }),

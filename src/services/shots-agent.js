@@ -1,18 +1,18 @@
 'use strict';
 
-// Dispatch the preview agent: a purpose-bound, read-only turn in the
+// Dispatch the shots agent: a purpose-bound, read-only turn in the
 // proposal's worker that walks each declared change on the exact before and
 // after builds and saves before/after shots (and clips for motion). People
 // look at what it saved; nothing here decides whether a change is good.
 
 const agentTurn = require('./agent-turn');
 const worker = require('./worker');
-const { repoParts } = require('./visual-evidence-environment');
+const { repoParts } = require('./shots-environment');
 
-class VisualEvidenceAgentError extends Error {
+class ShotsAgentError extends Error {
   constructor(code, message, detail = null) {
     super(message);
-    this.name = 'VisualEvidenceAgentError';
+    this.name = 'ShotsAgentError';
     this.code = code;
     this.detail = detail;
   }
@@ -27,7 +27,7 @@ function failedResult(result) {
   );
 }
 
-const SYSTEM_PROMPT = `You are the preview agent for one Homeroom proposal.
+const SYSTEM_PROMPT = `You are the shots agent for one Homeroom proposal.
 Your job is to take before/after shots of the changes the author declared, so
 people can see each change without opening a preview.
 
@@ -100,8 +100,8 @@ function resultThreadId(result) {
 }
 
 function reportDiagnostic(options, event) {
-  try { options.onEvidenceDiagnostic?.(event); }
-  catch { /* Diagnostics must not change an evidence turn. */ }
+  try { options.onShotsDiagnostic?.(event); }
+  catch { /* Diagnostics must not change a shots turn. */ }
 }
 
 async function withDispatchTimeout(promise, { timeoutMs, onTimeout, suspendedMs = () => 0 }) {
@@ -120,9 +120,9 @@ async function withDispatchTimeout(promise, { timeoutMs, onTimeout, suspendedMs 
         return;
       }
       Promise.resolve().then(() => onTimeout?.()).catch(() => {}).finally(() => {
-        reject(new VisualEvidenceAgentError(
-          'evidence_agent_timeout',
-          'The preview agent ran out of time.'
+        reject(new ShotsAgentError(
+          'shots_agent_timeout',
+          'The shots agent ran out of time.'
         ));
       });
     };
@@ -140,31 +140,31 @@ async function withDispatchTimeout(promise, { timeoutMs, onTimeout, suspendedMs 
 }
 
 // Imported proposals have no hosted coding session to resume. A merged native
-// proposal is terminal too. Their preview agent only needs its workspace
+// proposal is terminal too. Their shots agent only needs its workspace
 // for the duration of this run, so it must not consume a retained worker PVC.
-function temporaryEvidenceWorker(session) {
+function temporaryShotsWorker(session) {
   return session?.source === 'imported' || session?.status === 'merged';
 }
 
-async function ensureEvidenceWorker(session, { onProgress = null, workerService = worker } = {}) {
+async function ensureShotsWorker(session, { onProgress = null, workerService = worker } = {}) {
   const { owner, repo } = repoParts(session.repo_url);
   return workerService.ensureWorker(session.id, {
     repoOwner: owner,
     repoName: repo,
     branchName: session.branch_name,
     onProgress,
-    temporary: temporaryEvidenceWorker(session),
+    temporary: temporaryShotsWorker(session),
   });
 }
 
-// The Claude preview agent runs on this model whatever the author's session
-// used (VISUAL_EVIDENCE_AGENT_MODEL overrides it). It is deliberately not
+// The Claude shots agent runs on this model whatever the author's session
+// used (SHOTS_AGENT_MODEL overrides it). It is deliberately not
 // passed through models.resolve(): that is the author-facing allowlist, and
 // it would turn an id it does not list back into the author default.
 const DEFAULT_AGENT_MODEL = 'claude-sonnet-5-5';
 
 function agentModel(config) {
-  return config?.visualEvidence?.agentModel || DEFAULT_AGENT_MODEL;
+  return config?.shots?.agentModel || DEFAULT_AGENT_MODEL;
 }
 
 async function dispatchClaude(config, options, deps) {
@@ -174,7 +174,7 @@ async function dispatchClaude(config, options, deps) {
   reportDiagnostic(options, { kind: 'turn_start' });
   let result;
   try { result = await withDispatchTimeout(deps.workerService.execInWorker(session.id, {
-    mode: 'evidence',
+    mode: 'shots',
     prompt: TASK_PROMPT,
     systemPrompt: SYSTEM_PROMPT,
     model,
@@ -183,20 +183,20 @@ async function dispatchClaude(config, options, deps) {
     resumeSessionId: null,
     branchName: session.branch_name,
     agentBackend: 'claude_code',
-    evidenceRunId: runId,
-    evidenceOrigins: origins,
-    evidenceAuthTokens: authTokens,
-    evidenceNavigationHints: options.navigationHints,
-    evidenceRecordClips: options.recordClips === true,
-    ...(options.recordClips === true && options.clipSize ? { evidenceClipSize: options.clipSize } : {}),
-    evidencePlatformAssets: options.platformAssets === true,
-    telemetryComponent: 'visual_evidence_agent',
+    shotsRunId: runId,
+    shotsOrigins: origins,
+    shotsAuthTokens: authTokens,
+    shotsNavigationHints: options.navigationHints,
+    shotsRecordClips: options.recordClips === true,
+    ...(options.recordClips === true && options.clipSize ? { shotsClipSize: options.clipSize } : {}),
+    shotsPlatformAssets: options.platformAssets === true,
+    telemetryComponent: 'shots_agent',
     telemetryCorrelationId: runId,
     telemetryAttemptNumber: 1,
     onProgress,
-    onEvidenceDiagnostic: options.onEvidenceDiagnostic,
+    onShotsDiagnostic: options.onShotsDiagnostic,
   }), {
-    timeoutMs: options.timeoutMs || config.visualEvidence?.maxAgentMs || 480_000,
+    timeoutMs: options.timeoutMs || config.shots?.maxAgentMs || 480_000,
     onTimeout: async () => {
       reportDiagnostic(options, { kind: 'agent_deadline' });
       reportDiagnostic(options, { kind: 'worker_stop_requested' });
@@ -213,26 +213,26 @@ async function dispatchClaude(config, options, deps) {
   catch (error) {
     reportDiagnostic(options, { kind: 'turn_end', outcome: 'error' });
     if (error && typeof error === 'object') {
-      error.evidenceBackend = 'claude_code';
-      error.evidenceModel = model;
+      error.shotsBackend = 'claude_code';
+      error.shotsModel = model;
     }
     throw error;
   }
   reportDiagnostic(options, { kind: 'turn_end', outcome: failedResult(result) ? 'error' : 'ok' });
   if (failedResult(result)) {
-    const error = new VisualEvidenceAgentError(
-      'evidence_agent_failed',
-      'The preview agent stopped with an error before it finished.',
+    const error = new ShotsAgentError(
+      'shots_agent_failed',
+      'The shots agent stopped with an error before it finished.',
       deps.agentTurn.sanitizeError({ message: result?.fatalError || `exit ${result?.exitCode ?? result?.agentExit ?? 'unknown'}` })
     );
-    error.evidenceBackend = 'claude_code';
-    error.evidenceModel = model;
+    error.shotsBackend = 'claude_code';
+    error.shotsModel = model;
     throw error;
   }
   return { backend: 'claude_code', model, result, threadId: resultThreadId(result) };
 }
 
-// Every preview agent is the platform's Claude one on its own model, whatever
+// Every shots agent is the platform's Claude one on its own model, whatever
 // backend the author's session used: taking shots needs browser tools and no
 // memory of the build, and one agent keeps cost and behaviour predictable.
 async function dispatch(config, options, injected = {}) {
@@ -242,24 +242,24 @@ async function dispatch(config, options, injected = {}) {
   };
   const { pool, session } = options;
   if (!pool || !session?.id || !options.runId) {
-    throw new VisualEvidenceAgentError('invalid_evidence_dispatch', 'Evidence dispatch requires a session, pool, and run.');
+    throw new ShotsAgentError('invalid_shots_dispatch', 'Shots dispatch requires a session, pool, and run.');
   }
   reportDiagnostic(options, { kind: 'worker_prepare_start' });
-  await ensureEvidenceWorker(session, { onProgress: options.onProgress, workerService: deps.workerService });
+  await ensureShotsWorker(session, { onProgress: options.onProgress, workerService: deps.workerService });
   reportDiagnostic(options, { kind: 'worker_prepare_end' });
   return dispatchClaude(config, options, deps);
 }
 
 module.exports = {
-  VisualEvidenceAgentError,
+  ShotsAgentError,
   DEFAULT_AGENT_MODEL,
   agentModel,
   SYSTEM_PROMPT,
   TASK_PROMPT,
   failedResult,
   resultThreadId,
-  ensureEvidenceWorker,
-  temporaryEvidenceWorker,
+  ensureShotsWorker,
+  temporaryShotsWorker,
   withDispatchTimeout,
   dispatch,
 };

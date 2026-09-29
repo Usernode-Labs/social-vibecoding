@@ -147,21 +147,21 @@ COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
 # #3296: the same per-invocation, worker-local adapter for an OpenRouter turn
 # that Claude Code runs. It holds that turn's key; claude gets a local token.
 COPY claude-openrouter-request.js /usr/local/bin/claude-openrouter-request.js
-COPY evidence-mcp.js /usr/local/bin/evidence-mcp.js
-COPY build-evidence-mcp.js /usr/local/bin/build-evidence-mcp.js
-COPY evidence-origin-proxy.js /usr/local/bin/evidence-origin-proxy.js
-COPY evidence-hosted-origins.js /usr/local/bin/evidence-hosted-origins.js
-COPY evidence-hosted-app-contract.js /usr/local/bin/evidence-hosted-app-contract.js
-COPY evidence-browser-observer.js /usr/local/bin/evidence-browser-observer.js
-COPY evidence-browser-bootstrap.js /usr/local/bin/evidence-browser-bootstrap.js
+COPY shots-mcp.js /usr/local/bin/shots-mcp.js
+COPY visible-changes-mcp.js /usr/local/bin/visible-changes-mcp.js
+COPY shots-origin-proxy.js /usr/local/bin/shots-origin-proxy.js
+COPY shots-hosted-origins.js /usr/local/bin/shots-hosted-origins.js
+COPY shots-hosted-app-contract.js /usr/local/bin/shots-hosted-app-contract.js
+COPY shots-browser-observer.js /usr/local/bin/shots-browser-observer.js
+COPY shots-browser-bootstrap.js /usr/local/bin/shots-browser-bootstrap.js
 COPY session-bootstrap.js /usr/local/bin/session-bootstrap.js
-COPY write-evidence-mcp-config.js /usr/local/bin/write-evidence-mcp-config.js
+COPY write-shots-mcp-config.js /usr/local/bin/write-shots-mcp-config.js
 # #2779: the coding agent's read-only Homeroom tools. The config carries no
 # secret: the bridge reads its per-turn grant from the environment.
 COPY homeroom-read-mcp.js /usr/local/bin/homeroom-read-mcp.js
 COPY homeroom-mcp.json /usr/local/share/usernode/homeroom-mcp.json
-COPY verify-evidence-browser-mcp.js /usr/local/bin/verify-evidence-browser-mcp.js
-COPY verify-evidence-browser-auth.js /usr/local/bin/verify-evidence-browser-auth.js
+COPY verify-shots-browser-mcp.js /usr/local/bin/verify-shots-browser-mcp.js
+COPY verify-shots-browser-auth.js /usr/local/bin/verify-shots-browser-auth.js
 COPY classify-codex-resume.js /usr/local/bin/classify-codex-resume.js
 COPY build-codex-model-catalog.js /usr/local/bin/build-codex-model-catalog.js
 # usernode-push is the worker's only path to writing anything back to
@@ -215,12 +215,12 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/run-cc.sh \
               /usr/local/bin/run-codex-agent.sh \
               /usr/local/bin/start-inloop-db.sh \
-              /usr/local/bin/evidence-mcp.js \
-              /usr/local/bin/build-evidence-mcp.js \
-              /usr/local/bin/evidence-origin-proxy.js \
-              /usr/local/bin/evidence-browser-observer.js \
-              /usr/local/bin/evidence-browser-bootstrap.js \
-              /usr/local/bin/write-evidence-mcp-config.js \
+              /usr/local/bin/shots-mcp.js \
+              /usr/local/bin/visible-changes-mcp.js \
+              /usr/local/bin/shots-origin-proxy.js \
+              /usr/local/bin/shots-browser-observer.js \
+              /usr/local/bin/shots-browser-bootstrap.js \
+              /usr/local/bin/write-shots-mcp-config.js \
               /usr/local/bin/homeroom-read-mcp.js \
               /usr/local/bin/usernode-push \
               /usr/local/bin/usernode-issues \
@@ -250,11 +250,11 @@ ENV SOCIAL_VIBECODING_DRIFT_CHECK=off
 RUN cd /usr/local/lib/node_modules/@playwright/mcp \
   && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,chromiumSandbox:false,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(b=>b.close()).catch(e=>{console.error(e);process.exit(1);})"
 
-# Validate the actual evidence MCP config against the installed package.
+# Validate the actual shots MCP config against the installed package.
 # This catches a missing/renamed command, rejected CLI flags, or failed
 # Chromium startup through the actual MCP tool before deploy.
-RUN node /usr/local/bin/verify-evidence-browser-mcp.js
-RUN node /usr/local/bin/verify-evidence-browser-auth.js
+RUN node /usr/local/bin/verify-shots-browser-mcp.js
+RUN node /usr/local/bin/verify-shots-browser-auth.js
 
 # The worker is "warm-by-default": MODE=warm clones the repo + restores
 # CC config + sleeps forever, and the host drives per-turn work via

@@ -1034,7 +1034,7 @@ function recoveredRunState(agentSessionId, changeId, deps = {}) {
   if (!d.isChangeBusy(changeId)) return null;
   // The change's before/after shots are not the coding agent: the
   // conversation shows it as its own capture (activeChange.previewCapture).
-  if (d.activeTurnMode(changeId) === 'evidence') return null;
+  if (d.activeTurnMode(changeId) === 'shots') return null;
   return { phase: 'cc', stopping: false, changeId };
 }
 

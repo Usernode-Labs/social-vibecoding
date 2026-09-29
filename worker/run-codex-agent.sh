@@ -17,8 +17,8 @@
 #
 # Required env: PROMPT_FILE, BRANCH, SESSION_ID, PLATFORM_URL,
 #   OPENROUTER_API_KEY, AGENT_MODEL
-# Optional: MODE (build|scout, default build; every preview (evidence) turn
-#   runs on Claude Code through run-cc.sh, so MODE=evidence is refused
+# Optional: MODE (build|scout, default build; every shots turn
+#   runs on Claude Code through run-cc.sh, so MODE=shots is refused
 #   before anything starts), AGENT_REASONING_EFFORT, AGENT_THREAD_ID,
 #   AGENT_MODEL_NAME, AGENT_MODEL_CONTEXT_WINDOW,
 #   AGENT_MODEL_SUPPORTS_REASONING, AGENT_MODEL_REASONING_EFFORTS,
@@ -52,7 +52,7 @@ die() {
 : "${BRANCH:=}"
 case "$MODE" in
   build|scout) ;;
-  evidence) die "evidence turns run on Claude Code (run-cc.sh)" ;;
+  shots) die "shots turns run on Claude Code (run-cc.sh)" ;;
   *) die "unsupported MODE: $MODE" ;;
 esac
 # Scout must NEVER receive push authority (review #4): WORKER_JWT is
@@ -208,11 +208,11 @@ TOML
 startup_timeout_sec = 30
 tool_timeout_sec = 60
 
-[mcp_servers.visual_intent]
+[mcp_servers.visible_changes]
 command = "node"
-args = ["/usr/local/bin/build-evidence-mcp.js"]
+args = ["/usr/local/bin/visible-changes-mcp.js"]
 env_vars = ["WORKER_JWT", "SESSION_ID", "PLATFORM_URL"]
-enabled_tools = ["record_visual_evidence_intent"]
+enabled_tools = ["declare_visible_changes"]
 startup_timeout_sec = 15
 tool_timeout_sec = 30
 TOML

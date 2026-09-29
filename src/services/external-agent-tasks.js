@@ -1069,9 +1069,9 @@ function buildWorkOrder({
       '   force-pushed past anybody else\'s work: if the proposal moved in the',
       '   meantime the call is refused rather than overwriting it.',
       '   The proposal keeps its manual testing routes unless you replace them.',
-      '   Pass `visualEvidence` for this revision: the changes a person will',
+      '   Pass `visibleChanges` for this revision: the changes a person will',
       '   see, for before/after shots. If available, call',
-      '   `record_visual_evidence_intent` and pass its version-1 object unchanged.',
+      '   `declare_visible_changes` and pass its version-1 object unchanged.',
       '   If that helper is not exposed in this connector session, constructing the',
       '   documented version-1 object directly is supported too.',
       '   Visible work uses impact "ui" or "motion" with one to three declared',
@@ -1084,7 +1084,7 @@ function buildWorkOrder({
       '   intent.controlledFailurePath and make the first intent.steps entry',
       '   exactly "Controlled test: deliberately block the declared API GET on',
       '   both revisions." Genuinely non-visual work uses impact "none", no',
-      '   changes, and a short rationale. Homeroom\'s preview agent takes fresh',
+      '   changes, and a short rationale. Homeroom\'s shots agent takes fresh',
       '   before/after shots of every new revision.',
       '   Your sandbox cannot reach the Homeroom website, and it does not need to:',
       '   connector traffic goes out through your chat product\'s own',
@@ -1206,7 +1206,7 @@ function buildWorkOrder({
       '   lost. Write the summary from what the person voting would NOTICE, not',
       '   from what you edited. Not every member of the group is a developer.',
       // testingPaths remain the human/manual test entry point. Reviewer-facing
-      // visual evidence carries the interaction that reaches the relevant
+      // before & after shots carries the interaction that reaches the relevant
       // state instead of pretending every state is URL-addressable.
       '   ALSO PASS `testingPaths` AND `testingSteps`. `testingPaths` is the list',
       '   of in-app routes your change is actually visible on, most important',
@@ -1216,9 +1216,9 @@ function buildWorkOrder({
       '   they are not visual proof. Point them at THE SCREEN YOU CHANGED, not the',
       '   home page, but do not add a screenshot-only route to expose interactive',
       '   state.',
-      '   ALSO PASS `visualEvidence` for this exact revision: the changes a',
+      '   ALSO PASS `visibleChanges` for this exact revision: the changes a',
       '   person will see, for before/after shots. If available, call',
-      '   `record_visual_evidence_intent` and pass its version-1 object unchanged.',
+      '   `declare_visible_changes` and pass its version-1 object unchanged.',
       '   If that helper is not exposed in this connector session, construct the',
       '   documented version-1 object directly; submit_work validates the same shape.',
       '   For a visible change use impact "ui" or "motion" and one to three',
@@ -1237,7 +1237,7 @@ function buildWorkOrder({
       '   looks like (checkpoint), the element that matters (focus), whether it',
       '   existed before (baseState), and animation "none", "steps", or',
       '   "motion" (motion gets a short before/after clip). Optional hints help',
-      '   the preview agent go straight there: setup (data to create first),',
+      '   the shots agent go straight there: setup (data to create first),',
       '   expectText (words visible once it shows), focusTarget (a locator).',
       '   For a genuinely non-visual change use impact "none", no changes, and a',
       '   short rationale. Never include secrets or personal data.',
@@ -1247,8 +1247,8 @@ function buildWorkOrder({
       '   READ THE ANSWER: `testingPaths` is what the manual test link will use and',
       '   `testingPathsRejected` names anything Homeroom could not use. Correct a',
       '   rejected route only when that manual entry point needs it. Separately,',
-      '   `visualEvidenceAccepted`, `visualEvidenceState`, and',
-      '   `visualEvidenceNextStep` report whether your declared changes were accepted',
+      '   `visibleChangesAccepted`, `shotsState`, and',
+      '   `shotsNextStep` report whether your declared changes were accepted',
       '   and what happens next. A same-commit route correction is not a second',
       '   proposal and clears no votes.',
       '   Your sandbox cannot reach the Homeroom website, and it does not need to:',
@@ -1319,7 +1319,7 @@ function buildWorkOrder({
       '   branch, so a new commit re-runs the checks by itself. Do not call',
       '   `submit_work` again and do not call `prepare_work` — the pull request',
       '   already exists, and a second submission would duplicate it.',
-      '   `get_proposal` also reports `visualEvidence`. For a user-visible',
+      '   `get_proposal` also reports `shots`. For a user-visible',
       '   change, check that your declared changes were accepted and',
       '   wait for `verified`; `shotResults` says why any change was skipped,',
       '   and a ready change\'s `note` says what its shots leave out. A skip or',
@@ -2784,7 +2784,7 @@ async function submitUpdate(deps, params, proposalId) {
     expectedHeadSha,
     ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
     ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
-    ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
+    ...(params.visibleChanges ? { visibleChanges: params.visibleChanges } : {}),
     // The agent's own name for the change. On a session it is stored and
     // names the pull request created at propose time; on a target with a PR
     // it renames it — including a fork-tracked one, which is how an agent's
@@ -2900,11 +2900,11 @@ async function submitUpdate(deps, params, proposalId) {
       ? result.testingPathsRejected.map((p) => String(p))
       : null,
     captureRerun: result.captureRerun === true,
-    visualEvidenceState: result.visualEvidenceState || null,
-    visualEvidenceAccepted: result.visualEvidenceAccepted === true,
-    visualEvidenceRejected: result.visualEvidenceRejected === true,
-    visualEvidenceRequired: result.visualEvidenceRequired === true,
-    visualEvidenceNextStep: result.visualEvidenceNextStep || 'none',
+    shotsState: result.shotsState || null,
+    visibleChangesAccepted: result.visibleChangesAccepted === true,
+    visibleChangesRejected: result.visibleChangesRejected === true,
+    shotsRequired: result.shotsRequired === true,
+    shotsNextStep: result.shotsNextStep || 'none',
     // Whether the submitted title landed — stored as the session's proposed
     // PR name, or applied as a rename of the proposal that already has one
     // (false on a repeat of the value already stored).
@@ -2954,7 +2954,7 @@ async function submitUpdate(deps, params, proposalId) {
 // deps: { pool, config, gh, githubLink, limits }
 // params: { user, clientName, clientId, taskId, prNumber, proposalId, slug,
 //           branch, forkRepo, expectedHeadSha, patch, source, agent, title,
-//           body, testing, visualEvidence, importProposal, updateProposal }
+//           body, testing, visibleChanges, importProposal, updateProposal }
 //
 // `importProposal(slug, prNumber)` is supplied by the caller and performs
 // the loopback POST to /api/apps/:slug/pr-import carrying the caller's own
@@ -3186,7 +3186,7 @@ async function submitWorkLocked(deps, params) {
       ...(params.expectedHeadSha ? { expectedHeadSha: String(params.expectedHeadSha).trim().toLowerCase() } : {}),
       ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
       ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
-      ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
+      ...(params.visibleChanges ? { visibleChanges: params.visibleChanges } : {}),
       ...(title ? { title: stripEnvelope(title) } : {}),
       ...(params.body ? { description: stripEnvelope(params.body) } : {}),
       ...(linkedIssuesFor(task).length ? { linkedIssues: linkedIssuesFor(task) } : {}),
@@ -3234,11 +3234,11 @@ async function submitWorkLocked(deps, params) {
         previewRebuilding: !!(advanced.body && advanced.body.previewRebuilding),
         testingPaths: (advanced.body && advanced.body.testingPaths) || null,
         testingPathsRejected: (advanced.body && advanced.body.testingPathsRejected) || null,
-        visualEvidenceState: (advanced.body && advanced.body.visualEvidenceState) || null,
-        visualEvidenceAccepted: !!(advanced.body && advanced.body.visualEvidenceAccepted),
-        visualEvidenceRejected: !!(advanced.body && advanced.body.visualEvidenceRejected),
-        visualEvidenceRequired: !!(advanced.body && advanced.body.visualEvidenceRequired),
-        visualEvidenceNextStep: (advanced.body && advanced.body.visualEvidenceNextStep) || 'none',
+        shotsState: (advanced.body && advanced.body.shotsState) || null,
+        visibleChangesAccepted: !!(advanced.body && advanced.body.visibleChangesAccepted),
+        visibleChangesRejected: !!(advanced.body && advanced.body.visibleChangesRejected),
+        shotsRequired: !!(advanced.body && advanced.body.shotsRequired),
+        shotsNextStep: (advanced.body && advanced.body.shotsNextStep) || 'none',
       };
     }
 
@@ -3311,11 +3311,11 @@ async function submitWorkLocked(deps, params) {
       previewRebuilding: !!(shared.body && shared.body.previewRebuilding),
       testingPaths: (shared.body && shared.body.testingPaths) || null,
       testingPathsRejected: (shared.body && shared.body.testingPathsRejected) || null,
-      visualEvidenceState: (shared.body && shared.body.visualEvidenceState) || null,
-      visualEvidenceAccepted: !!(shared.body && shared.body.visualEvidenceAccepted),
-      visualEvidenceRejected: !!(shared.body && shared.body.visualEvidenceRejected),
-      visualEvidenceRequired: !!(shared.body && shared.body.visualEvidenceRequired),
-      visualEvidenceNextStep: (shared.body && shared.body.visualEvidenceNextStep) || 'none',
+      shotsState: (shared.body && shared.body.shotsState) || null,
+      visibleChangesAccepted: !!(shared.body && shared.body.visibleChangesAccepted),
+      visibleChangesRejected: !!(shared.body && shared.body.visibleChangesRejected),
+      shotsRequired: !!(shared.body && shared.body.shotsRequired),
+      shotsNextStep: (shared.body && shared.body.shotsNextStep) || 'none',
     };
   }
 
@@ -3529,7 +3529,7 @@ async function submitWorkLocked(deps, params) {
   // it was.
   const imported = await importProposal(slug, pr.number, {
     linkedIssues: linkedIssuesFor(task),
-    ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
+    ...(params.visibleChanges ? { visibleChanges: params.visibleChanges } : {}),
   });
   if (!imported || !imported.ok) {
     const retryable = retryableImportFailure(imported);
@@ -3607,11 +3607,11 @@ async function submitWorkLocked(deps, params) {
     appSlug: slug,
     externalAgent: label,
     submittedVia: via,
-    visualEvidenceState: (imported.body && imported.body.visualEvidenceState) || null,
-    visualEvidenceAccepted: !!(imported.body && imported.body.visualEvidenceAccepted),
-    visualEvidenceRejected: !!(imported.body && imported.body.visualEvidenceRejected),
-    visualEvidenceRequired: !!(imported.body && imported.body.visualEvidenceRequired),
-    visualEvidenceNextStep: (imported.body && imported.body.visualEvidenceNextStep) || 'none',
+    shotsState: (imported.body && imported.body.shotsState) || null,
+    visibleChangesAccepted: !!(imported.body && imported.body.visibleChangesAccepted),
+    visibleChangesRejected: !!(imported.body && imported.body.visibleChangesRejected),
+    shotsRequired: !!(imported.body && imported.body.shotsRequired),
+    shotsNextStep: (imported.body && imported.body.shotsNextStep) || 'none',
     // What the proposal was linked to, and — only when that is nothing — the
     // request numbers its brief mentions. A number in free text is never
     // linked by itself (it may name a request the work only touches, or one it

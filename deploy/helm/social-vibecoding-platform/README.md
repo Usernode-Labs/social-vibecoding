@@ -207,10 +207,10 @@ Platform links, CLI authentication, and access-grant redirects continue to use
 collision before writing Kubernetes resources, and app access parsing never
 treats the platform as a generated app.
 
-Agent-authored visual evidence is active by default. The chart always injects
-`VISUAL_EVIDENCE_V2_ENABLED=true`; in an incident, set
-`platform.visualEvidenceV2Enabled: false` and sync Argo CD to stop collection,
-execution, and presentation together. This kill switch does not restore
+Before & after shots are on by default. The chart always injects
+`SHOTS_ENABLED=true`; in an incident, set `platform.shotsEnabled: false`
+(formerly `platform.visualEvidenceV2Enabled`) and sync Argo CD to stop
+collection, execution, and presentation together. This kill switch does not restore
 legacy default-route screenshots.
 
 DNS and cert-manager must support both hostname sets before rollout. Keep
