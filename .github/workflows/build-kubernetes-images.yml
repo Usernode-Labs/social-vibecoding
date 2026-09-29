@@ -198,7 +198,9 @@ jobs:
             ${{ steps.reuse.outputs.reuse_tag }}
           pull: true
           no-cache: ${{ steps.reuse.outputs.refresh == 'true' }}
-          build-args: ${{ steps.claude.outputs.build_arg }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            ${{ steps.claude.outputs.build_arg }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -265,6 +267,30 @@ jobs:
           pattern: image-digest-*
           path: ${{ runner.temp }}/image-digests
           merge-multiple: true
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Check the actual packaged image, including the platform image reused
+      # by scheduled worker refreshes, before a chart can reach Argo CD.
+      - name: Validate platform shell release
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          digest="$(cat "$RUNNER_TEMP/image-digests/platform.txt")"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/social-vibecoding-platform@$digest"
+          docker run --rm -i --network none --read-only \
+            --env NODE_ENV=production --env GIT_SHA="$GITHUB_SHA" \
+            --entrypoint node "$image" - <<'NODE'
+          const { loadShellRelease } = require('./src/services/shell-release');
+          const release = loadShellRelease('/app/public');
+          console.log(`Verified platform shell release ${release.revision}: ${release.id}`);
+          NODE
 
       - name: Prepare and validate release chart
         id: chart
