@@ -179,6 +179,14 @@ test('the run\'s screens outline each change where it differs, numbered as in th
   assert.doesNotMatch(orphan, /shots-box/);
 });
 
+test('ready shots can be taken again from the card', () => {
+  // After better steps or hints, or to outline a run from before outlines
+  // were worked out. Only failed and never-started runs offered it before.
+  const html = AppView.shotsHtml(shots(), { sessionId: 42 });
+  assert.match(html, /<button type="button" data-shots-retake="1"[^>]*onclick="AppView\.rerunShots\(42, this\)">Take the shots again<\/button>/);
+  assert.doesNotMatch(AppView.shotsHtml(shots(), {}), /data-shots-retake/, 'no proposal id, nothing to take again');
+});
+
 test('several screens step with arrows, one at a time, with no script', () => {
   const value = shots({
     claims: [{ ...shots().claims[0], viewports: ['desktop', 'phone'] }],

@@ -18324,10 +18324,16 @@ const AppView = {
     const screensBlock = screenCount > 1
       ? `<div class="shots-screens">${picks}${screenHtml.join('')}</div>`
       : screenHtml.join('');
+    // Ready shots can be taken again too: after better steps or hints, or to
+    // outline a run from before outlines were worked out. The route lets only
+    // the author or an app manager do it.
+    const retake = Number.isInteger(sessionId) && sessionId > 0
+      ? `<button type="button" data-shots-retake="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">Take the shots again</button>`
+      : '';
     return `<section data-shots="1" data-shots-state="verified" aria-label="Before &amp; after" class="space-y-3"><div class="flex items-start justify-between gap-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">Taken on the exact before and after builds of this proposal. ${lookCopy}</p>${badge}</div>${screensBlock}<ol class="shots-claims">${items.join('')}</ol>
-      <details class="text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">Shot details</summary>
+      <div class="flex flex-wrap items-start justify-between gap-3"><details class="text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">Shot details</summary>
         <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>shots <code>${esc(String(shots.planHash || '').slice(0, 12) || 'unknown')}</code></span>${shotResults.length ? '<span>taken by the shots agent</span>' : ''}</div>
-      </details></section>`;
+      </details>${retake}</div></section>`;
   },
 
   // A screen of the card above, larger, in the comparison overlay. The copy
