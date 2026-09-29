@@ -3249,9 +3249,9 @@
       "expectSelector": "#workshop-screen:not(.hidden) #workshop-list a[data-workshop-app]:has([data-workshop-working] + [data-workshop-needs])"
     },
     {
-      "name": "A saved Home tile does not invent a Workshop community membership",
+      "name": "The Workshop keeps joined community sections in audience order",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list:has([data-workshop-section=\"open\"]):not(:has([data-workshop-app=\"staging-demo-your-app\"]))",
+      "expectSelector": "#workshop-list:has([data-workshop-section=\"open\"]):not(:has([data-workshop-section=\"solo\"] ~ [data-workshop-section])):not(:has([data-workshop-section=\"invited\"] ~ [data-workshop-section=\"open\"]))",
       "expectText": "Communities"
     },
     {
