@@ -4001,6 +4001,12 @@
       "expectText": "It posts nothing and claims nothing, and builds nothing unless shadow builds are on below"
     },
     {
+      "name": "Welcome messages lets an admin choose who greets somebody let in, and what the first message says",
+      "path": "/#admin/welcome-dm",
+      "expectSelector": "#admin-welcome-dm:has(#admin-welcome-dm-members):has(#admin-welcome-dm-recent) #admin-welcome-dm-intro",
+      "expectText": "When someone is let in to the platform"
+    },
+    {
       "name": "Model costs says what one change is and that it counts the coding agent (#2592)",
       "path": "/#admin/model-costs",
       "expectSelector": "#admin-model-costs-profile",

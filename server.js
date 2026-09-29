@@ -1216,6 +1216,10 @@ async function becomeLeader() {
   // above — hourly sweep, advisory-locked — posting one card per app into
   // its chat on Fridays, and nothing at all on a quiet week.
   require('./src/services/weekly-digest').start(config);
+  // Welcome messages: somebody let in gets a group with the people an admin
+  // chose. Leader-only so one Pod sends; the queue row's lock and the
+  // message's idempotency key keep a retry from sending twice anyway.
+  require('./src/services/welcome-dm').start(config);
   // Season challenges are read from the points ledger, and until this ran
   // only two of them ever wrote to it without an admin typing the rows in.
   // Leader-only and advisory-locked on top of that, because a tick costs
