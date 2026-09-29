@@ -678,7 +678,7 @@ async function runMayorTurn(ctx, deps) {
     const noteModelFallback = async (result) => {
       if (!result || !result.fallbackServed) return;
       const requested = mayorModel;
-      const served = result.servedModel || llm.FALLBACK_TARGET_MODEL;
+      const served = result.servedModel;
       const category = (result.stopDetails && result.stopDetails.category) || null;
       await modelFallback.record(pool, {
         kind: events.EVENT_TYPES.MODEL_FALLBACK,
