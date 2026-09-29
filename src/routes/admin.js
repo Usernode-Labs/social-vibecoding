@@ -1012,6 +1012,18 @@ function adminRoutes(config) {
     }
   });
 
+  // The typeahead behind each "People in the group" row. Only accounts the
+  // PUT below would accept are suggested. Admin-only and debounced by the
+  // client, like /api/admin/support/search.
+  router.get('/api/admin/welcome-dm/people', async (req, res) => {
+    try {
+      res.json({ users: await welcomeDm.searchPeople(pool, req.query.q) });
+    } catch (err) {
+      log.error('admin', 'Welcome messages people search failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.put('/api/admin/welcome-dm', requireAdminWrite, async (req, res) => {
     try {
       const result = await welcomeDm.writeSettings(pool, req.body || {}, req.user.id);

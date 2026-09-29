@@ -309,6 +309,24 @@ test('welcome messages against the full PostgreSQL schema', { timeout: 180000 },
     await setOn(false);
   });
 
+  await t.test('the people search suggests only accounts the Save accepts, by username prefix', async () => {
+    const ok = await user('pickme');
+    await user('pickmebot', { synthetic: true });
+    await user('pickmelater', { access: false });
+    const gone = await user('pickmegone');
+    await pool.query('UPDATE users SET anonymised_at = NOW() WHERE id = $1', [gone.id]);
+    const names = (rows) => rows.map((r) => r.username);
+    assert.deepEqual(names(await welcomeDm.searchPeople(pool, 'PICKME')), [ok.username],
+      'case-insensitive, and no bot, no one without access, no deleted account');
+    assert.deepEqual(names(await welcomeDm.searchPeople(pool, '@pickme')), [ok.username], 'a leading @ is ignored');
+    assert.deepEqual(await welcomeDm.searchPeople(pool, '   '), []);
+    assert.deepEqual(await welcomeDm.searchPeople(pool, undefined), []);
+    assert.deepEqual(await welcomeDm.searchPeople(pool, '%'), [], 'LIKE wildcards are literal');
+    const saved = await welcomeDm.writeSettings(pool, { members: [ok.username] }, evan.id);
+    assert.deepEqual(saved, { ok: true }, 'what it suggests, the Save accepts');
+    await welcomeDm.writeSettings(pool, { members: ['evan_1', 'lukas_2'] }, evan.id);
+  });
+
   await t.test('the admin routes read for any admin and write for full admins only', async () => {
     const poolMod = require('../src/db/pool');
     const prior = poolMod.getPool;
@@ -338,6 +356,10 @@ test('welcome messages against the full PostgreSQL schema', { timeout: 180000 },
       assert.equal(res.status, 200);
       assert.equal(res.body.enabled, true);
       assert.deepEqual(res.body.members.map((m) => m.username), ['lukas_2']);
+
+      const people = await fetch(`${base}/api/admin/welcome-dm/people?q=luk`);
+      assert.equal(people.status, 200);
+      assert.deepEqual((await people.json()).users.map((u) => u.username), ['lukas_2']);
 
       res = await call('PUT', { title: '' });
       assert.equal(res.status, 400);
