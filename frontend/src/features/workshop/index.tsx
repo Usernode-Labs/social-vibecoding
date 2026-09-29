@@ -84,7 +84,7 @@ import {
   BallotIcon, HandRaisedIcon, LockIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
 } from '@/components/ui/icons';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
@@ -364,13 +364,14 @@ function ItemGroup({ app, items, more, section }: {
       {/* An app's name, not a label: normal case, at the row title's weight
           and a step down in size, over its items. */}
       <SectionHeader className="flex items-center gap-2 normal-case tracking-normal text-sm font-semibold text-zinc-700 dark:text-zinc-300">
-        <span
-          aria-hidden="true"
+        <AppIconLink
+          slug={app.slug}
+          name={app.name}
           className="app-icon-tile w-6 h-6 shrink-0 rounded-lg overflow-hidden flex items-center justify-center text-xs font-bold"
           data-icon={appIconKind(app as any)}
         >
           <AppIconContent app={app as any} />
-        </span>
+        </AppIconLink>
         <a href={workshopHref} onClick={go} className="min-w-0 truncate hover:underline">
           {app.name || app.slug}
         </a>
@@ -560,13 +561,16 @@ function AppRow({ row }: { row: WorkshopRow }) {
         win.App?.navigateToApp?.(row.slug, 'dev');
       }}
       leading={(
-        <div
+        <AppIconLink
+          nested
+          slug={row.slug}
+          name={row.name}
           className={'app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden '
             + 'flex items-center justify-center font-bold text-lg'}
           data-icon={appIconKind(row as any)}
         >
           <AppIconContent app={row as any} />
-        </div>
+        </AppIconLink>
       )}
       title={row.name || row.slug}
       trailing={unread > 0 ? (

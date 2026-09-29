@@ -68,7 +68,7 @@ import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronRightIcon, LockIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
-import { AppIconContent, appIconKind } from '../../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../../apps/app-card-view';
 import { swatchFor } from '../../messages/format';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 
@@ -172,9 +172,9 @@ function HeroId({ app, children }: {
 }) {
   return (
     <div className="dev-ws-hero-id">
-      <div className="app-icon-tile dev-ws-hero-tile" data-icon={appIconKind(app)} aria-hidden="true">
+      <AppIconLink slug={app.slug} name={app.name} className="app-icon-tile dev-ws-hero-tile" data-icon={appIconKind(app)}>
         <AppIconContent app={app} />
-      </div>
+      </AppIconLink>
       <div className="min-w-0">
         <h2 className="dev-ws-hero-name">{app.name}</h2>
         {children}

@@ -33,7 +33,7 @@
 import { useRef, useState } from 'react';
 
 import { ChevronRightIcon } from '@/components/ui/icons';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { agoStamp } from '../../lib/timestamp';
 
 export type NeedsFeedItem = {
@@ -110,9 +110,9 @@ function ReelCard({ item, index, total, voted, busy, onVote }: {
           href={`#app/${encodeURIComponent(item.app.slug)}/workshop`}
           onClick={() => { (window as any).AppView?._landOnHub?.(item.app.slug); }}
         >
-          <span className="app-icon-tile workshop-reel-tile" data-icon={appIconKind(tile as never)} aria-hidden="true">
+          <AppIconLink nested slug={item.app.slug} name={item.app.name} className="app-icon-tile workshop-reel-tile" data-icon={appIconKind(tile as never)}>
             <AppIconContent app={tile as never} />
-          </span>
+          </AppIconLink>
           <span className="min-w-0 truncate">{item.app.name}</span>
         </a>
         <span className="workshop-reel-pos" aria-hidden="true">{index + 1} of {total}</span>
