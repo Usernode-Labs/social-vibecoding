@@ -1441,19 +1441,19 @@
       "expectText": "GitHub repo URL"
     },
     {
-      "name": "Create-project dialog opens on who it is for, nothing chosen yet and Next dimmed beside Cancel: Just me, A group and A community, with a step count (communities, stage 3; the rework)",
+      "name": "Create-project dialog opens on who it is for, nothing chosen yet and Next dimmed beside Cancel: Just me, A private community and A public community, with a step count (communities, stage 3; the rework)",
       "path": "/#create",
       "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-audience=\"\"]:has(#create-cancel + #create-next:disabled) .create-who-pill[data-audience-pill=\"solo\"] + .create-who-pill[data-audience-pill=\"invited\"] + .create-who-pill[data-audience-pill=\"open\"]",
       "expectText": "Step 1 of 4"
     },
     {
-      "name": "A community's create dialog asks who approves changes before how to start: members vote, or people you pick (communities, stage 3)",
+      "name": "A public community's create dialog asks who approves changes before how to start: members vote, or people you pick (communities, stage 3)",
       "path": "/?shot=create-approve#create",
       "expectSelector": ".un-modal #create-card[data-step=\"approve\"][data-audience=\"open\"][data-final=\"false\"] #create-approve-block .create-approver-pill[data-approver-pill=\"anyone\"] + .create-approver-pill[data-approver-pill=\"invited\"]",
       "expectText": "Who approves changes?"
     },
     {
-      "name": "A group names its people when it is created, on a step of its own: one row per person, typed as @username or an email (communities, stage 3; the rework)",
+      "name": "A private community names its people when it is created, on a step of its own: one row per person, typed as @username or an email (communities, stage 3; the rework)",
       "path": "/?shot=create-group#create",
       "expectSelector": ".un-modal #create-card[data-audience=\"invited\"][data-step=\"invite\"] [data-create-step=\"invite\"] #create-invite-block #create-invitees",
       "expectText": "Who do you want to invite?"
@@ -2420,7 +2420,7 @@
       "name": "A project's Workshop page leads with a hero that says who it is for and how a change gets in (communities)",
       "path": "/#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"] > [data-ws-community-rule]",
-      "expectText": "Community"
+      "expectText": "Public community"
     },
     {
       "id": "workshop.grouping-ear",
@@ -3252,7 +3252,7 @@
       "name": "The Workshop keeps joined community sections in audience order",
       "path": "/?demo=1#workshop",
       "expectSelector": "#workshop-list:has([data-workshop-section=\"open\"]):not(:has([data-workshop-section=\"solo\"] ~ [data-workshop-section])):not(:has([data-workshop-section=\"invited\"] ~ [data-workshop-section=\"open\"]))",
-      "expectText": "Communities"
+      "expectText": "Public communities"
     },
     {
       "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All chip over its Current status and Needs you tabs, lit like a project page's (#3051)",

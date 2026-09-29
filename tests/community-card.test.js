@@ -33,8 +33,8 @@ test('the approval rule is one sentence per regime, read from the server', () =>
 
 test('the audience line uses the words on screen, and "Just you" counts nobody', () => {
   const { audienceLine } = loadTsx(CARD);
-  assert.equal(audienceLine({ audience: 'open', audience_label: 'Community', member_count: 12 }), 'Community · 12 members');
-  assert.equal(audienceLine({ audience: 'invited', audience_label: 'Group', member_count: 1 }), 'Group · 1 member');
+  assert.equal(audienceLine({ audience: 'open', audience_label: 'Public community', member_count: 12 }), 'Public community · 12 members');
+  assert.equal(audienceLine({ audience: 'invited', audience_label: 'Private community', member_count: 1 }), 'Private community · 1 member');
   assert.equal(audienceLine({ audience: 'solo', audience_label: 'Just you', member_count: 1 }), 'Just you');
 });
 

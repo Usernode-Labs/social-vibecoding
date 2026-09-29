@@ -107,7 +107,7 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // The whole Your apps section, heading included, so the card never sits on
   // the heading the step is about (#3240); the grid is the fallback.
   assert.deepEqual([...byId.apps.targets], ['#home-apps-section', '#app-list']);
-  assert.match(byId.apps.body, /people for a group, a lock for one that is just yours/,
+  assert.match(byId.apps.body, /people for a private community, a lock for one that is just yours/,
     'the step names the tile marks the grid draws');
   // The way into Settings is the Me tab, whose screen carries
   // #profile-row-settings (#2718).

@@ -41,8 +41,8 @@ test('a body with no audience keeps today\'s two fields, defaults and rule', () 
 test('invitees are usernames, for a group only, deduplicated and bounded', () => {
   const group = options.parseCreateOptions({ audience: 'invited', invitees: [' @Ada ', 'ada', 'grace', '', '@'] });
   assert.deepEqual(group.invitees, ['Ada', 'grace'], '@ and case do not make a second invite');
-  assert.match(options.parseCreateOptions({ audience: 'solo', invitees: ['ada'] }).error, /Only a group/);
-  assert.match(options.parseCreateOptions({ audience: 'open', invitees: ['ada'] }).error, /Only a group/);
+  assert.match(options.parseCreateOptions({ audience: 'solo', invitees: ['ada'] }).error, /Only a private community/);
+  assert.match(options.parseCreateOptions({ audience: 'open', invitees: ['ada'] }).error, /Only a private community/);
   assert.deepEqual(options.parseCreateOptions({ audience: 'open', invitees: [] }).invitees, [],
     'an empty list is no invites, not an error');
   assert.match(options.parseCreateOptions({ audience: 'invited', invitees: 'ada' }).error, /list of usernames/);
@@ -74,7 +74,7 @@ test('invite emails are addresses, for a group only, lowercased, deduplicated, a
   assert.deepEqual(group.inviteEmails, ['sam@example.com']);
   assert.deepEqual(group.invitees, ['ada']);
   assert.deepEqual(options.parseCreateOptions({ audience: 'invited' }).inviteEmails, []);
-  assert.match(options.parseCreateOptions({ audience: 'open', inviteEmails: ['a@b.co'] }).error, /Only a group/);
+  assert.match(options.parseCreateOptions({ audience: 'open', inviteEmails: ['a@b.co'] }).error, /Only a private community/);
   assert.match(options.parseCreateOptions({ audience: 'invited', inviteEmails: ['nope'] }).error, /not an email address/);
   assert.match(options.parseCreateOptions({ audience: 'invited', inviteEmails: 'a@b.co' }).error, /list of email addresses/);
   const people = Array.from({ length: 15 }, (_, i) => `u${i}`);

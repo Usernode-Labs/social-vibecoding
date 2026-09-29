@@ -187,7 +187,7 @@ export interface RepoOverride {
   yours: string;
 }
 
-const WHO_WORDS: Record<Audience, string> = { solo: 'Just me', invited: 'A group', open: 'A community' };
+const WHO_WORDS: Record<Audience, string> = { solo: 'Just me', invited: 'A private community', open: 'A public community' };
 
 function ruleWords(approvers: Approvers, approvals: number | null): string {
   if (approvers === 'anyone') return 'Members vote';
@@ -403,8 +403,8 @@ const SOON_TAG = 'shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400'
 /** The three audiences, in the order and the words the screen uses. */
 const WHO: ReadonlyArray<{ key: Audience; title: string; caption: string }> = [
   { key: 'solo', title: 'Just me', caption: 'Only you can see it. Invite people or open it up later, from its page.' },
-  { key: 'invited', title: 'A group', caption: 'Private to you and the people you invite.' },
-  { key: 'open', title: 'A community', caption: 'Anyone can find it, join and build.' },
+  { key: 'invited', title: 'A private community', caption: 'Private to you and the people you invite.' },
+  { key: 'open', title: 'A public community', caption: 'Anyone can find it, join and build.' },
 ];
 
 function WhoGlyph({ audience }: { audience: Audience }) {
@@ -1072,8 +1072,9 @@ export function CreateAppDialog() {
         </h2>
         {/*
             How far the flow has unfolded, and how far it goes for the
-            answers so far: four steps for Just me, five for a community,
-            six for a group. The index is also on the attribute for the
+            answers so far: four steps for Just me, five for a public
+            community, six for a private one. The index is also on the
+            attribute for the
             declared checks.
         */}
         <p
@@ -1116,8 +1117,9 @@ export function CreateAppDialog() {
             ))}
           </div>
           {/*
-              STEP 2, a group only: who is in it, one row per person. The rows
-              stay on screen, still editable, as the later steps open.
+              STEP 2, a private community only: who is in it, one row per
+              person. The rows stay on screen, still editable, as the later
+              steps open.
           */}
           <div data-create-step="invite" className="space-y-2">
             <p className={STEP_HEADING}>{`${numberOf('invite')}. Who do you want to invite?`}</p>
@@ -1209,10 +1211,11 @@ export function CreateAppDialog() {
             </div>
           </div>
           {/*
-              Who approves changes — a group or a community. Members vote is
-              the platform's default rule; People I pick starts with just the
-              creator as approver, and under it "at least N yes votes" is the
-              follow-up. Written into the new repository's dapp.json, so it
+              Who approves changes — a private or a public community. Members
+              vote is the platform's default rule; People I pick starts with
+              just the creator as approver, and under it "at least N yes
+              votes" is the follow-up. Written into the new repository's
+              dapp.json, so it
               can be voted on later like any other rule there. Nothing is
               picked on arrival, and neither is the follow-up once it shows.
           */}

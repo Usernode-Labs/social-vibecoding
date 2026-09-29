@@ -2,11 +2,11 @@
 // every choice. Since the rework (drawn and agreed as a clickable mock first)
 // it asks six questions, each a step of its own:
 //
-//   who      Just me, A group, A community
-//   invite   a group only: one row per person, a @username or an email
+//   who      Just me, A private community, A public community
+//   invite   a private community only: one row per person, a @username or an email
 //   kind     App; Document and Video there, dimmed, saying Soon
 //   details  the name and the optional "What is it?"
-//   approve  who approves changes — a group or a community only
+//   approve  who approves changes — a private or a public community only
 //   start    LAST: from scratch, from a template (Soon), or from a GitHub
 //            repo, whose check also reads its dapp.json
 //

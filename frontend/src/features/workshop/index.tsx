@@ -38,7 +38,8 @@
  * Home no longer takes it off this screen.
  *
  * They are grouped by AUDIENCE, in the order a person reaches for them:
- * Communities (open), Groups (invite-only, more than one person) and Just you.
+ * Public communities (open), Private communities (invite-only, more than one
+ * person) and Just you.
  * Inside each section the rows are by recency (`last_active_at`: your joining,
  * your last visit, the last thing that happened in its changes), and only the
  * three most recent show until "Show N more" is pressed. Recency rather than
@@ -124,8 +125,8 @@ type WorkshopRow = {
  * in), one person.
  */
 export const SECTIONS: ReadonlyArray<{ key: Audience; label: string; noun: string }> = [
-  { key: 'open', label: 'Communities', noun: 'Community' },
-  { key: 'invited', label: 'Groups', noun: 'Group' },
+  { key: 'open', label: 'Public communities', noun: 'Public community' },
+  { key: 'invited', label: 'Private communities', noun: 'Private community' },
   { key: 'solo', label: 'Just you', noun: 'Just you' },
 ];
 
@@ -236,10 +237,10 @@ export function groupRows(rows: WorkshopRow[]): Array<{ key: Audience; label: st
  * "3 to vote" is cut before it says anything, so each audience gets the fact
  * that says the most about it:
  *
- *   Community / Group → how many people are in it ("12 members"). The order
- *     of the section already says which moved last.
- *   Just you          → when it last moved ("2h ago"). There is one member,
- *     and it is you.
+ *   Public / Private community → how many people are in it ("12 members").
+ *     The order of the section already says which moved last.
+ *   Just you                   → when it last moved ("2h ago"). There is one
+ *     member, and it is you.
  */
 export function rowSubtitle(row: WorkshopRow, now = Date.now()): string {
   if (row.audience !== 'solo') {

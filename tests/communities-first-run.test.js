@@ -145,13 +145,13 @@ test('the card counts, records the two visits it asks for, and closes for good',
 
 // ── the tile mark (stage 4) ────────────────────────────────────────────
 
-test('a Home tile says where it lives: people for a group, a lock for just you, nothing for a community', () => {
+test('a Home tile says where it lives: people for a private community, a lock for just you, nothing for a public one', () => {
   assert.match(HOME_JS,
     /audience: app\.audience === 'invited' \|\| app\.audience === 'solo' \? app\.audience : 'open',/);
   assert.match(GRID_SRC, /\{app\.audience !== 'open' \? \(/);
   assert.match(GRID_SRC, /data-stage=\{app\.audience\}/);
   assert.match(GRID_SRC, /\? <UserGroupIcon className="w-3 h-3" aria-hidden="true" \/>\s*\n\s*: <LockIcon className="w-3 h-3" aria-hidden="true" \/>/);
-  assert.match(GRID_SRC, /title=\{app\.audience === 'invited' \? 'Group' : 'Just you'\}/);
+  assert.match(GRID_SRC, /title=\{app\.audience === 'invited' \? 'Private community' : 'Just you'\}/);
 });
 
 // ── declared checks ────────────────────────────────────────────────────

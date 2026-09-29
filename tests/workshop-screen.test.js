@@ -379,8 +379,8 @@ function listChildren(html) {
 
 test('#workshop-list holds the empty card, then one section per audience, in order', () => {
   // THE LIST IS A WRAPPER NOW (communities). Its children are the empty
-  // card and up to three SECTIONS — Communities, Groups, Just you — each a
-  // SectionHeader over a GroupedList of its own. The declared checks select
+  // card and up to three SECTIONS — Public communities, Private communities,
+  // Just you — each a SectionHeader over a GroupedList of its own. The declared checks select
   // through it with DESCENDANT combinators (`#workshop-list
   // a[data-workshop-app=…]`) and name the sections by attribute, so what this
   // pins is the tree they resolve against.
@@ -406,7 +406,7 @@ test('#workshop-list holds the empty card, then one section per audience, in ord
   assert.match(kids[0].attrs.class || '', /\bhidden\b/, 'and hidden while there are rows');
   assert.deepEqual(kids.slice(1).map((k) => [k.tag, k.attrs['data-workshop-section']]),
     [['section', 'open'], ['section', 'invited'], ['section', 'solo']],
-    'Communities, Groups, Just you — the order a person reaches for them');
+    'Public communities, Private communities, Just you — the order a person reaches for them');
 
   const out = html();
   for (const [section, slug] of [['open', 'staging-demo-your-app'], ['invited', 'staging-demo-long-name'], ['solo', 'staging-demo-emoji-icon']]) {
@@ -414,7 +414,7 @@ test('#workshop-list holds the empty card, then one section per audience, in ord
     const row = out.indexOf(`data-workshop-app="${slug}"`);
     assert.ok(at >= 0 && row > at, `${slug} is drawn inside the ${section} section`);
   }
-  for (const label of ['Communities', 'Groups', 'Just you']) {
+  for (const label of ['Public communities', 'Private communities', 'Just you']) {
     assert.match(out, new RegExp(`<span>${label}</span>`), `the ${label} header is drawn`);
   }
   assert.match(out, /data-workshop-audience="invited"/, 'each row says its audience');
@@ -489,7 +489,7 @@ test('rows go most recently active first; undated ones last, in the server\'s or
 test('groupRows: three sections in order, empty ones left out, an unknown audience read as open', () => {
   const { groupRows, SECTIONS, SECTION_LIMIT } = loadTsx('frontend/src/features/workshop/index.tsx');
   assert.deepEqual(SECTIONS.map((s) => [s.key, s.label]),
-    [['open', 'Communities'], ['invited', 'Groups'], ['solo', 'Just you']]);
+    [['open', 'Public communities'], ['invited', 'Private communities'], ['solo', 'Just you']]);
   assert.equal(SECTION_LIMIT, 3, 'three most recent, then "Show N more"');
   const out = groupRows([
     { slug: 'a', audience: 'solo', last_active_at: '2026-09-02T00:00:00Z', working: 0, needs: 0 },
@@ -499,7 +499,7 @@ test('groupRows: three sections in order, empty ones left out, an unknown audien
   ]);
   assert.deepEqual(out.map((s) => [s.key, s.rows.map((r) => r.slug)]),
     [['open', ['c', 'b']], ['solo', ['d', 'a']]],
-    'no Groups section when there are no groups, and a row is never dropped');
+    'no Private communities section when there are none, and a row is never dropped');
 });
 
 test('a section shows its three most recent and folds the rest under "Show N more"', () => {
@@ -515,7 +515,7 @@ test('a section shows its three most recent and folds the rest under "Show N mor
   assert.match(html, /<button[^>]*data-workshop-more="open"[^>]*aria-expanded="false"/,
     'the fold is a button row of the same card, never an anchor');
   assert.match(html, />Show 2 more</);
-  assert.match(html, /aria-label="5 in Communities"/, 'the header counts the whole section');
+  assert.match(html, /aria-label="5 in Public communities"/, 'the header counts the whole section');
 });
 
 test('"Show N more" reveals five at a time, then folds back (#3269)', () => {
