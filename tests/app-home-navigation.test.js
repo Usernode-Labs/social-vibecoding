@@ -175,7 +175,7 @@ test('app navigation retires the previous report target before loading, includin
   ui.Improve._prefetched = true;
   t.after(() => { global.window = previousWindow; });
   ui.Improve.setTarget({kind:'platform',slug:'homeroom',name:'Homeroom',canReport:true});
-  const menu = () => renderToHtml(createElement(ui.ImproveQuickActions));
+  const menu = () => renderToHtml(createElement(ui.AppsSwitcherSheet));
   assert.match(menu(), /improve-row-report/);
   const opening = h.App.navigateToApp('missing');
   assert.equal(ui.improveStore.get().slug, null, 'the pending route cannot report the old app');
