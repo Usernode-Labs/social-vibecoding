@@ -1361,6 +1361,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           : {}),
         demo_partner: demoPartner,
         contributor_count: contributorCount,
+        // Server-built icon URL so the client never assembles ids into
+        // paths (and staging demo rows can inject arbitrary sources) —
+        // same computation as the /api/apps list. Without it the header
+        // tile (features/header/header-title.tsx via improve-status.js)
+        // only ever sees the raw `icon_image_id` column, never a usable
+        // URL, so it falls back to the letter/emoji even when the app has
+        // a real icon image (#3348).
+        icon_url: appRow.icon_image_id ? `/app-icons/${appRow.icon_image_id}` : null,
         directory: discoveryCuration.describe(appRow),
         last_failure: undefined,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
