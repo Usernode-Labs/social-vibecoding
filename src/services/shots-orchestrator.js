@@ -11,6 +11,7 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const github = require('./github');
 const log = require('./logger');
+const shotsDiff = require('./shots-diff');
 const logRedaction = require('./log-redaction');
 const shotsAgent = require('./shots-agent');
 const shotsControl = require('./shots-control');
@@ -1097,6 +1098,18 @@ async function executeRun(config, options, injected = {}) {
         'shots_capture_incomplete',
         reasons.join(' ').slice(0, 1800) || 'The shots agent did not save a before and after shot.'
       );
+    }
+    // Where each change's before and after screens differ, so the card can
+    // outline it. A screen that cannot be compared is shown without outlines;
+    // it never holds the run back.
+    try {
+      const ready = intent.stories.filter((story) => summary.stories
+        .some((result) => result.id === story.id && result.status === 'ready'));
+      summary.verdict.screens = await (deps.shotsDiff || shotsDiff).screensFor(ready, summary.files);
+    } catch (error) {
+      log.warn('shots', 'Could not compare the before and after screens', {
+        runId: run.id, error: String(error?.message || error).slice(0, 300),
+      });
     }
     failurePhase = 'persist_shots';
     stage(failurePhase);

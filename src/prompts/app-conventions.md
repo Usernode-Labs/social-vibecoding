@@ -700,8 +700,9 @@ Per-test fields:
 
 Visual scenario metadata remains useful executable documentation and durable
 regression coverage. Before/after shots are proposal-specific: the authoring
-agent declares up to three changes, with the steps and optional hints it used
-during implementation, and a purpose-bound shots agent follows them on the
+agent declares up to three changes (changes that show on the same screen are
+one), with the steps and optional hints it used during implementation, and a
+purpose-bound shots agent follows them on the
 exact before and after builds and saves what it sees. People look at the
 shots to judge the change. No matching scenario and no submitted legacy route
 is ever permission to publish `/` as a fallback.

@@ -176,6 +176,9 @@ is no replay plan to write and nothing to verify locally.
 - Declare one to three changes, each as a person would say it, with the real
   `startPath` and `steps` that reach it and the persona and screen sizes
   it needs. Declare only a state you actually reached in the running app.
+  Changes that show on the same screen are one declared change: name
+  everything that differs there in its claim, and one screen of shots shows
+  it, outlined where it differs.
 - Add `intent.hints` when you learned something the shots agent would
   otherwise have to rediscover. `setup` names data to create through the UI
   first, `expectText` gives short text that shows the state was reached, and

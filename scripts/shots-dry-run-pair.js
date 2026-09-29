@@ -250,6 +250,9 @@ async function up(options) {
     const seeded = [];
     for (const side of ['base', 'head']) seeded.push(await fixtures.copyMemberAgentSession({ ...input(side), selfAppSlug: SLUG }));
     availableFixtures.push(seeded[0]);
+    const adminSeeded = [];
+    for (const side of ['base', 'head']) adminSeeded.push(await fixtures.copyFullAdminAgentSession({ ...input(side), selfAppSlug: SLUG }));
+    availableFixtures.push(adminSeeded[0]);
   }
 
   // Persona tokens minted with the pair's own iframe key, exchanged for a

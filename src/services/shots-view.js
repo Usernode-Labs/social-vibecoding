@@ -36,6 +36,10 @@ function cleanClaims(value) {
 
 // One result per declared change: its shots are ready, or the shots agent
 // skipped it and says why.
+// The agent sometimes writes a quotation mark already escaped, as it would
+// inside JSON (\"Continue\"); people should read the quotation mark.
+const unescapeQuotes = (text) => text.replace(/\\+(["'])/g, '$1');
+
 function cleanShotResults(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 3).filter((result) => STORY_ID_RE.test(String(result?.id || '')))
@@ -43,9 +47,37 @@ function cleanShotResults(value) {
       id: String(result.id),
       status: result.status === 'ready' ? 'ready' : 'skipped',
       reason: result.status === 'ready' || typeof result.reason !== 'string'
-        ? null : result.reason.slice(0, 1000),
+        ? null : unescapeQuotes(result.reason).slice(0, 1000),
       note: result.status !== 'ready' || typeof result.note !== 'string'
-        ? null : result.note.slice(0, 500),
+        ? null : unescapeQuotes(result.note).slice(0, 500),
+    }));
+}
+
+// The screens a verified run's card shows, and the areas that differ on
+// each: integers and story ids from this run's own declaration, nothing else.
+function cleanScreens(screens, claims) {
+  const ids = new Set((claims || []).map((claim) => claim.id));
+  const int = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 20000;
+  const box = (value, size) => (Array.isArray(value) && value.length === size && value.every(int)
+    ? value.slice() : null);
+  return (Array.isArray(screens) ? screens : []).slice(0, 6)
+    .filter((screen) => screen && typeof screen.viewport === 'string' && ids.has(screen.shot))
+    .map((screen) => ({
+      viewport: screen.viewport.slice(0, 32),
+      shot: screen.shot,
+      stories: (Array.isArray(screen.stories) ? screen.stories : []).filter((id) => ids.has(id)).slice(0, 3),
+      width: int(screen.width) ? screen.width : null,
+      heightBefore: int(screen.heightBefore) ? screen.heightBefore : null,
+      heightAfter: int(screen.heightAfter) ? screen.heightAfter : null,
+      regions: (Array.isArray(screen.regions) ? screen.regions : []).slice(0, 12)
+        .map((region) => ({
+          story: region && ids.has(region.story) ? region.story : null,
+          b: box(region?.b, 4),
+          a: box(region?.a, 4),
+          bMark: box(region?.bMark, 3),
+          aMark: box(region?.aMark, 3),
+        }))
+        .filter((region) => region.b || region.a),
     }));
 }
 
@@ -125,6 +157,7 @@ function fromSnapshot(session, currentHead) {
     repairAvailable: detail.repairAvailable === true,
     planHash: typeof detail.planHash === 'string' ? detail.planHash : null,
     shotResults: [],
+    screens: [],
     progress: null,
     verifiedReason: null,
     overriddenBy: Number.isInteger(detail.overriddenBy) ? detail.overriddenBy : null,
@@ -161,6 +194,7 @@ function serialize(run, session, slug, currentHead) {
       && !(run.automaticRetryPending === true && !['merged', 'archived'].includes(session?.status)),
     planHash: run.planHash || null,
     shotResults: matchesCurrent && run.state === 'verified' ? cleanShotResults(run.shotResults) : [],
+    screens: matchesCurrent && run.state === 'verified' ? cleanScreens(run.screens, cleanClaims(run.claims)) : [],
     progress: matchesCurrent && PUBLIC_STATES.has(run.state) ? (run.progress || null) : null,
     verifiedReason: null,
     overriddenBy: run.overriddenBy || null,
@@ -224,6 +258,7 @@ module.exports = {
   PUBLIC_STATES,
   cleanClaims,
   cleanShotResults,
+  cleanScreens,
   cleanArtifacts,
   artifactUrl,
   notStartedReason,

@@ -2264,7 +2264,7 @@ async function runMcp(args, launcherPath) {
   });
 
   server.registerTool('social_vibecoding.proposal_submit_build', {
-    description: 'Submit an implemented local build to the native proposal. First run proposal_push_commit and use its returned bot-owned head SHA. Declare visible_changes while implementation context is fresh: describe the real UI flow for ui/motion changes, or explicitly use impact none with a rationale. Homeroom verifies the pinned head, deploys staging, runs checks, and its shots agent follows each declared change on the exact base and head builds to take before/after shots. Poll proposal_status afterward; for an already-promoted revision, poll revisionState instead of the lifecycle state.',
+    description: 'Submit an implemented local build to the native proposal. First run proposal_push_commit and use its returned bot-owned head SHA. Declare visible_changes while implementation context is fresh: describe the real UI flow for ui/motion changes (changes that show on the same screen are one declared change), or explicitly use impact none with a rationale. Homeroom verifies the pinned head, deploys staging, runs checks, and its shots agent follows each declared change on the exact base and head builds to take before/after shots. Poll proposal_status afterward; for an already-promoted revision, poll revisionState instead of the lifecycle state.',
     inputSchema: {
       session_id: sessionIdSchema,
       head_sha: z.string().regex(/^[0-9a-fA-F]{40}$/),

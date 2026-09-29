@@ -441,6 +441,12 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
           })));
         fixtureProfiles.push(shotsFixtures.PROFILE);
         availableFixtures.push(seeded[0]);
+        const adminSeeded = await allSettledValues(['base', 'head'].map((side) =>
+          shotsFixtures.copyFullAdminAgentSession({
+            ...fixtureInputs[side], selfAppSlug: config.selfAppSlug,
+          })));
+        fixtureProfiles.push(shotsFixtures.FULL_ADMIN_SESSION_PROFILE);
+        availableFixtures.push(adminSeeded[0]);
       }
       fixtureProfile = fixtureProfiles.join('+');
     }

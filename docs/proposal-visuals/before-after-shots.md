@@ -20,7 +20,7 @@ program failed replay on a locator, an assertion, or a fingerprint.
 
 | Word | Meaning | Stored as |
 | --- | --- | --- |
-| declared change | One visible change the author declares (up to three per proposal) | `intent.stories[]` |
+| declared change | One visible change the author declares (up to three per proposal); changes that show on the same screen are one | `intent.stories[]` |
 | before / after | The build without and with the proposal | `base` / `head` |
 | shot | A PNG of the screen (`kind: "screen"`) or of one element (`kind: "element"`) | variant `context` / `focus` |
 | clip | A WebM of one side, for a `motion` change | variant `animation`, side `base`/`head` |
@@ -203,16 +203,33 @@ can appear in them.
 
 ## What people see
 
-The proposal's card leads with each declared change:
+The proposal's card shows one screen per screen size that flips between
+before and after: click it, or focus it and press Space. Each declared change
+on it is outlined and numbered, red where it was and green where it is now; a
+dashed line marks where something appears or goes, and a difference no
+declared change accounts for is outlined dashed and grey. Changes whose before
+screens are the same image share one screen. With more than one screen, one
+shows at a time and the ‹ › arrows under it step through them (radios, so the
+keyboard's arrow keys step them too). "Open full screen" shows the screen
+larger, flipping the same way. Under the screens, the declared changes are
+listed with those numbers:
 
-- **Ready.** Before and after side by side for each screen. The element shot
-  leads when there is one and is big enough to read (at least 120×40 px on
-  both sides; a corner badge's crop is not), and "Open full screen" shows
-  the screen shots.
-  Motion changes also show a before and an after clip player. When the agent
+- **Ready.** The change, its screen sizes and persona, and its steps. Motion
+  changes also show a before and an after clip player. When the agent
   noted that its shots leave part of the claim out, the note is shown as
   "Not in these shots: …", so a partial pair is never mistaken for the
   whole change.
+
+The outlines are worked out once, when the run saves its shots
+(`src/services/shots-diff.js`), and stored in the verdict as `screens`. The
+two screens are compared row by row first, the way a text diff compares
+lines, so content that only moved (a sheet that grew upward) lines up instead
+of counting as changed; rows that do not line up are compared pixel by pixel
+for how wide the change is. Each area is tied to the declared change whose
+element shot sits inside it, and widened to that element. A run from before
+this has no `screens`: its card flips a screen per change and size, with
+nothing outlined. The Workshop feed's picture still leads with the element
+shot when it is big enough to read (at least 120×40 px on both sides).
 - **Skipped.** The change, a "Skipped" badge and the reason.
 - While running, the card shows its state ("Building before and after",
   "Taking the shots", "Saving the shots") and a Stop action. A failed run
@@ -258,6 +275,7 @@ browser). Each persona's browser saves files under
 | Egress proxy (origins, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
 | Local dry run: the pair, then the shots | `scripts/shots-dry-run-pair.js`, `scripts/shots-dry-run.js` |
 | States, storage, public summary | `src/services/shots-state.js`, `src/services/shots-view.js` |
+| Where before and after differ, per screen (`screensFor`) | `src/services/shots-diff.js` |
 | Public routes (summary, files, diagnostics, take again, stop, waive) | `src/routes/shots.js` |
 | Tables, and the rename from `visual_evidence_*` | `src/db/schema.sql` (the "Renamed from visual_evidence_*" block) |
 | Proposal card | `public/js/app-view.js` (`shotsHtml`) |
