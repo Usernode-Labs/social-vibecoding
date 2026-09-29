@@ -592,6 +592,63 @@ const AppView = {
       }
     } catch {}
   },
+  // Sorting belongs to the In review column, not the board's shared
+  // filters or activity feed. Remember it per app for this browser tab,
+  // with an in-memory fallback when sessionStorage is unavailable.
+  REVIEW_SORT_KEY: 'devReviewSort',
+  _reviewSortByApp: new Map(),
+  _reviewSort() {
+    const slug = AppView.appData?.slug || App.currentApp || '';
+    if (!AppView._reviewSortByApp.has(slug)) {
+      let stored;
+      try { stored = window.sessionStorage.getItem(`${AppView.REVIEW_SORT_KEY}:${slug}`); } catch {}
+      AppView._reviewSortByApp.set(slug, stored === 'priority' ? 'priority' : 'newest');
+    }
+    return AppView._reviewSortByApp.get(slug);
+  },
+  _setReviewSort(mode) {
+    if (!['newest', 'priority'].includes(mode) || mode === AppView._reviewSort()) return;
+    const slug = AppView.appData?.slug || App.currentApp || '';
+    AppView._reviewSortByApp.set(slug, mode);
+    try {
+      const key = `${AppView.REVIEW_SORT_KEY}:${slug}`;
+      if (mode === 'newest') window.sessionStorage.removeItem(key);
+      else window.sessionStorage.setItem(key, mode);
+    } catch {}
+    // The same column also lives inside Workshop's By stage view, where
+    // the standalone board host does not exist. Repaint its active owner.
+    AppView._repaintBoardSurface();
+  },
+  _reviewVotesNeeded(entry) {
+    const item = entry.item || {};
+    const raw = entry.kind === 'gov' && item.approvals_required != null
+      ? item.approvals_required : item.votes_required;
+    const threshold = Number(raw);
+    const fallback = entry.kind === 'proposal' ? Number(AppView._proposalsCtx?.majority) : NaN;
+    const required = Number.isFinite(threshold) && threshold > 0 ? threshold : fallback;
+    if (!Number.isFinite(required) || required <= 0) return Infinity;
+    const tally = Number(item.qualified_yes_count != null ? item.qualified_yes_count
+      : entry.kind === 'gov' ? item.up_count : item.yes_count);
+    return Math.max(0, required - (Number.isFinite(tally) ? tally : 0));
+  },
+  _compareReviewProposals(a, b, mode) {
+    if (mode === 'priority') {
+      // Only the vote on the CURRENT revision counts. A prior revision's
+      // vote leaves this proposal in the unvoted group, as its card does.
+      const voted = Number(!!a.item?.my_vote) - Number(!!b.item?.my_vote);
+      if (voted) return voted;
+      const left = AppView._reviewVotesNeeded(a), right = AppView._reviewVotesNeeded(b);
+      // Positive shortfalls first, already enough votes next, unknown last.
+      const rank = n => Number.isFinite(n) ? (n > 0 ? 0 : 1) : 2;
+      const group = rank(left) - rank(right);
+      if (group) return group;
+      if (left !== right) return left < right ? -1 : 1;
+    }
+    const stamp = row => Date.parse(row.item?.promoted_at || '')
+      || Date.parse(row.item?.created_at || '') || 0;
+    return stamp(b) - stamp(a) || Number(b.item?.id || 0) - Number(a.item?.id || 0)
+      || String(a.kind).localeCompare(String(b.kind));
+  },
   // Was this click (or key) inside a fold wrapper — a Workshop row, a Board
   // row, or the open card either folds to (card/fold.tsx)? The fold owns
   // those; the delegated handlers above stand aside for them.
@@ -10205,14 +10262,11 @@ const AppView = {
     });
     const meta = AppView._ghIssuesMeta || {};
 
-    // #613: apply the manual drag order overlay to the Issues + In review
-    // columns BEFORE filtering, so hiding cards via the filter bar never
-    // disturbs the saved order. Empty order → no change.
+    // Preserve the historical manual order for Issues. In review now has
+    // an explicit sorting control, which supersedes its old drag order.
     const order = AppView._boardOrder || { issues: [], review: [] };
     buckets.issues = AppView._applyManualOrder(
       buckets.issues, order.issues, (c) => AppView._cardOrderKey('issues', c));
-    buckets.inReview = AppView._applyManualOrder(
-      buckets.inReview, order.review, (c) => AppView._cardOrderKey('review', c));
 
     // #482: apply the filter bar AFTER bucketing, per column, so every
     // card's lifecycle placement stays identical to the unfiltered board —
@@ -10233,9 +10287,12 @@ const AppView = {
         ? AppView._devCardMatches('issue', e.item, f)
         : AppView._devCardMatches('session', e.item, f)))
       : buckets.inProgress;
-    const kInReview = filtering
+    const reviewSort = AppView._reviewSort();
+    const reviewMatches = filtering
       ? buckets.inReview.filter((x) => AppView._devCardMatches(x.kind, x.item, f))
       : buckets.inReview;
+    // Copy so the shared bucketer/feed/category order stays independent.
+    const kInReview = reviewMatches.slice().sort((a, b) => AppView._compareReviewProposals(a, b, reviewSort));
     // Done AGES OUT: unfiltered, the column shows what landed in the last
     // seven days (never fewer than the newest three, so a quiet fortnight
     // does not empty it) and a "Show all N" footer for the rest. A settled
@@ -10327,6 +10384,7 @@ const AppView = {
       },
       {
         key: 'inreview', title: 'In review', count: kInReview.length,
+        reviewSort,
         rows: cardRows(
           kInReview,
           (x) => (x.kind === 'proposal'

@@ -41,7 +41,12 @@
 //
 // Legacy development/cache-format identity only. Hosted /sw.js is generated
 // from the final asset manifest: UI changes never require editing this value.
-const SW_VERSION = 'v36';
+//
+// v37 (#3331): replace the In review sorting pill with the compact header
+// button. Bumped past v36 so an unbuilt development checkout also retires the
+// pre-compact-sorting shell cache, matching the fresh-browser renderer
+// (tests/pwa-offline-cache.test.js).
+const SW_VERSION = 'v37';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
