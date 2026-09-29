@@ -17,6 +17,8 @@ WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
 COPY src/services/countries.json ./src/services/countries.json
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
 RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw \
     node frontend/scripts/build-shell.mjs
 
@@ -31,6 +33,8 @@ COPY scripts/build-tailwind.js ./scripts/build-tailwind.js
 COPY public ./public
 RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw \
     node scripts/build-tailwind.js
+COPY scripts/build-shell-release.js ./scripts/build-shell-release.js
+RUN node scripts/build-shell-release.js
 
 FROM node:22-alpine
 
@@ -77,5 +81,7 @@ USER 1000:1000
 # dependencies — `npm ci` treats NODE_ENV=production as `--omit=dev`, which
 # would break the shell and Tailwind builds.
 ENV NODE_ENV=production
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
 EXPOSE 3000
 CMD ["node", "server.js"]

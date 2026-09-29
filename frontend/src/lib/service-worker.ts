@@ -102,12 +102,22 @@ export function registerServiceWorker(): void {
   if (!container) return;
   try {
     listenForApiUpdates(container);
+    // Tell the shared worker which document THIS tab runs. Cleanup may then
+    // retain that version's assets without guessing from another tab's load.
+    const reportBuild = () => {
+      try {
+        const build = document.querySelector('meta[name="platform-build"]')?.getAttribute('content');
+        if (build) container.controller?.postMessage({ type: 'shell-client-build', build });
+      } catch { /* optional bookkeeping must never block hydration */ }
+    };
+    container.addEventListener('controllerchange', reportBuild);
+    reportBuild();
     // The side panel's document (`?panel=1`, framed beside a running app)
     // listens — the worker answers ITS reads too — but does not register:
     // the top window already did, at the same scope, and a second
     // registration from a frame is one more update check for nothing.
     if (isEmbeddedPanel()) return;
-    container.register('/sw.js').catch(() => {
+    container.register('/sw.js', { updateViaCache: 'none' }).catch(() => {
       // Unsupported / blocked contexts (e.g. some WebViews) just keep
       // today's online-only behaviour.
     });
