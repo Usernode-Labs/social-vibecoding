@@ -101,6 +101,36 @@ test('state 6 — checks pending is neutral + spinner (not amber)', () => {
   assert.equal(life.spinner, true);
 });
 
+test('state 6 — checks pending with a run 12 minutes old shows elapsed minutes (#3232)', () => {
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'pending',
+    checks_checked_at: new Date(Date.now() - 12 * 60000).toISOString(),
+  });
+  assert.equal(life.key, 'checks_running');
+  assert.equal(life.label, 'Checks running · 12 min');
+  assert.equal(life.tone, 'neutral');
+  assert.equal(life.spinner, true);
+});
+
+test('state 6 — checks pending under a minute or with no/unparseable stamp keeps the old wording', () => {
+  const underMinute = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'pending',
+    checks_checked_at: new Date(Date.now() - 30 * 1000).toISOString(),
+  });
+  assert.equal(underMinute.label, 'Checks running…');
+  const missing = MergeStatus.lifecycle({ status: 'promoted', check_state: 'pending' });
+  assert.equal(missing.label, 'Checks running…');
+  const unparseable = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'pending', checks_checked_at: 'not-a-date',
+  });
+  assert.equal(unparseable.label, 'Checks running…');
+  const future = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'pending',
+    checks_checked_at: new Date(Date.now() + 5 * 60000).toISOString(),
+  });
+  assert.equal(future.label, 'Checks running…');
+});
+
 test('state 6b — checks skipped (#461) is neutral, terminal (no spinner) and carries the reason', () => {
   const life = MergeStatus.lifecycle({
     status: 'promoted', check_state: 'skipped',

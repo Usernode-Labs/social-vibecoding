@@ -102,6 +102,19 @@
     return 'measured ' + Math.round(secs / 3600) + ' hours ago';
   }
 
+  // #3232: whole minutes the current checks run has been going, from the
+  // checks-started stamp the session payload already carries. Null when
+  // missing, unparseable, or in the future (clock skew reads as "just
+  // started", which is the honest reading of a skewed clock).
+  function runMinutesOf(p) {
+    if (!p || !p.checks_checked_at) return null;
+    var t = Date.parse(p.checks_checked_at);
+    if (!Number.isFinite(t)) return null;
+    var ms = Date.now() - t;
+    if (ms < 0) return null;
+    return Math.floor(ms / 60000);
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -315,7 +328,9 @@
       });
     }
     if (check === 'pending') {
-      return descriptor('checks_running', 'Checks running…', 'neutral', true, {
+      var mins = runMinutesOf(p);
+      var label = 'Checks running' + (mins >= 1 ? ' \u00b7 ' + mins + ' min' : '…');
+      return descriptor('checks_running', label, 'neutral', true, {
         votes: votes,
         title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
       });
