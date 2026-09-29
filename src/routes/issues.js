@@ -682,6 +682,13 @@ function composeInProgress(sessions, claims, viewerId) {
   };
 }
 
+// `?kinds=governance` on GET /api/apps/:slug/issues: only the governance
+// kinds (services/governance-kinds.js), or null for every kind. The only
+// named set; anything else is the whole list, as before.
+function listedKinds(raw) {
+  return raw === 'governance' ? [...require('../services/governance-kinds').GOVERNANCE_KINDS] : null;
+}
+
 function issueRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -719,8 +726,14 @@ function issueRoutes(config) {
          FROM issues i
          LEFT JOIN users u ON i.created_by = u.id
          WHERE i.app_id = $1 AND i.status = 'open'
+           AND ($3::text[] IS NULL OR i.kind = ANY($3::text[]))
          ORDER BY (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up') DESC, i.created_at DESC`,
-        [appId, req.user.id]
+        // `?kinds=governance`: only the governance kinds. The Workshop draws
+        // no others and discarded them on arrival — on the platform app that
+        // was all 325 open rows (request twins), ~540 KB, and the five
+        // subqueries each of them costs. Without it, every open row, as
+        // before.
+        [appId, req.user.id, listedKinds(req.query.kinds)]
       );
 
       const { active: activeUsers, majority } = await getActiveUserStats(pool, appId);

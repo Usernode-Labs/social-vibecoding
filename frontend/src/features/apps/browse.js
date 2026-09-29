@@ -1208,7 +1208,9 @@ const Browse = {
     if (Browse._detailFetching === slug) return;
     Browse._detailFetching = slug;
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}`);
+      // `manifest=summary`: the row joins the list's rows, which carry the
+      // same summary, and shares the service worker's copy with AppView.
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}?manifest=summary`);
       if (!res.ok) {
         const failure = await res.json().catch(() => ({}));
         Browse._detailBlocked = failure.code === 'app_blocked';

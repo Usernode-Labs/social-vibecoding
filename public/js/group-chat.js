@@ -3971,15 +3971,21 @@ const MentionAutocomplete = {
   },
 
   // Wire (or re-wire) the controller onto a freshly-rendered composer.
-  // Idempotent per element; called on every group-chat tab mount.
+  // Idempotent per element; called on every group-chat tab mount. The
+  // candidates are warmed when the box is focused, before the first
+  // keystroke, rather than on every mount (see RefAutocomplete.attach).
   attach(input, slug) {
     if (!input) return;
     MentionAutocomplete._input = input;
     MentionAutocomplete._slug = slug;
-    MentionAutocomplete._loadCandidates(slug);
+    if (document.activeElement === input) MentionAutocomplete._loadCandidates(slug);
 
     if (input._gcMentionBound) return;
     input._gcMentionBound = true;
+
+    input.addEventListener('focus', () => {
+      if (MentionAutocomplete._input === input) MentionAutocomplete._loadCandidates(MentionAutocomplete._slug);
+    });
 
     input.addEventListener('compositionstart', () => { MentionAutocomplete._composing = true; });
     input.addEventListener('compositionend', () => {
@@ -4281,16 +4287,23 @@ const RefAutocomplete = {
   _triggerRe: /(^|[^\w&])(pr ?#|#)(\d{0,7}|[A-Za-z][A-Za-z0-9-]{0,39})$/i,
 
   // Wire (or re-wire) the controller onto a freshly-rendered composer.
-  // Idempotent per element; called on every group-chat tab mount. Kicks
-  // off the candidate load so the list is warm by the first keystroke.
+  // Idempotent per element; called on every group-chat tab mount. Warms the
+  // candidates when the box is focused — before the first keystroke, as it
+  // always was — rather than on every mount: the list is the app's open
+  // proposals and GitHub issues, a read no screen that merely SHOWS a chat
+  // needed (on the platform app, two of the board's largest).
   attach(input, slug) {
     if (!input) return;
     RefAutocomplete._input = input;
     RefAutocomplete._slug = slug;
-    RefAutocomplete._loadCandidates(slug);
+    if (document.activeElement === input) RefAutocomplete._loadCandidates(slug);
 
     if (input._gcRefBound) return;
     input._gcRefBound = true;
+
+    input.addEventListener('focus', () => {
+      if (RefAutocomplete._input === input) RefAutocomplete._loadCandidates(RefAutocomplete._slug);
+    });
 
     input.addEventListener('compositionstart', () => { RefAutocomplete._composing = true; });
     input.addEventListener('compositionend', () => {
@@ -4319,7 +4332,9 @@ const RefAutocomplete = {
     if (cached && (Date.now() - cached.fetchedAt) < RefAutocomplete.CACHE_TTL_MS) return;
     try {
       const [prRes, issueRes] = await Promise.all([
-        fetch(`/api/apps/${slug}/promoted`),
+        // `results=failing`: numbers and titles are all this reads; the list
+        // form is the Workshop's own spelling (AppView._listQS), so one copy.
+        fetch(`/api/apps/${slug}/promoted?results=failing`),
         fetch(`/api/apps/${slug}/github-issues`),
       ]);
       const prData = prRes.ok ? await prRes.json() : {};

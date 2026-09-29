@@ -207,7 +207,7 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
       ) : null}
       {v.foldPasses ? (
         <details className="mt-1">
-          <summary className="cursor-pointer opacity-80">{`Show ${v.passes.length} passing checks`}</summary>
+          <summary className="cursor-pointer opacity-80">{`Show ${v.passCount ?? v.passes.length} passing checks`}</summary>
           {passList}
         </details>
       ) : passList}
@@ -406,6 +406,11 @@ function HelpLinks({ question }: { question: boolean }): ReactNode {
  * app-view.js (`_topicLedgerRows`) from the same reason, checks, roster and
  * note builders the "Where it stands" ledger drew from — this only draws.
  */
+/** How many checks passed on a ledger row — counted, even while `passes` is not yet listed. */
+function passingCount(r: LedgerRow): number {
+  return r.passCount ?? (r.passes ? r.passes.length : 0);
+}
+
 function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode {
   return (
     <>
@@ -452,14 +457,14 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
           {r.fails.map((c) => <CheckRowView key={c.key} r={c} />)}
         </ul>
       ) : null}
-      {(r.actions && r.actions.length) || (r.passes && r.passes.length) ? (
+      {(r.actions && r.actions.length) || passingCount(r) ? (
         <span className="dev-ledger-ops">
           {(r.actions || []).map((a) => <ActionButton key={a.key} a={a} />)}
-          {r.passes && r.passes.length ? (
+          {passingCount(r) ? (
             <details className="dev-ledger-passes">
-              <summary className="gc-vote-btn dev-ledger-passes-btn">{`${r.passes.length} passing`}</summary>
+              <summary className="gc-vote-btn dev-ledger-passes-btn">{`${passingCount(r)} passing`}</summary>
               <ul className="dev-ledger-fails">
-                {r.passes.map((c) => <CheckRowView key={c.key} r={c} />)}
+                {(r.passes || []).map((c) => <CheckRowView key={c.key} r={c} />)}
               </ul>
             </details>
           ) : null}

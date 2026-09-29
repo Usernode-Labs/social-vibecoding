@@ -39,6 +39,29 @@ function stripAppSecrets(row) {
   return out;
 }
 
+// The two blocks of `manifest_snapshot` that only the server reads, and the
+// only two that grow without bound: `tests` (every declared check, with its
+// path and expected text — the platform's own dapp.json declares 800+, about
+// 240 KB of JSON) and `platform_env` (the self-hosted app's environment
+// declarations, ~31 KB). Neither is secret; both are simply never read by a
+// client, whose one use of the snapshot is its `description` (the launcher
+// card's sentence, the About sheet's tagline). GET /api/apps carried both for
+// every app on every load and every live refresh — most of its 300-700 KB.
+const MANIFEST_SERVER_ONLY_KEYS = ['tests', 'platform_env'];
+
+// A shallow copy of a manifest snapshot without MANIFEST_SERVER_ONLY_KEYS.
+// Everything else is kept as it is; a snapshot with neither key, a null, or
+// anything that is not a plain object comes back unchanged.
+function summarizeManifestSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return snapshot;
+  if (!MANIFEST_SERVER_ONLY_KEYS.some((key) => Object.prototype.hasOwnProperty.call(snapshot, key))) {
+    return snapshot;
+  }
+  const out = { ...snapshot };
+  for (const key of MANIFEST_SERVER_ONLY_KEYS) delete out[key];
+  return out;
+}
+
 // Every current `apps` column EXCEPT the SECRET_APP_COLUMNS above —
 // the explicit allowlist client-facing SELECTs should use instead of
 // `SELECT *` / `SELECT a.*`, so secrets never leave Postgres for those
@@ -386,6 +409,8 @@ module.exports = {
   SECRET_APP_COLUMNS,
   NON_SECRET_APP_COLUMNS,
   stripAppSecrets,
+  MANIFEST_SERVER_ONLY_KEYS,
+  summarizeManifestSnapshot,
   nonSecretAppColumnList,
   isCollaborator,
   checkAppAccess,

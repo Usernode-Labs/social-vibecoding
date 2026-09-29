@@ -737,7 +737,7 @@ test('open mints the token alongside the detail fetch instead of after it', asyn
   await flush();
   assert.equal(fetches.length, 2, 'both requests are in flight before either resolves');
   assert.ok(fetches.some((u) => u.startsWith('/api/iframe-token')));
-  assert.ok(fetches.some((u) => u === '/api/apps/notes'));
+  assert.ok(fetches.some((u) => u === '/api/apps/notes?manifest=summary'));
 
   detailResolve();
   await p;
@@ -779,7 +779,7 @@ test('an older app detail response cannot replace the app opened after it', asyn
         const slug = new URL(url, 'https://platform.example').searchParams.get('app');
         return Promise.resolve({ ok: true, json: async () => ({ token: `tok-${slug}` }) });
       }
-      const slug = String(url).split('/').pop();
+      const slug = String(url).split('?')[0].split('/').pop();
       return new Promise((resolve) => {
         releases[slug] = () => resolve({
           ok: true,
