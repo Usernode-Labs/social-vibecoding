@@ -15,6 +15,14 @@ Helm chart containing all three image digests. `main` produces the stable
 workflow; generated child apps use kpack and Paketo from exact Git revisions.
 Child-app Dockerfiles are not executed by kpack.
 
+The platform image build receives the exact `GIT_SHA` that the chart supplies
+at runtime. Before packaging a chart, CI runs the immutable platform image's
+shell-release validator with that revision and `NODE_ENV=production`, without
+network access or application startup. Missing or inconsistent generated shell
+artifacts block the release, including scheduled releases that reuse an image.
+An image built with the default `dev` stamp cannot pass this check; rebuild it
+with the intended commit SHA rather than changing the runtime revision.
+
 The daily dependency check is intentionally cheaper than a source release. It
 looks up the exact worker input key for the current npm version and exits after
 the planning job when that artifact already exists: no image jobs run and no
