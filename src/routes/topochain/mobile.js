@@ -299,6 +299,7 @@ async function fetchChallengeProgress(pool, userId, eventId) {
 async function fetchBreakdownActivities(pool, userId, eventId) {
   const { rows } = await pool.query(
     `SELECT ua.id, ua.challenge_id, ua.activity_type, ua.points, ua.description, ua.activity_at,
+            ua.metadata->'grade'->>'reason' AS grade_reason,
             ct.kind AS activity_kind
        FROM user_activities ua
        JOIN challenges c ON c.id = ua.challenge_id
@@ -314,6 +315,7 @@ async function fetchBreakdownActivities(pool, userId, eventId) {
     activity_kind: r.activity_kind,
     points: num(r.points) ?? 0,
     description: r.description,
+    grade_reason: r.grade_reason || null,
     activity_at: iso(r.activity_at),
   }));
 }
@@ -667,7 +669,7 @@ async function fetchChallengesForSeason(pool, seasonId) {
 // whole list, grouped in JS per challenge_id by the route below.
 async function fetchOwnChallengeActivities(pool, userId, challengeIds) {
   const { rows } = await pool.query(
-    `SELECT challenge_id, points, description, activity_at
+    `SELECT challenge_id, points, description, activity_at, metadata->'grade'->>'reason' AS grade_reason
        FROM user_activities
       WHERE user_id = $1 AND challenge_id = ANY($2::bigint[])
       ORDER BY activity_at DESC`,
@@ -1317,6 +1319,7 @@ function topochainMobileRoutes(config) {
         return buildMobileChallengeItem(r, {
           activities: list.map((a) => ({
             points: num(a.points) ?? 0, description: a.description, activity_at: iso(a.activity_at),
+            grade_reason: a.grade_reason,
           })),
           // activities_total: this endpoint's own aggregate, summed from
           // the SAME rows `activities` carries (judgment call: mirrors
