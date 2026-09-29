@@ -2049,6 +2049,7 @@
       "clientReferences": [
         "frontend/src/features/header/ai-credit.js",
         "frontend/src/features/improve/improve-controller.js",
+        "frontend/src/features/profile/my-proposals.tsx",
         "frontend/src/features/profile/profile.js",
         "frontend/src/features/settings/sections/blocked-apps.tsx",
         "frontend/src/features/settings/sections/email.tsx",

@@ -34,6 +34,10 @@ COPY worker/session-bootstrap.js /worker/session-bootstrap.js
 COPY worker/evidence-hosted-origins.js /worker/evidence-hosted-origins.js
 COPY worker/evidence-hosted-app-contract.js /worker/evidence-hosted-app-contract.js
 COPY src/services/visual-evidence-plan.js /app/visual-evidence-plan.js
+COPY scripts/serve-platform-assets.js /scripts/serve-platform-assets.js
+COPY public/usernode-bridge /public/usernode-bridge
+COPY public/usernode-native /public/usernode-native
+COPY public/usernode-tailwind /public/usernode-tailwind
 
 # This image also serves the short-lived hosted-app evidence fixture through
 # the ordinary Kubernetes app runtime. That runtime enforces runAsNonRoot
