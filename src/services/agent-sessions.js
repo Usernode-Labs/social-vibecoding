@@ -24,7 +24,7 @@ const appAccess = require('./app-access');
 const TITLE_MAX = 256;
 const LIST_LIMIT_MAX = 50;
 const MESSAGES_LIMIT_MAX = 200;
-const ENTRIES = Object.freeze(['improve', 'workshop', 'app', 'issue', 'feedback', 'proposal', 'messages', 'banner']);
+const ENTRIES = Object.freeze(['improve', 'workshop', 'app', 'issue', 'feedback', 'proposal', 'messages', 'banner', 'global-chat']);
 
 class AgentSessionError extends Error {
   constructor(status, message) {

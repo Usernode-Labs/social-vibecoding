@@ -2898,21 +2898,6 @@
     {
       "source": "src/routes/auth.js",
       "method": "POST",
-      "path": "/api/me/agent-sessions",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "apps.post.me.agent.sessions.d8c01721",
-      "domain": "apps",
-      "risk": "external_write",
-      "confirmation": "required",
-      "renderer": "app",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#apps"
-    },
-    {
-      "source": "src/routes/auth.js",
-      "method": "POST",
       "path": "/api/me/dev-flow",
       "expression": null,
       "status": "mapped",
@@ -7358,15 +7343,8 @@
       "method": "POST",
       "path": "/api/sessions/:id/clone-headless",
       "expression": null,
-      "status": "mapped",
-      "capabilityId": "development.post.sessions.item.clone.headless.7b5c0502",
-      "domain": "development",
-      "risk": "external_write",
-      "confirmation": "required",
-      "renderer": "session",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#workshop"
+      "status": "exempt",
+      "reason": "retired with classic dev sessions (#2779): a fork answers 410, and cloning a run is left to the hosted connector"
     },
     {
       "source": "src/routes/sessions.js",
@@ -7628,15 +7606,8 @@
       "method": "POST",
       "path": "/api/sessions/:id/fork",
       "expression": null,
-      "status": "mapped",
-      "capabilityId": "development.post.sessions.item.fork.eb13b22e",
-      "domain": "development",
-      "risk": "external_write",
-      "confirmation": "required",
-      "renderer": "session",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#workshop"
+      "status": "exempt",
+      "reason": "retired with classic dev sessions (#2779): a fork answers 410, and cloning a run is left to the hosted connector"
     },
     {
       "source": "src/routes/sessions.js",

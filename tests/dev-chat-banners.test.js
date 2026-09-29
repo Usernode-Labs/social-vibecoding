@@ -208,18 +208,18 @@ test('the new-change banner appears only past the active-editing stage', () => {
   assert.equal(view().newChange, null);
 });
 
-test('its button\'s busy state is published, not written onto the element', () => {
-  // It was `btn.disabled` + `btn.textContent` by id — a second author on a
-  // node the component renders now, and React would clobber both on its next
-  // paint.
-  assert.doesNotMatch(DEV_CHAT_SRC, /btn\.textContent = 'Starting…'/);
-  assert.match(DEV_CHAT_SRC, /DevChat\._newChangePending = true;\s*\n\s*DevChat\._publishBanners\(\)/);
+test('its button starts an agent session, so it has no busy state to publish (#2779)', () => {
+  // It used to navigate to the classic unsent-change screen, awaiting the
+  // switch with a published "Starting…" state. An agent session opens at
+  // once, so there is nothing to wait for, and nothing written onto the node.
+  assert.doesNotMatch(DEV_CHAT_SRC, /_newChangePending/);
+  assert.match(DEV_CHAT_SRC, /agent\.start\(\{ slug, entry: 'banner' \}\)/);
   const html = bannersHtml({
-    sync: null, newChange: { stateLabel: 'merged (PR #7)', pending: true },
+    sync: null, newChange: { stateLabel: 'merged (PR #7)' },
     credits: null, creditsLow: null,
   });
-  assert.match(html, /id="dc-new-change-btn"[^>]*disabled=""/);
-  assert.match(html, />Starting…</);
+  assert.doesNotMatch(html, /id="dc-new-change-btn"[^>]*disabled=""/);
+  assert.match(html, />Start a new change</);
 });
 
 test('the one primary-filled button routes through <Button>, byte for byte', () => {
@@ -229,7 +229,7 @@ test('the one primary-filled button routes through <Button>, byte for byte', () 
   // same order, same attribute order. `disabledStyle: 'dim60'` was added for
   // this call site, which is the only thing the table could not already say.
   const html = bannersHtml({
-    sync: null, newChange: { stateLabel: 'merged (PR #7)', pending: false },
+    sync: null, newChange: { stateLabel: 'merged (PR #7)' },
     credits: null, creditsLow: null,
   });
   const tag = html.match(/<button[^>]*>/)[0];
@@ -244,7 +244,7 @@ test('the one primary-filled button routes through <Button>, byte for byte', () 
 
 test('the new-change explanation owns the phone row before its action', () => {
   const html = bannersHtml({
-    sync: null, newChange: { stateLabel: 'proposed to the group (PR #7)', pending: false },
+    sync: null, newChange: { stateLabel: 'proposed to the group (PR #7)' },
     credits: null, creditsLow: null,
   });
   assert.match(html,
@@ -407,7 +407,7 @@ test('no slug, no link — the banner still renders the rest', () => {
 test('the link is an anchor to the hash route, not a button', () => {
   const html = bannersHtml({
     sync: null,
-    newChange: { stateLabel: 'proposed to the group (PR #7)', pending: false, cardHref: '#app/demo-app/dev/proposals/5' },
+    newChange: { stateLabel: 'proposed to the group (PR #7)', cardHref: '#app/demo-app/dev/proposals/5' },
     credits: null, creditsLow: null,
   });
   assert.match(html, /<a id="dc-open-card-link" href="#app\/demo-app\/dev\/proposals\/5"/);

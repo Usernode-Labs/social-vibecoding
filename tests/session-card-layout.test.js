@@ -411,9 +411,7 @@ test('a shared card offers View checks from its menu', () => {
 });
 
 test('read-only viewers still reach a published transcript (via the detail page)', () => {
-  // #621: read-only viewers may READ a shared transcript — it's the fork
-  // action that needs collab access, and that lives in the transcript
-  // section (see _transcriptActionsHtml), not on this card.
+  // #621: read-only viewers may READ a shared transcript.
   const AppView = makeAppView();
   AppView.appData = { can_collaborate: false };
   const html = sharedSessionCardHtml(AppView, sharedSess({ transcript_shared: true }));
@@ -477,18 +475,10 @@ test('an expanded transcript SURVIVES a topic-head repaint', () => {
   );
 });
 
-test('"Fork this chat" follows the server can_fork flag, and never for read-only viewers', () => {
+test('"Fork this chat" is retired with classic sessions (#2779)', () => {
   const AppView = makeAppView();
-  assert.match(AppView._transcriptActionsHtml({ id: 5, can_fork: true }), /data-fork-chat="5"/);
-  // The owner's own chat: nothing to fork (that's "Start a new change").
-  assert.strictEqual(AppView._transcriptActionsHtml({ id: 5, can_fork: false, is_owner: true }), '');
-  assert.strictEqual(AppView._transcriptActionsHtml(null), '');
-
-  // A dev chat spends the viewer's own AI budget and its API is
-  // collab-gated, so a read-only viewer is never offered the button.
-  // (readOnly is a getter over appData.can_collaborate — see #621.)
-  AppView.appData = { can_collaborate: false };
-  assert.strictEqual(AppView._transcriptActionsHtml({ id: 5, can_fork: true }), '');
+  assert.equal(AppView._transcriptActionsHtml, undefined);
+  assert.equal(AppView.forkSharedChat, undefined);
 });
 
 // ── Private/visible split around the archived toggle ────────────────────────

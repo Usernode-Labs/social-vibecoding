@@ -1099,6 +1099,16 @@ function object(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function agentHandoffHint(action: Record<string, unknown>): LegacyAgentHint | null {
+  const raw = object(action.hint);
+  const slug = typeof raw?.slug === 'string' ? raw.slug : '';
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(slug)) return null;
+  const hint: LegacyAgentHint = { slug, entry: 'global-chat' };
+  if (Number.isSafeInteger(raw?.issueNumber) && Number(raw?.issueNumber) > 0) hint.issueNumber = Number(raw?.issueNumber);
+  if (typeof action.message === 'string' && action.message.trim()) hint.message = action.message;
+  return hint;
+}
+
 export function clientAction(result: GlobalChatResult): Record<string, unknown> | null {
   const authoritative = object(result.authoritativeResult);
   const wrapped = object(authoritative?.data);
@@ -1194,6 +1204,25 @@ export async function runGlobalChatClientAction(result: GlobalChatResult) {
   if (!action || state.clientActionStates[result.id] === 'running') return false;
   if (action.transport === 'navigation') {
     closeGlobalChat(result.classicPath);
+    return true;
+  }
+  if (action.transport === 'agent_session_handoff') {
+    // #2779: development work starts in an agent session. Nothing was
+    // created: the unsent conversation opens focused on the app (and the
+    // issue), with the task in its box for the user to send.
+    const hint = agentHandoffHint(action);
+    if (!hint) {
+      publish((current) => ({
+        error: 'That development handoff is missing its app.',
+        clientActionStates: { ...current.clientActionStates, [result.id]: 'error' },
+      }));
+      return false;
+    }
+    window.UsernodeReact?.agentSession?.prepareDraft(hint);
+    publish((current) => ({
+      clientActionStates: { ...current.clientActionStates, [result.id]: 'done' },
+    }));
+    closeGlobalChat('#messages/agent/new');
     return true;
   }
   publish((current) => ({

@@ -5059,20 +5059,20 @@
       "expectText": "Apps set differently"
     },
     {
-      "name": "#2241: New change opens a screen of its own, with the empty state that invites the first message",
+      "name": "#2241 → #2779: New change's old address opens an unsent agent session beside the inbox, with the empty state that invites the first message",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
-      "expectSelector": "#dc-tab-chat #dc-messages #dc-empty-state",
-      "expectText": "What should this session change?"
+      "expectSelector": "#messages-screen:not(.hidden) [data-agent-session-thread=\"new\"] [data-agent-session-empty]",
+      "expectText": "New agent session"
     },
     {
-      "name": "#2241/#2607: the unsent change has a live composer and the venue dropdown, and no controls for a session that does not exist",
+      "name": "#2779: the unsent agent session has a live message box, and no session actions for a conversation that does not exist yet",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
-      "expectSelector": "#dc-session-header:has(> button#dc-venue-select[data-venue-change]):not(:has(#dc-session-actions)) ~ .dc-session-body #dc-form #dc-input:not([disabled])"
+      "expectSelector": "[data-agent-session-thread=\"new\"]:has([data-agent-session-menu][disabled]) #agent-session-pane-composer:not([disabled])"
     },
     {
-      "name": "#2607: the venue dropdown on a new change names the venue it would be built in, and opens the sheet that changes it",
+      "name": "#2607 → #3078: where an unsent agent session is built is its composer's model pill, which opens Build with",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
-      "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]:not([disabled]) > .dc-venue-name"
+      "expectSelector": "[data-agent-session-thread=\"new\"] button[data-agent-session-model][aria-haspopup=\"dialog\"]"
     },
     {
       "name": "#2772: a change in progress is listed in Messages as an agent conversation, and opens its session (beside the list since #2813)",

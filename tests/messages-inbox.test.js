@@ -160,28 +160,23 @@ test('the "+" is back at the strip\'s trailing end, and opens a choice rather th
 
   assert.match(SCREEN, /\{ key: 'direct', label: 'Direct message'/);
   assert.match(SCREEN, /\{ key: 'group', label: 'Group chat'/);
-  assert.match(SCREEN, /\{ key: 'agent', label: 'Agent chat'/);
+  assert.match(SCREEN, /\{ key: 'agent', label: 'Agent session'/);
   const start = SCREEN.slice(SCREEN.indexOf('function startNew'));
   const starter = start.slice(0, start.indexOf('\n}\n'));
-  assert.match(starter, /if \(choice === 'agent'\) openDialog\('messagesAgent'\);/,
-    'Agent asks which app first');
+  assert.match(starter, /if \(choice === 'agent'\) void startAgentSession\(\{ entry: 'messages' \}\);/,
+    'Agent opens one new conversation with the Mayor, with no app to pick first (#2779)');
   assert.match(starter, /else openDialog\('messagesCreate', choice\);/,
     'DM and group open the create flow on the matching tab');
   const create = read('frontend/src/features/messages/create-dialog.tsx');
   assert.match(create, /setMode\(tab === 'group' \? 'group' : 'direct'\)/);
 });
 
-test('Agent chat picks one of the viewer\'s apps and opens a new dev session there', () => {
-  const dialog = read('frontend/src/features/messages/agent-dialog.tsx');
-  assert.match(dialog, /id="messages-agent-dialog"/);
-  assert.match(dialog, /useDialog\('messagesAgent'/);
-  assert.match(dialog, /snap\.discussions/, 'the apps are the channels already loaded — no second list to disagree');
-  assert.match(dialog, /Improve\.startSessionFor\(slug\)/);
+test('the "+" asks no app first and opens no classic session any more (#2779)', () => {
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/messages/agent-dialog.tsx')), false,
+    'the "which app?" dialog led to a classic dev session, which is no longer created');
+  assert.doesNotMatch(SCREEN, /messagesAgent|agentSessionsEnabled/);
   const improve = read('frontend/src/features/improve/improve-controller.js');
-  const fn = improve.slice(improve.indexOf('async startSessionFor(slug)'));
-  const body = fn.slice(0, fn.indexOf('\n  },'));
-  assert.match(body, /Improve\._nextSessionOrigin = '#messages';/, 'back goes up to Messages');
-  assert.match(body, /navigateToApp\(slug, 'dev', ref, 'sessions'\)/, 'straight to /dev/sessions/new');
+  assert.doesNotMatch(improve, /startSessionFor/);
 });
 
 test('the endpoint lists yours then more, one row per app, never an app the viewer cannot open', () => {

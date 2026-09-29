@@ -226,8 +226,8 @@ test('new work at the cap pauses the user\'s least recently used session instead
   const sessions = read('src/routes/sessions.js');
   const create = sessions.slice(sessions.indexOf("router.post('/api/apps/:slug/sessions'"));
   assert.match(create.slice(0, 6000), /sessionLifecycle\.freeUserSlot\(\{ pool, userId: req\.user\.id \}\)/);
-  assert.equal((sessions.match(/sessionLifecycle\.freeUserSlot\(/g) || []).length, 4,
-    'create, clone, fork and resume all free a slot the same way');
+  assert.equal((sessions.match(/sessionLifecycle\.freeUserSlot\(/g) || []).length, 3,
+    'create, clone and resume all free a slot the same way (fork is retired, #2779)');
   assert.match(read('src/routes/proposal-handoff.js'), /sessionLifecycle\.freeUserSlot\(/);
   assert.match(read('src/services/connector-limits.js'), /lifecycle\.freeUserSlot\(\{ pool, userId: user\.id \}\)/);
 });
