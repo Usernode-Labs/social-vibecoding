@@ -118,10 +118,26 @@ test('the spec lists every assumption, and may stop only for impossible', () => 
   assert.match(p, /End the "User-facing changes" half with a\n"### Assumptions" subsection: every assumption listed in the plan above and every choice you made/);
   assert.match(p, /If reading the code shows the request is IMPOSSIBLE as written/);
   assert.match(p, /A choice, however unsure you are about it, is an assumption, never a BLOCKED\./);
+  assert.match(p, /A reported bug counts as impossible when the code does not show it: if the request reports a bug and you\ncannot find where in the code it happens, reply "BLOCKED:" and say where you looked\./);
+  assert.match(p, /the build does not guess\./);
   assert.equal(live.specBlocked('BLOCKED: The app has no user accounts to rank.'), 'The app has no user accounts to rank.');
   assert.equal(live.specBlocked('  blocked:  no such screen\n\nmore'), 'no such screen');
   assert.equal(live.specBlocked('# Title\n\nBLOCKED: not on the first line'), null);
   assert.equal(live.specBlocked('# Leaderboard'), null);
+});
+
+// ── The build: the rules the first shadow builds broke ──────────────────
+
+test('the build keeps lockfiles, proves its checks, leaves existing tests alone, and does not guess at a bug', () => {
+  for (const spec of [null, '# Title\n\n## User-facing changes\n\nx\n\n## Technical implementation\n\ny']) {
+    const p = live.buildPrompt({ seed: 'ISSUE', buildNote: 'Edit a.js.', spec });
+    const rules = p.slice(p.indexOf('Make exactly that change, and nothing else:'));
+    assert.match(rules, /- Do not change a lockfile \(package-lock\.json, yarn\.lock, pnpm-lock\.yaml and the like\) unless the change\n  adds or removes a dependency\. If installing dependencies rewrote one, restore it before you finish/);
+    assert.match(rules, /- A test or check you add must fail without your change: assert what the change makes true, not only that\n  the page loads\./);
+    assert.match(rules, /- Do not loosen, skip, delete or rewrite an existing test or check to make it pass\. Change one only where\n  the spec changes the behaviour it pins, and name it in your summary\./);
+    assert.match(rules, /- If the request reports a bug, find where in the code it happens before changing anything\. If you cannot\n  find it, stop and say so instead of changing code: do not ship a guessed fix\./);
+    assert.ok(rules.indexOf('lockfile') < rules.indexOf('Do not commit or push yourself'), 'inside the rules, before the hand-off');
+  }
 });
 
 function buildHarness(specText) {

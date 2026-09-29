@@ -756,7 +756,7 @@ function HomeroomBotSection() {
                   setStatus({ text: 'Builds at once must be a whole number from 1 to 4.', tone: 'err' });
                   return;
                 }
-                saveSettings({ buildConcurrency: n }, `The bot now runs up to ${n} shadow build${n === 1 ? '' : 's'} at once, one per app.`);
+                saveSettings({ buildConcurrency: n }, `The bot now runs up to ${n} shadow build${n === 1 ? '' : 's'} at once, shared between apps in turns.`);
               }}
             />
             <label className="flex items-center gap-2 mt-3 text-sm" htmlFor="admin-homeroom-bot-shadow-build-platform">

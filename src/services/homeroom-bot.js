@@ -1782,8 +1782,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
 // up to a turn's budget; run inline it held up the rest of its app's batch,
 // and one of the loop's few slots with it. So a ready verdict only QUEUES
 // its build (build_queued_at on its run), and this lane drains that queue
-// with a concurrency of its own: `buildConcurrency` builds at once, at most
-// one per app, so one busy board cannot take every slot. Each build is its
+// with a concurrency of its own: `buildConcurrency` builds at once, shared
+// between apps in turns, so one busy board cannot starve another, but a
+// slot no other app wants is not left idle either. Each build is its
 // own session on its own temporary worker, so builds side by side share
 // nothing but the bot's weekly allowance, which every drain checks first.
 //
@@ -1896,23 +1897,29 @@ async function releaseStaleBuilds(pool, settings) {
   return rows.length;
 }
 
-// The oldest queued build of each app with none under way, oldest first,
-// claimed in one statement. `$2` is the paused apps: a paused app's builds
-// wait with its triage.
+// The free slots, dealt to apps in turns, claimed in one statement. An
+// app's queued builds are numbered oldest first, starting after the builds
+// it already has under way; the claim takes the lowest numbers, so every
+// app with a build waiting gets one slot before any app gets a second, and
+// an app alone in the queue takes every free slot. Ties go to the build
+// queued first. `$2` is the paused apps: a paused app's builds wait with
+// its triage.
 const CLAIM_BUILDS_SQL = `WITH building AS (
-    SELECT DISTINCT app_id FROM homeroom_bot_runs
+    SELECT app_id, COUNT(*)::int AS n FROM homeroom_bot_runs
      WHERE build_queued_at IS NOT NULL AND build_at IS NOT NULL AND build_ok IS NULL
-  ), heads AS (
-    SELECT DISTINCT ON (r.app_id) r.id, r.build_queued_at
+     GROUP BY app_id
+  ), queued AS (
+    SELECT r.id, r.build_queued_at,
+           COALESCE(b.n, 0)
+             + ROW_NUMBER() OVER (PARTITION BY r.app_id ORDER BY r.build_queued_at, r.id) AS turn
       FROM homeroom_bot_runs r
       JOIN apps a ON a.id = r.app_id
+      LEFT JOIN building b ON b.app_id = r.app_id
      WHERE r.build_queued_at IS NOT NULL AND r.build_at IS NULL AND r.build_ok IS NULL
        AND a.status = 'running' AND a.repo_url IS NOT NULL
        AND NOT (a.slug = ANY($2::text[]))
-       AND r.app_id NOT IN (SELECT app_id FROM building)
-     ORDER BY r.app_id, r.build_queued_at, r.id
   ), picked AS (
-    SELECT id FROM heads ORDER BY build_queued_at, id LIMIT $1
+    SELECT id FROM queued ORDER BY turn, build_queued_at, id LIMIT $1
   )
   UPDATE homeroom_bot_runs r
      SET build_at = NOW(), build_attempts = r.build_attempts + 1
